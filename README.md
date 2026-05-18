@@ -165,8 +165,9 @@ MP4s with shot timing, text treatment, and simple animated motion.
 Use `scene-previews` to render every manifest scene for one platform.
 Work previews under `renders\work-previews\` concatenate the platform's scene
 previews into a continuous baseline MP4.
-Artifact manifests under `renders\artifacts\` provide machine-readable paths,
-byte sizes, durations, dimensions, and scene-preview coverage for automation.
+Artifact manifests under `renders\artifacts\` provide a schema version,
+machine-readable paths, byte sizes, durations, dimensions, and scene-preview
+coverage for automation.
 Use `artifact-check` to verify that a generated artifact manifest still points to
 files with matching byte sizes and positive video durations.
 Add `--output json` when automation needs the verification summary.

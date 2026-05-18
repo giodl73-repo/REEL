@@ -40,6 +40,7 @@ adapter contracts without provider lock-in.
 | 28 | Artifact manifest byte sizes | done | Added file byte sizes to artifact-manifest video and image entries so automation can detect missing or truncated render outputs. |
 | 29 | Artifact manifest verification | done | Added `cargo run -- artifact-check <artifact-json>` to verify artifact files, byte sizes, and positive video durations. |
 | 30 | Artifact-check JSON output | done | Added `--output json` to `artifact-check` for machine-readable verification summaries. |
+| 31 | Artifact manifest schema version | done | Added `schema_version` to artifact manifests and required the supported version during `artifact-check`. |
 
 ## Success criteria
 

@@ -13,6 +13,7 @@ use tempfile::tempdir;
 pub mod adapters;
 
 const SUPPORTED_MANIFEST_VERSION: &str = "reel.manifest.v0.1";
+const ARTIFACT_MANIFEST_SCHEMA_VERSION: &str = "reel.artifacts.v0.1";
 
 const REQUIRED_TOP_FIELDS: &[&str] = &[
     "manifest_version",
@@ -140,6 +141,7 @@ pub struct AdapterPlanEntry {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ArtifactManifest {
+    pub schema_version: String,
     pub work: String,
     pub title: String,
     pub manifest: String,
@@ -182,6 +184,7 @@ pub struct ArtifactImage {
 #[derive(Debug, Serialize)]
 pub struct ArtifactCheckReport {
     pub artifact_manifest: String,
+    pub schema_version: String,
     pub platforms: usize,
     pub files: usize,
     pub total_bytes: u64,
@@ -499,6 +502,7 @@ pub fn render_artifact_manifest(manifest: impl AsRef<Path>) -> Result<PathBuf> {
     }
 
     let artifact_manifest = ArtifactManifest {
+        schema_version: ARTIFACT_MANIFEST_SCHEMA_VERSION.to_string(),
         work: loaded.manifest.work.clone(),
         title: loaded.manifest.title.clone(),
         manifest: path_text(manifest),
@@ -517,6 +521,13 @@ pub fn check_artifact_manifest(path: impl AsRef<Path>) -> Result<ArtifactCheckRe
         .with_context(|| format!("failed to read artifact manifest {}", path.display()))?;
     let manifest: ArtifactManifest = serde_json::from_str(&json)
         .with_context(|| format!("failed to parse artifact manifest {}", path.display()))?;
+
+    if manifest.schema_version != ARTIFACT_MANIFEST_SCHEMA_VERSION {
+        bail!(
+            "unsupported artifact manifest schema version: {}",
+            manifest.schema_version
+        );
+    }
 
     if manifest.platforms.is_empty() {
         bail!("artifact manifest has no platforms: {}", path.display());
@@ -549,6 +560,7 @@ pub fn check_artifact_manifest(path: impl AsRef<Path>) -> Result<ArtifactCheckRe
 
     Ok(ArtifactCheckReport {
         artifact_manifest: path_text(path),
+        schema_version: manifest.schema_version,
         platforms: manifest.platforms.len(),
         files,
         total_bytes,
