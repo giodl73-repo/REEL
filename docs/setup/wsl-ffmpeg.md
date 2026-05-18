@@ -44,6 +44,12 @@ not generated media.
 
 ## Run the shot-card renderer
 
+Validate the work manifest before rendering:
+
+```powershell
+wsl -- bash -lc 'cd /mnt/c/src/TRACKER/repos/design-labs/reel && bash scripts/validate-manifest.sh works/0001-ash-vale-last-road-before-winter/manifest.yaml'
+```
+
 Once a work has a full manifest, render a timed card sequence for every shot:
 
 ```powershell
@@ -79,6 +85,7 @@ and shot intent before we build a Remotion or final animation pass.
 - REEL manifests can drive renderer inputs without a provider-specific schema.
 - REEL can render a timed shot-card draft from the manifest shot list.
 - REEL can generate separate 16:9 and 9:16 draft exports from one manifest.
+- REEL can validate manifest timing and export targets before rendering.
 
 ## What the smoke does not prove
 

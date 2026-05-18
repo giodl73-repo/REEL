@@ -18,6 +18,7 @@ into a renderer too early.
 | 06 | First original video package | done | Created the Ash Vale trailer package from BANISH scenario evidence and rendered its first FFmpeg smoke draft. |
 | 07 | FFmpeg shot-card draft | done | Added a manifest-driven shot-card renderer that turns each shot into a timed draft card sequence. |
 | 08 | Shot-card export variants | done | Added 16:9 YouTube and 9:16 iPhone/social shot-card exports from the same manifest. |
+| 09 | Manifest validation gate | done | Added a WSL-friendly manifest validator for required fields, timeline consistency, and export/platform targets. |
 
 ## Success criteria
 
@@ -32,5 +33,6 @@ into a renderer too early.
 - REEL has a first original Games Design scenario video package with brief, script, shotlist, manifest, and panel review.
 - REEL can render a gitignored shot-card MP4 that follows a work manifest's shot order and durations.
 - REEL can render platform-specific shot-card drafts for YouTube/demo and iPhone/social review.
+- REEL can validate manifest structure, timeline continuity, and export targets before rendering.
 - Validation commands are named before renderer-specific tooling is chosen.
 - TRACKER records REEL as a Design Labs repo and dependency intake candidate.
