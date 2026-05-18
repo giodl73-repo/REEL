@@ -365,6 +365,22 @@ pub fn render_scene_previews(manifest: impl AsRef<Path>, platform: &str) -> Resu
     Ok(previews)
 }
 
+pub fn render_work_preview(manifest: impl AsRef<Path>, platform: &str) -> Result<PathBuf> {
+    let manifest = manifest.as_ref();
+    let loaded = load_manifest(manifest)?;
+    let previews = render_scene_previews(manifest, platform)?;
+    if previews.is_empty() {
+        bail!("manifest has no scenes to preview");
+    }
+
+    let out_dir = PathBuf::from("renders/work-previews");
+    fs::create_dir_all(&out_dir)
+        .with_context(|| format!("failed to create {}", out_dir.display()))?;
+    let out_file = out_dir.join(format!("{}-{}-preview.mp4", loaded.manifest.work, platform));
+    concat_mp4_files(&previews, &out_file)?;
+    Ok(out_file)
+}
+
 pub fn render_demo(manifest: impl AsRef<Path>) -> Result<PathBuf> {
     let manifest = manifest.as_ref();
     let loaded = load_manifest(manifest)?;
@@ -1708,6 +1724,50 @@ fn render_scene_preview_for_plan(loaded: &LoadedManifest, plan: &ScenePlan) -> R
     )?;
 
     Ok(out_file)
+}
+
+fn concat_mp4_files(files: &[PathBuf], out_file: &Path) -> Result<()> {
+    let ffmpeg = adapters::ffmpeg::FfmpegAdapter;
+    let temp_dir = tempdir().context("failed to create temporary concat workspace")?;
+    let concat_file = temp_dir.path().join("concat.txt");
+    let mut concat = String::new();
+    let cwd = std::env::current_dir().context("failed to read current directory")?;
+    for file in files {
+        let absolute = if file.is_absolute() {
+            file.to_path_buf()
+        } else {
+            cwd.join(file)
+        };
+        concat.push_str(&format!("file '{}'\n", ffmpeg.path_for_concat(&absolute)?));
+    }
+    fs::write(&concat_file, concat)
+        .with_context(|| format!("failed to write {}", concat_file.display()))?;
+
+    ffmpeg.run_ffmpeg(
+        &[
+            "-hide_banner".to_string(),
+            "-loglevel".to_string(),
+            "error".to_string(),
+            "-y".to_string(),
+            "-f".to_string(),
+            "concat".to_string(),
+            "-safe".to_string(),
+            "0".to_string(),
+            "-i".to_string(),
+            ffmpeg.path_argument(&concat_file)?,
+            "-fflags".to_string(),
+            "+genpts".to_string(),
+            "-c:v".to_string(),
+            "libx264".to_string(),
+            "-pix_fmt".to_string(),
+            "yuv420p".to_string(),
+            "-avoid_negative_ts".to_string(),
+            "make_zero".to_string(),
+        ],
+        &[ffmpeg.path_argument(out_file)?],
+    )?;
+
+    Ok(())
 }
 
 fn scene_preview_text(

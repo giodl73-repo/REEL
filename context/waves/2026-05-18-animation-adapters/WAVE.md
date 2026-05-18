@@ -32,6 +32,7 @@ adapter contracts without provider lock-in.
 | 20 | Batch scene preview rendering | done | Added `cargo run -- scene-previews <manifest> <platform>` to render every manifest scene preview through the FFmpeg baseline adapter. |
 | 21 | Demo all-scene previews | done | Updated `cargo run -- demo <manifest>` to render and embed every manifest scene preview for each export platform. |
 | 22 | Review-pack scene previews | done | Added a scene-preview table to review packs and render-all review output so reviewers can inspect every baseline scene MP4. |
+| 23 | Full work preview render | done | Added `cargo run -- work-preview <manifest> <platform>` to concatenate all scene previews into one continuous platform MP4. |
 
 ## Success criteria
 
