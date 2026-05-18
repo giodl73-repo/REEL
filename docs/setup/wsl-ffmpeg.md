@@ -74,6 +74,18 @@ The contact sheet writes:
 renders/contact-sheets/0001-ash-vale-last-road-before-winter-youtube-demo-contact-sheet.png
 ```
 
+Render every platform cut, contact sheet, and a summary review report:
+
+```powershell
+wsl -- bash -lc 'cd /mnt/c/src/TRACKER/repos/design-labs/reel && bash scripts/render-review-pack.sh works/0001-ash-vale-last-road-before-winter/manifest.yaml'
+```
+
+The review-pack report writes:
+
+```text
+renders/review-packs/0001-ash-vale-last-road-before-winter-review-pack.md
+```
+
 Render the phone-first 9:16 cut with:
 
 ```powershell
@@ -106,6 +118,7 @@ and shot intent before we build a Remotion or final animation pass.
   camera notes, action, and narration for animation review.
 - REEL can generate contact-sheet PNGs from draft cuts for fast shot-rhythm
   review.
+- REEL can render a full gitignored review pack covering every manifest platform.
 
 ## What the smoke does not prove
 
