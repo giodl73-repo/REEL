@@ -205,6 +205,7 @@ pub fn validate_manifest(loaded: &LoadedManifest) -> Result<ValidationReport> {
         "renderer_assumptions",
         REQUIRED_RENDERER_ASSUMPTIONS_FIELDS,
     )?;
+    validate_optional_adapter_metadata(top)?;
     validate_required_mapping_fields(top, "review", REQUIRED_REVIEW_FIELDS)?;
     validate_required_sequence_fields(top, "platforms", REQUIRED_PLATFORM_FIELDS)?;
     validate_required_sequence_fields(top, "scenes", REQUIRED_SCENE_FIELDS)?;
@@ -461,6 +462,52 @@ fn validate_required_sequence_fields(
             if is_empty_required_value(value) {
                 bail!("{section_name}[{}].{field} must not be empty", index + 1);
             }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_optional_adapter_metadata(top: &Mapping) -> Result<()> {
+    let renderer_assumptions = top
+        .get(Value::String("renderer_assumptions".to_string()))
+        .ok_or_else(|| anyhow!("missing required top-level field: renderer_assumptions"))?
+        .as_mapping()
+        .ok_or_else(|| anyhow!("renderer_assumptions must be a mapping"))?;
+    let Some(adapters) = renderer_assumptions.get(Value::String("adapters".to_string())) else {
+        return Ok(());
+    };
+    let adapters = adapters
+        .as_sequence()
+        .ok_or_else(|| anyhow!("renderer_assumptions.adapters must be a sequence"))?;
+    if adapters.is_empty() {
+        bail!("renderer_assumptions.adapters must not be empty when present");
+    }
+
+    let known_adapters = adapters::adapter_catalog()
+        .iter()
+        .map(|adapter| adapter.id.as_str())
+        .collect::<HashSet<_>>();
+
+    for (index, adapter) in adapters.iter().enumerate() {
+        let adapter = adapter.as_str().ok_or_else(|| {
+            anyhow!(
+                "renderer_assumptions.adapters[{}] must be an adapter id string",
+                index + 1
+            )
+        })?;
+        if adapter.trim().is_empty() {
+            bail!(
+                "renderer_assumptions.adapters[{}] must not be empty",
+                index + 1
+            );
+        }
+        if !known_adapters.contains(adapter) {
+            bail!(
+                "renderer_assumptions.adapters[{}] has unknown adapter id: {}",
+                index + 1,
+                adapter
+            );
         }
     }
 
@@ -1237,6 +1284,45 @@ mod tests {
             error
                 .to_string()
                 .contains("exports[1] missing required fields: filename")
+        );
+    }
+
+    #[test]
+    fn accepts_known_optional_adapter_metadata() {
+        let manifest = load_manifest("works/0001-ash-vale-last-road-before-winter/manifest.yaml")
+            .expect("manifest loads");
+        let mut raw = manifest.raw.clone();
+        raw["renderer_assumptions"]["adapters"] = Value::Sequence(vec![
+            Value::String("ffmpeg".to_string()),
+            Value::String("remotion".to_string()),
+        ]);
+        let with_adapters = LoadedManifest {
+            path: manifest.path,
+            raw,
+            manifest: manifest.manifest,
+        };
+
+        validate_manifest(&with_adapters).expect("known adapter ids validate");
+    }
+
+    #[test]
+    fn rejects_unknown_optional_adapter_metadata() {
+        let manifest = load_manifest("works/0001-ash-vale-last-road-before-winter/manifest.yaml")
+            .expect("manifest loads");
+        let mut raw = manifest.raw.clone();
+        raw["renderer_assumptions"]["adapters"] =
+            Value::Sequence(vec![Value::String("vendor-video".to_string())]);
+        let invalid = LoadedManifest {
+            path: manifest.path,
+            raw,
+            manifest: manifest.manifest,
+        };
+
+        let error = validate_manifest(&invalid).expect_err("unknown adapter id rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("renderer_assumptions.adapters[1] has unknown adapter id: vendor-video")
         );
     }
 

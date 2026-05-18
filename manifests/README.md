@@ -87,6 +87,10 @@ Each shot must define:
 - Use `renderer_assumptions.candidates` to list plausible paths such as FFmpeg,
   Remotion, Blender, browser capture, or cinematic AI.
 - Use `renderer_assumptions.blockers` for unknowns that require `reel-research`.
+- Optionally use `renderer_assumptions.adapters` for known adapter ids:
+  `ffmpeg`, `remotion`, `blender`, or `ai-video`. This list names possible
+  adapter boundaries only; it must not require provider credentials, API
+  endpoints, model names, SDK packages, or binary installation details.
 
 ## Validation
 
@@ -102,3 +106,5 @@ non-empty and unique scene, shot, platform, and export identifiers; positive
 timing; scene and shot duration totals; shot start offsets; shot-to-scene
 references; shot placement within the referenced scene timeline; and
 platform/export coverage, duration, aspect ratio, and filename consistency.
+When optional `renderer_assumptions.adapters` metadata is present, adapter ids
+must be one of the known provider-neutral adapter boundaries.

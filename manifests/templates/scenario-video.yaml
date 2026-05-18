@@ -73,6 +73,10 @@ captions:
   style: "large phone-readable captions with high contrast"
   language: "en"
 renderer_assumptions:
+  adapters:
+    - "ffmpeg"
+    - "remotion"
+    - "ai-video"
   candidates:
     - "storyboard-animatic via stills + FFmpeg"
     - "Remotion motion pass"
