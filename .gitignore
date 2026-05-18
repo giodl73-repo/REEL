@@ -1,0 +1,15 @@
+# Generated media and local exports
+renders/
+exports/
+*.mp4
+*.mov
+*.m4v
+*.webm
+*.mp3
+*.wav
+*.aiff
+
+# Local scratch
+.DS_Store
+Thumbs.db
+*.tmp
