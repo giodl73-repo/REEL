@@ -27,6 +27,7 @@ into a renderer too early.
 | 15 | Rust CLI orchestration core | done | Added a Rust CLI for manifest validation, export planning, and review-pack adapter orchestration. |
 | 16 | Rust review-pack orchestration | done | Moved review-pack reports and batch indexes into Rust while keeping FFmpeg media generation external. |
 | 17 | Rust contact-sheet orchestration | done | Moved contact-sheet FFmpeg orchestration into Rust and removed the Bash contact-sheet adapter. |
+| 18 | Rust shot-card orchestration | done | Moved shot-card MP4 FFmpeg orchestration into Rust and removed the Bash shot-card adapter. |
 
 ## Success criteria
 
@@ -50,5 +51,6 @@ into a renderer too early.
 - REEL has a Rust CLI core so contracts and orchestration fit the wider portfolio while renderers remain external dependencies.
 - REEL writes review-pack reports and indexes in Rust, leaving Bash only as FFmpeg adapter glue.
 - REEL renders contact sheets through Rust-owned FFmpeg orchestration.
+- REEL renders shot-card MP4s through Rust-owned FFmpeg orchestration.
 - Validation commands are named before renderer-specific tooling is chosen.
 - TRACKER records REEL as a Design Labs repo and dependency intake candidate.

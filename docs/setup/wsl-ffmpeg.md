@@ -51,7 +51,7 @@ cargo run -- validate works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- plan works\0001-ash-vale-last-road-before-winter\manifest.yaml
 ```
 
-Validate the work manifest before rendering:
+The legacy WSL validator remains available for parity checks:
 
 ```powershell
 wsl -- bash -lc 'cd /mnt/c/src/TRACKER/repos/design-labs/reel && bash scripts/validate-manifest.sh works/0001-ash-vale-last-road-before-winter/manifest.yaml'
@@ -60,10 +60,10 @@ wsl -- bash -lc 'cd /mnt/c/src/TRACKER/repos/design-labs/reel && bash scripts/va
 Once a work has a full manifest, render a timed card sequence for every shot:
 
 ```powershell
-wsl -- bash -lc 'cd /mnt/c/src/TRACKER/repos/design-labs/reel && bash scripts/render-shot-cards.sh works/0001-ash-vale-last-road-before-winter/manifest.yaml'
+cargo run -- shot-cards works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo
 ```
 
-The default platform is `youtube-demo` and writes:
+The `youtube-demo` platform writes:
 
 ```text
 renders/shot-cards/0001-ash-vale-last-road-before-winter-youtube-demo-shot-cards.mp4
@@ -108,7 +108,7 @@ renders/review-packs/INDEX.md
 Render the phone-first 9:16 cut with:
 
 ```powershell
-wsl -- bash -lc 'cd /mnt/c/src/TRACKER/repos/design-labs/reel && bash scripts/render-shot-cards.sh works/0001-ash-vale-last-road-before-winter/manifest.yaml iphone-social'
+cargo run -- shot-cards works\0001-ash-vale-last-road-before-winter\manifest.yaml iphone-social
 ```
 
 The renderer validates the manifest before rendering and derives each platform's
@@ -141,9 +141,11 @@ and shot intent before we build a Remotion or final animation pass.
 - REEL can batch-render review packs for all work manifests and write an index.
 - REEL has a Rust CLI for validation, export planning, and adapter
   orchestration while FFmpeg remains an external renderer dependency.
-- REEL writes review-pack reports and indexes in Rust; Bash is now only the
-  FFmpeg media adapter path.
+- REEL writes review-pack reports and indexes in Rust; Bash now remains only
+  for legacy smoke/validator scripts while main review media adapters run
+  through Rust.
 - REEL renders contact-sheet PNGs through Rust-owned FFmpeg orchestration.
+- REEL renders shot-card MP4s through Rust-owned FFmpeg orchestration.
 
 ## What the smoke does not prove
 

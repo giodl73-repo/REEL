@@ -9,6 +9,7 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 use serde_yaml::{Mapping, Value};
+use tempfile::tempdir;
 
 const REQUIRED_TOP_FIELDS: &[&str] = &[
     "manifest_version",
@@ -58,6 +59,8 @@ pub struct ExportPlan {
 struct Manifest {
     work: String,
     title: String,
+    format: String,
+    style: String,
     platforms: Vec<Platform>,
     scenes: Vec<Scene>,
     shots: Vec<Shot>,
@@ -83,6 +86,13 @@ struct Shot {
     scene_id: String,
     start_seconds: f64,
     duration_seconds: f64,
+    camera: String,
+    action: String,
+    visual_prompt: String,
+    #[serde(default)]
+    audio: ShotAudio,
+    #[serde(default)]
+    captions: ShotCaptions,
 }
 
 #[derive(Debug, Deserialize)]
@@ -91,6 +101,18 @@ struct Export {
     filename: String,
     aspect_ratio: String,
     duration_seconds: f64,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ShotAudio {
+    #[serde(default)]
+    narration: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ShotCaptions {
+    #[serde(default)]
+    text: String,
 }
 
 pub fn load_manifest(path: impl AsRef<Path>) -> Result<LoadedManifest> {
@@ -166,11 +188,8 @@ pub fn render_review_pack(manifest: impl AsRef<Path>) -> Result<PathBuf> {
     markdown.push_str("|---|---|---:|---|\n");
 
     for export in &report.exports {
-        let video = run_script_with_values(
-            "scripts/render-shot-cards.sh",
-            &[path_argument(manifest)?, export.id.clone()],
-        )?;
-        let sheet = render_contact_sheet_for_export(manifest, &loaded, export)?;
+        let video = render_shot_cards_for_export(&loaded, export)?;
+        let sheet = render_contact_sheet_for_export(&loaded, export)?;
         let duration = ffprobe_duration(&video)?;
 
         markdown.push_str(&format!(
@@ -187,6 +206,18 @@ pub fn render_review_pack(manifest: impl AsRef<Path>) -> Result<PathBuf> {
     Ok(report_path)
 }
 
+pub fn render_shot_cards(manifest: impl AsRef<Path>, platform: &str) -> Result<PathBuf> {
+    let loaded = load_manifest(manifest)?;
+    let report = validate_manifest(&loaded)?;
+    let export = report
+        .exports
+        .iter()
+        .find(|export| export.id == platform)
+        .ok_or_else(|| anyhow!("unknown platform in manifest: {platform}"))?;
+
+    render_shot_cards_for_export(&loaded, export)
+}
+
 pub fn render_contact_sheet(manifest: impl AsRef<Path>, platform: &str) -> Result<PathBuf> {
     let manifest = manifest.as_ref();
     let loaded = load_manifest(manifest)?;
@@ -197,7 +228,7 @@ pub fn render_contact_sheet(manifest: impl AsRef<Path>, platform: &str) -> Resul
         .find(|export| export.id == platform)
         .ok_or_else(|| anyhow!("unknown platform in manifest: {platform}"))?;
 
-    render_contact_sheet_for_export(manifest, &loaded, export)
+    render_contact_sheet_for_export(&loaded, export)
 }
 
 pub fn render_all_review_packs(root: impl AsRef<Path>) -> Result<PathBuf> {
@@ -382,7 +413,6 @@ fn discover_work_manifests(root: &Path) -> Result<Vec<PathBuf>> {
 }
 
 fn render_contact_sheet_for_export(
-    manifest_path: &Path,
     loaded: &LoadedManifest,
     export: &ExportPlan,
 ) -> Result<PathBuf> {
@@ -391,10 +421,7 @@ fn render_contact_sheet_for_export(
         loaded.manifest.work, export.id
     ));
     if !video_file.is_file() {
-        run_script_with_values(
-            "scripts/render-shot-cards.sh",
-            &[path_argument(manifest_path)?, export.id.clone()],
-        )?;
+        render_shot_cards_for_export(loaded, export)?;
     }
 
     let out_dir = PathBuf::from("renders/contact-sheets");
@@ -435,15 +462,174 @@ fn render_contact_sheet_for_export(
     Ok(out_file)
 }
 
-fn run_script_with_values(script: &str, args: &[String]) -> Result<PathBuf> {
-    let stdout = run_external("bash", &[script.to_string()], args)
-        .with_context(|| format!("failed to run {script}"))?;
-    let path = stdout
-        .lines()
-        .last()
-        .ok_or_else(|| anyhow!("{script} did not print an output path"))?;
+fn render_shot_cards_for_export(loaded: &LoadedManifest, export: &ExportPlan) -> Result<PathBuf> {
+    let out_dir = PathBuf::from("renders/shot-cards");
+    fs::create_dir_all(&out_dir)
+        .with_context(|| format!("failed to create {}", out_dir.display()))?;
+    let out_file = out_dir.join(format!(
+        "{}-{}-shot-cards.mp4",
+        loaded.manifest.work, export.id
+    ));
 
-    Ok(PathBuf::from(path))
+    let temp_dir = tempdir().context("failed to create temporary shot-card workspace")?;
+    let concat_file = temp_dir.path().join("concat.txt");
+    let mut concat = String::new();
+
+    let font_size = if export.aspect_ratio == "9:16" {
+        28
+    } else {
+        32
+    };
+    let wrap_width = if export.aspect_ratio == "9:16" {
+        34
+    } else {
+        56
+    };
+
+    for (index, shot) in loaded.manifest.shots.iter().enumerate() {
+        let clip_file = temp_dir.path().join(format!("shot-{}.mp4", index + 1));
+        let card_file = temp_dir.path().join(format!("card-{}.txt", index + 1));
+        let duration = shot.duration_seconds * export.duration_scale;
+        let bg_color = scene_color(&shot.scene_id);
+
+        fs::write(&card_file, shot_card_text(loaded, shot, export, wrap_width))
+            .with_context(|| format!("failed to write {}", card_file.display()))?;
+
+        let source = format!(
+            "color=c={}:s={}x{}:d={}:r=24",
+            bg_color,
+            export.width,
+            export.height,
+            compact_seconds(duration)
+        );
+        let filter = format!(
+            "drawbox=x=0:y=0:w=iw:h=10:color=white@0.45:t=fill,drawbox=x=0:y=ih-90:w=iw:h=90:color=black@0.30:t=fill,drawtext=textfile={}:fontcolor=white:fontsize={font_size}:line_spacing=10:x=70:y=70,format=yuv420p",
+            path_argument(&card_file)?
+        );
+
+        run_external(
+            "ffmpeg",
+            &[
+                "-hide_banner".to_string(),
+                "-loglevel".to_string(),
+                "error".to_string(),
+                "-y".to_string(),
+                "-f".to_string(),
+                "lavfi".to_string(),
+                "-i".to_string(),
+                source,
+                "-vf".to_string(),
+                filter,
+                "-c:v".to_string(),
+                "libx264".to_string(),
+                "-pix_fmt".to_string(),
+                "yuv420p".to_string(),
+                "-t".to_string(),
+                compact_seconds(duration),
+            ],
+            &[path_argument(&clip_file)?],
+        )?;
+
+        concat.push_str(&format!("file '{}'\n", path_for_concat(&clip_file)?));
+    }
+
+    fs::write(&concat_file, concat)
+        .with_context(|| format!("failed to write {}", concat_file.display()))?;
+
+    run_external(
+        "ffmpeg",
+        &[
+            "-hide_banner".to_string(),
+            "-loglevel".to_string(),
+            "error".to_string(),
+            "-y".to_string(),
+            "-f".to_string(),
+            "concat".to_string(),
+            "-safe".to_string(),
+            "0".to_string(),
+            "-i".to_string(),
+            path_argument(&concat_file)?,
+            "-fflags".to_string(),
+            "+genpts".to_string(),
+            "-c:v".to_string(),
+            "libx264".to_string(),
+            "-pix_fmt".to_string(),
+            "yuv420p".to_string(),
+            "-avoid_negative_ts".to_string(),
+            "make_zero".to_string(),
+        ],
+        &[path_argument(&out_file)?],
+    )?;
+
+    Ok(out_file)
+}
+
+fn shot_card_text(
+    loaded: &LoadedManifest,
+    shot: &Shot,
+    export: &ExportPlan,
+    wrap_width: usize,
+) -> String {
+    format!(
+        "{}\n{} | {} | {} | {} | {} | {} | target {}s\n\nCaption: {}\n\nVisual: {}\n\nCamera: {}\n\nAction: {}\n\nNarration: {}\n",
+        loaded.manifest.title,
+        shot.id,
+        shot.scene_id,
+        loaded.manifest.format,
+        loaded.manifest.style,
+        export.id,
+        export.aspect_ratio,
+        compact_seconds(export.duration_seconds),
+        wrap_text(non_empty(&shot.captions.text, "No caption"), wrap_width),
+        wrap_text(
+            non_empty(&shot.visual_prompt, "No visual prompt"),
+            wrap_width
+        ),
+        wrap_text(non_empty(&shot.camera, "No camera note"), wrap_width),
+        wrap_text(non_empty(&shot.action, "No action note"), wrap_width),
+        wrap_text(non_empty(&shot.audio.narration, "No narration"), wrap_width),
+    )
+}
+
+fn non_empty<'a>(value: &'a str, fallback: &'a str) -> &'a str {
+    if value.trim().is_empty() {
+        fallback
+    } else {
+        value
+    }
+}
+
+fn wrap_text(value: &str, width: usize) -> String {
+    let mut result = String::new();
+    let mut current = 0usize;
+
+    for word in value.split_whitespace() {
+        let separator = usize::from(current != 0);
+        if current != 0 && current + separator + word.len() > width {
+            result.push('\n');
+            current = 0;
+        } else if current != 0 {
+            result.push(' ');
+            current += 1;
+        }
+        result.push_str(word);
+        current += word.len();
+    }
+
+    result
+}
+
+fn scene_color(scene_id: &str) -> &'static str {
+    match scene_id {
+        "scene-01" => "0x102A43",
+        "scene-02" => "0x243B2F",
+        "scene-03" => "0x3B263A",
+        _ => "0x041E42",
+    }
+}
+
+fn path_for_concat(path: &Path) -> Result<String> {
+    Ok(path_argument(path)?.replace('\'', "'\\''"))
 }
 
 fn ffprobe_duration(path: &Path) -> Result<String> {

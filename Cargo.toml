@@ -8,5 +8,6 @@ anyhow = "1.0.100"
 clap = { version = "4.5.53", features = ["derive"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_yaml = "0.9.34"
+tempfile = "3.24.0"
 
 [workspace]

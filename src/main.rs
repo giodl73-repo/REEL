@@ -38,6 +38,10 @@ fn main() -> Result<()> {
             let sheet = reel::render_contact_sheet(&manifest, &platform)?;
             println!("{}", sheet.display());
         }
+        Command::ShotCards { manifest, platform } => {
+            let video = reel::render_shot_cards(&manifest, &platform)?;
+            println!("{}", video.display());
+        }
         Command::ReviewPack { manifest } => {
             let report = reel::render_review_pack(&manifest)?;
             println!("{}", report.display());
@@ -72,6 +76,13 @@ enum Command {
     },
     /// Render a contact-sheet PNG through FFmpeg.
     ContactSheet {
+        #[arg(default_value = "works/0001-ash-vale-last-road-before-winter/manifest.yaml")]
+        manifest: PathBuf,
+        #[arg(default_value = "youtube-demo")]
+        platform: String,
+    },
+    /// Render a shot-card MP4 through FFmpeg.
+    ShotCards {
         #[arg(default_value = "works/0001-ash-vale-last-road-before-winter/manifest.yaml")]
         manifest: PathBuf,
         #[arg(default_value = "youtube-demo")]
