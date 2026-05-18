@@ -42,6 +42,10 @@ fn main() -> Result<()> {
             let video = reel::render_shot_cards(&manifest, &platform)?;
             println!("{}", video.display());
         }
+        Command::Smoke { manifest } => {
+            let video = reel::render_smoke(&manifest)?;
+            println!("{}", video.display());
+        }
         Command::ReviewPack { manifest } => {
             let report = reel::render_review_pack(&manifest)?;
             println!("{}", report.display());
@@ -87,6 +91,11 @@ enum Command {
         manifest: PathBuf,
         #[arg(default_value = "youtube-demo")]
         platform: String,
+    },
+    /// Render a small FFmpeg smoke MP4 from manifest metadata.
+    Smoke {
+        #[arg(default_value = "manifests/templates/scenario-video.yaml")]
+        manifest: PathBuf,
     },
     /// Render one manifest's review pack through Rust orchestration and FFmpeg adapters.
     ReviewPack {

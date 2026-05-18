@@ -30,16 +30,16 @@ ffmpeg -version
 From PowerShell:
 
 ```powershell
-wsl -- bash -lc 'cd /mnt/c/src/TRACKER/repos/design-labs/reel && bash scripts/smoke-render.sh'
+cargo run -- smoke
 ```
 
-The script reads `manifests/templates/scenario-video.yaml` and writes:
+The command reads `manifests/templates/scenario-video.yaml` and writes:
 
 ```text
 renders/smoke/0001-example-scenario-video-smoke.mp4
 ```
 
-`renders/` is gitignored. Commit the manifest, script, docs, and review notes,
+`renders/` is gitignored. Commit the manifest, docs, and review notes,
 not generated media.
 
 ## Run the shot-card renderer
@@ -135,12 +135,11 @@ and shot intent before we build a Remotion or final animation pass.
 - REEL can batch-render review packs for all work manifests and write an index.
 - REEL has a Rust CLI for validation, export planning, and adapter
   orchestration while FFmpeg remains an external renderer dependency.
-- REEL writes review-pack reports and indexes in Rust; Bash now remains only
-  for the legacy smoke script while main validation and review media adapters
-  run through Rust.
+- REEL writes review-pack reports and indexes in Rust.
 - REEL renders contact-sheet PNGs through Rust-owned FFmpeg orchestration.
 - REEL renders shot-card MP4s through Rust-owned FFmpeg orchestration.
 - REEL uses Rust manifest validation as the canonical pre-render gate.
+- REEL renders smoke MP4s through Rust-owned FFmpeg orchestration.
 
 ## What the smoke does not prove
 

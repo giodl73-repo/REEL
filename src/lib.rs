@@ -59,12 +59,19 @@ pub struct ExportPlan {
 struct Manifest {
     work: String,
     title: String,
+    source_scenario: SourceScenario,
     format: String,
     style: String,
     platforms: Vec<Platform>,
     scenes: Vec<Scene>,
     shots: Vec<Shot>,
     exports: Vec<Export>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SourceScenario {
+    repo: String,
+    id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -216,6 +223,11 @@ pub fn render_shot_cards(manifest: impl AsRef<Path>, platform: &str) -> Result<P
         .ok_or_else(|| anyhow!("unknown platform in manifest: {platform}"))?;
 
     render_shot_cards_for_export(&loaded, export)
+}
+
+pub fn render_smoke(manifest: impl AsRef<Path>) -> Result<PathBuf> {
+    let loaded = load_manifest(manifest)?;
+    render_smoke_for_manifest(&loaded)
 }
 
 pub fn render_contact_sheet(manifest: impl AsRef<Path>, platform: &str) -> Result<PathBuf> {
@@ -410,6 +422,74 @@ fn discover_work_manifests(root: &Path) -> Result<Vec<PathBuf>> {
 
     manifests.sort();
     Ok(manifests)
+}
+
+fn render_smoke_for_manifest(loaded: &LoadedManifest) -> Result<PathBuf> {
+    let out_dir = PathBuf::from("renders/smoke");
+    fs::create_dir_all(&out_dir)
+        .with_context(|| format!("failed to create {}", out_dir.display()))?;
+    let out_file = out_dir.join(format!("{}-smoke.mp4", loaded.manifest.work));
+
+    let temp_dir = tempdir().context("failed to create temporary smoke-render workspace")?;
+    let card_file = temp_dir.path().join("card.txt");
+    fs::write(&card_file, smoke_card_text(loaded))
+        .with_context(|| format!("failed to write {}", card_file.display()))?;
+
+    let filter = format!(
+        "drawtext=textfile={}:fontcolor=white:fontsize=42:line_spacing=16:x=(w-text_w)/2:y=(h-text_h)/2,format=yuv420p",
+        path_argument(&card_file)?
+    );
+
+    run_external(
+        "ffmpeg",
+        &[
+            "-hide_banner".to_string(),
+            "-loglevel".to_string(),
+            "error".to_string(),
+            "-y".to_string(),
+            "-f".to_string(),
+            "lavfi".to_string(),
+            "-i".to_string(),
+            "color=c=0x041E42:s=1280x720:d=6:r=24".to_string(),
+            "-f".to_string(),
+            "lavfi".to_string(),
+            "-i".to_string(),
+            "anullsrc=channel_layout=stereo:sample_rate=48000".to_string(),
+            "-vf".to_string(),
+            filter,
+            "-shortest".to_string(),
+            "-c:v".to_string(),
+            "libx264".to_string(),
+            "-pix_fmt".to_string(),
+            "yuv420p".to_string(),
+            "-c:a".to_string(),
+            "aac".to_string(),
+            "-t".to_string(),
+            "6".to_string(),
+        ],
+        &[path_argument(&out_file)?],
+    )?;
+
+    Ok(out_file)
+}
+
+fn smoke_card_text(loaded: &LoadedManifest) -> String {
+    let caption = loaded
+        .manifest
+        .shots
+        .first()
+        .map(|shot| non_empty(&shot.captions.text, "manifest-fed smoke render"))
+        .unwrap_or("manifest-fed smoke render");
+
+    format!(
+        "{}\nsource: {} / {}\nformat: {}\nstyle: {}\n{}",
+        loaded.manifest.title,
+        loaded.manifest.source_scenario.repo,
+        loaded.manifest.source_scenario.id,
+        loaded.manifest.format,
+        loaded.manifest.style,
+        caption
+    )
 }
 
 fn render_contact_sheet_for_export(

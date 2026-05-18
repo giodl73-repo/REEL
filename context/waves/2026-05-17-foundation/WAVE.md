@@ -29,6 +29,7 @@ into a renderer too early.
 | 17 | Rust contact-sheet orchestration | done | Moved contact-sheet FFmpeg orchestration into Rust and removed the Bash contact-sheet adapter. |
 | 18 | Rust shot-card orchestration | done | Moved shot-card MP4 FFmpeg orchestration into Rust and removed the Bash shot-card adapter. |
 | 19 | Rust validation canonical path | done | Removed the legacy Bash manifest validator and documented `cargo run -- validate` as the canonical pre-render gate. |
+| 20 | Rust smoke orchestration | done | Moved the starter smoke MP4 renderer into Rust and removed the last Bash FFmpeg adapter. |
 
 ## Success criteria
 
@@ -39,7 +40,7 @@ into a renderer too early.
 - REEL can describe multiple animation styles for Games Design scenario videos before renderer selection.
 - REEL has a renderer-neutral production manifest contract covering scenario source, format, style, scenes, shots, audio, captions, continuity, assumptions, and exports.
 - REEL has a researched first renderer path that keeps Linux video tooling in WSL2 and avoids provider lock-in.
-- REEL can produce a gitignored FFmpeg smoke MP4 from the starter scenario manifest in WSL2.
+- REEL can produce a gitignored FFmpeg smoke MP4 from the starter scenario manifest through Rust orchestration.
 - REEL has a first original Games Design scenario video package with brief, script, shotlist, manifest, and panel review.
 - REEL can render a gitignored shot-card MP4 that follows a work manifest's shot order and durations.
 - REEL can render platform-specific shot-card drafts for YouTube/demo and iPhone/social review.
@@ -54,5 +55,6 @@ into a renderer too early.
 - REEL renders contact sheets through Rust-owned FFmpeg orchestration.
 - REEL renders shot-card MP4s through Rust-owned FFmpeg orchestration.
 - REEL uses Rust manifest validation as the canonical pre-render gate.
+- REEL renders smoke MP4s through Rust-owned FFmpeg orchestration.
 - Validation commands are named before renderer-specific tooling is chosen.
 - TRACKER records REEL as a Design Labs repo and dependency intake candidate.
