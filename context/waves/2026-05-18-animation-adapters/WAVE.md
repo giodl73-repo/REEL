@@ -38,6 +38,7 @@ adapter contracts without provider lock-in.
 | 26 | Artifact manifest review links | done | Linked generated artifact manifests from review-pack and browser-demo outputs so humans and automation share the same artifact index. |
 | 27 | Review-all artifact index | done | Added artifact-manifest links to `cargo run -- review-all <works-root>` output beside each review pack. |
 | 28 | Artifact manifest byte sizes | done | Added file byte sizes to artifact-manifest video and image entries so automation can detect missing or truncated render outputs. |
+| 29 | Artifact manifest verification | done | Added `cargo run -- artifact-check <artifact-json>` to verify artifact files, byte sizes, and positive video durations. |
 
 ## Success criteria
 

@@ -146,6 +146,13 @@ fn main() -> Result<()> {
             let artifact_manifest = reel::render_artifact_manifest(&manifest)?;
             println!("{}", artifact_manifest.display());
         }
+        Command::ArtifactCheck { artifact_manifest } => {
+            let report = reel::check_artifact_manifest(&artifact_manifest)?;
+            println!(
+                "{} | platforms={} | files={} | bytes={}",
+                report.artifact_manifest, report.platforms, report.files, report.total_bytes
+            );
+        }
         Command::ContactSheet { manifest, platform } => {
             let sheet = reel::render_contact_sheet(&manifest, &platform)?;
             println!("{}", sheet.display());
@@ -252,6 +259,13 @@ enum Command {
     ArtifactManifest {
         #[arg(default_value = "works/0001-ash-vale-last-road-before-winter/manifest.yaml")]
         manifest: PathBuf,
+    },
+    /// Verify a generated artifact manifest's files and byte sizes.
+    ArtifactCheck {
+        #[arg(
+            default_value = "renders/artifacts/0001-ash-vale-last-road-before-winter-artifacts.json"
+        )]
+        artifact_manifest: PathBuf,
     },
     /// Render a contact-sheet PNG through FFmpeg.
     ContactSheet {

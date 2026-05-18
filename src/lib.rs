@@ -138,17 +138,17 @@ pub struct AdapterPlanEntry {
     pub dependency_policy: &'static str,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ArtifactManifest {
     pub work: String,
     pub title: String,
     pub manifest: String,
     pub generated_unix: u64,
-    pub baseline_adapter: &'static str,
+    pub baseline_adapter: String,
     pub platforms: Vec<ArtifactPlatform>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ArtifactPlatform {
     pub id: String,
     pub aspect_ratio: String,
@@ -160,23 +160,31 @@ pub struct ArtifactPlatform {
     pub scene_previews: Vec<ArtifactScenePreview>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ArtifactScenePreview {
     pub scene_id: String,
     pub video: ArtifactVideo,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ArtifactVideo {
     pub path: String,
     pub bytes: u64,
     pub duration_seconds: f64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ArtifactImage {
     pub path: String,
     pub bytes: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ArtifactCheckReport {
+    pub artifact_manifest: String,
+    pub platforms: usize,
+    pub files: usize,
+    pub total_bytes: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -495,12 +503,56 @@ pub fn render_artifact_manifest(manifest: impl AsRef<Path>) -> Result<PathBuf> {
         title: loaded.manifest.title.clone(),
         manifest: path_text(manifest),
         generated_unix: unix_now()?,
-        baseline_adapter: "ffmpeg",
+        baseline_adapter: "ffmpeg".to_string(),
         platforms,
     };
     fs::write(&out_file, serde_json::to_string_pretty(&artifact_manifest)?)
         .with_context(|| format!("failed to write {}", out_file.display()))?;
     Ok(out_file)
+}
+
+pub fn check_artifact_manifest(path: impl AsRef<Path>) -> Result<ArtifactCheckReport> {
+    let path = path.as_ref();
+    let json = fs::read_to_string(path)
+        .with_context(|| format!("failed to read artifact manifest {}", path.display()))?;
+    let manifest: ArtifactManifest = serde_json::from_str(&json)
+        .with_context(|| format!("failed to parse artifact manifest {}", path.display()))?;
+
+    if manifest.platforms.is_empty() {
+        bail!("artifact manifest has no platforms: {}", path.display());
+    }
+
+    let mut files = 0usize;
+    let mut total_bytes = 0u64;
+    for platform in &manifest.platforms {
+        check_artifact_video(&platform.shot_cards, "shot_cards")?;
+        files += 1;
+        total_bytes += platform.shot_cards.bytes;
+
+        check_artifact_image(&platform.contact_sheet, "contact_sheet")?;
+        files += 1;
+        total_bytes += platform.contact_sheet.bytes;
+
+        check_artifact_video(&platform.work_preview, "work_preview")?;
+        files += 1;
+        total_bytes += platform.work_preview.bytes;
+
+        if platform.scene_previews.is_empty() {
+            bail!("platform {} has no scene previews", platform.id);
+        }
+        for scene in &platform.scene_previews {
+            check_artifact_video(&scene.video, &format!("scene_preview {}", scene.scene_id))?;
+            files += 1;
+            total_bytes += scene.video.bytes;
+        }
+    }
+
+    Ok(ArtifactCheckReport {
+        artifact_manifest: path_text(path),
+        platforms: manifest.platforms.len(),
+        files,
+        total_bytes,
+    })
 }
 
 pub fn render_demo(manifest: impl AsRef<Path>) -> Result<PathBuf> {
@@ -2050,6 +2102,31 @@ fn file_bytes(path: &Path) -> Result<u64> {
     Ok(fs::metadata(path)
         .with_context(|| format!("failed to inspect {}", path.display()))?
         .len())
+}
+
+fn check_artifact_video(video: &ArtifactVideo, label: &str) -> Result<()> {
+    check_artifact_file(&video.path, video.bytes, label)?;
+    if video.duration_seconds <= 0.0 {
+        bail!(
+            "{label} has non-positive duration: {}",
+            video.duration_seconds
+        );
+    }
+    Ok(())
+}
+
+fn check_artifact_image(image: &ArtifactImage, label: &str) -> Result<()> {
+    check_artifact_file(&image.path, image.bytes, label)
+}
+
+fn check_artifact_file(path: &str, expected_bytes: u64, label: &str) -> Result<()> {
+    let actual_bytes = fs::metadata(path)
+        .with_context(|| format!("{label} missing artifact file: {path}"))?
+        .len();
+    if actual_bytes != expected_bytes {
+        bail!("{label} byte mismatch for {path}: expected {expected_bytes}, found {actual_bytes}");
+    }
+    Ok(())
 }
 
 fn same_duration(left: f64, right: f64) -> bool {
