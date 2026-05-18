@@ -14,6 +14,10 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
   exit 127
 fi
 
+if [[ -f "scripts/validate-manifest.sh" ]]; then
+  bash scripts/validate-manifest.sh "$manifest" >/dev/null
+fi
+
 yaml_value() {
   local key="$1"
   awk -v key="$key" '
@@ -28,33 +32,66 @@ yaml_value() {
   ' "$manifest"
 }
 
+section_value() {
+  local section="$1"
+  local id_key="$2"
+  local id_value="$3"
+  local value_key="$4"
+  awk -v section="$section" -v id_key="$id_key" -v id_value="$id_value" -v value_key="$value_key" '
+    function clean(line) {
+      sub(/^[[:space:]]+(-[[:space:]]*)?[A-Za-z_]+:[[:space:]]*/, "", line)
+      gsub(/\r/, "", line)
+      gsub(/^"/, "", line)
+      gsub(/"$/, "", line)
+      return line
+    }
+    $0 == section ":" { in_section = 1; next }
+    in_section && /^[A-Za-z_]+:/ { in_section = 0; next }
+    in_section && index($0, "  - " id_key ": ") == 1 {
+      in_item = clean($0) == id_value
+      next
+    }
+    in_section && in_item && index($0, "    " value_key ": ") == 1 {
+      print clean($0)
+      exit
+    }
+  ' "$manifest"
+}
+
 work="$(yaml_value work)"
 title="$(yaml_value title)"
 format="$(yaml_value format)"
 style="$(yaml_value style)"
+platform_aspect="$(section_value platforms name "$platform" aspect_ratio)"
+platform_duration="$(section_value platforms name "$platform" target_duration_seconds)"
+export_duration="$(section_value exports id "$platform" duration_seconds)"
 
 work="${work:-reel-shot-cards}"
 title="${title:-REEL Shot Cards}"
 format="${format:-unknown-format}"
 style="${style:-unknown-style}"
+target_duration="${export_duration:-$platform_duration}"
 
-case "$platform" in
-  youtube-demo)
+if [[ -z "$platform_aspect" || -z "$target_duration" ]]; then
+  echo "unknown platform or missing target in manifest: $platform" >&2
+  exit 4
+fi
+
+case "$platform_aspect" in
+  "16:9")
     width=1280
     height=720
     font_size=32
     wrap_width=56
-    duration_scale=1
     ;;
-  iphone-social)
+  "9:16")
     width=720
     height=1280
     font_size=28
     wrap_width=34
-    duration_scale=0.75
     ;;
   *)
-    echo "unknown platform: $platform (expected youtube-demo or iphone-social)" >&2
+    echo "unsupported aspect ratio for $platform: $platform_aspect" >&2
     exit 4
     ;;
 esac
@@ -111,6 +148,14 @@ if [[ ! -s "$shots_tsv" ]]; then
   exit 3
 fi
 
+base_duration="$(awk -F '\t' '{ total += $2 } END { printf "%.3f", total }' "$shots_tsv")"
+duration_scale="$(awk -v target="$target_duration" -v base="$base_duration" 'BEGIN {
+  if (base <= 0 || target <= 0) {
+    exit 1
+  }
+  printf "%.6f", target / base
+}')"
+
 wrap() {
   printf '%s' "$1" | fold -s -w "$wrap_width"
 }
@@ -128,7 +173,7 @@ while IFS=$'\t' read -r shot_id duration caption camera action narration; do
 
   {
     printf '%s\n' "$title"
-    printf '%s | %s | %s | %s\n\n' "$shot_id" "$format" "$style" "$platform"
+    printf '%s | %s | %s | %s | %s | target %ss\n\n' "$shot_id" "$format" "$style" "$platform" "$platform_aspect" "$target_duration"
     printf 'Caption: %s\n' "$(wrap "${caption:-No caption}")"
     printf '\nCamera: %s\n' "$(wrap "${camera:-No camera note}")"
     printf '\nAction: %s\n' "$(wrap "${action:-No action note}")"

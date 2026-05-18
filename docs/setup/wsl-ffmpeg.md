@@ -68,8 +68,10 @@ Render the phone-first 9:16 cut with:
 wsl -- bash -lc 'cd /mnt/c/src/TRACKER/repos/design-labs/reel && bash scripts/render-shot-cards.sh works/0001-ash-vale-last-road-before-winter/manifest.yaml iphone-social'
 ```
 
-The `iphone-social` platform compresses the shot durations to the manifest's
-45-second phone target and writes:
+The renderer validates the manifest before rendering and derives each platform's
+aspect ratio and duration scale from the manifest `platforms` and `exports`
+entries. The `iphone-social` platform compresses the shot durations to the
+manifest's 45-second phone target and writes:
 
 ```text
 renders/shot-cards/0001-ash-vale-last-road-before-winter-iphone-social-shot-cards.mp4
@@ -86,6 +88,8 @@ and shot intent before we build a Remotion or final animation pass.
 - REEL can render a timed shot-card draft from the manifest shot list.
 - REEL can generate separate 16:9 and 9:16 draft exports from one manifest.
 - REEL can validate manifest timing and export targets before rendering.
+- REEL can derive shot-card export aspect ratios and duration scaling from the
+  manifest instead of hard-coded platform timing.
 
 ## What the smoke does not prove
 
