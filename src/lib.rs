@@ -333,6 +333,11 @@ pub fn render_review_pack(manifest: impl AsRef<Path>) -> Result<PathBuf> {
     markdown.push_str(&format!("- Manifest: `{}`\n", manifest.display()));
     markdown.push_str(&format!("- Work: `{}`\n", loaded.manifest.work));
     markdown.push_str(&format!("- Generated unix: `{}`\n\n", unix_now()?));
+    let artifact_manifest = render_artifact_manifest(manifest)?;
+    markdown.push_str(&format!(
+        "- Artifact manifest JSON: `{}`\n\n",
+        artifact_manifest.display()
+    ));
     markdown.push_str(&review_pack_adapter_summary(&loaded)?);
     markdown.push_str("## FFmpeg baseline renders\n\n");
     markdown.push_str("| Platform | MP4 | Duration | Contact sheet |\n");
@@ -502,6 +507,7 @@ pub fn render_demo(manifest: impl AsRef<Path>) -> Result<PathBuf> {
         .with_context(|| format!("failed to create {}", out_dir.display()))?;
     let demo_path = out_dir.join(format!("{}-demo.html", loaded.manifest.work));
     let review_pack = render_review_pack(manifest)?;
+    let artifact_manifest = render_artifact_manifest(manifest)?;
 
     let mut exports = Vec::new();
     for export in &report.exports {
@@ -534,7 +540,13 @@ pub fn render_demo(manifest: impl AsRef<Path>) -> Result<PathBuf> {
 
     fs::write(
         &demo_path,
-        demo_html(&loaded, manifest, &review_pack, &exports)?,
+        demo_html(
+            &loaded,
+            manifest,
+            &review_pack,
+            &artifact_manifest,
+            &exports,
+        )?,
     )
     .with_context(|| format!("failed to write {}", demo_path.display()))?;
     Ok(demo_path)
@@ -733,6 +745,7 @@ fn demo_html(
     loaded: &LoadedManifest,
     manifest: &Path,
     review_pack: &Path,
+    artifact_manifest: &Path,
     exports: &[DemoExport<'_>],
 ) -> Result<String> {
     let mut html = String::new();
@@ -753,10 +766,12 @@ fn demo_html(
         html_escape(&loaded.manifest.style)
     ));
     html.push_str(&format!(
-        "<p>Manifest: <code>{}</code><br>Review pack: <a href=\"{}\">{}</a></p>\n",
+        "<p>Manifest: <code>{}</code><br>Review pack: <a href=\"{}\">{}</a><br>Artifact manifest: <a href=\"{}\">{}</a></p>\n",
         html_escape(&manifest.display().to_string()),
         html_escape(&relative_render_href(review_pack)?),
-        html_escape(&review_pack.display().to_string())
+        html_escape(&review_pack.display().to_string()),
+        html_escape(&relative_render_href(artifact_manifest)?),
+        html_escape(&artifact_manifest.display().to_string())
     ));
     html.push_str("<h2>Adapter summary</h2>\n");
     html.push_str(&markdown_table_to_html(&review_pack_adapter_summary(

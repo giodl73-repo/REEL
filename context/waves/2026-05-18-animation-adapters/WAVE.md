@@ -35,6 +35,7 @@ adapter contracts without provider lock-in.
 | 23 | Full work preview render | done | Added `cargo run -- work-preview <manifest> <platform>` to concatenate all scene previews into one continuous platform MP4. |
 | 24 | Work preview review surfaces | done | Added full work-preview MP4s to demo and review-pack outputs for each export platform. |
 | 25 | Artifact manifest JSON | done | Added `cargo run -- artifact-manifest <manifest>` to render baseline artifacts and write machine-readable paths, durations, and scene coverage. |
+| 26 | Artifact manifest review links | done | Linked generated artifact manifests from review-pack and browser-demo outputs so humans and automation share the same artifact index. |
 
 ## Success criteria
 
