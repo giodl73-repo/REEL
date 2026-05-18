@@ -34,6 +34,10 @@ fn main() -> Result<()> {
                 );
             }
         }
+        Command::ContactSheet { manifest, platform } => {
+            let sheet = reel::render_contact_sheet(&manifest, &platform)?;
+            println!("{}", sheet.display());
+        }
         Command::ReviewPack { manifest } => {
             let report = reel::render_review_pack(&manifest)?;
             println!("{}", report.display());
@@ -66,7 +70,14 @@ enum Command {
         #[arg(default_value = "works/0001-ash-vale-last-road-before-winter/manifest.yaml")]
         manifest: PathBuf,
     },
-    /// Render one manifest's review pack through the existing FFmpeg scripts.
+    /// Render a contact-sheet PNG through FFmpeg.
+    ContactSheet {
+        #[arg(default_value = "works/0001-ash-vale-last-road-before-winter/manifest.yaml")]
+        manifest: PathBuf,
+        #[arg(default_value = "youtube-demo")]
+        platform: String,
+    },
+    /// Render one manifest's review pack through Rust orchestration and FFmpeg adapters.
     ReviewPack {
         #[arg(default_value = "works/0001-ash-vale-last-road-before-winter/manifest.yaml")]
         manifest: PathBuf,

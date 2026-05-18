@@ -72,7 +72,7 @@ renders/shot-cards/0001-ash-vale-last-road-before-winter-youtube-demo-shot-cards
 Create a quick contact sheet for review:
 
 ```powershell
-wsl -- bash -lc 'cd /mnt/c/src/TRACKER/repos/design-labs/reel && bash scripts/render-contact-sheet.sh works/0001-ash-vale-last-road-before-winter/manifest.yaml youtube-demo'
+cargo run -- contact-sheet works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo
 ```
 
 The contact sheet writes:
@@ -143,6 +143,7 @@ and shot intent before we build a Remotion or final animation pass.
   orchestration while FFmpeg remains an external renderer dependency.
 - REEL writes review-pack reports and indexes in Rust; Bash is now only the
   FFmpeg media adapter path.
+- REEL renders contact-sheet PNGs through Rust-owned FFmpeg orchestration.
 
 ## What the smoke does not prove
 

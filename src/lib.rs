@@ -170,10 +170,7 @@ pub fn render_review_pack(manifest: impl AsRef<Path>) -> Result<PathBuf> {
             "scripts/render-shot-cards.sh",
             &[path_argument(manifest)?, export.id.clone()],
         )?;
-        let sheet = run_script_with_values(
-            "scripts/render-contact-sheet.sh",
-            &[path_argument(manifest)?, export.id.clone()],
-        )?;
+        let sheet = render_contact_sheet_for_export(manifest, &loaded, export)?;
         let duration = ffprobe_duration(&video)?;
 
         markdown.push_str(&format!(
@@ -188,6 +185,19 @@ pub fn render_review_pack(manifest: impl AsRef<Path>) -> Result<PathBuf> {
     fs::write(&report_path, markdown)
         .with_context(|| format!("failed to write {}", report_path.display()))?;
     Ok(report_path)
+}
+
+pub fn render_contact_sheet(manifest: impl AsRef<Path>, platform: &str) -> Result<PathBuf> {
+    let manifest = manifest.as_ref();
+    let loaded = load_manifest(manifest)?;
+    let report = validate_manifest(&loaded)?;
+    let export = report
+        .exports
+        .iter()
+        .find(|export| export.id == platform)
+        .ok_or_else(|| anyhow!("unknown platform in manifest: {platform}"))?;
+
+    render_contact_sheet_for_export(manifest, &loaded, export)
 }
 
 pub fn render_all_review_packs(root: impl AsRef<Path>) -> Result<PathBuf> {
@@ -371,6 +381,60 @@ fn discover_work_manifests(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(manifests)
 }
 
+fn render_contact_sheet_for_export(
+    manifest_path: &Path,
+    loaded: &LoadedManifest,
+    export: &ExportPlan,
+) -> Result<PathBuf> {
+    let video_file = PathBuf::from(format!(
+        "renders/shot-cards/{}-{}-shot-cards.mp4",
+        loaded.manifest.work, export.id
+    ));
+    if !video_file.is_file() {
+        run_script_with_values(
+            "scripts/render-shot-cards.sh",
+            &[path_argument(manifest_path)?, export.id.clone()],
+        )?;
+    }
+
+    let out_dir = PathBuf::from("renders/contact-sheets");
+    fs::create_dir_all(&out_dir)
+        .with_context(|| format!("failed to create {}", out_dir.display()))?;
+    let out_file = out_dir.join(format!(
+        "{}-{}-contact-sheet.png",
+        loaded.manifest.work, export.id
+    ));
+
+    let columns = 4usize;
+    let rows = loaded.manifest.shots.len().div_ceil(columns);
+    let fps = format!(
+        "{}/{}",
+        loaded.manifest.shots.len(),
+        compact_seconds(export.duration_seconds)
+    );
+    let filter =
+        format!("fps={fps},scale=320:-1,tile={columns}x{rows}:padding=8:margin=8:color=0x111111");
+
+    run_external(
+        "ffmpeg",
+        &[
+            "-hide_banner".to_string(),
+            "-loglevel".to_string(),
+            "error".to_string(),
+            "-y".to_string(),
+            "-i".to_string(),
+            path_argument(&video_file)?,
+            "-vf".to_string(),
+            filter,
+            "-frames:v".to_string(),
+            "1".to_string(),
+        ],
+        &[path_argument(&out_file)?],
+    )?;
+
+    Ok(out_file)
+}
+
 fn run_script_with_values(script: &str, args: &[String]) -> Result<PathBuf> {
     let stdout = run_external("bash", &[script.to_string()], args)
         .with_context(|| format!("failed to run {script}"))?;
@@ -463,6 +527,14 @@ fn same_duration(left: f64, right: f64) -> bool {
     (left - right).abs() < 0.001
 }
 
+fn compact_seconds(value: f64) -> String {
+    if same_duration(value.fract(), 0.0) {
+        format!("{value:.0}")
+    } else {
+        format!("{value:.3}")
+    }
+}
+
 fn unix_now() -> Result<u64> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -497,5 +569,11 @@ mod tests {
         );
         assert_eq!(report.exports[1].id, "youtube-demo");
         assert!(same_duration(report.exports[1].duration_scale, 1.0));
+    }
+
+    #[test]
+    fn formats_integer_seconds_for_ffmpeg_ratios() {
+        assert_eq!(compact_seconds(45.0), "45");
+        assert_eq!(compact_seconds(45.25), "45.250");
     }
 }
