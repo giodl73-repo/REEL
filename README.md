@@ -103,6 +103,7 @@ The REEL CLI is the durable orchestration layer:
 
 ```powershell
 cargo run -- smoke
+cargo run -- adapters
 cargo run -- validate works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- plan works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- shot-cards works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo
@@ -117,6 +118,9 @@ Blender, and future providers stay external adapters.
 The adapter boundary now names FFmpeg as the implemented baseline adapter and
 keeps Remotion, Blender, and AI-video as provider-neutral planned adapters until
 a concrete work package needs them.
+
+Use `cargo run -- adapters` to inspect the implemented baseline and planned
+adapter boundaries.
 
 ## Pipeline
 
