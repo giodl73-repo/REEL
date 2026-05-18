@@ -44,6 +44,13 @@ not generated media.
 
 ## Run the shot-card renderer
 
+Use the Rust CLI for validation and planning:
+
+```powershell
+cargo run -- validate works\0001-ash-vale-last-road-before-winter\manifest.yaml
+cargo run -- plan works\0001-ash-vale-last-road-before-winter\manifest.yaml
+```
+
 Validate the work manifest before rendering:
 
 ```powershell
@@ -77,6 +84,7 @@ renders/contact-sheets/0001-ash-vale-last-road-before-winter-youtube-demo-contac
 Render every platform cut, contact sheet, and a summary review report:
 
 ```powershell
+cargo run -- review-pack works\0001-ash-vale-last-road-before-winter\manifest.yaml
 wsl -- bash -lc 'cd /mnt/c/src/TRACKER/repos/design-labs/reel && bash scripts/render-review-pack.sh works/0001-ash-vale-last-road-before-winter/manifest.yaml'
 ```
 
@@ -89,6 +97,7 @@ renders/review-packs/0001-ash-vale-last-road-before-winter-review-pack.md
 Render review packs for every work manifest:
 
 ```powershell
+cargo run -- review-all works
 wsl -- bash -lc 'cd /mnt/c/src/TRACKER/repos/design-labs/reel && bash scripts/render-all-review-packs.sh'
 ```
 
@@ -132,6 +141,8 @@ and shot intent before we build a Remotion or final animation pass.
   review.
 - REEL can render a full gitignored review pack covering every manifest platform.
 - REEL can batch-render review packs for all work manifests and write an index.
+- REEL has a Rust CLI for validation, export planning, and adapter
+  orchestration while FFmpeg remains an external renderer dependency.
 
 ## What the smoke does not prove
 

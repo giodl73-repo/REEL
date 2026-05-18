@@ -10,9 +10,10 @@ loop we learn from. The rubric is REEL:
 time, create an effect, hold together technically, and remain understandable to
 its intended audience.
 
-Claude Code-driven. Markdown-first. The first wave builds the production
-grammar: briefs, shot lists, storyboard manifests, edit decisions, generation
-prompts, review panels, and export contracts.
+Claude Code-driven. Rust-orchestrated. Markdown and YAML remain the human review
+surface, while the Rust CLI owns manifest validation, render planning, and
+review-pack orchestration. FFmpeg remains an external renderer dependency rather
+than something REEL rewrites.
 
 **Review roles:** REEL uses
 [ROLES](https://github.com/giodl73-repo/ROLES), the `.roles` convention for
@@ -98,6 +99,18 @@ baseline assembly/encoding, then a Remotion adapter for programmatic animation.
 Blender and cinematic AI remain style-specific follow-up paths until a concrete
 work package requires them.
 
+The REEL CLI is the durable orchestration layer:
+
+```powershell
+cargo run -- validate works\0001-ash-vale-last-road-before-winter\manifest.yaml
+cargo run -- plan works\0001-ash-vale-last-road-before-winter\manifest.yaml
+cargo run -- review-pack works\0001-ash-vale-last-road-before-winter\manifest.yaml
+cargo run -- review-all works
+```
+
+Rust owns contracts, planning, and subprocess orchestration; FFmpeg, Remotion,
+Blender, and future providers stay external adapters.
+
 ## Pipeline
 
 ```text
@@ -108,6 +121,7 @@ BRIEF -> FORMAT -> SCRIPT/SHOTLIST -> MANIFEST -> PANEL -> INNOVATION -> AMENDME
 
 ```text
 REEL/
+├── src/                     Rust CLI orchestration core
 ├── scoring/                 REEL rubric and innovation log
 ├── formats/                 Video format grammars
 ├── styles/                  Animation and visual style grammars
@@ -124,6 +138,7 @@ REEL/
 ## Validation
 
 ```powershell
+cargo test
 git grep -n "REEL" -- README.md PRODUCT_PLAN.md context\waves\PHASES.md
 git diff --check
 ```

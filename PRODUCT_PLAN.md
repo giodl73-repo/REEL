@@ -7,6 +7,11 @@ It should let us move from an idea to a reviewable production package: a brief,
 format grammar, script, shot list, edit manifest, generation prompts, review
 notes, and eventually rendered outputs.
 
+The implementation center is Rust for portability across the portfolio. REEL
+should not rewrite rendering dependencies like FFmpeg, Remotion, Blender, or
+provider SDKs; it should own the typed manifest contracts, validation, planning,
+and adapter orchestration around those tools.
+
 The repo starts as a design lab rather than a renderer because the hard problem
 is not only producing frames. The hard problem is preserving intent across
 story, timing, sound, captions, aspect ratios, model prompts, edits, and export
@@ -28,6 +33,8 @@ targets.
 4. Capture generation manifests without locking into a provider.
 5. Review works through a panel of filmmaker/editor/animation/audio/platform lenses.
 6. Record innovations and rubric amendments as repeated production gaps appear.
+7. Provide a Rust CLI that validates manifests, derives export plans, and invokes
+   external renderer adapters.
 
 ## Games Design scenario videos
 
@@ -65,6 +72,7 @@ fields as required foundation metadata.
 - No native iOS or desktop editor in the foundation wave.
 - No product-to-product dependency from sibling repos into REEL.
 - No direct edits to game scenario canon from inside REEL.
+- No Rust rewrite of mature rendering dependencies; REEL orchestrates them.
 
 ## Dependency-chain placement
 
@@ -81,6 +89,7 @@ consume:
 The foundation wave is documentation-first:
 
 ```powershell
+cargo test
 git grep -n "REEL" -- README.md PRODUCT_PLAN.md context\waves\PHASES.md
 git diff --check
 ```

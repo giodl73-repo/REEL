@@ -24,6 +24,7 @@ into a renderer too early.
 | 12 | Contact sheet review exports | done | Added contact-sheet PNG generation from shot-card draft cuts for fast rhythm review. |
 | 13 | Review pack renderer | done | Added a one-command review pack that renders all platform cuts, contact sheets, and a summary report. |
 | 14 | Batch review-pack index | done | Added a batch command that renders every work manifest's review pack and writes an index. |
+| 15 | Rust CLI orchestration core | done | Added a Rust CLI for manifest validation, export planning, and review-pack adapter orchestration. |
 
 ## Success criteria
 
@@ -44,5 +45,6 @@ into a renderer too early.
 - REEL can render gitignored contact sheets from draft cuts for quick review.
 - REEL can render a gitignored review pack for all manifest platforms.
 - REEL can batch-render review packs for all work manifests under `works/`.
+- REEL has a Rust CLI core so contracts and orchestration fit the wider portfolio while renderers remain external dependencies.
 - Validation commands are named before renderer-specific tooling is chosen.
 - TRACKER records REEL as a Design Labs repo and dependency intake candidate.
