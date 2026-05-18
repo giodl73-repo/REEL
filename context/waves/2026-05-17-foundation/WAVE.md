@@ -11,7 +11,7 @@ into a renderer too early.
 | Pulse | Title | Status | Outcome |
 |------:|---|---|---|
 | 01 | Repo scaffold and intake | done | Created REEL docs, skills, initial rubric, validation contract, and TRACKER intake. |
-| 02 | Format grammar seed | planned | Add first format files for trailer, explainer, social clip, short film, game cinematic, and animated diagram. |
+| 02 | Animation style grammar and roles review | done | Added animation style catalog, Games Design scenario video flow, `.roles` panel, and foundation plan review. |
 | 03 | Production manifest sketch | planned | Define the first edit-manifest schema for scenes, shots, audio, captions, prompts, and exports. |
 | 04 | Renderer research | planned | Compare FFmpeg, Remotion, Blender, browser capture, and AI-video provider paths before implementation. |
 | 05 | First original video package | planned | Create the first REEL work package from brief through panel review. |
@@ -21,5 +21,7 @@ into a renderer too early.
 - REEL has a clear movie/video product thesis and explicit non-goals.
 - The REEL rubric and production vocabulary are documented.
 - Repo-local wave, pulse, and research skills exist.
+- Repo-local `.roles` panel reviews story, animation style, edit, sound, and platform fit.
+- REEL can describe multiple animation styles for Games Design scenario videos before renderer selection.
 - Validation commands are named before renderer-specific tooling is chosen.
 - TRACKER records REEL as a Design Labs repo and dependency intake candidate.

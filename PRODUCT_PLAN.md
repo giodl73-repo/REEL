@@ -24,9 +24,34 @@ targets.
 1. Define video briefs with audience, platform, duration, format, references,
    constraints, and acceptance criteria.
 2. Convert briefs into scripts, scene beats, shot lists, and edit decision notes.
-3. Capture generation manifests without locking into a provider.
-4. Review works through a panel of filmmaker/editor/audio/platform lenses.
-5. Record innovations and rubric amendments as repeated production gaps appear.
+3. Select a format and animation style before choosing a renderer.
+4. Capture generation manifests without locking into a provider.
+5. Review works through a panel of filmmaker/editor/animation/audio/platform lenses.
+6. Record innovations and rubric amendments as repeated production gaps appear.
+
+## Games Design scenario videos
+
+REEL should be able to turn Games Design scenario packs into multiple video
+forms without changing the scenario truth owned by the game repo.
+
+Initial targets:
+
+- 30-90 second trailers for BANISH, QUEST, TIGRIS, AMAZE, and future games.
+- Storyboard animatics that prove scene order, pacing, and narration before
+  expensive rendering.
+- Style variants of the same scenario, such as pixel-art, isometric-game,
+  illustrated-2d, 3d-previs, or cinematic-ai.
+- Mobile/social cuts with captions and fast hooks.
+
+The production package should preserve:
+
+- source scenario reference,
+- selected format and style,
+- scene beats and shot list,
+- character/location continuity notes,
+- audio and caption plan,
+- renderer/provider assumptions,
+- export targets.
 
 ## Non-goals
 
@@ -34,6 +59,7 @@ targets.
 - No default dependency on a single AI video provider.
 - No native iOS or desktop editor in the foundation wave.
 - No product-to-product dependency from sibling repos into REEL.
+- No direct edits to game scenario canon from inside REEL.
 
 ## Dependency-chain placement
 
