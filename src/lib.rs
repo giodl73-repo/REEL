@@ -262,6 +262,8 @@ pub fn render_review_pack(manifest: impl AsRef<Path>) -> Result<PathBuf> {
     markdown.push_str(&format!("- Manifest: `{}`\n", manifest.display()));
     markdown.push_str(&format!("- Work: `{}`\n", loaded.manifest.work));
     markdown.push_str(&format!("- Generated unix: `{}`\n\n", unix_now()?));
+    markdown.push_str(&review_pack_adapter_summary());
+    markdown.push_str("## FFmpeg baseline renders\n\n");
     markdown.push_str("| Platform | MP4 | Duration | Contact sheet |\n");
     markdown.push_str("|---|---|---:|---|\n");
 
@@ -349,6 +351,34 @@ pub fn render_all_review_packs(root: impl AsRef<Path>) -> Result<PathBuf> {
     fs::write(&index_path, markdown)
         .with_context(|| format!("failed to write {}", index_path.display()))?;
     Ok(index_path)
+}
+
+fn review_pack_adapter_summary() -> String {
+    let mut markdown = String::new();
+    markdown.push_str("## Adapter summary\n\n");
+    markdown.push_str("| Adapter | Status | Operations | Boundary |\n");
+    markdown.push_str("|---|---|---|---|\n");
+    for adapter in adapters::adapter_catalog() {
+        let operations = if adapter.operations.is_empty() {
+            "none".to_string()
+        } else {
+            adapter
+                .operations
+                .iter()
+                .map(|operation| operation.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        markdown.push_str(&format!(
+            "| `{}` | `{}` | `{}` | {} |\n",
+            adapter.id,
+            adapter.status.as_str(),
+            operations,
+            adapter.boundary
+        ));
+    }
+    markdown.push('\n');
+    markdown
 }
 
 fn validate_required_top_fields(top: &Mapping) -> Result<()> {
@@ -1324,6 +1354,17 @@ mod tests {
                 .to_string()
                 .contains("renderer_assumptions.adapters[1] has unknown adapter id: vendor-video")
         );
+    }
+
+    #[test]
+    fn review_pack_includes_adapter_summary() {
+        let markdown = review_pack_adapter_summary();
+
+        assert!(markdown.contains("## Adapter summary"));
+        assert!(markdown.contains("| `ffmpeg` | `implemented-baseline` |"));
+        assert!(markdown.contains("| `remotion` | `planned` |"));
+        assert!(markdown.contains("| `blender` | `planned` |"));
+        assert!(markdown.contains("| `ai-video` | `planned` |"));
     }
 
     #[test]
