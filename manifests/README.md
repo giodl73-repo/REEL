@@ -98,6 +98,7 @@ Before rendering, validate a work manifest with the Rust CLI:
 
 ```powershell
 cargo run -- validate works\0001-ash-vale-last-road-before-winter\manifest.yaml
+cargo run -- adapter-plan works\0001-ash-vale-last-road-before-winter\manifest.yaml
 ```
 
 The validator checks the supported manifest version; required top-level,
@@ -108,3 +109,5 @@ references; shot placement within the referenced scene timeline; and
 platform/export coverage, duration, aspect ratio, and filename consistency.
 When optional `renderer_assumptions.adapters` metadata is present, adapter ids
 must be one of the known provider-neutral adapter boundaries.
+The adapter plan command reports each known adapter and whether the manifest
+declares it, without executing planned providers.

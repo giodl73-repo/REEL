@@ -55,6 +55,28 @@ fn main() -> Result<()> {
                 );
             }
         }
+        Command::AdapterPlan { manifest } => {
+            for adapter in reel::adapter_plan(&manifest)? {
+                let operations = if adapter.operations.is_empty() {
+                    "none".to_string()
+                } else {
+                    adapter
+                        .operations
+                        .iter()
+                        .map(|operation| operation.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                };
+                println!(
+                    "{} | {} | declared={} | operations={} | {}",
+                    adapter.id,
+                    adapter.status.as_str(),
+                    adapter.declared_by_manifest,
+                    operations,
+                    adapter.boundary
+                );
+            }
+        }
         Command::ContactSheet { manifest, platform } => {
             let sheet = reel::render_contact_sheet(&manifest, &platform)?;
             println!("{}", sheet.display());
@@ -101,6 +123,11 @@ enum Command {
     },
     /// Print available and planned render adapters.
     Adapters,
+    /// Print manifest-aware adapter plan for a REEL manifest.
+    AdapterPlan {
+        #[arg(default_value = "works/0001-ash-vale-last-road-before-winter/manifest.yaml")]
+        manifest: PathBuf,
+    },
     /// Render a contact-sheet PNG through FFmpeg.
     ContactSheet {
         #[arg(default_value = "works/0001-ash-vale-last-road-before-winter/manifest.yaml")]

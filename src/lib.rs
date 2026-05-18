@@ -106,6 +106,15 @@ pub struct ExportPlan {
     pub filename: String,
 }
 
+#[derive(Debug, PartialEq)]
+pub struct AdapterPlanEntry {
+    pub id: adapters::AdapterId,
+    pub status: adapters::AdapterStatus,
+    pub declared_by_manifest: bool,
+    pub operations: Vec<adapters::RenderOperationKind>,
+    pub boundary: &'static str,
+}
+
 #[derive(Debug, Deserialize)]
 struct Manifest {
     work: String,
@@ -262,7 +271,7 @@ pub fn render_review_pack(manifest: impl AsRef<Path>) -> Result<PathBuf> {
     markdown.push_str(&format!("- Manifest: `{}`\n", manifest.display()));
     markdown.push_str(&format!("- Work: `{}`\n", loaded.manifest.work));
     markdown.push_str(&format!("- Generated unix: `{}`\n\n", unix_now()?));
-    markdown.push_str(&review_pack_adapter_summary());
+    markdown.push_str(&review_pack_adapter_summary(&loaded)?);
     markdown.push_str("## FFmpeg baseline renders\n\n");
     markdown.push_str("| Platform | MP4 | Duration | Contact sheet |\n");
     markdown.push_str("|---|---|---:|---|\n");
@@ -353,12 +362,12 @@ pub fn render_all_review_packs(root: impl AsRef<Path>) -> Result<PathBuf> {
     Ok(index_path)
 }
 
-fn review_pack_adapter_summary() -> String {
+fn review_pack_adapter_summary(loaded: &LoadedManifest) -> Result<String> {
     let mut markdown = String::new();
     markdown.push_str("## Adapter summary\n\n");
-    markdown.push_str("| Adapter | Status | Operations | Boundary |\n");
-    markdown.push_str("|---|---|---|---|\n");
-    for adapter in adapters::adapter_catalog() {
+    markdown.push_str("| Adapter | Status | Declared by manifest | Operations | Boundary |\n");
+    markdown.push_str("|---|---|---:|---|---|\n");
+    for adapter in manifest_adapter_plan(loaded)? {
         let operations = if adapter.operations.is_empty() {
             "none".to_string()
         } else {
@@ -370,15 +379,40 @@ fn review_pack_adapter_summary() -> String {
                 .join(", ")
         };
         markdown.push_str(&format!(
-            "| `{}` | `{}` | `{}` | {} |\n",
+            "| `{}` | `{}` | {} | `{}` | {} |\n",
             adapter.id,
             adapter.status.as_str(),
+            if adapter.declared_by_manifest {
+                "yes"
+            } else {
+                "no"
+            },
             operations,
             adapter.boundary
         ));
     }
     markdown.push('\n');
-    markdown
+    Ok(markdown)
+}
+
+pub fn adapter_plan(manifest: impl AsRef<Path>) -> Result<Vec<AdapterPlanEntry>> {
+    let loaded = load_manifest(manifest)?;
+    validate_manifest(&loaded)?;
+    manifest_adapter_plan(&loaded)
+}
+
+fn manifest_adapter_plan(loaded: &LoadedManifest) -> Result<Vec<AdapterPlanEntry>> {
+    let declared = declared_adapter_ids(&loaded.raw)?;
+    Ok(adapters::adapter_catalog()
+        .into_iter()
+        .map(|adapter| AdapterPlanEntry {
+            id: adapter.id,
+            status: adapter.status,
+            declared_by_manifest: declared.contains(adapter.id.as_str()),
+            operations: adapter.operations,
+            boundary: adapter.boundary,
+        })
+        .collect())
 }
 
 fn validate_required_top_fields(top: &Mapping) -> Result<()> {
@@ -499,13 +533,40 @@ fn validate_required_sequence_fields(
 }
 
 fn validate_optional_adapter_metadata(top: &Mapping) -> Result<()> {
+    let known_adapters = adapters::adapter_catalog()
+        .iter()
+        .map(|adapter| adapter.id.as_str())
+        .collect::<HashSet<_>>();
+    let declared_adapters = declared_adapter_ids_from_top(top)?;
+
+    for (index, adapter) in declared_adapters.iter().enumerate() {
+        if !known_adapters.contains(adapter.as_str()) {
+            bail!(
+                "renderer_assumptions.adapters[{}] has unknown adapter id: {}",
+                index + 1,
+                adapter
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn declared_adapter_ids(raw: &Value) -> Result<HashSet<String>> {
+    let top = raw
+        .as_mapping()
+        .ok_or_else(|| anyhow!("manifest root must be a mapping"))?;
+    declared_adapter_ids_from_top(top)
+}
+
+fn declared_adapter_ids_from_top(top: &Mapping) -> Result<HashSet<String>> {
     let renderer_assumptions = top
         .get(Value::String("renderer_assumptions".to_string()))
         .ok_or_else(|| anyhow!("missing required top-level field: renderer_assumptions"))?
         .as_mapping()
         .ok_or_else(|| anyhow!("renderer_assumptions must be a mapping"))?;
     let Some(adapters) = renderer_assumptions.get(Value::String("adapters".to_string())) else {
-        return Ok(());
+        return Ok(HashSet::new());
     };
     let adapters = adapters
         .as_sequence()
@@ -514,11 +575,7 @@ fn validate_optional_adapter_metadata(top: &Mapping) -> Result<()> {
         bail!("renderer_assumptions.adapters must not be empty when present");
     }
 
-    let known_adapters = adapters::adapter_catalog()
-        .iter()
-        .map(|adapter| adapter.id.as_str())
-        .collect::<HashSet<_>>();
-
+    let mut declared = HashSet::new();
     for (index, adapter) in adapters.iter().enumerate() {
         let adapter = adapter.as_str().ok_or_else(|| {
             anyhow!(
@@ -532,16 +589,10 @@ fn validate_optional_adapter_metadata(top: &Mapping) -> Result<()> {
                 index + 1
             );
         }
-        if !known_adapters.contains(adapter) {
-            bail!(
-                "renderer_assumptions.adapters[{}] has unknown adapter id: {}",
-                index + 1,
-                adapter
-            );
-        }
+        declared.insert(adapter.to_string());
     }
 
-    Ok(())
+    Ok(declared)
 }
 
 fn is_empty_required_value(value: &Value) -> bool {
@@ -1358,13 +1409,37 @@ mod tests {
 
     #[test]
     fn review_pack_includes_adapter_summary() {
-        let markdown = review_pack_adapter_summary();
+        let manifest = load_manifest("works/0001-ash-vale-last-road-before-winter/manifest.yaml")
+            .expect("manifest loads");
+        let markdown = review_pack_adapter_summary(&manifest).expect("summary renders");
 
         assert!(markdown.contains("## Adapter summary"));
-        assert!(markdown.contains("| `ffmpeg` | `implemented-baseline` |"));
-        assert!(markdown.contains("| `remotion` | `planned` |"));
-        assert!(markdown.contains("| `blender` | `planned` |"));
-        assert!(markdown.contains("| `ai-video` | `planned` |"));
+        assert!(markdown.contains("| `ffmpeg` | `implemented-baseline` | yes |"));
+        assert!(markdown.contains("| `remotion` | `planned` | yes |"));
+        assert!(markdown.contains("| `blender` | `planned` | no |"));
+        assert!(markdown.contains("| `ai-video` | `planned` | yes |"));
+    }
+
+    #[test]
+    fn adapter_plan_marks_manifest_declared_adapters() {
+        let adapters = adapter_plan("works/0001-ash-vale-last-road-before-winter/manifest.yaml")
+            .expect("adapter plan renders");
+
+        assert_eq!(adapters.len(), 4);
+        assert!(
+            adapters
+                .iter()
+                .find(|adapter| adapter.id == adapters::AdapterId::Ffmpeg)
+                .expect("ffmpeg exists")
+                .declared_by_manifest
+        );
+        assert!(
+            !adapters
+                .iter()
+                .find(|adapter| adapter.id == adapters::AdapterId::Blender)
+                .expect("blender exists")
+                .declared_by_manifest
+        );
     }
 
     #[test]

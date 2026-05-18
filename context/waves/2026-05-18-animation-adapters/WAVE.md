@@ -17,6 +17,7 @@ adapter contracts without provider lock-in.
 | 05 | Remotion adapter stub | done | Added a planned Remotion file/project boundary with deterministic command-shape planning and no Node dependency. |
 | 06 | Blender and AI-video stubs | done | Added planned Blender CLI/file and AI-video package boundaries without binaries, SDKs, or credentials. |
 | 07 | Review-pack adapter summary | done | Added adapter summaries to review-pack reports while keeping FFmpeg as the only rendered adapter. |
+| 08 | Manifest-aware adapter planning | done | Added `cargo run -- adapter-plan <manifest>` and review-pack declaration flags for manifest-selected adapter boundaries. |
 
 ## Success criteria
 
