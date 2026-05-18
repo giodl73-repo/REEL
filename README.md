@@ -107,6 +107,7 @@ cargo run -- adapters
 cargo run -- adapters --output json
 cargo run -- adapter-plan works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- adapter-plan works\0001-ash-vale-last-road-before-winter\manifest.yaml --output json
+cargo run -- scene-plan works\0001-ash-vale-last-road-before-winter\manifest.yaml scene-01 youtube-demo
 cargo run -- validate works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- plan works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- shot-cards works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo
@@ -148,6 +149,8 @@ Demo pages under `renders\demo\` provide a browser-openable view of the FFmpeg
 baseline MP4s, contact sheets, review pack, and adapter summary.
 Remotion handoff packages under `renders\remotion\` provide manifest-derived
 props and a planned command shape without installing or running Node.
+Scene planning derives a single scene's shot subset, timing, platform
+dimensions, and scaled render duration before rendering a full scene preview.
 
 ## Pipeline
 

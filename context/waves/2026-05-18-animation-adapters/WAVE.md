@@ -24,6 +24,7 @@ adapter contracts without provider lock-in.
 | 12 | Adapter dependency policy | done | Added explicit dependency/provider policy to catalog, adapter-plan, JSON, and review-pack summaries. |
 | 13 | Browser demo page | done | Added `cargo run -- demo <manifest>` to render a browser-openable HTML demo from FFmpeg baseline artifacts and adapter summaries. |
 | 14 | Remotion handoff package | done | Added `cargo run -- remotion-pack <manifest> <platform>` to write manifest-derived Remotion props and command-shape docs without running Node. |
+| 15 | Scene export planning | done | Added `cargo run -- scene-plan <manifest> <scene-id> <platform>` to derive scene shot subsets, timing, dimensions, and scaled render duration. |
 
 ## Success criteria
 

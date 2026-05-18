@@ -91,6 +91,40 @@ fn main() -> Result<()> {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&adapter_plan)?),
             }
         }
+        Command::ScenePlan {
+            manifest,
+            scene,
+            platform,
+            output,
+        } => {
+            let scene_plan = reel::scene_plan(&manifest, &scene, &platform)?;
+            match output {
+                OutputFormat::Text => {
+                    println!(
+                        "{} | {} | {}x{} | source={:.3}-{:.3}s | render={:.3}s | shots={}",
+                        scene_plan.scene_id,
+                        scene_plan.platform,
+                        scene_plan.width,
+                        scene_plan.height,
+                        scene_plan.source_start_seconds,
+                        scene_plan.source_start_seconds + scene_plan.source_duration_seconds,
+                        scene_plan.render_duration_seconds,
+                        scene_plan.shots.len()
+                    );
+                    for shot in scene_plan.shots {
+                        println!(
+                            "  {} | source={:.3}-{:.3}s | render={:.3}-{:.3}s",
+                            shot.id,
+                            shot.source_start_seconds,
+                            shot.source_start_seconds + shot.source_duration_seconds,
+                            shot.render_start_seconds,
+                            shot.render_start_seconds + shot.render_duration_seconds
+                        );
+                    }
+                }
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&scene_plan)?),
+            }
+        }
         Command::ContactSheet { manifest, platform } => {
             let sheet = reel::render_contact_sheet(&manifest, &platform)?;
             println!("{}", sheet.display());
@@ -152,6 +186,17 @@ enum Command {
     AdapterPlan {
         #[arg(default_value = "works/0001-ash-vale-last-road-before-winter/manifest.yaml")]
         manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Print a scene-level render plan for one manifest scene and platform.
+    ScenePlan {
+        #[arg(default_value = "works/0001-ash-vale-last-road-before-winter/manifest.yaml")]
+        manifest: PathBuf,
+        #[arg(default_value = "scene-01")]
+        scene: String,
+        #[arg(default_value = "youtube-demo")]
+        platform: String,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

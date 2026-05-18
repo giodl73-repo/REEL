@@ -107,6 +107,28 @@ pub struct ExportPlan {
 }
 
 #[derive(Debug, PartialEq, Serialize)]
+pub struct ScenePlan {
+    pub scene_id: String,
+    pub platform: String,
+    pub source_start_seconds: f64,
+    pub source_duration_seconds: f64,
+    pub render_duration_seconds: f64,
+    pub width: u32,
+    pub height: u32,
+    pub duration_scale: f64,
+    pub shots: Vec<SceneShotPlan>,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+pub struct SceneShotPlan {
+    pub id: String,
+    pub source_start_seconds: f64,
+    pub source_duration_seconds: f64,
+    pub render_start_seconds: f64,
+    pub render_duration_seconds: f64,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
 pub struct AdapterPlanEntry {
     pub id: adapters::AdapterId,
     pub status: adapters::AdapterStatus,
@@ -294,6 +316,12 @@ pub fn render_review_pack(manifest: impl AsRef<Path>) -> Result<PathBuf> {
     fs::write(&report_path, markdown)
         .with_context(|| format!("failed to write {}", report_path.display()))?;
     Ok(report_path)
+}
+
+pub fn scene_plan(manifest: impl AsRef<Path>, scene_id: &str, platform: &str) -> Result<ScenePlan> {
+    let loaded = load_manifest(manifest)?;
+    let report = validate_manifest(&loaded)?;
+    scene_plan_for_loaded(&loaded, &report, scene_id, platform)
 }
 
 pub fn render_demo(manifest: impl AsRef<Path>) -> Result<PathBuf> {
@@ -703,6 +731,62 @@ fn manifest_adapter_plan(loaded: &LoadedManifest) -> Result<Vec<AdapterPlanEntry
     }
 
     Ok(plan)
+}
+
+fn scene_plan_for_loaded(
+    loaded: &LoadedManifest,
+    report: &ValidationReport,
+    scene_id: &str,
+    platform: &str,
+) -> Result<ScenePlan> {
+    let (source_start_seconds, source_duration_seconds) = scene_span(&loaded.manifest, scene_id)?;
+    let export = report
+        .exports
+        .iter()
+        .find(|export| export.id == platform)
+        .ok_or_else(|| anyhow!("unknown platform in manifest: {platform}"))?;
+    let shots = loaded
+        .manifest
+        .shots
+        .iter()
+        .filter(|shot| shot.scene_id == scene_id)
+        .map(|shot| SceneShotPlan {
+            id: shot.id.clone(),
+            source_start_seconds: shot.start_seconds,
+            source_duration_seconds: shot.duration_seconds,
+            render_start_seconds: (shot.start_seconds - source_start_seconds)
+                * export.duration_scale,
+            render_duration_seconds: shot.duration_seconds * export.duration_scale,
+        })
+        .collect::<Vec<_>>();
+
+    if shots.is_empty() {
+        bail!("scene {scene_id} has no shots");
+    }
+
+    Ok(ScenePlan {
+        scene_id: scene_id.to_string(),
+        platform: platform.to_string(),
+        source_start_seconds,
+        source_duration_seconds,
+        render_duration_seconds: source_duration_seconds * export.duration_scale,
+        width: export.width,
+        height: export.height,
+        duration_scale: export.duration_scale,
+        shots,
+    })
+}
+
+fn scene_span(manifest: &Manifest, scene_id: &str) -> Result<(f64, f64)> {
+    let mut start = 0.0;
+    for scene in &manifest.scenes {
+        if scene.id == scene_id {
+            return Ok((start, scene.duration_seconds));
+        }
+        start += scene.duration_seconds;
+    }
+
+    bail!("unknown scene in manifest: {scene_id}")
 }
 
 fn validate_required_top_fields(top: &Mapping) -> Result<()> {
@@ -1484,6 +1568,39 @@ mod tests {
         );
         assert_eq!(report.exports[1].id, "youtube-demo");
         assert!(same_duration(report.exports[1].duration_scale, 1.0));
+    }
+
+    #[test]
+    fn derives_scene_plan_for_first_ash_vale_scene() {
+        let plan = scene_plan(
+            "works/0001-ash-vale-last-road-before-winter/manifest.yaml",
+            "scene-01",
+            "youtube-demo",
+        )
+        .expect("scene plan renders");
+
+        assert_eq!(plan.scene_id, "scene-01");
+        assert_eq!(plan.platform, "youtube-demo");
+        assert!(same_duration(plan.source_start_seconds, 0.0));
+        assert!(same_duration(plan.source_duration_seconds, 11.0));
+        assert!(same_duration(plan.render_duration_seconds, 11.0));
+        assert_eq!(plan.width, 1280);
+        assert_eq!(plan.height, 720);
+        assert_eq!(plan.shots.len(), 2);
+        assert_eq!(plan.shots[0].id, "shot-001");
+        assert!(same_duration(plan.shots[1].render_start_seconds, 5.0));
+    }
+
+    #[test]
+    fn rejects_unknown_scene_plan_ids() {
+        let error = scene_plan(
+            "works/0001-ash-vale-last-road-before-winter/manifest.yaml",
+            "scene-99",
+            "youtube-demo",
+        )
+        .expect_err("unknown scene is rejected");
+
+        assert!(error.to_string().contains("unknown scene in manifest"));
     }
 
     #[test]
