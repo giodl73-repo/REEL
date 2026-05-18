@@ -403,16 +403,40 @@ pub fn adapter_plan(manifest: impl AsRef<Path>) -> Result<Vec<AdapterPlanEntry>>
 
 fn manifest_adapter_plan(loaded: &LoadedManifest) -> Result<Vec<AdapterPlanEntry>> {
     let declared = declared_adapter_ids(&loaded.raw)?;
-    Ok(adapters::adapter_catalog()
-        .into_iter()
-        .map(|adapter| AdapterPlanEntry {
+    let catalog = adapters::adapter_catalog();
+    let mut plan = Vec::new();
+
+    for adapter_id in &declared {
+        let adapter = catalog
+            .iter()
+            .find(|adapter| adapter.id.as_str() == adapter_id)
+            .expect("declared adapter ids are validated before planning");
+        plan.push(AdapterPlanEntry {
             id: adapter.id,
             status: adapter.status,
-            declared_by_manifest: declared.contains(adapter.id.as_str()),
+            declared_by_manifest: true,
+            operations: adapter.operations.clone(),
+            boundary: adapter.boundary,
+        });
+    }
+
+    for adapter in catalog {
+        if declared
+            .iter()
+            .any(|declared| declared == adapter.id.as_str())
+        {
+            continue;
+        }
+        plan.push(AdapterPlanEntry {
+            id: adapter.id,
+            status: adapter.status,
+            declared_by_manifest: false,
             operations: adapter.operations,
             boundary: adapter.boundary,
-        })
-        .collect())
+        });
+    }
+
+    Ok(plan)
 }
 
 fn validate_required_top_fields(top: &Mapping) -> Result<()> {
@@ -552,21 +576,21 @@ fn validate_optional_adapter_metadata(top: &Mapping) -> Result<()> {
     Ok(())
 }
 
-fn declared_adapter_ids(raw: &Value) -> Result<HashSet<String>> {
+fn declared_adapter_ids(raw: &Value) -> Result<Vec<String>> {
     let top = raw
         .as_mapping()
         .ok_or_else(|| anyhow!("manifest root must be a mapping"))?;
     declared_adapter_ids_from_top(top)
 }
 
-fn declared_adapter_ids_from_top(top: &Mapping) -> Result<HashSet<String>> {
+fn declared_adapter_ids_from_top(top: &Mapping) -> Result<Vec<String>> {
     let renderer_assumptions = top
         .get(Value::String("renderer_assumptions".to_string()))
         .ok_or_else(|| anyhow!("missing required top-level field: renderer_assumptions"))?
         .as_mapping()
         .ok_or_else(|| anyhow!("renderer_assumptions must be a mapping"))?;
     let Some(adapters) = renderer_assumptions.get(Value::String("adapters".to_string())) else {
-        return Ok(HashSet::new());
+        return Ok(Vec::new());
     };
     let adapters = adapters
         .as_sequence()
@@ -575,7 +599,8 @@ fn declared_adapter_ids_from_top(top: &Mapping) -> Result<HashSet<String>> {
         bail!("renderer_assumptions.adapters must not be empty when present");
     }
 
-    let mut declared = HashSet::new();
+    let mut declared = Vec::new();
+    let mut seen = HashSet::new();
     for (index, adapter) in adapters.iter().enumerate() {
         let adapter = adapter.as_str().ok_or_else(|| {
             anyhow!(
@@ -589,7 +614,10 @@ fn declared_adapter_ids_from_top(top: &Mapping) -> Result<HashSet<String>> {
                 index + 1
             );
         }
-        declared.insert(adapter.to_string());
+        if !seen.insert(adapter) {
+            bail!("duplicate renderer_assumptions.adapters id: {adapter}");
+        }
+        declared.push(adapter.to_string());
     }
 
     Ok(declared)
@@ -1426,6 +1454,10 @@ mod tests {
             .expect("adapter plan renders");
 
         assert_eq!(adapters.len(), 4);
+        assert_eq!(adapters[0].id, adapters::AdapterId::Ffmpeg);
+        assert_eq!(adapters[1].id, adapters::AdapterId::Remotion);
+        assert_eq!(adapters[2].id, adapters::AdapterId::AiVideo);
+        assert_eq!(adapters[3].id, adapters::AdapterId::Blender);
         assert!(
             adapters
                 .iter()
@@ -1439,6 +1471,29 @@ mod tests {
                 .find(|adapter| adapter.id == adapters::AdapterId::Blender)
                 .expect("blender exists")
                 .declared_by_manifest
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_optional_adapter_metadata() {
+        let manifest = load_manifest("works/0001-ash-vale-last-road-before-winter/manifest.yaml")
+            .expect("manifest loads");
+        let mut raw = manifest.raw.clone();
+        raw["renderer_assumptions"]["adapters"] = Value::Sequence(vec![
+            Value::String("ffmpeg".to_string()),
+            Value::String("ffmpeg".to_string()),
+        ]);
+        let invalid = LoadedManifest {
+            path: manifest.path,
+            raw,
+            manifest: manifest.manifest,
+        };
+
+        let error = validate_manifest(&invalid).expect_err("duplicate adapter id rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate renderer_assumptions.adapters id: ffmpeg")
         );
     }
 

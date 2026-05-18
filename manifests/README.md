@@ -91,6 +91,7 @@ Each shot must define:
   `ffmpeg`, `remotion`, `blender`, or `ai-video`. This list names possible
   adapter boundaries only; it must not require provider credentials, API
   endpoints, model names, SDK packages, or binary installation details.
+  Adapter ids must be unique, and their order is preserved by adapter planning.
 
 ## Validation
 
@@ -110,4 +111,5 @@ platform/export coverage, duration, aspect ratio, and filename consistency.
 When optional `renderer_assumptions.adapters` metadata is present, adapter ids
 must be one of the known provider-neutral adapter boundaries.
 The adapter plan command reports each known adapter and whether the manifest
-declares it, without executing planned providers.
+declares it, without executing planned providers. Declared adapters are listed
+first in manifest order, followed by undeclared known adapters.
