@@ -32,6 +32,7 @@ into a renderer too early.
 | 20 | Rust smoke orchestration | done | Moved the starter smoke MP4 renderer into Rust and removed the last Bash FFmpeg adapter. |
 | 21 | Rust CLI command surface docs | done | Updated README and product validation docs to show the current Rust-owned smoke, validation, planning, render, and review commands. |
 | 22 | Valid starter manifest contract | done | Updated the starter scenario-video template so it passes Rust validation and added regression coverage. |
+| 23 | Manifest identity validation | done | Added Rust checks for duplicate IDs, positive timing, and platform/export coverage before rendering. |
 
 ## Success criteria
 
@@ -60,5 +61,6 @@ into a renderer too early.
 - REEL renders smoke MP4s through Rust-owned FFmpeg orchestration.
 - REEL documents its current Rust CLI command surface for validation and review rendering.
 - REEL's starter manifest template passes the same Rust validation contract as work manifests.
+- REEL rejects duplicate manifest IDs, non-positive timing, and platform/export coverage gaps.
 - Validation commands are named before renderer-specific tooling is chosen.
 - TRACKER records REEL as a Design Labs repo and dependency intake candidate.

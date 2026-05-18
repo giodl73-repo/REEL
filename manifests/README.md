@@ -81,6 +81,7 @@ Before rendering, validate a work manifest with the Rust CLI:
 cargo run -- validate works\0001-ash-vale-last-road-before-winter\manifest.yaml
 ```
 
-The validator checks required top-level fields, scene and shot duration totals,
-shot start offsets, shot-to-scene references, and platform/export duration,
-aspect ratio, and filename consistency.
+The validator checks required top-level fields, non-empty and unique scene, shot,
+platform, and export identifiers, positive timing, scene and shot duration
+totals, shot start offsets, shot-to-scene references, and platform/export
+coverage, duration, aspect ratio, and filename consistency.

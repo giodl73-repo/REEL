@@ -145,6 +145,9 @@ pub fn validate_manifest(loaded: &LoadedManifest) -> Result<ValidationReport> {
         .ok_or_else(|| anyhow!("manifest root must be a mapping"))?;
     validate_required_top_fields(top)?;
     validate_non_empty_sections(&loaded.manifest)?;
+    validate_unique_ids(&loaded.manifest)?;
+    validate_positive_timing(&loaded.manifest)?;
+    validate_platform_export_coverage(&loaded.manifest)?;
 
     let scene_total = loaded
         .manifest
@@ -306,6 +309,89 @@ fn validate_non_empty_sections(manifest: &Manifest) -> Result<()> {
     }
     if manifest.exports.is_empty() {
         bail!("exports must not be empty");
+    }
+    Ok(())
+}
+
+fn validate_unique_ids(manifest: &Manifest) -> Result<()> {
+    ensure_unique(
+        "scene id",
+        manifest.scenes.iter().map(|scene| scene.id.as_str()),
+    )?;
+    ensure_unique(
+        "shot id",
+        manifest.shots.iter().map(|shot| shot.id.as_str()),
+    )?;
+    ensure_unique(
+        "platform name",
+        manifest
+            .platforms
+            .iter()
+            .map(|platform| platform.name.as_str()),
+    )?;
+    ensure_unique(
+        "export id",
+        manifest.exports.iter().map(|export| export.id.as_str()),
+    )?;
+    Ok(())
+}
+
+fn validate_positive_timing(manifest: &Manifest) -> Result<()> {
+    for scene in &manifest.scenes {
+        if scene.duration_seconds <= 0.0 {
+            bail!(
+                "scene {} duration must be positive, got {:.3}",
+                scene.id,
+                scene.duration_seconds
+            );
+        }
+    }
+
+    for shot in &manifest.shots {
+        if shot.start_seconds < 0.0 {
+            bail!(
+                "shot {} start_seconds must not be negative, got {:.3}",
+                shot.id,
+                shot.start_seconds
+            );
+        }
+        if shot.duration_seconds <= 0.0 {
+            bail!(
+                "shot {} duration must be positive, got {:.3}",
+                shot.id,
+                shot.duration_seconds
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_platform_export_coverage(manifest: &Manifest) -> Result<()> {
+    let export_ids = manifest
+        .exports
+        .iter()
+        .map(|export| export.id.as_str())
+        .collect::<HashSet<_>>();
+
+    for platform in &manifest.platforms {
+        if !export_ids.contains(platform.name.as_str()) {
+            bail!("platform {} has no matching export", platform.name);
+        }
+    }
+
+    Ok(())
+}
+
+fn ensure_unique<'a>(label: &str, ids: impl Iterator<Item = &'a str>) -> Result<()> {
+    let mut seen = HashSet::new();
+    for id in ids {
+        if id.trim().is_empty() {
+            bail!("{label} must not be empty");
+        }
+        if !seen.insert(id) {
+            bail!("duplicate {label}: {id}");
+        }
     }
     Ok(())
 }
@@ -850,6 +936,51 @@ mod tests {
         assert!(same_duration(report.exports[0].duration_scale, 0.75));
         assert_eq!(report.exports[1].id, "youtube-demo");
         assert!(same_duration(report.exports[1].duration_scale, 1.0));
+    }
+
+    #[test]
+    fn rejects_duplicate_manifest_ids() {
+        let manifest = load_manifest("works/0001-ash-vale-last-road-before-winter/manifest.yaml")
+            .expect("manifest loads");
+        let mut raw = manifest.raw.clone();
+        raw["shots"][1]["id"] = raw["shots"][0]["id"].clone();
+        let parsed = serde_yaml::from_value(raw.clone()).expect("duplicate manifest deserializes");
+        let duplicate = LoadedManifest {
+            path: manifest.path,
+            raw,
+            manifest: parsed,
+        };
+
+        let error = validate_manifest(&duplicate).expect_err("duplicate shot id rejected");
+        assert!(error.to_string().contains("duplicate shot id"));
+    }
+
+    #[test]
+    fn rejects_platforms_without_matching_exports() {
+        let manifest = load_manifest("works/0001-ash-vale-last-road-before-winter/manifest.yaml")
+            .expect("manifest loads");
+        let mut raw = manifest.raw.clone();
+        raw.as_mapping_mut()
+            .expect("raw manifest is mapping")
+            .get_mut(&Value::String("exports".to_string()))
+            .expect("exports exists")
+            .as_sequence_mut()
+            .expect("exports is sequence")
+            .remove(0);
+        let parsed =
+            serde_yaml::from_value(raw.clone()).expect("missing export manifest deserializes");
+        let missing = LoadedManifest {
+            path: manifest.path,
+            raw,
+            manifest: parsed,
+        };
+
+        let error = validate_manifest(&missing).expect_err("missing platform export rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("platform iphone-social has no matching export")
+        );
     }
 
     #[test]
