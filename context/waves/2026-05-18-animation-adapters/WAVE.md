@@ -30,6 +30,7 @@ adapter contracts without provider lock-in.
 | 18 | Remotion scene handoff refinement | done | Extended Remotion handoff props with scene timing, shot subset, frame hints, and caption/action/narration tracks without Node execution. |
 | 19 | Full scene acceptance pass | done | Generated and validated the scene plan, FFmpeg scene preview, browser demo, and Remotion scene handoff for `scene-01`. |
 | 20 | Batch scene preview rendering | done | Added `cargo run -- scene-previews <manifest> <platform>` to render every manifest scene preview through the FFmpeg baseline adapter. |
+| 21 | Demo all-scene previews | done | Updated `cargo run -- demo <manifest>` to render and embed every manifest scene preview for each export platform. |
 
 ## Success criteria
 
