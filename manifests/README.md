@@ -75,10 +75,10 @@ Each shot must define:
 
 ## Validation
 
-Before rendering, validate a work manifest from WSL:
+Before rendering, validate a work manifest with the Rust CLI:
 
-```bash
-bash scripts/validate-manifest.sh works/0001-ash-vale-last-road-before-winter/manifest.yaml
+```powershell
+cargo run -- validate works\0001-ash-vale-last-road-before-winter\manifest.yaml
 ```
 
 The validator checks required top-level fields, scene and shot duration totals,

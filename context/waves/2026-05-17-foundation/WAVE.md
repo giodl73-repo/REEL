@@ -28,6 +28,7 @@ into a renderer too early.
 | 16 | Rust review-pack orchestration | done | Moved review-pack reports and batch indexes into Rust while keeping FFmpeg media generation external. |
 | 17 | Rust contact-sheet orchestration | done | Moved contact-sheet FFmpeg orchestration into Rust and removed the Bash contact-sheet adapter. |
 | 18 | Rust shot-card orchestration | done | Moved shot-card MP4 FFmpeg orchestration into Rust and removed the Bash shot-card adapter. |
+| 19 | Rust validation canonical path | done | Removed the legacy Bash manifest validator and documented `cargo run -- validate` as the canonical pre-render gate. |
 
 ## Success criteria
 
@@ -52,5 +53,6 @@ into a renderer too early.
 - REEL writes review-pack reports and indexes in Rust, leaving Bash only as FFmpeg adapter glue.
 - REEL renders contact sheets through Rust-owned FFmpeg orchestration.
 - REEL renders shot-card MP4s through Rust-owned FFmpeg orchestration.
+- REEL uses Rust manifest validation as the canonical pre-render gate.
 - Validation commands are named before renderer-specific tooling is chosen.
 - TRACKER records REEL as a Design Labs repo and dependency intake candidate.

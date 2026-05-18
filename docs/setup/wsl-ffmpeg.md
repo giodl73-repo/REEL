@@ -44,17 +44,11 @@ not generated media.
 
 ## Run the shot-card renderer
 
-Use the Rust CLI for validation and planning:
+Use the Rust CLI for validation and planning before rendering:
 
 ```powershell
 cargo run -- validate works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- plan works\0001-ash-vale-last-road-before-winter\manifest.yaml
-```
-
-The legacy WSL validator remains available for parity checks:
-
-```powershell
-wsl -- bash -lc 'cd /mnt/c/src/TRACKER/repos/design-labs/reel && bash scripts/validate-manifest.sh works/0001-ash-vale-last-road-before-winter/manifest.yaml'
 ```
 
 Once a work has a full manifest, render a timed card sequence for every shot:
@@ -142,10 +136,11 @@ and shot intent before we build a Remotion or final animation pass.
 - REEL has a Rust CLI for validation, export planning, and adapter
   orchestration while FFmpeg remains an external renderer dependency.
 - REEL writes review-pack reports and indexes in Rust; Bash now remains only
-  for legacy smoke/validator scripts while main review media adapters run
-  through Rust.
+  for the legacy smoke script while main validation and review media adapters
+  run through Rust.
 - REEL renders contact-sheet PNGs through Rust-owned FFmpeg orchestration.
 - REEL renders shot-card MP4s through Rust-owned FFmpeg orchestration.
+- REEL uses Rust manifest validation as the canonical pre-render gate.
 
 ## What the smoke does not prove
 
