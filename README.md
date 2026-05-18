@@ -165,6 +165,7 @@ Work previews under `renders\work-previews\` concatenate the platform's scene
 previews into a continuous baseline MP4.
 Artifact manifests under `renders\artifacts\` provide machine-readable paths,
 durations, dimensions, and scene-preview coverage for automation.
+The `review-all` index links each work's review pack and artifact manifest.
 
 ## Pipeline
 
