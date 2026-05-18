@@ -145,8 +145,9 @@ The Blender boundary is planned as a CLI/Python file handoff, and the AI-video
 boundary is planned as a provider-neutral package. Neither requires binaries,
 SDKs, credentials, endpoints, or model names in the baseline contract.
 
-Review packs include an adapter summary so reviewers can see the FFmpeg baseline
-used for rendered outputs and the planned animation adapter boundaries.
+Review packs include an adapter summary and scene-preview table so reviewers can
+see the FFmpeg baseline used for rendered outputs and the planned animation
+adapter boundaries.
 Demo pages under `renders\demo\` provide a browser-openable view of the FFmpeg
 baseline MP4s, all baseline scene previews, contact sheets, review pack, and
 adapter summary.

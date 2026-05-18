@@ -312,6 +312,23 @@ pub fn render_review_pack(manifest: impl AsRef<Path>) -> Result<PathBuf> {
             sheet.display()
         ));
     }
+    markdown.push_str("\n## FFmpeg baseline scene previews\n\n");
+    markdown.push_str("| Platform | Scene | MP4 | Duration |\n");
+    markdown.push_str("|---|---|---|---:|\n");
+
+    for export in &report.exports {
+        for scene in &loaded.manifest.scenes {
+            let plan = scene_plan_for_loaded(&loaded, &report, &scene.id, &export.id)?;
+            let preview = render_scene_preview_for_plan(&loaded, &plan)?;
+            markdown.push_str(&format!(
+                "| `{}` | `{}` | `{}` | `{}s` |\n",
+                export.id,
+                scene.id,
+                preview.display(),
+                compact_seconds(plan.render_duration_seconds)
+            ));
+        }
+    }
 
     fs::write(&report_path, markdown)
         .with_context(|| format!("failed to write {}", report_path.display()))?;
