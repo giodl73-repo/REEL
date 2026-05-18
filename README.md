@@ -84,6 +84,13 @@ Games Design scenario flow:
 SCENARIO -> REEL BRIEF -> FORMAT + STYLE -> SCRIPT -> SHOTLIST -> MANIFEST -> PANEL -> EXPORT
 ```
 
+## Production manifest
+
+The production manifest is the handoff from design to rendering. It is defined in
+`manifests/README.md` and starts as YAML so humans can review it before tooling
+exists. A manifest must name the source scenario, target format and style,
+scene/shot order, audio, captions, renderer assumptions, and export targets.
+
 ## Pipeline
 
 ```text
@@ -97,6 +104,7 @@ REEL/
 ├── scoring/                 REEL rubric and innovation log
 ├── formats/                 Video format grammars
 ├── styles/                  Animation and visual style grammars
+├── manifests/               Production manifest contract and templates
 ├── .roles/                  Review panel definitions
 ├── personas/                Filmmaker/editor/reviewer voices and lenses
 ├── works/                   Numbered canonical and original video works

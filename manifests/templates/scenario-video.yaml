@@ -1,0 +1,98 @@
+manifest_version: reel.manifest.v0.1
+work: "0001-example-scenario-video"
+title: "Example Scenario Video"
+source_scenario:
+  repo: "BANISH"
+  path: "scenarios/example"
+  id: "example-scenario"
+  source_commit: "unknown"
+format: "trailer"
+style: "isometric-game"
+alternate_styles:
+  - "storyboard-animatic"
+audience:
+  primary: "portfolio reviewer"
+  context: "phone-first preview and desktop review"
+  desired_effect: "understand the scenario promise in under 60 seconds"
+platforms:
+  - name: "iphone-social"
+    aspect_ratio: "9:16"
+    target_duration_seconds: 45
+    sound_optional: true
+  - name: "youtube-demo"
+    aspect_ratio: "16:9"
+    target_duration_seconds: 60
+    sound_optional: false
+continuity:
+  characters:
+    - id: "character-1"
+      description: "Source scenario character; preserve role, silhouette, and motivation."
+  places:
+    - id: "place-1"
+      description: "Source scenario location; preserve geography and mood."
+  factions: []
+  props: []
+  canon_constraints:
+    - "Do not introduce events not present in the source scenario unless marked as trailer metaphor."
+scenes:
+  - id: "scene-01"
+    purpose: "Open with the scenario promise."
+    duration_seconds: 12
+    story_beat: "A place under pressure is established."
+    location: "place-1"
+    characters: ["character-1"]
+    continuity_notes:
+      - "Keep source geography recognizable."
+shots:
+  - id: "shot-001"
+    scene_id: "scene-01"
+    start_seconds: 0
+    duration_seconds: 4
+    camera: "slow isometric push over the map"
+    action: "Reveal the settlement and pressure point."
+    visual_prompt: "Isometric game view of the source scenario location, readable silhouettes, dusk palette."
+    style_constraints:
+      - "Use the selected isometric-game style."
+      - "Keep character/place continuity from the source scenario."
+    audio:
+      narration: "This place is about to choose what it can survive."
+      music: "low pulse begins"
+      effects: "distant wind"
+    captions:
+      text: "A settlement under pressure"
+      safe_area: "phone-safe center lower third"
+    transition_out: "hard cut on music pulse"
+audio:
+  narration_voice: "calm, cinematic, concise"
+  music_direction: "restrained tension, no heroic swell before the reveal"
+  effects_direction: "environment first; avoid clutter"
+  silence_notes:
+    - "Leave one beat of silence before the final title card."
+captions:
+  required: true
+  style: "large phone-readable captions with high contrast"
+  language: "en"
+renderer_assumptions:
+  candidates:
+    - "storyboard-animatic via stills + FFmpeg"
+    - "Remotion motion pass"
+    - "cinematic-ai prompt pass after continuity research"
+  blockers:
+    - "Need renderer research before provider-specific prompt fields are required."
+exports:
+  - id: "iphone-social"
+    filename: "0001-example-scenario-video-iphone.mp4"
+    aspect_ratio: "9:16"
+    duration_seconds: 45
+  - id: "youtube-demo"
+    filename: "0001-example-scenario-video-youtube.mp4"
+    aspect_ratio: "16:9"
+    duration_seconds: 60
+review:
+  required_roles:
+    - "story-director"
+    - "animation-director"
+    - "editor"
+    - "sound-designer"
+    - "platform-audience"
+  status: "not-reviewed"

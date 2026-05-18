@@ -20,6 +20,8 @@ The rubric is REEL: **R**hythm, **E**motion, **E**xecution, **L**egibility.
 - **Shot** - a camera, composition, motion, or generated visual unit.
 - **Edit manifest** - the ordered production contract for shots, audio, captions,
   transitions, and exports.
+- **Source scenario** - the upstream game/design scenario reference that owns
+  canon, continuity, and factual constraints.
 - **Persona** - a filmmaker/editor/critic voice that reviews a work.
 - **Lens** - a production perspective such as editor, cinematographer, sound, or
   platform/audience.
@@ -56,6 +58,8 @@ Every generated work file opens with YAML frontmatter:
 work: NNNN-slug
 stage: brief|script|shotlist|manifest|panel|handoff
 format: format-slug
+style: style-slug
+source_scenario: repo/path-or-id
 author: persona-slug
 rubric_version: v0.1
 created: YYYY-MM-DD
@@ -71,7 +75,9 @@ sources: []
    viewing contracts.
 3. **Sound is structural** - narration, music, silence, and effects are not
    afterthoughts.
-4. **No binary sprawl** - keep renders out of git unless a later policy says
+4. **Canon stays upstream** - Games Design repos own scenario truth; REEL adapts
+   and cites it.
+5. **No binary sprawl** - keep renders out of git unless a later policy says
    otherwise.
-5. **Forward-only rubric** - amendments apply after ratification; do not
+6. **Forward-only rubric** - amendments apply after ratification; do not
    retroactively rescore completed works.

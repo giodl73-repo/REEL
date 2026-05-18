@@ -53,6 +53,11 @@ The production package should preserve:
 - renderer/provider assumptions,
 - export targets.
 
+The first manifest contract is intentionally renderer-neutral. It should be
+specific enough for a human or agent to choose FFmpeg, Remotion, Blender, browser
+capture, or an AI-video provider later, but it should not encode provider-only
+fields as required foundation metadata.
+
 ## Non-goals
 
 - No large media binaries in git.
