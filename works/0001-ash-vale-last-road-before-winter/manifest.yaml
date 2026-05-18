@@ -1,0 +1,241 @@
+manifest_version: reel.manifest.v0.1
+work: "0001-ash-vale-last-road-before-winter"
+title: "Ash Vale: Last Road Before Winter"
+source_scenario:
+  repo: "BANISH"
+  path: "docs/canon-ash-vale-scenario.md"
+  id: "scenario:banish:ash-vale-last-road-before-winter"
+  source_commit: "3f20886eaaae3657562a010d5bdbc6316e1f6fbb"
+format: "trailer"
+style: "isometric-game"
+alternate_styles:
+  - "storyboard-animatic"
+audience:
+  primary: "portfolio reviewer and Games Design collaborator"
+  context: "phone-first preview and desktop review"
+  desired_effect: "understand BANISH Pilgrim Loss in under 60 seconds"
+platforms:
+  - name: "iphone-social"
+    aspect_ratio: "9:16"
+    target_duration_seconds: 45
+    sound_optional: true
+  - name: "youtube-demo"
+    aspect_ratio: "16:9"
+    target_duration_seconds: 60
+    sound_optional: false
+continuity:
+  characters:
+    - id: "settlement"
+      description: "The moving settlement; collective protagonist, not a single hero."
+  places:
+    - id: "place:porto:ash-vale:hillkiln"
+      description: "Upland village and fragile industry site."
+    - id: "place:porto:ash-vale:riverford"
+      description: "Market town and regional access anchor."
+  factions: []
+  props:
+    - id: "facility:ceres:shared-forge"
+      description: "Shared forge whose location and repair capacity create the winter-route choice."
+    - id: "concept:banish:legible-loss"
+      description: "Design promise that losses teach what changed."
+  canon_constraints:
+    - "Preserve scenario id scenario:banish:ash-vale-last-road-before-winter."
+    - "Preserve the forge choice: Hillkiln, Riverford, or split maintenance."
+    - "Do not introduce a best abstract build order."
+scenes:
+  - id: "scene-01"
+    purpose: "Establish Ash Vale and the winter deadline."
+    duration_seconds: 11
+    story_beat: "The forge and road cannot both remain simple."
+    location: "Ash Vale"
+    characters: ["settlement"]
+    continuity_notes:
+      - "Hillkiln, Riverford, and the shared forge must remain recognizable."
+  - id: "scene-02"
+    purpose: "Show the Pilgrim Loss playable verbs."
+    duration_seconds: 23
+    story_beat: "The player chooses what moves, what route strains, and what anchors."
+    location: "Migration route and new settlement"
+    characters: ["settlement"]
+    continuity_notes:
+      - "Use prepare, migrate, settle, lose visibly, carry forward."
+  - id: "scene-03"
+    purpose: "Turn visible loss into campaign memory."
+    duration_seconds: 26
+    story_beat: "Loss becomes the next settlement's shape."
+    location: "Next settlement seed"
+    characters: ["settlement"]
+    continuity_notes:
+      - "Use packed, anchored, salvaged, abandoned, wasted, remembered language."
+shots:
+  - id: "shot-001"
+    scene_id: "scene-01"
+    start_seconds: 0
+    duration_seconds: 5
+    camera: "slow isometric push over Ash Vale under early snow"
+    action: "Reveal Hillkiln high ground, Riverford crossing, and a dim road between them."
+    visual_prompt: "Isometric game map of a winter valley with upland forge village and river market town."
+    style_constraints:
+      - "Use clean isometric-game silhouettes."
+      - "No final art polish implied."
+    audio:
+      narration: "Ash Vale has one road left before winter."
+      music: "low winter pulse"
+      effects: "wind"
+    captions:
+      text: "Ash Vale: Last Road Before Winter"
+      safe_area: "phone-safe center lower third"
+    transition_out: "snow wipe"
+  - id: "shot-002"
+    scene_id: "scene-01"
+    start_seconds: 5
+    duration_seconds: 6
+    camera: "locked isometric map with three highlighted route decisions"
+    action: "Forge icon pulses at Hillkiln, ghosts toward Riverford, then splits labor markers."
+    visual_prompt: "Three-way choice overlay: keep forge, move work, split maintenance risk."
+    style_constraints:
+      - "Keep the shared forge as the central prop."
+    audio:
+      narration: "Keep the forge. Move the work. Split the risk."
+      music: "pulse tightens"
+      effects: "distant hammer"
+    captions:
+      text: "Keep the forge. Move the work. Split the risk."
+      safe_area: "phone-safe lower third"
+    transition_out: "hard cut"
+  - id: "shot-003"
+    scene_id: "scene-02"
+    start_seconds: 11
+    duration_seconds: 7
+    camera: "tabletop overhead into isometric pack cards"
+    action: "Hearth-kit, memory-chest, and heavy-wagons cards slide into a caravan."
+    visual_prompt: "Pack choice cards become wagons in a stylized settlement caravan."
+    style_constraints:
+      - "Pack choices must look like player decisions, not random inventory."
+    audio:
+      narration: "So the settlement prepares. Pack what can move."
+      music: "measured build"
+      effects: "wood wheels and rope"
+    captions:
+      text: "Prepare: choose what can move"
+      safe_area: "phone-safe lower third"
+    transition_out: "match cut to road"
+  - id: "shot-004"
+    scene_id: "scene-02"
+    start_seconds: 18
+    duration_seconds: 8
+    camera: "sideways map pan along route cards"
+    action: "River-road, ridge-pass, sheltered-valley, and old-road appear as selectable paths."
+    visual_prompt: "Readable route cards over isometric terrain, each with a different risk mood."
+    style_constraints:
+      - "No path should be presented as universally best."
+    audio:
+      narration: "Choose the road that decides what cannot come."
+      music: "route percussion"
+      effects: "cart strain"
+    captions:
+      text: "Migrate: choose the road"
+      safe_area: "phone-safe lower third"
+    transition_out: "cut on cart wheel"
+  - id: "shot-005"
+    scene_id: "scene-02"
+    start_seconds: 26
+    duration_seconds: 8
+    camera: "isometric settle view"
+    action: "Memory-stone, storehouse-yard, and workshop-row anchor into a new settlement."
+    visual_prompt: "Anchor options become permanent landmarks in a new settlement grid."
+    style_constraints:
+      - "Anchors must show permanence without looking like final UI."
+    audio:
+      narration: "Anchor what must become permanent."
+      music: "warm chord enters"
+      effects: "stone set down"
+    captions:
+      text: "Settle: anchor what matters"
+      safe_area: "phone-safe lower third"
+    transition_out: "ledger slide"
+  - id: "shot-006"
+    scene_id: "scene-03"
+    start_seconds: 34
+    duration_seconds: 10
+    camera: "flat ledger-to-map animation"
+    action: "Packed, anchored, salvaged, abandoned, wasted, and remembered rows animate into visible totals."
+    visual_prompt: "Game ledger rows become map memory markers."
+    style_constraints:
+      - "Loss language must remain legible on phone."
+    audio:
+      narration: "Then read the loss: packed, salvaged, abandoned, remembered."
+      music: "drops to sparse pulse"
+      effects: "paper ledger ticks"
+    captions:
+      text: "Lose visibly: read what changed"
+      safe_area: "phone-safe center"
+    transition_out: "fade through remembered row"
+  - id: "shot-007"
+    scene_id: "scene-03"
+    start_seconds: 44
+    duration_seconds: 11
+    camera: "isometric pull from old settlement to new seed"
+    action: "Remembered values light the next settlement seed."
+    visual_prompt: "The next settlement appears from memory markers, not from a victory screen."
+    style_constraints:
+      - "Show continuity as carried memory, not magic reward."
+    audio:
+      narration: "In BANISH, loss is not a hidden fail state. It is the shape of the next settlement."
+      music: "resolved but restrained"
+      effects: "wind softens"
+    captions:
+      text: "Loss becomes campaign memory"
+      safe_area: "phone-safe lower third"
+    transition_out: "title card"
+  - id: "shot-008"
+    scene_id: "scene-03"
+    start_seconds: 55
+    duration_seconds: 5
+    camera: "static title card"
+    action: "BANISH - Pilgrim Loss title resolves over Ash Vale map marks."
+    visual_prompt: "Minimal title card with isometric map traces."
+    style_constraints:
+      - "Keep it trailer-like, not a release announcement."
+    audio:
+      narration: "Prepare. Migrate. Settle. Remember."
+      music: "single closing hit"
+      effects: "none"
+    captions:
+      text: "Prepare. Migrate. Settle. Remember."
+      safe_area: "phone-safe center"
+    transition_out: "fade out"
+audio:
+  narration_voice: "calm, cinematic, concise"
+  music_direction: "restrained winter tension, warming only when memory carries forward"
+  effects_direction: "wind, carts, forge, ledger ticks; avoid clutter"
+  silence_notes:
+    - "Leave a breath before the final title card."
+captions:
+  required: true
+  style: "large phone-readable captions with high contrast"
+  language: "en"
+renderer_assumptions:
+  candidates:
+    - "storyboard-animatic via stills + FFmpeg"
+    - "Remotion motion pass"
+    - "cinematic-ai prompt pass after continuity research"
+  blockers:
+    - "Final art direction and AI-video continuity controls are not selected yet."
+exports:
+  - id: "iphone-social"
+    filename: "0001-ash-vale-last-road-before-winter-iphone.mp4"
+    aspect_ratio: "9:16"
+    duration_seconds: 45
+  - id: "youtube-demo"
+    filename: "0001-ash-vale-last-road-before-winter-youtube.mp4"
+    aspect_ratio: "16:9"
+    duration_seconds: 60
+review:
+  required_roles:
+    - "story-director"
+    - "animation-director"
+    - "editor"
+    - "sound-designer"
+    - "platform-audience"
+  status: "reviewed"

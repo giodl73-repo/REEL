@@ -18,6 +18,7 @@ yaml_value() {
   awk -F': ' -v key="$key" '
     $1 == key {
       value = $2
+      gsub(/\r/, "", value)
       gsub(/^"/, "", value)
       gsub(/"$/, "", value)
       print value
@@ -31,6 +32,7 @@ indented_yaml_value() {
   awk -F': ' -v key="$key" '
     $1 ~ "^[[:space:]]+" key "$" {
       value = $2
+      gsub(/\r/, "", value)
       gsub(/^"/, "", value)
       gsub(/"$/, "", value)
       print value
