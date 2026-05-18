@@ -115,7 +115,7 @@ cargo run -- shot-cards works\0001-ash-vale-last-road-before-winter\manifest.yam
 cargo run -- contact-sheet works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo
 cargo run -- review-pack works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- demo works\0001-ash-vale-last-road-before-winter\manifest.yaml
-cargo run -- remotion-pack works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo
+cargo run -- remotion-pack works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo scene-01
 cargo run -- review-all works
 ```
 
@@ -150,7 +150,8 @@ Demo pages under `renders\demo\` provide a browser-openable view of the FFmpeg
 baseline MP4s, baseline scene previews, contact sheets, review pack, and adapter
 summary.
 Remotion handoff packages under `renders\remotion\` provide manifest-derived
-props and a planned command shape without installing or running Node.
+props, scene timing hints, and a planned command shape without installing or
+running Node.
 Scene planning derives a single scene's shot subset, timing, platform
 dimensions, and scaled render duration before rendering a full scene preview.
 Scene previews under `renders\scene-previews\` are deterministic FFmpeg baseline

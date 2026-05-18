@@ -382,11 +382,39 @@ pub fn render_remotion_package(manifest: impl AsRef<Path>, platform: &str) -> Re
     let manifest = manifest.as_ref();
     let loaded = load_manifest(manifest)?;
     let report = validate_manifest(&loaded)?;
+    let scene_id = loaded
+        .manifest
+        .scenes
+        .first()
+        .map(|scene| scene.id.as_str())
+        .context("manifest has no scenes")?;
+    render_remotion_package_for_loaded(manifest, &loaded, &report, platform, scene_id)
+}
+
+pub fn render_remotion_package_for_scene(
+    manifest: impl AsRef<Path>,
+    platform: &str,
+    scene_id: &str,
+) -> Result<PathBuf> {
+    let manifest = manifest.as_ref();
+    let loaded = load_manifest(manifest)?;
+    let report = validate_manifest(&loaded)?;
+    render_remotion_package_for_loaded(manifest, &loaded, &report, platform, scene_id)
+}
+
+fn render_remotion_package_for_loaded(
+    manifest: &Path,
+    loaded: &LoadedManifest,
+    report: &ValidationReport,
+    platform: &str,
+    scene_id: &str,
+) -> Result<PathBuf> {
     let export = report
         .exports
         .iter()
         .find(|export| export.id == platform)
         .ok_or_else(|| anyhow!("unknown platform in manifest: {platform}"))?;
+    let scene_plan = scene_plan_for_loaded(loaded, report, scene_id, platform)?;
 
     let package_dir = PathBuf::from(format!(
         "renders/remotion/{}/{}",
@@ -405,7 +433,7 @@ pub fn render_remotion_package(manifest: impl AsRef<Path>, platform: &str) -> Re
     })?;
 
     let remotion_plan = adapters::remotion::plan(&source_manifest, &package_dir, &export.id);
-    let props = remotion_props_json(&loaded, export, &remotion_plan);
+    let props = remotion_props_json(loaded, export, &scene_plan, &remotion_plan);
     let props_path = package_dir.join("props.json");
     fs::write(&props_path, serde_json::to_string_pretty(&props)?)
         .with_context(|| format!("failed to write {}", props_path.display()))?;
@@ -413,7 +441,7 @@ pub fn render_remotion_package(manifest: impl AsRef<Path>, platform: &str) -> Re
     let readme_path = package_dir.join("README.md");
     fs::write(
         &readme_path,
-        remotion_package_readme(&loaded, export, &remotion_plan, &props_path),
+        remotion_package_readme(loaded, export, &scene_plan, &remotion_plan, &props_path),
     )
     .with_context(|| format!("failed to write {}", readme_path.display()))?;
 
@@ -642,6 +670,7 @@ fn html_escape(value: &str) -> String {
 fn remotion_props_json(
     loaded: &LoadedManifest,
     export: &ExportPlan,
+    scene_plan: &ScenePlan,
     remotion_plan: &adapters::remotion::RemotionPlan,
 ) -> serde_json::Value {
     let shots = loaded
@@ -654,6 +683,34 @@ fn remotion_props_json(
                 "scene_id": &shot.scene_id,
                 "start_seconds": shot.start_seconds,
                 "duration_seconds": shot.duration_seconds,
+                "camera": &shot.camera,
+                "action": &shot.action,
+                "visual_prompt": &shot.visual_prompt,
+                "narration": &shot.audio.narration,
+                "caption": &shot.captions.text,
+            })
+        })
+        .collect::<Vec<_>>();
+    let scene_shots = loaded
+        .manifest
+        .shots
+        .iter()
+        .filter(|shot| scene_plan.shots.iter().any(|planned| planned.id == shot.id))
+        .map(|shot| {
+            let planned = scene_plan
+                .shots
+                .iter()
+                .find(|planned| planned.id == shot.id)
+                .expect("shot was filtered from scene plan");
+            serde_json::json!({
+                "id": &shot.id,
+                "scene_id": &shot.scene_id,
+                "source_start_seconds": planned.source_start_seconds,
+                "source_duration_seconds": planned.source_duration_seconds,
+                "render_start_seconds": planned.render_start_seconds,
+                "render_duration_seconds": planned.render_duration_seconds,
+                "frame_start": (planned.render_start_seconds * 24.0).round() as u32,
+                "frame_duration": (planned.render_duration_seconds * 24.0).round() as u32,
                 "camera": &shot.camera,
                 "action": &shot.action,
                 "visual_prompt": &shot.visual_prompt,
@@ -683,6 +740,17 @@ fn remotion_props_json(
             "duration_seconds": export.duration_seconds,
             "duration_scale": export.duration_scale,
         },
+        "scene": {
+            "id": &scene_plan.scene_id,
+            "source_start_seconds": scene_plan.source_start_seconds,
+            "source_duration_seconds": scene_plan.source_duration_seconds,
+            "render_duration_seconds": scene_plan.render_duration_seconds,
+            "fps": 24,
+            "frame_count": (scene_plan.render_duration_seconds * 24.0).round() as u32,
+            "width": scene_plan.width,
+            "height": scene_plan.height,
+            "shots": scene_shots,
+        },
         "shots": shots,
         "command_shape": &remotion_plan.command_shape,
         "dependency_policy": adapters::remotion::descriptor().dependency_policy,
@@ -692,6 +760,7 @@ fn remotion_props_json(
 fn remotion_package_readme(
     loaded: &LoadedManifest,
     export: &ExportPlan,
+    scene_plan: &ScenePlan,
     remotion_plan: &adapters::remotion::RemotionPlan,
     props_path: &Path,
 ) -> String {
@@ -700,6 +769,7 @@ fn remotion_package_readme(
 This is a REEL-generated handoff package, not an executed Remotion render.\n\n\
 - Work: `{}`\n\
 - Export: `{}` (`{}`, {}x{}, {:.3}s)\n\
+- Scene: `{}` ({:.3}s source, {:.3}s render, {} shots)\n\
 - Props: `{}`\n\
 - Dependency policy: {}\n\n\
 ## Planned command shape\n\n```powershell\n{}\n```\n",
@@ -711,6 +781,10 @@ This is a REEL-generated handoff package, not an executed Remotion render.\n\n\
         export.width,
         export.height,
         export.duration_seconds,
+        scene_plan.scene_id,
+        scene_plan.source_duration_seconds,
+        scene_plan.render_duration_seconds,
+        scene_plan.shots.len(),
         props_path.display(),
         adapters::remotion::descriptor().dependency_policy,
         remotion_plan.command_shape.join(" ")

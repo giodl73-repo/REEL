@@ -27,6 +27,7 @@ adapter contracts without provider lock-in.
 | 15 | Scene export planning | done | Added `cargo run -- scene-plan <manifest> <scene-id> <platform>` to derive scene shot subsets, timing, dimensions, and scaled render duration. |
 | 16 | FFmpeg scene preview render | done | Added `cargo run -- scene-preview <manifest> <scene-id> <platform>` to render a playable scene MP4 through the FFmpeg baseline adapter. |
 | 17 | Demo scene preview integration | done | Added FFmpeg baseline scene-preview players to `cargo run -- demo <manifest>` output with not-final-art labeling. |
+| 18 | Remotion scene handoff refinement | done | Extended Remotion handoff props with scene timing, shot subset, frame hints, and caption/action/narration tracks without Node execution. |
 
 ## Success criteria
 

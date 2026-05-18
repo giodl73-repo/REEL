@@ -153,8 +153,12 @@ fn main() -> Result<()> {
             let demo = reel::render_demo(&manifest)?;
             println!("{}", demo.display());
         }
-        Command::RemotionPack { manifest, platform } => {
-            let package = reel::render_remotion_package(&manifest, &platform)?;
+        Command::RemotionPack {
+            manifest,
+            platform,
+            scene,
+        } => {
+            let package = reel::render_remotion_package_for_scene(&manifest, &platform, &scene)?;
             println!("{}", package.display());
         }
         Command::ReviewAll { root } => {
@@ -252,6 +256,8 @@ enum Command {
         manifest: PathBuf,
         #[arg(default_value = "youtube-demo")]
         platform: String,
+        #[arg(default_value = "scene-01")]
+        scene: String,
     },
     /// Render review packs for every work manifest under a root directory.
     ReviewAll {

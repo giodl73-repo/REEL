@@ -101,7 +101,7 @@ cargo run --quiet -- validate works\0001-ash-vale-last-road-before-winter\manife
 cargo run --quiet -- plan works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run --quiet -- smoke
 cargo run --quiet -- demo works\0001-ash-vale-last-road-before-winter\manifest.yaml
-cargo run --quiet -- remotion-pack works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo
+cargo run --quiet -- remotion-pack works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo scene-01
 cargo run --quiet -- review-all works
 git diff --check
 ```
