@@ -11,6 +11,8 @@ use serde::Deserialize;
 use serde_yaml::{Mapping, Value};
 use tempfile::tempdir;
 
+const SUPPORTED_MANIFEST_VERSION: &str = "reel.manifest.v0.1";
+
 const REQUIRED_TOP_FIELDS: &[&str] = &[
     "manifest_version",
     "work",
@@ -29,6 +31,9 @@ const REQUIRED_TOP_FIELDS: &[&str] = &[
     "exports",
     "review",
 ];
+
+const REQUIRED_TOP_SCALAR_FIELDS: &[&str] =
+    &["manifest_version", "work", "title", "format", "style"];
 
 const REQUIRED_SCENE_FIELDS: &[&str] = &[
     "id",
@@ -180,6 +185,7 @@ pub fn validate_manifest(loaded: &LoadedManifest) -> Result<ValidationReport> {
         .as_mapping()
         .ok_or_else(|| anyhow!("manifest root must be a mapping"))?;
     validate_required_top_fields(top)?;
+    validate_top_level_values(top)?;
     validate_required_mapping_fields(top, "source_scenario", REQUIRED_SOURCE_SCENARIO_FIELDS)?;
     validate_required_mapping_fields(top, "audience", REQUIRED_AUDIENCE_FIELDS)?;
     validate_required_mapping_fields(top, "audio", REQUIRED_AUDIO_FIELDS)?;
@@ -341,6 +347,32 @@ fn validate_required_top_fields(top: &Mapping) -> Result<()> {
 
     if !missing.is_empty() {
         bail!("missing required top-level fields: {}", missing.join(", "));
+    }
+
+    Ok(())
+}
+
+fn validate_top_level_values(top: &Mapping) -> Result<()> {
+    for field in REQUIRED_TOP_SCALAR_FIELDS {
+        let value = top
+            .get(Value::String((*field).to_string()))
+            .expect("required top-level field was checked above");
+        if is_empty_required_value(value) {
+            bail!("{field} must not be empty");
+        }
+        if !matches!(value, Value::String(_)) {
+            bail!("{field} must be a string");
+        }
+    }
+
+    let manifest_version = top
+        .get(Value::String("manifest_version".to_string()))
+        .and_then(Value::as_str)
+        .expect("manifest_version string was checked above");
+    if manifest_version != SUPPORTED_MANIFEST_VERSION {
+        bail!(
+            "unsupported manifest_version: {manifest_version}; expected {SUPPORTED_MANIFEST_VERSION}"
+        );
     }
 
     Ok(())
@@ -1333,6 +1365,45 @@ mod tests {
             error
                 .to_string()
                 .contains("shots[1].visual_prompt must not be empty")
+        );
+    }
+
+    #[test]
+    fn rejects_empty_top_level_scalar_values() {
+        let manifest = load_manifest("works/0001-ash-vale-last-road-before-winter/manifest.yaml")
+            .expect("manifest loads");
+        let mut raw = manifest.raw.clone();
+        raw["title"] = Value::String(String::new());
+        let parsed =
+            serde_yaml::from_value(raw.clone()).expect("empty top-level manifest deserializes");
+        let invalid = LoadedManifest {
+            path: manifest.path,
+            raw,
+            manifest: parsed,
+        };
+
+        let error = validate_manifest(&invalid).expect_err("empty title rejected");
+        assert!(error.to_string().contains("title must not be empty"));
+    }
+
+    #[test]
+    fn rejects_unsupported_manifest_version() {
+        let manifest = load_manifest("works/0001-ash-vale-last-road-before-winter/manifest.yaml")
+            .expect("manifest loads");
+        let mut raw = manifest.raw.clone();
+        raw["manifest_version"] = Value::String("reel.manifest.v9.9".to_string());
+        let parsed = serde_yaml::from_value(raw.clone()).expect("version manifest deserializes");
+        let invalid = LoadedManifest {
+            path: manifest.path,
+            raw,
+            manifest: parsed,
+        };
+
+        let error = validate_manifest(&invalid).expect_err("unsupported version rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported manifest_version: reel.manifest.v9.9")
         );
     }
 
