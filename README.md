@@ -114,6 +114,10 @@ cargo run -- review-all works
 Rust owns contracts, planning, and subprocess orchestration; FFmpeg, Remotion,
 Blender, and future providers stay external adapters.
 
+The adapter boundary now names FFmpeg as the implemented baseline adapter and
+keeps Remotion, Blender, and AI-video as provider-neutral planned adapters until
+a concrete work package needs them.
+
 ## Pipeline
 
 ```text

@@ -11,6 +11,8 @@ use serde::Deserialize;
 use serde_yaml::{Mapping, Value};
 use tempfile::tempdir;
 
+pub mod adapters;
+
 const SUPPORTED_MANIFEST_VERSION: &str = "reel.manifest.v0.1";
 
 const REQUIRED_TOP_FIELDS: &[&str] = &[

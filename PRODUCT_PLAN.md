@@ -101,3 +101,8 @@ git diff --check
 Renderer-specific validation stays tied to external adapters such as FFmpeg,
 while Rust remains the command surface that validates manifests, derives plans,
 and invokes those adapters.
+
+The animation adapter wave keeps FFmpeg as the implemented deterministic
+baseline and prepares Remotion, Blender, and AI-video through provider-neutral
+Rust adapter descriptors before any SDK, credential, or binary dependency is
+selected.
