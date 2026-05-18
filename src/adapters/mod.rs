@@ -61,6 +61,8 @@ pub enum RenderOperationKind {
     ShotCards,
     #[serde(rename = "contact-sheet")]
     ContactSheet,
+    #[serde(rename = "scene-preview")]
+    ScenePreview,
     #[serde(rename = "review-pack")]
     ReviewPack,
 }
@@ -71,6 +73,7 @@ impl RenderOperationKind {
             Self::Smoke => "smoke",
             Self::ShotCards => "shot-cards",
             Self::ContactSheet => "contact-sheet",
+            Self::ScenePreview => "scene-preview",
             Self::ReviewPack => "review-pack",
         }
     }
@@ -122,6 +125,14 @@ impl RenderOperation {
             adapter,
             kind: RenderOperationKind::ReviewPack,
             platform: None,
+        }
+    }
+
+    pub fn scene_preview(adapter: AdapterId, platform: impl Into<String>) -> Self {
+        Self {
+            adapter,
+            kind: RenderOperationKind::ScenePreview,
+            platform: Some(platform.into()),
         }
     }
 }

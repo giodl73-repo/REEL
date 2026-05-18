@@ -324,6 +324,17 @@ pub fn scene_plan(manifest: impl AsRef<Path>, scene_id: &str, platform: &str) ->
     scene_plan_for_loaded(&loaded, &report, scene_id, platform)
 }
 
+pub fn render_scene_preview(
+    manifest: impl AsRef<Path>,
+    scene_id: &str,
+    platform: &str,
+) -> Result<PathBuf> {
+    let loaded = load_manifest(manifest)?;
+    let report = validate_manifest(&loaded)?;
+    let plan = scene_plan_for_loaded(&loaded, &report, scene_id, platform)?;
+    render_scene_preview_for_plan(&loaded, &plan)
+}
+
 pub fn render_demo(manifest: impl AsRef<Path>) -> Result<PathBuf> {
     let manifest = manifest.as_ref();
     let loaded = load_manifest(manifest)?;
@@ -1451,6 +1462,141 @@ fn render_shot_cards_for_export(loaded: &LoadedManifest, export: &ExportPlan) ->
     )?;
 
     Ok(out_file)
+}
+
+fn render_scene_preview_for_plan(loaded: &LoadedManifest, plan: &ScenePlan) -> Result<PathBuf> {
+    let ffmpeg = adapters::ffmpeg::FfmpegAdapter;
+    let out_dir = PathBuf::from("renders/scene-previews");
+    fs::create_dir_all(&out_dir)
+        .with_context(|| format!("failed to create {}", out_dir.display()))?;
+    let out_file = out_dir.join(format!(
+        "{}-{}-{}-preview.mp4",
+        loaded.manifest.work, plan.scene_id, plan.platform
+    ));
+
+    let temp_dir = tempdir().context("failed to create temporary scene-preview workspace")?;
+    let concat_file = temp_dir.path().join("concat.txt");
+    let mut concat = String::new();
+    let font_size = if plan.height > plan.width { 28 } else { 34 };
+    let wrap_width = if plan.height > plan.width { 34 } else { 58 };
+
+    for (index, shot_plan) in plan.shots.iter().enumerate() {
+        let shot = loaded
+            .manifest
+            .shots
+            .iter()
+            .find(|shot| shot.id == shot_plan.id)
+            .ok_or_else(|| anyhow!("scene plan references unknown shot: {}", shot_plan.id))?;
+        let clip_file = temp_dir
+            .path()
+            .join(format!("scene-shot-{}.mp4", index + 1));
+        let text_file = temp_dir
+            .path()
+            .join(format!("scene-shot-{}.txt", index + 1));
+        fs::write(
+            &text_file,
+            scene_preview_text(loaded, shot, shot_plan, plan, wrap_width),
+        )
+        .with_context(|| format!("failed to write {}", text_file.display()))?;
+
+        let duration = compact_seconds(shot_plan.render_duration_seconds);
+        let source = format!(
+            "color=c={}:s={}x{}:d={}:r=24",
+            scene_color(&plan.scene_id),
+            plan.width,
+            plan.height,
+            duration
+        );
+        let primary_x = (plan.width as f64 * 0.07).round() as u32;
+        let primary_y = (plan.height as f64 * 0.16).round() as u32;
+        let primary_w = (plan.width as f64 * 0.38).round() as u32;
+        let primary_h = (plan.height as f64 * 0.22).round() as u32;
+        let accent_x = (plan.width as f64 * 0.62).round() as u32;
+        let accent_y = (plan.height as f64 * 0.46).round() as u32;
+        let accent_w = (plan.width as f64 * 0.24).round() as u32;
+        let accent_h = (plan.height as f64 * 0.16).round() as u32;
+        let caption_h = (plan.height as f64 * 0.24).round() as u32;
+        let caption_y = plan.height.saturating_sub(caption_h);
+        let filter = format!(
+            "drawbox=x={primary_x}:y={primary_y}:w={primary_w}:h={primary_h}:color=white@0.12:t=fill,drawbox=x={accent_x}:y={accent_y}:w={accent_w}:h={accent_h}:color=0x8fd3ff@0.16:t=fill,drawbox=x=0:y={caption_y}:w={}:h={caption_h}:color=black@0.48:t=fill,drawtext=textfile={}:fontcolor=white:fontsize={font_size}:line_spacing=10:x='(w*0.07)+(w*0.012)*t':y='h*0.08',format=yuv420p",
+            plan.width,
+            ffmpeg.path_argument(&text_file)?
+        );
+
+        ffmpeg.run_ffmpeg(
+            &[
+                "-hide_banner".to_string(),
+                "-loglevel".to_string(),
+                "error".to_string(),
+                "-y".to_string(),
+                "-f".to_string(),
+                "lavfi".to_string(),
+                "-i".to_string(),
+                source,
+                "-vf".to_string(),
+                filter,
+                "-c:v".to_string(),
+                "libx264".to_string(),
+                "-pix_fmt".to_string(),
+                "yuv420p".to_string(),
+                "-t".to_string(),
+                duration,
+            ],
+            &[ffmpeg.path_argument(&clip_file)?],
+        )?;
+
+        concat.push_str(&format!("file '{}'\n", ffmpeg.path_for_concat(&clip_file)?));
+    }
+
+    fs::write(&concat_file, concat)
+        .with_context(|| format!("failed to write {}", concat_file.display()))?;
+    ffmpeg.run_ffmpeg(
+        &[
+            "-hide_banner".to_string(),
+            "-loglevel".to_string(),
+            "error".to_string(),
+            "-y".to_string(),
+            "-f".to_string(),
+            "concat".to_string(),
+            "-safe".to_string(),
+            "0".to_string(),
+            "-i".to_string(),
+            ffmpeg.path_argument(&concat_file)?,
+            "-fflags".to_string(),
+            "+genpts".to_string(),
+            "-c:v".to_string(),
+            "libx264".to_string(),
+            "-pix_fmt".to_string(),
+            "yuv420p".to_string(),
+            "-avoid_negative_ts".to_string(),
+            "make_zero".to_string(),
+        ],
+        &[ffmpeg.path_argument(&out_file)?],
+    )?;
+
+    Ok(out_file)
+}
+
+fn scene_preview_text(
+    loaded: &LoadedManifest,
+    shot: &Shot,
+    shot_plan: &SceneShotPlan,
+    plan: &ScenePlan,
+    wrap_width: usize,
+) -> String {
+    format!(
+        "{}\n{} | {} | {} | render {:.3}-{:.3}s\n\nCaption: {}\n\nAction: {}\n\nCamera: {}\n\nNarration: {}",
+        loaded.manifest.title,
+        plan.scene_id,
+        shot.id,
+        plan.platform,
+        shot_plan.render_start_seconds,
+        shot_plan.render_start_seconds + shot_plan.render_duration_seconds,
+        wrap_text(non_empty(&shot.captions.text, "No caption"), wrap_width),
+        wrap_text(non_empty(&shot.action, "No action note"), wrap_width),
+        wrap_text(non_empty(&shot.camera, "No camera note"), wrap_width),
+        wrap_text(non_empty(&shot.audio.narration, "No narration"), wrap_width),
+    )
 }
 
 fn shot_card_text(

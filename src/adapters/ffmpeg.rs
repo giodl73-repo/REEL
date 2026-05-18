@@ -15,6 +15,7 @@ pub fn descriptor() -> AdapterDescriptor {
             RenderOperationKind::Smoke,
             RenderOperationKind::ShotCards,
             RenderOperationKind::ContactSheet,
+            RenderOperationKind::ScenePreview,
             RenderOperationKind::ReviewPack,
         ],
     }

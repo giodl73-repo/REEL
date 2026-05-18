@@ -18,6 +18,7 @@ pub fn descriptor() -> AdapterDescriptor {
         dependency_policy: "No Blender binary, Python script, or add-on dependency is required until implementation is explicitly selected.",
         operations: vec![
             RenderOperationKind::ShotCards,
+            RenderOperationKind::ScenePreview,
             RenderOperationKind::ReviewPack,
         ],
     }

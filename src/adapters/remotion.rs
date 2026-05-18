@@ -19,6 +19,7 @@ pub fn descriptor() -> AdapterDescriptor {
         operations: vec![
             RenderOperationKind::ShotCards,
             RenderOperationKind::ContactSheet,
+            RenderOperationKind::ScenePreview,
             RenderOperationKind::ReviewPack,
         ],
     }

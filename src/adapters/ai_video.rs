@@ -18,6 +18,7 @@ pub fn descriptor() -> AdapterDescriptor {
         dependency_policy: "No provider SDK, credentials, endpoint, account, or model name is required in the baseline contract.",
         operations: vec![
             RenderOperationKind::ShotCards,
+            RenderOperationKind::ScenePreview,
             RenderOperationKind::ReviewPack,
         ],
     }
