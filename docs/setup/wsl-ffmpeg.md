@@ -86,6 +86,18 @@ The review-pack report writes:
 renders/review-packs/0001-ash-vale-last-road-before-winter-review-pack.md
 ```
 
+Render review packs for every work manifest:
+
+```powershell
+wsl -- bash -lc 'cd /mnt/c/src/TRACKER/repos/design-labs/reel && bash scripts/render-all-review-packs.sh'
+```
+
+The batch index writes:
+
+```text
+renders/review-packs/INDEX.md
+```
+
 Render the phone-first 9:16 cut with:
 
 ```powershell
@@ -119,6 +131,7 @@ and shot intent before we build a Remotion or final animation pass.
 - REEL can generate contact-sheet PNGs from draft cuts for fast shot-rhythm
   review.
 - REEL can render a full gitignored review pack covering every manifest platform.
+- REEL can batch-render review packs for all work manifests and write an index.
 
 ## What the smoke does not prove
 
