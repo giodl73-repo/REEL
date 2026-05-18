@@ -142,9 +142,12 @@ fn main() -> Result<()> {
             let video = reel::render_work_preview(&manifest, &platform)?;
             println!("{}", video.display());
         }
-        Command::ArtifactManifest { manifest } => {
+        Command::ArtifactManifest { manifest, output } => {
             let artifact_manifest = reel::render_artifact_manifest(&manifest)?;
-            println!("{}", artifact_manifest.display());
+            match output {
+                OutputFormat::Text => println!("{}", artifact_manifest.display()),
+                OutputFormat::Json => println!("{}", std::fs::read_to_string(&artifact_manifest)?),
+            }
         }
         Command::ArtifactCheck {
             artifact_manifest,
@@ -270,6 +273,8 @@ enum Command {
     ArtifactManifest {
         #[arg(default_value = "works/0001-ash-vale-last-road-before-winter/manifest.yaml")]
         manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
     },
     /// Verify a generated artifact manifest's files and byte sizes.
     ArtifactCheck {

@@ -99,6 +99,7 @@ cargo run --quiet -- scene-preview works\0001-ash-vale-last-road-before-winter\m
 cargo run --quiet -- scene-previews works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo
 cargo run --quiet -- work-preview works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo
 cargo run --quiet -- artifact-manifest works\0001-ash-vale-last-road-before-winter\manifest.yaml
+cargo run --quiet -- artifact-manifest works\0001-ash-vale-last-road-before-winter\manifest.yaml --output json
 cargo run --quiet -- artifact-check renders\artifacts\0001-ash-vale-last-road-before-winter-artifacts.json
 cargo run --quiet -- artifact-check renders\artifacts\0001-ash-vale-last-road-before-winter-artifacts.json --output json
 cargo run --quiet -- validate manifests\templates\scenario-video.yaml

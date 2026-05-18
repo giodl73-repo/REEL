@@ -112,6 +112,7 @@ cargo run -- scene-preview works\0001-ash-vale-last-road-before-winter\manifest.
 cargo run -- scene-previews works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo
 cargo run -- work-preview works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo
 cargo run -- artifact-manifest works\0001-ash-vale-last-road-before-winter\manifest.yaml
+cargo run -- artifact-manifest works\0001-ash-vale-last-road-before-winter\manifest.yaml --output json
 cargo run -- artifact-check renders\artifacts\0001-ash-vale-last-road-before-winter-artifacts.json
 cargo run -- artifact-check renders\artifacts\0001-ash-vale-last-road-before-winter-artifacts.json --output json
 cargo run -- validate works\0001-ash-vale-last-road-before-winter\manifest.yaml
@@ -168,6 +169,7 @@ previews into a continuous baseline MP4.
 Artifact manifests under `renders\artifacts\` provide a schema version,
 machine-readable paths, byte sizes, durations, dimensions, and scene-preview
 coverage for automation.
+Add `--output json` to print the generated artifact manifest to stdout.
 Use `artifact-check` to verify that a generated artifact manifest still points to
 files with matching byte sizes and positive video durations.
 Add `--output json` when automation needs the verification summary.
