@@ -329,6 +329,19 @@ pub fn render_review_pack(manifest: impl AsRef<Path>) -> Result<PathBuf> {
             ));
         }
     }
+    markdown.push_str("\n## FFmpeg baseline work previews\n\n");
+    markdown.push_str("| Platform | MP4 | Duration |\n");
+    markdown.push_str("|---|---|---:|\n");
+    for export in &report.exports {
+        let preview = render_work_preview(manifest, &export.id)?;
+        let duration = ffprobe_duration_label(&preview)?;
+        markdown.push_str(&format!(
+            "| `{}` | `{}` | `{}s` |\n",
+            export.id,
+            preview.display(),
+            duration
+        ));
+    }
 
     fs::write(&report_path, markdown)
         .with_context(|| format!("failed to write {}", report_path.display()))?;
@@ -407,12 +420,16 @@ pub fn render_demo(manifest: impl AsRef<Path>) -> Result<PathBuf> {
                 duration,
             });
         }
+        let work_preview = render_work_preview(manifest, &export.id)?;
+        let work_preview_duration = ffprobe_duration_label(&work_preview)?;
         let duration = ffprobe_duration(&video)?;
         exports.push(DemoExport {
             export,
             video,
             sheet,
             previews,
+            work_preview,
+            work_preview_duration,
             duration,
         });
     }
@@ -603,6 +620,8 @@ struct DemoExport<'a> {
     video: PathBuf,
     sheet: PathBuf,
     previews: Vec<DemoScenePreview>,
+    work_preview: PathBuf,
+    work_preview_duration: String,
     duration: String,
 }
 
@@ -658,6 +677,12 @@ fn demo_html(
             "<video controls src=\"{}\"></video>\n<p><a href=\"{}\">Open MP4</a></p>\n",
             html_escape(&relative_render_href(&item.video)?),
             html_escape(&relative_render_href(&item.video)?)
+        ));
+        html.push_str(&format!(
+            "<h4>Full FFmpeg baseline work preview · not final art · {}s</h4>\n<video controls src=\"{}\"></video>\n<p><a href=\"{}\">Open work preview</a></p>\n",
+            html_escape(&item.work_preview_duration),
+            html_escape(&relative_render_href(&item.work_preview)?),
+            html_escape(&relative_render_href(&item.work_preview)?)
         ));
         html.push_str("<h4>FFmpeg baseline scene previews · not final art</h4>\n");
         for preview in &item.previews {
@@ -1859,6 +1884,14 @@ fn scene_color(scene_id: &str) -> &'static str {
 fn ffprobe_duration(path: &Path) -> Result<String> {
     let ffmpeg = adapters::ffmpeg::FfmpegAdapter;
     ffmpeg.ffprobe_duration(path)
+}
+
+fn ffprobe_duration_label(path: &Path) -> Result<String> {
+    let duration = ffprobe_duration(path)?;
+    match duration.parse::<f64>() {
+        Ok(value) => Ok(compact_seconds(value)),
+        Err(_) => Ok(duration),
+    }
 }
 
 fn same_duration(left: f64, right: f64) -> bool {
