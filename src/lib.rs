@@ -369,6 +369,14 @@ fn validate_required_mapping_fields(
             missing.join(", ")
         );
     }
+    for field in required_fields {
+        let value = section
+            .get(Value::String((*field).to_string()))
+            .expect("required field was checked above");
+        if is_empty_required_value(value) {
+            bail!("{section_name}.{field} must not be empty");
+        }
+    }
 
     Ok(())
 }
@@ -402,9 +410,28 @@ fn validate_required_sequence_fields(
                 missing.join(", ")
             );
         }
+        for field in required_fields {
+            let value = item
+                .get(Value::String((*field).to_string()))
+                .expect("required field was checked above");
+            if is_empty_required_value(value) {
+                bail!("{section_name}[{}].{field} must not be empty", index + 1);
+            }
+        }
     }
 
     Ok(())
+}
+
+fn is_empty_required_value(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::String(text) => text.trim().is_empty(),
+        Value::Sequence(items) => items.is_empty(),
+        Value::Mapping(items) => items.is_empty(),
+        Value::Bool(_) | Value::Number(_) => false,
+        _ => false,
+    }
 }
 
 fn validate_non_empty_sections(manifest: &Manifest) -> Result<()> {
@@ -1244,6 +1271,68 @@ mod tests {
             error
                 .to_string()
                 .contains("review missing required fields: required_roles")
+        );
+    }
+
+    #[test]
+    fn rejects_empty_required_metadata_values() {
+        let manifest = load_manifest("works/0001-ash-vale-last-road-before-winter/manifest.yaml")
+            .expect("manifest loads");
+        let mut raw = manifest.raw.clone();
+        raw["renderer_assumptions"]["candidates"] = Value::Sequence(Vec::new());
+        let parsed =
+            serde_yaml::from_value(raw.clone()).expect("empty metadata manifest deserializes");
+        let invalid = LoadedManifest {
+            path: manifest.path,
+            raw,
+            manifest: parsed,
+        };
+
+        let error = validate_manifest(&invalid).expect_err("empty metadata rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("renderer_assumptions.candidates must not be empty")
+        );
+    }
+
+    #[test]
+    fn rejects_empty_required_scene_and_shot_values() {
+        let manifest = load_manifest("works/0001-ash-vale-last-road-before-winter/manifest.yaml")
+            .expect("manifest loads");
+        let mut raw = manifest.raw.clone();
+        raw["scenes"][0]["characters"] = Value::Sequence(Vec::new());
+        let parsed =
+            serde_yaml::from_value(raw.clone()).expect("empty scene manifest deserializes");
+        let invalid = LoadedManifest {
+            path: manifest.path,
+            raw,
+            manifest: parsed,
+        };
+
+        let error = validate_manifest(&invalid).expect_err("empty scene value rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("scenes[1].characters must not be empty")
+        );
+
+        let manifest = load_manifest("works/0001-ash-vale-last-road-before-winter/manifest.yaml")
+            .expect("manifest loads");
+        let mut raw = manifest.raw.clone();
+        raw["shots"][0]["visual_prompt"] = Value::String(String::new());
+        let parsed = serde_yaml::from_value(raw.clone()).expect("empty shot manifest deserializes");
+        let invalid = LoadedManifest {
+            path: manifest.path,
+            raw,
+            manifest: parsed,
+        };
+
+        let error = validate_manifest(&invalid).expect_err("empty shot value rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("shots[1].visual_prompt must not be empty")
         );
     }
 
