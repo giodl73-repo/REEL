@@ -15,6 +15,7 @@ pub fn descriptor() -> AdapterDescriptor {
         id: AdapterId::Remotion,
         status: AdapterStatus::Planned,
         boundary: "Node/Remotion project boundary; planned only, no dependency is required yet.",
+        dependency_policy: "No Node, Remotion package, browser runtime, or npm install is required until implementation is explicitly selected.",
         operations: vec![
             RenderOperationKind::ShotCards,
             RenderOperationKind::ContactSheet,

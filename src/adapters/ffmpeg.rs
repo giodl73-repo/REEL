@@ -10,6 +10,7 @@ pub fn descriptor() -> AdapterDescriptor {
         id: AdapterId::Ffmpeg,
         status: AdapterStatus::ImplementedBaseline,
         boundary: "Rust-owned subprocess orchestration around external FFmpeg/ffprobe.",
+        dependency_policy: "Requires external FFmpeg/ffprobe at render time; no Rust rewrite or provider SDK.",
         operations: vec![
             RenderOperationKind::Smoke,
             RenderOperationKind::ShotCards,

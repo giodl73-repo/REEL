@@ -128,6 +128,9 @@ Use `cargo run -- adapter-plan <manifest>` to see which of those adapter
 boundaries a manifest declares under `renderer_assumptions.adapters`.
 Add `--output json` when automation needs a machine-readable adapter catalog or
 manifest adapter plan.
+Both text and JSON outputs include each adapter's dependency policy so reviewers
+can see whether an external binary, SDK, credential, or provider choice is
+required.
 
 The Remotion boundary is a planned file/project handoff: Rust can describe the
 manifest, output directory, platform/export id, and deterministic command shape

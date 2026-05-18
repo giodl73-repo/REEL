@@ -81,6 +81,7 @@ pub struct AdapterDescriptor {
     pub id: AdapterId,
     pub status: AdapterStatus,
     pub boundary: &'static str,
+    pub dependency_policy: &'static str,
     pub operations: Vec<RenderOperationKind>,
 }
 

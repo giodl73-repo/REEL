@@ -15,6 +15,7 @@ pub fn descriptor() -> AdapterDescriptor {
         id: AdapterId::AiVideo,
         status: AdapterStatus::Planned,
         boundary: "Provider-neutral package boundary; planned only, no SDK or credentials are required yet.",
+        dependency_policy: "No provider SDK, credentials, endpoint, account, or model name is required in the baseline contract.",
         operations: vec![
             RenderOperationKind::ShotCards,
             RenderOperationKind::ReviewPack,

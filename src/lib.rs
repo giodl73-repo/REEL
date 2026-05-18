@@ -113,6 +113,7 @@ pub struct AdapterPlanEntry {
     pub declared_by_manifest: bool,
     pub operations: Vec<adapters::RenderOperationKind>,
     pub boundary: &'static str,
+    pub dependency_policy: &'static str,
 }
 
 #[derive(Debug, Deserialize)]
@@ -365,8 +366,10 @@ pub fn render_all_review_packs(root: impl AsRef<Path>) -> Result<PathBuf> {
 fn review_pack_adapter_summary(loaded: &LoadedManifest) -> Result<String> {
     let mut markdown = String::new();
     markdown.push_str("## Adapter summary\n\n");
-    markdown.push_str("| Adapter | Status | Declared by manifest | Operations | Boundary |\n");
-    markdown.push_str("|---|---|---:|---|---|\n");
+    markdown.push_str(
+        "| Adapter | Status | Declared by manifest | Operations | Boundary | Dependency policy |\n",
+    );
+    markdown.push_str("|---|---|---:|---|---|---|\n");
     for adapter in manifest_adapter_plan(loaded)? {
         let operations = if adapter.operations.is_empty() {
             "none".to_string()
@@ -379,7 +382,7 @@ fn review_pack_adapter_summary(loaded: &LoadedManifest) -> Result<String> {
                 .join(", ")
         };
         markdown.push_str(&format!(
-            "| `{}` | `{}` | {} | `{}` | {} |\n",
+            "| `{}` | `{}` | {} | `{}` | {} | {} |\n",
             adapter.id,
             adapter.status.as_str(),
             if adapter.declared_by_manifest {
@@ -388,7 +391,8 @@ fn review_pack_adapter_summary(loaded: &LoadedManifest) -> Result<String> {
                 "no"
             },
             operations,
-            adapter.boundary
+            adapter.boundary,
+            adapter.dependency_policy
         ));
     }
     markdown.push('\n');
@@ -417,6 +421,7 @@ fn manifest_adapter_plan(loaded: &LoadedManifest) -> Result<Vec<AdapterPlanEntry
             declared_by_manifest: true,
             operations: adapter.operations.clone(),
             boundary: adapter.boundary,
+            dependency_policy: adapter.dependency_policy,
         });
     }
 
@@ -433,6 +438,7 @@ fn manifest_adapter_plan(loaded: &LoadedManifest) -> Result<Vec<AdapterPlanEntry
             declared_by_manifest: false,
             operations: adapter.operations,
             boundary: adapter.boundary,
+            dependency_policy: adapter.dependency_policy,
         });
     }
 

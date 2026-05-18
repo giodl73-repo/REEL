@@ -117,3 +117,5 @@ declares it, without executing planned providers. Declared adapters are listed
 first in manifest order, followed by undeclared known adapters.
 Use `--output json` for automation that needs stable adapter ids, status,
 operation names, boundaries, and manifest-declared flags where applicable.
+Adapter catalog and plan outputs also include dependency policies so provider or
+binary requirements remain explicit.

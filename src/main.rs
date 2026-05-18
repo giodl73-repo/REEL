@@ -50,11 +50,12 @@ fn main() -> Result<()> {
                                 .join(",")
                         };
                         println!(
-                            "{} | {} | operations={} | {}",
+                            "{} | {} | operations={} | {} | policy={}",
                             adapter.id,
                             adapter.status.as_str(),
                             operations,
-                            adapter.boundary
+                            adapter.boundary,
+                            adapter.dependency_policy
                         );
                     }
                 }
@@ -77,12 +78,13 @@ fn main() -> Result<()> {
                                 .join(",")
                         };
                         println!(
-                            "{} | {} | declared={} | operations={} | {}",
+                            "{} | {} | declared={} | operations={} | {} | policy={}",
                             adapter.id,
                             adapter.status.as_str(),
                             adapter.declared_by_manifest,
                             operations,
-                            adapter.boundary
+                            adapter.boundary,
+                            adapter.dependency_policy
                         );
                     }
                 }

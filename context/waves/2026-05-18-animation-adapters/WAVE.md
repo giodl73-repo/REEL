@@ -21,6 +21,7 @@ adapter contracts without provider lock-in.
 | 09 | Adapter metadata determinism | done | Preserved manifest-declared adapter order and rejected duplicate optional adapter ids for deterministic planning. |
 | 10 | Adapter-plan JSON output | done | Added optional `--output json` for machine-readable adapter plans while keeping text output as the default. |
 | 11 | Adapter catalog JSON output | done | Added optional `--output json` for the adapter catalog while keeping text output as the default. |
+| 12 | Adapter dependency policy | done | Added explicit dependency/provider policy to catalog, adapter-plan, JSON, and review-pack summaries. |
 
 ## Success criteria
 
