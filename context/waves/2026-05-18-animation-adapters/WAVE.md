@@ -11,6 +11,7 @@ adapter contracts without provider lock-in.
 | Pulse | Title | Status | Outcome |
 |------:|---|---|---|
 | 01 | Adapter boundary scaffold | done | Added Rust adapter descriptors and render-operation types while preserving existing FFmpeg CLI behavior. |
+| 02 | FFmpeg baseline adapter | done | Moved FFmpeg/ffprobe subprocess invocation and WSL path handling behind the baseline adapter module without changing render outputs. |
 
 ## Success criteria
 

@@ -2,7 +2,6 @@ use std::{
     collections::HashSet,
     fs,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -730,6 +729,7 @@ fn discover_work_manifests(root: &Path) -> Result<Vec<PathBuf>> {
 }
 
 fn render_smoke_for_manifest(loaded: &LoadedManifest) -> Result<PathBuf> {
+    let ffmpeg = adapters::ffmpeg::FfmpegAdapter;
     let out_dir = PathBuf::from("renders/smoke");
     fs::create_dir_all(&out_dir)
         .with_context(|| format!("failed to create {}", out_dir.display()))?;
@@ -742,11 +742,10 @@ fn render_smoke_for_manifest(loaded: &LoadedManifest) -> Result<PathBuf> {
 
     let filter = format!(
         "drawtext=textfile={}:fontcolor=white:fontsize=42:line_spacing=16:x=(w-text_w)/2:y=(h-text_h)/2,format=yuv420p",
-        path_argument(&card_file)?
+        ffmpeg.path_argument(&card_file)?
     );
 
-    run_external(
-        "ffmpeg",
+    ffmpeg.run_ffmpeg(
         &[
             "-hide_banner".to_string(),
             "-loglevel".to_string(),
@@ -772,7 +771,7 @@ fn render_smoke_for_manifest(loaded: &LoadedManifest) -> Result<PathBuf> {
             "-t".to_string(),
             "6".to_string(),
         ],
-        &[path_argument(&out_file)?],
+        &[ffmpeg.path_argument(&out_file)?],
     )?;
 
     Ok(out_file)
@@ -801,6 +800,7 @@ fn render_contact_sheet_for_export(
     loaded: &LoadedManifest,
     export: &ExportPlan,
 ) -> Result<PathBuf> {
+    let ffmpeg = adapters::ffmpeg::FfmpegAdapter;
     let video_file = PathBuf::from(format!(
         "renders/shot-cards/{}-{}-shot-cards.mp4",
         loaded.manifest.work, export.id
@@ -827,27 +827,27 @@ fn render_contact_sheet_for_export(
     let filter =
         format!("fps={fps},scale=320:-1,tile={columns}x{rows}:padding=8:margin=8:color=0x111111");
 
-    run_external(
-        "ffmpeg",
+    ffmpeg.run_ffmpeg(
         &[
             "-hide_banner".to_string(),
             "-loglevel".to_string(),
             "error".to_string(),
             "-y".to_string(),
             "-i".to_string(),
-            path_argument(&video_file)?,
+            ffmpeg.path_argument(&video_file)?,
             "-vf".to_string(),
             filter,
             "-frames:v".to_string(),
             "1".to_string(),
         ],
-        &[path_argument(&out_file)?],
+        &[ffmpeg.path_argument(&out_file)?],
     )?;
 
     Ok(out_file)
 }
 
 fn render_shot_cards_for_export(loaded: &LoadedManifest, export: &ExportPlan) -> Result<PathBuf> {
+    let ffmpeg = adapters::ffmpeg::FfmpegAdapter;
     let out_dir = PathBuf::from("renders/shot-cards");
     fs::create_dir_all(&out_dir)
         .with_context(|| format!("failed to create {}", out_dir.display()))?;
@@ -889,11 +889,10 @@ fn render_shot_cards_for_export(loaded: &LoadedManifest, export: &ExportPlan) ->
         );
         let filter = format!(
             "drawbox=x=0:y=0:w=iw:h=10:color=white@0.45:t=fill,drawbox=x=0:y=ih-90:w=iw:h=90:color=black@0.30:t=fill,drawtext=textfile={}:fontcolor=white:fontsize={font_size}:line_spacing=10:x=70:y=70,format=yuv420p",
-            path_argument(&card_file)?
+            ffmpeg.path_argument(&card_file)?
         );
 
-        run_external(
-            "ffmpeg",
+        ffmpeg.run_ffmpeg(
             &[
                 "-hide_banner".to_string(),
                 "-loglevel".to_string(),
@@ -912,17 +911,16 @@ fn render_shot_cards_for_export(loaded: &LoadedManifest, export: &ExportPlan) ->
                 "-t".to_string(),
                 compact_seconds(duration),
             ],
-            &[path_argument(&clip_file)?],
+            &[ffmpeg.path_argument(&clip_file)?],
         )?;
 
-        concat.push_str(&format!("file '{}'\n", path_for_concat(&clip_file)?));
+        concat.push_str(&format!("file '{}'\n", ffmpeg.path_for_concat(&clip_file)?));
     }
 
     fs::write(&concat_file, concat)
         .with_context(|| format!("failed to write {}", concat_file.display()))?;
 
-    run_external(
-        "ffmpeg",
+    ffmpeg.run_ffmpeg(
         &[
             "-hide_banner".to_string(),
             "-loglevel".to_string(),
@@ -933,7 +931,7 @@ fn render_shot_cards_for_export(loaded: &LoadedManifest, export: &ExportPlan) ->
             "-safe".to_string(),
             "0".to_string(),
             "-i".to_string(),
-            path_argument(&concat_file)?,
+            ffmpeg.path_argument(&concat_file)?,
             "-fflags".to_string(),
             "+genpts".to_string(),
             "-c:v".to_string(),
@@ -943,7 +941,7 @@ fn render_shot_cards_for_export(loaded: &LoadedManifest, export: &ExportPlan) ->
             "-avoid_negative_ts".to_string(),
             "make_zero".to_string(),
         ],
-        &[path_argument(&out_file)?],
+        &[ffmpeg.path_argument(&out_file)?],
     )?;
 
     Ok(out_file)
@@ -1013,85 +1011,9 @@ fn scene_color(scene_id: &str) -> &'static str {
     }
 }
 
-fn path_for_concat(path: &Path) -> Result<String> {
-    Ok(path_argument(path)?.replace('\'', "'\\''"))
-}
-
 fn ffprobe_duration(path: &Path) -> Result<String> {
-    let stdout = run_external(
-        "ffprobe",
-        &[
-            "-v".to_string(),
-            "error".to_string(),
-            "-show_entries".to_string(),
-            "format=duration".to_string(),
-            "-of".to_string(),
-            "default=nw=1:nk=1".to_string(),
-        ],
-        &[path_argument(path)?],
-    )?;
-
-    Ok(stdout.trim().to_string())
-}
-
-fn run_external(program: &str, fixed_args: &[String], runtime_args: &[String]) -> Result<String> {
-    let output = if cfg!(windows) {
-        let cwd = std::env::current_dir().context("failed to read current directory")?;
-        let mut command = format!(
-            "cd {} && {}",
-            shell_quote(&path_for_wsl(&cwd)?),
-            shell_quote(program)
-        );
-        for arg in fixed_args.iter().chain(runtime_args.iter()) {
-            command.push(' ');
-            command.push_str(&shell_quote(arg));
-        }
-
-        Command::new("wsl")
-            .args(["--", "bash", "-lc", &command])
-            .stdin(Stdio::null())
-            .output()
-            .with_context(|| format!("failed to run {program} through WSL"))?
-    } else {
-        Command::new(program)
-            .args(fixed_args)
-            .args(runtime_args)
-            .stdin(Stdio::null())
-            .output()
-            .with_context(|| format!("failed to run {program}"))?
-    };
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("{program} failed: {stderr}");
-    }
-
-    String::from_utf8(output.stdout).with_context(|| format!("{program} wrote non-utf8 output"))
-}
-
-fn path_argument(path: &Path) -> Result<String> {
-    if cfg!(windows) {
-        path_for_wsl(path)
-    } else {
-        Ok(path.to_string_lossy().to_string())
-    }
-}
-
-fn path_for_wsl(path: &Path) -> Result<String> {
-    let text = path.to_string_lossy().replace('\\', "/");
-    let bytes = text.as_bytes();
-
-    if bytes.len() >= 3 && bytes[1] == b':' && bytes[2] == b'/' {
-        let drive = (bytes[0] as char).to_ascii_lowercase();
-        let rest = &text[3..];
-        return Ok(format!("/mnt/{drive}/{rest}"));
-    }
-
-    Ok(text)
-}
-
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
+    let ffmpeg = adapters::ffmpeg::FfmpegAdapter;
+    ffmpeg.ffprobe_duration(path)
 }
 
 fn same_duration(left: f64, right: f64) -> bool {
