@@ -30,6 +30,30 @@ const REQUIRED_TOP_FIELDS: &[&str] = &[
     "review",
 ];
 
+const REQUIRED_SCENE_FIELDS: &[&str] = &[
+    "id",
+    "purpose",
+    "duration_seconds",
+    "story_beat",
+    "location",
+    "characters",
+    "continuity_notes",
+];
+
+const REQUIRED_SHOT_FIELDS: &[&str] = &[
+    "id",
+    "scene_id",
+    "start_seconds",
+    "duration_seconds",
+    "camera",
+    "action",
+    "visual_prompt",
+    "style_constraints",
+    "audio",
+    "captions",
+    "transition_out",
+];
+
 #[derive(Debug)]
 pub struct LoadedManifest {
     pub path: PathBuf,
@@ -144,6 +168,8 @@ pub fn validate_manifest(loaded: &LoadedManifest) -> Result<ValidationReport> {
         .as_mapping()
         .ok_or_else(|| anyhow!("manifest root must be a mapping"))?;
     validate_required_top_fields(top)?;
+    validate_required_sequence_fields(top, "scenes", REQUIRED_SCENE_FIELDS)?;
+    validate_required_sequence_fields(top, "shots", REQUIRED_SHOT_FIELDS)?;
     validate_non_empty_sections(&loaded.manifest)?;
     validate_unique_ids(&loaded.manifest)?;
     validate_positive_timing(&loaded.manifest)?;
@@ -293,6 +319,40 @@ fn validate_required_top_fields(top: &Mapping) -> Result<()> {
 
     if !missing.is_empty() {
         bail!("missing required top-level fields: {}", missing.join(", "));
+    }
+
+    Ok(())
+}
+
+fn validate_required_sequence_fields(
+    top: &Mapping,
+    section_name: &str,
+    required_fields: &[&str],
+) -> Result<()> {
+    let section = top
+        .get(Value::String(section_name.to_string()))
+        .ok_or_else(|| anyhow!("missing required top-level field: {section_name}"))?
+        .as_sequence()
+        .ok_or_else(|| anyhow!("{section_name} must be a sequence"))?;
+
+    for (index, item) in section.iter().enumerate() {
+        let item = item
+            .as_mapping()
+            .ok_or_else(|| anyhow!("{section_name}[{}] must be a mapping", index + 1))?;
+        let missing = required_fields
+            .iter()
+            .filter(|field| !item.contains_key(Value::String((**field).to_string())))
+            .copied()
+            .collect::<Vec<_>>();
+
+        if !missing.is_empty() {
+            bail!(
+                "{}[{}] missing required fields: {}",
+                section_name,
+                index + 1,
+                missing.join(", ")
+            );
+        }
     }
 
     Ok(())
@@ -1039,6 +1099,54 @@ mod tests {
             error
                 .to_string()
                 .contains("falls outside scene scene-01 span")
+        );
+    }
+
+    #[test]
+    fn rejects_scene_missing_documented_required_fields() {
+        let manifest = load_manifest("works/0001-ash-vale-last-road-before-winter/manifest.yaml")
+            .expect("manifest loads");
+        let mut raw = manifest.raw.clone();
+        raw["scenes"][0]
+            .as_mapping_mut()
+            .expect("scene is mapping")
+            .remove(Value::String("purpose".to_string()));
+        let parsed = serde_yaml::from_value(raw.clone()).expect("scene manifest deserializes");
+        let invalid = LoadedManifest {
+            path: manifest.path,
+            raw,
+            manifest: parsed,
+        };
+
+        let error = validate_manifest(&invalid).expect_err("missing scene field rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("scenes[1] missing required fields: purpose")
+        );
+    }
+
+    #[test]
+    fn rejects_shot_missing_documented_required_fields() {
+        let manifest = load_manifest("works/0001-ash-vale-last-road-before-winter/manifest.yaml")
+            .expect("manifest loads");
+        let mut raw = manifest.raw.clone();
+        raw["shots"][0]
+            .as_mapping_mut()
+            .expect("shot is mapping")
+            .remove(Value::String("transition_out".to_string()));
+        let parsed = serde_yaml::from_value(raw.clone()).expect("shot manifest deserializes");
+        let invalid = LoadedManifest {
+            path: manifest.path,
+            raw,
+            manifest: parsed,
+        };
+
+        let error = validate_manifest(&invalid).expect_err("missing shot field rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("shots[1] missing required fields: transition_out")
         );
     }
 
