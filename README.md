@@ -91,6 +91,13 @@ The production manifest is the handoff from design to rendering. It is defined i
 exists. A manifest must name the source scenario, target format and style,
 scene/shot order, audio, captions, renderer assumptions, and export targets.
 
+## Renderer direction
+
+The first researched implementation path is Linux-first in WSL2: FFmpeg for
+baseline assembly/encoding, then a Remotion adapter for programmatic animation.
+Blender and cinematic AI remain style-specific follow-up paths until a concrete
+work package requires them.
+
 ## Pipeline
 
 ```text
