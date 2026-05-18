@@ -21,6 +21,7 @@ into a renderer too early.
 | 09 | Manifest validation gate | done | Added a WSL-friendly manifest validator for required fields, timeline consistency, and export/platform targets. |
 | 10 | Manifest-driven export timing | done | Updated the shot-card renderer to validate first and derive aspect ratios and duration scaling from manifest exports. |
 | 11 | Scene-aware draft cards | done | Added scene-colored shot cards with visual prompts for clearer animation review. |
+| 12 | Contact sheet review exports | done | Added contact-sheet PNG generation from shot-card draft cuts for fast rhythm review. |
 
 ## Success criteria
 
@@ -38,5 +39,6 @@ into a renderer too early.
 - REEL can validate manifest structure, timeline continuity, and export targets before rendering.
 - REEL can derive draft export timing from manifest platform/export targets.
 - REEL can render scene-aware shot cards with visual prompts from the manifest.
+- REEL can render gitignored contact sheets from draft cuts for quick review.
 - Validation commands are named before renderer-specific tooling is chosen.
 - TRACKER records REEL as a Design Labs repo and dependency intake candidate.

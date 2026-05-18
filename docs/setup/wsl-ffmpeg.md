@@ -62,6 +62,18 @@ The default platform is `youtube-demo` and writes:
 renders/shot-cards/0001-ash-vale-last-road-before-winter-youtube-demo-shot-cards.mp4
 ```
 
+Create a quick contact sheet for review:
+
+```powershell
+wsl -- bash -lc 'cd /mnt/c/src/TRACKER/repos/design-labs/reel && bash scripts/render-contact-sheet.sh works/0001-ash-vale-last-road-before-winter/manifest.yaml youtube-demo'
+```
+
+The contact sheet writes:
+
+```text
+renders/contact-sheets/0001-ash-vale-last-road-before-winter-youtube-demo-contact-sheet.png
+```
+
 Render the phone-first 9:16 cut with:
 
 ```powershell
@@ -92,6 +104,8 @@ and shot intent before we build a Remotion or final animation pass.
   manifest instead of hard-coded platform timing.
 - REEL can render scene-aware draft cards that include captions, visual prompts,
   camera notes, action, and narration for animation review.
+- REEL can generate contact-sheet PNGs from draft cuts for fast shot-rhythm
+  review.
 
 ## What the smoke does not prove
 
