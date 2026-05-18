@@ -19,6 +19,7 @@ adapter contracts without provider lock-in.
 | 07 | Review-pack adapter summary | done | Added adapter summaries to review-pack reports while keeping FFmpeg as the only rendered adapter. |
 | 08 | Manifest-aware adapter planning | done | Added `cargo run -- adapter-plan <manifest>` and review-pack declaration flags for manifest-selected adapter boundaries. |
 | 09 | Adapter metadata determinism | done | Preserved manifest-declared adapter order and rejected duplicate optional adapter ids for deterministic planning. |
+| 10 | Adapter-plan JSON output | done | Added optional `--output json` for machine-readable adapter plans while keeping text output as the default. |
 
 ## Success criteria
 

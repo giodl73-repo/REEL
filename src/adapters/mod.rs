@@ -1,15 +1,21 @@
 use std::fmt;
 
+use serde::Serialize;
+
 pub mod ai_video;
 pub mod blender;
 pub mod ffmpeg;
 pub mod remotion;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub enum AdapterId {
+    #[serde(rename = "ffmpeg")]
     Ffmpeg,
+    #[serde(rename = "remotion")]
     Remotion,
+    #[serde(rename = "blender")]
     Blender,
+    #[serde(rename = "ai-video")]
     AiVideo,
 }
 
@@ -30,9 +36,11 @@ impl fmt::Display for AdapterId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub enum AdapterStatus {
+    #[serde(rename = "implemented-baseline")]
     ImplementedBaseline,
+    #[serde(rename = "planned")]
     Planned,
 }
 
@@ -45,11 +53,15 @@ impl AdapterStatus {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub enum RenderOperationKind {
+    #[serde(rename = "smoke")]
     Smoke,
+    #[serde(rename = "shot-cards")]
     ShotCards,
+    #[serde(rename = "contact-sheet")]
     ContactSheet,
+    #[serde(rename = "review-pack")]
     ReviewPack,
 }
 

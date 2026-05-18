@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_yaml::{Mapping, Value};
 use tempfile::tempdir;
 
@@ -106,7 +106,7 @@ pub struct ExportPlan {
     pub filename: String,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize)]
 pub struct AdapterPlanEntry {
     pub id: adapters::AdapterId,
     pub status: adapters::AdapterStatus,

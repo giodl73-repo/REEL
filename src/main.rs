@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -55,26 +55,32 @@ fn main() -> Result<()> {
                 );
             }
         }
-        Command::AdapterPlan { manifest } => {
-            for adapter in reel::adapter_plan(&manifest)? {
-                let operations = if adapter.operations.is_empty() {
-                    "none".to_string()
-                } else {
-                    adapter
-                        .operations
-                        .iter()
-                        .map(|operation| operation.as_str())
-                        .collect::<Vec<_>>()
-                        .join(",")
-                };
-                println!(
-                    "{} | {} | declared={} | operations={} | {}",
-                    adapter.id,
-                    adapter.status.as_str(),
-                    adapter.declared_by_manifest,
-                    operations,
-                    adapter.boundary
-                );
+        Command::AdapterPlan { manifest, output } => {
+            let adapter_plan = reel::adapter_plan(&manifest)?;
+            match output {
+                OutputFormat::Text => {
+                    for adapter in adapter_plan {
+                        let operations = if adapter.operations.is_empty() {
+                            "none".to_string()
+                        } else {
+                            adapter
+                                .operations
+                                .iter()
+                                .map(|operation| operation.as_str())
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        };
+                        println!(
+                            "{} | {} | declared={} | operations={} | {}",
+                            adapter.id,
+                            adapter.status.as_str(),
+                            adapter.declared_by_manifest,
+                            operations,
+                            adapter.boundary
+                        );
+                    }
+                }
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&adapter_plan)?),
             }
         }
         Command::ContactSheet { manifest, platform } => {
@@ -127,6 +133,8 @@ enum Command {
     AdapterPlan {
         #[arg(default_value = "works/0001-ash-vale-last-road-before-winter/manifest.yaml")]
         manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
     },
     /// Render a contact-sheet PNG through FFmpeg.
     ContactSheet {
@@ -157,4 +165,10 @@ enum Command {
         #[arg(default_value = "works")]
         root: PathBuf,
     },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum OutputFormat {
+    Text,
+    Json,
 }
