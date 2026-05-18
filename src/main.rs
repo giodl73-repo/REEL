@@ -111,6 +111,10 @@ fn main() -> Result<()> {
             let demo = reel::render_demo(&manifest)?;
             println!("{}", demo.display());
         }
+        Command::RemotionPack { manifest, platform } => {
+            let package = reel::render_remotion_package(&manifest, &platform)?;
+            println!("{}", package.display());
+        }
         Command::ReviewAll { root } => {
             let index = reel::render_all_review_packs(&root)?;
             println!("{}", index.display());
@@ -179,6 +183,13 @@ enum Command {
     Demo {
         #[arg(default_value = "works/0001-ash-vale-last-road-before-winter/manifest.yaml")]
         manifest: PathBuf,
+    },
+    /// Create a Remotion handoff package without installing or running Node.
+    RemotionPack {
+        #[arg(default_value = "works/0001-ash-vale-last-road-before-winter/manifest.yaml")]
+        manifest: PathBuf,
+        #[arg(default_value = "youtube-demo")]
+        platform: String,
     },
     /// Render review packs for every work manifest under a root directory.
     ReviewAll {

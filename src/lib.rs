@@ -328,6 +328,48 @@ pub fn render_demo(manifest: impl AsRef<Path>) -> Result<PathBuf> {
     Ok(demo_path)
 }
 
+pub fn render_remotion_package(manifest: impl AsRef<Path>, platform: &str) -> Result<PathBuf> {
+    let manifest = manifest.as_ref();
+    let loaded = load_manifest(manifest)?;
+    let report = validate_manifest(&loaded)?;
+    let export = report
+        .exports
+        .iter()
+        .find(|export| export.id == platform)
+        .ok_or_else(|| anyhow!("unknown platform in manifest: {platform}"))?;
+
+    let package_dir = PathBuf::from(format!(
+        "renders/remotion/{}/{}",
+        loaded.manifest.work, export.id
+    ));
+    fs::create_dir_all(&package_dir)
+        .with_context(|| format!("failed to create {}", package_dir.display()))?;
+
+    let source_manifest = package_dir.join("manifest.yaml");
+    fs::copy(manifest, &source_manifest).with_context(|| {
+        format!(
+            "failed to copy {} to {}",
+            manifest.display(),
+            source_manifest.display()
+        )
+    })?;
+
+    let remotion_plan = adapters::remotion::plan(&source_manifest, &package_dir, &export.id);
+    let props = remotion_props_json(&loaded, export, &remotion_plan);
+    let props_path = package_dir.join("props.json");
+    fs::write(&props_path, serde_json::to_string_pretty(&props)?)
+        .with_context(|| format!("failed to write {}", props_path.display()))?;
+
+    let readme_path = package_dir.join("README.md");
+    fs::write(
+        &readme_path,
+        remotion_package_readme(&loaded, export, &remotion_plan, &props_path),
+    )
+    .with_context(|| format!("failed to write {}", readme_path.display()))?;
+
+    Ok(package_dir)
+}
+
 pub fn render_shot_cards(manifest: impl AsRef<Path>, platform: &str) -> Result<PathBuf> {
     let loaded = load_manifest(manifest)?;
     let report = validate_manifest(&loaded)?;
@@ -537,6 +579,84 @@ fn html_escape(value: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+fn remotion_props_json(
+    loaded: &LoadedManifest,
+    export: &ExportPlan,
+    remotion_plan: &adapters::remotion::RemotionPlan,
+) -> serde_json::Value {
+    let shots = loaded
+        .manifest
+        .shots
+        .iter()
+        .map(|shot| {
+            serde_json::json!({
+                "id": &shot.id,
+                "scene_id": &shot.scene_id,
+                "start_seconds": shot.start_seconds,
+                "duration_seconds": shot.duration_seconds,
+                "camera": &shot.camera,
+                "action": &shot.action,
+                "visual_prompt": &shot.visual_prompt,
+                "narration": &shot.audio.narration,
+                "caption": &shot.captions.text,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    serde_json::json!({
+        "adapter": "remotion",
+        "status": "planned-handoff",
+        "work": &loaded.manifest.work,
+        "title": &loaded.manifest.title,
+        "format": &loaded.manifest.format,
+        "style": &loaded.manifest.style,
+        "source_scenario": {
+            "repo": &loaded.manifest.source_scenario.repo,
+            "id": &loaded.manifest.source_scenario.id,
+        },
+        "export": {
+            "id": &export.id,
+            "filename": &export.filename,
+            "aspect_ratio": &export.aspect_ratio,
+            "width": export.width,
+            "height": export.height,
+            "duration_seconds": export.duration_seconds,
+            "duration_scale": export.duration_scale,
+        },
+        "shots": shots,
+        "command_shape": &remotion_plan.command_shape,
+        "dependency_policy": adapters::remotion::descriptor().dependency_policy,
+    })
+}
+
+fn remotion_package_readme(
+    loaded: &LoadedManifest,
+    export: &ExportPlan,
+    remotion_plan: &adapters::remotion::RemotionPlan,
+    props_path: &Path,
+) -> String {
+    format!(
+        "# Remotion handoff: {} / {}\n\n\
+This is a REEL-generated handoff package, not an executed Remotion render.\n\n\
+- Work: `{}`\n\
+- Export: `{}` (`{}`, {}x{}, {:.3}s)\n\
+- Props: `{}`\n\
+- Dependency policy: {}\n\n\
+## Planned command shape\n\n```powershell\n{}\n```\n",
+        loaded.manifest.title,
+        export.id,
+        loaded.manifest.work,
+        export.id,
+        export.aspect_ratio,
+        export.width,
+        export.height,
+        export.duration_seconds,
+        props_path.display(),
+        adapters::remotion::descriptor().dependency_policy,
+        remotion_plan.command_shape.join(" ")
+    )
 }
 
 pub fn adapter_plan(manifest: impl AsRef<Path>) -> Result<Vec<AdapterPlanEntry>> {

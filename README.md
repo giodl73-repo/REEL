@@ -113,6 +113,7 @@ cargo run -- shot-cards works\0001-ash-vale-last-road-before-winter\manifest.yam
 cargo run -- contact-sheet works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo
 cargo run -- review-pack works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- demo works\0001-ash-vale-last-road-before-winter\manifest.yaml
+cargo run -- remotion-pack works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo
 cargo run -- review-all works
 ```
 
@@ -145,6 +146,8 @@ Review packs include an adapter summary so reviewers can see the FFmpeg baseline
 used for rendered outputs and the planned animation adapter boundaries.
 Demo pages under `renders\demo\` provide a browser-openable view of the FFmpeg
 baseline MP4s, contact sheets, review pack, and adapter summary.
+Remotion handoff packages under `renders\remotion\` provide manifest-derived
+props and a planned command shape without installing or running Node.
 
 ## Pipeline
 
@@ -179,6 +182,7 @@ cargo run --quiet -- validate works\0001-ash-vale-last-road-before-winter\manife
 cargo run --quiet -- plan works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run --quiet -- smoke
 cargo run --quiet -- demo works\0001-ash-vale-last-road-before-winter\manifest.yaml
+cargo run --quiet -- remotion-pack works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo
 cargo run --quiet -- review-all works
 git diff --check
 ```
