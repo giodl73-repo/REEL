@@ -113,6 +113,7 @@ cargo run -- scene-previews works\0001-ash-vale-last-road-before-winter\manifest
 cargo run -- work-preview works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo
 cargo run -- artifact-manifest works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- artifact-check renders\artifacts\0001-ash-vale-last-road-before-winter-artifacts.json
+cargo run -- artifact-check renders\artifacts\0001-ash-vale-last-road-before-winter-artifacts.json --output json
 cargo run -- validate works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- plan works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- shot-cards works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo
@@ -168,6 +169,7 @@ Artifact manifests under `renders\artifacts\` provide machine-readable paths,
 byte sizes, durations, dimensions, and scene-preview coverage for automation.
 Use `artifact-check` to verify that a generated artifact manifest still points to
 files with matching byte sizes and positive video durations.
+Add `--output json` when automation needs the verification summary.
 The `review-all` index links each work's review pack and artifact manifest.
 
 ## Pipeline

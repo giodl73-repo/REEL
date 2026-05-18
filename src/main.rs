@@ -146,12 +146,23 @@ fn main() -> Result<()> {
             let artifact_manifest = reel::render_artifact_manifest(&manifest)?;
             println!("{}", artifact_manifest.display());
         }
-        Command::ArtifactCheck { artifact_manifest } => {
+        Command::ArtifactCheck {
+            artifact_manifest,
+            output,
+        } => {
             let report = reel::check_artifact_manifest(&artifact_manifest)?;
-            println!(
-                "{} | platforms={} | files={} | bytes={}",
-                report.artifact_manifest, report.platforms, report.files, report.total_bytes
-            );
+            match output {
+                OutputFormat::Text => {
+                    println!(
+                        "{} | platforms={} | files={} | bytes={}",
+                        report.artifact_manifest,
+                        report.platforms,
+                        report.files,
+                        report.total_bytes
+                    );
+                }
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+            }
         }
         Command::ContactSheet { manifest, platform } => {
             let sheet = reel::render_contact_sheet(&manifest, &platform)?;
@@ -266,6 +277,8 @@ enum Command {
             default_value = "renders/artifacts/0001-ash-vale-last-road-before-winter-artifacts.json"
         )]
         artifact_manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
     },
     /// Render a contact-sheet PNG through FFmpeg.
     ContactSheet {
