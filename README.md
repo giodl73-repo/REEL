@@ -102,8 +102,11 @@ work package requires them.
 The REEL CLI is the durable orchestration layer:
 
 ```powershell
+cargo run -- smoke
 cargo run -- validate works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- plan works\0001-ash-vale-last-road-before-winter\manifest.yaml
+cargo run -- shot-cards works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo
+cargo run -- contact-sheet works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo
 cargo run -- review-pack works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- review-all works
 ```
@@ -138,7 +141,10 @@ REEL/
 ## Validation
 
 ```powershell
-cargo test
-git grep -n "REEL" -- README.md PRODUCT_PLAN.md context\waves\PHASES.md
+cargo test --quiet
+cargo run --quiet -- validate works\0001-ash-vale-last-road-before-winter\manifest.yaml
+cargo run --quiet -- plan works\0001-ash-vale-last-road-before-winter\manifest.yaml
+cargo run --quiet -- smoke
+cargo run --quiet -- review-all works
 git diff --check
 ```

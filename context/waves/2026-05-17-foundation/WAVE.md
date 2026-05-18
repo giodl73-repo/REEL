@@ -30,6 +30,7 @@ into a renderer too early.
 | 18 | Rust shot-card orchestration | done | Moved shot-card MP4 FFmpeg orchestration into Rust and removed the Bash shot-card adapter. |
 | 19 | Rust validation canonical path | done | Removed the legacy Bash manifest validator and documented `cargo run -- validate` as the canonical pre-render gate. |
 | 20 | Rust smoke orchestration | done | Moved the starter smoke MP4 renderer into Rust and removed the last Bash FFmpeg adapter. |
+| 21 | Rust CLI command surface docs | done | Updated README and product validation docs to show the current Rust-owned smoke, validation, planning, render, and review commands. |
 
 ## Success criteria
 
@@ -51,10 +52,11 @@ into a renderer too early.
 - REEL can render a gitignored review pack for all manifest platforms.
 - REEL can batch-render review packs for all work manifests under `works/`.
 - REEL has a Rust CLI core so contracts and orchestration fit the wider portfolio while renderers remain external dependencies.
-- REEL writes review-pack reports and indexes in Rust, leaving Bash only as FFmpeg adapter glue.
+- REEL writes review-pack reports and indexes in Rust.
 - REEL renders contact sheets through Rust-owned FFmpeg orchestration.
 - REEL renders shot-card MP4s through Rust-owned FFmpeg orchestration.
 - REEL uses Rust manifest validation as the canonical pre-render gate.
 - REEL renders smoke MP4s through Rust-owned FFmpeg orchestration.
+- REEL documents its current Rust CLI command surface for validation and review rendering.
 - Validation commands are named before renderer-specific tooling is chosen.
 - TRACKER records REEL as a Design Labs repo and dependency intake candidate.

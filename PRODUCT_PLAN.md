@@ -89,10 +89,14 @@ consume:
 The foundation wave is documentation-first:
 
 ```powershell
-cargo test
-git grep -n "REEL" -- README.md PRODUCT_PLAN.md context\waves\PHASES.md
+cargo test --quiet
+cargo run --quiet -- validate works\0001-ash-vale-last-road-before-winter\manifest.yaml
+cargo run --quiet -- plan works\0001-ash-vale-last-road-before-winter\manifest.yaml
+cargo run --quiet -- smoke
+cargo run --quiet -- review-all works
 git diff --check
 ```
 
-Later implementation waves should add renderer-specific validation only after a
-renderer is selected through `reel-research`.
+Renderer-specific validation stays tied to external adapters such as FFmpeg,
+while Rust remains the command surface that validates manifests, derives plans,
+and invokes those adapters.
