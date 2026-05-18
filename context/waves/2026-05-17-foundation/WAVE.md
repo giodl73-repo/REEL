@@ -16,6 +16,7 @@ into a renderer too early.
 | 04 | Renderer research | done | Selected WSL2 Ubuntu + FFmpeg as the baseline path, Remotion as the first animation prototype boundary, and Blender/AI-video as deferred style-specific paths. |
 | 05 | WSL FFmpeg smoke render | done | Added a WSL setup guide and manifest-fed FFmpeg smoke renderer that writes gitignored MP4 drafts. |
 | 06 | First original video package | done | Created the Ash Vale trailer package from BANISH scenario evidence and rendered its first FFmpeg smoke draft. |
+| 07 | FFmpeg shot-card draft | done | Added a manifest-driven shot-card renderer that turns each shot into a timed draft card sequence. |
 
 ## Success criteria
 
@@ -28,5 +29,6 @@ into a renderer too early.
 - REEL has a researched first renderer path that keeps Linux video tooling in WSL2 and avoids provider lock-in.
 - REEL can produce a gitignored FFmpeg smoke MP4 from the starter scenario manifest in WSL2.
 - REEL has a first original Games Design scenario video package with brief, script, shotlist, manifest, and panel review.
+- REEL can render a gitignored shot-card MP4 that follows a work manifest's shot order and durations.
 - Validation commands are named before renderer-specific tooling is chosen.
 - TRACKER records REEL as a Design Labs repo and dependency intake candidate.

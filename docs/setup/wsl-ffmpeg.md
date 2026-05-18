@@ -42,11 +42,29 @@ renders/smoke/0001-example-scenario-video-smoke.mp4
 `renders/` is gitignored. Commit the manifest, script, docs, and review notes,
 not generated media.
 
+## Run the shot-card renderer
+
+Once a work has a full manifest, render a timed card sequence for every shot:
+
+```powershell
+wsl -- bash -lc 'cd /mnt/c/src/TRACKER/repos/design-labs/reel && bash scripts/render-shot-cards.sh works/0001-ash-vale-last-road-before-winter/manifest.yaml'
+```
+
+The script writes:
+
+```text
+renders/shot-cards/0001-ash-vale-last-road-before-winter-shot-cards.mp4
+```
+
+This is still a draft renderer: it proves order, duration, captions, narration,
+and shot intent before we build a Remotion or final animation pass.
+
 ## What the smoke proves
 
 - WSL2 can run the REEL renderer path.
 - FFmpeg can encode an MP4 from manifest-derived text cards and silence.
 - REEL manifests can drive renderer inputs without a provider-specific schema.
+- REEL can render a timed shot-card draft from the manifest shot list.
 
 ## What the smoke does not prove
 
