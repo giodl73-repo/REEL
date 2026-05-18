@@ -169,12 +169,14 @@ pub struct ArtifactScenePreview {
 #[derive(Debug, Serialize)]
 pub struct ArtifactVideo {
     pub path: String,
+    pub bytes: u64,
     pub duration_seconds: f64,
 }
 
 #[derive(Debug, Serialize)]
 pub struct ArtifactImage {
     pub path: String,
+    pub bytes: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -457,6 +459,7 @@ pub fn render_artifact_manifest(manifest: impl AsRef<Path>) -> Result<PathBuf> {
                 scene_id: scene.id.clone(),
                 video: ArtifactVideo {
                     path: path_text(&preview),
+                    bytes: file_bytes(&preview)?,
                     duration_seconds: plan.render_duration_seconds,
                 },
             });
@@ -471,13 +474,16 @@ pub fn render_artifact_manifest(manifest: impl AsRef<Path>) -> Result<PathBuf> {
             height: export.height,
             shot_cards: ArtifactVideo {
                 path: path_text(&shot_cards),
+                bytes: file_bytes(&shot_cards)?,
                 duration_seconds: ffprobe_duration_seconds(&shot_cards)?,
             },
             contact_sheet: ArtifactImage {
                 path: path_text(&contact_sheet),
+                bytes: file_bytes(&contact_sheet)?,
             },
             work_preview: ArtifactVideo {
                 path: path_text(&work_preview),
+                bytes: file_bytes(&work_preview)?,
                 duration_seconds: ffprobe_duration_seconds(&work_preview)?,
             },
             scene_previews,
@@ -2038,6 +2044,12 @@ fn ffprobe_duration_label(path: &Path) -> Result<String> {
 
 fn path_text(path: &Path) -> String {
     path.display().to_string()
+}
+
+fn file_bytes(path: &Path) -> Result<u64> {
+    Ok(fs::metadata(path)
+        .with_context(|| format!("failed to inspect {}", path.display()))?
+        .len())
 }
 
 fn same_duration(left: f64, right: f64) -> bool {
