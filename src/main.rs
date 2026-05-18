@@ -107,6 +107,10 @@ fn main() -> Result<()> {
             let report = reel::render_review_pack(&manifest)?;
             println!("{}", report.display());
         }
+        Command::Demo { manifest } => {
+            let demo = reel::render_demo(&manifest)?;
+            println!("{}", demo.display());
+        }
         Command::ReviewAll { root } => {
             let index = reel::render_all_review_packs(&root)?;
             println!("{}", index.display());
@@ -168,6 +172,11 @@ enum Command {
     },
     /// Render one manifest's review pack through Rust orchestration and FFmpeg adapters.
     ReviewPack {
+        #[arg(default_value = "works/0001-ash-vale-last-road-before-winter/manifest.yaml")]
+        manifest: PathBuf,
+    },
+    /// Render a browser-openable HTML demo page for one manifest.
+    Demo {
         #[arg(default_value = "works/0001-ash-vale-last-road-before-winter/manifest.yaml")]
         manifest: PathBuf,
     },

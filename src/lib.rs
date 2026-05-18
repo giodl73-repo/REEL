@@ -296,6 +296,38 @@ pub fn render_review_pack(manifest: impl AsRef<Path>) -> Result<PathBuf> {
     Ok(report_path)
 }
 
+pub fn render_demo(manifest: impl AsRef<Path>) -> Result<PathBuf> {
+    let manifest = manifest.as_ref();
+    let loaded = load_manifest(manifest)?;
+    let report = validate_manifest(&loaded)?;
+
+    let out_dir = PathBuf::from("renders/demo");
+    fs::create_dir_all(&out_dir)
+        .with_context(|| format!("failed to create {}", out_dir.display()))?;
+    let demo_path = out_dir.join(format!("{}-demo.html", loaded.manifest.work));
+    let review_pack = render_review_pack(manifest)?;
+
+    let mut exports = Vec::new();
+    for export in &report.exports {
+        let video = render_shot_cards_for_export(&loaded, export)?;
+        let sheet = render_contact_sheet_for_export(&loaded, export)?;
+        let duration = ffprobe_duration(&video)?;
+        exports.push(DemoExport {
+            export,
+            video,
+            sheet,
+            duration,
+        });
+    }
+
+    fs::write(
+        &demo_path,
+        demo_html(&loaded, manifest, &review_pack, &exports)?,
+    )
+    .with_context(|| format!("failed to write {}", demo_path.display()))?;
+    Ok(demo_path)
+}
+
 pub fn render_shot_cards(manifest: impl AsRef<Path>, platform: &str) -> Result<PathBuf> {
     let loaded = load_manifest(manifest)?;
     let report = validate_manifest(&loaded)?;
@@ -397,6 +429,114 @@ fn review_pack_adapter_summary(loaded: &LoadedManifest) -> Result<String> {
     }
     markdown.push('\n');
     Ok(markdown)
+}
+
+struct DemoExport<'a> {
+    export: &'a ExportPlan,
+    video: PathBuf,
+    sheet: PathBuf,
+    duration: String,
+}
+
+fn demo_html(
+    loaded: &LoadedManifest,
+    manifest: &Path,
+    review_pack: &Path,
+    exports: &[DemoExport<'_>],
+) -> Result<String> {
+    let mut html = String::new();
+    html.push_str("<!doctype html>\n<html lang=\"en\">\n<head>\n");
+    html.push_str("<meta charset=\"utf-8\">\n");
+    html.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n");
+    html.push_str(&format!(
+        "<title>REEL demo: {}</title>\n",
+        html_escape(&loaded.manifest.title)
+    ));
+    html.push_str("<style>body{font-family:system-ui,sans-serif;margin:2rem;max-width:1100px;background:#101820;color:#f7f7f7}a{color:#8fd3ff}.cards{display:grid;gap:1.5rem}.card{background:#182635;border:1px solid #31465d;border-radius:12px;padding:1rem}video,img{max-width:100%;border-radius:8px;background:#000}.meta{color:#b7c6d8}</style>\n");
+    html.push_str("</head>\n<body>\n");
+    html.push_str(&format!(
+        "<h1>{}</h1>\n<p class=\"meta\">Work <code>{}</code> · format <code>{}</code> · style <code>{}</code></p>\n",
+        html_escape(&loaded.manifest.title),
+        html_escape(&loaded.manifest.work),
+        html_escape(&loaded.manifest.format),
+        html_escape(&loaded.manifest.style)
+    ));
+    html.push_str(&format!(
+        "<p>Manifest: <code>{}</code><br>Review pack: <a href=\"{}\">{}</a></p>\n",
+        html_escape(&manifest.display().to_string()),
+        html_escape(&relative_render_href(review_pack)?),
+        html_escape(&review_pack.display().to_string())
+    ));
+    html.push_str("<h2>Adapter summary</h2>\n");
+    html.push_str(&markdown_table_to_html(&review_pack_adapter_summary(
+        loaded,
+    )?));
+    html.push_str("<h2>FFmpeg baseline exports</h2>\n<div class=\"cards\">\n");
+    for item in exports {
+        html.push_str("<section class=\"card\">\n");
+        html.push_str(&format!(
+            "<h3>{} · {} · {}s</h3>\n",
+            html_escape(&item.export.id),
+            html_escape(&item.export.aspect_ratio),
+            html_escape(&item.duration)
+        ));
+        html.push_str(&format!(
+            "<video controls src=\"{}\"></video>\n<p><a href=\"{}\">Open MP4</a></p>\n",
+            html_escape(&relative_render_href(&item.video)?),
+            html_escape(&relative_render_href(&item.video)?)
+        ));
+        html.push_str(&format!(
+            "<h4>Contact sheet</h4>\n<img src=\"{}\" alt=\"{} contact sheet\">\n<p><a href=\"{}\">Open contact sheet</a></p>\n",
+            html_escape(&relative_render_href(&item.sheet)?),
+            html_escape(&item.export.id),
+            html_escape(&relative_render_href(&item.sheet)?)
+        ));
+        html.push_str("</section>\n");
+    }
+    html.push_str("</div>\n</body>\n</html>\n");
+    Ok(html)
+}
+
+fn relative_render_href(path: &Path) -> Result<String> {
+    let renders = Path::new("renders");
+    let relative = path
+        .strip_prefix(renders)
+        .with_context(|| format!("demo artifact is outside renders: {}", path.display()))?;
+    Ok(format!(
+        "../{}",
+        relative.to_string_lossy().replace('\\', "/")
+    ))
+}
+
+fn markdown_table_to_html(markdown: &str) -> String {
+    let rows = markdown
+        .lines()
+        .filter(|line| line.starts_with('|') && !line.starts_with("|---"))
+        .collect::<Vec<_>>();
+    if rows.is_empty() {
+        return String::new();
+    }
+
+    let mut html = String::from("<table>\n");
+    for (index, row) in rows.iter().enumerate() {
+        let tag = if index == 0 { "th" } else { "td" };
+        html.push_str("<tr>");
+        for cell in row.trim_matches('|').split('|') {
+            let cell = cell.trim().trim_matches('`');
+            html.push_str(&format!("<{tag}>{}</{tag}>", html_escape(cell)));
+        }
+        html.push_str("</tr>\n");
+    }
+    html.push_str("</table>\n");
+    html
+}
+
+fn html_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 pub fn adapter_plan(manifest: impl AsRef<Path>) -> Result<Vec<AdapterPlanEntry>> {

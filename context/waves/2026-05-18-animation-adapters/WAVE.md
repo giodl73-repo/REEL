@@ -22,6 +22,7 @@ adapter contracts without provider lock-in.
 | 10 | Adapter-plan JSON output | done | Added optional `--output json` for machine-readable adapter plans while keeping text output as the default. |
 | 11 | Adapter catalog JSON output | done | Added optional `--output json` for the adapter catalog while keeping text output as the default. |
 | 12 | Adapter dependency policy | done | Added explicit dependency/provider policy to catalog, adapter-plan, JSON, and review-pack summaries. |
+| 13 | Browser demo page | done | Added `cargo run -- demo <manifest>` to render a browser-openable HTML demo from FFmpeg baseline artifacts and adapter summaries. |
 
 ## Success criteria
 

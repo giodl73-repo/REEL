@@ -98,6 +98,7 @@ cargo run --quiet -- validate manifests\templates\scenario-video.yaml
 cargo run --quiet -- validate works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run --quiet -- plan works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run --quiet -- smoke
+cargo run --quiet -- demo works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run --quiet -- review-all works
 git diff --check
 ```
