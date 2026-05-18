@@ -90,6 +90,8 @@ and shot intent before we build a Remotion or final animation pass.
 - REEL can validate manifest timing and export targets before rendering.
 - REEL can derive shot-card export aspect ratios and duration scaling from the
   manifest instead of hard-coded platform timing.
+- REEL can render scene-aware draft cards that include captions, visual prompts,
+  camera notes, action, and narration for animation review.
 
 ## What the smoke does not prove
 

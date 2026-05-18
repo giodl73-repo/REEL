@@ -20,6 +20,7 @@ into a renderer too early.
 | 08 | Shot-card export variants | done | Added 16:9 YouTube and 9:16 iPhone/social shot-card exports from the same manifest. |
 | 09 | Manifest validation gate | done | Added a WSL-friendly manifest validator for required fields, timeline consistency, and export/platform targets. |
 | 10 | Manifest-driven export timing | done | Updated the shot-card renderer to validate first and derive aspect ratios and duration scaling from manifest exports. |
+| 11 | Scene-aware draft cards | done | Added scene-colored shot cards with visual prompts for clearer animation review. |
 
 ## Success criteria
 
@@ -36,5 +37,6 @@ into a renderer too early.
 - REEL can render platform-specific shot-card drafts for YouTube/demo and iPhone/social review.
 - REEL can validate manifest structure, timeline continuity, and export targets before rendering.
 - REEL can derive draft export timing from manifest platform/export targets.
+- REEL can render scene-aware shot cards with visual prompts from the manifest.
 - Validation commands are named before renderer-specific tooling is chosen.
 - TRACKER records REEL as a Design Labs repo and dependency intake candidate.

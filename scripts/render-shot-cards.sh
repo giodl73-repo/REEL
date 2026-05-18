@@ -115,7 +115,7 @@ function clean(line) {
 }
 function emit() {
   if (id != "") {
-    print id "\t" duration "\t" caption "\t" camera "\t" action "\t" narration
+    print id "\t" scene_id "\t" duration "\t" caption "\t" camera "\t" action "\t" visual_prompt "\t" narration
   }
 }
 /^shots:/ { in_shots = 1; next }
@@ -128,16 +128,20 @@ in_shots && /^[A-Za-z_]+:/ {
 in_shots && /^  - id: "shot-/ {
   emit()
   id = clean($0)
+  scene_id = ""
   duration = "4"
   caption = ""
   camera = ""
   action = ""
+  visual_prompt = ""
   narration = ""
   next
 }
+in_shots && id != "" && /^    scene_id:/ { scene_id = clean($0); next }
 in_shots && id != "" && /^    duration_seconds:/ { duration = clean($0); next }
 in_shots && id != "" && /^    camera:/ { camera = clean($0); next }
 in_shots && id != "" && /^    action:/ { action = clean($0); next }
+in_shots && id != "" && /^    visual_prompt:/ { visual_prompt = clean($0); next }
 in_shots && id != "" && /^      narration:/ { narration = clean($0); next }
 in_shots && id != "" && /^      text:/ { caption = clean($0); next }
 END { emit() }
@@ -148,7 +152,7 @@ if [[ ! -s "$shots_tsv" ]]; then
   exit 3
 fi
 
-base_duration="$(awk -F '\t' '{ total += $2 } END { printf "%.3f", total }' "$shots_tsv")"
+base_duration="$(awk -F '\t' '{ total += $3 } END { printf "%.3f", total }' "$shots_tsv")"
 duration_scale="$(awk -v target="$target_duration" -v base="$base_duration" 'BEGIN {
   if (base <= 0 || target <= 0) {
     exit 1
@@ -160,29 +164,40 @@ wrap() {
   printf '%s' "$1" | fold -s -w "$wrap_width"
 }
 
+scene_color() {
+  case "$1" in
+    scene-01) printf '0x102A43' ;;
+    scene-02) printf '0x243B2F' ;;
+    scene-03) printf '0x3B263A' ;;
+    *) printf '0x041E42' ;;
+  esac
+}
+
 concat_list="$tmp_dir/concat.txt"
 : > "$concat_list"
 
 index=0
-while IFS=$'\t' read -r shot_id duration caption camera action narration; do
+while IFS=$'\t' read -r shot_id scene_id duration caption camera action visual_prompt narration; do
   index=$((index + 1))
   card_text="$tmp_dir/card-$index.txt"
   clip_file="$tmp_dir/shot-$index.mp4"
   duration="${duration:-4}"
   duration="$(awk -v d="$duration" -v s="$duration_scale" 'BEGIN { printf "%.3f", d * s }')"
+  bg_color="$(scene_color "$scene_id")"
 
   {
     printf '%s\n' "$title"
-    printf '%s | %s | %s | %s | %s | target %ss\n\n' "$shot_id" "$format" "$style" "$platform" "$platform_aspect" "$target_duration"
+    printf '%s | %s | %s | %s | %s | target %ss\n\n' "$shot_id" "${scene_id:-unknown-scene}" "$style" "$platform" "$platform_aspect" "$target_duration"
     printf 'Caption: %s\n' "$(wrap "${caption:-No caption}")"
+    printf '\nVisual: %s\n' "$(wrap "${visual_prompt:-No visual prompt}")"
     printf '\nCamera: %s\n' "$(wrap "${camera:-No camera note}")"
     printf '\nAction: %s\n' "$(wrap "${action:-No action note}")"
     printf '\nNarration: %s\n' "$(wrap "${narration:-No narration}")"
   } > "$card_text"
 
   ffmpeg -hide_banner -loglevel error -y \
-    -f lavfi -i "color=c=0x041E42:s=${width}x${height}:d=${duration}:r=24" \
-    -vf "drawtext=textfile=$card_text:fontcolor=white:fontsize=${font_size}:line_spacing=10:x=70:y=70,format=yuv420p" \
+    -f lavfi -i "color=c=${bg_color}:s=${width}x${height}:d=${duration}:r=24" \
+    -vf "drawbox=x=0:y=0:w=iw:h=10:color=white@0.45:t=fill,drawbox=x=0:y=ih-90:w=iw:h=90:color=black@0.30:t=fill,drawtext=textfile=$card_text:fontcolor=white:fontsize=${font_size}:line_spacing=10:x=70:y=70,format=yuv420p" \
     -c:v libx264 \
     -pix_fmt yuv420p \
     -t "$duration" \
