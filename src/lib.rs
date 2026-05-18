@@ -838,6 +838,21 @@ mod tests {
     }
 
     #[test]
+    fn validates_starter_manifest_template() {
+        let manifest =
+            load_manifest("manifests/templates/scenario-video.yaml").expect("template loads");
+        let report = validate_manifest(&manifest).expect("template validates");
+
+        assert!(same_duration(report.scene_total, 60.0));
+        assert!(same_duration(report.shot_total, 60.0));
+        assert_eq!(report.exports.len(), 2);
+        assert_eq!(report.exports[0].id, "iphone-social");
+        assert!(same_duration(report.exports[0].duration_scale, 0.75));
+        assert_eq!(report.exports[1].id, "youtube-demo");
+        assert!(same_duration(report.exports[1].duration_scale, 1.0));
+    }
+
+    #[test]
     fn formats_integer_seconds_for_ffmpeg_ratios() {
         assert_eq!(compact_seconds(45.0), "45");
         assert_eq!(compact_seconds(45.25), "45.250");

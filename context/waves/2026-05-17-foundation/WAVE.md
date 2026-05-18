@@ -31,6 +31,7 @@ into a renderer too early.
 | 19 | Rust validation canonical path | done | Removed the legacy Bash manifest validator and documented `cargo run -- validate` as the canonical pre-render gate. |
 | 20 | Rust smoke orchestration | done | Moved the starter smoke MP4 renderer into Rust and removed the last Bash FFmpeg adapter. |
 | 21 | Rust CLI command surface docs | done | Updated README and product validation docs to show the current Rust-owned smoke, validation, planning, render, and review commands. |
+| 22 | Valid starter manifest contract | done | Updated the starter scenario-video template so it passes Rust validation and added regression coverage. |
 
 ## Success criteria
 
@@ -58,5 +59,6 @@ into a renderer too early.
 - REEL uses Rust manifest validation as the canonical pre-render gate.
 - REEL renders smoke MP4s through Rust-owned FFmpeg orchestration.
 - REEL documents its current Rust CLI command surface for validation and review rendering.
+- REEL's starter manifest template passes the same Rust validation contract as work manifests.
 - Validation commands are named before renderer-specific tooling is chosen.
 - TRACKER records REEL as a Design Labs repo and dependency intake candidate.

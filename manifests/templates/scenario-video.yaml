@@ -37,7 +37,7 @@ continuity:
 scenes:
   - id: "scene-01"
     purpose: "Open with the scenario promise."
-    duration_seconds: 12
+    duration_seconds: 60
     story_beat: "A place under pressure is established."
     location: "place-1"
     characters: ["character-1"]
@@ -47,7 +47,7 @@ shots:
   - id: "shot-001"
     scene_id: "scene-01"
     start_seconds: 0
-    duration_seconds: 4
+    duration_seconds: 60
     camera: "slow isometric push over the map"
     action: "Reveal the settlement and pressure point."
     visual_prompt: "Isometric game view of the source scenario location, readable silhouettes, dusk palette."
@@ -61,7 +61,7 @@ shots:
     captions:
       text: "A settlement under pressure"
       safe_area: "phone-safe center lower third"
-    transition_out: "hard cut on music pulse"
+    transition_out: "fade on music pulse"
 audio:
   narration_voice: "calm, cinematic, concise"
   music_direction: "restrained tension, no heroic swell before the reveal"
