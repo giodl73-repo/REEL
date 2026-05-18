@@ -35,6 +35,7 @@ into a renderer too early.
 | 23 | Manifest identity validation | done | Added Rust checks for duplicate IDs, positive timing, and platform/export coverage before rendering. |
 | 24 | Scene span validation | done | Added Rust checks that each shot falls within the timeline span of its referenced scene. |
 | 25 | Nested manifest field validation | done | Added Rust checks for documented required scene and shot fields before rendering. |
+| 26 | Metadata manifest field validation | done | Added Rust checks for documented source, audience, audio, captions, renderer assumptions, and review fields. |
 
 ## Success criteria
 
@@ -66,5 +67,6 @@ into a renderer too early.
 - REEL rejects duplicate manifest IDs, non-positive timing, and platform/export coverage gaps.
 - REEL rejects shots whose timelines fall outside their referenced scene spans.
 - REEL rejects scenes and shots that omit documented required manifest fields.
+- REEL rejects metadata sections that omit documented required manifest fields.
 - Validation commands are named before renderer-specific tooling is chosen.
 - TRACKER records REEL as a Design Labs repo and dependency intake candidate.

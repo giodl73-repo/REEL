@@ -40,6 +40,15 @@ Each scene must define:
 - `characters`
 - `continuity_notes`
 
+## Metadata section contracts
+
+`source_scenario` must define `repo`, `path`, `id`, and `source_commit`.
+`audience` must define `primary`, `context`, and `desired_effect`.
+`audio` must define `narration_voice`, `music_direction`, `effects_direction`,
+and `silence_notes`. `captions` must define `required`, `style`, and
+`language`. `renderer_assumptions` must define `candidates` and `blockers`.
+`review` must define `required_roles` and `status`.
+
 ## Shot contract
 
 Each shot must define:
@@ -81,8 +90,8 @@ Before rendering, validate a work manifest with the Rust CLI:
 cargo run -- validate works\0001-ash-vale-last-road-before-winter\manifest.yaml
 ```
 
-The validator checks required top-level, scene, and shot fields; non-empty and
-unique scene, shot, platform, and export identifiers; positive timing; scene and
-shot duration totals; shot start offsets; shot-to-scene references; shot
-placement within the referenced scene timeline; and platform/export coverage,
-duration, aspect ratio, and filename consistency.
+The validator checks required top-level, metadata, scene, and shot fields;
+non-empty and unique scene, shot, platform, and export identifiers; positive
+timing; scene and shot duration totals; shot start offsets; shot-to-scene
+references; shot placement within the referenced scene timeline; and
+platform/export coverage, duration, aspect ratio, and filename consistency.

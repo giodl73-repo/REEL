@@ -54,6 +54,18 @@ const REQUIRED_SHOT_FIELDS: &[&str] = &[
     "transition_out",
 ];
 
+const REQUIRED_SOURCE_SCENARIO_FIELDS: &[&str] = &["repo", "path", "id", "source_commit"];
+const REQUIRED_AUDIENCE_FIELDS: &[&str] = &["primary", "context", "desired_effect"];
+const REQUIRED_AUDIO_FIELDS: &[&str] = &[
+    "narration_voice",
+    "music_direction",
+    "effects_direction",
+    "silence_notes",
+];
+const REQUIRED_CAPTIONS_FIELDS: &[&str] = &["required", "style", "language"];
+const REQUIRED_RENDERER_ASSUMPTIONS_FIELDS: &[&str] = &["candidates", "blockers"];
+const REQUIRED_REVIEW_FIELDS: &[&str] = &["required_roles", "status"];
+
 #[derive(Debug)]
 pub struct LoadedManifest {
     pub path: PathBuf,
@@ -168,6 +180,16 @@ pub fn validate_manifest(loaded: &LoadedManifest) -> Result<ValidationReport> {
         .as_mapping()
         .ok_or_else(|| anyhow!("manifest root must be a mapping"))?;
     validate_required_top_fields(top)?;
+    validate_required_mapping_fields(top, "source_scenario", REQUIRED_SOURCE_SCENARIO_FIELDS)?;
+    validate_required_mapping_fields(top, "audience", REQUIRED_AUDIENCE_FIELDS)?;
+    validate_required_mapping_fields(top, "audio", REQUIRED_AUDIO_FIELDS)?;
+    validate_required_mapping_fields(top, "captions", REQUIRED_CAPTIONS_FIELDS)?;
+    validate_required_mapping_fields(
+        top,
+        "renderer_assumptions",
+        REQUIRED_RENDERER_ASSUMPTIONS_FIELDS,
+    )?;
+    validate_required_mapping_fields(top, "review", REQUIRED_REVIEW_FIELDS)?;
     validate_required_sequence_fields(top, "scenes", REQUIRED_SCENE_FIELDS)?;
     validate_required_sequence_fields(top, "shots", REQUIRED_SHOT_FIELDS)?;
     validate_non_empty_sections(&loaded.manifest)?;
@@ -319,6 +341,33 @@ fn validate_required_top_fields(top: &Mapping) -> Result<()> {
 
     if !missing.is_empty() {
         bail!("missing required top-level fields: {}", missing.join(", "));
+    }
+
+    Ok(())
+}
+
+fn validate_required_mapping_fields(
+    top: &Mapping,
+    section_name: &str,
+    required_fields: &[&str],
+) -> Result<()> {
+    let section = top
+        .get(Value::String(section_name.to_string()))
+        .ok_or_else(|| anyhow!("missing required top-level field: {section_name}"))?
+        .as_mapping()
+        .ok_or_else(|| anyhow!("{section_name} must be a mapping"))?;
+    let missing = required_fields
+        .iter()
+        .filter(|field| !section.contains_key(Value::String((**field).to_string())))
+        .copied()
+        .collect::<Vec<_>>();
+
+    if !missing.is_empty() {
+        bail!(
+            "{} missing required fields: {}",
+            section_name,
+            missing.join(", ")
+        );
     }
 
     Ok(())
@@ -1147,6 +1196,54 @@ mod tests {
             error
                 .to_string()
                 .contains("shots[1] missing required fields: transition_out")
+        );
+    }
+
+    #[test]
+    fn rejects_source_scenario_missing_documented_required_fields() {
+        let manifest = load_manifest("works/0001-ash-vale-last-road-before-winter/manifest.yaml")
+            .expect("manifest loads");
+        let mut raw = manifest.raw.clone();
+        raw["source_scenario"]
+            .as_mapping_mut()
+            .expect("source_scenario is mapping")
+            .remove(Value::String("path".to_string()));
+        let parsed = serde_yaml::from_value(raw.clone()).expect("metadata manifest deserializes");
+        let invalid = LoadedManifest {
+            path: manifest.path,
+            raw,
+            manifest: parsed,
+        };
+
+        let error = validate_manifest(&invalid).expect_err("missing source path rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("source_scenario missing required fields: path")
+        );
+    }
+
+    #[test]
+    fn rejects_review_missing_documented_required_fields() {
+        let manifest = load_manifest("works/0001-ash-vale-last-road-before-winter/manifest.yaml")
+            .expect("manifest loads");
+        let mut raw = manifest.raw.clone();
+        raw["review"]
+            .as_mapping_mut()
+            .expect("review is mapping")
+            .remove(Value::String("required_roles".to_string()));
+        let parsed = serde_yaml::from_value(raw.clone()).expect("review manifest deserializes");
+        let invalid = LoadedManifest {
+            path: manifest.path,
+            raw,
+            manifest: parsed,
+        };
+
+        let error = validate_manifest(&invalid).expect_err("missing review roles rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("review missing required fields: required_roles")
         );
     }
 
