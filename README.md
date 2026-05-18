@@ -147,7 +147,8 @@ SDKs, credentials, endpoints, or model names in the baseline contract.
 Review packs include an adapter summary so reviewers can see the FFmpeg baseline
 used for rendered outputs and the planned animation adapter boundaries.
 Demo pages under `renders\demo\` provide a browser-openable view of the FFmpeg
-baseline MP4s, contact sheets, review pack, and adapter summary.
+baseline MP4s, baseline scene previews, contact sheets, review pack, and adapter
+summary.
 Remotion handoff packages under `renders\remotion\` provide manifest-derived
 props and a planned command shape without installing or running Node.
 Scene planning derives a single scene's shot subset, timing, platform

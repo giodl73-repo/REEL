@@ -347,14 +347,25 @@ pub fn render_demo(manifest: impl AsRef<Path>) -> Result<PathBuf> {
     let review_pack = render_review_pack(manifest)?;
 
     let mut exports = Vec::new();
+    let preview_scene = loaded
+        .manifest
+        .scenes
+        .first()
+        .map(|scene| scene.id.clone())
+        .context("manifest has no scenes")?;
     for export in &report.exports {
         let video = render_shot_cards_for_export(&loaded, export)?;
         let sheet = render_contact_sheet_for_export(&loaded, export)?;
+        let preview_plan = scene_plan_for_loaded(&loaded, &report, &preview_scene, &export.id)?;
+        let preview = render_scene_preview_for_plan(&loaded, &preview_plan)?;
+        let preview_duration = compact_seconds(preview_plan.render_duration_seconds);
         let duration = ffprobe_duration(&video)?;
         exports.push(DemoExport {
             export,
             video,
             sheet,
+            preview,
+            preview_duration,
             duration,
         });
     }
@@ -516,6 +527,8 @@ struct DemoExport<'a> {
     export: &'a ExportPlan,
     video: PathBuf,
     sheet: PathBuf,
+    preview: PathBuf,
+    preview_duration: String,
     duration: String,
 }
 
@@ -565,6 +578,12 @@ fn demo_html(
             "<video controls src=\"{}\"></video>\n<p><a href=\"{}\">Open MP4</a></p>\n",
             html_escape(&relative_render_href(&item.video)?),
             html_escape(&relative_render_href(&item.video)?)
+        ));
+        html.push_str(&format!(
+            "<h4>FFmpeg baseline scene preview · not final art · {}s</h4>\n<video controls src=\"{}\"></video>\n<p><a href=\"{}\">Open scene preview</a></p>\n",
+            html_escape(&item.preview_duration),
+            html_escape(&relative_render_href(&item.preview)?),
+            html_escape(&relative_render_href(&item.preview)?)
         ));
         html.push_str(&format!(
             "<h4>Contact sheet</h4>\n<img src=\"{}\" alt=\"{} contact sheet\">\n<p><a href=\"{}\">Open contact sheet</a></p>\n",
