@@ -34,25 +34,31 @@ fn main() -> Result<()> {
                 );
             }
         }
-        Command::Adapters => {
-            for adapter in reel::adapters::adapter_catalog() {
-                let operations = if adapter.operations.is_empty() {
-                    "none".to_string()
-                } else {
-                    adapter
-                        .operations
-                        .iter()
-                        .map(|operation| operation.as_str())
-                        .collect::<Vec<_>>()
-                        .join(",")
-                };
-                println!(
-                    "{} | {} | operations={} | {}",
-                    adapter.id,
-                    adapter.status.as_str(),
-                    operations,
-                    adapter.boundary
-                );
+        Command::Adapters { output } => {
+            let catalog = reel::adapters::adapter_catalog();
+            match output {
+                OutputFormat::Text => {
+                    for adapter in catalog {
+                        let operations = if adapter.operations.is_empty() {
+                            "none".to_string()
+                        } else {
+                            adapter
+                                .operations
+                                .iter()
+                                .map(|operation| operation.as_str())
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        };
+                        println!(
+                            "{} | {} | operations={} | {}",
+                            adapter.id,
+                            adapter.status.as_str(),
+                            operations,
+                            adapter.boundary
+                        );
+                    }
+                }
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&catalog)?),
             }
         }
         Command::AdapterPlan { manifest, output } => {
@@ -128,7 +134,10 @@ enum Command {
         manifest: PathBuf,
     },
     /// Print available and planned render adapters.
-    Adapters,
+    Adapters {
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
     /// Print manifest-aware adapter plan for a REEL manifest.
     AdapterPlan {
         #[arg(default_value = "works/0001-ash-vale-last-road-before-winter/manifest.yaml")]

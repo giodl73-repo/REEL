@@ -99,6 +99,7 @@ Before rendering, validate a work manifest with the Rust CLI:
 
 ```powershell
 cargo run -- validate works\0001-ash-vale-last-road-before-winter\manifest.yaml
+cargo run -- adapters --output json
 cargo run -- adapter-plan works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- adapter-plan works\0001-ash-vale-last-road-before-winter\manifest.yaml --output json
 ```
@@ -115,4 +116,4 @@ The adapter plan command reports each known adapter and whether the manifest
 declares it, without executing planned providers. Declared adapters are listed
 first in manifest order, followed by undeclared known adapters.
 Use `--output json` for automation that needs stable adapter ids, status,
-declared flags, operation names, and boundaries.
+operation names, boundaries, and manifest-declared flags where applicable.

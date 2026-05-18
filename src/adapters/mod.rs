@@ -76,7 +76,7 @@ impl RenderOperationKind {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct AdapterDescriptor {
     pub id: AdapterId,
     pub status: AdapterStatus,
@@ -84,7 +84,7 @@ pub struct AdapterDescriptor {
     pub operations: Vec<RenderOperationKind>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct RenderOperation {
     pub adapter: AdapterId,
     pub kind: RenderOperationKind,

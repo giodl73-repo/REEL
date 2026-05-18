@@ -104,6 +104,7 @@ The REEL CLI is the durable orchestration layer:
 ```powershell
 cargo run -- smoke
 cargo run -- adapters
+cargo run -- adapters --output json
 cargo run -- adapter-plan works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- adapter-plan works\0001-ash-vale-last-road-before-winter\manifest.yaml --output json
 cargo run -- validate works\0001-ash-vale-last-road-before-winter\manifest.yaml
@@ -125,7 +126,8 @@ Use `cargo run -- adapters` to inspect the implemented baseline and planned
 adapter boundaries.
 Use `cargo run -- adapter-plan <manifest>` to see which of those adapter
 boundaries a manifest declares under `renderer_assumptions.adapters`.
-Add `--output json` when automation needs a machine-readable adapter plan.
+Add `--output json` when automation needs a machine-readable adapter catalog or
+manifest adapter plan.
 
 The Remotion boundary is a planned file/project handoff: Rust can describe the
 manifest, output directory, platform/export id, and deterministic command shape
