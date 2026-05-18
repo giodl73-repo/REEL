@@ -335,6 +335,19 @@ pub fn render_scene_preview(
     render_scene_preview_for_plan(&loaded, &plan)
 }
 
+pub fn render_scene_previews(manifest: impl AsRef<Path>, platform: &str) -> Result<Vec<PathBuf>> {
+    let loaded = load_manifest(manifest)?;
+    let report = validate_manifest(&loaded)?;
+    let mut previews = Vec::new();
+
+    for scene in &loaded.manifest.scenes {
+        let plan = scene_plan_for_loaded(&loaded, &report, &scene.id, platform)?;
+        previews.push(render_scene_preview_for_plan(&loaded, &plan)?);
+    }
+
+    Ok(previews)
+}
+
 pub fn render_demo(manifest: impl AsRef<Path>) -> Result<PathBuf> {
     let manifest = manifest.as_ref();
     let loaded = load_manifest(manifest)?;

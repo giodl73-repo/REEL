@@ -133,6 +133,11 @@ fn main() -> Result<()> {
             let video = reel::render_scene_preview(&manifest, &scene, &platform)?;
             println!("{}", video.display());
         }
+        Command::ScenePreviews { manifest, platform } => {
+            for video in reel::render_scene_previews(&manifest, &platform)? {
+                println!("{}", video.display());
+            }
+        }
         Command::ContactSheet { manifest, platform } => {
             let sheet = reel::render_contact_sheet(&manifest, &platform)?;
             println!("{}", sheet.display());
@@ -218,6 +223,13 @@ enum Command {
         manifest: PathBuf,
         #[arg(default_value = "scene-01")]
         scene: String,
+        #[arg(default_value = "youtube-demo")]
+        platform: String,
+    },
+    /// Render every scene preview MP4 for one platform through FFmpeg.
+    ScenePreviews {
+        #[arg(default_value = "works/0001-ash-vale-last-road-before-winter/manifest.yaml")]
+        manifest: PathBuf,
         #[arg(default_value = "youtube-demo")]
         platform: String,
     },
