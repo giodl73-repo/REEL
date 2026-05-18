@@ -95,7 +95,7 @@ pub struct ValidationReport {
     pub exports: Vec<ExportPlan>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize)]
 pub struct ExportPlan {
     pub id: String,
     pub aspect_ratio: String,
@@ -136,6 +136,45 @@ pub struct AdapterPlanEntry {
     pub operations: Vec<adapters::RenderOperationKind>,
     pub boundary: &'static str,
     pub dependency_policy: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ArtifactManifest {
+    pub work: String,
+    pub title: String,
+    pub manifest: String,
+    pub generated_unix: u64,
+    pub baseline_adapter: &'static str,
+    pub platforms: Vec<ArtifactPlatform>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ArtifactPlatform {
+    pub id: String,
+    pub aspect_ratio: String,
+    pub width: u32,
+    pub height: u32,
+    pub shot_cards: ArtifactVideo,
+    pub contact_sheet: ArtifactImage,
+    pub work_preview: ArtifactVideo,
+    pub scene_previews: Vec<ArtifactScenePreview>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ArtifactScenePreview {
+    pub scene_id: String,
+    pub video: ArtifactVideo,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ArtifactVideo {
+    pub path: String,
+    pub duration_seconds: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ArtifactImage {
+    pub path: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -386,11 +425,70 @@ pub fn render_work_preview(manifest: impl AsRef<Path>, platform: &str) -> Result
         bail!("manifest has no scenes to preview");
     }
 
-    let out_dir = PathBuf::from("renders/work-previews");
+    render_work_preview_for_paths(&loaded.manifest.work, platform, &previews)
+}
+
+pub fn render_artifact_manifest(manifest: impl AsRef<Path>) -> Result<PathBuf> {
+    let manifest = manifest.as_ref();
+    let loaded = load_manifest(manifest)?;
+    let report = validate_manifest(&loaded)?;
+    let out_dir = PathBuf::from("renders/artifacts");
     fs::create_dir_all(&out_dir)
         .with_context(|| format!("failed to create {}", out_dir.display()))?;
-    let out_file = out_dir.join(format!("{}-{}-preview.mp4", loaded.manifest.work, platform));
-    concat_mp4_files(&previews, &out_file)?;
+    let out_file = out_dir.join(format!("{}-artifacts.json", loaded.manifest.work));
+
+    let mut platforms = Vec::new();
+    for export in &report.exports {
+        let shot_cards = render_shot_cards_for_export(&loaded, export)?;
+        let contact_sheet = render_contact_sheet_for_export(&loaded, export)?;
+        let mut scene_previews = Vec::new();
+        let mut preview_paths = Vec::new();
+
+        for scene in &loaded.manifest.scenes {
+            let plan = scene_plan_for_loaded(&loaded, &report, &scene.id, &export.id)?;
+            let preview = render_scene_preview_for_plan(&loaded, &plan)?;
+            preview_paths.push(preview.clone());
+            scene_previews.push(ArtifactScenePreview {
+                scene_id: scene.id.clone(),
+                video: ArtifactVideo {
+                    path: path_text(&preview),
+                    duration_seconds: plan.render_duration_seconds,
+                },
+            });
+        }
+
+        let work_preview =
+            render_work_preview_for_paths(&loaded.manifest.work, &export.id, &preview_paths)?;
+        platforms.push(ArtifactPlatform {
+            id: export.id.clone(),
+            aspect_ratio: export.aspect_ratio.clone(),
+            width: export.width,
+            height: export.height,
+            shot_cards: ArtifactVideo {
+                path: path_text(&shot_cards),
+                duration_seconds: ffprobe_duration_seconds(&shot_cards)?,
+            },
+            contact_sheet: ArtifactImage {
+                path: path_text(&contact_sheet),
+            },
+            work_preview: ArtifactVideo {
+                path: path_text(&work_preview),
+                duration_seconds: ffprobe_duration_seconds(&work_preview)?,
+            },
+            scene_previews,
+        });
+    }
+
+    let artifact_manifest = ArtifactManifest {
+        work: loaded.manifest.work.clone(),
+        title: loaded.manifest.title.clone(),
+        manifest: path_text(manifest),
+        generated_unix: unix_now()?,
+        baseline_adapter: "ffmpeg",
+        platforms,
+    };
+    fs::write(&out_file, serde_json::to_string_pretty(&artifact_manifest)?)
+        .with_context(|| format!("failed to write {}", out_file.display()))?;
     Ok(out_file)
 }
 
@@ -1795,6 +1893,23 @@ fn concat_mp4_files(files: &[PathBuf], out_file: &Path) -> Result<()> {
     Ok(())
 }
 
+fn render_work_preview_for_paths(
+    work: &str,
+    platform: &str,
+    previews: &[PathBuf],
+) -> Result<PathBuf> {
+    if previews.is_empty() {
+        bail!("no scene previews to concatenate");
+    }
+
+    let out_dir = PathBuf::from("renders/work-previews");
+    fs::create_dir_all(&out_dir)
+        .with_context(|| format!("failed to create {}", out_dir.display()))?;
+    let out_file = out_dir.join(format!("{work}-{platform}-preview.mp4"));
+    concat_mp4_files(previews, &out_file)?;
+    Ok(out_file)
+}
+
 fn scene_preview_text(
     loaded: &LoadedManifest,
     shot: &Shot,
@@ -1886,12 +2001,26 @@ fn ffprobe_duration(path: &Path) -> Result<String> {
     ffmpeg.ffprobe_duration(path)
 }
 
+fn ffprobe_duration_seconds(path: &Path) -> Result<f64> {
+    let duration = ffprobe_duration(path)?;
+    duration.parse::<f64>().with_context(|| {
+        format!(
+            "ffprobe returned non-numeric duration for {}",
+            path.display()
+        )
+    })
+}
+
 fn ffprobe_duration_label(path: &Path) -> Result<String> {
     let duration = ffprobe_duration(path)?;
     match duration.parse::<f64>() {
         Ok(value) => Ok(compact_seconds(value)),
         Err(_) => Ok(duration),
     }
+}
+
+fn path_text(path: &Path) -> String {
+    path.display().to_string()
 }
 
 fn same_duration(left: f64, right: f64) -> bool {

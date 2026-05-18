@@ -111,6 +111,7 @@ cargo run -- scene-plan works\0001-ash-vale-last-road-before-winter\manifest.yam
 cargo run -- scene-preview works\0001-ash-vale-last-road-before-winter\manifest.yaml scene-01 youtube-demo
 cargo run -- scene-previews works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo
 cargo run -- work-preview works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo
+cargo run -- artifact-manifest works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- validate works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- plan works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- shot-cards works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo
@@ -162,6 +163,8 @@ MP4s with shot timing, text treatment, and simple animated motion.
 Use `scene-previews` to render every manifest scene for one platform.
 Work previews under `renders\work-previews\` concatenate the platform's scene
 previews into a continuous baseline MP4.
+Artifact manifests under `renders\artifacts\` provide machine-readable paths,
+durations, dimensions, and scene-preview coverage for automation.
 
 ## Pipeline
 

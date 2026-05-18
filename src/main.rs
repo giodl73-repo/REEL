@@ -142,6 +142,10 @@ fn main() -> Result<()> {
             let video = reel::render_work_preview(&manifest, &platform)?;
             println!("{}", video.display());
         }
+        Command::ArtifactManifest { manifest } => {
+            let artifact_manifest = reel::render_artifact_manifest(&manifest)?;
+            println!("{}", artifact_manifest.display());
+        }
         Command::ContactSheet { manifest, platform } => {
             let sheet = reel::render_contact_sheet(&manifest, &platform)?;
             println!("{}", sheet.display());
@@ -243,6 +247,11 @@ enum Command {
         manifest: PathBuf,
         #[arg(default_value = "youtube-demo")]
         platform: String,
+    },
+    /// Render baseline artifacts and write a machine-readable artifact manifest.
+    ArtifactManifest {
+        #[arg(default_value = "works/0001-ash-vale-last-road-before-winter/manifest.yaml")]
+        manifest: PathBuf,
     },
     /// Render a contact-sheet PNG through FFmpeg.
     ContactSheet {
