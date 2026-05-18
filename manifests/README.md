@@ -49,6 +49,12 @@ and `silence_notes`. `captions` must define `required`, `style`, and
 `language`. `renderer_assumptions` must define `candidates` and `blockers`.
 `review` must define `required_roles` and `status`.
 
+## Platform and export contracts
+
+Each platform must define `name`, `aspect_ratio`, `target_duration_seconds`, and
+`sound_optional`. Each export must define `id`, `filename`, `aspect_ratio`, and
+`duration_seconds`.
+
 ## Shot contract
 
 Each shot must define:
@@ -91,8 +97,8 @@ cargo run -- validate works\0001-ash-vale-last-road-before-winter\manifest.yaml
 ```
 
 The validator checks the supported manifest version; required top-level,
-metadata, scene, and shot fields; non-empty required values; non-empty and unique
-scene, shot, platform, and export identifiers; positive timing; scene and shot
-duration totals; shot start offsets; shot-to-scene references; shot placement
-within the referenced scene timeline; and platform/export coverage, duration,
-aspect ratio, and filename consistency.
+metadata, platform, export, scene, and shot fields; non-empty required values;
+non-empty and unique scene, shot, platform, and export identifiers; positive
+timing; scene and shot duration totals; shot start offsets; shot-to-scene
+references; shot placement within the referenced scene timeline; and
+platform/export coverage, duration, aspect ratio, and filename consistency.

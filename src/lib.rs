@@ -59,6 +59,15 @@ const REQUIRED_SHOT_FIELDS: &[&str] = &[
     "transition_out",
 ];
 
+const REQUIRED_PLATFORM_FIELDS: &[&str] = &[
+    "name",
+    "aspect_ratio",
+    "target_duration_seconds",
+    "sound_optional",
+];
+
+const REQUIRED_EXPORT_FIELDS: &[&str] = &["id", "filename", "aspect_ratio", "duration_seconds"];
+
 const REQUIRED_SOURCE_SCENARIO_FIELDS: &[&str] = &["repo", "path", "id", "source_commit"];
 const REQUIRED_AUDIENCE_FIELDS: &[&str] = &["primary", "context", "desired_effect"];
 const REQUIRED_AUDIO_FIELDS: &[&str] = &[
@@ -196,8 +205,10 @@ pub fn validate_manifest(loaded: &LoadedManifest) -> Result<ValidationReport> {
         REQUIRED_RENDERER_ASSUMPTIONS_FIELDS,
     )?;
     validate_required_mapping_fields(top, "review", REQUIRED_REVIEW_FIELDS)?;
+    validate_required_sequence_fields(top, "platforms", REQUIRED_PLATFORM_FIELDS)?;
     validate_required_sequence_fields(top, "scenes", REQUIRED_SCENE_FIELDS)?;
     validate_required_sequence_fields(top, "shots", REQUIRED_SHOT_FIELDS)?;
+    validate_required_sequence_fields(top, "exports", REQUIRED_EXPORT_FIELDS)?;
     validate_non_empty_sections(&loaded.manifest)?;
     validate_unique_ids(&loaded.manifest)?;
     validate_positive_timing(&loaded.manifest)?;
@@ -1255,6 +1266,53 @@ mod tests {
             error
                 .to_string()
                 .contains("shots[1] missing required fields: transition_out")
+        );
+    }
+
+    #[test]
+    fn rejects_platform_missing_documented_required_fields() {
+        let manifest = load_manifest("works/0001-ash-vale-last-road-before-winter/manifest.yaml")
+            .expect("manifest loads");
+        let mut raw = manifest.raw.clone();
+        raw["platforms"][0]
+            .as_mapping_mut()
+            .expect("platform is mapping")
+            .remove(Value::String("sound_optional".to_string()));
+        let parsed = serde_yaml::from_value(raw.clone()).expect("platform manifest deserializes");
+        let invalid = LoadedManifest {
+            path: manifest.path,
+            raw,
+            manifest: parsed,
+        };
+
+        let error = validate_manifest(&invalid).expect_err("missing platform field rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("platforms[1] missing required fields: sound_optional")
+        );
+    }
+
+    #[test]
+    fn rejects_export_missing_documented_required_fields() {
+        let manifest = load_manifest("works/0001-ash-vale-last-road-before-winter/manifest.yaml")
+            .expect("manifest loads");
+        let mut raw = manifest.raw.clone();
+        raw["exports"][0]
+            .as_mapping_mut()
+            .expect("export is mapping")
+            .remove(Value::String("filename".to_string()));
+        let invalid = LoadedManifest {
+            path: manifest.path,
+            raw,
+            manifest: manifest.manifest,
+        };
+
+        let error = validate_manifest(&invalid).expect_err("missing export field rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("exports[1] missing required fields: filename")
         );
     }
 

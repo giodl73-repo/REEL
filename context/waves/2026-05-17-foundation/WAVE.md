@@ -38,6 +38,7 @@ into a renderer too early.
 | 26 | Metadata manifest field validation | done | Added Rust checks for documented source, audience, audio, captions, renderer assumptions, and review fields. |
 | 27 | Required value validation | done | Added Rust checks that documented required metadata, scene, and shot fields are not empty. |
 | 28 | Top-level value validation | done | Added Rust checks for supported manifest version and non-empty top-level scalar fields. |
+| 29 | Platform and export field validation | done | Added Rust checks for documented required platform and export fields before rendering. |
 
 ## Success criteria
 
@@ -72,5 +73,6 @@ into a renderer too early.
 - REEL rejects metadata sections that omit documented required manifest fields.
 - REEL rejects documented required metadata, scene, and shot fields with empty values.
 - REEL rejects unsupported manifest versions and empty top-level scalar fields.
+- REEL rejects platforms and exports that omit documented required fields.
 - Validation commands are named before renderer-specific tooling is chosen.
 - TRACKER records REEL as a Design Labs repo and dependency intake candidate.
