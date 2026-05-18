@@ -1,5 +1,7 @@
 use std::fmt;
 
+pub mod ai_video;
+pub mod blender;
 pub mod ffmpeg;
 pub mod remotion;
 
@@ -115,18 +117,8 @@ pub fn adapter_catalog() -> Vec<AdapterDescriptor> {
     vec![
         ffmpeg::descriptor(),
         remotion::descriptor(),
-        AdapterDescriptor {
-            id: AdapterId::Blender,
-            status: AdapterStatus::Planned,
-            boundary: "Blender CLI or Python file boundary; no binary is required yet.",
-            operations: Vec::new(),
-        },
-        AdapterDescriptor {
-            id: AdapterId::AiVideo,
-            status: AdapterStatus::Planned,
-            boundary: "Provider-neutral package boundary; no SDK or credentials are required yet.",
-            operations: Vec::new(),
-        },
+        blender::descriptor(),
+        ai_video::descriptor(),
     ]
 }
 
@@ -153,6 +145,22 @@ mod tests {
                 .expect("remotion adapter exists")
                 .operations
                 .contains(&RenderOperationKind::ShotCards)
+        );
+        assert!(
+            catalog
+                .iter()
+                .find(|adapter| adapter.id == AdapterId::Blender)
+                .expect("blender adapter exists")
+                .operations
+                .contains(&RenderOperationKind::ReviewPack)
+        );
+        assert!(
+            catalog
+                .iter()
+                .find(|adapter| adapter.id == AdapterId::AiVideo)
+                .expect("ai-video adapter exists")
+                .operations
+                .contains(&RenderOperationKind::ReviewPack)
         );
         assert!(
             catalog

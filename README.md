@@ -126,6 +126,10 @@ The Remotion boundary is a planned file/project handoff: Rust can describe the
 manifest, output directory, platform/export id, and deterministic command shape
 without requiring Node or Remotion packages in the baseline repo.
 
+The Blender boundary is planned as a CLI/Python file handoff, and the AI-video
+boundary is planned as a provider-neutral package. Neither requires binaries,
+SDKs, credentials, endpoints, or model names in the baseline contract.
+
 ## Pipeline
 
 ```text
