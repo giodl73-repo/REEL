@@ -1,6 +1,7 @@
 use std::fmt;
 
 pub mod ffmpeg;
+pub mod remotion;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AdapterId {
@@ -113,12 +114,7 @@ impl RenderOperation {
 pub fn adapter_catalog() -> Vec<AdapterDescriptor> {
     vec![
         ffmpeg::descriptor(),
-        AdapterDescriptor {
-            id: AdapterId::Remotion,
-            status: AdapterStatus::Planned,
-            boundary: "Node/Remotion project boundary; no dependency is required yet.",
-            operations: Vec::new(),
-        },
+        remotion::descriptor(),
         AdapterDescriptor {
             id: AdapterId::Blender,
             status: AdapterStatus::Planned,
@@ -147,6 +143,14 @@ mod tests {
         assert_eq!(catalog[0].status, AdapterStatus::ImplementedBaseline);
         assert!(
             catalog[0]
+                .operations
+                .contains(&RenderOperationKind::ShotCards)
+        );
+        assert!(
+            catalog
+                .iter()
+                .find(|adapter| adapter.id == AdapterId::Remotion)
+                .expect("remotion adapter exists")
                 .operations
                 .contains(&RenderOperationKind::ShotCards)
         );

@@ -122,6 +122,10 @@ a concrete work package needs them.
 Use `cargo run -- adapters` to inspect the implemented baseline and planned
 adapter boundaries.
 
+The Remotion boundary is a planned file/project handoff: Rust can describe the
+manifest, output directory, platform/export id, and deterministic command shape
+without requiring Node or Remotion packages in the baseline repo.
+
 ## Pipeline
 
 ```text
