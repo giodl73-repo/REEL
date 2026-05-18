@@ -170,6 +170,7 @@ pub fn validate_manifest(loaded: &LoadedManifest) -> Result<ValidationReport> {
 
     validate_shot_timing(&loaded.manifest.shots)?;
     validate_shot_scenes(&loaded.manifest)?;
+    validate_shot_scene_spans(&loaded.manifest)?;
     let exports = export_plans(&loaded.manifest, shot_total)?;
 
     Ok(ValidationReport {
@@ -425,6 +426,43 @@ fn validate_shot_scenes(manifest: &Manifest) -> Result<()> {
                 "shot {} references unknown scene_id: {}",
                 shot.id,
                 shot.scene_id
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_shot_scene_spans(manifest: &Manifest) -> Result<()> {
+    let mut scene_spans = Vec::new();
+    let mut scene_start = 0.0;
+    for scene in &manifest.scenes {
+        let scene_end = scene_start + scene.duration_seconds;
+        scene_spans.push((scene.id.as_str(), scene_start, scene_end));
+        scene_start = scene_end;
+    }
+
+    for shot in &manifest.shots {
+        let (_, scene_start, scene_end) = scene_spans
+            .iter()
+            .find(|(scene_id, _, _)| *scene_id == shot.scene_id)
+            .ok_or_else(|| {
+                anyhow!(
+                    "shot {} references unknown scene_id: {}",
+                    shot.id,
+                    shot.scene_id
+                )
+            })?;
+        let shot_end = shot.start_seconds + shot.duration_seconds;
+        if shot.start_seconds + 0.001 < *scene_start || shot_end > scene_end + 0.001 {
+            bail!(
+                "shot {} timeline {:.3}-{:.3} falls outside scene {} span {:.3}-{:.3}",
+                shot.id,
+                shot.start_seconds,
+                shot_end,
+                shot.scene_id,
+                scene_start,
+                scene_end
             );
         }
     }
@@ -980,6 +1018,27 @@ mod tests {
             error
                 .to_string()
                 .contains("platform iphone-social has no matching export")
+        );
+    }
+
+    #[test]
+    fn rejects_shots_outside_referenced_scene_span() {
+        let manifest = load_manifest("works/0001-ash-vale-last-road-before-winter/manifest.yaml")
+            .expect("manifest loads");
+        let mut raw = manifest.raw.clone();
+        raw["shots"][2]["scene_id"] = Value::String("scene-01".to_string());
+        let parsed = serde_yaml::from_value(raw.clone()).expect("scene span manifest deserializes");
+        let invalid = LoadedManifest {
+            path: manifest.path,
+            raw,
+            manifest: parsed,
+        };
+
+        let error = validate_manifest(&invalid).expect_err("out-of-scene shot rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("falls outside scene scene-01 span")
         );
     }
 
