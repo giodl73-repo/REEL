@@ -66,6 +66,7 @@ adapter contracts without provider lock-in.
 | 54 | Artifact work totals | done | Added aggregate verified work ids to artifact-check-all and review-all reports. |
 | 55 | Artifact title totals | done | Added aggregate verified work titles to artifact-check-all and review-all reports. |
 | 56 | Artifact manifest totals | done | Added aggregate generated artifact manifest paths to artifact-check-all and review-all reports. |
+| 57 | Review-pack path totals | done | Added aggregate generated review-pack paths to review-all reports. |
 
 ## Success criteria
 

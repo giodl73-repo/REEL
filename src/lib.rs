@@ -231,6 +231,7 @@ pub struct ReviewAllReport {
     pub generated_unix: u64,
     pub checked_unix: u64,
     pub works: usize,
+    pub review_packs: Vec<String>,
     pub work_ids: Vec<String>,
     pub work_titles: Vec<String>,
     pub artifact_manifests: Vec<String>,
@@ -998,6 +999,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
     markdown.push_str("|---|---|---|---:|---:|---:|\n");
 
     let mut reports = Vec::new();
+    let mut review_packs = BTreeSet::new();
     let mut work_ids = BTreeSet::new();
     let mut work_titles = BTreeSet::new();
     let mut artifact_manifests = BTreeSet::new();
@@ -1015,6 +1017,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         let report = render_review_pack(&manifest)?;
         let artifact_manifest = render_artifact_manifest(&manifest)?;
         let check = check_artifact_manifest(&artifact_manifest)?;
+        review_packs.insert(path_text(&report));
         work_ids.insert(check.work.clone());
         work_titles.insert(check.title.clone());
         artifact_manifests.insert(check.artifact_manifest.clone());
@@ -1053,6 +1056,8 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
     markdown.push_str("\n## Verification totals\n\n");
     markdown.push_str(&format!("- Checked unix: `{checked_unix}`\n"));
     markdown.push_str(&format!("- Works: `{}`\n", reports.len()));
+    let review_packs: Vec<_> = review_packs.into_iter().collect();
+    markdown.push_str(&format!("- Review packs: `{}`\n", review_packs.join(", ")));
     let work_ids: Vec<_> = work_ids.into_iter().collect();
     markdown.push_str(&format!("- Work ids: `{}`\n", work_ids.join(", ")));
     let work_titles: Vec<_> = work_titles.into_iter().collect();
@@ -1096,6 +1101,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         generated_unix,
         checked_unix,
         works: reports.len(),
+        review_packs,
         work_ids,
         work_titles,
         artifact_manifests,
