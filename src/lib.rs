@@ -924,9 +924,9 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
     markdown.push_str(&format!("- Works root: `{}`\n", root.display()));
     markdown.push_str(&format!("- Generated unix: `{}`\n\n", unix_now()?));
     markdown.push_str(
-        "| Work manifest | Review pack | Artifact manifest | Generated unix | Verification |\n",
+        "| Work manifest | Review pack | Artifact manifest | Generated unix | Checked unix | Verification |\n",
     );
-    markdown.push_str("|---|---|---|---:|---:|\n");
+    markdown.push_str("|---|---|---|---:|---:|---:|\n");
 
     let mut reports = Vec::new();
     let mut files = 0usize;
@@ -940,11 +940,12 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         scene_previews += check.scene_previews;
         total_bytes += check.total_bytes;
         markdown.push_str(&format!(
-            "| `{}` | `{}` | `{}` | `{}` | `{} files / {} bytes` |\n",
+            "| `{}` | `{}` | `{}` | `{}` | `{}` | `{} files / {} bytes` |\n",
             manifest.display(),
             report.display(),
             artifact_manifest.display(),
             check.generated_unix,
+            check.checked_unix,
             check.files,
             check.total_bytes
         ));
