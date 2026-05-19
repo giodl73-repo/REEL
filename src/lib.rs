@@ -202,6 +202,24 @@ pub struct ArtifactCheckAllReport {
     pub reports: Vec<ArtifactCheckReport>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ReviewAllReport {
+    pub works_root: String,
+    pub index: String,
+    pub works: usize,
+    pub files: usize,
+    pub total_bytes: u64,
+    pub reports: Vec<ReviewAllWorkReport>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReviewAllWorkReport {
+    pub manifest: String,
+    pub review_pack: String,
+    pub artifact_manifest: String,
+    pub artifact_check: ArtifactCheckReport,
+}
+
 #[derive(Debug, Deserialize)]
 struct Manifest {
     work: String,
@@ -769,6 +787,10 @@ pub fn render_contact_sheet(manifest: impl AsRef<Path>, platform: &str) -> Resul
 }
 
 pub fn render_all_review_packs(root: impl AsRef<Path>) -> Result<PathBuf> {
+    Ok(render_all_review_pack_report(root)?.index.into())
+}
+
+pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAllReport> {
     let root = root.as_ref();
     if !root.is_dir() {
         bail!("works root not found: {}", root.display());
@@ -791,10 +813,15 @@ pub fn render_all_review_packs(root: impl AsRef<Path>) -> Result<PathBuf> {
     markdown.push_str("| Work manifest | Review pack | Artifact manifest | Verification |\n");
     markdown.push_str("|---|---|---|---:|\n");
 
+    let mut reports = Vec::new();
+    let mut files = 0usize;
+    let mut total_bytes = 0u64;
     for manifest in manifests {
         let report = render_review_pack(&manifest)?;
         let artifact_manifest = render_artifact_manifest(&manifest)?;
         let check = check_artifact_manifest(&artifact_manifest)?;
+        files += check.files;
+        total_bytes += check.total_bytes;
         markdown.push_str(&format!(
             "| `{}` | `{}` | `{}` | `{} files / {} bytes` |\n",
             manifest.display(),
@@ -803,11 +830,24 @@ pub fn render_all_review_packs(root: impl AsRef<Path>) -> Result<PathBuf> {
             check.files,
             check.total_bytes
         ));
+        reports.push(ReviewAllWorkReport {
+            manifest: path_text(&manifest),
+            review_pack: path_text(&report),
+            artifact_manifest: path_text(&artifact_manifest),
+            artifact_check: check,
+        });
     }
 
     fs::write(&index_path, markdown)
         .with_context(|| format!("failed to write {}", index_path.display()))?;
-    Ok(index_path)
+    Ok(ReviewAllReport {
+        works_root: path_text(root),
+        index: path_text(&index_path),
+        works: reports.len(),
+        files,
+        total_bytes,
+        reports,
+    })
 }
 
 fn review_pack_adapter_summary(loaded: &LoadedManifest) -> Result<String> {

@@ -45,6 +45,7 @@ adapter contracts without provider lock-in.
 | 33 | Artifact-check identity fields | done | Added work, title, and baseline adapter fields to artifact-check text and JSON reports for downstream routing. |
 | 34 | Batch artifact verification | done | Added `cargo run -- artifact-check-all <works-root>` to generate and verify artifact manifests for every work under a root. |
 | 35 | Review-all verification summary | done | Added artifact-check file and byte counts to the `review-all` index for each generated work artifact manifest. |
+| 36 | Review-all JSON output | done | Added `--output json` to `review-all` with index, review-pack, artifact-manifest, and artifact-check summaries. |
 
 ## Success criteria
 

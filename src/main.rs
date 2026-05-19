@@ -220,9 +220,12 @@ fn main() -> Result<()> {
             let package = reel::render_remotion_package_for_scene(&manifest, &platform, &scene)?;
             println!("{}", package.display());
         }
-        Command::ReviewAll { root } => {
-            let index = reel::render_all_review_packs(&root)?;
-            println!("{}", index.display());
+        Command::ReviewAll { root, output } => {
+            let report = reel::render_all_review_pack_report(&root)?;
+            match output {
+                OutputFormat::Text => println!("{}", report.index),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+            }
         }
     }
 
@@ -359,6 +362,8 @@ enum Command {
     ReviewAll {
         #[arg(default_value = "works")]
         root: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
     },
 }
 
