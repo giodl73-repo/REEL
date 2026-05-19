@@ -67,6 +67,7 @@ adapter contracts without provider lock-in.
 | 55 | Artifact title totals | done | Added aggregate verified work titles to artifact-check-all and review-all reports. |
 | 56 | Artifact manifest totals | done | Added aggregate generated artifact manifest paths to artifact-check-all and review-all reports. |
 | 57 | Review-pack path totals | done | Added aggregate generated review-pack paths to review-all reports. |
+| 58 | Wave closeout | done | Closed the animation-adapter wave after validating the adapter boundary, FFmpeg baseline, planned provider boundaries, and artifact/review automation. |
 
 ## Success criteria
 
@@ -78,3 +79,23 @@ adapter contracts without provider lock-in.
   a later pulse chooses a concrete integration.
 - Provider SDKs, credentials, and binary dependencies are not required by the
   adapter boundary.
+
+## Closeout
+
+This wave is complete as a foundation milestone. REEL now has a Rust-owned
+adapter boundary, FFmpeg remains the implemented deterministic baseline, and the
+Remotion, Blender, and AI-video surfaces remain provider-neutral planned
+handoff boundaries without adding SDK, credential, Node, Blender, or provider
+runtime requirements.
+
+The review pipeline now covers single-work and batch artifact generation,
+artifact verification, review-pack indexing, Markdown summaries, and JSON
+summaries. Generated reports expose stable routing and audit metadata including
+work ids/titles, review packs, artifact manifests, source manifests, artifact
+schema versions, adapter identities, platform counts, media counts, bytes,
+timestamps, SHA-256 verification, scene coverage, and video duration totals.
+
+The next product milestone should shift from report-field hardening to
+multi-work production readiness: add or ingest additional real work manifests so
+`review-all` proves a corpus beyond the Ash Vale sample while preserving the
+same validation contract.
