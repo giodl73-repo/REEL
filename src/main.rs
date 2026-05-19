@@ -182,11 +182,12 @@ fn main() -> Result<()> {
             match output {
                 OutputFormat::Text => {
                     println!(
-                        "{} | works={} | work_ids={} | titles={} | sources={} | schemas={} | adapters={} | platforms={} | scenes={} | videos={} | images={} | files={} | bytes={} | duration={:.3}s",
+                        "{} | works={} | work_ids={} | titles={} | artifact_manifests={} | sources={} | schemas={} | adapters={} | platforms={} | scenes={} | videos={} | images={} | files={} | bytes={} | duration={:.3}s",
                         report.works_root,
                         report.works,
                         report.work_ids.join(","),
                         report.work_titles.join(";"),
+                        report.artifact_manifests.len(),
                         report.source_manifests.len(),
                         report.schema_versions.join(","),
                         report.baseline_adapters.join(","),

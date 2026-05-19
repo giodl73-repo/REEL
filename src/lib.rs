@@ -210,6 +210,7 @@ pub struct ArtifactCheckAllReport {
     pub works: usize,
     pub work_ids: Vec<String>,
     pub work_titles: Vec<String>,
+    pub artifact_manifests: Vec<String>,
     pub source_manifests: Vec<String>,
     pub schema_versions: Vec<String>,
     pub baseline_adapters: Vec<String>,
@@ -232,6 +233,7 @@ pub struct ReviewAllReport {
     pub works: usize,
     pub work_ids: Vec<String>,
     pub work_titles: Vec<String>,
+    pub artifact_manifests: Vec<String>,
     pub source_manifests: Vec<String>,
     pub schema_versions: Vec<String>,
     pub baseline_adapters: Vec<String>,
@@ -760,6 +762,7 @@ pub fn check_all_artifact_manifests(root: impl AsRef<Path>) -> Result<ArtifactCh
     let mut reports = Vec::new();
     let mut work_ids = BTreeSet::new();
     let mut work_titles = BTreeSet::new();
+    let mut artifact_manifests = BTreeSet::new();
     let mut source_manifests = BTreeSet::new();
     let mut schema_versions = BTreeSet::new();
     let mut baseline_adapters = BTreeSet::new();
@@ -775,6 +778,7 @@ pub fn check_all_artifact_manifests(root: impl AsRef<Path>) -> Result<ArtifactCh
         let report = check_artifact_manifest(&artifact_manifest)?;
         work_ids.insert(report.work.clone());
         work_titles.insert(report.title.clone());
+        artifact_manifests.insert(report.artifact_manifest.clone());
         source_manifests.insert(report.source_manifest.clone());
         schema_versions.insert(report.schema_version.clone());
         baseline_adapters.insert(report.baseline_adapter.clone());
@@ -793,6 +797,7 @@ pub fn check_all_artifact_manifests(root: impl AsRef<Path>) -> Result<ArtifactCh
         works: reports.len(),
         work_ids: work_ids.into_iter().collect(),
         work_titles: work_titles.into_iter().collect(),
+        artifact_manifests: artifact_manifests.into_iter().collect(),
         source_manifests: source_manifests.into_iter().collect(),
         schema_versions: schema_versions.into_iter().collect(),
         baseline_adapters: baseline_adapters.into_iter().collect(),
@@ -995,6 +1000,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
     let mut reports = Vec::new();
     let mut work_ids = BTreeSet::new();
     let mut work_titles = BTreeSet::new();
+    let mut artifact_manifests = BTreeSet::new();
     let mut source_manifests = BTreeSet::new();
     let mut schema_versions = BTreeSet::new();
     let mut baseline_adapters = BTreeSet::new();
@@ -1011,6 +1017,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         let check = check_artifact_manifest(&artifact_manifest)?;
         work_ids.insert(check.work.clone());
         work_titles.insert(check.title.clone());
+        artifact_manifests.insert(check.artifact_manifest.clone());
         source_manifests.insert(check.source_manifest.clone());
         schema_versions.insert(check.schema_version.clone());
         baseline_adapters.insert(check.baseline_adapter.clone());
@@ -1050,6 +1057,11 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
     markdown.push_str(&format!("- Work ids: `{}`\n", work_ids.join(", ")));
     let work_titles: Vec<_> = work_titles.into_iter().collect();
     markdown.push_str(&format!("- Work titles: `{}`\n", work_titles.join(" | ")));
+    let artifact_manifests: Vec<_> = artifact_manifests.into_iter().collect();
+    markdown.push_str(&format!(
+        "- Artifact manifests: `{}`\n",
+        artifact_manifests.join(", ")
+    ));
     let source_manifests: Vec<_> = source_manifests.into_iter().collect();
     markdown.push_str(&format!(
         "- Source manifests: `{}`\n",
@@ -1086,6 +1098,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         works: reports.len(),
         work_ids,
         work_titles,
+        artifact_manifests,
         source_manifests,
         schema_versions,
         baseline_adapters,
