@@ -197,6 +197,8 @@ pub struct ArtifactCheckReport {
     pub baseline_adapter: String,
     pub platforms: usize,
     pub scene_previews: usize,
+    pub video_files: usize,
+    pub image_files: usize,
     pub files: usize,
     pub total_bytes: u64,
     pub total_video_duration_seconds: f64,
@@ -206,6 +208,8 @@ pub struct ArtifactCheckReport {
 pub struct ArtifactCheckAllReport {
     pub works_root: String,
     pub works: usize,
+    pub video_files: usize,
+    pub image_files: usize,
     pub files: usize,
     pub scene_previews: usize,
     pub total_bytes: u64,
@@ -220,6 +224,8 @@ pub struct ReviewAllReport {
     pub generated_unix: u64,
     pub checked_unix: u64,
     pub works: usize,
+    pub video_files: usize,
+    pub image_files: usize,
     pub files: usize,
     pub scene_previews: usize,
     pub total_bytes: u64,
@@ -614,6 +620,8 @@ pub fn check_artifact_manifest(path: impl AsRef<Path>) -> Result<ArtifactCheckRe
 
     let mut files = 0usize;
     let mut scene_previews = 0usize;
+    let mut video_files = 0usize;
+    let mut image_files = 0usize;
     let mut total_bytes = 0u64;
     let mut total_video_duration_seconds = 0.0f64;
     for platform in &manifest.platforms {
@@ -648,11 +656,13 @@ pub fn check_artifact_manifest(path: impl AsRef<Path>) -> Result<ArtifactCheckRe
             &format!("platform {} shot_cards", platform.id),
         )?;
         files += 1;
+        video_files += 1;
         total_bytes += platform.shot_cards.bytes;
         total_video_duration_seconds += platform.shot_cards.duration_seconds;
 
         check_artifact_image(&platform.contact_sheet, "contact_sheet")?;
         files += 1;
+        image_files += 1;
         total_bytes += platform.contact_sheet.bytes;
 
         check_artifact_video(&platform.work_preview, "work_preview")?;
@@ -662,6 +672,7 @@ pub fn check_artifact_manifest(path: impl AsRef<Path>) -> Result<ArtifactCheckRe
             &format!("platform {} work_preview", platform.id),
         )?;
         files += 1;
+        video_files += 1;
         total_bytes += platform.work_preview.bytes;
         total_video_duration_seconds += platform.work_preview.duration_seconds;
 
@@ -697,6 +708,7 @@ pub fn check_artifact_manifest(path: impl AsRef<Path>) -> Result<ArtifactCheckRe
             }
             check_artifact_video(&scene.video, &format!("scene_preview {}", scene.scene_id))?;
             files += 1;
+            video_files += 1;
             scene_previews += 1;
             total_bytes += scene.video.bytes;
             total_video_duration_seconds += scene.video.duration_seconds;
@@ -714,6 +726,8 @@ pub fn check_artifact_manifest(path: impl AsRef<Path>) -> Result<ArtifactCheckRe
         baseline_adapter: manifest.baseline_adapter,
         platforms: manifest.platforms.len(),
         scene_previews,
+        video_files,
+        image_files,
         files,
         total_bytes,
         total_video_duration_seconds,
@@ -734,6 +748,8 @@ pub fn check_all_artifact_manifests(root: impl AsRef<Path>) -> Result<ArtifactCh
     let mut reports = Vec::new();
     let mut files = 0usize;
     let mut scene_previews = 0usize;
+    let mut video_files = 0usize;
+    let mut image_files = 0usize;
     let mut total_bytes = 0u64;
     let mut total_video_duration_seconds = 0.0f64;
     for manifest in manifests {
@@ -741,6 +757,8 @@ pub fn check_all_artifact_manifests(root: impl AsRef<Path>) -> Result<ArtifactCh
         let report = check_artifact_manifest(&artifact_manifest)?;
         files += report.files;
         scene_previews += report.scene_previews;
+        video_files += report.video_files;
+        image_files += report.image_files;
         total_bytes += report.total_bytes;
         total_video_duration_seconds += report.total_video_duration_seconds;
         reports.push(report);
@@ -749,6 +767,8 @@ pub fn check_all_artifact_manifests(root: impl AsRef<Path>) -> Result<ArtifactCh
     Ok(ArtifactCheckAllReport {
         works_root: path_text(root),
         works: reports.len(),
+        video_files,
+        image_files,
         files,
         scene_previews,
         total_bytes,
@@ -945,6 +965,8 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
     let mut reports = Vec::new();
     let mut files = 0usize;
     let mut scene_previews = 0usize;
+    let mut video_files = 0usize;
+    let mut image_files = 0usize;
     let mut total_bytes = 0u64;
     let mut total_video_duration_seconds = 0.0f64;
     for manifest in manifests {
@@ -953,15 +975,19 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         let check = check_artifact_manifest(&artifact_manifest)?;
         files += check.files;
         scene_previews += check.scene_previews;
+        video_files += check.video_files;
+        image_files += check.image_files;
         total_bytes += check.total_bytes;
         total_video_duration_seconds += check.total_video_duration_seconds;
         markdown.push_str(&format!(
-            "| `{}` | `{}` | `{}` | `{}` | `{}` | `{} files / {} bytes / {}s` |\n",
+            "| `{}` | `{}` | `{}` | `{}` | `{}` | `{} videos / {} images / {} files / {} bytes / {}s` |\n",
             manifest.display(),
             report.display(),
             artifact_manifest.display(),
             check.generated_unix,
             check.checked_unix,
+            check.video_files,
+            check.image_files,
             check.files,
             check.total_bytes,
             compact_seconds(check.total_video_duration_seconds)
@@ -978,6 +1004,8 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
     markdown.push_str(&format!("- Checked unix: `{checked_unix}`\n"));
     markdown.push_str(&format!("- Works: `{}`\n", reports.len()));
     markdown.push_str(&format!("- Scene previews: `{scene_previews}`\n"));
+    markdown.push_str(&format!("- Videos: `{video_files}`\n"));
+    markdown.push_str(&format!("- Images: `{image_files}`\n"));
     markdown.push_str(&format!("- Files: `{files}`\n"));
     markdown.push_str(&format!("- Bytes: `{total_bytes}`\n"));
     markdown.push_str(&format!(
@@ -993,6 +1021,8 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         generated_unix,
         checked_unix,
         works: reports.len(),
+        video_files,
+        image_files,
         files,
         scene_previews,
         total_bytes,

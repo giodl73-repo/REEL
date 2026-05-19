@@ -157,7 +157,7 @@ fn main() -> Result<()> {
             match output {
                 OutputFormat::Text => {
                     println!(
-                        "{} | schema={} | generated={} | checked={} | source={} | work={} | adapter={} | platforms={} | scenes={} | files={} | bytes={} | duration={:.3}s",
+                        "{} | schema={} | generated={} | checked={} | source={} | work={} | adapter={} | platforms={} | scenes={} | videos={} | images={} | files={} | bytes={} | duration={:.3}s",
                         report.artifact_manifest,
                         report.schema_version,
                         report.generated_unix,
@@ -167,6 +167,8 @@ fn main() -> Result<()> {
                         report.baseline_adapter,
                         report.platforms,
                         report.scene_previews,
+                        report.video_files,
+                        report.image_files,
                         report.files,
                         report.total_bytes,
                         report.total_video_duration_seconds
@@ -180,17 +182,19 @@ fn main() -> Result<()> {
             match output {
                 OutputFormat::Text => {
                     println!(
-                        "{} | works={} | scenes={} | files={} | bytes={} | duration={:.3}s",
+                        "{} | works={} | scenes={} | videos={} | images={} | files={} | bytes={} | duration={:.3}s",
                         report.works_root,
                         report.works,
                         report.scene_previews,
+                        report.video_files,
+                        report.image_files,
                         report.files,
                         report.total_bytes,
                         report.total_video_duration_seconds
                     );
                     for item in report.reports {
                         println!(
-                            "  {} | schema={} | generated={} | checked={} | source={} | work={} | adapter={} | platforms={} | scenes={} | files={} | bytes={} | duration={:.3}s",
+                            "  {} | schema={} | generated={} | checked={} | source={} | work={} | adapter={} | platforms={} | scenes={} | videos={} | images={} | files={} | bytes={} | duration={:.3}s",
                             item.artifact_manifest,
                             item.schema_version,
                             item.generated_unix,
@@ -200,6 +204,8 @@ fn main() -> Result<()> {
                             item.baseline_adapter,
                             item.platforms,
                             item.scene_previews,
+                            item.video_files,
+                            item.image_files,
                             item.files,
                             item.total_bytes,
                             item.total_video_duration_seconds
