@@ -42,6 +42,7 @@ adapter contracts without provider lock-in.
 | 30 | Artifact-check JSON output | done | Added `--output json` to `artifact-check` for machine-readable verification summaries. |
 | 31 | Artifact manifest schema version | done | Added `schema_version` to artifact manifests and required the supported version during `artifact-check`. |
 | 32 | Artifact-manifest JSON output | done | Added `--output json` to `artifact-manifest` so automation can read the generated artifact manifest from stdout. |
+| 33 | Artifact-check identity fields | done | Added work, title, and baseline adapter fields to artifact-check text and JSON reports for downstream routing. |
 
 ## Success criteria
 

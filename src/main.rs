@@ -157,8 +157,10 @@ fn main() -> Result<()> {
             match output {
                 OutputFormat::Text => {
                     println!(
-                        "{} | platforms={} | files={} | bytes={}",
+                        "{} | work={} | adapter={} | platforms={} | files={} | bytes={}",
                         report.artifact_manifest,
+                        report.work,
+                        report.baseline_adapter,
                         report.platforms,
                         report.files,
                         report.total_bytes

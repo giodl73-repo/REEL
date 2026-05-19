@@ -185,6 +185,9 @@ pub struct ArtifactImage {
 pub struct ArtifactCheckReport {
     pub artifact_manifest: String,
     pub schema_version: String,
+    pub work: String,
+    pub title: String,
+    pub baseline_adapter: String,
     pub platforms: usize,
     pub files: usize,
     pub total_bytes: u64,
@@ -561,6 +564,9 @@ pub fn check_artifact_manifest(path: impl AsRef<Path>) -> Result<ArtifactCheckRe
     Ok(ArtifactCheckReport {
         artifact_manifest: path_text(path),
         schema_version: manifest.schema_version,
+        work: manifest.work,
+        title: manifest.title,
+        baseline_adapter: manifest.baseline_adapter,
         platforms: manifest.platforms.len(),
         files,
         total_bytes,

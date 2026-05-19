@@ -173,6 +173,8 @@ Add `--output json` to print the generated artifact manifest to stdout.
 Use `artifact-check` to verify that a generated artifact manifest still points to
 files with matching byte sizes and positive video durations.
 Add `--output json` when automation needs the verification summary.
+Check reports include work identity and the baseline adapter for downstream
+routing.
 The `review-all` index links each work's review pack and artifact manifest.
 
 ## Pipeline
