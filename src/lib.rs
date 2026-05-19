@@ -1,6 +1,7 @@
 use std::{
     collections::HashSet,
-    fs,
+    fs::{self, File},
+    io::Read,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -8,12 +9,13 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use serde_yaml::{Mapping, Value};
+use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
 pub mod adapters;
 
 const SUPPORTED_MANIFEST_VERSION: &str = "reel.manifest.v0.1";
-const ARTIFACT_MANIFEST_SCHEMA_VERSION: &str = "reel.artifacts.v0.1";
+const ARTIFACT_MANIFEST_SCHEMA_VERSION: &str = "reel.artifacts.v0.2";
 
 const REQUIRED_TOP_FIELDS: &[&str] = &[
     "manifest_version",
@@ -172,6 +174,7 @@ pub struct ArtifactScenePreview {
 pub struct ArtifactVideo {
     pub path: String,
     pub bytes: u64,
+    pub sha256: String,
     pub duration_seconds: f64,
 }
 
@@ -179,6 +182,7 @@ pub struct ArtifactVideo {
 pub struct ArtifactImage {
     pub path: String,
     pub bytes: u64,
+    pub sha256: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -501,6 +505,7 @@ pub fn render_artifact_manifest(manifest: impl AsRef<Path>) -> Result<PathBuf> {
                 video: ArtifactVideo {
                     path: path_text(&preview),
                     bytes: file_bytes(&preview)?,
+                    sha256: sha256_file(&preview)?,
                     duration_seconds: plan.render_duration_seconds,
                 },
             });
@@ -516,15 +521,18 @@ pub fn render_artifact_manifest(manifest: impl AsRef<Path>) -> Result<PathBuf> {
             shot_cards: ArtifactVideo {
                 path: path_text(&shot_cards),
                 bytes: file_bytes(&shot_cards)?,
+                sha256: sha256_file(&shot_cards)?,
                 duration_seconds: ffprobe_duration_seconds(&shot_cards)?,
             },
             contact_sheet: ArtifactImage {
                 path: path_text(&contact_sheet),
                 bytes: file_bytes(&contact_sheet)?,
+                sha256: sha256_file(&contact_sheet)?,
             },
             work_preview: ArtifactVideo {
                 path: path_text(&work_preview),
                 bytes: file_bytes(&work_preview)?,
+                sha256: sha256_file(&work_preview)?,
                 duration_seconds: ffprobe_duration_seconds(&work_preview)?,
             },
             scene_previews,
@@ -2205,8 +2213,32 @@ fn file_bytes(path: &Path) -> Result<u64> {
         .len())
 }
 
+fn sha256_file(path: &Path) -> Result<String> {
+    let mut file =
+        File::open(path).with_context(|| format!("failed to hash {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 8192];
+
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .with_context(|| format!("failed to hash {}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+
+    let digest = hasher.finalize();
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    Ok(hex)
+}
+
 fn check_artifact_video(video: &ArtifactVideo, label: &str) -> Result<()> {
-    check_artifact_file(&video.path, video.bytes, label)?;
+    check_artifact_file(&video.path, video.bytes, &video.sha256, label)?;
     if video.duration_seconds <= 0.0 {
         bail!(
             "{label} has non-positive duration: {}",
@@ -2217,15 +2249,26 @@ fn check_artifact_video(video: &ArtifactVideo, label: &str) -> Result<()> {
 }
 
 fn check_artifact_image(image: &ArtifactImage, label: &str) -> Result<()> {
-    check_artifact_file(&image.path, image.bytes, label)
+    check_artifact_file(&image.path, image.bytes, &image.sha256, label)
 }
 
-fn check_artifact_file(path: &str, expected_bytes: u64, label: &str) -> Result<()> {
+fn check_artifact_file(
+    path: &str,
+    expected_bytes: u64,
+    expected_sha256: &str,
+    label: &str,
+) -> Result<()> {
     let actual_bytes = fs::metadata(path)
         .with_context(|| format!("{label} missing artifact file: {path}"))?
         .len();
     if actual_bytes != expected_bytes {
         bail!("{label} byte mismatch for {path}: expected {expected_bytes}, found {actual_bytes}");
+    }
+    let actual_sha256 = sha256_file(Path::new(path))?;
+    if actual_sha256 != expected_sha256 {
+        bail!(
+            "{label} sha256 mismatch for {path}: expected {expected_sha256}, found {actual_sha256}"
+        );
     }
     Ok(())
 }
@@ -2252,6 +2295,7 @@ fn unix_now() -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     #[test]
     fn validates_ash_vale_manifest_and_derives_exports() {
@@ -2741,5 +2785,18 @@ mod tests {
     fn formats_integer_seconds_for_ffmpeg_ratios() {
         assert_eq!(compact_seconds(45.0), "45");
         assert_eq!(compact_seconds(45.25), "45.250");
+    }
+
+    #[test]
+    fn computes_sha256_for_artifact_files() {
+        let mut file = tempfile::NamedTempFile::new().expect("temp file");
+        write!(file, "reel").expect("write temp file");
+
+        let digest = sha256_file(file.path()).expect("file hashes");
+
+        assert_eq!(
+            digest,
+            "74a61185e36e3edd483e8b96e93cb0406b0238fcdadda0283a5fa4318c1dcf6d"
+        );
     }
 }
