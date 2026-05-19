@@ -199,6 +199,7 @@ pub struct ArtifactCheckReport {
     pub scene_previews: usize,
     pub files: usize,
     pub total_bytes: u64,
+    pub total_video_duration_seconds: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -208,6 +209,7 @@ pub struct ArtifactCheckAllReport {
     pub files: usize,
     pub scene_previews: usize,
     pub total_bytes: u64,
+    pub total_video_duration_seconds: f64,
     pub reports: Vec<ArtifactCheckReport>,
 }
 
@@ -221,6 +223,7 @@ pub struct ReviewAllReport {
     pub files: usize,
     pub scene_previews: usize,
     pub total_bytes: u64,
+    pub total_video_duration_seconds: f64,
     pub reports: Vec<ReviewAllWorkReport>,
 }
 
@@ -612,6 +615,7 @@ pub fn check_artifact_manifest(path: impl AsRef<Path>) -> Result<ArtifactCheckRe
     let mut files = 0usize;
     let mut scene_previews = 0usize;
     let mut total_bytes = 0u64;
+    let mut total_video_duration_seconds = 0.0f64;
     for platform in &manifest.platforms {
         let export = validation
             .exports
@@ -645,6 +649,7 @@ pub fn check_artifact_manifest(path: impl AsRef<Path>) -> Result<ArtifactCheckRe
         )?;
         files += 1;
         total_bytes += platform.shot_cards.bytes;
+        total_video_duration_seconds += platform.shot_cards.duration_seconds;
 
         check_artifact_image(&platform.contact_sheet, "contact_sheet")?;
         files += 1;
@@ -658,6 +663,7 @@ pub fn check_artifact_manifest(path: impl AsRef<Path>) -> Result<ArtifactCheckRe
         )?;
         files += 1;
         total_bytes += platform.work_preview.bytes;
+        total_video_duration_seconds += platform.work_preview.duration_seconds;
 
         if platform.scene_previews.is_empty() {
             bail!("platform {} has no scene previews", platform.id);
@@ -693,6 +699,7 @@ pub fn check_artifact_manifest(path: impl AsRef<Path>) -> Result<ArtifactCheckRe
             files += 1;
             scene_previews += 1;
             total_bytes += scene.video.bytes;
+            total_video_duration_seconds += scene.video.duration_seconds;
         }
     }
 
@@ -709,6 +716,7 @@ pub fn check_artifact_manifest(path: impl AsRef<Path>) -> Result<ArtifactCheckRe
         scene_previews,
         files,
         total_bytes,
+        total_video_duration_seconds,
     })
 }
 
@@ -727,12 +735,14 @@ pub fn check_all_artifact_manifests(root: impl AsRef<Path>) -> Result<ArtifactCh
     let mut files = 0usize;
     let mut scene_previews = 0usize;
     let mut total_bytes = 0u64;
+    let mut total_video_duration_seconds = 0.0f64;
     for manifest in manifests {
         let artifact_manifest = render_artifact_manifest(&manifest)?;
         let report = check_artifact_manifest(&artifact_manifest)?;
         files += report.files;
         scene_previews += report.scene_previews;
         total_bytes += report.total_bytes;
+        total_video_duration_seconds += report.total_video_duration_seconds;
         reports.push(report);
     }
 
@@ -742,6 +752,7 @@ pub fn check_all_artifact_manifests(root: impl AsRef<Path>) -> Result<ArtifactCh
         files,
         scene_previews,
         total_bytes,
+        total_video_duration_seconds,
         reports,
     })
 }
@@ -935,6 +946,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
     let mut files = 0usize;
     let mut scene_previews = 0usize;
     let mut total_bytes = 0u64;
+    let mut total_video_duration_seconds = 0.0f64;
     for manifest in manifests {
         let report = render_review_pack(&manifest)?;
         let artifact_manifest = render_artifact_manifest(&manifest)?;
@@ -942,15 +954,17 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         files += check.files;
         scene_previews += check.scene_previews;
         total_bytes += check.total_bytes;
+        total_video_duration_seconds += check.total_video_duration_seconds;
         markdown.push_str(&format!(
-            "| `{}` | `{}` | `{}` | `{}` | `{}` | `{} files / {} bytes` |\n",
+            "| `{}` | `{}` | `{}` | `{}` | `{}` | `{} files / {} bytes / {}s` |\n",
             manifest.display(),
             report.display(),
             artifact_manifest.display(),
             check.generated_unix,
             check.checked_unix,
             check.files,
-            check.total_bytes
+            check.total_bytes,
+            compact_seconds(check.total_video_duration_seconds)
         ));
         reports.push(ReviewAllWorkReport {
             manifest: path_text(&manifest),
@@ -966,6 +980,10 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
     markdown.push_str(&format!("- Scene previews: `{scene_previews}`\n"));
     markdown.push_str(&format!("- Files: `{files}`\n"));
     markdown.push_str(&format!("- Bytes: `{total_bytes}`\n"));
+    markdown.push_str(&format!(
+        "- Video duration seconds: `{}`\n",
+        compact_seconds(total_video_duration_seconds)
+    ));
 
     fs::write(&index_path, markdown)
         .with_context(|| format!("failed to write {}", index_path.display()))?;
@@ -978,6 +996,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         files,
         scene_previews,
         total_bytes,
+        total_video_duration_seconds,
         reports,
     })
 }

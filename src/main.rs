@@ -157,7 +157,7 @@ fn main() -> Result<()> {
             match output {
                 OutputFormat::Text => {
                     println!(
-                        "{} | schema={} | generated={} | checked={} | source={} | work={} | adapter={} | platforms={} | scenes={} | files={} | bytes={}",
+                        "{} | schema={} | generated={} | checked={} | source={} | work={} | adapter={} | platforms={} | scenes={} | files={} | bytes={} | duration={:.3}s",
                         report.artifact_manifest,
                         report.schema_version,
                         report.generated_unix,
@@ -168,7 +168,8 @@ fn main() -> Result<()> {
                         report.platforms,
                         report.scene_previews,
                         report.files,
-                        report.total_bytes
+                        report.total_bytes,
+                        report.total_video_duration_seconds
                     );
                 }
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
@@ -179,16 +180,17 @@ fn main() -> Result<()> {
             match output {
                 OutputFormat::Text => {
                     println!(
-                        "{} | works={} | scenes={} | files={} | bytes={}",
+                        "{} | works={} | scenes={} | files={} | bytes={} | duration={:.3}s",
                         report.works_root,
                         report.works,
                         report.scene_previews,
                         report.files,
-                        report.total_bytes
+                        report.total_bytes,
+                        report.total_video_duration_seconds
                     );
                     for item in report.reports {
                         println!(
-                            "  {} | schema={} | generated={} | checked={} | source={} | work={} | adapter={} | platforms={} | scenes={} | files={} | bytes={}",
+                            "  {} | schema={} | generated={} | checked={} | source={} | work={} | adapter={} | platforms={} | scenes={} | files={} | bytes={} | duration={:.3}s",
                             item.artifact_manifest,
                             item.schema_version,
                             item.generated_unix,
@@ -199,7 +201,8 @@ fn main() -> Result<()> {
                             item.platforms,
                             item.scene_previews,
                             item.files,
-                            item.total_bytes
+                            item.total_bytes,
+                            item.total_video_duration_seconds
                         );
                     }
                 }
