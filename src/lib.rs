@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{BTreeSet, HashSet},
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
@@ -208,6 +208,7 @@ pub struct ArtifactCheckReport {
 pub struct ArtifactCheckAllReport {
     pub works_root: String,
     pub works: usize,
+    pub baseline_adapters: Vec<String>,
     pub platforms: usize,
     pub video_files: usize,
     pub image_files: usize,
@@ -225,6 +226,7 @@ pub struct ReviewAllReport {
     pub generated_unix: u64,
     pub checked_unix: u64,
     pub works: usize,
+    pub baseline_adapters: Vec<String>,
     pub platforms: usize,
     pub video_files: usize,
     pub image_files: usize,
@@ -748,6 +750,7 @@ pub fn check_all_artifact_manifests(root: impl AsRef<Path>) -> Result<ArtifactCh
     }
 
     let mut reports = Vec::new();
+    let mut baseline_adapters = BTreeSet::new();
     let mut platforms = 0usize;
     let mut files = 0usize;
     let mut scene_previews = 0usize;
@@ -758,6 +761,7 @@ pub fn check_all_artifact_manifests(root: impl AsRef<Path>) -> Result<ArtifactCh
     for manifest in manifests {
         let artifact_manifest = render_artifact_manifest(&manifest)?;
         let report = check_artifact_manifest(&artifact_manifest)?;
+        baseline_adapters.insert(report.baseline_adapter.clone());
         platforms += report.platforms;
         files += report.files;
         scene_previews += report.scene_previews;
@@ -771,6 +775,7 @@ pub fn check_all_artifact_manifests(root: impl AsRef<Path>) -> Result<ArtifactCh
     Ok(ArtifactCheckAllReport {
         works_root: path_text(root),
         works: reports.len(),
+        baseline_adapters: baseline_adapters.into_iter().collect(),
         platforms,
         video_files,
         image_files,
@@ -968,6 +973,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
     markdown.push_str("|---|---|---|---:|---:|---:|\n");
 
     let mut reports = Vec::new();
+    let mut baseline_adapters = BTreeSet::new();
     let mut platforms = 0usize;
     let mut files = 0usize;
     let mut scene_previews = 0usize;
@@ -979,6 +985,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         let report = render_review_pack(&manifest)?;
         let artifact_manifest = render_artifact_manifest(&manifest)?;
         let check = check_artifact_manifest(&artifact_manifest)?;
+        baseline_adapters.insert(check.baseline_adapter.clone());
         platforms += check.platforms;
         files += check.files;
         scene_previews += check.scene_previews;
@@ -1011,6 +1018,11 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
     markdown.push_str("\n## Verification totals\n\n");
     markdown.push_str(&format!("- Checked unix: `{checked_unix}`\n"));
     markdown.push_str(&format!("- Works: `{}`\n", reports.len()));
+    let baseline_adapters: Vec<_> = baseline_adapters.into_iter().collect();
+    markdown.push_str(&format!(
+        "- Baseline adapters: `{}`\n",
+        baseline_adapters.join(", ")
+    ));
     markdown.push_str(&format!("- Platforms: `{platforms}`\n"));
     markdown.push_str(&format!("- Scene previews: `{scene_previews}`\n"));
     markdown.push_str(&format!("- Videos: `{video_files}`\n"));
@@ -1030,6 +1042,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         generated_unix,
         checked_unix,
         works: reports.len(),
+        baseline_adapters,
         platforms,
         video_files,
         image_files,

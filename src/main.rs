@@ -182,9 +182,10 @@ fn main() -> Result<()> {
             match output {
                 OutputFormat::Text => {
                     println!(
-                        "{} | works={} | platforms={} | scenes={} | videos={} | images={} | files={} | bytes={} | duration={:.3}s",
+                        "{} | works={} | adapters={} | platforms={} | scenes={} | videos={} | images={} | files={} | bytes={} | duration={:.3}s",
                         report.works_root,
                         report.works,
+                        report.baseline_adapters.join(","),
                         report.platforms,
                         report.scene_previews,
                         report.video_files,
