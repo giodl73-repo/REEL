@@ -1,0 +1,156 @@
+manifest_version: reel.manifest.v0.1
+work: "0002-court-first-rally"
+title: "COURT: First Rally"
+source_scenario:
+  repo: "COURT"
+  path: "docs/scenarios/first-rally.md"
+  id: "scenario:court:first-rally"
+  source_commit: "unknown"
+format: "trailer"
+style: "storyboard-animatic"
+alternate_styles:
+  - "isometric-game"
+audience:
+  primary: "portfolio reviewer and Games Design collaborator"
+  context: "desktop review of a lightweight second corpus item"
+  desired_effect: "understand COURT's rally loop in under 30 seconds"
+platforms:
+  - name: "youtube-demo"
+    aspect_ratio: "16:9"
+    target_duration_seconds: 20
+    sound_optional: false
+continuity:
+  characters:
+    - id: "player-side"
+      description: "The near-side player shape; focus is timing, not identity."
+    - id: "opponent-side"
+      description: "The far-side player shape; readable as pressure and return."
+  places:
+    - id: "court-center"
+      description: "A simple court lane with clear service and rally zones."
+  factions: []
+  props:
+    - id: "ball"
+      description: "Single bright ball used as the timing anchor."
+  canon_constraints:
+    - "Keep the rally legible as serve, return, pressure, and recovery."
+    - "Do not imply final art, roster, scoring, or release timing."
+scenes:
+  - id: "scene-01"
+    purpose: "Establish the serve and first return."
+    duration_seconds: 8
+    story_beat: "The rally starts with readable timing."
+    location: "court-center"
+    characters: ["player-side", "opponent-side"]
+    continuity_notes:
+      - "Keep the ball as the clearest motion cue."
+  - id: "scene-02"
+    purpose: "Show pressure, recovery, and replayable rhythm."
+    duration_seconds: 12
+    story_beat: "A rally becomes a small system of choices."
+    location: "court-center"
+    characters: ["player-side", "opponent-side"]
+    continuity_notes:
+      - "Show decisions through spacing and timing rather than UI detail."
+shots:
+  - id: "shot-001"
+    scene_id: "scene-01"
+    start_seconds: 0
+    duration_seconds: 4
+    camera: "clean overhead court frame"
+    action: "Near-side player serves into a marked lane."
+    visual_prompt: "Minimal court diagram with a bright ball, service line, and two player silhouettes."
+    style_constraints:
+      - "Use storyboard-animatic clarity."
+      - "No final art polish implied."
+    audio:
+      narration: "A point begins with a readable serve."
+      music: "light metronome pulse"
+      effects: "single ball hit"
+    captions:
+      text: "Serve: start the timing"
+      safe_area: "desktop lower third"
+    transition_out: "quick court-line wipe"
+  - id: "shot-002"
+    scene_id: "scene-01"
+    start_seconds: 4
+    duration_seconds: 4
+    camera: "follow the ball across center line"
+    action: "Opponent returns into the open lane."
+    visual_prompt: "Ball arc crosses a simple court grid toward an open lane."
+    style_constraints:
+      - "Keep motion readable with one bright path."
+    audio:
+      narration: "The return asks where you left space."
+      music: "pulse continues"
+      effects: "return hit"
+    captions:
+      text: "Return: read the lane"
+      safe_area: "desktop lower third"
+    transition_out: "cut on bounce"
+  - id: "shot-003"
+    scene_id: "scene-02"
+    start_seconds: 8
+    duration_seconds: 6
+    camera: "overhead with pressure arrows"
+    action: "Pressure arrows show a risky angle and a safer reset."
+    visual_prompt: "Court lanes with two choice arrows, one sharp angle and one safe reset path."
+    style_constraints:
+      - "Choices should read as tactical spacing, not final UI."
+    audio:
+      narration: "Pressure is a choice between angle and recovery."
+      music: "pulse tightens"
+      effects: "shoe squeak"
+    captions:
+      text: "Pressure: angle or recover"
+      safe_area: "desktop lower third"
+    transition_out: "match cut to reset"
+  - id: "shot-004"
+    scene_id: "scene-02"
+    start_seconds: 14
+    duration_seconds: 6
+    camera: "pull back to full court rhythm"
+    action: "The rally loops into a clean reset with the ball still readable."
+    visual_prompt: "Full court rhythm diagram, two silhouettes reset, ball path remains the focus."
+    style_constraints:
+      - "End as a reviewable loop, not a launch trailer."
+    audio:
+      narration: "COURT is the rhythm between risk and reset."
+      music: "small resolved pulse"
+      effects: "ball bounce fades"
+    captions:
+      text: "Risk. Reset. Rally again."
+      safe_area: "desktop lower third"
+    transition_out: "fade out"
+audio:
+  narration_voice: "clear, brief, analytical"
+  music_direction: "light timing pulse, no cinematic swell"
+  effects_direction: "serve, return, shoe, and bounce cues only"
+  silence_notes:
+    - "Leave a short pause after the final bounce."
+captions:
+  required: true
+  style: "simple high-contrast review captions"
+  language: "en"
+renderer_assumptions:
+  adapters:
+    - "ffmpeg"
+    - "remotion"
+  candidates:
+    - "storyboard-animatic via stills + FFmpeg"
+    - "Remotion timing pass"
+  blockers:
+    - "Final COURT art direction and scoring UI are outside this REEL corpus pulse."
+exports:
+  - id: "youtube-demo"
+    filename: "0002-court-first-rally-youtube.mp4"
+    aspect_ratio: "16:9"
+    duration_seconds: 20
+review:
+  required_roles:
+    - "story-director"
+    - "animation-director"
+    - "editor"
+    - "sound-designer"
+    - "platform-audience"
+  status: "not-reviewed"
