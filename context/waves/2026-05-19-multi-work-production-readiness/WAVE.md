@@ -13,12 +13,13 @@ validation contract and keeping generated media out of git.
 | 01 | Second corpus work | done | Added `0002-court-first-rally` as a lightweight COURT storyboard-animatic work so batch artifact and review reports cover more than one work. |
 | 02 | Corpus summary command | done | Added `cargo run -- corpus <works-root>` with text and JSON output to validate and summarize a work corpus without rendering media. |
 | 03 | Corpus manifest paths | done | Added top-level manifest path aggregation to corpus text and JSON reports so automation can identify exactly which work manifests were summarized. |
+| 04 | Corpus source ids | done | Added top-level source id aggregation to corpus text and JSON reports so automation can inventory exact source scenario identifiers. |
 
 ## Success criteria
 
 - `cargo run -- artifact-check-all works` verifies multiple work manifests.
 - `cargo run -- corpus works --output json` summarizes the multi-work corpus
-  without rendering media, including the exact manifest path set.
+  without rendering media, including exact manifest paths and source ids.
 - `cargo run -- review-all works --output json` reports multiple works with
   distinct work ids, titles, source manifests, artifact manifests, review packs,
   adapters, platforms, media counts, bytes, and duration totals.

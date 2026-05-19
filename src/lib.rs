@@ -106,6 +106,7 @@ pub struct CorpusReport {
     pub work_ids: Vec<String>,
     pub work_titles: Vec<String>,
     pub source_repos: Vec<String>,
+    pub source_ids: Vec<String>,
     pub formats: Vec<String>,
     pub styles: Vec<String>,
     pub platforms: usize,
@@ -859,6 +860,7 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
     let mut work_ids = BTreeSet::new();
     let mut work_titles = BTreeSet::new();
     let mut source_repos = BTreeSet::new();
+    let mut source_ids = BTreeSet::new();
     let mut formats = BTreeSet::new();
     let mut styles = BTreeSet::new();
     let mut platforms = 0usize;
@@ -877,6 +879,7 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
         work_ids.insert(loaded.manifest.work.clone());
         work_titles.insert(loaded.manifest.title.clone());
         source_repos.insert(loaded.manifest.source_scenario.repo.clone());
+        source_ids.insert(loaded.manifest.source_scenario.id.clone());
         formats.insert(loaded.manifest.format.clone());
         styles.insert(loaded.manifest.style.clone());
         platforms += loaded.manifest.platforms.len();
@@ -910,6 +913,7 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
         work_ids: work_ids.into_iter().collect(),
         work_titles: work_titles.into_iter().collect(),
         source_repos: source_repos.into_iter().collect(),
+        source_ids: source_ids.into_iter().collect(),
         formats: formats.into_iter().collect(),
         styles: styles.into_iter().collect(),
         platforms,

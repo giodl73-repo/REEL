@@ -227,12 +227,13 @@ fn main() -> Result<()> {
             match output {
                 OutputFormat::Text => {
                     println!(
-                        "{} | works={} | manifests={} | work_ids={} | sources={} | formats={} | styles={} | platforms={} | scenes={} | shots={} | exports={} | scene_duration={:.3}s | shot_duration={:.3}s",
+                        "{} | works={} | manifests={} | work_ids={} | sources={} | source_ids={} | formats={} | styles={} | platforms={} | scenes={} | shots={} | exports={} | scene_duration={:.3}s | shot_duration={:.3}s",
                         report.works_root,
                         report.works,
                         report.manifests.join(";"),
                         report.work_ids.join(","),
                         report.source_repos.join(","),
+                        report.source_ids.join(","),
                         report.formats.join(","),
                         report.styles.join(","),
                         report.platforms,
