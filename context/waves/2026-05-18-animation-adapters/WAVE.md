@@ -61,6 +61,7 @@ adapter contracts without provider lock-in.
 | 49 | Artifact media counts | done | Split verified artifact totals into video and image file counts across artifact-check, artifact-check-all, and review-all reports. |
 | 50 | Artifact platform totals | done | Added aggregate verified platform counts to artifact-check-all and review-all reports. |
 | 51 | Artifact adapter totals | done | Added aggregate verified baseline adapter identities to artifact-check-all and review-all reports. |
+| 52 | Artifact schema totals | done | Added aggregate verified artifact schema versions to artifact-check-all and review-all reports. |
 
 ## Success criteria
 
