@@ -189,6 +189,7 @@ pub struct ArtifactImage {
 pub struct ArtifactCheckReport {
     pub artifact_manifest: String,
     pub schema_version: String,
+    pub generated_unix: u64,
     pub source_manifest: String,
     pub work: String,
     pub title: String,
@@ -695,6 +696,7 @@ pub fn check_artifact_manifest(path: impl AsRef<Path>) -> Result<ArtifactCheckRe
     Ok(ArtifactCheckReport {
         artifact_manifest: path_text(path),
         schema_version: manifest.schema_version,
+        generated_unix: manifest.generated_unix,
         source_manifest: manifest.manifest,
         work: manifest.work,
         title: manifest.title,

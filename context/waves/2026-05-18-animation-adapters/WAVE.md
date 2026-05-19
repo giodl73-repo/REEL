@@ -51,6 +51,7 @@ adapter contracts without provider lock-in.
 | 39 | Artifact platform duration verification | done | Added artifact checks that shot-card and work-preview durations match each source export duration. |
 | 40 | Review-all aggregate totals | done | Added aggregate verified works, scene previews, files, and bytes to the review-all Markdown index. |
 | 41 | Artifact-check text identity | done | Added schema version and source manifest paths to artifact-check and artifact-check-all text reports. |
+| 42 | Artifact-check generation timestamp | done | Added the artifact manifest `generated_unix` timestamp to artifact-check JSON and text reports. |
 
 ## Success criteria
 
