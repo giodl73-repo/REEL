@@ -110,6 +110,7 @@ pub struct CorpusReport {
     pub source_ids: Vec<String>,
     pub formats: Vec<String>,
     pub styles: Vec<String>,
+    pub platform_names: Vec<String>,
     pub platforms: usize,
     pub scenes: usize,
     pub shots: usize,
@@ -129,6 +130,7 @@ pub struct CorpusWorkReport {
     pub source_id: String,
     pub format: String,
     pub style: String,
+    pub platform_names: Vec<String>,
     pub platforms: usize,
     pub scenes: usize,
     pub shots: usize,
@@ -866,6 +868,7 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
     let mut source_ids = BTreeSet::new();
     let mut formats = BTreeSet::new();
     let mut styles = BTreeSet::new();
+    let mut platform_names = BTreeSet::new();
     let mut platforms = 0usize;
     let mut scenes = 0usize;
     let mut shots = 0usize;
@@ -885,6 +888,12 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
             .and_then(Value::as_str)
             .expect("manifest_version string was checked during validation")
             .to_string();
+        let work_platform_names = loaded
+            .manifest
+            .platforms
+            .iter()
+            .map(|platform| platform.name.clone())
+            .collect::<Vec<_>>();
         work_ids.insert(loaded.manifest.work.clone());
         work_titles.insert(loaded.manifest.title.clone());
         manifest_versions.insert(manifest_version.clone());
@@ -892,6 +901,7 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
         source_ids.insert(loaded.manifest.source_scenario.id.clone());
         formats.insert(loaded.manifest.format.clone());
         styles.insert(loaded.manifest.style.clone());
+        platform_names.extend(work_platform_names.iter().cloned());
         platforms += loaded.manifest.platforms.len();
         scenes += loaded.manifest.scenes.len();
         shots += loaded.manifest.shots.len();
@@ -908,6 +918,7 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
             source_id: loaded.manifest.source_scenario.id,
             format: loaded.manifest.format,
             style: loaded.manifest.style,
+            platform_names: work_platform_names,
             platforms: loaded.manifest.platforms.len(),
             scenes: loaded.manifest.scenes.len(),
             shots: loaded.manifest.shots.len(),
@@ -928,6 +939,7 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
         source_ids: source_ids.into_iter().collect(),
         formats: formats.into_iter().collect(),
         styles: styles.into_iter().collect(),
+        platform_names: platform_names.into_iter().collect(),
         platforms,
         scenes,
         shots,
@@ -2805,6 +2817,7 @@ mod tests {
         );
         assert_eq!(report.formats, vec!["trailer"]);
         assert_eq!(report.styles, vec!["isometric-game", "storyboard-animatic"]);
+        assert_eq!(report.platform_names, vec!["iphone-social", "youtube-demo"]);
         assert_eq!(report.platforms, 3);
         assert_eq!(report.scenes, 5);
         assert_eq!(report.shots, 12);

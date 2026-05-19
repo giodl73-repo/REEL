@@ -227,7 +227,7 @@ fn main() -> Result<()> {
             match output {
                 OutputFormat::Text => {
                     println!(
-                        "{} | works={} | manifests={} | manifest_versions={} | work_ids={} | sources={} | source_ids={} | formats={} | styles={} | platforms={} | scenes={} | shots={} | exports={} | scene_duration={:.3}s | shot_duration={:.3}s",
+                        "{} | works={} | manifests={} | manifest_versions={} | work_ids={} | sources={} | source_ids={} | formats={} | styles={} | platform_names={} | platforms={} | scenes={} | shots={} | exports={} | scene_duration={:.3}s | shot_duration={:.3}s",
                         report.works_root,
                         report.works,
                         report.manifests.join(";"),
@@ -237,6 +237,7 @@ fn main() -> Result<()> {
                         report.source_ids.join(","),
                         report.formats.join(","),
                         report.styles.join(","),
+                        report.platform_names.join(","),
                         report.platforms,
                         report.scenes,
                         report.shots,
@@ -246,7 +247,7 @@ fn main() -> Result<()> {
                     );
                     for item in report.reports {
                         println!(
-                            "  {} | version={} | work={} | title={} | source={} | format={} | style={} | platforms={} | scenes={} | shots={} | exports={} | scene_duration={:.3}s | shot_duration={:.3}s",
+                            "  {} | version={} | work={} | title={} | source={} | format={} | style={} | platform_names={} | platforms={} | scenes={} | shots={} | exports={} | scene_duration={:.3}s | shot_duration={:.3}s",
                             item.manifest,
                             item.manifest_version,
                             item.work,
@@ -254,6 +255,7 @@ fn main() -> Result<()> {
                             item.source_repo,
                             item.format,
                             item.style,
+                            item.platform_names.join(","),
                             item.platforms,
                             item.scenes,
                             item.shots,

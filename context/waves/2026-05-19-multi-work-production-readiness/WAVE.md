@@ -16,13 +16,14 @@ validation contract and keeping generated media out of git.
 | 04 | Corpus source ids | done | Added top-level source id aggregation to corpus text and JSON reports so automation can inventory exact source scenario identifiers. |
 | 05 | Corpus regression test | done | Added a focused regression test for the multi-work corpus summary totals, manifest paths, work ids, source ids, formats, styles, and duration totals. |
 | 06 | Corpus manifest versions | done | Added manifest-version aggregation to corpus text and JSON reports so automation can verify schema uniformity before render-heavy checks. |
+| 07 | Corpus platform names | done | Added platform-name aggregation to corpus text and JSON reports so automation can inventory target platforms before rendering. |
 
 ## Success criteria
 
 - `cargo run -- artifact-check-all works` verifies multiple work manifests.
 - `cargo run -- corpus works --output json` summarizes the multi-work corpus
   without rendering media, including exact manifest paths, manifest versions, and
-  source ids.
+  source ids and platform names.
 - `cargo test --quiet` locks the expected corpus summary totals and identifier
   sets for the current multi-work fixture.
 - `cargo run -- review-all works --output json` reports multiple works with
