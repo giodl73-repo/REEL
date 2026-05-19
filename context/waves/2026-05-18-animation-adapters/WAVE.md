@@ -64,6 +64,7 @@ adapter contracts without provider lock-in.
 | 52 | Artifact schema totals | done | Added aggregate verified artifact schema versions to artifact-check-all and review-all reports. |
 | 53 | Artifact source totals | done | Added aggregate verified source manifest paths to artifact-check-all and review-all reports. |
 | 54 | Artifact work totals | done | Added aggregate verified work ids to artifact-check-all and review-all reports. |
+| 55 | Artifact title totals | done | Added aggregate verified work titles to artifact-check-all and review-all reports. |
 
 ## Success criteria
 

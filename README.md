@@ -182,15 +182,15 @@ Check reports include schema version, generation timestamp, verification
 timestamp, source manifest, work identity, and the baseline adapter for
 downstream routing, plus aggregate verified video/image file counts and video
 duration. Batch reports also aggregate verified source manifest paths, artifact
-schema versions, baseline adapter identities, work ids, and platform counts
-across works.
+schema versions, baseline adapter identities, work ids/titles, and platform
+counts across works.
 Use `artifact-check-all` to generate and verify artifact manifests for every
 work under a works root.
 The `review-all` index links each work's review pack and artifact manifest, then
 shows per-work artifact generation and verification timestamps plus per-work and
 aggregate verification counts for generated scene previews, files, bytes, and
-work id/source manifest/artifact schema/baseline adapter/platform/video/image
-split counts, plus video duration.
+work id/title/source manifest/artifact schema/baseline adapter/platform/video/
+image split counts, plus video duration.
 Add `--output json` to emit the generated index path, index generation and
 verification timestamps, review-pack paths, artifact-manifest paths, and
 artifact-check summaries for automation.
