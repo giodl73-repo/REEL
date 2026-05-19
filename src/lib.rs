@@ -102,6 +102,7 @@ pub struct ValidationReport {
 pub struct CorpusReport {
     pub works_root: String,
     pub works: usize,
+    pub manifests: Vec<String>,
     pub work_ids: Vec<String>,
     pub work_titles: Vec<String>,
     pub source_repos: Vec<String>,
@@ -866,11 +867,13 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
     let mut exports = 0usize;
     let mut total_scene_duration_seconds = 0.0f64;
     let mut total_shot_duration_seconds = 0.0f64;
+    let mut manifest_paths = Vec::new();
     let mut reports = Vec::new();
 
     for manifest in manifests {
         let loaded = load_manifest(&manifest)?;
         let validation = validate_manifest(&loaded)?;
+        let manifest_path = path_text(&loaded.path);
         work_ids.insert(loaded.manifest.work.clone());
         work_titles.insert(loaded.manifest.title.clone());
         source_repos.insert(loaded.manifest.source_scenario.repo.clone());
@@ -882,8 +885,9 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
         exports += validation.exports.len();
         total_scene_duration_seconds += validation.scene_total;
         total_shot_duration_seconds += validation.shot_total;
+        manifest_paths.push(manifest_path.clone());
         reports.push(CorpusWorkReport {
-            manifest: path_text(&loaded.path),
+            manifest: manifest_path,
             work: loaded.manifest.work,
             title: loaded.manifest.title,
             source_repo: loaded.manifest.source_scenario.repo,
@@ -902,6 +906,7 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
     Ok(CorpusReport {
         works_root: path_text(root),
         works: reports.len(),
+        manifests: manifest_paths,
         work_ids: work_ids.into_iter().collect(),
         work_titles: work_titles.into_iter().collect(),
         source_repos: source_repos.into_iter().collect(),
