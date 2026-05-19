@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
@@ -286,6 +286,7 @@ pub struct ReviewAllReport {
     pub works: usize,
     pub review_packs: Vec<String>,
     pub review_statuses: Vec<String>,
+    pub review_status_counts: BTreeMap<String, usize>,
     pub required_roles: Vec<String>,
     pub work_ids: Vec<String>,
     pub work_titles: Vec<String>,
@@ -1238,6 +1239,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
     let mut reports = Vec::new();
     let mut review_packs = BTreeSet::new();
     let mut review_statuses = BTreeSet::new();
+    let mut review_status_counts = BTreeMap::new();
     let mut required_roles = BTreeSet::new();
     let mut work_ids = BTreeSet::new();
     let mut work_titles = BTreeSet::new();
@@ -1261,6 +1263,9 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         let check = check_artifact_manifest(&artifact_manifest)?;
         review_packs.insert(path_text(&report));
         review_statuses.insert(review_metadata.status.clone());
+        *review_status_counts
+            .entry(review_metadata.status.clone())
+            .or_insert(0) += 1;
         required_roles.extend(review_metadata.required_roles.iter().cloned());
         work_ids.insert(check.work.clone());
         work_titles.insert(check.title.clone());
@@ -1308,6 +1313,14 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
     markdown.push_str(&format!(
         "- Review statuses: `{}`\n",
         review_statuses.join(", ")
+    ));
+    markdown.push_str(&format!(
+        "- Review status counts: `{}`\n",
+        review_status_counts
+            .iter()
+            .map(|(status, count)| format!("{status}={count}"))
+            .collect::<Vec<_>>()
+            .join(", ")
     ));
     let required_roles: Vec<_> = required_roles.into_iter().collect();
     markdown.push_str(&format!(
@@ -1359,6 +1372,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         works: reports.len(),
         review_packs,
         review_statuses,
+        review_status_counts,
         required_roles,
         work_ids,
         work_titles,
