@@ -788,17 +788,20 @@ pub fn render_all_review_packs(root: impl AsRef<Path>) -> Result<PathBuf> {
     markdown.push_str("# REEL review-pack index\n\n");
     markdown.push_str(&format!("- Works root: `{}`\n", root.display()));
     markdown.push_str(&format!("- Generated unix: `{}`\n\n", unix_now()?));
-    markdown.push_str("| Work manifest | Review pack | Artifact manifest |\n");
-    markdown.push_str("|---|---|---|\n");
+    markdown.push_str("| Work manifest | Review pack | Artifact manifest | Verification |\n");
+    markdown.push_str("|---|---|---|---:|\n");
 
     for manifest in manifests {
         let report = render_review_pack(&manifest)?;
         let artifact_manifest = render_artifact_manifest(&manifest)?;
+        let check = check_artifact_manifest(&artifact_manifest)?;
         markdown.push_str(&format!(
-            "| `{}` | `{}` | `{}` |\n",
+            "| `{}` | `{}` | `{}` | `{} files / {} bytes` |\n",
             manifest.display(),
             report.display(),
-            artifact_manifest.display()
+            artifact_manifest.display(),
+            check.files,
+            check.total_bytes
         ));
     }
 

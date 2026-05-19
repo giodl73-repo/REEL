@@ -179,7 +179,8 @@ Check reports include work identity and the baseline adapter for downstream
 routing.
 Use `artifact-check-all` to generate and verify artifact manifests for every
 work under a works root.
-The `review-all` index links each work's review pack and artifact manifest.
+The `review-all` index links each work's review pack and artifact manifest, then
+shows artifact verification file and byte counts for the generated outputs.
 
 ## Pipeline
 

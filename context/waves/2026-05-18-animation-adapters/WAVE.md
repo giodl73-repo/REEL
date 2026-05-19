@@ -44,6 +44,7 @@ adapter contracts without provider lock-in.
 | 32 | Artifact-manifest JSON output | done | Added `--output json` to `artifact-manifest` so automation can read the generated artifact manifest from stdout. |
 | 33 | Artifact-check identity fields | done | Added work, title, and baseline adapter fields to artifact-check text and JSON reports for downstream routing. |
 | 34 | Batch artifact verification | done | Added `cargo run -- artifact-check-all <works-root>` to generate and verify artifact manifests for every work under a root. |
+| 35 | Review-all verification summary | done | Added artifact-check file and byte counts to the `review-all` index for each generated work artifact manifest. |
 
 ## Success criteria
 
