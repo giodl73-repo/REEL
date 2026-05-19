@@ -157,8 +157,10 @@ fn main() -> Result<()> {
             match output {
                 OutputFormat::Text => {
                     println!(
-                        "{} | work={} | adapter={} | platforms={} | scenes={} | files={} | bytes={}",
+                        "{} | schema={} | source={} | work={} | adapter={} | platforms={} | scenes={} | files={} | bytes={}",
                         report.artifact_manifest,
+                        report.schema_version,
+                        report.source_manifest,
                         report.work,
                         report.baseline_adapter,
                         report.platforms,
@@ -184,8 +186,10 @@ fn main() -> Result<()> {
                     );
                     for item in report.reports {
                         println!(
-                            "  {} | work={} | adapter={} | platforms={} | scenes={} | files={} | bytes={}",
+                            "  {} | schema={} | source={} | work={} | adapter={} | platforms={} | scenes={} | files={} | bytes={}",
                             item.artifact_manifest,
+                            item.schema_version,
+                            item.source_manifest,
                             item.work,
                             item.baseline_adapter,
                             item.platforms,
