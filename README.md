@@ -117,6 +117,8 @@ cargo run -- artifact-check renders\artifacts\0001-ash-vale-last-road-before-win
 cargo run -- artifact-check renders\artifacts\0001-ash-vale-last-road-before-winter-artifacts.json --output json
 cargo run -- artifact-check-all works
 cargo run -- artifact-check-all works --output json
+cargo run -- corpus works
+cargo run -- corpus works --output json
 cargo run -- validate works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- plan works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- shot-cards works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo
@@ -186,6 +188,11 @@ manifest paths, artifact schema versions, baseline adapter identities, work
 ids/titles, and platform counts across works.
 Use `artifact-check-all` to generate and verify artifact manifests for every
 work under a works root.
+Use `corpus` to validate and summarize every work manifest under a works root
+without rendering media. This gives automation a fast inventory of work ids,
+titles, source repos, formats, styles, platform counts, scene counts, shot
+counts, export counts, and manifest timing totals before expensive artifact or
+review-pack generation.
 The `review-all` index links each work's review pack and artifact manifest, then
 shows per-work artifact generation and verification timestamps plus per-work and
 aggregate verification counts for generated scene previews, files, bytes, and

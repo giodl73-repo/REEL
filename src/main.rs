@@ -222,6 +222,46 @@ fn main() -> Result<()> {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
             }
         }
+        Command::Corpus { root, output } => {
+            let report = reel::summarize_work_corpus(&root)?;
+            match output {
+                OutputFormat::Text => {
+                    println!(
+                        "{} | works={} | work_ids={} | sources={} | formats={} | styles={} | platforms={} | scenes={} | shots={} | exports={} | scene_duration={:.3}s | shot_duration={:.3}s",
+                        report.works_root,
+                        report.works,
+                        report.work_ids.join(","),
+                        report.source_repos.join(","),
+                        report.formats.join(","),
+                        report.styles.join(","),
+                        report.platforms,
+                        report.scenes,
+                        report.shots,
+                        report.exports,
+                        report.total_scene_duration_seconds,
+                        report.total_shot_duration_seconds
+                    );
+                    for item in report.reports {
+                        println!(
+                            "  {} | work={} | title={} | source={} | format={} | style={} | platforms={} | scenes={} | shots={} | exports={} | scene_duration={:.3}s | shot_duration={:.3}s",
+                            item.manifest,
+                            item.work,
+                            item.title,
+                            item.source_repo,
+                            item.format,
+                            item.style,
+                            item.platforms,
+                            item.scenes,
+                            item.shots,
+                            item.exports,
+                            item.scene_duration_seconds,
+                            item.shot_duration_seconds
+                        );
+                    }
+                }
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+            }
+        }
         Command::ContactSheet { manifest, platform } => {
             let sheet = reel::render_contact_sheet(&manifest, &platform)?;
             println!("{}", sheet.display());
@@ -345,6 +385,13 @@ enum Command {
     },
     /// Generate and verify artifact manifests for every work under a root.
     ArtifactCheckAll {
+        #[arg(default_value = "works")]
+        root: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate and summarize all work manifests under a root without rendering media.
+    Corpus {
         #[arg(default_value = "works")]
         root: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]

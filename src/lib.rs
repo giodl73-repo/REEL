@@ -98,6 +98,41 @@ pub struct ValidationReport {
     pub exports: Vec<ExportPlan>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct CorpusReport {
+    pub works_root: String,
+    pub works: usize,
+    pub work_ids: Vec<String>,
+    pub work_titles: Vec<String>,
+    pub source_repos: Vec<String>,
+    pub formats: Vec<String>,
+    pub styles: Vec<String>,
+    pub platforms: usize,
+    pub scenes: usize,
+    pub shots: usize,
+    pub exports: usize,
+    pub total_scene_duration_seconds: f64,
+    pub total_shot_duration_seconds: f64,
+    pub reports: Vec<CorpusWorkReport>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CorpusWorkReport {
+    pub manifest: String,
+    pub work: String,
+    pub title: String,
+    pub source_repo: String,
+    pub source_id: String,
+    pub format: String,
+    pub style: String,
+    pub platforms: usize,
+    pub scenes: usize,
+    pub shots: usize,
+    pub exports: usize,
+    pub scene_duration_seconds: f64,
+    pub shot_duration_seconds: f64,
+}
+
 #[derive(Debug, PartialEq, Serialize)]
 pub struct ExportPlan {
     pub id: String,
@@ -809,6 +844,75 @@ pub fn check_all_artifact_manifests(root: impl AsRef<Path>) -> Result<ArtifactCh
         scene_previews,
         total_bytes,
         total_video_duration_seconds,
+        reports,
+    })
+}
+
+pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
+    let root = root.as_ref();
+    let manifests = discover_work_manifests(root)?;
+    if manifests.is_empty() {
+        bail!("no work manifests found under: {}", root.display());
+    }
+
+    let mut work_ids = BTreeSet::new();
+    let mut work_titles = BTreeSet::new();
+    let mut source_repos = BTreeSet::new();
+    let mut formats = BTreeSet::new();
+    let mut styles = BTreeSet::new();
+    let mut platforms = 0usize;
+    let mut scenes = 0usize;
+    let mut shots = 0usize;
+    let mut exports = 0usize;
+    let mut total_scene_duration_seconds = 0.0f64;
+    let mut total_shot_duration_seconds = 0.0f64;
+    let mut reports = Vec::new();
+
+    for manifest in manifests {
+        let loaded = load_manifest(&manifest)?;
+        let validation = validate_manifest(&loaded)?;
+        work_ids.insert(loaded.manifest.work.clone());
+        work_titles.insert(loaded.manifest.title.clone());
+        source_repos.insert(loaded.manifest.source_scenario.repo.clone());
+        formats.insert(loaded.manifest.format.clone());
+        styles.insert(loaded.manifest.style.clone());
+        platforms += loaded.manifest.platforms.len();
+        scenes += loaded.manifest.scenes.len();
+        shots += loaded.manifest.shots.len();
+        exports += validation.exports.len();
+        total_scene_duration_seconds += validation.scene_total;
+        total_shot_duration_seconds += validation.shot_total;
+        reports.push(CorpusWorkReport {
+            manifest: path_text(&loaded.path),
+            work: loaded.manifest.work,
+            title: loaded.manifest.title,
+            source_repo: loaded.manifest.source_scenario.repo,
+            source_id: loaded.manifest.source_scenario.id,
+            format: loaded.manifest.format,
+            style: loaded.manifest.style,
+            platforms: loaded.manifest.platforms.len(),
+            scenes: loaded.manifest.scenes.len(),
+            shots: loaded.manifest.shots.len(),
+            exports: validation.exports.len(),
+            scene_duration_seconds: validation.scene_total,
+            shot_duration_seconds: validation.shot_total,
+        });
+    }
+
+    Ok(CorpusReport {
+        works_root: path_text(root),
+        works: reports.len(),
+        work_ids: work_ids.into_iter().collect(),
+        work_titles: work_titles.into_iter().collect(),
+        source_repos: source_repos.into_iter().collect(),
+        formats: formats.into_iter().collect(),
+        styles: styles.into_iter().collect(),
+        platforms,
+        scenes,
+        shots,
+        exports,
+        total_scene_duration_seconds,
+        total_shot_duration_seconds,
         reports,
     })
 }
