@@ -470,6 +470,7 @@ pub fn render_review_pack(manifest: impl AsRef<Path>) -> Result<PathBuf> {
         "- Artifact manifest JSON: `{}`\n\n",
         artifact_manifest.display()
     ));
+    markdown.push_str(&review_pack_review_summary(&loaded)?);
     markdown.push_str(&review_pack_adapter_summary(&loaded)?);
     markdown.push_str("## FFmpeg baseline renders\n\n");
     markdown.push_str("| Platform | MP4 | Duration | Contact sheet |\n");
@@ -1379,6 +1380,56 @@ fn review_pack_adapter_summary(loaded: &LoadedManifest) -> Result<String> {
     }
     markdown.push('\n');
     Ok(markdown)
+}
+
+fn review_pack_review_summary(loaded: &LoadedManifest) -> Result<String> {
+    let review = loaded
+        .raw
+        .get(Value::String("review".to_string()))
+        .and_then(Value::as_mapping)
+        .expect("review mapping was checked during validation");
+    let status = review
+        .get(Value::String("status".to_string()))
+        .and_then(Value::as_str)
+        .expect("review.status string was checked during validation");
+    let required_roles = review
+        .get(Value::String("required_roles".to_string()))
+        .and_then(Value::as_sequence)
+        .expect("review.required_roles sequence was checked during validation")
+        .iter()
+        .enumerate()
+        .map(|(index, role)| {
+            role.as_str()
+                .map(str::to_string)
+                .ok_or_else(|| anyhow!("review.required_roles[{}] must be a string", index + 1))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let mut markdown = String::new();
+    markdown.push_str("## Review summary\n\n");
+    markdown.push_str(&format!("- Status: `{status}`\n"));
+    markdown.push_str(&format!(
+        "- Required roles: `{}`\n\n",
+        required_roles.join("`, `")
+    ));
+    markdown.push_str("| Role | Review focus |\n");
+    markdown.push_str("|---|---|\n");
+    for role in required_roles {
+        markdown.push_str(&format!("| `{role}` | {} |\n", review_role_focus(&role)));
+    }
+    markdown.push('\n');
+    Ok(markdown)
+}
+
+fn review_role_focus(role: &str) -> &'static str {
+    match role {
+        "story-director" => "Scenario truth, narrative promise, and continuity.",
+        "animation-director" => "Motion readability, style fit, and visual continuity.",
+        "editor" => "Pacing, cuts, timing, and export structure.",
+        "sound-designer" => "Narration, music, effects, silence, and caption support.",
+        "platform-audience" => "Platform fit, audience clarity, captions, and safe areas.",
+        _ => "Manifest-specific review responsibility.",
+    }
 }
 
 struct DemoExport<'a> {
@@ -3159,6 +3210,27 @@ mod tests {
         assert!(markdown.contains("| `remotion` | `planned` | yes |"));
         assert!(markdown.contains("| `blender` | `planned` | no |"));
         assert!(markdown.contains("| `ai-video` | `planned` | yes |"));
+    }
+
+    #[test]
+    fn review_pack_includes_review_role_summary() {
+        let manifest = load_manifest("works/0001-ash-vale-last-road-before-winter/manifest.yaml")
+            .expect("manifest loads");
+        let markdown = review_pack_review_summary(&manifest).expect("summary renders");
+
+        assert!(markdown.contains("## Review summary"));
+        assert!(markdown.contains("- Status: `reviewed`"));
+        assert!(markdown.contains(
+            "- Required roles: `story-director`, `animation-director`, `editor`, `sound-designer`, `platform-audience`"
+        ));
+        assert!(
+            markdown.contains(
+                "| `story-director` | Scenario truth, narrative promise, and continuity. |"
+            )
+        );
+        assert!(markdown.contains(
+            "| `platform-audience` | Platform fit, audience clarity, captions, and safe areas. |"
+        ));
     }
 
     #[test]

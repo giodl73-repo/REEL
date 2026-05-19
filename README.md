@@ -195,7 +195,9 @@ source paths, source commits, audience primary/context/effect values, styles,
 alternate styles, platform names, platform counts, scene counts, shot counts,
 export counts, and manifest timing totals before expensive artifact or
 review-pack generation.
-The `review-all` index links each work's review pack and artifact manifest, then
+Generated review packs include manifest-owned review status, required review
+roles, and role-specific focus before adapter and FFmpeg artifact sections. The
+`review-all` index links each work's review pack and artifact manifest, then
 shows per-work artifact generation and verification timestamps plus per-work and
 aggregate verification counts for generated scene previews, files, bytes, and
 review pack/work id/title/artifact manifest/source manifest/artifact schema/
