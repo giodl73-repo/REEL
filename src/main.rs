@@ -227,7 +227,7 @@ fn main() -> Result<()> {
             match output {
                 OutputFormat::Text => {
                     println!(
-                        "{} | works={} | manifests={} | manifest_versions={} | work_ids={} | sources={} | source_ids={} | formats={} | styles={} | platform_names={} | platforms={} | scenes={} | shots={} | exports={} | scene_duration={:.3}s | shot_duration={:.3}s",
+                        "{} | works={} | manifests={} | manifest_versions={} | work_ids={} | sources={} | source_ids={} | source_paths={} | source_commits={} | formats={} | styles={} | platform_names={} | platforms={} | scenes={} | shots={} | exports={} | scene_duration={:.3}s | shot_duration={:.3}s",
                         report.works_root,
                         report.works,
                         report.manifests.join(";"),
@@ -235,6 +235,8 @@ fn main() -> Result<()> {
                         report.work_ids.join(","),
                         report.source_repos.join(","),
                         report.source_ids.join(","),
+                        report.source_paths.join(","),
+                        report.source_commits.join(","),
                         report.formats.join(","),
                         report.styles.join(","),
                         report.platform_names.join(","),
@@ -247,12 +249,14 @@ fn main() -> Result<()> {
                     );
                     for item in report.reports {
                         println!(
-                            "  {} | version={} | work={} | title={} | source={} | format={} | style={} | platform_names={} | platforms={} | scenes={} | shots={} | exports={} | scene_duration={:.3}s | shot_duration={:.3}s",
+                            "  {} | version={} | work={} | title={} | source={} | source_path={} | source_commit={} | format={} | style={} | platform_names={} | platforms={} | scenes={} | shots={} | exports={} | scene_duration={:.3}s | shot_duration={:.3}s",
                             item.manifest,
                             item.manifest_version,
                             item.work,
                             item.title,
                             item.source_repo,
+                            item.source_path,
+                            item.source_commit,
                             item.format,
                             item.style,
                             item.platform_names.join(","),

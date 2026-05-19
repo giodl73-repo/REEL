@@ -108,6 +108,8 @@ pub struct CorpusReport {
     pub work_titles: Vec<String>,
     pub source_repos: Vec<String>,
     pub source_ids: Vec<String>,
+    pub source_paths: Vec<String>,
+    pub source_commits: Vec<String>,
     pub formats: Vec<String>,
     pub styles: Vec<String>,
     pub platform_names: Vec<String>,
@@ -128,6 +130,8 @@ pub struct CorpusWorkReport {
     pub title: String,
     pub source_repo: String,
     pub source_id: String,
+    pub source_path: String,
+    pub source_commit: String,
     pub format: String,
     pub style: String,
     pub platform_names: Vec<String>,
@@ -866,6 +870,8 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
     let mut manifest_versions = BTreeSet::new();
     let mut source_repos = BTreeSet::new();
     let mut source_ids = BTreeSet::new();
+    let mut source_paths = BTreeSet::new();
+    let mut source_commits = BTreeSet::new();
     let mut formats = BTreeSet::new();
     let mut styles = BTreeSet::new();
     let mut platform_names = BTreeSet::new();
@@ -888,6 +894,21 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
             .and_then(Value::as_str)
             .expect("manifest_version string was checked during validation")
             .to_string();
+        let source_scenario = loaded
+            .raw
+            .get(Value::String("source_scenario".to_string()))
+            .and_then(Value::as_mapping)
+            .expect("source_scenario mapping was checked during validation");
+        let source_path = source_scenario
+            .get(Value::String("path".to_string()))
+            .and_then(Value::as_str)
+            .expect("source_scenario.path string was checked during validation")
+            .to_string();
+        let source_commit = source_scenario
+            .get(Value::String("source_commit".to_string()))
+            .and_then(Value::as_str)
+            .expect("source_scenario.source_commit string was checked during validation")
+            .to_string();
         let work_platform_names = loaded
             .manifest
             .platforms
@@ -899,6 +920,8 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
         manifest_versions.insert(manifest_version.clone());
         source_repos.insert(loaded.manifest.source_scenario.repo.clone());
         source_ids.insert(loaded.manifest.source_scenario.id.clone());
+        source_paths.insert(source_path.clone());
+        source_commits.insert(source_commit.clone());
         formats.insert(loaded.manifest.format.clone());
         styles.insert(loaded.manifest.style.clone());
         platform_names.extend(work_platform_names.iter().cloned());
@@ -916,6 +939,8 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
             title: loaded.manifest.title,
             source_repo: loaded.manifest.source_scenario.repo,
             source_id: loaded.manifest.source_scenario.id,
+            source_path,
+            source_commit,
             format: loaded.manifest.format,
             style: loaded.manifest.style,
             platform_names: work_platform_names,
@@ -937,6 +962,8 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
         work_titles: work_titles.into_iter().collect(),
         source_repos: source_repos.into_iter().collect(),
         source_ids: source_ids.into_iter().collect(),
+        source_paths: source_paths.into_iter().collect(),
+        source_commits: source_commits.into_iter().collect(),
         formats: formats.into_iter().collect(),
         styles: styles.into_iter().collect(),
         platform_names: platform_names.into_iter().collect(),
@@ -2814,6 +2841,17 @@ mod tests {
                 "scenario:banish:ash-vale-last-road-before-winter",
                 "scenario:court:first-rally"
             ]
+        );
+        assert_eq!(
+            report.source_paths,
+            vec![
+                "docs/canon-ash-vale-scenario.md",
+                "docs/scenarios/first-rally.md"
+            ]
+        );
+        assert_eq!(
+            report.source_commits,
+            vec!["3f20886eaaae3657562a010d5bdbc6316e1f6fbb", "unknown"]
         );
         assert_eq!(report.formats, vec!["trailer"]);
         assert_eq!(report.styles, vec!["isometric-game", "storyboard-animatic"]);
