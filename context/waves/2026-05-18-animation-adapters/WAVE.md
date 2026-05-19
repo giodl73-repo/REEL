@@ -49,6 +49,7 @@ adapter contracts without provider lock-in.
 | 37 | Artifact SHA-256 verification | done | Added SHA-256 digests to artifact manifests and enforced digest checks in artifact verification. |
 | 38 | Artifact coverage verification | done | Added artifact checks for source manifest identity, export platforms, dimensions, scene ids, and scene durations. |
 | 39 | Artifact platform duration verification | done | Added artifact checks that shot-card and work-preview durations match each source export duration. |
+| 40 | Review-all aggregate totals | done | Added aggregate verified works, scene previews, files, and bytes to the review-all Markdown index. |
 
 ## Success criteria
 

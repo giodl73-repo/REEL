@@ -948,6 +948,11 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
             artifact_check: check,
         });
     }
+    markdown.push_str("\n## Verification totals\n\n");
+    markdown.push_str(&format!("- Works: `{}`\n", reports.len()));
+    markdown.push_str(&format!("- Scene previews: `{scene_previews}`\n"));
+    markdown.push_str(&format!("- Files: `{files}`\n"));
+    markdown.push_str(&format!("- Bytes: `{total_bytes}`\n"));
 
     fs::write(&index_path, markdown)
         .with_context(|| format!("failed to write {}", index_path.display()))?;
