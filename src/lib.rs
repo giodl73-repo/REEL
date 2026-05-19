@@ -216,6 +216,7 @@ pub struct ReviewAllReport {
     pub works_root: String,
     pub index: String,
     pub generated_unix: u64,
+    pub checked_unix: u64,
     pub works: usize,
     pub files: usize,
     pub scene_previews: usize,
@@ -958,7 +959,9 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
             artifact_check: check,
         });
     }
+    let checked_unix = unix_now()?;
     markdown.push_str("\n## Verification totals\n\n");
+    markdown.push_str(&format!("- Checked unix: `{checked_unix}`\n"));
     markdown.push_str(&format!("- Works: `{}`\n", reports.len()));
     markdown.push_str(&format!("- Scene previews: `{scene_previews}`\n"));
     markdown.push_str(&format!("- Files: `{files}`\n"));
@@ -970,6 +973,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         works_root: path_text(root),
         index: path_text(&index_path),
         generated_unix,
+        checked_unix,
         works: reports.len(),
         files,
         scene_previews,
