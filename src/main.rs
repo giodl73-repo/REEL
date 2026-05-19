@@ -227,7 +227,7 @@ fn main() -> Result<()> {
             match output {
                 OutputFormat::Text => {
                     println!(
-                        "{} | works={} | manifests={} | manifest_versions={} | work_ids={} | sources={} | source_ids={} | source_paths={} | source_commits={} | formats={} | styles={} | platform_names={} | platforms={} | scenes={} | shots={} | exports={} | scene_duration={:.3}s | shot_duration={:.3}s",
+                        "{} | works={} | manifests={} | manifest_versions={} | work_ids={} | sources={} | source_ids={} | source_paths={} | source_commits={} | formats={} | styles={} | alternate_styles={} | platform_names={} | platforms={} | scenes={} | shots={} | exports={} | scene_duration={:.3}s | shot_duration={:.3}s",
                         report.works_root,
                         report.works,
                         report.manifests.join(";"),
@@ -239,6 +239,7 @@ fn main() -> Result<()> {
                         report.source_commits.join(","),
                         report.formats.join(","),
                         report.styles.join(","),
+                        report.alternate_styles.join(","),
                         report.platform_names.join(","),
                         report.platforms,
                         report.scenes,
@@ -249,7 +250,7 @@ fn main() -> Result<()> {
                     );
                     for item in report.reports {
                         println!(
-                            "  {} | version={} | work={} | title={} | source={} | source_path={} | source_commit={} | format={} | style={} | platform_names={} | platforms={} | scenes={} | shots={} | exports={} | scene_duration={:.3}s | shot_duration={:.3}s",
+                            "  {} | version={} | work={} | title={} | source={} | source_path={} | source_commit={} | format={} | style={} | alternate_styles={} | platform_names={} | platforms={} | scenes={} | shots={} | exports={} | scene_duration={:.3}s | shot_duration={:.3}s",
                             item.manifest,
                             item.manifest_version,
                             item.work,
@@ -259,6 +260,7 @@ fn main() -> Result<()> {
                             item.source_commit,
                             item.format,
                             item.style,
+                            item.alternate_styles.join(","),
                             item.platform_names.join(","),
                             item.platforms,
                             item.scenes,

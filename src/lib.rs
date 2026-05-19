@@ -112,6 +112,7 @@ pub struct CorpusReport {
     pub source_commits: Vec<String>,
     pub formats: Vec<String>,
     pub styles: Vec<String>,
+    pub alternate_styles: Vec<String>,
     pub platform_names: Vec<String>,
     pub platforms: usize,
     pub scenes: usize,
@@ -134,6 +135,7 @@ pub struct CorpusWorkReport {
     pub source_commit: String,
     pub format: String,
     pub style: String,
+    pub alternate_styles: Vec<String>,
     pub platform_names: Vec<String>,
     pub platforms: usize,
     pub scenes: usize,
@@ -874,6 +876,7 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
     let mut source_commits = BTreeSet::new();
     let mut formats = BTreeSet::new();
     let mut styles = BTreeSet::new();
+    let mut alternate_styles = BTreeSet::new();
     let mut platform_names = BTreeSet::new();
     let mut platforms = 0usize;
     let mut scenes = 0usize;
@@ -909,6 +912,24 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
             .and_then(Value::as_str)
             .expect("source_scenario.source_commit string was checked during validation")
             .to_string();
+        let work_alternate_styles = loaded
+            .raw
+            .get(Value::String("alternate_styles".to_string()))
+            .map(|styles| {
+                styles
+                    .as_sequence()
+                    .ok_or_else(|| anyhow!("alternate_styles must be a sequence"))?
+                    .iter()
+                    .enumerate()
+                    .map(|(index, style)| {
+                        style.as_str().map(str::to_string).ok_or_else(|| {
+                            anyhow!("alternate_styles[{}] must be a string", index + 1)
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
         let work_platform_names = loaded
             .manifest
             .platforms
@@ -924,6 +945,7 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
         source_commits.insert(source_commit.clone());
         formats.insert(loaded.manifest.format.clone());
         styles.insert(loaded.manifest.style.clone());
+        alternate_styles.extend(work_alternate_styles.iter().cloned());
         platform_names.extend(work_platform_names.iter().cloned());
         platforms += loaded.manifest.platforms.len();
         scenes += loaded.manifest.scenes.len();
@@ -943,6 +965,7 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
             source_commit,
             format: loaded.manifest.format,
             style: loaded.manifest.style,
+            alternate_styles: work_alternate_styles,
             platform_names: work_platform_names,
             platforms: loaded.manifest.platforms.len(),
             scenes: loaded.manifest.scenes.len(),
@@ -966,6 +989,7 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
         source_commits: source_commits.into_iter().collect(),
         formats: formats.into_iter().collect(),
         styles: styles.into_iter().collect(),
+        alternate_styles: alternate_styles.into_iter().collect(),
         platform_names: platform_names.into_iter().collect(),
         platforms,
         scenes,
@@ -2855,6 +2879,10 @@ mod tests {
         );
         assert_eq!(report.formats, vec!["trailer"]);
         assert_eq!(report.styles, vec!["isometric-game", "storyboard-animatic"]);
+        assert_eq!(
+            report.alternate_styles,
+            vec!["isometric-game", "storyboard-animatic"]
+        );
         assert_eq!(report.platform_names, vec!["iphone-social", "youtube-demo"]);
         assert_eq!(report.platforms, 3);
         assert_eq!(report.scenes, 5);
