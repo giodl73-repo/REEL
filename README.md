@@ -178,8 +178,9 @@ files with matching byte sizes, matching SHA-256 digests, and positive video
 durations, and still matches the source manifest's work identity, export
 platforms, dimensions, platform video durations, scene ids, and scene durations.
 Add `--output json` when automation needs the verification summary.
-Check reports include schema version, generation timestamp, source manifest,
-work identity, and the baseline adapter for downstream routing.
+Check reports include schema version, generation timestamp, verification
+timestamp, source manifest, work identity, and the baseline adapter for
+downstream routing.
 Use `artifact-check-all` to generate and verify artifact manifests for every
 work under a works root.
 The `review-all` index links each work's review pack and artifact manifest, then

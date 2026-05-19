@@ -157,10 +157,11 @@ fn main() -> Result<()> {
             match output {
                 OutputFormat::Text => {
                     println!(
-                        "{} | schema={} | generated={} | source={} | work={} | adapter={} | platforms={} | scenes={} | files={} | bytes={}",
+                        "{} | schema={} | generated={} | checked={} | source={} | work={} | adapter={} | platforms={} | scenes={} | files={} | bytes={}",
                         report.artifact_manifest,
                         report.schema_version,
                         report.generated_unix,
+                        report.checked_unix,
                         report.source_manifest,
                         report.work,
                         report.baseline_adapter,
@@ -187,10 +188,11 @@ fn main() -> Result<()> {
                     );
                     for item in report.reports {
                         println!(
-                            "  {} | schema={} | generated={} | source={} | work={} | adapter={} | platforms={} | scenes={} | files={} | bytes={}",
+                            "  {} | schema={} | generated={} | checked={} | source={} | work={} | adapter={} | platforms={} | scenes={} | files={} | bytes={}",
                             item.artifact_manifest,
                             item.schema_version,
                             item.generated_unix,
+                            item.checked_unix,
                             item.source_manifest,
                             item.work,
                             item.baseline_adapter,
