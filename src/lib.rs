@@ -189,10 +189,12 @@ pub struct ArtifactImage {
 pub struct ArtifactCheckReport {
     pub artifact_manifest: String,
     pub schema_version: String,
+    pub source_manifest: String,
     pub work: String,
     pub title: String,
     pub baseline_adapter: String,
     pub platforms: usize,
+    pub scene_previews: usize,
     pub files: usize,
     pub total_bytes: u64,
 }
@@ -202,6 +204,7 @@ pub struct ArtifactCheckAllReport {
     pub works_root: String,
     pub works: usize,
     pub files: usize,
+    pub scene_previews: usize,
     pub total_bytes: u64,
     pub reports: Vec<ArtifactCheckReport>,
 }
@@ -212,6 +215,7 @@ pub struct ReviewAllReport {
     pub index: String,
     pub works: usize,
     pub files: usize,
+    pub scene_previews: usize,
     pub total_bytes: u64,
     pub reports: Vec<ReviewAllWorkReport>,
 }
@@ -571,9 +575,64 @@ pub fn check_artifact_manifest(path: impl AsRef<Path>) -> Result<ArtifactCheckRe
         bail!("artifact manifest has no platforms: {}", path.display());
     }
 
+    let source = load_manifest(&manifest.manifest)?;
+    let validation = validate_manifest(&source)?;
+    if manifest.work != source.manifest.work {
+        bail!(
+            "artifact manifest work mismatch: expected {}, found {}",
+            source.manifest.work,
+            manifest.work
+        );
+    }
+    if manifest.title != source.manifest.title {
+        bail!(
+            "artifact manifest title mismatch: expected {}, found {}",
+            source.manifest.title,
+            manifest.title
+        );
+    }
+    if manifest.baseline_adapter != "ffmpeg" {
+        bail!(
+            "artifact manifest baseline adapter mismatch: expected ffmpeg, found {}",
+            manifest.baseline_adapter
+        );
+    }
+    if manifest.platforms.len() != validation.exports.len() {
+        bail!(
+            "artifact manifest platform count mismatch: expected {}, found {}",
+            validation.exports.len(),
+            manifest.platforms.len()
+        );
+    }
+
     let mut files = 0usize;
+    let mut scene_previews = 0usize;
     let mut total_bytes = 0u64;
     for platform in &manifest.platforms {
+        let export = validation
+            .exports
+            .iter()
+            .find(|export| export.id == platform.id)
+            .ok_or_else(|| anyhow!("artifact manifest has unknown platform: {}", platform.id))?;
+        if platform.aspect_ratio != export.aspect_ratio {
+            bail!(
+                "platform {} aspect ratio mismatch: expected {}, found {}",
+                platform.id,
+                export.aspect_ratio,
+                platform.aspect_ratio
+            );
+        }
+        if platform.width != export.width || platform.height != export.height {
+            bail!(
+                "platform {} dimensions mismatch: expected {}x{}, found {}x{}",
+                platform.id,
+                export.width,
+                export.height,
+                platform.width,
+                platform.height
+            );
+        }
+
         check_artifact_video(&platform.shot_cards, "shot_cards")?;
         files += 1;
         total_bytes += platform.shot_cards.bytes;
@@ -589,9 +648,36 @@ pub fn check_artifact_manifest(path: impl AsRef<Path>) -> Result<ArtifactCheckRe
         if platform.scene_previews.is_empty() {
             bail!("platform {} has no scene previews", platform.id);
         }
-        for scene in &platform.scene_previews {
+        if platform.scene_previews.len() != source.manifest.scenes.len() {
+            bail!(
+                "platform {} scene preview count mismatch: expected {}, found {}",
+                platform.id,
+                source.manifest.scenes.len(),
+                platform.scene_previews.len()
+            );
+        }
+        for (scene, expected_scene) in platform.scene_previews.iter().zip(&source.manifest.scenes) {
+            if scene.scene_id != expected_scene.id {
+                bail!(
+                    "platform {} scene preview mismatch: expected {}, found {}",
+                    platform.id,
+                    expected_scene.id,
+                    scene.scene_id
+                );
+            }
+            let plan = scene_plan_for_loaded(&source, &validation, &scene.scene_id, &platform.id)?;
+            if !same_duration(scene.video.duration_seconds, plan.render_duration_seconds) {
+                bail!(
+                    "platform {} scene {} duration mismatch: expected {}, found {}",
+                    platform.id,
+                    scene.scene_id,
+                    plan.render_duration_seconds,
+                    scene.video.duration_seconds
+                );
+            }
             check_artifact_video(&scene.video, &format!("scene_preview {}", scene.scene_id))?;
             files += 1;
+            scene_previews += 1;
             total_bytes += scene.video.bytes;
         }
     }
@@ -599,10 +685,12 @@ pub fn check_artifact_manifest(path: impl AsRef<Path>) -> Result<ArtifactCheckRe
     Ok(ArtifactCheckReport {
         artifact_manifest: path_text(path),
         schema_version: manifest.schema_version,
+        source_manifest: manifest.manifest,
         work: manifest.work,
         title: manifest.title,
         baseline_adapter: manifest.baseline_adapter,
         platforms: manifest.platforms.len(),
+        scene_previews,
         files,
         total_bytes,
     })
@@ -621,11 +709,13 @@ pub fn check_all_artifact_manifests(root: impl AsRef<Path>) -> Result<ArtifactCh
 
     let mut reports = Vec::new();
     let mut files = 0usize;
+    let mut scene_previews = 0usize;
     let mut total_bytes = 0u64;
     for manifest in manifests {
         let artifact_manifest = render_artifact_manifest(&manifest)?;
         let report = check_artifact_manifest(&artifact_manifest)?;
         files += report.files;
+        scene_previews += report.scene_previews;
         total_bytes += report.total_bytes;
         reports.push(report);
     }
@@ -634,6 +724,7 @@ pub fn check_all_artifact_manifests(root: impl AsRef<Path>) -> Result<ArtifactCh
         works_root: path_text(root),
         works: reports.len(),
         files,
+        scene_previews,
         total_bytes,
         reports,
     })
@@ -823,12 +914,14 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
 
     let mut reports = Vec::new();
     let mut files = 0usize;
+    let mut scene_previews = 0usize;
     let mut total_bytes = 0u64;
     for manifest in manifests {
         let report = render_review_pack(&manifest)?;
         let artifact_manifest = render_artifact_manifest(&manifest)?;
         let check = check_artifact_manifest(&artifact_manifest)?;
         files += check.files;
+        scene_previews += check.scene_previews;
         total_bytes += check.total_bytes;
         markdown.push_str(&format!(
             "| `{}` | `{}` | `{}` | `{} files / {} bytes` |\n",
@@ -853,6 +946,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         index: path_text(&index_path),
         works: reports.len(),
         files,
+        scene_previews,
         total_bytes,
         reports,
     })

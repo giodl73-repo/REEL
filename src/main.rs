@@ -157,11 +157,12 @@ fn main() -> Result<()> {
             match output {
                 OutputFormat::Text => {
                     println!(
-                        "{} | work={} | adapter={} | platforms={} | files={} | bytes={}",
+                        "{} | work={} | adapter={} | platforms={} | scenes={} | files={} | bytes={}",
                         report.artifact_manifest,
                         report.work,
                         report.baseline_adapter,
                         report.platforms,
+                        report.scene_previews,
                         report.files,
                         report.total_bytes
                     );
@@ -174,16 +175,21 @@ fn main() -> Result<()> {
             match output {
                 OutputFormat::Text => {
                     println!(
-                        "{} | works={} | files={} | bytes={}",
-                        report.works_root, report.works, report.files, report.total_bytes
+                        "{} | works={} | scenes={} | files={} | bytes={}",
+                        report.works_root,
+                        report.works,
+                        report.scene_previews,
+                        report.files,
+                        report.total_bytes
                     );
                     for item in report.reports {
                         println!(
-                            "  {} | work={} | adapter={} | platforms={} | files={} | bytes={}",
+                            "  {} | work={} | adapter={} | platforms={} | scenes={} | files={} | bytes={}",
                             item.artifact_manifest,
                             item.work,
                             item.baseline_adapter,
                             item.platforms,
+                            item.scene_previews,
                             item.files,
                             item.total_bytes
                         );
