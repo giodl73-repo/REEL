@@ -110,6 +110,9 @@ pub struct CorpusReport {
     pub source_ids: Vec<String>,
     pub source_paths: Vec<String>,
     pub source_commits: Vec<String>,
+    pub audience_primaries: Vec<String>,
+    pub audience_contexts: Vec<String>,
+    pub audience_desired_effects: Vec<String>,
     pub formats: Vec<String>,
     pub styles: Vec<String>,
     pub alternate_styles: Vec<String>,
@@ -133,6 +136,9 @@ pub struct CorpusWorkReport {
     pub source_id: String,
     pub source_path: String,
     pub source_commit: String,
+    pub audience_primary: String,
+    pub audience_context: String,
+    pub audience_desired_effect: String,
     pub format: String,
     pub style: String,
     pub alternate_styles: Vec<String>,
@@ -874,6 +880,9 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
     let mut source_ids = BTreeSet::new();
     let mut source_paths = BTreeSet::new();
     let mut source_commits = BTreeSet::new();
+    let mut audience_primaries = BTreeSet::new();
+    let mut audience_contexts = BTreeSet::new();
+    let mut audience_desired_effects = BTreeSet::new();
     let mut formats = BTreeSet::new();
     let mut styles = BTreeSet::new();
     let mut alternate_styles = BTreeSet::new();
@@ -912,6 +921,26 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
             .and_then(Value::as_str)
             .expect("source_scenario.source_commit string was checked during validation")
             .to_string();
+        let audience = loaded
+            .raw
+            .get(Value::String("audience".to_string()))
+            .and_then(Value::as_mapping)
+            .expect("audience mapping was checked during validation");
+        let audience_primary = audience
+            .get(Value::String("primary".to_string()))
+            .and_then(Value::as_str)
+            .expect("audience.primary string was checked during validation")
+            .to_string();
+        let audience_context = audience
+            .get(Value::String("context".to_string()))
+            .and_then(Value::as_str)
+            .expect("audience.context string was checked during validation")
+            .to_string();
+        let audience_desired_effect = audience
+            .get(Value::String("desired_effect".to_string()))
+            .and_then(Value::as_str)
+            .expect("audience.desired_effect string was checked during validation")
+            .to_string();
         let work_alternate_styles = loaded
             .raw
             .get(Value::String("alternate_styles".to_string()))
@@ -943,6 +972,9 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
         source_ids.insert(loaded.manifest.source_scenario.id.clone());
         source_paths.insert(source_path.clone());
         source_commits.insert(source_commit.clone());
+        audience_primaries.insert(audience_primary.clone());
+        audience_contexts.insert(audience_context.clone());
+        audience_desired_effects.insert(audience_desired_effect.clone());
         formats.insert(loaded.manifest.format.clone());
         styles.insert(loaded.manifest.style.clone());
         alternate_styles.extend(work_alternate_styles.iter().cloned());
@@ -963,6 +995,9 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
             source_id: loaded.manifest.source_scenario.id,
             source_path,
             source_commit,
+            audience_primary,
+            audience_context,
+            audience_desired_effect,
             format: loaded.manifest.format,
             style: loaded.manifest.style,
             alternate_styles: work_alternate_styles,
@@ -987,6 +1022,9 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
         source_ids: source_ids.into_iter().collect(),
         source_paths: source_paths.into_iter().collect(),
         source_commits: source_commits.into_iter().collect(),
+        audience_primaries: audience_primaries.into_iter().collect(),
+        audience_contexts: audience_contexts.into_iter().collect(),
+        audience_desired_effects: audience_desired_effects.into_iter().collect(),
         formats: formats.into_iter().collect(),
         styles: styles.into_iter().collect(),
         alternate_styles: alternate_styles.into_iter().collect(),
@@ -2876,6 +2914,24 @@ mod tests {
         assert_eq!(
             report.source_commits,
             vec!["3f20886eaaae3657562a010d5bdbc6316e1f6fbb", "unknown"]
+        );
+        assert_eq!(
+            report.audience_primaries,
+            vec!["portfolio reviewer and Games Design collaborator"]
+        );
+        assert_eq!(
+            report.audience_contexts,
+            vec![
+                "desktop review of a lightweight second corpus item",
+                "phone-first preview and desktop review"
+            ]
+        );
+        assert_eq!(
+            report.audience_desired_effects,
+            vec![
+                "understand BANISH Pilgrim Loss in under 60 seconds",
+                "understand COURT's rally loop in under 30 seconds"
+            ]
         );
         assert_eq!(report.formats, vec!["trailer"]);
         assert_eq!(report.styles, vec!["isometric-game", "storyboard-animatic"]);

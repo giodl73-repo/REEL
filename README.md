@@ -191,9 +191,10 @@ work under a works root.
 Use `corpus` to validate and summarize every work manifest under a works root
 without rendering media. This gives automation a fast inventory of work ids,
 manifest paths, manifest versions, titles, source repos, source ids, formats,
-source paths, source commits, styles, alternate styles, platform names, platform
-counts, scene counts, shot counts, export counts, and manifest timing totals
-before expensive artifact or review-pack generation.
+source paths, source commits, audience primary/context/effect values, styles,
+alternate styles, platform names, platform counts, scene counts, shot counts,
+export counts, and manifest timing totals before expensive artifact or
+review-pack generation.
 The `review-all` index links each work's review pack and artifact manifest, then
 shows per-work artifact generation and verification timestamps plus per-work and
 aggregate verification counts for generated scene previews, files, bytes, and
