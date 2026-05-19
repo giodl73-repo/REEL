@@ -227,10 +227,11 @@ fn main() -> Result<()> {
             match output {
                 OutputFormat::Text => {
                     println!(
-                        "{} | works={} | manifests={} | work_ids={} | sources={} | source_ids={} | formats={} | styles={} | platforms={} | scenes={} | shots={} | exports={} | scene_duration={:.3}s | shot_duration={:.3}s",
+                        "{} | works={} | manifests={} | manifest_versions={} | work_ids={} | sources={} | source_ids={} | formats={} | styles={} | platforms={} | scenes={} | shots={} | exports={} | scene_duration={:.3}s | shot_duration={:.3}s",
                         report.works_root,
                         report.works,
                         report.manifests.join(";"),
+                        report.manifest_versions.join(","),
                         report.work_ids.join(","),
                         report.source_repos.join(","),
                         report.source_ids.join(","),
@@ -245,8 +246,9 @@ fn main() -> Result<()> {
                     );
                     for item in report.reports {
                         println!(
-                            "  {} | work={} | title={} | source={} | format={} | style={} | platforms={} | scenes={} | shots={} | exports={} | scene_duration={:.3}s | shot_duration={:.3}s",
+                            "  {} | version={} | work={} | title={} | source={} | format={} | style={} | platforms={} | scenes={} | shots={} | exports={} | scene_duration={:.3}s | shot_duration={:.3}s",
                             item.manifest,
+                            item.manifest_version,
                             item.work,
                             item.title,
                             item.source_repo,

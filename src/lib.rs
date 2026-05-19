@@ -103,6 +103,7 @@ pub struct CorpusReport {
     pub works_root: String,
     pub works: usize,
     pub manifests: Vec<String>,
+    pub manifest_versions: Vec<String>,
     pub work_ids: Vec<String>,
     pub work_titles: Vec<String>,
     pub source_repos: Vec<String>,
@@ -121,6 +122,7 @@ pub struct CorpusReport {
 #[derive(Debug, Serialize)]
 pub struct CorpusWorkReport {
     pub manifest: String,
+    pub manifest_version: String,
     pub work: String,
     pub title: String,
     pub source_repo: String,
@@ -859,6 +861,7 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
 
     let mut work_ids = BTreeSet::new();
     let mut work_titles = BTreeSet::new();
+    let mut manifest_versions = BTreeSet::new();
     let mut source_repos = BTreeSet::new();
     let mut source_ids = BTreeSet::new();
     let mut formats = BTreeSet::new();
@@ -876,8 +879,15 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
         let loaded = load_manifest(&manifest)?;
         let validation = validate_manifest(&loaded)?;
         let manifest_path = path_text(&loaded.path);
+        let manifest_version = loaded
+            .raw
+            .get(Value::String("manifest_version".to_string()))
+            .and_then(Value::as_str)
+            .expect("manifest_version string was checked during validation")
+            .to_string();
         work_ids.insert(loaded.manifest.work.clone());
         work_titles.insert(loaded.manifest.title.clone());
+        manifest_versions.insert(manifest_version.clone());
         source_repos.insert(loaded.manifest.source_scenario.repo.clone());
         source_ids.insert(loaded.manifest.source_scenario.id.clone());
         formats.insert(loaded.manifest.format.clone());
@@ -891,6 +901,7 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
         manifest_paths.push(manifest_path.clone());
         reports.push(CorpusWorkReport {
             manifest: manifest_path,
+            manifest_version,
             work: loaded.manifest.work,
             title: loaded.manifest.title,
             source_repo: loaded.manifest.source_scenario.repo,
@@ -910,6 +921,7 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
         works_root: path_text(root),
         works: reports.len(),
         manifests: manifest_paths,
+        manifest_versions: manifest_versions.into_iter().collect(),
         work_ids: work_ids.into_iter().collect(),
         work_titles: work_titles.into_iter().collect(),
         source_repos: source_repos.into_iter().collect(),
@@ -2771,6 +2783,7 @@ mod tests {
                 "works\\0002-court-first-rally\\manifest.yaml"
             ]
         );
+        assert_eq!(report.manifest_versions, vec!["reel.manifest.v0.1"]);
         assert_eq!(
             report.work_ids,
             vec![
