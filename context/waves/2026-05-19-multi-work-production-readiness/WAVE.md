@@ -20,6 +20,7 @@ validation contract and keeping generated media out of git.
 | 08 | Corpus source paths | done | Added source path and source commit aggregation to corpus text and JSON reports so automation can inventory upstream scenario files and revisions. |
 | 09 | Corpus alternate styles | done | Added alternate-style aggregation to corpus text and JSON reports so automation can inventory planned style variants before rendering. |
 | 10 | Corpus audience metadata | done | Added audience primary, context, and desired-effect aggregation to corpus text and JSON reports for reviewer targeting inventory. |
+| 11 | Wave closeout | done | Revalidated corpus, artifact, and review automation across the two-work corpus and closed the multi-work production-readiness wave. |
 
 ## Success criteria
 
@@ -36,3 +37,17 @@ validation contract and keeping generated media out of git.
 - Additional corpus works remain renderer-neutral and do not require new provider
   SDKs, credentials, or binary dependencies.
 - Generated renders stay under ignored `renders\` paths.
+
+## Closeout
+
+This wave is complete. REEL now proves its non-rendering corpus inventory,
+artifact verification, and review-pack index over two renderer-neutral work
+manifests: `0001-ash-vale-last-road-before-winter` and
+`0002-court-first-rally`. The corpus command inventories manifest paths,
+manifest versions, work ids/titles, source repos/ids/paths/commits, audience
+metadata, formats, primary/alternate styles, platform names/counts, scene/shot
+counts, export counts, and manifest timing totals before render-heavy checks.
+
+Artifact and review automation continue to use the deterministic FFmpeg baseline
+only. Remotion, Blender, and AI-video remain planned/provider-neutral handoff
+boundaries, and generated media remains under ignored `renders\` paths.
