@@ -193,6 +193,15 @@ pub struct ArtifactCheckReport {
     pub total_bytes: u64,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ArtifactCheckAllReport {
+    pub works_root: String,
+    pub works: usize,
+    pub files: usize,
+    pub total_bytes: u64,
+    pub reports: Vec<ArtifactCheckReport>,
+}
+
 #[derive(Debug, Deserialize)]
 struct Manifest {
     work: String,
@@ -570,6 +579,37 @@ pub fn check_artifact_manifest(path: impl AsRef<Path>) -> Result<ArtifactCheckRe
         platforms: manifest.platforms.len(),
         files,
         total_bytes,
+    })
+}
+
+pub fn check_all_artifact_manifests(root: impl AsRef<Path>) -> Result<ArtifactCheckAllReport> {
+    let root = root.as_ref();
+    if !root.is_dir() {
+        bail!("works root not found: {}", root.display());
+    }
+
+    let manifests = discover_work_manifests(root)?;
+    if manifests.is_empty() {
+        bail!("no work manifests found under: {}", root.display());
+    }
+
+    let mut reports = Vec::new();
+    let mut files = 0usize;
+    let mut total_bytes = 0u64;
+    for manifest in manifests {
+        let artifact_manifest = render_artifact_manifest(&manifest)?;
+        let report = check_artifact_manifest(&artifact_manifest)?;
+        files += report.files;
+        total_bytes += report.total_bytes;
+        reports.push(report);
+    }
+
+    Ok(ArtifactCheckAllReport {
+        works_root: path_text(root),
+        works: reports.len(),
+        files,
+        total_bytes,
+        reports,
     })
 }
 

@@ -169,6 +169,29 @@ fn main() -> Result<()> {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
             }
         }
+        Command::ArtifactCheckAll { root, output } => {
+            let report = reel::check_all_artifact_manifests(&root)?;
+            match output {
+                OutputFormat::Text => {
+                    println!(
+                        "{} | works={} | files={} | bytes={}",
+                        report.works_root, report.works, report.files, report.total_bytes
+                    );
+                    for item in report.reports {
+                        println!(
+                            "  {} | work={} | adapter={} | platforms={} | files={} | bytes={}",
+                            item.artifact_manifest,
+                            item.work,
+                            item.baseline_adapter,
+                            item.platforms,
+                            item.files,
+                            item.total_bytes
+                        );
+                    }
+                }
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+            }
+        }
         Command::ContactSheet { manifest, platform } => {
             let sheet = reel::render_contact_sheet(&manifest, &platform)?;
             println!("{}", sheet.display());
@@ -284,6 +307,13 @@ enum Command {
             default_value = "renders/artifacts/0001-ash-vale-last-road-before-winter-artifacts.json"
         )]
         artifact_manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Generate and verify artifact manifests for every work under a root.
+    ArtifactCheckAll {
+        #[arg(default_value = "works")]
+        root: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
