@@ -285,6 +285,8 @@ pub struct ReviewAllReport {
     pub checked_unix: u64,
     pub works: usize,
     pub review_packs: Vec<String>,
+    pub review_statuses: Vec<String>,
+    pub required_roles: Vec<String>,
     pub work_ids: Vec<String>,
     pub work_titles: Vec<String>,
     pub artifact_manifests: Vec<String>,
@@ -305,8 +307,16 @@ pub struct ReviewAllReport {
 pub struct ReviewAllWorkReport {
     pub manifest: String,
     pub review_pack: String,
+    pub review_status: String,
+    pub required_roles: Vec<String>,
     pub artifact_manifest: String,
     pub artifact_check: ArtifactCheckReport,
+}
+
+#[derive(Debug)]
+struct ReviewMetadata {
+    status: String,
+    required_roles: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1227,6 +1237,8 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
 
     let mut reports = Vec::new();
     let mut review_packs = BTreeSet::new();
+    let mut review_statuses = BTreeSet::new();
+    let mut required_roles = BTreeSet::new();
     let mut work_ids = BTreeSet::new();
     let mut work_titles = BTreeSet::new();
     let mut artifact_manifests = BTreeSet::new();
@@ -1241,10 +1253,15 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
     let mut total_bytes = 0u64;
     let mut total_video_duration_seconds = 0.0f64;
     for manifest in manifests {
+        let loaded = load_manifest(&manifest)?;
+        validate_manifest(&loaded)?;
+        let review_metadata = review_metadata(&loaded)?;
         let report = render_review_pack(&manifest)?;
         let artifact_manifest = render_artifact_manifest(&manifest)?;
         let check = check_artifact_manifest(&artifact_manifest)?;
         review_packs.insert(path_text(&report));
+        review_statuses.insert(review_metadata.status.clone());
+        required_roles.extend(review_metadata.required_roles.iter().cloned());
         work_ids.insert(check.work.clone());
         work_titles.insert(check.title.clone());
         artifact_manifests.insert(check.artifact_manifest.clone());
@@ -1275,6 +1292,8 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         reports.push(ReviewAllWorkReport {
             manifest: path_text(&manifest),
             review_pack: path_text(&report),
+            review_status: review_metadata.status,
+            required_roles: review_metadata.required_roles,
             artifact_manifest: path_text(&artifact_manifest),
             artifact_check: check,
         });
@@ -1285,6 +1304,16 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
     markdown.push_str(&format!("- Works: `{}`\n", reports.len()));
     let review_packs: Vec<_> = review_packs.into_iter().collect();
     markdown.push_str(&format!("- Review packs: `{}`\n", review_packs.join(", ")));
+    let review_statuses: Vec<_> = review_statuses.into_iter().collect();
+    markdown.push_str(&format!(
+        "- Review statuses: `{}`\n",
+        review_statuses.join(", ")
+    ));
+    let required_roles: Vec<_> = required_roles.into_iter().collect();
+    markdown.push_str(&format!(
+        "- Required roles: `{}`\n",
+        required_roles.join(", ")
+    ));
     let work_ids: Vec<_> = work_ids.into_iter().collect();
     markdown.push_str(&format!("- Work ids: `{}`\n", work_ids.join(", ")));
     let work_titles: Vec<_> = work_titles.into_iter().collect();
@@ -1329,6 +1358,8 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         checked_unix,
         works: reports.len(),
         review_packs,
+        review_statuses,
+        required_roles,
         work_ids,
         work_titles,
         artifact_manifests,
@@ -1383,19 +1414,39 @@ fn review_pack_adapter_summary(loaded: &LoadedManifest) -> Result<String> {
 }
 
 fn review_pack_review_summary(loaded: &LoadedManifest) -> Result<String> {
+    let review = review_metadata(loaded)?;
+
+    let mut markdown = String::new();
+    markdown.push_str("## Review summary\n\n");
+    markdown.push_str(&format!("- Status: `{}`\n", review.status));
+    markdown.push_str(&format!(
+        "- Required roles: `{}`\n\n",
+        review.required_roles.join("`, `")
+    ));
+    markdown.push_str("| Role | Review focus |\n");
+    markdown.push_str("|---|---|\n");
+    for role in review.required_roles {
+        markdown.push_str(&format!("| `{role}` | {} |\n", review_role_focus(&role)));
+    }
+    markdown.push('\n');
+    Ok(markdown)
+}
+
+fn review_metadata(loaded: &LoadedManifest) -> Result<ReviewMetadata> {
     let review = loaded
         .raw
         .get(Value::String("review".to_string()))
         .and_then(Value::as_mapping)
-        .expect("review mapping was checked during validation");
+        .ok_or_else(|| anyhow!("review must be a mapping"))?;
     let status = review
         .get(Value::String("status".to_string()))
         .and_then(Value::as_str)
-        .expect("review.status string was checked during validation");
+        .ok_or_else(|| anyhow!("review.status must be a string"))?
+        .to_string();
     let required_roles = review
         .get(Value::String("required_roles".to_string()))
         .and_then(Value::as_sequence)
-        .expect("review.required_roles sequence was checked during validation")
+        .ok_or_else(|| anyhow!("review.required_roles must be a sequence"))?
         .iter()
         .enumerate()
         .map(|(index, role)| {
@@ -1405,20 +1456,10 @@ fn review_pack_review_summary(loaded: &LoadedManifest) -> Result<String> {
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let mut markdown = String::new();
-    markdown.push_str("## Review summary\n\n");
-    markdown.push_str(&format!("- Status: `{status}`\n"));
-    markdown.push_str(&format!(
-        "- Required roles: `{}`\n\n",
-        required_roles.join("`, `")
-    ));
-    markdown.push_str("| Role | Review focus |\n");
-    markdown.push_str("|---|---|\n");
-    for role in required_roles {
-        markdown.push_str(&format!("| `{role}` | {} |\n", review_role_focus(&role)));
-    }
-    markdown.push('\n');
-    Ok(markdown)
+    Ok(ReviewMetadata {
+        status,
+        required_roles,
+    })
 }
 
 fn review_role_focus(role: &str) -> &'static str {
