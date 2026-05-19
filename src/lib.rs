@@ -2759,6 +2759,48 @@ mod tests {
     }
 
     #[test]
+    fn summarizes_multi_work_corpus_without_rendering() {
+        let report = summarize_work_corpus("works").expect("corpus summarizes");
+
+        assert_eq!(report.works_root, "works");
+        assert_eq!(report.works, 2);
+        assert_eq!(
+            report.manifests,
+            vec![
+                "works\\0001-ash-vale-last-road-before-winter\\manifest.yaml",
+                "works\\0002-court-first-rally\\manifest.yaml"
+            ]
+        );
+        assert_eq!(
+            report.work_ids,
+            vec![
+                "0001-ash-vale-last-road-before-winter",
+                "0002-court-first-rally"
+            ]
+        );
+        assert_eq!(
+            report.work_titles,
+            vec!["Ash Vale: Last Road Before Winter", "COURT: First Rally"]
+        );
+        assert_eq!(report.source_repos, vec!["BANISH", "COURT"]);
+        assert_eq!(
+            report.source_ids,
+            vec![
+                "scenario:banish:ash-vale-last-road-before-winter",
+                "scenario:court:first-rally"
+            ]
+        );
+        assert_eq!(report.formats, vec!["trailer"]);
+        assert_eq!(report.styles, vec!["isometric-game", "storyboard-animatic"]);
+        assert_eq!(report.platforms, 3);
+        assert_eq!(report.scenes, 5);
+        assert_eq!(report.shots, 12);
+        assert_eq!(report.exports, 3);
+        assert!(same_duration(report.total_scene_duration_seconds, 80.0));
+        assert!(same_duration(report.total_shot_duration_seconds, 80.0));
+    }
+
+    #[test]
     fn rejects_duplicate_manifest_ids() {
         let manifest = load_manifest("works/0001-ash-vale-last-road-before-winter/manifest.yaml")
             .expect("manifest loads");
