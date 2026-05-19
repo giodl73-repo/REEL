@@ -48,6 +48,7 @@ adapter contracts without provider lock-in.
 | 36 | Review-all JSON output | done | Added `--output json` to `review-all` with index, review-pack, artifact-manifest, and artifact-check summaries. |
 | 37 | Artifact SHA-256 verification | done | Added SHA-256 digests to artifact manifests and enforced digest checks in artifact verification. |
 | 38 | Artifact coverage verification | done | Added artifact checks for source manifest identity, export platforms, dimensions, scene ids, and scene durations. |
+| 39 | Artifact platform duration verification | done | Added artifact checks that shot-card and work-preview durations match each source export duration. |
 
 ## Success criteria
 

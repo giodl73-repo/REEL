@@ -176,7 +176,7 @@ Add `--output json` to print the generated artifact manifest to stdout.
 Use `artifact-check` to verify that a generated artifact manifest still points to
 files with matching byte sizes, matching SHA-256 digests, and positive video
 durations, and still matches the source manifest's work identity, export
-platforms, dimensions, scene ids, and scene durations.
+platforms, dimensions, platform video durations, scene ids, and scene durations.
 Add `--output json` when automation needs the verification summary.
 Check reports include work identity and the baseline adapter for downstream
 routing.

@@ -634,6 +634,11 @@ pub fn check_artifact_manifest(path: impl AsRef<Path>) -> Result<ArtifactCheckRe
         }
 
         check_artifact_video(&platform.shot_cards, "shot_cards")?;
+        check_artifact_duration(
+            &platform.shot_cards,
+            export.duration_seconds,
+            &format!("platform {} shot_cards", platform.id),
+        )?;
         files += 1;
         total_bytes += platform.shot_cards.bytes;
 
@@ -642,6 +647,11 @@ pub fn check_artifact_manifest(path: impl AsRef<Path>) -> Result<ArtifactCheckRe
         total_bytes += platform.contact_sheet.bytes;
 
         check_artifact_video(&platform.work_preview, "work_preview")?;
+        check_artifact_duration(
+            &platform.work_preview,
+            export.duration_seconds,
+            &format!("platform {} work_preview", platform.id),
+        )?;
         files += 1;
         total_bytes += platform.work_preview.bytes;
 
@@ -2336,6 +2346,20 @@ fn check_artifact_video(video: &ArtifactVideo, label: &str) -> Result<()> {
     if video.duration_seconds <= 0.0 {
         bail!(
             "{label} has non-positive duration: {}",
+            video.duration_seconds
+        );
+    }
+    Ok(())
+}
+
+fn check_artifact_duration(
+    video: &ArtifactVideo,
+    expected_duration: f64,
+    label: &str,
+) -> Result<()> {
+    if !same_duration(video.duration_seconds, expected_duration) {
+        bail!(
+            "{label} duration mismatch: expected {expected_duration}, found {}",
             video.duration_seconds
         );
     }
