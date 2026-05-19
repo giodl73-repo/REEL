@@ -59,6 +59,7 @@ adapter contracts without provider lock-in.
 | 47 | Review-all batch checked timestamp | done | Added a top-level review-all `checked_unix` timestamp to Markdown totals and JSON output. |
 | 48 | Artifact duration totals | done | Added aggregate verified video duration seconds to artifact-check, artifact-check-all, and review-all reports. |
 | 49 | Artifact media counts | done | Split verified artifact totals into video and image file counts across artifact-check, artifact-check-all, and review-all reports. |
+| 50 | Artifact platform totals | done | Added aggregate verified platform counts to artifact-check-all and review-all reports. |
 
 ## Success criteria
 
