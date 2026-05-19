@@ -215,6 +215,7 @@ pub struct ArtifactCheckAllReport {
 pub struct ReviewAllReport {
     pub works_root: String,
     pub index: String,
+    pub generated_unix: u64,
     pub works: usize,
     pub files: usize,
     pub scene_previews: usize,
@@ -920,9 +921,10 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
     let index_path = out_dir.join("INDEX.md");
 
     let mut markdown = String::new();
+    let generated_unix = unix_now()?;
     markdown.push_str("# REEL review-pack index\n\n");
     markdown.push_str(&format!("- Works root: `{}`\n", root.display()));
-    markdown.push_str(&format!("- Generated unix: `{}`\n\n", unix_now()?));
+    markdown.push_str(&format!("- Generated unix: `{generated_unix}`\n\n"));
     markdown.push_str(
         "| Work manifest | Review pack | Artifact manifest | Generated unix | Checked unix | Verification |\n",
     );
@@ -967,6 +969,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
     Ok(ReviewAllReport {
         works_root: path_text(root),
         index: path_text(&index_path),
+        generated_unix,
         works: reports.len(),
         files,
         scene_previews,

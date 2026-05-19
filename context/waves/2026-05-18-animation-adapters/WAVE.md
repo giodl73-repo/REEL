@@ -55,6 +55,7 @@ adapter contracts without provider lock-in.
 | 43 | Review-all generated timestamps | done | Added each artifact manifest generation timestamp to the review-all Markdown index table. |
 | 44 | Artifact-check verification timestamp | done | Added a `checked_unix` timestamp to artifact-check JSON and text reports. |
 | 45 | Review-all checked timestamps | done | Added each artifact-check verification timestamp to the review-all Markdown index table. |
+| 46 | Review-all JSON index timestamp | done | Added the review-all index `generated_unix` timestamp to JSON output. |
 
 ## Success criteria
 

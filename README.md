@@ -186,8 +186,9 @@ work under a works root.
 The `review-all` index links each work's review pack and artifact manifest, then
 shows per-work artifact generation and verification timestamps plus per-work and
 aggregate verification counts for generated scene previews, files, and bytes.
-Add `--output json` to emit the generated index path, review-pack paths,
-artifact-manifest paths, and artifact-check summaries for automation.
+Add `--output json` to emit the generated index path, index generation
+timestamp, review-pack paths, artifact-manifest paths, and artifact-check
+summaries for automation.
 
 ## Pipeline
 
