@@ -18,14 +18,15 @@ render-heavy artifact sections.
 | 06 | Review status work ids | done | Added aggregate work id lists split by review status so automation can identify outstanding review packs directly. |
 | 07 | Review status work titles | done | Added aggregate work title lists split by review status so handoff reports are readable without opening each pack. |
 | 08 | Review status review packs | done | Added aggregate review-pack path lists split by review status so agents can jump directly to outstanding packs. |
+| 09 | Review status artifact manifests | done | Added aggregate artifact-manifest path lists split by review status so agents can route generated artifacts with handoff state. |
 
 ## Success criteria
 
 - `cargo run -- review-pack <manifest>` generates a handoff pack with review
   status and required-role guidance.
 - `cargo run -- review-all works --output json` exposes review statuses and
-  required roles plus status counts, status review packs/work ids/titles, role
-  counts, and role-by-status counts across the corpus without opening every
-  review pack.
+  required roles plus status counts, status artifact manifests/review
+  packs/work ids/titles, role counts, and role-by-status counts across the
+  corpus without opening every review pack.
 - Review metadata remains manifest-owned and renderer-neutral.
 - The FFmpeg baseline remains the only implemented deterministic renderer.

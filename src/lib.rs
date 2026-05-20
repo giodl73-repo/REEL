@@ -287,6 +287,7 @@ pub struct ReviewAllReport {
     pub review_packs: Vec<String>,
     pub review_statuses: Vec<String>,
     pub review_status_counts: BTreeMap<String, usize>,
+    pub review_status_artifact_manifests: BTreeMap<String, Vec<String>>,
     pub review_status_review_packs: BTreeMap<String, Vec<String>>,
     pub review_status_work_ids: BTreeMap<String, Vec<String>>,
     pub review_status_work_titles: BTreeMap<String, Vec<String>>,
@@ -1245,6 +1246,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
     let mut review_packs = BTreeSet::new();
     let mut review_statuses = BTreeSet::new();
     let mut review_status_counts = BTreeMap::new();
+    let mut review_status_artifact_manifests: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut review_status_review_packs: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut review_status_work_ids: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut review_status_work_titles: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -1278,6 +1280,10 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         *review_status_counts
             .entry(review_status.clone())
             .or_insert(0) += 1;
+        review_status_artifact_manifests
+            .entry(review_status.clone())
+            .or_default()
+            .push(path_text(&artifact_manifest));
         review_status_review_packs
             .entry(review_status.clone())
             .or_default()
@@ -1353,6 +1359,14 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
             .map(|(status, count)| format!("{status}={count}"))
             .collect::<Vec<_>>()
             .join(", ")
+    ));
+    markdown.push_str(&format!(
+        "- Review status artifact manifests: `{}`\n",
+        review_status_artifact_manifests
+            .iter()
+            .map(|(status, manifests)| format!("{status}: {}", manifests.join(", ")))
+            .collect::<Vec<_>>()
+            .join("; ")
     ));
     markdown.push_str(&format!(
         "- Review status review packs: `{}`\n",
@@ -1452,6 +1466,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         review_packs,
         review_statuses,
         review_status_counts,
+        review_status_artifact_manifests,
         review_status_review_packs,
         review_status_work_ids,
         review_status_work_titles,
