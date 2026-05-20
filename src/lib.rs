@@ -162,6 +162,7 @@ pub struct ReviewQueueReport {
     pub review_status_work_titles: BTreeMap<String, Vec<String>>,
     pub required_roles: Vec<String>,
     pub required_role_counts: BTreeMap<String, usize>,
+    pub required_role_manifests: BTreeMap<String, Vec<String>>,
     pub required_role_work_ids: BTreeMap<String, Vec<String>>,
     pub required_role_work_titles: BTreeMap<String, Vec<String>>,
     pub required_role_status_counts: BTreeMap<String, BTreeMap<String, usize>>,
@@ -1097,6 +1098,7 @@ pub fn summarize_review_queue(root: impl AsRef<Path>) -> Result<ReviewQueueRepor
     let mut review_status_work_titles: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut required_roles = BTreeSet::new();
     let mut required_role_counts = BTreeMap::new();
+    let mut required_role_manifests: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut required_role_work_ids: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut required_role_work_titles: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut required_role_status_counts: BTreeMap<String, BTreeMap<String, usize>> =
@@ -1125,6 +1127,10 @@ pub fn summarize_review_queue(root: impl AsRef<Path>) -> Result<ReviewQueueRepor
         required_roles.extend(review.required_roles.iter().cloned());
         for role in &review.required_roles {
             *required_role_counts.entry(role.clone()).or_insert(0) += 1;
+            required_role_manifests
+                .entry(role.clone())
+                .or_default()
+                .push(manifest_path.clone());
             required_role_work_ids
                 .entry(role.clone())
                 .or_default()
@@ -1158,6 +1164,7 @@ pub fn summarize_review_queue(root: impl AsRef<Path>) -> Result<ReviewQueueRepor
         review_status_work_titles,
         required_roles: required_roles.into_iter().collect(),
         required_role_counts,
+        required_role_manifests,
         required_role_work_ids,
         required_role_work_titles,
         required_role_status_counts,
@@ -3296,6 +3303,13 @@ mod tests {
             ]
         );
         assert_eq!(report.required_role_counts["editor"], 2);
+        assert_eq!(
+            report.required_role_manifests["editor"],
+            vec![
+                "works\\0001-ash-vale-last-road-before-winter\\manifest.yaml",
+                "works\\0002-court-first-rally\\manifest.yaml"
+            ]
+        );
         assert_eq!(
             report.required_role_work_ids["editor"],
             vec![

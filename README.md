@@ -196,8 +196,8 @@ alternate styles, platform names, platform counts, scene counts, shot counts,
 export counts, and manifest timing totals before expensive artifact or
 review-pack generation.
 Use `review-queue` to validate and summarize manifest-owned review status and
-required roles, including required-role work id/title lists, across a works root
-without rendering media.
+required roles, including required-role manifest/work id/title lists, across a
+works root without rendering media.
 Generated review packs include manifest-owned review status, required review
 roles, and role-specific focus before adapter and FFmpeg artifact sections. The
 `review-all` index links each work's review pack and artifact manifest, then
