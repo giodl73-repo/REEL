@@ -287,6 +287,7 @@ pub struct ReviewAllReport {
     pub review_packs: Vec<String>,
     pub review_statuses: Vec<String>,
     pub review_status_counts: BTreeMap<String, usize>,
+    pub review_status_work_ids: BTreeMap<String, Vec<String>>,
     pub required_roles: Vec<String>,
     pub required_role_counts: BTreeMap<String, usize>,
     pub required_role_status_counts: BTreeMap<String, BTreeMap<String, usize>>,
@@ -1242,6 +1243,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
     let mut review_packs = BTreeSet::new();
     let mut review_statuses = BTreeSet::new();
     let mut review_status_counts = BTreeMap::new();
+    let mut review_status_work_ids: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut required_roles = BTreeSet::new();
     let mut required_role_counts = BTreeMap::new();
     let mut required_role_status_counts: BTreeMap<String, BTreeMap<String, usize>> =
@@ -1266,11 +1268,16 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         let report = render_review_pack(&manifest)?;
         let artifact_manifest = render_artifact_manifest(&manifest)?;
         let check = check_artifact_manifest(&artifact_manifest)?;
+        let review_status = review_metadata.status.clone();
         review_packs.insert(path_text(&report));
-        review_statuses.insert(review_metadata.status.clone());
+        review_statuses.insert(review_status.clone());
         *review_status_counts
-            .entry(review_metadata.status.clone())
+            .entry(review_status.clone())
             .or_insert(0) += 1;
+        review_status_work_ids
+            .entry(review_status.clone())
+            .or_default()
+            .push(check.work.clone());
         required_roles.extend(review_metadata.required_roles.iter().cloned());
         for role in &review_metadata.required_roles {
             *required_role_counts.entry(role.clone()).or_insert(0) += 1;
@@ -1334,6 +1341,14 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
             .map(|(status, count)| format!("{status}={count}"))
             .collect::<Vec<_>>()
             .join(", ")
+    ));
+    markdown.push_str(&format!(
+        "- Review status work ids: `{}`\n",
+        review_status_work_ids
+            .iter()
+            .map(|(status, work_ids)| format!("{status}: {}", work_ids.join(", ")))
+            .collect::<Vec<_>>()
+            .join("; ")
     ));
     let required_roles: Vec<_> = required_roles.into_iter().collect();
     markdown.push_str(&format!(
@@ -1409,6 +1424,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         review_packs,
         review_statuses,
         review_status_counts,
+        review_status_work_ids,
         required_roles,
         required_role_counts,
         required_role_status_counts,
