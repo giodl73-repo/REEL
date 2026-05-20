@@ -19,6 +19,7 @@ render-heavy artifact sections.
 | 07 | Review status work titles | done | Added aggregate work title lists split by review status so handoff reports are readable without opening each pack. |
 | 08 | Review status review packs | done | Added aggregate review-pack path lists split by review status so agents can jump directly to outstanding packs. |
 | 09 | Review status artifact manifests | done | Added aggregate artifact-manifest path lists split by review status so agents can route generated artifacts with handoff state. |
+| 10 | Close review handoff readiness | done | Closed the wave after validating review-pack handoff metadata and review-all aggregate routing over the corpus. |
 
 ## Success criteria
 
@@ -30,3 +31,17 @@ render-heavy artifact sections.
   corpus without opening every review pack.
 - Review metadata remains manifest-owned and renderer-neutral.
 - The FFmpeg baseline remains the only implemented deterministic renderer.
+
+## Closeout
+
+Closed on 2026-05-19 after validating the two-work corpus with:
+
+- `cargo fmt`
+- `cargo test --quiet`
+- `cargo run --quiet -- review-all works --output json`
+- `git diff --check`
+
+The wave leaves review handoff metadata manifest-owned and renderer-neutral while
+making `review-all` the single automation entry point for review status,
+required roles, outstanding review-pack paths, artifact-manifest paths, work ids,
+work titles, status counts, role counts, and role-by-status workload.
