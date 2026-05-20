@@ -202,7 +202,8 @@ shows per-work artifact generation and verification timestamps plus per-work and
 aggregate verification counts for generated scene previews, files, bytes, and
 review pack/review status/required role/work id/title/artifact manifest/source
 manifest/artifact schema/baseline adapter/platform/video/image split counts,
-status counts, required-role counts, plus video duration.
+status counts, required-role counts, required-role status counts, plus video
+duration.
 Add `--output json` to emit the generated index path, index generation and
 verification timestamps, review-pack paths, artifact-manifest paths, and
 artifact-check summaries plus review handoff metadata for automation.
