@@ -288,6 +288,7 @@ pub struct ReviewAllReport {
     pub review_statuses: Vec<String>,
     pub review_status_counts: BTreeMap<String, usize>,
     pub required_roles: Vec<String>,
+    pub required_role_counts: BTreeMap<String, usize>,
     pub work_ids: Vec<String>,
     pub work_titles: Vec<String>,
     pub artifact_manifests: Vec<String>,
@@ -1241,6 +1242,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
     let mut review_statuses = BTreeSet::new();
     let mut review_status_counts = BTreeMap::new();
     let mut required_roles = BTreeSet::new();
+    let mut required_role_counts = BTreeMap::new();
     let mut work_ids = BTreeSet::new();
     let mut work_titles = BTreeSet::new();
     let mut artifact_manifests = BTreeSet::new();
@@ -1267,6 +1269,9 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
             .entry(review_metadata.status.clone())
             .or_insert(0) += 1;
         required_roles.extend(review_metadata.required_roles.iter().cloned());
+        for role in &review_metadata.required_roles {
+            *required_role_counts.entry(role.clone()).or_insert(0) += 1;
+        }
         work_ids.insert(check.work.clone());
         work_titles.insert(check.title.clone());
         artifact_manifests.insert(check.artifact_manifest.clone());
@@ -1327,6 +1332,14 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         "- Required roles: `{}`\n",
         required_roles.join(", ")
     ));
+    markdown.push_str(&format!(
+        "- Required role counts: `{}`\n",
+        required_role_counts
+            .iter()
+            .map(|(role, count)| format!("{role}={count}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
     let work_ids: Vec<_> = work_ids.into_iter().collect();
     markdown.push_str(&format!("- Work ids: `{}`\n", work_ids.join(", ")));
     let work_titles: Vec<_> = work_titles.into_iter().collect();
@@ -1374,6 +1387,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         review_statuses,
         review_status_counts,
         required_roles,
+        required_role_counts,
         work_ids,
         work_titles,
         artifact_manifests,
