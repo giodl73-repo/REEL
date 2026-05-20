@@ -15,11 +15,12 @@ artifact or review-pack generation.
 | 03 | Required role work titles | done | Added required-role work title lists to `review-queue` so reviewer assignments are readable without rendering media. |
 | 04 | Required role manifests | done | Added required-role manifest path lists to `review-queue` so reviewers can jump directly to source manifests without rendering media. |
 | 05 | Required role status work ids | done | Added role-by-status work id lists to `review-queue` so reviewers can see outstanding assignments by role without rendering media. |
+| 06 | Required role status work titles | done | Added role-by-status work title lists to `review-queue` so outstanding assignments are readable by role without rendering media. |
 
 ## Success criteria
 
 - `cargo run -- review-queue works --output json` exposes review statuses,
   required roles, status counts, role counts, role manifests/work ids/titles, and
-  role-by-status workload and work id lists without rendering media.
+  role-by-status workload plus work id/title lists without rendering media.
 - Review queue metadata remains manifest-owned and renderer-neutral.
 - `review-all` remains the render-heavy artifact and review-pack routing command.

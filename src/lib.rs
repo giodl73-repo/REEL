@@ -167,6 +167,7 @@ pub struct ReviewQueueReport {
     pub required_role_work_titles: BTreeMap<String, Vec<String>>,
     pub required_role_status_counts: BTreeMap<String, BTreeMap<String, usize>>,
     pub required_role_status_work_ids: BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    pub required_role_status_work_titles: BTreeMap<String, BTreeMap<String, Vec<String>>>,
     pub reports: Vec<ReviewQueueWorkReport>,
 }
 
@@ -1106,6 +1107,8 @@ pub fn summarize_review_queue(root: impl AsRef<Path>) -> Result<ReviewQueueRepor
         BTreeMap::new();
     let mut required_role_status_work_ids: BTreeMap<String, BTreeMap<String, Vec<String>>> =
         BTreeMap::new();
+    let mut required_role_status_work_titles: BTreeMap<String, BTreeMap<String, Vec<String>>> =
+        BTreeMap::new();
     let mut reports = Vec::new();
 
     for manifest in manifests {
@@ -1153,6 +1156,12 @@ pub fn summarize_review_queue(root: impl AsRef<Path>) -> Result<ReviewQueueRepor
                 .entry(review_status.clone())
                 .or_default()
                 .push(loaded.manifest.work.clone());
+            required_role_status_work_titles
+                .entry(role.clone())
+                .or_default()
+                .entry(review_status.clone())
+                .or_default()
+                .push(loaded.manifest.title.clone());
         }
         reports.push(ReviewQueueWorkReport {
             manifest: manifest_path,
@@ -1178,6 +1187,7 @@ pub fn summarize_review_queue(root: impl AsRef<Path>) -> Result<ReviewQueueRepor
         required_role_work_titles,
         required_role_status_counts,
         required_role_status_work_ids,
+        required_role_status_work_titles,
         reports,
     })
 }
@@ -3338,6 +3348,10 @@ mod tests {
         assert_eq!(
             report.required_role_status_work_ids["editor"]["not-reviewed"],
             vec!["0002-court-first-rally"]
+        );
+        assert_eq!(
+            report.required_role_status_work_titles["editor"]["not-reviewed"],
+            vec!["COURT: First Rally"]
         );
         assert_eq!(report.reports[0].review_status, "reviewed");
         assert_eq!(report.reports[1].review_status, "not-reviewed");
