@@ -158,6 +158,7 @@ pub struct ReviewQueueReport {
     pub manifests: Vec<String>,
     pub review_statuses: Vec<String>,
     pub review_status_counts: BTreeMap<String, usize>,
+    pub review_status_required_roles: BTreeMap<String, Vec<String>>,
     pub review_status_work_ids: BTreeMap<String, Vec<String>>,
     pub review_status_work_titles: BTreeMap<String, Vec<String>>,
     pub required_roles: Vec<String>,
@@ -1097,6 +1098,7 @@ pub fn summarize_review_queue(root: impl AsRef<Path>) -> Result<ReviewQueueRepor
     let mut manifest_paths = Vec::new();
     let mut review_statuses = BTreeSet::new();
     let mut review_status_counts = BTreeMap::new();
+    let mut review_status_required_roles: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut review_status_work_ids: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut review_status_work_titles: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut required_roles = BTreeSet::new();
@@ -1134,6 +1136,10 @@ pub fn summarize_review_queue(root: impl AsRef<Path>) -> Result<ReviewQueueRepor
             .or_default()
             .push(loaded.manifest.title.clone());
         required_roles.extend(review.required_roles.iter().cloned());
+        review_status_required_roles
+            .entry(review_status.clone())
+            .or_default()
+            .extend(review.required_roles.iter().cloned());
         for role in &review.required_roles {
             *required_role_counts.entry(role.clone()).or_insert(0) += 1;
             required_role_manifests
@@ -1187,6 +1193,10 @@ pub fn summarize_review_queue(root: impl AsRef<Path>) -> Result<ReviewQueueRepor
         manifests: manifest_paths,
         review_statuses: review_statuses.into_iter().collect(),
         review_status_counts,
+        review_status_required_roles: review_status_required_roles
+            .into_iter()
+            .map(|(status, roles)| (status, roles.into_iter().collect()))
+            .collect(),
         review_status_work_ids,
         review_status_work_titles,
         required_roles: required_roles.into_iter().collect(),
@@ -3314,6 +3324,16 @@ mod tests {
         assert_eq!(report.review_statuses, vec!["not-reviewed", "reviewed"]);
         assert_eq!(report.review_status_counts["not-reviewed"], 1);
         assert_eq!(report.review_status_counts["reviewed"], 1);
+        assert_eq!(
+            report.review_status_required_roles["not-reviewed"],
+            vec![
+                "animation-director",
+                "editor",
+                "platform-audience",
+                "sound-designer",
+                "story-director"
+            ]
+        );
         assert_eq!(
             report.review_status_work_ids["not-reviewed"],
             vec!["0002-court-first-rally"]
