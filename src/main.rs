@@ -285,7 +285,7 @@ fn main() -> Result<()> {
             match output {
                 OutputFormat::Text => {
                     println!(
-                        "{} | works={} | manifests={} | review_statuses={} | status_counts={} | required_roles={} | role_counts={} | role_work_ids={}",
+                        "{} | works={} | manifests={} | review_statuses={} | status_counts={} | required_roles={} | role_counts={} | role_work_ids={} | role_work_titles={}",
                         report.works_root,
                         report.works,
                         report.manifests.join(";"),
@@ -307,6 +307,12 @@ fn main() -> Result<()> {
                             .required_role_work_ids
                             .iter()
                             .map(|(role, work_ids)| format!("{role}:{}", work_ids.join(",")))
+                            .collect::<Vec<_>>()
+                            .join(";"),
+                        report
+                            .required_role_work_titles
+                            .iter()
+                            .map(|(role, work_titles)| format!("{role}:{}", work_titles.join("|")))
                             .collect::<Vec<_>>()
                             .join(";")
                     );

@@ -163,6 +163,7 @@ pub struct ReviewQueueReport {
     pub required_roles: Vec<String>,
     pub required_role_counts: BTreeMap<String, usize>,
     pub required_role_work_ids: BTreeMap<String, Vec<String>>,
+    pub required_role_work_titles: BTreeMap<String, Vec<String>>,
     pub required_role_status_counts: BTreeMap<String, BTreeMap<String, usize>>,
     pub reports: Vec<ReviewQueueWorkReport>,
 }
@@ -1097,6 +1098,7 @@ pub fn summarize_review_queue(root: impl AsRef<Path>) -> Result<ReviewQueueRepor
     let mut required_roles = BTreeSet::new();
     let mut required_role_counts = BTreeMap::new();
     let mut required_role_work_ids: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut required_role_work_titles: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut required_role_status_counts: BTreeMap<String, BTreeMap<String, usize>> =
         BTreeMap::new();
     let mut reports = Vec::new();
@@ -1127,6 +1129,10 @@ pub fn summarize_review_queue(root: impl AsRef<Path>) -> Result<ReviewQueueRepor
                 .entry(role.clone())
                 .or_default()
                 .push(loaded.manifest.work.clone());
+            required_role_work_titles
+                .entry(role.clone())
+                .or_default()
+                .push(loaded.manifest.title.clone());
             *required_role_status_counts
                 .entry(role.clone())
                 .or_default()
@@ -1153,6 +1159,7 @@ pub fn summarize_review_queue(root: impl AsRef<Path>) -> Result<ReviewQueueRepor
         required_roles: required_roles.into_iter().collect(),
         required_role_counts,
         required_role_work_ids,
+        required_role_work_titles,
         required_role_status_counts,
         reports,
     })
@@ -3295,6 +3302,10 @@ mod tests {
                 "0001-ash-vale-last-road-before-winter",
                 "0002-court-first-rally"
             ]
+        );
+        assert_eq!(
+            report.required_role_work_titles["editor"],
+            vec!["Ash Vale: Last Road Before Winter", "COURT: First Rally"]
         );
         assert_eq!(
             report.required_role_status_counts["editor"]["not-reviewed"],
