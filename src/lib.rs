@@ -288,6 +288,7 @@ pub struct ReviewAllReport {
     pub review_statuses: Vec<String>,
     pub review_status_counts: BTreeMap<String, usize>,
     pub review_status_work_ids: BTreeMap<String, Vec<String>>,
+    pub review_status_work_titles: BTreeMap<String, Vec<String>>,
     pub required_roles: Vec<String>,
     pub required_role_counts: BTreeMap<String, usize>,
     pub required_role_status_counts: BTreeMap<String, BTreeMap<String, usize>>,
@@ -1244,6 +1245,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
     let mut review_statuses = BTreeSet::new();
     let mut review_status_counts = BTreeMap::new();
     let mut review_status_work_ids: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut review_status_work_titles: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut required_roles = BTreeSet::new();
     let mut required_role_counts = BTreeMap::new();
     let mut required_role_status_counts: BTreeMap<String, BTreeMap<String, usize>> =
@@ -1278,6 +1280,10 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
             .entry(review_status.clone())
             .or_default()
             .push(check.work.clone());
+        review_status_work_titles
+            .entry(review_status.clone())
+            .or_default()
+            .push(check.title.clone());
         required_roles.extend(review_metadata.required_roles.iter().cloned());
         for role in &review_metadata.required_roles {
             *required_role_counts.entry(role.clone()).or_insert(0) += 1;
@@ -1347,6 +1353,14 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         review_status_work_ids
             .iter()
             .map(|(status, work_ids)| format!("{status}: {}", work_ids.join(", ")))
+            .collect::<Vec<_>>()
+            .join("; ")
+    ));
+    markdown.push_str(&format!(
+        "- Review status work titles: `{}`\n",
+        review_status_work_titles
+            .iter()
+            .map(|(status, work_titles)| format!("{status}: {}", work_titles.join(" | ")))
             .collect::<Vec<_>>()
             .join("; ")
     ));
@@ -1425,6 +1439,7 @@ pub fn render_all_review_pack_report(root: impl AsRef<Path>) -> Result<ReviewAll
         review_statuses,
         review_status_counts,
         review_status_work_ids,
+        review_status_work_titles,
         required_roles,
         required_role_counts,
         required_role_status_counts,
