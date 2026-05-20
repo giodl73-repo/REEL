@@ -280,6 +280,44 @@ fn main() -> Result<()> {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
             }
         }
+        Command::ReviewQueue { root, output } => {
+            let report = reel::summarize_review_queue(&root)?;
+            match output {
+                OutputFormat::Text => {
+                    println!(
+                        "{} | works={} | manifests={} | review_statuses={} | status_counts={} | required_roles={} | role_counts={}",
+                        report.works_root,
+                        report.works,
+                        report.manifests.join(";"),
+                        report.review_statuses.join(","),
+                        report
+                            .review_status_counts
+                            .iter()
+                            .map(|(status, count)| format!("{status}={count}"))
+                            .collect::<Vec<_>>()
+                            .join(","),
+                        report.required_roles.join(","),
+                        report
+                            .required_role_counts
+                            .iter()
+                            .map(|(role, count)| format!("{role}={count}"))
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    );
+                    for item in report.reports {
+                        println!(
+                            "  {} | work={} | title={} | status={} | roles={}",
+                            item.manifest,
+                            item.work,
+                            item.title,
+                            item.review_status,
+                            item.required_roles.join(",")
+                        );
+                    }
+                }
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+            }
+        }
         Command::ContactSheet { manifest, platform } => {
             let sheet = reel::render_contact_sheet(&manifest, &platform)?;
             println!("{}", sheet.display());
@@ -410,6 +448,13 @@ enum Command {
     },
     /// Validate and summarize all work manifests under a root without rendering media.
     Corpus {
+        #[arg(default_value = "works")]
+        root: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Summarize manifest-owned review queue metadata without rendering media.
+    ReviewQueue {
         #[arg(default_value = "works")]
         root: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]

@@ -151,6 +151,30 @@ pub struct CorpusWorkReport {
     pub shot_duration_seconds: f64,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ReviewQueueReport {
+    pub works_root: String,
+    pub works: usize,
+    pub manifests: Vec<String>,
+    pub review_statuses: Vec<String>,
+    pub review_status_counts: BTreeMap<String, usize>,
+    pub review_status_work_ids: BTreeMap<String, Vec<String>>,
+    pub review_status_work_titles: BTreeMap<String, Vec<String>>,
+    pub required_roles: Vec<String>,
+    pub required_role_counts: BTreeMap<String, usize>,
+    pub required_role_status_counts: BTreeMap<String, BTreeMap<String, usize>>,
+    pub reports: Vec<ReviewQueueWorkReport>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReviewQueueWorkReport {
+    pub manifest: String,
+    pub work: String,
+    pub title: String,
+    pub review_status: String,
+    pub required_roles: Vec<String>,
+}
+
 #[derive(Debug, PartialEq, Serialize)]
 pub struct ExportPlan {
     pub id: String,
@@ -1053,6 +1077,76 @@ pub fn summarize_work_corpus(root: impl AsRef<Path>) -> Result<CorpusReport> {
         exports,
         total_scene_duration_seconds,
         total_shot_duration_seconds,
+        reports,
+    })
+}
+
+pub fn summarize_review_queue(root: impl AsRef<Path>) -> Result<ReviewQueueReport> {
+    let root = root.as_ref();
+    let manifests = discover_work_manifests(root)?;
+    if manifests.is_empty() {
+        bail!("no work manifests found under: {}", root.display());
+    }
+
+    let mut manifest_paths = Vec::new();
+    let mut review_statuses = BTreeSet::new();
+    let mut review_status_counts = BTreeMap::new();
+    let mut review_status_work_ids: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut review_status_work_titles: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut required_roles = BTreeSet::new();
+    let mut required_role_counts = BTreeMap::new();
+    let mut required_role_status_counts: BTreeMap<String, BTreeMap<String, usize>> =
+        BTreeMap::new();
+    let mut reports = Vec::new();
+
+    for manifest in manifests {
+        let loaded = load_manifest(&manifest)?;
+        validate_manifest(&loaded)?;
+        let review = review_metadata(&loaded)?;
+        let review_status = review.status.clone();
+        let manifest_path = path_text(&loaded.path);
+        manifest_paths.push(manifest_path.clone());
+        review_statuses.insert(review_status.clone());
+        *review_status_counts
+            .entry(review_status.clone())
+            .or_insert(0) += 1;
+        review_status_work_ids
+            .entry(review_status.clone())
+            .or_default()
+            .push(loaded.manifest.work.clone());
+        review_status_work_titles
+            .entry(review_status.clone())
+            .or_default()
+            .push(loaded.manifest.title.clone());
+        required_roles.extend(review.required_roles.iter().cloned());
+        for role in &review.required_roles {
+            *required_role_counts.entry(role.clone()).or_insert(0) += 1;
+            *required_role_status_counts
+                .entry(role.clone())
+                .or_default()
+                .entry(review_status.clone())
+                .or_insert(0) += 1;
+        }
+        reports.push(ReviewQueueWorkReport {
+            manifest: manifest_path,
+            work: loaded.manifest.work,
+            title: loaded.manifest.title,
+            review_status: review.status,
+            required_roles: review.required_roles,
+        });
+    }
+
+    Ok(ReviewQueueReport {
+        works_root: path_text(root),
+        works: reports.len(),
+        manifests: manifest_paths,
+        review_statuses: review_statuses.into_iter().collect(),
+        review_status_counts,
+        review_status_work_ids,
+        review_status_work_titles,
+        required_roles: required_roles.into_iter().collect(),
+        required_role_counts,
+        required_role_status_counts,
         reports,
     })
 }
@@ -3151,6 +3245,49 @@ mod tests {
         assert_eq!(report.exports, 3);
         assert!(same_duration(report.total_scene_duration_seconds, 80.0));
         assert!(same_duration(report.total_shot_duration_seconds, 80.0));
+    }
+
+    #[test]
+    fn summarizes_review_queue_without_rendering() {
+        let report = summarize_review_queue("works").expect("review queue summarizes");
+
+        assert_eq!(report.works_root, "works");
+        assert_eq!(report.works, 2);
+        assert_eq!(
+            report.manifests,
+            vec![
+                "works\\0001-ash-vale-last-road-before-winter\\manifest.yaml",
+                "works\\0002-court-first-rally\\manifest.yaml"
+            ]
+        );
+        assert_eq!(report.review_statuses, vec!["not-reviewed", "reviewed"]);
+        assert_eq!(report.review_status_counts["not-reviewed"], 1);
+        assert_eq!(report.review_status_counts["reviewed"], 1);
+        assert_eq!(
+            report.review_status_work_ids["not-reviewed"],
+            vec!["0002-court-first-rally"]
+        );
+        assert_eq!(
+            report.review_status_work_titles["reviewed"],
+            vec!["Ash Vale: Last Road Before Winter"]
+        );
+        assert_eq!(
+            report.required_roles,
+            vec![
+                "animation-director",
+                "editor",
+                "platform-audience",
+                "sound-designer",
+                "story-director"
+            ]
+        );
+        assert_eq!(report.required_role_counts["editor"], 2);
+        assert_eq!(
+            report.required_role_status_counts["editor"]["not-reviewed"],
+            1
+        );
+        assert_eq!(report.reports[0].review_status, "reviewed");
+        assert_eq!(report.reports[1].review_status, "not-reviewed");
     }
 
     #[test]
