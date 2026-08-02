@@ -26,3 +26,12 @@ short video package.
 
 Goal: produce videos for selected downstream repos such as BANISH, ICELINES,
 SCENE, SCORE, or public front-door demos.
+
+## Phase 5: Episodic story development
+
+Goal: extend REEL from short-form production packages into season-scale story
+architecture with recurring casts, episode engines, faction plots, continuity
+ledgers, and pilot treatments before screenplay or renderer work.
+
+Active wave:
+[`Reading the Runes - Episodic series bible`](2026-08-01-episodic-series-bible/WAVE.md).
