@@ -3052,7 +3052,7 @@ fn ffprobe_duration_label(path: &Path) -> Result<String> {
 }
 
 fn path_text(path: &Path) -> String {
-    path.display().to_string()
+    path.display().to_string().replace('\\', "/")
 }
 
 fn file_bytes(path: &Path) -> Result<u64> {
@@ -3241,8 +3241,8 @@ mod tests {
         assert_eq!(
             report.manifests,
             vec![
-                "works\\0001-ash-vale-last-road-before-winter\\manifest.yaml",
-                "works\\0002-court-first-rally\\manifest.yaml"
+                "works/0001-ash-vale-last-road-before-winter/manifest.yaml",
+                "works/0002-court-first-rally/manifest.yaml"
             ]
         );
         assert_eq!(report.manifest_versions, vec!["reel.manifest.v0.1"]);
@@ -3318,8 +3318,8 @@ mod tests {
         assert_eq!(
             report.manifests,
             vec![
-                "works\\0001-ash-vale-last-road-before-winter\\manifest.yaml",
-                "works\\0002-court-first-rally\\manifest.yaml"
+                "works/0001-ash-vale-last-road-before-winter/manifest.yaml",
+                "works/0002-court-first-rally/manifest.yaml"
             ]
         );
         assert_eq!(report.review_statuses, vec!["not-reviewed", "reviewed"]);
@@ -3357,8 +3357,8 @@ mod tests {
         assert_eq!(
             report.required_role_manifests["editor"],
             vec![
-                "works\\0001-ash-vale-last-road-before-winter\\manifest.yaml",
-                "works\\0002-court-first-rally\\manifest.yaml"
+                "works/0001-ash-vale-last-road-before-winter/manifest.yaml",
+                "works/0002-court-first-rally/manifest.yaml"
             ]
         );
         assert_eq!(
@@ -3378,7 +3378,7 @@ mod tests {
         );
         assert_eq!(
             report.required_role_status_manifests["editor"]["not-reviewed"],
-            vec!["works\\0002-court-first-rally\\manifest.yaml"]
+            vec!["works/0002-court-first-rally/manifest.yaml"]
         );
         assert_eq!(
             report.required_role_status_work_ids["editor"]["not-reviewed"],
