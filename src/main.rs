@@ -305,6 +305,8 @@ fn main() -> Result<()> {
             fps,
             transition_seconds,
             disclosure,
+            motion_quality,
+            motion_curve,
             dry_run,
             output,
         } => {
@@ -320,6 +322,8 @@ fn main() -> Result<()> {
                 fps,
                 transition_seconds,
                 disclosure,
+                motion_quality,
+                motion_curve,
                 dry_run,
             };
             let requested = reel::production::load(&base_options.manifest)?
@@ -372,6 +376,28 @@ fn main() -> Result<()> {
                     }
                 }
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&reports)?),
+            }
+        }
+        Command::MotionAnalyze { video, output } => {
+            let report = reel::adapters::still_animatic::analyze_motion(&video)?;
+            match output {
+                OutputFormat::Text => println!(
+                    "{} | transitions={} | near_stationary={} | fraction={:.4} | maximum={:.4} | passed={}",
+                    report.input,
+                    report.frame_transitions,
+                    report.near_stationary_transitions,
+                    report.near_stationary_fraction,
+                    report.maximum_near_stationary_fraction,
+                    report.passed
+                ),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+            }
+            if !report.passed {
+                anyhow::bail!(
+                    "motion cadence failed: near-stationary fraction {:.4} exceeds {:.4}",
+                    report.near_stationary_fraction,
+                    report.maximum_near_stationary_fraction
+                );
             }
         }
         Command::Adapters { output } => {
@@ -945,9 +971,21 @@ enum Command {
         transition_seconds: f64,
         #[arg(long, default_value = "ILLUSTRATED RECONSTRUCTION - PRIVATE REVIEW")]
         disclosure: String,
+        /// Select smooth subpixel motion (default) or deterministic v0.2.1 zoompan reproduction.
+        #[arg(long, value_enum, default_value_t = reel::adapters::still_animatic::MotionQuality::Smooth)]
+        motion_quality: reel::adapters::still_animatic::MotionQuality,
+        /// Select the motion progress curve used by the smooth backend.
+        #[arg(long, value_enum, default_value_t = reel::adapters::still_animatic::MotionCurve::EaseInOut)]
+        motion_curve: reel::adapters::still_animatic::MotionCurve,
         #[arg(long)]
         dry_run: bool,
         #[arg(long = "format", value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Measure near-stationary adjacent-frame cadence in a rendered moving shot.
+    MotionAnalyze {
+        video: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
     /// Print available and planned render adapters.
