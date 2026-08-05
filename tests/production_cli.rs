@@ -118,3 +118,80 @@ fn cli_validates_plans_and_conforms_the_sanitized_fixture() {
     );
     assert!(!video.exists());
 }
+
+#[test]
+fn cli_renders_the_vertical_role_proof_without_an_audio_stream() {
+    let binary = env!("CARGO_BIN_EXE_reel");
+    let fixture = "manifests/fixtures/vertical-sound-off/manifest.yaml";
+    let output_dir = tempdir().unwrap();
+    let video = output_dir.path().join("vertical-sound-off.mp4");
+    let render = Command::new(binary)
+        .arg("animatic-render")
+        .arg(fixture)
+        .arg("--asset-root")
+        .arg("manifests/fixtures/vertical-sound-off")
+        .arg("--silent")
+        .arg("--captions")
+        .arg("manifests/fixtures/vertical-sound-off/captions.srt")
+        .arg("--output")
+        .arg(&video)
+        .args([
+            "--width",
+            "720",
+            "--height",
+            "1280",
+            "--dry-run",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("silent vertical render runs");
+    assert!(
+        render.status.success(),
+        "{}",
+        String::from_utf8_lossy(&render.stderr)
+    );
+    let report = fs::read_to_string(video.with_extension("artifacts.json")).unwrap();
+    assert!(report.contains("\"width\": 720"));
+    assert!(report.contains("\"height\": 1280"));
+    assert!(report.contains("\"silent\": true"));
+    assert!(!report.contains("\"kind\": \"audio\""));
+    assert!(!video.exists());
+}
+
+#[test]
+fn cli_preflights_all_requested_ab_audio_before_rendering() {
+    let binary = env!("CARGO_BIN_EXE_reel");
+    let dir = tempdir().unwrap();
+    let packet = dir.path().join("packet");
+    let conform = Command::new(binary)
+        .arg("conform")
+        .arg(FIXTURE)
+        .args(["--cues", CUES, "--output-dir"])
+        .arg(&packet)
+        .output()
+        .expect("conform command runs");
+    assert!(conform.status.success());
+    fs::write(dir.path().join("frame-01.png"), b"fixture-image-one").unwrap();
+    fs::write(dir.path().join("frame-02.png"), b"fixture-image-two").unwrap();
+    let audio = dir.path().join("guide.wav");
+    fs::write(&audio, b"fixture-audio").unwrap();
+    let video = dir.path().join("must-not-exist.mp4");
+    let render = Command::new(binary)
+        .arg("animatic-render")
+        .arg(packet.join("manifest.yaml"))
+        .arg("--asset-root")
+        .arg(dir.path())
+        .arg("--audio")
+        .arg(&audio)
+        .arg("--captions")
+        .arg(packet.join("captions.srt"))
+        .arg("--output")
+        .arg(&video)
+        .arg("--dry-run")
+        .output()
+        .expect("preflight render runs");
+    assert!(!render.status.success());
+    assert!(String::from_utf8_lossy(&render.stderr).contains("narration-only"));
+    assert!(!video.with_extension("artifacts.json").exists());
+}

@@ -13,7 +13,10 @@ use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
 pub mod adapters;
+pub mod continuity;
+pub mod cue_import;
 pub mod production;
+pub mod series;
 
 const SUPPORTED_MANIFEST_VERSION: &str = "reel.manifest.v0.1";
 const ARTIFACT_MANIFEST_SCHEMA_VERSION: &str = "reel.artifacts.v0.2";

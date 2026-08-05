@@ -175,6 +175,133 @@ manifest-level checks for:
 The goal is not constant movement. It is controlled, inspectable motion that
 protects faces, captions, and the one emotional beat assigned to each frame.
 
+## v0.2.1 follow-up after BERTICA adoption
+
+BERTICA has now exercised REEL v0.2 against all twelve legacy manifests, seven
+enriched preferred artifacts, and six native untimed pre-voice scene plans. The
+individual-scene contract is strong. The remaining production gap is composing
+those scenes into a long-form audiobook series without copying their internals
+or weakening source and approval boundaries.
+
+### P0 — Native episodic-series composition
+
+Please add a real `episodic-series` contract that references scene or segment
+manifests rather than embedding their shots, cues, private references, or
+conformed artifacts.
+
+Required hierarchy and identity:
+
+- stable series, season, and episode IDs, including IDs such as `S2E02`;
+- deterministic season/episode order and optional episode parts;
+- original manuscript section titles and Andresito poem identities alongside
+  working production titles;
+- references to child scene manifests by path, work ID, expected hash, and
+  accepted timing/review state;
+- inheritance of series-wide platform, disclosure, caption, continuity, and
+  privacy defaults without erasing scene-specific overrides.
+
+Required episode metadata:
+
+- exact canonical source ranges and disclosed omissions across every child
+  scene;
+- chronology/place, memory mode, sensitivity/risk, recurring motifs, and
+  continuity entry/exit state;
+- `untimed`, `guide`, `conformed`, `locked`, and human-review status;
+- raw orientation, measured narration, protected pauses, scene duration, and
+  total episode/season runtime as distinct values;
+- separate Bertica and Herman findings, with no inferred consensus or approval;
+- explicit dependencies when an episode continues a poem, source section,
+  character state, or unresolved visual motif from another episode.
+
+Validation and reports should detect:
+
+- missing, duplicated, overlapping, or out-of-order source ranges;
+- repeated or missing scene-manifest references;
+- a poem separated from its associated prose without an explicit approved
+  structure;
+- incompatible speaker, continuity, platform, privacy, or timing states;
+- an episode marked release-ready while any child remains untimed, unreviewed,
+  privacy-blocked, or source-incomplete;
+- mismatches between child-manifest duration and episode/season totals.
+
+Suggested commands:
+
+```text
+reel series-validate production/reel/series/el-camino-v1.yaml --output json
+reel series-plan production/reel/series/el-camino-v1.yaml --output json
+reel series-coverage production/reel/series/el-camino-v1.yaml --output json
+reel series-review-queue production/reel/series/el-camino-v1.yaml --output json
+reel episode-compose production/reel/series/el-camino-v1.yaml S2E02 \
+  --output-dir production/reel/composed/S2E02-v1
+```
+
+Composition should publish a new atomic episode packet with its own manifest,
+captions, lineage, coverage, and duration report. It must not overwrite or
+silently retime child packets.
+
+Acceptance test: import BERTICA's sanitized five-season slate with exactly ten
+episodes per season and source coverage from blocks 34–4419. Validation should
+confirm 50 ordered episodes and continuous coverage, while leaving all human
+approval fields false/open.
+
+### P1 — Caption/cue import
+
+Please add a deterministic `cue-import-srt` operation for upgrading existing
+timed proofs:
+
+```text
+reel cue-import-srt manifest.yaml captions.es.srt \
+  --speaker bertica-narrator \
+  --output upgraded-with-cues.yaml
+```
+
+It should parse millisecond cue timing, preserve caption text, associate cues
+with overlapping shots, require source and speaker assignment, write a new
+derivative with lineage, and reject overlaps or duration beyond the declared
+work. A mapping file should allow a two-speaker threshold such as Andresito's
+poem, a protected silence, and Bertica's prose.
+
+Acceptance test: the sanitized two-speaker fixture imports four poem captions
+and prose captions, assigns each to the correct speaker and shots, preserves the
+1.5-second poem-to-prose pause, and reproduces the original SRT exactly.
+
+### P1 — Scene-to-episode composition
+
+Please support ordered composition of several conformed child scene packets
+into one episode without flattening their source, speaker, privacy, variant, or
+review records. Composition may add episode-level cards, credits, and approved
+bridges, but these must be separately attributed production units.
+
+Acceptance test: compose a poem threshold, a prose scene, and an end card. The
+result preserves every child hash and protected pause, creates continuous
+captions, and reports the card as production-authored rather than manuscript
+narration.
+
+### P1 — Shared continuity registry
+
+The v0.2 per-manifest entity contract works, but BERTICA now needs a shared,
+versioned registry referenced across works. Please allow manifests to cite an
+external continuity registry by path, version/hash, and entity ID while keeping
+scene-specific `age_at_scene`, clothing, condition, and confidence overrides.
+
+The registry should record approved textual observations and local reference
+policies once for recurring people, animals, houses, vehicles, and motif
+objects. Provider packaging must still resolve only the approved observations
+and never serialize forbidden local paths.
+
+Acceptance test: young Herrera, later Herrera, Bertha María, Herminio, Moro,
+Amado Rosa, and the caimito road remain stable across several scene manifests;
+a provider package contains the applicable textual observations but no private
+photo path.
+
+### Scope discipline
+
+This follow-up does not request a monolithic runtime, a BERTICA-specific schema,
+automatic editorial approval, or a requirement that REEL own manuscript truth.
+The series layer should remain a portable composition/index contract over
+independent scene artifacts. BERTICA continues to own canon, consent, private
+assets, historical interpretation, and actual principal decisions.
+
 ## Recommended implementation order
 
 1. Untimed planning manifests.
@@ -183,6 +310,13 @@ protects faces, captions, and the one emotional beat assigned to each frame.
 4. Source coverage and omission reporting.
 5. Privacy-safe continuity/provider package.
 6. Variant lineage and long-still quality checks.
+
+For v0.2.1, the recommended order is:
+
+1. Native episodic-series schema and validation.
+2. Scene-to-episode composition with atomic lineage.
+3. Caption/cue import.
+4. Shared external continuity registry.
 
 ## Cross-repo handoff request
 

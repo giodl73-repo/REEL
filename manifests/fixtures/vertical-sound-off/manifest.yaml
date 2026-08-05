@@ -1,0 +1,150 @@
+manifest_version: reel.manifest.v0.2
+profile: animatic
+timing_status: conformed
+work: fixture-two-speaker-threshold-vertical
+title: Threshold — vertical sound-off proof
+source_scenario:
+  repo: FIXTURE
+  path: fixtures/source-blocks.txt
+  id: threshold-scene
+  source_commit: fixture-only
+format: social-clip
+style: illustrated-2d
+audience:
+  primary: phone viewers
+  context: sound-off social feed
+  desired_effect: understand the threshold and answer without audio
+platforms:
+  - name: vertical-sound-off
+    aspect_ratio: "9:16"
+    target_duration_seconds: 6.0
+    sound_optional: true
+    device: phone
+    hook_deadline_seconds: 3
+continuity:
+  entities:
+    - id: guide
+      age_at_scene: adult
+      observations:
+        - A generic illustrated figure used only for contract testing.
+      confidence: fixture
+      provenance: synthetic
+      human_confirmation_status: not-required-fixture
+      reference_assets: []
+  canon_constraints:
+    - All text, entities, and frames are synthetic test material.
+scenes:
+  - id: scene-01
+    duration_seconds: 6.0
+    purpose: Prove a complete threshold-and-answer story in a vertical sound-off cut.
+    story_beat: Rain opens the threshold; the doorway answers with light.
+    location: abstract grove
+    characters: [guide]
+    continuity_notes:
+      - Preserve the blue path below the warm doorway in both frames.
+shots:
+  - id: shot-hook
+    scene_id: scene-01
+    start_seconds: 0.0
+    duration_seconds: 2.75
+    camera: centered vertical hold
+    action: Rain reveals a bright path and the opening claim lands before three seconds.
+    visual_prompt: Synthetic blue rain and path; no real person or private reference.
+    visual_asset: frame-hook.ppm
+    motion: push
+    style_constraints: [illustrated reconstruction, phone-safe center composition]
+    transition_out: dissolve
+    narration_cue_ids: [cue-hook]
+    source_refs: [selected-a]
+    focal_point: { x: 0.5, y: 0.38 }
+    protected_regions:
+      - { id: caption-safe, x: 0.08, y: 0.68, width: 0.84, height: 0.22 }
+  - id: shot-landing
+    scene_id: scene-01
+    start_seconds: 2.75
+    duration_seconds: 3.25
+    camera: slow vertical push
+    action: A warm doorway opens and completes the answer rather than stopping loosely.
+    visual_prompt: Synthetic warm doorway at dawn; no likeness or documentary claim.
+    visual_asset: frame-landing.ppm
+    motion: push
+    style_constraints: [illustrated reconstruction, phone-safe center composition]
+    transition_out: fade
+    narration_cue_ids: [cue-landing]
+    source_refs: [selected-b]
+    focal_point: { x: 0.5, y: 0.42 }
+    protected_regions:
+      - { id: caption-safe, x: 0.08, y: 0.68, width: 0.84, height: 0.22 }
+speakers:
+  - id: on-screen-story
+    display_name: On-screen story
+    language: es
+    pronunciation_profile: not-applicable-silent-output
+    performance_direction: concise caption rhythm
+    approval_reference: fixture/no-human-voice
+    asset_kind: guide
+narration_cues:
+  - id: cue-hook
+    speaker_id: on-screen-story
+    text: La lluvia abre el camino.
+    source_refs: [selected-a]
+    shot_ids: [shot-hook]
+    start_seconds: 0.0
+    duration_seconds: 2.75
+  - id: cue-landing
+    speaker_id: on-screen-story
+    text: "La luz responde: adelante."
+    source_refs: [selected-b]
+    shot_ids: [shot-landing]
+    start_seconds: 2.75
+    duration_seconds: 3.25
+protected_pauses: []
+source_ranges:
+  - { id: selected-a, start: 1, end: 2, label: synthetic opening }
+  - { id: selected-b, start: 3, end: 4, label: synthetic landing }
+omissions: []
+audio:
+  narration_voice: none
+  music_direction: none
+  effects_direction: none
+  silence_notes: intentionally silent platform derivative
+captions:
+  required: true
+  style: centered-safe-lower-third
+  language: es
+  sound_off_complete: true
+renderer_assumptions:
+  candidates: [ffmpeg]
+  blockers: []
+exports:
+  - id: vertical-sound-off
+    filename: fixture-threshold-vertical-sound-off.mp4
+    aspect_ratio: "9:16"
+    duration_seconds: 6.0
+lineage:
+  parent_manifest: ../two-speaker-untimed/planning.yaml
+  root_work: fixture-two-speaker-threshold
+  scene_key: scene-01
+  transformation_reason: phone-first sound-off accessibility proof
+  changed_dimensions: [edit, frames, captions, mix]
+  review_candidate: true
+  principal_approved: false
+  created_unix: 1785907200
+review:
+  required_roles:
+    - story-director
+    - animation-director
+    - editor
+    - sound-designer
+    - platform-audience
+  status: panel-reviewed
+  principal_findings: []
+quality_controls:
+  max_uninterrupted_hold_seconds: 4
+  require_focal_points: true
+  require_protected_regions: true
+  no_lip_sync: true
+  ab_outputs: []
+provider_handoff:
+  asset_ids: []
+  text_fields: [continuity.entities.observations, shots.visual_prompt]

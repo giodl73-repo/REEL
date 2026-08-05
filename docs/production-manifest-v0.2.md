@@ -131,7 +131,25 @@ captions and a disclosure, records input hashes and command parameters, and
 writes a sibling `*.artifacts.json` report. When `quality_controls.ab_outputs`
 requests `narration-only` or `effects-music`, the matching audio arguments are
 required and named A/B videos are rendered from the identical visual timeline.
+All requested A/B inputs are checked before any output is written.
 `--dry-run` builds and records every command without invoking FFmpeg.
+
+For a platform whose manifest declares `sound_optional: true`, the renderer can
+produce a video with no audio stream:
+
+```powershell
+cargo run -- animatic-render conformed/vertical.yaml `
+  --asset-root production/frames `
+  --silent `
+  --captions conformed/captions.srt `
+  --width 720 --height 1280 `
+  --output production/video/vertical-sound-off.mp4
+```
+
+Silent output is explicit in the artifact report and cannot be combined with
+manifest-requested audio A/B outputs. Portrait renders also receive larger
+caption styling and platform-safe lower margins. The sanitized acceptance proof
+is in `manifests/fixtures/vertical-sound-off/`.
 
 ## Migration
 

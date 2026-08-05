@@ -7,6 +7,11 @@ but neutral enough that the renderer can be selected later.
 Use YAML for foundation manifests. The first template lives at
 `manifests/templates/scenario-video.yaml`.
 
+Scene production remains `reel.manifest.v0.2`. CLI v0.2.1 also provides the
+separate reference-only `reel.series.v0.1` template at
+`manifests/templates/episodic-series.yaml`; it does not replace or revise the
+scene format. See `docs/episodic-series-v0.1.md`.
+
 ## Required top-level fields
 
 | Field | Required | Purpose |

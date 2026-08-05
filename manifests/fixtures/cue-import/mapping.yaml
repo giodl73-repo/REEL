@@ -1,0 +1,8 @@
+schema: reel.cue-import.v0.1
+cues:
+  - { index: 1, cue_id: poem-01, speaker_id: poet, source_refs: [selected-a] }
+  - { index: 2, cue_id: poem-02, speaker_id: poet, source_refs: [selected-a] }
+  - { index: 3, cue_id: poem-03, speaker_id: poet, source_refs: [selected-a] }
+  - { index: 4, cue_id: cue-poem, speaker_id: poet, source_refs: [selected-a], pause_policy: preserve-tail }
+  - { index: 5, cue_id: prose-01, speaker_id: narrator, source_refs: [selected-b] }
+  - { index: 6, cue_id: cue-prose, speaker_id: narrator, source_refs: [selected-b] }

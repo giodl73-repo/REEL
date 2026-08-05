@@ -21,6 +21,12 @@ jobs:
       - run: cargo test --all-targets --all-features
       - name: Validate untimed production fixture
         run: cargo run --quiet -- validate manifests/fixtures/two-speaker-untimed/planning.yaml --output json
+      - name: Validate v0.2.1 composition contracts
+        run: |
+          cargo run --quiet -- series-validate manifests/templates/episodic-series.yaml --output json
+          cargo run --quiet -- series-coverage manifests/templates/episodic-series.yaml --output json
+          cargo run --quiet -- series-review-queue manifests/templates/episodic-series.yaml --output json
+          cargo run --quiet -- continuity-validate manifests/fixtures/shared-continuity/registry.yaml --output json
 
   ffmpeg-linux:
     runs-on: ubuntu-latest
@@ -36,3 +42,7 @@ jobs:
           cargo run --quiet -- conform manifests/fixtures/two-speaker-untimed/planning.yaml --cues manifests/fixtures/two-speaker-untimed/cue-measurements.yaml --speaker-tempo narrator=85 --output-dir target/ci-conform
           cargo run --quiet -- animatic-render target/ci-conform/manifest.yaml --asset-root target/ci-assets --audio target/ci-assets/guide.wav --narration-only-audio target/ci-assets/guide.wav --effects-music-audio target/ci-assets/guide.wav --captions target/ci-conform/captions.srt --output target/ci-animatic.mp4 --format json
           ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 target/ci-animatic.mp4
+          cargo run --quiet -- animatic-render manifests/fixtures/vertical-sound-off/manifest.yaml --asset-root manifests/fixtures/vertical-sound-off --silent --captions manifests/fixtures/vertical-sound-off/captions.srt --width 720 --height 1280 --output target/ci-vertical-sound-off.mp4 --format json
+          test "$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0:s=x target/ci-vertical-sound-off.mp4)" = "720x1280"
+          test -z "$(ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 target/ci-vertical-sound-off.mp4)"
+          test "$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 target/ci-vertical-sound-off.mp4)" = "6.000000"
