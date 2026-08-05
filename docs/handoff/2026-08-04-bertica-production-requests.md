@@ -7,7 +7,7 @@ source_scenario: C:/src/bertica
 author: bertica-production
 rubric_version: v0.1
 created: 2026-08-04
-updated: 2026-08-04
+updated: 2026-08-05
 sources:
   - C:/src/bertica/production/reel
   - C:/src/bertica/production/visual
@@ -302,6 +302,114 @@ The series layer should remain a portable composition/index contract over
 independent scene artifacts. BERTICA continues to own canon, consent, private
 assets, historical interpretation, and actual principal decisions.
 
+## v0.2.2 follow-up — smooth long-still motion
+
+BERTICA's project owner observed that the current illustrated scene proofs feel
+slightly jittery. The intended treatment is restrained “living still” motion;
+the visible stepping is not intentional.
+
+### Reproduced production defect
+
+The affected outputs are valid constant-frame-rate 1280×720 H.264 files at 24
+fps. This is not a variable-frame-rate or dropped-frame problem. Both BERTICA's
+prototype renderer and REEL v0.2.1 currently scale/crop to delivery resolution
+before applying `zoompan`. A typical 3.5–4 percent pan or push therefore travels
+only about 45–50 output pixels across a 15–25 second shot. Fractional positions
+are quantized: several frames remain nearly stationary, followed by a one-pixel
+jump.
+
+Optical-flow sampling of actual private BERTICA v2 exports found the following
+fractions of near-stationary frame transitions during declared moving shots:
+
+| Sample | Declared motion | Near-stationary transitions |
+|---|---|---:|
+| Herrera arrival | push | approximately 93% |
+| Don Tancredo mystery box | pan | approximately 90% |
+| Don Tancredo opening | push | approximately 83% |
+| Moro | push | approximately 66% |
+
+No private render, manuscript text, photograph, or voice asset is required to
+reproduce this. A synthetic high-detail illustration or test grid moving about
+45 pixels over 20 seconds at 24 fps should expose the same cadence.
+
+### P0 — Subpixel-capable deterministic motion renderer
+
+Please target this fix as REEL v0.2.2 while keeping the scene manifest schema at
+`reel.manifest.v0.2` unless a portable motion field is genuinely necessary.
+
+Required behavior:
+
+- A declared moving shot must advance visually on essentially every output frame
+  at ordinary audiobook motion rates; it must not alternate long runs of frozen
+  frames with integer-pixel jumps.
+- Use a genuinely subpixel-capable transform and interpolation path. An affine,
+  perspective, browser/Remotion, or rigorously validated adaptive-supersampling
+  implementation is acceptable. Merely increasing output fps while retaining
+  integer crop coordinates is not.
+- Apply deterministic ease-in/ease-out motion by default so pushes and pans do
+  not start or stop mechanically. The curve and parameters must be recorded in
+  the artifact report.
+- Preserve exact `hold` and `hold-dark` semantics. The fix must not introduce
+  constant motion where a still frame is artistically preferable.
+- Preserve safe crop, focal point, protected-region, portrait/landscape,
+  disclosure, caption, transition, audio, duration, and privacy behavior.
+- Keep output constant-frame-rate and preserve the conformed timeline to within
+  the existing one-frame duration tolerance.
+- Record the motion backend/version, interpolation method, curve, working
+  resolution or sampling strategy, fps, and any quality override in the sibling
+  `*.artifacts.json` report.
+- Provide an explicit legacy-render option for deterministic reproduction of old
+  proofs, while making smooth motion the default for new v0.2.2 renders.
+- Bound memory and render cost, fail clearly when a requested quality mode is
+  infeasible, and leave no partial output or artifact report on failure.
+
+Suggested CLI shape (names may change to fit REEL conventions):
+
+```text
+reel animatic-render manifest.yaml ... \
+  --motion-quality smooth \
+  --motion-curve ease-in-out
+
+reel animatic-render manifest.yaml ... \
+  --motion-quality legacy
+```
+
+### Automated acceptance tests
+
+1. Render a sanitized 20-second, 1280×720, 24-fps pan that travels approximately
+   45 pixels. Frame analysis must show continuous subpixel movement without a
+   periodic one-pixel step cadence. Define and publish the metric and threshold;
+   the old renderer must fail the test and the new renderer must pass it.
+2. Repeat for centered `push` and `pull` treatments, including a long 25-second
+   shot representative of narration slowed to 85 percent effective tempo.
+3. Verify that a `hold` produces no transform drift and that `hold-dark` changes
+   appearance without changing position.
+4. Verify no blank canvas, protected-region violation, caption/disclosure
+   regression, duration drift, variable frame rate, or audio/caption desync.
+5. Run production CLI tests on the supported Windows/WSL and Linux paths and
+   inspect the artifact report for complete motion lineage.
+6. Produce a short side-by-side or alternating legacy/smooth sanitized proof so
+   the cadence improvement can be judged visually rather than only by unit tests.
+
+### BERTICA migration and consumption
+
+BERTICA should not need to edit its current v0.2 manifests. After v0.2.2 lands,
+it will first rerender one short existing proof through `animatic-render`, verify
+the cadence metric and human-visible improvement, and only then regenerate the
+five private reviewer scenes. Existing v2 files must remain preserved as legacy
+artifacts until the smooth versions are approved. Voice choice, source timing,
+visual content, and review status must not change as a side effect of this motion
+repair.
+
+Please respond with:
+
+- the selected subpixel transform strategy and why it avoids integer stepping;
+- the exact smooth and legacy commands BERTICA should run;
+- the automated cadence metric, threshold, and before/after results;
+- performance and memory cost at 1280×720 and 1920×1080;
+- confirmation that current `reel.manifest.v0.2` files need no migration;
+- the artifact-report fields BERTICA should retain with each rerender.
+
 ## Recommended implementation order
 
 1. Untimed planning manifests.
@@ -317,6 +425,13 @@ For v0.2.1, the recommended order is:
 2. Scene-to-episode composition with atomic lineage.
 3. Caption/cue import.
 4. Shared external continuity registry.
+
+For v0.2.2, the recommended order is:
+
+1. Reproduce and measure the integer-step cadence with a sanitized fixture.
+2. Implement a subpixel-capable smooth path plus explicit legacy mode.
+3. Add motion lineage, duration/atomicity checks, and cross-platform tests.
+4. Deliver a short legacy-versus-smooth visual proof and consumption commands.
 
 ## Cross-repo handoff request
 
