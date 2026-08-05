@@ -1,0 +1,9 @@
+cues:
+  - cue_id: cue-poem
+    duration_ms: 2000
+    head_silence_ms: 0
+    tail_silence_ms: 0
+  - cue_id: cue-prose
+    duration_ms: 3400
+    head_silence_ms: 0
+    tail_silence_ms: 0

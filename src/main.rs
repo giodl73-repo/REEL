@@ -7,31 +7,300 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Validate { manifest } => {
-            let manifest = reel::load_manifest(&manifest)?;
-            let report = reel::validate_manifest(&manifest)?;
+        Command::Validate { manifest, output } => {
+            if reel::production::is_production_manifest(&manifest)? {
+                let loaded = reel::production::load(&manifest)?;
+                let report = reel::production::validate(&loaded)?;
+                match output {
+                    OutputFormat::Text => println!(
+                        "manifest ok: {} version={} profile={} timing={} scenes={} shots={} speakers={} cues={} duration={} preview_ready={} delivery_ready={} gated={}",
+                        report.manifest,
+                        report.version,
+                        report.profile,
+                        report.timing_status,
+                        report.scenes,
+                        report.shots,
+                        report.speakers,
+                        report.narration_cues,
+                        report
+                            .duration_ms
+                            .map(|value| format!("{value}ms"))
+                            .unwrap_or_else(|| "untimed".to_string()),
+                        report.preview_ready,
+                        report.delivery_ready,
+                        report.gated_commands.join(",")
+                    ),
+                    OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+                }
+            } else {
+                let loaded = reel::load_manifest(&manifest)?;
+                let report = reel::validate_manifest(&loaded)?;
+                match output {
+                    OutputFormat::Text => println!(
+                        "manifest ok: {} scenes={:.3}s shots={:.3}s exports={}",
+                        loaded.path.display(),
+                        report.scene_total,
+                        report.shot_total,
+                        report.exports.len()
+                    ),
+                    OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+                }
+            }
+        }
+        Command::Plan { manifest, output } => {
+            if reel::production::is_production_manifest(&manifest)? {
+                let loaded = reel::production::load(&manifest)?;
+                let plan = reel::production::plan(&loaded)?;
+                match output {
+                    OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&plan)?),
+                    OutputFormat::Text => {
+                        println!(
+                            "{} | timing={} | gated={}",
+                            plan.work,
+                            plan.timing_status,
+                            plan.gated_commands.join(",")
+                        );
+                        for scene in plan.scenes {
+                            println!(
+                                "{} | duration={}",
+                                scene.id,
+                                scene
+                                    .duration_ms
+                                    .map(|value| format!("{value}ms"))
+                                    .unwrap_or_else(|| "untimed".to_string())
+                            );
+                            for shot in scene.shots {
+                                println!(
+                                    "  {:03} | {} | start={} | duration={} | speakers={} | sources={} | {}",
+                                    shot.order,
+                                    shot.id,
+                                    shot.start_ms
+                                        .map(|v| format!("{v}ms"))
+                                        .unwrap_or_else(|| "untimed".to_string()),
+                                    shot.duration_ms
+                                        .map(|v| format!("{v}ms"))
+                                        .unwrap_or_else(|| "untimed".to_string()),
+                                    shot.speaker_ids.join(","),
+                                    shot.source_refs.join(","),
+                                    shot.action
+                                );
+                            }
+                        }
+                    }
+                }
+            } else {
+                let loaded = reel::load_manifest(&manifest)?;
+                let report = reel::validate_manifest(&loaded)?;
+                match output {
+                    OutputFormat::Json => {
+                        println!("{}", serde_json::to_string_pretty(&report.exports)?)
+                    }
+                    OutputFormat::Text => {
+                        for export in report.exports {
+                            println!(
+                                "{} | {} | {}x{} | {:.3}s | scale={:.3} | {}",
+                                export.id,
+                                export.aspect_ratio,
+                                export.width,
+                                export.height,
+                                export.duration_seconds,
+                                export.duration_scale,
+                                export.filename
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        Command::Conform {
+            manifest,
+            cues,
+            output_dir,
+            speaker_tempo,
+            output,
+        } => {
+            let tempos = reel::production::parse_tempos(&speaker_tempo)?;
+            let report = reel::production::conform(&manifest, &cues, &output_dir, &tempos)?;
+            match output {
+                OutputFormat::Text => println!(
+                    "{} | work={} | duration={}ms | manifest={} | captions={} | lineage={}",
+                    report.packet,
+                    report.work,
+                    report.duration_ms,
+                    report.manifest,
+                    report.captions,
+                    report.lineage
+                ),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+            }
+        }
+        Command::CaptionExport {
+            manifest,
+            output_path,
+        } => {
             println!(
-                "manifest ok: {} scenes={:.3}s shots={:.3}s exports={}",
-                manifest.path.display(),
-                report.scene_total,
-                report.shot_total,
-                report.exports.len()
+                "{}",
+                reel::production::caption_export(&manifest, &output_path)?.display()
             );
         }
-        Command::Plan { manifest } => {
-            let manifest = reel::load_manifest(&manifest)?;
-            let report = reel::validate_manifest(&manifest)?;
-            for export in report.exports {
-                println!(
-                    "{} | {} | {}x{} | {:.3}s | scale={:.3} | {}",
-                    export.id,
-                    export.aspect_ratio,
-                    export.width,
-                    export.height,
-                    export.duration_seconds,
-                    export.duration_scale,
-                    export.filename
-                );
+        Command::Migrate {
+            manifest,
+            output_path,
+            normalize_timing,
+        } => {
+            println!(
+                "{}",
+                reel::production::migrate(&manifest, &output_path, normalize_timing)?.display()
+            );
+        }
+        Command::SourceCoverage { manifest, output } => {
+            let report = reel::production::source_coverage(&manifest)?;
+            match output {
+                OutputFormat::Text => println!(
+                    "{} | spoken={} | attributed={} | invented={} | unattributed={} | uncovered={} | complete={}",
+                    report.work,
+                    report.spoken_cues,
+                    report.attributed_cues,
+                    report.invented_cues.join(","),
+                    report.unattributed_cues.join(","),
+                    report
+                        .uncovered_units
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(","),
+                    report.complete
+                ),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+            }
+        }
+        Command::ProviderPackage {
+            manifest,
+            output_path,
+            output,
+        } => {
+            let report = reel::production::write_provider_package(&manifest, &output_path)?;
+            match output {
+                OutputFormat::Text => println!(
+                    "{} | work={} | assets={} | text_fields={} | blocked={}",
+                    output_path.display(),
+                    report.work,
+                    report.requested_assets.len(),
+                    report.outbound_text_fields.len(),
+                    report.blocked
+                ),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+            }
+        }
+        Command::ReviewSelect { root, output } => {
+            let report = reel::production::review_select(&root)?;
+            match output {
+                OutputFormat::Text => {
+                    for (group, selection) in report.groups {
+                        println!(
+                            "{} | latest_candidate={} | candidates={} | approved={}",
+                            group,
+                            selection
+                                .latest_review_candidate
+                                .unwrap_or_else(|| "none".to_string()),
+                            selection.candidates.len(),
+                            selection.principal_approved.join(",")
+                        );
+                    }
+                }
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+            }
+        }
+        Command::QualityCheck { manifest, output } => {
+            let report = reel::production::quality_check(&manifest)?;
+            match output {
+                OutputFormat::Text => {
+                    println!(
+                        "{} | passed={} | warnings={} | narration_only={} | effects_music={}",
+                        report.work,
+                        report.passed,
+                        report.warnings.len(),
+                        report.narration_only_output,
+                        report.effects_music_output
+                    );
+                    for warning in report.warnings {
+                        println!(
+                            "  {} | {} | {}",
+                            warning.shot_id, warning.code, warning.message
+                        );
+                    }
+                }
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+            }
+        }
+        Command::AnimaticRender {
+            manifest,
+            asset_root,
+            audio,
+            narration_only_audio,
+            effects_music_audio,
+            captions,
+            output_path,
+            width,
+            height,
+            fps,
+            transition_seconds,
+            disclosure,
+            dry_run,
+            output,
+        } => {
+            let base_options = reel::adapters::still_animatic::AnimaticRenderOptions {
+                manifest,
+                asset_root,
+                audio,
+                captions,
+                output: output_path,
+                width,
+                height,
+                fps,
+                transition_seconds,
+                disclosure,
+                dry_run,
+            };
+            let requested = reel::production::load(&base_options.manifest)?
+                .manifest
+                .quality_controls
+                .ab_outputs;
+            let mut reports = vec![reel::adapters::still_animatic::render(&base_options)?];
+            for (label, selected_audio) in [
+                ("narration-only", narration_only_audio),
+                ("effects-music", effects_music_audio),
+            ] {
+                if requested.iter().any(|item| item == label) {
+                    let selected_audio = selected_audio.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "manifest requests {label} A/B output; provide --{label}-audio"
+                        )
+                    })?;
+                    let mut variant = base_options.clone();
+                    variant.audio = selected_audio;
+                    variant.output =
+                        reel::adapters::still_animatic::variant_output(&base_options.output, label);
+                    reports.push(reel::adapters::still_animatic::render(&variant)?);
+                }
+            }
+            match output {
+                OutputFormat::Text => {
+                    for report in reports {
+                        println!(
+                            "{} | work={} | duration={}ms | {}x{}@{} | dry_run={} | artifacts={}",
+                            report.output,
+                            report.work,
+                            report.duration_ms,
+                            report.width,
+                            report.height,
+                            report.fps,
+                            report.dry_run,
+                            report.artifact_manifest
+                        );
+                    }
+                }
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&reports)?),
             }
         }
         Command::Adapters { output } => {
@@ -130,19 +399,23 @@ fn main() -> Result<()> {
             scene,
             platform,
         } => {
+            ensure_legacy_render_compatible(&manifest)?;
             let video = reel::render_scene_preview(&manifest, &scene, &platform)?;
             println!("{}", video.display());
         }
         Command::ScenePreviews { manifest, platform } => {
+            ensure_legacy_render_compatible(&manifest)?;
             for video in reel::render_scene_previews(&manifest, &platform)? {
                 println!("{}", video.display());
             }
         }
         Command::WorkPreview { manifest, platform } => {
+            ensure_legacy_render_compatible(&manifest)?;
             let video = reel::render_work_preview(&manifest, &platform)?;
             println!("{}", video.display());
         }
         Command::ArtifactManifest { manifest, output } => {
+            ensure_legacy_render_compatible(&manifest)?;
             let artifact_manifest = reel::render_artifact_manifest(&manifest)?;
             match output {
                 OutputFormat::Text => println!("{}", artifact_manifest.display()),
@@ -388,22 +661,27 @@ fn main() -> Result<()> {
             }
         }
         Command::ContactSheet { manifest, platform } => {
+            ensure_legacy_render_compatible(&manifest)?;
             let sheet = reel::render_contact_sheet(&manifest, &platform)?;
             println!("{}", sheet.display());
         }
         Command::ShotCards { manifest, platform } => {
+            ensure_legacy_render_compatible(&manifest)?;
             let video = reel::render_shot_cards(&manifest, &platform)?;
             println!("{}", video.display());
         }
         Command::Smoke { manifest } => {
+            ensure_legacy_render_compatible(&manifest)?;
             let video = reel::render_smoke(&manifest)?;
             println!("{}", video.display());
         }
         Command::ReviewPack { manifest } => {
+            ensure_legacy_render_compatible(&manifest)?;
             let report = reel::render_review_pack(&manifest)?;
             println!("{}", report.display());
         }
         Command::Demo { manifest } => {
+            ensure_legacy_render_compatible(&manifest)?;
             let demo = reel::render_demo(&manifest)?;
             println!("{}", demo.display());
         }
@@ -412,6 +690,7 @@ fn main() -> Result<()> {
             platform,
             scene,
         } => {
+            ensure_legacy_render_compatible(&manifest)?;
             let package = reel::render_remotion_package_for_scene(&manifest, &platform, &scene)?;
             println!("{}", package.display());
         }
@@ -424,6 +703,16 @@ fn main() -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn ensure_legacy_render_compatible(manifest: &std::path::Path) -> Result<()> {
+    if reel::production::is_production_manifest(manifest)? {
+        reel::production::require_preview_ready(manifest)?;
+        anyhow::bail!(
+            "production v0.2 manifests use `animatic-render`; legacy card/preview renderers accept v0.1 manifests"
+        );
+    }
     Ok(())
 }
 
@@ -440,11 +729,98 @@ enum Command {
     Validate {
         #[arg(default_value = "works/0001-ash-vale-last-road-before-winter/manifest.yaml")]
         manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
     },
     /// Print renderer-neutral export plans derived from a manifest.
     Plan {
         #[arg(default_value = "works/0001-ash-vale-last-road-before-winter/manifest.yaml")]
         manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Atomically conform an untimed/guide production manifest from measured narration cues.
+    Conform {
+        manifest: PathBuf,
+        #[arg(long)]
+        cues: PathBuf,
+        #[arg(long)]
+        output_dir: PathBuf,
+        #[arg(long = "speaker-tempo", value_name = "SPEAKER=PERCENT")]
+        speaker_tempo: Vec<String>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Export SRT captions from a conformed speaker-aware cue timeline.
+    CaptionExport {
+        manifest: PathBuf,
+        #[arg(long = "output")]
+        output_path: PathBuf,
+    },
+    /// Migrate a legacy manifest into the additive v0.2 production contract.
+    Migrate {
+        manifest: PathBuf,
+        #[arg(long = "output")]
+        output_path: PathBuf,
+        #[arg(long)]
+        normalize_timing: bool,
+    },
+    /// Report selected, omitted, invented, and unattributed source coverage.
+    SourceCoverage {
+        manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Write a privacy-audited provider egress package without local paths.
+    ProviderPackage {
+        manifest: PathBuf,
+        #[arg(long = "output")]
+        output_path: PathBuf,
+        #[arg(long = "format", value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Identify latest review candidates without inferring principal approval.
+    ReviewSelect {
+        #[arg(default_value = "works")]
+        root: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Check long-still motion, focal, crop, and continuity quality controls.
+    QualityCheck {
+        manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Render an asset-backed still-image animatic through FFmpeg with captions and provenance.
+    AnimaticRender {
+        manifest: PathBuf,
+        #[arg(long)]
+        asset_root: PathBuf,
+        #[arg(long)]
+        audio: PathBuf,
+        #[arg(long)]
+        narration_only_audio: Option<PathBuf>,
+        #[arg(long)]
+        effects_music_audio: Option<PathBuf>,
+        #[arg(long)]
+        captions: PathBuf,
+        #[arg(long = "output")]
+        output_path: PathBuf,
+        #[arg(long, default_value_t = 1280)]
+        width: u32,
+        #[arg(long, default_value_t = 720)]
+        height: u32,
+        #[arg(long, default_value_t = 24)]
+        fps: u32,
+        #[arg(long, default_value_t = 0.8)]
+        transition_seconds: f64,
+        #[arg(long, default_value = "ILLUSTRATED RECONSTRUCTION - PRIVATE REVIEW")]
+        disclosure: String,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long = "format", value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
     },
     /// Print available and planned render adapters.
     Adapters {

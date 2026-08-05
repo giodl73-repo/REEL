@@ -1,0 +1,143 @@
+manifest_version: reel.manifest.v0.2
+profile: animatic
+timing_status: untimed
+work: fixture-two-speaker-threshold
+title: Sanitized two-speaker threshold fixture
+source_scenario:
+  repo: FIXTURE
+  path: fixtures/source-blocks.txt
+  id: threshold-scene
+  source_commit: fixture-only
+format: short-film
+style: illustrated-2d
+audience:
+  primary: contract testers
+  context: local automated validation
+  desired_effect: prove speaker-selective conform without private material
+platforms:
+  - name: private-review
+    aspect_ratio: "16:9"
+    sound_optional: false
+continuity:
+  entities:
+    - id: guide
+      age_at_scene: adult
+      observations:
+        - A generic illustrated figure used only for contract testing.
+      confidence: fixture
+      provenance: synthetic
+      human_confirmation_status: not-required-fixture
+      reference_assets:
+        - id: local-reference
+          sha256: fixture-hash
+          local_path: C:/private/never-export-this.png
+          provider_transfer: forbidden
+  canon_constraints:
+    - All text and entities are synthetic test material.
+scenes:
+  - id: scene-01
+    purpose: Test an ordered poem-to-prose threshold before timing exists.
+    story_beat: One voice opens a threshold and another answers after protected silence.
+    location: abstract grove
+    characters: [guide]
+    continuity_notes:
+      - The protected pause must not change when narrator tempo changes.
+shots:
+  - id: shot-01
+    scene_id: scene-01
+    camera: centered hold
+    action: Rain crosses an empty path while the first voice speaks.
+    visual_prompt: Synthetic moonlit path with rain; no real person or private reference.
+    visual_asset: frame-01.png
+    motion: hold
+    style_constraints: [illustrated reconstruction]
+    narration_cue_ids: [cue-poem]
+    source_refs: [selected-a]
+    focal_point: { x: 0.5, y: 0.5 }
+    protected_regions:
+      - { id: caption-safe, x: 0.1, y: 0.7, width: 0.8, height: 0.2 }
+    transition_out: dissolve
+  - id: shot-02
+    scene_id: scene-01
+    camera: slow push
+    action: A doorway brightens while the second voice answers.
+    visual_prompt: Synthetic empty doorway at dawn; no likeness or documentary claim.
+    visual_asset: frame-02.png
+    motion: push
+    style_constraints: [illustrated reconstruction]
+    narration_cue_ids: [cue-prose]
+    source_refs: [selected-b]
+    focal_point: { x: 0.5, y: 0.45 }
+    protected_regions:
+      - { id: caption-safe, x: 0.1, y: 0.7, width: 0.8, height: 0.2 }
+    transition_out: fade
+speakers:
+  - id: poet
+    display_name: Fixture poet
+    language: es
+    pronunciation_profile: fixture-neutral
+    performance_direction: measured and distinct
+    approval_reference: fixture/no-human-voice
+    asset_kind: guide
+  - id: narrator
+    display_name: Fixture narrator
+    language: es
+    pronunciation_profile: fixture-neutral
+    performance_direction: warm and unhurried
+    approval_reference: fixture/no-human-voice
+    asset_kind: guide
+narration_cues:
+  - id: cue-poem
+    speaker_id: poet
+    text: La lluvia abre un sendero de prueba.
+    source_refs: [selected-a]
+    shot_ids: [shot-01]
+    pause_policy: preserve-tail
+  - id: cue-prose
+    speaker_id: narrator
+    text: Después del silencio, comienza la respuesta.
+    source_refs: [selected-b]
+    shot_ids: [shot-02]
+protected_pauses:
+  - id: poem-to-prose-pause
+    after_cue_id: cue-poem
+    duration_ms: 1500
+    locked: true
+source_ranges:
+  - { id: selected-a, start: 1, end: 3, label: synthetic poem blocks }
+  - { id: selected-b, start: 6, end: 8, label: synthetic prose blocks }
+omissions:
+  - id: omitted-bridge
+    start: 4
+    end: 5
+    bridge: silence
+    reason: Exercise explicit omission coverage.
+audio:
+  narration_voice: cue-owned
+  music_direction: none
+  effects_direction: none
+  silence_notes: protect poem-to-prose-pause
+captions:
+  required: true
+  style: lower-third
+  language: es
+renderer_assumptions:
+  candidates: [ffmpeg]
+  blockers: [timing not conformed]
+exports:
+  - id: private-review
+    filename: fixture-two-speaker.mp4
+    aspect_ratio: "16:9"
+review:
+  required_roles: [editor, sound-designer]
+  status: planning
+  principal_findings: []
+quality_controls:
+  max_uninterrupted_hold_seconds: 12
+  require_focal_points: true
+  require_protected_regions: true
+  no_lip_sync: true
+  ab_outputs: [narration-only, effects-music]
+provider_handoff:
+  asset_ids: []
+  text_fields: [continuity.entities.observations, shots.visual_prompt]

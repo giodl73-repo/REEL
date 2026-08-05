@@ -6,6 +6,7 @@ pub mod ai_video;
 pub mod blender;
 pub mod ffmpeg;
 pub mod remotion;
+pub mod still_animatic;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub enum AdapterId {
@@ -65,6 +66,8 @@ pub enum RenderOperationKind {
     ScenePreview,
     #[serde(rename = "review-pack")]
     ReviewPack,
+    #[serde(rename = "animatic-render")]
+    AnimaticRender,
 }
 
 impl RenderOperationKind {
@@ -75,6 +78,7 @@ impl RenderOperationKind {
             Self::ContactSheet => "contact-sheet",
             Self::ScenePreview => "scene-preview",
             Self::ReviewPack => "review-pack",
+            Self::AnimaticRender => "animatic-render",
         }
     }
 }
