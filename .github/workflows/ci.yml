@@ -21,6 +21,12 @@ jobs:
       - run: cargo test --all-targets --all-features
       - name: Validate untimed production fixture
         run: cargo run --quiet -- validate manifests/fixtures/two-speaker-untimed/planning.yaml --output json
+      - name: Validate v0.2.1 composition contracts
+        run: |
+          cargo run --quiet -- series-validate manifests/templates/episodic-series.yaml --output json
+          cargo run --quiet -- series-coverage manifests/templates/episodic-series.yaml --output json
+          cargo run --quiet -- series-review-queue manifests/templates/episodic-series.yaml --output json
+          cargo run --quiet -- continuity-validate manifests/fixtures/shared-continuity/registry.yaml --output json
 
   ffmpeg-linux:
     runs-on: ubuntu-latest

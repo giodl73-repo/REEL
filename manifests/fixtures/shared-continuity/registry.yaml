@@ -1,0 +1,61 @@
+schema: reel.continuity.v0.1
+registry_id: bertica-sanitized-recurring-entities
+version: "1"
+entities:
+  - id: herrera
+    observations: [A recurring adult figure with a narrow face and dark hair.]
+    observations_approved: true
+    observation_approval_reference: fixture/sanitized-text
+    confidence: fixture
+    provenance: sanitized-text
+    human_confirmation_status: open
+    reference_assets:
+      - { id: herrera-private-photo, sha256: fixture-herrera-hash, local_path: C:/private/herrera.jpg, provider_transfer: forbidden }
+  - id: bertha-maria
+    observations: [A recurring adult figure in practical period clothing.]
+    observations_approved: true
+    observation_approval_reference: fixture/sanitized-text
+    confidence: fixture
+    provenance: sanitized-text
+    human_confirmation_status: open
+    reference_assets: []
+  - id: herminio
+    observations: [A recurring adult figure with a reserved posture.]
+    observations_approved: true
+    observation_approval_reference: fixture/sanitized-text
+    confidence: fixture
+    provenance: sanitized-text
+    human_confirmation_status: open
+    reference_assets: []
+  - id: moro
+    observations: [A recurring horse identified by a dark coat.]
+    observations_approved: true
+    observation_approval_reference: fixture/sanitized-text
+    confidence: fixture
+    provenance: sanitized-text
+    human_confirmation_status: open
+    reference_assets: []
+  - id: amado-rosa
+    observations: [A strong adult figure associated with the launch rescue.]
+    observations_approved: true
+    observation_approval_reference: fixture/sanitized-text
+    confidence: fixture
+    provenance: sanitized-text
+    human_confirmation_status: open
+    reference_assets: []
+  - id: caimito-road
+    observations: [A recurring rural road bordered by caimito trees.]
+    observations_approved: true
+    observation_approval_reference: fixture/sanitized-text
+    confidence: fixture
+    provenance: sanitized-text
+    human_confirmation_status: open
+    reference_assets: []
+  - id: riverita-house
+    observations: [A recurring family house represented without a private address.]
+    observations_approved: true
+    observation_approval_reference: fixture/sanitized-text
+    confidence: fixture
+    provenance: sanitized-text
+    human_confirmation_status: open
+    reference_assets: []

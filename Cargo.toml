@@ -1,7 +1,12 @@
 [package]
 name = "reel"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
+rust-version = "1.85"
+description = "Portable moving-image production manifests, series composition, and FFmpeg orchestration"
+license = "MIT"
+repository = "https://github.com/giodl73-repo/REEL"
+readme = "README.md"
 
 [dependencies]
 anyhow = "1.0.100"

@@ -122,6 +122,11 @@ The sanitized `manifests/fixtures/vertical-sound-off/` derivative exercises a
 real 9:16, caption-complete output with no audio stream and records a complete
 five-role panel decision without implying principal approval.
 
+CLI v0.2.1 adds the reference-only `reel.series.v0.1` layer, atomic episode
+packets, deterministic SRT cue import, and shared hashed continuity registries
+without changing `reel.manifest.v0.2`. See `docs/episodic-series-v0.1.md` and
+`docs/cue-import-and-continuity-v0.1.md`.
+
 ## Renderer direction
 
 The first researched implementation path is Linux-first in WSL2: FFmpeg for

@@ -2,6 +2,16 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
+use serde::Serialize;
+
+fn print_report(report: &impl Serialize, output: OutputFormat) -> Result<()> {
+    match output {
+        OutputFormat::Text | OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(report)?)
+        }
+    }
+    Ok(())
+}
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -111,6 +121,54 @@ fn main() -> Result<()> {
                     }
                 }
             }
+        }
+        Command::SeriesValidate { manifest, output } => {
+            let report = reel::series::validate(&manifest)?;
+            print_report(&report, output)?;
+        }
+        Command::SeriesPlan { manifest, output } => {
+            let report = reel::series::plan(&manifest)?;
+            print_report(&report, output)?;
+        }
+        Command::SeriesCoverage { manifest, output } => {
+            let report = reel::series::coverage(&manifest)?;
+            print_report(&report, output)?;
+        }
+        Command::SeriesReviewQueue { manifest, output } => {
+            let report = reel::series::review_queue(&manifest)?;
+            print_report(&report, output)?;
+        }
+        Command::EpisodeCompose {
+            manifest,
+            episode,
+            output_dir,
+            output,
+        } => {
+            let report = reel::series::compose_episode(&manifest, &episode, &output_dir)?;
+            print_report(&report, output)?;
+        }
+        Command::CueImportSrt {
+            manifest,
+            captions,
+            speaker,
+            source_refs,
+            mapping,
+            output_path,
+            output,
+        } => {
+            let report = reel::cue_import::import_srt(
+                &manifest,
+                &captions,
+                speaker.as_deref(),
+                &source_refs,
+                mapping.as_deref(),
+                &output_path,
+            )?;
+            print_report(&report, output)?;
+        }
+        Command::ContinuityValidate { registry, output } => {
+            let report = reel::continuity::validate(&registry)?;
+            print_report(&report, output)?;
         }
         Command::Conform {
             manifest,
@@ -749,6 +807,60 @@ enum Command {
     Plan {
         #[arg(default_value = "works/0001-ash-vale-last-road-before-winter/manifest.yaml")]
         manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate an episodic-series index and all referenced child manifests.
+    SeriesValidate {
+        manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Print deterministic season, episode, child, timing, and runtime order.
+    SeriesPlan {
+        manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Report continuous canonical source coverage across a series.
+    SeriesCoverage {
+        manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Report open human review and release-blocked episodes.
+    SeriesReviewQueue {
+        manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Atomically compose referenced conformed scene packets into an episode packet.
+    EpisodeCompose {
+        manifest: PathBuf,
+        episode: String,
+        #[arg(long)]
+        output_dir: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Import millisecond SRT captions as source- and speaker-assigned narration cues.
+    CueImportSrt {
+        manifest: PathBuf,
+        captions: PathBuf,
+        #[arg(long)]
+        speaker: Option<String>,
+        #[arg(long = "source-ref")]
+        source_refs: Vec<String>,
+        #[arg(long)]
+        mapping: Option<PathBuf>,
+        #[arg(long = "output")]
+        output_path: PathBuf,
+        #[arg(long = "format", value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate a shared, versioned continuity registry without exposing local assets.
+    ContinuityValidate {
+        registry: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

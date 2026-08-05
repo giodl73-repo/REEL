@@ -287,6 +287,8 @@ pub struct ContinuityEntity {
     pub human_confirmation_status: String,
     #[serde(default)]
     pub reference_assets: Vec<ReferenceAsset>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -642,6 +644,7 @@ pub fn validate(loaded: &LoadedProductionManifest) -> Result<ProductionValidatio
     }
     require_nonempty("work", &manifest.work)?;
     require_nonempty("title", &manifest.title)?;
+    crate::continuity::resolve_for_manifest(&loaded.path, manifest)?;
     if manifest.scenes.is_empty() || manifest.shots.is_empty() {
         bail!("production manifest requires at least one scene and one ordered shot");
     }
@@ -1227,21 +1230,25 @@ pub fn conform(
 
 fn render_srt(cues: &[NarrationCue], timeline: &BTreeMap<String, (u64, u64)>) -> String {
     let mut output = String::new();
-    let mut index = 1;
-    for cue in cues {
-        let Some((start, end)) = timeline.get(&cue.id) else {
-            continue;
-        };
-        if cue.text.trim().is_empty() {
-            continue;
-        }
+    let rendered = cues
+        .iter()
+        .filter_map(|cue| {
+            let (start, end) = timeline.get(&cue.id)?;
+            (!cue.text.trim().is_empty()).then_some((*start, *end, cue.text.as_str()))
+        })
+        .collect::<Vec<_>>();
+    for (position, (start, end, text)) in rendered.iter().enumerate() {
         output.push_str(&format!(
-            "{index}\n{} --> {}\n{}\n\n",
+            "{}\n{} --> {}\n{}",
+            position + 1,
             srt_time(*start),
             srt_time(*end),
-            cue.text
+            text
         ));
-        index += 1;
+        output.push('\n');
+        if position + 1 < rendered.len() {
+            output.push('\n');
+        }
     }
     output
 }
@@ -1568,21 +1575,21 @@ pub fn source_coverage(path: impl AsRef<Path>) -> Result<CoverageReport> {
 }
 
 pub fn provider_package(path: impl AsRef<Path>) -> Result<ProviderPackage> {
-    let loaded = load(path)?;
+    let loaded = load(&path)?;
     validate(&loaded)?;
     let mut observations = BTreeMap::new();
     let mut assets = HashMap::new();
-    for entity in &loaded.manifest.continuity.entities {
+    for entity in crate::continuity::resolve_for_manifest(path.as_ref(), &loaded.manifest)? {
         observations.insert(entity.id.clone(), entity.observations.clone());
-        for asset in &entity.reference_assets {
-            assets.insert(asset.id.as_str(), asset);
+        for asset in entity.reference_assets {
+            assets.insert(asset.id.clone(), asset);
         }
     }
     let mut requested_assets = Vec::new();
     let mut blockers = Vec::new();
     for id in &loaded.manifest.provider_handoff.asset_ids {
         let asset = assets
-            .get(id.as_str())
+            .get(id)
             .ok_or_else(|| anyhow!("provider handoff references unknown local asset {id}"))?;
         if asset.provider_transfer != TransferPolicy::Approved
             || asset.approval_reference.is_empty()

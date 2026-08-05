@@ -1,0 +1,59 @@
+schema: reel.series.v0.1
+series_id: sanitized-threshold-series
+title: Sanitized threshold series template
+canonical_source_start: 1
+canonical_source_end: 4
+defaults:
+  platforms: [vertical-sound-off]
+  disclosure: ILLUSTRATED RECONSTRUCTION - REVIEW CANDIDATE
+  captions: { required: true, language: es }
+  privacy: { private_reference_default: forbidden }
+  continuity_registry:
+    path: ../fixtures/shared-continuity/registry.yaml
+    version: "1"
+    sha256: b04c5bc9cc36d2f7eef4718e13e6e66fc23b153a0c8efac6ab24c0ee755b6eff
+    entity_ids: [herrera, bertha-maria, herminio, moro, amado-rosa, caimito-road, riverita-house]
+seasons:
+  - id: S1
+    order: 1
+    title: Opening season
+    total_runtime_seconds: 6.0
+    episodes:
+      - id: S1E01
+        order: 1
+        production_title: Threshold — vertical proof
+        manuscript_title: Synthetic opening and landing
+        poem_ids: []
+        source_ranges:
+          - { start: 1, end: 4 }
+        omissions: []
+        chronology_place: abstract grove
+        memory_mode: synthetic recollection
+        sensitivity: fixture-only
+        recurring_motifs: [rain, road, doorway]
+        continuity_entry: [path-before-threshold]
+        continuity_exit: [doorway-open]
+        timing_status: conformed
+        human_review_status: open
+        raw_orientation_seconds: 0.0
+        measured_narration_seconds: 6.0
+        protected_pause_seconds: 0.0
+        scene_duration_seconds: 6.0
+        total_runtime_seconds: 6.0
+        release_ready: false
+        accepted_speakers: [on-screen-story]
+        findings:
+          - { reviewer: bertica, finding: open, approved: false }
+          - { reviewer: herman, finding: open, approved: false }
+        dependencies: []
+        children:
+          - path: ../fixtures/vertical-sound-off/manifest.yaml
+            work_id: fixture-two-speaker-threshold-vertical
+            expected_sha256: b2ae61e6e29857e5a747874e61da6179c3713f40556445048a858f73f55ff482
+            accepted_timing_states: [conformed, locked]
+            accepted_review_states: [panel-reviewed]
+            required_platforms: [vertical-sound-off]
+            source_complete: true
+            privacy_clear: true
+            duration_seconds: 6.0
+        production_units: []

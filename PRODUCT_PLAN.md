@@ -93,6 +93,11 @@ coverage, privacy-audited provider packages, explicit variant lineage,
 long-still quality controls, and asset-backed FFmpeg animatics. All v0.2
 transformations create new derivatives and retain input/output hash lineage.
 
+CLI v0.2.1 keeps that scene contract unchanged and adds separately versioned
+series composition, episode packets, SRT cue import, and shared continuity
+registries. Series indexes reference child manifests by identity and hash;
+composition never flattens or silently retimes their internals.
+
 The foundation wave is documentation-first:
 
 ```powershell
@@ -101,6 +106,9 @@ cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo run --quiet -- validate manifests\fixtures\two-speaker-untimed\planning.yaml --output json
 cargo run --quiet -- plan manifests\fixtures\two-speaker-untimed\planning.yaml --output json
+cargo run --quiet -- series-validate manifests\templates\episodic-series.yaml --output json
+cargo run --quiet -- series-coverage manifests\templates\episodic-series.yaml --output json
+cargo run --quiet -- continuity-validate manifests\fixtures\shared-continuity\registry.yaml --output json
 cargo run --quiet -- adapters
 cargo run --quiet -- adapters --output json
 cargo run --quiet -- adapter-plan works\0001-ash-vale-last-road-before-winter\manifest.yaml
