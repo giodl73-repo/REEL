@@ -287,3 +287,7 @@ cargo run --quiet -- remotion-pack works\0001-ash-vale-last-road-before-winter\m
 cargo run --quiet -- review-all works
 git diff --check
 ```
+
+## License
+
+[MIT](LICENSE) — © 2026 Gio Della-Libera.
