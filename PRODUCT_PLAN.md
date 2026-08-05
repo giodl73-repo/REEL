@@ -86,10 +86,21 @@ consume:
 
 ## Validation contract
 
+The BERTICA production-hardening wave promotes the manifest contract to v0.2.
+Its acceptance boundary includes untimed pre-voice planning, speaker-aware cue
+conform, protected pauses, per-speaker tempo derivatives, fine-grained source
+coverage, privacy-audited provider packages, explicit variant lineage,
+long-still quality controls, and asset-backed FFmpeg animatics. All v0.2
+transformations create new derivatives and retain input/output hash lineage.
+
 The foundation wave is documentation-first:
 
 ```powershell
 cargo test --quiet
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo run --quiet -- validate manifests\fixtures\two-speaker-untimed\planning.yaml --output json
+cargo run --quiet -- plan manifests\fixtures\two-speaker-untimed\planning.yaml --output json
 cargo run --quiet -- adapters
 cargo run --quiet -- adapters --output json
 cargo run --quiet -- adapter-plan works\0001-ash-vale-last-road-before-winter\manifest.yaml

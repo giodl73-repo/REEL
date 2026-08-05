@@ -26,3 +26,12 @@ short video package.
 
 Goal: produce videos for selected downstream repos such as BANISH, ICELINES,
 SCENE, SCORE, or public front-door demos.
+
+## Phase 5: Consumer-driven production hardening
+
+Goal: turn repeated production costs from real consumers into portable manifest
+contracts and deterministic transformations without copying consumer internals
+or private assets.
+
+Active wave:
+[`BERTICA-driven production hardening`](2026-08-04-bertica-production-hardening/WAVE.md).

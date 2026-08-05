@@ -92,6 +92,32 @@ The production manifest is the handoff from design to rendering. It is defined i
 exists. A manifest must name the source scenario, target format and style,
 scene/shot order, audio, captions, renderer assumptions, and export targets.
 
+Production manifest v0.2 adds an explicit timing lifecycle, speaker-aware
+narration cues, protected pauses, deterministic voice conform, fine-grained
+source coverage, privacy-safe continuity references, derivative lineage, and
+long-still motion controls. See
+[`docs/production-manifest-v0.2.md`](docs/production-manifest-v0.2.md).
+
+The main BERTICA-driven workflow is:
+
+```powershell
+cargo run -- validate planning.yaml --output json
+cargo run -- plan planning.yaml --output json
+cargo run -- conform planning.yaml --cues cue-measurements.yaml `
+  --speaker-tempo narrator=85 --output-dir production/conformed/scene-v2
+cargo run -- source-coverage production/conformed/scene-v2/manifest.yaml --output json
+cargo run -- quality-check production/conformed/scene-v2/manifest.yaml --output json
+cargo run -- animatic-render production/conformed/scene-v2/manifest.yaml `
+  --asset-root C:/src/consumer --audio production/audio/master.wav `
+  --captions production/conformed/scene-v2/captions.srt `
+  --output production/video/private-review.mp4
+```
+
+Untimed manifests validate and produce useful storyboard plans while render and
+delivery commands remain explicitly gated. Conform packets are published
+atomically and include a conformed manifest, captions, input/output hashes,
+transform parameters, and tool version.
+
 ## Renderer direction
 
 The first researched implementation path is Linux-first in WSL2: FFmpeg for
@@ -128,10 +154,19 @@ cargo run -- demo works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- remotion-pack works\0001-ash-vale-last-road-before-winter\manifest.yaml youtube-demo scene-01
 cargo run -- review-all works
 cargo run -- review-all works --output json
+cargo run -- validate manifests\fixtures\two-speaker-untimed\planning.yaml --output json
+cargo run -- plan manifests\fixtures\two-speaker-untimed\planning.yaml --output json
+cargo run -- conform manifests\fixtures\two-speaker-untimed\planning.yaml --cues manifests\fixtures\two-speaker-untimed\cue-measurements.yaml --speaker-tempo narrator=85 --output-dir target\fixture-conform
+cargo run -- source-coverage manifests\fixtures\two-speaker-untimed\planning.yaml --output json
+cargo run -- provider-package manifests\fixtures\two-speaker-untimed\planning.yaml --output target\fixture-provider.json --format json
+cargo run -- quality-check manifests\fixtures\two-speaker-untimed\planning.yaml --output json
 ```
 
 Rust owns contracts, planning, and subprocess orchestration; FFmpeg, Remotion,
 Blender, and future providers stay external adapters.
+
+Install the versioned CLI with `cargo install --path . --locked` or use a tagged
+Windows/Linux release binary. See [`docs/setup/install.md`](docs/setup/install.md).
 
 The adapter boundary now names FFmpeg as the implemented baseline adapter and
 keeps Remotion, Blender, and AI-video as provider-neutral planned adapters until
@@ -240,6 +275,9 @@ REEL/
 
 ```powershell
 cargo test --quiet
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo run --quiet -- validate manifests\fixtures\two-speaker-untimed\planning.yaml --output json
 cargo run --quiet -- validate manifests\templates\scenario-video.yaml
 cargo run --quiet -- validate works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run --quiet -- plan works\0001-ash-vale-last-road-before-winter\manifest.yaml

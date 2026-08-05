@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
 pub mod adapters;
+pub mod production;
 
 const SUPPORTED_MANIFEST_VERSION: &str = "reel.manifest.v0.1";
 const ARTIFACT_MANIFEST_SCHEMA_VERSION: &str = "reel.artifacts.v0.2";
@@ -91,7 +92,7 @@ pub struct LoadedManifest {
     manifest: Manifest,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct ValidationReport {
     pub scene_total: f64,
     pub shot_total: f64,
@@ -3415,7 +3416,7 @@ mod tests {
         let mut raw = manifest.raw.clone();
         raw.as_mapping_mut()
             .expect("raw manifest is mapping")
-            .get_mut(&Value::String("exports".to_string()))
+            .get_mut(Value::String("exports".to_string()))
             .expect("exports exists")
             .as_sequence_mut()
             .expect("exports is sequence")

@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --all-targets --all-features
+      - name: Validate untimed production fixture
+        run: cargo run --quiet -- validate manifests/fixtures/two-speaker-untimed/planning.yaml --output json
+
+  ffmpeg-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: |
+          mkdir -p target/ci-assets
+          ffmpeg -y -hide_banner -loglevel error -f lavfi -i color=c=navy:s=1280x720 -frames:v 1 target/ci-assets/frame-01.png
+          ffmpeg -y -hide_banner -loglevel error -f lavfi -i color=c=maroon:s=1280x720 -frames:v 1 target/ci-assets/frame-02.png
+          ffmpeg -y -hide_banner -loglevel error -f lavfi -i anullsrc=r=48000:cl=stereo -t 8 target/ci-assets/guide.wav
+          cargo run --quiet -- conform manifests/fixtures/two-speaker-untimed/planning.yaml --cues manifests/fixtures/two-speaker-untimed/cue-measurements.yaml --speaker-tempo narrator=85 --output-dir target/ci-conform
+          cargo run --quiet -- animatic-render target/ci-conform/manifest.yaml --asset-root target/ci-assets --audio target/ci-assets/guide.wav --narration-only-audio target/ci-assets/guide.wav --effects-music-audio target/ci-assets/guide.wav --captions target/ci-conform/captions.srt --output target/ci-animatic.mp4 --format json
+          ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 target/ci-animatic.mp4

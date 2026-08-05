@@ -17,6 +17,7 @@ pub fn descriptor() -> AdapterDescriptor {
             RenderOperationKind::ContactSheet,
             RenderOperationKind::ScenePreview,
             RenderOperationKind::ReviewPack,
+            RenderOperationKind::AnimaticRender,
         ],
     }
 }
@@ -100,7 +101,10 @@ impl FfmpegAdapter {
 }
 
 fn path_for_wsl(path: &Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/");
+    let mut text = path.to_string_lossy().replace('\\', "/");
+    if let Some(stripped) = text.strip_prefix("//?/") {
+        text = stripped.to_string();
+    }
     let bytes = text.as_bytes();
 
     if bytes.len() >= 3 && bytes[1] == b':' && bytes[2] == b'/' {
@@ -125,6 +129,10 @@ mod tests {
     fn converts_windows_paths_for_wsl_invocation() {
         assert_eq!(
             path_for_wsl(Path::new("C:\\src\\TRACKER\\file name.txt")),
+            "/mnt/c/src/TRACKER/file name.txt"
+        );
+        assert_eq!(
+            path_for_wsl(Path::new(r"\\?\C:\src\TRACKER\file name.txt")),
             "/mnt/c/src/TRACKER/file name.txt"
         );
     }
