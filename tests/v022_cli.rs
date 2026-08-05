@@ -1,0 +1,270 @@
+use std::{fs, process::Command};
+
+use serde_json::Value;
+use tempfile::tempdir;
+
+const MANIFEST: &str = "manifests/fixtures/smooth-motion/manifest.yaml";
+const ASSETS: &str = "manifests/fixtures/smooth-motion";
+const CAPTIONS: &str = "manifests/fixtures/smooth-motion/captions.srt";
+
+fn dry_run(extra: &[&str]) -> (tempfile::TempDir, std::process::Output, Value) {
+    let dir = tempdir().unwrap();
+    let video = dir.path().join("proof.mp4");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_reel"));
+    command
+        .args(["animatic-render", MANIFEST, "--asset-root", ASSETS])
+        .arg("--silent")
+        .args(["--captions", CAPTIONS, "--output"])
+        .arg(&video)
+        .args(["--dry-run", "--format", "json"])
+        .args(extra);
+    let output = command.output().expect("dry-run command executes");
+    let report: Value = serde_json::from_slice(&output.stdout).expect("report is json");
+    (dir, output, report)
+}
+
+#[test]
+fn smooth_motion_is_the_default_and_records_complete_lineage() {
+    let (dir, output, report) = dry_run(&[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = &report[0];
+    assert_eq!(report["tool_version"], "0.2.2");
+    assert_eq!(report["motion"]["backend"], "ffmpeg-perspective");
+    assert_eq!(report["motion"]["quality"], "smooth");
+    assert_eq!(report["motion"]["interpolation"], "cubic");
+    assert_eq!(report["motion"]["curve"], "ease-in-out");
+    assert_eq!(report["motion"]["working_width"], 1280);
+    assert_eq!(report["motion"]["working_height"], 720);
+    assert_eq!(report["motion"]["fps"], 24);
+    let args = report["command_arguments"].as_array().unwrap();
+    assert!(args.iter().any(|arg| {
+        arg.as_str()
+            .is_some_and(|text| text.contains("perspective=") && text.contains("eval=frame"))
+    }));
+    assert!(!dir.path().join("proof.mp4").exists());
+    assert!(dir.path().join("proof.artifacts.json").exists());
+}
+
+#[test]
+fn legacy_mode_preserves_the_v021_zoompan_path() {
+    let (_dir, output, report) = dry_run(&["--motion-quality", "legacy"]);
+    assert!(output.status.success());
+    let report = &report[0];
+    assert_eq!(report["motion"]["backend"], "ffmpeg-zoompan");
+    assert_eq!(report["motion"]["quality"], "legacy");
+    assert_eq!(report["motion"]["curve"], "legacy-linear");
+    assert_eq!(
+        report["motion"]["quality_override"],
+        "legacy deterministic reproduction"
+    );
+    let args = report["command_arguments"].as_array().unwrap();
+    assert!(args.iter().any(|arg| {
+        arg.as_str()
+            .is_some_and(|text| text.contains("zoompan") && !text.contains("perspective="))
+    }));
+}
+
+#[test]
+fn renderer_refuses_overwrite_and_infeasible_quality_without_partial_reports() {
+    let dir = tempdir().unwrap();
+    let video = dir.path().join("existing.mp4");
+    fs::write(&video, b"preserve-me").unwrap();
+    let overwrite = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .args(["animatic-render", MANIFEST, "--asset-root", ASSETS])
+        .arg("--silent")
+        .args(["--captions", CAPTIONS, "--output"])
+        .arg(&video)
+        .arg("--dry-run")
+        .output()
+        .unwrap();
+    assert!(!overwrite.status.success());
+    assert!(String::from_utf8_lossy(&overwrite.stderr).contains("refusing to overwrite"));
+    assert_eq!(fs::read(&video).unwrap(), b"preserve-me");
+    assert!(!video.with_extension("artifacts.json").exists());
+
+    let oversized = dir.path().join("oversized.mp4");
+    let infeasible = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .args(["animatic-render", MANIFEST, "--asset-root", ASSETS])
+        .arg("--silent")
+        .args(["--captions", CAPTIONS, "--output"])
+        .arg(&oversized)
+        .args(["--width", "7680", "--height", "4320", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(!infeasible.status.success());
+    assert!(String::from_utf8_lossy(&infeasible.stderr).contains("infeasible"));
+    assert!(!oversized.exists());
+    assert!(!oversized.with_extension("artifacts.json").exists());
+}
+
+#[test]
+#[ignore = "requires external FFmpeg/ffprobe"]
+fn real_sanitized_pan_makes_legacy_fail_and_smooth_pass() {
+    let dir = tempdir().unwrap();
+    let smooth = dir.path().join("smooth.mp4");
+    let legacy = dir.path().join("legacy.mp4");
+    for (quality, video) in [("smooth", &smooth), ("legacy", &legacy)] {
+        let render = Command::new(env!("CARGO_BIN_EXE_reel"))
+            .args(["animatic-render", MANIFEST, "--asset-root", ASSETS])
+            .arg("--silent")
+            .args(["--captions", CAPTIONS, "--output"])
+            .arg(video)
+            .args(["--motion-quality", quality, "--format", "json"])
+            .output()
+            .unwrap();
+        assert!(
+            render.status.success(),
+            "{}",
+            String::from_utf8_lossy(&render.stderr)
+        );
+    }
+    let smooth_analysis = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .arg("motion-analyze")
+        .arg(&smooth)
+        .args(["--output", "json"])
+        .output()
+        .unwrap();
+    assert!(smooth_analysis.status.success());
+    let smooth_report: Value = serde_json::from_slice(&smooth_analysis.stdout).unwrap();
+    assert!(smooth_report["passed"].as_bool().unwrap());
+    assert!(smooth_report["near_stationary_fraction"].as_f64().unwrap() <= 0.10);
+    let smooth_artifact: Value =
+        serde_json::from_slice(&fs::read(smooth.with_extension("artifacts.json")).unwrap())
+            .unwrap();
+    assert_eq!(smooth_artifact["fps"], 24);
+    assert_eq!(smooth_artifact["width"], 1280);
+    assert_eq!(smooth_artifact["height"], 720);
+    assert_eq!(smooth_artifact["output_duration_ms"], 20_000);
+
+    let legacy_analysis = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .arg("motion-analyze")
+        .arg(&legacy)
+        .args(["--output", "json"])
+        .output()
+        .unwrap();
+    assert!(!legacy_analysis.status.success());
+    let legacy_report: Value = serde_json::from_slice(&legacy_analysis.stdout).unwrap();
+    assert!(!legacy_report["passed"].as_bool().unwrap());
+    assert!(legacy_report["near_stationary_fraction"].as_f64().unwrap() > 0.10);
+
+    let manifest = fs::read_to_string(MANIFEST).unwrap();
+    let captions = fs::read_to_string(CAPTIONS).unwrap();
+    let captions_25 = dir.path().join("captions-25.srt");
+    fs::write(
+        &captions_25,
+        captions.replace("00:00:20,000", "00:00:25,000"),
+    )
+    .unwrap();
+    for motion in ["push", "pull"] {
+        let variant_manifest = dir.path().join(format!("{motion}.yaml"));
+        fs::write(
+            &variant_manifest,
+            manifest
+                .replace("20.0", "25.0")
+                .replace("motion: pan-right", &format!("motion: {motion}")),
+        )
+        .unwrap();
+        let video = dir.path().join(format!("{motion}.mp4"));
+        let render = Command::new(env!("CARGO_BIN_EXE_reel"))
+            .arg("animatic-render")
+            .arg(&variant_manifest)
+            .args(["--asset-root", ASSETS, "--silent", "--captions"])
+            .arg(&captions_25)
+            .arg("--output")
+            .arg(&video)
+            .args(["--motion-quality", "smooth", "--format", "json"])
+            .output()
+            .unwrap();
+        assert!(
+            render.status.success(),
+            "{}",
+            String::from_utf8_lossy(&render.stderr)
+        );
+        let analysis = Command::new(env!("CARGO_BIN_EXE_reel"))
+            .arg("motion-analyze")
+            .arg(&video)
+            .args(["--output", "json"])
+            .output()
+            .unwrap();
+        assert!(analysis.status.success());
+        let report: Value = serde_json::from_slice(&analysis.stdout).unwrap();
+        assert!(report["near_stationary_fraction"].as_f64().unwrap() <= 0.10);
+    }
+
+    let captions_5 = dir.path().join("captions-5.srt");
+    fs::write(
+        &captions_5,
+        captions.replace("00:00:20,000", "00:00:05,000"),
+    )
+    .unwrap();
+    for motion in ["hold", "hold-dark"] {
+        let variant_manifest = dir.path().join(format!("{motion}.yaml"));
+        fs::write(
+            &variant_manifest,
+            manifest
+                .replace("20.0", "5.0")
+                .replace("motion: pan-right", &format!("motion: {motion}")),
+        )
+        .unwrap();
+        let video = dir.path().join(format!("{motion}.mp4"));
+        let render = Command::new(env!("CARGO_BIN_EXE_reel"))
+            .arg("animatic-render")
+            .arg(&variant_manifest)
+            .args(["--asset-root", ASSETS, "--silent", "--captions"])
+            .arg(&captions_5)
+            .arg("--output")
+            .arg(&video)
+            .args(["--motion-quality", "smooth", "--format", "json"])
+            .output()
+            .unwrap();
+        assert!(render.status.success());
+        let artifact: Value =
+            serde_json::from_slice(&fs::read(video.with_extension("artifacts.json")).unwrap())
+                .unwrap();
+        let command = artifact["command_arguments"].as_array().unwrap();
+        assert!(command.iter().all(|arg| {
+            arg.as_str()
+                .is_none_or(|text| !text.contains("perspective="))
+        }));
+        let analysis = Command::new(env!("CARGO_BIN_EXE_reel"))
+            .arg("motion-analyze")
+            .arg(&video)
+            .args(["--output", "json"])
+            .output()
+            .unwrap();
+        assert!(!analysis.status.success());
+        let report: Value = serde_json::from_slice(&analysis.stdout).unwrap();
+        assert!(report["near_stationary_fraction"].as_f64().unwrap() > 0.85);
+    }
+
+    let corrupt_audio = dir.path().join("corrupt.wav");
+    fs::write(&corrupt_audio, b"not an audio stream").unwrap();
+    let failed_video = dir.path().join("must-not-publish.mp4");
+    let failed = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .args([
+            "animatic-render",
+            MANIFEST,
+            "--asset-root",
+            ASSETS,
+            "--audio",
+        ])
+        .arg(&corrupt_audio)
+        .args(["--captions", CAPTIONS, "--output"])
+        .arg(&failed_video)
+        .output()
+        .unwrap();
+    assert!(!failed.status.success());
+    assert!(!failed_video.exists());
+    assert!(!failed_video.with_extension("artifacts.json").exists());
+    assert!(fs::read_dir(dir.path()).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".reel-render-")
+    }));
+}

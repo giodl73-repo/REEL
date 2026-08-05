@@ -2,8 +2,9 @@
 
 REEL is a versioned Rust executable. Consumer repositories exchange YAML/JSON,
 caption, render, and provenance artifacts; they do not import REEL internals.
-CLI v0.2.1 retains `reel.manifest.v0.2` and adds separately versioned series,
-episode-packet, cue-import, and continuity contracts.
+CLI v0.2.2 retains `reel.manifest.v0.2` and the separately versioned series,
+episode-packet, cue-import, and continuity contracts. It adds smooth subpixel
+motion as the default renderer path plus explicit v0.2.1 legacy reproduction.
 
 For local development:
 

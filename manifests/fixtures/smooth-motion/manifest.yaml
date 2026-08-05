@@ -1,0 +1,112 @@
+manifest_version: reel.manifest.v0.2
+profile: animatic
+timing_status: conformed
+work: fixture-smooth-motion-pan
+title: Smooth motion cadence proof
+source_scenario:
+  repo: FIXTURE
+  path: fixtures/synthetic-grid
+  id: smooth-motion-pan
+  source_commit: fixture-only
+format: explainer
+style: illustrated-2d
+audience:
+  primary: renderer maintainers
+  context: sanitized motion review
+  desired_effect: compare integer stepping with smooth subpixel motion
+platforms:
+  - name: motion-proof
+    aspect_ratio: "16:9"
+    target_duration_seconds: 20.0
+    sound_optional: true
+    device: desktop
+    hook_deadline_seconds: 3
+continuity:
+  entities: []
+  canon_constraints:
+    - The grid is synthetic and contains no BERTICA material.
+scenes:
+  - id: scene-motion
+    duration_seconds: 20.0
+    purpose: Measure a restrained 3.5 percent pan over twenty seconds.
+    story_beat: The grid exposes whether motion advances smoothly.
+    location: synthetic grid
+    characters: []
+    continuity_notes: []
+shots:
+  - id: shot-pan
+    scene_id: scene-motion
+    start_seconds: 0.0
+    duration_seconds: 20.0
+    camera: restrained rightward pan
+    action: Travel approximately 45 output pixels without integer-step cadence.
+    visual_prompt: Synthetic high-contrast grid with no private or source material.
+    visual_asset: grid.ppm
+    motion: pan-right
+    style_constraints: [synthetic fixture, crop-safe]
+    transition_out: cut
+    narration_cue_ids: [cue-motion]
+    source_refs: [fixture-grid]
+    focal_point: { x: 0.5, y: 0.5 }
+    protected_regions:
+      - { id: center-safe, x: 0.35, y: 0.30, width: 0.30, height: 0.40 }
+speakers:
+  - id: fixture-caption
+    display_name: Fixture caption
+    language: en
+    pronunciation_profile: not-applicable-silent-output
+    performance_direction: static cadence label
+    approval_reference: fixture/no-human-voice
+    asset_kind: guide
+narration_cues:
+  - id: cue-motion
+    speaker_id: fixture-caption
+    text: Sanitized slow-motion cadence proof
+    source_refs: [fixture-grid]
+    shot_ids: [shot-pan]
+    start_seconds: 0.0
+    duration_seconds: 20.0
+protected_pauses: []
+source_ranges:
+  - { id: fixture-grid, start: 1, end: 1, label: synthetic grid }
+omissions: []
+audio:
+  narration_voice: none
+  music_direction: none
+  effects_direction: none
+  silence_notes: intentionally silent fixture
+captions:
+  required: true
+  style: centered-safe-lower-third
+  language: en
+  sound_off_complete: true
+renderer_assumptions:
+  candidates: [ffmpeg]
+  blockers: []
+exports:
+  - id: motion-proof
+    filename: smooth-motion-pan.mp4
+    aspect_ratio: "16:9"
+    duration_seconds: 20.0
+lineage:
+  parent_manifest: null
+  root_work: fixture-smooth-motion-pan
+  scene_key: scene-motion
+  transformation_reason: sanitized v0.2.2 cadence acceptance fixture
+  changed_dimensions: [frames]
+  review_candidate: true
+  principal_approved: false
+  created_unix: 1785993600
+review:
+  required_roles: [animation-director, editor, platform-audience]
+  status: fixture
+  principal_findings: []
+quality_controls:
+  max_uninterrupted_hold_seconds: 25
+  require_focal_points: true
+  require_protected_regions: true
+  no_lip_sync: true
+  ab_outputs: []
+provider_handoff:
+  asset_ids: []
+  text_fields: []

@@ -98,6 +98,11 @@ series composition, episode packets, SRT cue import, and shared continuity
 registries. Series indexes reference child manifests by identity and hash;
 composition never flattens or silently retimes their internals.
 
+CLI v0.2.2 also keeps `reel.manifest.v0.2` unchanged. It replaces
+delivery-resolution integer-step zoompan as the default with bounded,
+frame-evaluated fractional perspective sampling, preserves an explicit legacy
+mode, records motion lineage, and publishes a measurable cadence gate.
+
 The foundation wave is documentation-first:
 
 ```powershell
@@ -109,6 +114,8 @@ cargo run --quiet -- plan manifests\fixtures\two-speaker-untimed\planning.yaml -
 cargo run --quiet -- series-validate manifests\templates\episodic-series.yaml --output json
 cargo run --quiet -- series-coverage manifests\templates\episodic-series.yaml --output json
 cargo run --quiet -- continuity-validate manifests\fixtures\shared-continuity\registry.yaml --output json
+cargo run --quiet -- animatic-render manifests\fixtures\smooth-motion\manifest.yaml --asset-root manifests\fixtures\smooth-motion --silent --captions manifests\fixtures\smooth-motion\captions.srt --output target\smooth-motion.mp4 --motion-quality smooth --format json
+cargo run --quiet -- motion-analyze target\smooth-motion.mp4 --output json
 cargo run --quiet -- adapters
 cargo run --quiet -- adapters --output json
 cargo run --quiet -- adapter-plan works\0001-ash-vale-last-road-before-winter\manifest.yaml

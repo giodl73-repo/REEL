@@ -110,7 +110,9 @@ cargo run -- quality-check production/conformed/scene-v2/manifest.yaml --output 
 cargo run -- animatic-render production/conformed/scene-v2/manifest.yaml `
   --asset-root C:/src/consumer --audio production/audio/master.wav `
   --captions production/conformed/scene-v2/captions.srt `
-  --output production/video/private-review.mp4
+  --output production/video/private-review-smooth-v022.mp4 `
+  --motion-quality smooth --motion-curve ease-in-out
+cargo run -- motion-analyze production/video/private-review-smooth-v022.mp4 --output json
 ```
 
 Untimed manifests validate and produce useful storyboard plans while render and
@@ -126,6 +128,13 @@ CLI v0.2.1 adds the reference-only `reel.series.v0.1` layer, atomic episode
 packets, deterministic SRT cue import, and shared hashed continuity registries
 without changing `reel.manifest.v0.2`. See `docs/episodic-series-v0.1.md` and
 `docs/cue-import-and-continuity-v0.1.md`.
+
+CLI v0.2.2 keeps both contracts unchanged and repairs slow long-still cadence.
+`animatic-render` now defaults to frame-evaluated cubic subpixel motion with
+ease-in/out; `--motion-quality legacy` reproduces the v0.2.1 zoompan path.
+`motion-analyze` applies the published adjacent-frame cadence gate. See
+[`docs/smooth-motion-v0.2.2.md`](docs/smooth-motion-v0.2.2.md) and the fully
+synthetic `manifests/fixtures/smooth-motion/` proof.
 
 ## Renderer direction
 

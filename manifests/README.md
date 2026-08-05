@@ -12,6 +12,11 @@ separate reference-only `reel.series.v0.1` template at
 `manifests/templates/episodic-series.yaml`; it does not replace or revise the
 scene format. See `docs/episodic-series-v0.1.md`.
 
+CLI v0.2.2 requires no scene-manifest migration. Smooth fractional motion is a
+renderer default selected with CLI options, and the v0.2.1 integer-step path is
+available through `--motion-quality legacy`. The sanitized acceptance manifest
+and grid live under `manifests/fixtures/smooth-motion/`.
+
 ## Required top-level fields
 
 | Field | Required | Purpose |
