@@ -261,6 +261,28 @@ fn imports_two_speaker_srt_and_preserves_the_protected_pause_exactly() {
         fs::read_to_string("manifests/fixtures/cue-import/captions.es.srt").unwrap()
     );
 
+    let crlf_srt = temp.path().join("captions-crlf.srt");
+    let fixture_text = fs::read_to_string("manifests/fixtures/cue-import/captions.es.srt")
+        .unwrap()
+        .replace("\r\n", "\n");
+    fs::write(&crlf_srt, fixture_text.replace('\n', "\r\n")).unwrap();
+    let crlf_manifest = temp.path().join("imported-crlf.yaml");
+    cue_import::import_srt(
+        packet.join("manifest.yaml"),
+        &crlf_srt,
+        None,
+        &[],
+        Some(Path::new("manifests/fixtures/cue-import/mapping.yaml")),
+        &crlf_manifest,
+    )
+    .unwrap();
+    let crlf_exported = temp.path().join("exported-crlf.srt");
+    production::caption_export(&crlf_manifest, &crlf_exported).unwrap();
+    assert_eq!(
+        fs::read(&crlf_exported).unwrap(),
+        fs::read(&crlf_srt).unwrap()
+    );
+
     let bad_srt = temp.path().join("bad-pause.srt");
     fs::write(
         &bad_srt,

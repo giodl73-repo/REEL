@@ -68,7 +68,13 @@ pub fn import_srt(
     let total_ms = validation
         .duration_ms
         .ok_or_else(|| anyhow!("timing not conformed: cue import requires a timed manifest"))?;
-    let entries = parse_srt(&fs::read_to_string(srt_path)?)?;
+    let srt_text = fs::read_to_string(srt_path)?;
+    let srt_line_ending = if srt_text.contains("\r\n") {
+        "crlf"
+    } else {
+        "lf"
+    };
+    let entries = parse_srt(&srt_text)?;
     if entries.is_empty() {
         bail!("SRT contains no cues");
     }
@@ -231,6 +237,7 @@ pub fn import_srt(
             "input_srt_sha256": production::sha256_path(srt_path)?,
             "mapping": mapping_path.map(|path| path.display().to_string()),
             "mapping_sha256": mapping_path.map(production::sha256_path).transpose()?,
+            "srt_line_ending": srt_line_ending,
             "tool_version": env!("CARGO_PKG_VERSION"),
         }))?,
     );

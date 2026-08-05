@@ -1270,10 +1270,19 @@ pub fn caption_export(
     if let Some(parent) = output.as_ref().parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(
-        output.as_ref(),
-        render_srt(&loaded.manifest.narration_cues, &timeline),
-    )?;
+    let mut captions = render_srt(&loaded.manifest.narration_cues, &timeline);
+    let preserve_crlf = loaded
+        .manifest
+        .extra
+        .get("cue_import")
+        .and_then(Value::as_mapping)
+        .and_then(|mapping| mapping.get(Value::String("srt_line_ending".to_string())))
+        .and_then(Value::as_str)
+        == Some("crlf");
+    if preserve_crlf {
+        captions = captions.replace('\n', "\r\n");
+    }
+    fs::write(output.as_ref(), captions)?;
     Ok(output.as_ref().to_path_buf())
 }
 
