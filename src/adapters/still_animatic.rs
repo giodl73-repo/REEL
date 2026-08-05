@@ -13,7 +13,8 @@ use crate::production::{self, TimingStatus};
 pub struct AnimaticRenderOptions {
     pub manifest: PathBuf,
     pub asset_root: PathBuf,
-    pub audio: PathBuf,
+    pub audio: Option<PathBuf>,
+    pub silent: bool,
     pub captions: PathBuf,
     pub output: PathBuf,
     pub width: u32,
@@ -37,6 +38,7 @@ pub struct AnimaticRenderReport {
     pub duration_ms: u64,
     pub ffmpeg_version: String,
     pub dry_run: bool,
+    pub silent: bool,
     pub command_arguments: Vec<String>,
     pub inputs: Vec<AnimaticInput>,
     pub output_sha256: Option<String>,
@@ -72,6 +74,9 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
     }
     if options.fps == 0 || options.width == 0 || options.height == 0 {
         bail!("width, height, and fps must be positive");
+    }
+    if options.silent == options.audio.is_some() {
+        bail!("provide exactly one of audio or silent rendering");
     }
     if !(0.0..=5.0).contains(&options.transition_seconds) {
         bail!("transition-seconds must be within 0..5");
@@ -142,27 +147,35 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         ]);
         durations.push(duration);
     }
-    let audio = options
-        .audio
-        .canonicalize()
-        .with_context(|| format!("failed to resolve audio {}", options.audio.display()))?;
     let captions = options
         .captions
         .canonicalize()
         .with_context(|| format!("failed to resolve captions {}", options.captions.display()))?;
-    inputs.push(AnimaticInput {
-        kind: "audio".to_string(),
-        id: "master-audio".to_string(),
-        path: audio.display().to_string(),
-        sha256: production::sha256_path(&audio)?,
-    });
+    let audio = options
+        .audio
+        .as_ref()
+        .map(|path| {
+            path.canonicalize()
+                .with_context(|| format!("failed to resolve audio {}", path.display()))
+        })
+        .transpose()?;
+    if let Some(audio) = &audio {
+        inputs.push(AnimaticInput {
+            kind: "audio".to_string(),
+            id: "master-audio".to_string(),
+            path: audio.display().to_string(),
+            sha256: production::sha256_path(audio)?,
+        });
+    }
     inputs.push(AnimaticInput {
         kind: "captions".to_string(),
         id: "captions".to_string(),
         path: captions.display().to_string(),
         sha256: production::sha256_path(&captions)?,
     });
-    args.extend(["-i".to_string(), adapter.path_argument(&audio)?]);
+    if let Some(audio) = &audio {
+        args.extend(["-i".to_string(), adapter.path_argument(audio)?]);
+    }
     let mut filters = Vec::new();
     for (index, shot) in loaded.manifest.shots.iter().enumerate() {
         let duration = durations[index];
@@ -200,8 +213,23 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         .replace(':', "\\:")
         .replace('\'', "\\'");
     let disclosure = escape_drawtext(&options.disclosure);
+    let caption_font_size = if options.height > options.width {
+        20
+    } else {
+        18
+    };
+    let caption_margin = if options.height > options.width {
+        32
+    } else {
+        16
+    };
+    let disclosure_font_size = if options.height > options.width {
+        18
+    } else {
+        14
+    };
     filters.push(format!(
-        "[{previous}]subtitles=filename='{caption_path}',drawtext=text='{disclosure}':fontcolor=white@0.68:fontsize=14:x=w-tw-24:y=20:box=1:boxcolor=black@0.3:boxborderw=5,format=yuv420p[finalv]"
+        "[{previous}]subtitles=filename='{caption_path}':force_style='FontSize={caption_font_size},MarginV={caption_margin},Outline=2,Shadow=0,Alignment=2',drawtext=text='{disclosure}':fontcolor=white@0.68:fontsize={disclosure_font_size}:x=w-tw-24:y=20:box=1:boxcolor=black@0.3:boxborderw=5,format=yuv420p[finalv]"
     ));
     if let Some(parent) = options.output.parent() {
         fs::create_dir_all(parent)?;
@@ -212,8 +240,6 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         filters.join(";"),
         "-map".to_string(),
         "[finalv]".to_string(),
-        "-map".to_string(),
-        format!("{}:a:0", loaded.manifest.shots.len()),
         "-c:v".to_string(),
         "libx264".to_string(),
         "-preset".to_string(),
@@ -222,19 +248,25 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         "18".to_string(),
         "-r".to_string(),
         options.fps.to_string(),
-        "-c:a".to_string(),
-        "aac".to_string(),
-        "-b:a".to_string(),
-        "128k".to_string(),
         "-movflags".to_string(),
         "+faststart".to_string(),
         "-metadata".to_string(),
         format!("title={}", loaded.manifest.title),
         "-metadata".to_string(),
         format!("comment={}", options.disclosure),
-        "-shortest".to_string(),
-        output_argument,
     ]);
+    if audio.is_some() {
+        args.extend([
+            "-map".to_string(),
+            format!("{}:a:0", loaded.manifest.shots.len()),
+            "-c:a".to_string(),
+            "aac".to_string(),
+            "-b:a".to_string(),
+            "128k".to_string(),
+            "-shortest".to_string(),
+        ]);
+    }
+    args.push(output_argument);
     let ffmpeg_version = if options.dry_run {
         "not-probed-dry-run".to_string()
     } else {
@@ -287,6 +319,7 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         duration_ms: expected_duration_ms,
         ffmpeg_version,
         dry_run: options.dry_run,
+        silent: options.silent,
         command_arguments: args,
         inputs,
         output_sha256,

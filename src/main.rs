@@ -237,6 +237,7 @@ fn main() -> Result<()> {
             manifest,
             asset_root,
             audio,
+            silent,
             narration_only_audio,
             effects_music_audio,
             captions,
@@ -253,6 +254,7 @@ fn main() -> Result<()> {
                 manifest,
                 asset_root,
                 audio,
+                silent,
                 captions,
                 output: output_path,
                 width,
@@ -266,19 +268,30 @@ fn main() -> Result<()> {
                 .manifest
                 .quality_controls
                 .ab_outputs;
+            if silent && !requested.is_empty() {
+                anyhow::bail!(
+                    "silent rendering cannot satisfy requested A/B audio outputs: {}",
+                    requested.join(", ")
+                );
+            }
+            for (label, selected_audio) in [
+                ("narration-only", &narration_only_audio),
+                ("effects-music", &effects_music_audio),
+            ] {
+                if requested.iter().any(|item| item == label) && selected_audio.is_none() {
+                    anyhow::bail!("manifest requests {label} A/B output; provide --{label}-audio");
+                }
+            }
             let mut reports = vec![reel::adapters::still_animatic::render(&base_options)?];
             for (label, selected_audio) in [
                 ("narration-only", narration_only_audio),
                 ("effects-music", effects_music_audio),
             ] {
                 if requested.iter().any(|item| item == label) {
-                    let selected_audio = selected_audio.ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "manifest requests {label} A/B output; provide --{label}-audio"
-                        )
-                    })?;
+                    let selected_audio = selected_audio.expect("A/B audio preflighted");
                     let mut variant = base_options.clone();
-                    variant.audio = selected_audio;
+                    variant.audio = Some(selected_audio);
+                    variant.silent = false;
                     variant.output =
                         reel::adapters::still_animatic::variant_output(&base_options.output, label);
                     reports.push(reel::adapters::still_animatic::render(&variant)?);
@@ -797,8 +810,11 @@ enum Command {
         manifest: PathBuf,
         #[arg(long)]
         asset_root: PathBuf,
-        #[arg(long)]
-        audio: PathBuf,
+        #[arg(long, required_unless_present = "silent", conflicts_with = "silent")]
+        audio: Option<PathBuf>,
+        /// Render without an audio stream for sound-optional delivery.
+        #[arg(long, conflicts_with = "audio")]
+        silent: bool,
         #[arg(long)]
         narration_only_audio: Option<PathBuf>,
         #[arg(long)]

@@ -118,6 +118,10 @@ delivery commands remain explicitly gated. Conform packets are published
 atomically and include a conformed manifest, captions, input/output hashes,
 transform parameters, and tool version.
 
+The sanitized `manifests/fixtures/vertical-sound-off/` derivative exercises a
+real 9:16, caption-complete output with no audio stream and records a complete
+five-role panel decision without implying principal approval.
+
 ## Renderer direction
 
 The first researched implementation path is Linux-first in WSL2: FFmpeg for
