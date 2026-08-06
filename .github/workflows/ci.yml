@@ -40,10 +40,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: FedericoCarboni/setup-ffmpeg@v3
         with:
-          ffmpeg-version: "6.1.1"
+          ffmpeg-version: "6.1.0"
           architecture: x64
-          linking-type: static
           github-token: ${{ github.token }}
+      - name: Verify pinned FFmpeg version
+        run: ffmpeg -version | head -n 1 | grep -F "ffmpeg version 6.1"
       - run: |
           mkdir -p target/ci-assets
           ffmpeg -y -hide_banner -loglevel error -f lavfi -i color=c=navy:s=1280x720 -frames:v 1 target/ci-assets/frame-01.png

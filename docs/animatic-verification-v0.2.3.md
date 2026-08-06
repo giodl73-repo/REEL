@@ -52,7 +52,8 @@ lineage fields are additive. Verification output uses
 
 ## CI reproducibility
 
-CI installs FFmpeg 6.1.1 through the setup action, applies a 20-minute job
+CI installs FFmpeg 6.1.0 through the setup action, verifies the installed
+version, applies a 20-minute job
 timeout, and cancels superseded runs for the same branch. The real-FFmpeg gate
 renders the sanitized proof, runs both verification commands, and uploads their
 JSON evidence.
