@@ -1,13 +1,25 @@
 use super::{AdapterDescriptor, AdapterId, AdapterStatus, RenderOperationKind};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
+    fmt::Write as _,
     path::Path,
     process::{Command, Stdio},
     sync::OnceLock,
 };
 
 static RENDER_ENVIRONMENT: OnceLock<RenderEnvironmentReport> = OnceLock::new();
+const RENDER_ENVIRONMENT_SCHEMA: &str = "reel.render-environment.v0.1";
+const REQUIRED_RENDER_CAPABILITIES: [&str; 7] = [
+    "filter:drawtext",
+    "filter:subtitles",
+    "filter:perspective",
+    "filter:framerate",
+    "filter:xfade",
+    "encoder:libx264",
+    "perspective:cubic",
+];
 
 pub fn descriptor() -> AdapterDescriptor {
     AdapterDescriptor {
@@ -44,6 +56,8 @@ pub struct RenderEnvironmentReport {
     pub ffprobe_version: String,
     pub checks: Vec<RenderCapabilityCheck>,
     pub passed: bool,
+    #[serde(default)]
+    pub fingerprint_sha256: String,
 }
 
 impl RenderEnvironmentReport {
@@ -53,6 +67,43 @@ impl RenderEnvironmentReport {
             .filter(|check| !check.available)
             .map(|check| check.id.as_str())
             .collect()
+    }
+
+    pub fn validate_lineage(&self, require_smooth: bool) -> Result<()> {
+        if self.schema != RENDER_ENVIRONMENT_SCHEMA {
+            bail!("unsupported render environment schema {}", self.schema);
+        }
+        if !matches!(self.transport.as_str(), "native" | "wsl") {
+            bail!("invalid render environment transport {}", self.transport);
+        }
+        if !self.ffmpeg_version.starts_with("ffmpeg version ")
+            || !self.ffprobe_version.starts_with("ffprobe version ")
+        {
+            bail!("render environment executable version evidence is incomplete");
+        }
+        let ids = self
+            .checks
+            .iter()
+            .map(|check| check.id.as_str())
+            .collect::<Vec<_>>();
+        if ids != REQUIRED_RENDER_CAPABILITIES {
+            bail!("render environment capability set is incomplete or out of order");
+        }
+        let all_available = self.checks.iter().all(|check| check.available);
+        if self.passed != all_available {
+            bail!("render environment aggregate pass state is inconsistent");
+        }
+        let missing = self.missing();
+        if missing
+            .iter()
+            .any(|id| require_smooth || !matches!(*id, "filter:perspective" | "perspective:cubic"))
+        {
+            bail!("render environment records a missing required capability");
+        }
+        if self.fingerprint_sha256 != render_environment_fingerprint(self) {
+            bail!("render environment fingerprint does not match its evidence");
+        }
+        Ok(())
     }
 }
 
@@ -211,14 +262,39 @@ fn render_environment_from_outputs(
         evidence: "perspective filter cubic interpolation option".to_string(),
     });
     let passed = checks.iter().all(|check| check.available);
-    RenderEnvironmentReport {
-        schema: "reel.render-environment.v0.1".to_string(),
+    let mut report = RenderEnvironmentReport {
+        schema: RENDER_ENVIRONMENT_SCHEMA.to_string(),
         transport: if cfg!(windows) { "wsl" } else { "native" }.to_string(),
         ffmpeg_version: first_line(ffmpeg_version),
         ffprobe_version: first_line(ffprobe_version),
         checks,
         passed,
+        fingerprint_sha256: String::new(),
+    };
+    report.fingerprint_sha256 = render_environment_fingerprint(&report);
+    report
+}
+
+fn render_environment_fingerprint(report: &RenderEnvironmentReport) -> String {
+    let mut hasher = Sha256::new();
+    for value in [
+        report.schema.as_str(),
+        report.transport.as_str(),
+        report.ffmpeg_version.as_str(),
+        report.ffprobe_version.as_str(),
+    ] {
+        hasher.update(value.as_bytes());
+        hasher.update([0]);
     }
+    for check in &report.checks {
+        hasher.update(check.id.as_bytes());
+        hasher.update([0, u8::from(check.available)]);
+    }
+    let mut fingerprint = String::with_capacity(64);
+    for byte in hasher.finalize() {
+        write!(&mut fingerprint, "{byte:02x}").expect("writing to a string cannot fail");
+    }
+    fingerprint
 }
 
 fn path_for_wsl(path: &Path) -> String {
@@ -282,6 +358,7 @@ mod tests {
         assert_eq!(report.ffmpeg_version, "ffmpeg version 8.1");
         assert_eq!(report.ffprobe_version, "ffprobe version 8.1");
         assert_eq!(report.missing(), vec!["filter:subtitles"]);
+        assert!(report.validate_lineage(true).is_err());
     }
 
     #[test]
@@ -297,5 +374,39 @@ mod tests {
         assert!(report.passed);
         assert!(report.missing().is_empty());
         assert_eq!(report.schema, "reel.render-environment.v0.1");
+        assert_eq!(report.fingerprint_sha256.len(), 64);
+        report.validate_lineage(true).expect("lineage validates");
+    }
+
+    #[test]
+    fn rejects_tampered_render_environment_fingerprint() {
+        let mut report = render_environment_from_outputs(
+            "ffmpeg version 8.1",
+            "ffprobe version 8.1",
+            " drawtext\n subtitles\n perspective\n framerate\n xfade",
+            " libx264",
+            "interpolation cubic",
+        );
+        report.ffmpeg_version = "ffmpeg version altered".to_string();
+
+        let error = report.validate_lineage(true).unwrap_err().to_string();
+        assert!(error.contains("fingerprint"));
+    }
+
+    #[test]
+    fn legacy_lineage_waives_only_smooth_capabilities() {
+        let report = render_environment_from_outputs(
+            "ffmpeg version 8.1",
+            "ffprobe version 8.1",
+            " drawtext\n subtitles\n framerate\n xfade",
+            " libx264",
+            "perspective options without interpolation",
+        );
+
+        assert!(!report.passed);
+        report
+            .validate_lineage(false)
+            .expect("legacy requirements validate");
+        assert!(report.validate_lineage(true).is_err());
     }
 }

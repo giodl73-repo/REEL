@@ -32,7 +32,8 @@ fn smooth_motion_is_the_default_and_records_complete_lineage() {
         String::from_utf8_lossy(&output.stderr)
     );
     let report = &report[0];
-    assert_eq!(report["tool_version"], "0.2.4");
+    assert_eq!(report["tool_version"], "0.2.5");
+    assert!(report["render_environment"].is_null());
     assert_eq!(report["motion"]["backend"], "ffmpeg-perspective");
     assert_eq!(report["motion"]["quality"], "smooth");
     assert_eq!(report["motion"]["interpolation"], "cubic");
@@ -146,6 +147,25 @@ fn real_sanitized_pan_makes_legacy_fail_and_smooth_pass() {
     assert_eq!(smooth_artifact["width"], 1280);
     assert_eq!(smooth_artifact["height"], 720);
     assert_eq!(smooth_artifact["output_duration_ms"], 20_000);
+    assert!(
+        smooth_artifact["render_environment"]["passed"]
+            .as_bool()
+            .unwrap()
+    );
+    assert_eq!(
+        smooth_artifact["render_environment"]["checks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        7
+    );
+    assert_eq!(
+        smooth_artifact["render_environment"]["fingerprint_sha256"]
+            .as_str()
+            .unwrap()
+            .len(),
+        64
+    );
 
     let motion_check = Command::new(env!("CARGO_BIN_EXE_reel"))
         .arg("motion-check")
@@ -180,6 +200,14 @@ fn real_sanitized_pan_makes_legacy_fail_and_smooth_pass() {
     assert!(verification["passed"].as_bool().unwrap());
     assert_eq!(verification["codec"], "h264");
     assert_eq!(verification["pixel_format"], "yuv420p");
+    assert_eq!(verification["render_capabilities"], 7);
+    assert_eq!(
+        verification["render_environment_fingerprint"]
+            .as_str()
+            .unwrap()
+            .len(),
+        64
+    );
 
     let mut tampered_artifact = smooth_artifact.clone();
     tampered_artifact["output_sha256"] = Value::String("0".repeat(64));
@@ -196,6 +224,28 @@ fn real_sanitized_pan_makes_legacy_fail_and_smooth_pass() {
         .unwrap();
     assert!(!tampered_check.status.success());
     assert!(String::from_utf8_lossy(&tampered_check.stderr).contains("SHA-256"));
+
+    let mut missing_environment = smooth_artifact.clone();
+    missing_environment
+        .as_object_mut()
+        .unwrap()
+        .remove("render_environment");
+    let missing_environment_path = dir.path().join("missing-environment.artifacts.json");
+    fs::write(
+        &missing_environment_path,
+        serde_json::to_vec_pretty(&missing_environment).unwrap(),
+    )
+    .unwrap();
+    let missing_environment_check = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .arg("animatic-check")
+        .arg(&missing_environment_path)
+        .output()
+        .unwrap();
+    assert!(!missing_environment_check.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing_environment_check.stderr)
+            .contains("no render environment lineage")
+    );
 
     let legacy_analysis = Command::new(env!("CARGO_BIN_EXE_reel"))
         .arg("motion-analyze")
