@@ -262,6 +262,11 @@ pub struct SeriesReviewQueueReport {
     pub reviewed: Vec<String>,
     pub release_blocked: Vec<String>,
     pub findings_by_reviewer: BTreeMap<String, Vec<String>>,
+    pub decision_status_by_episode: BTreeMap<String, String>,
+    pub missing_decision_reviewers: BTreeMap<String, Vec<String>>,
+    pub decision_record_counts: BTreeMap<String, usize>,
+    pub explicit_resolutions: Vec<String>,
+    pub decision_release_gates: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -848,7 +853,15 @@ fn coverage_loaded(series: &SeriesManifest) -> Result<SeriesCoverageReport> {
 }
 
 pub fn review_queue(path: impl AsRef<Path>) -> Result<SeriesReviewQueueReport> {
-    let loaded = load(path)?;
+    review_queue_with_decisions(path, None::<&Path>)
+}
+
+pub fn review_queue_with_decisions(
+    path: impl AsRef<Path>,
+    decision_index: Option<impl AsRef<Path>>,
+) -> Result<SeriesReviewQueueReport> {
+    let series_path = path.as_ref();
+    let loaded = load(series_path)?;
     validate_loaded(&loaded)?;
     let mut report = SeriesReviewQueueReport {
         series_id: loaded.manifest.series_id,
@@ -856,7 +869,19 @@ pub fn review_queue(path: impl AsRef<Path>) -> Result<SeriesReviewQueueReport> {
         reviewed: Vec::new(),
         release_blocked: Vec::new(),
         findings_by_reviewer: BTreeMap::new(),
+        decision_status_by_episode: BTreeMap::new(),
+        missing_decision_reviewers: BTreeMap::new(),
+        decision_record_counts: BTreeMap::new(),
+        explicit_resolutions: Vec::new(),
+        decision_release_gates: Vec::new(),
     };
+    let episode_ids = loaded
+        .manifest
+        .seasons
+        .iter()
+        .flat_map(|season| &season.episodes)
+        .map(|episode| episode.id.clone())
+        .collect::<Vec<_>>();
     for episode in loaded
         .manifest
         .seasons
@@ -878,6 +903,15 @@ pub fn review_queue(path: impl AsRef<Path>) -> Result<SeriesReviewQueueReport> {
                 .or_default()
                 .push(format!("{}: {}", episode.id, finding.finding));
         }
+    }
+    if let Some(index) = decision_index {
+        let decisions =
+            crate::review_decision::summarize_index(series_path, index.as_ref(), &episode_ids)?;
+        report.decision_status_by_episode = decisions.status_by_episode;
+        report.missing_decision_reviewers = decisions.missing_reviewers_by_episode;
+        report.decision_record_counts = decisions.record_counts;
+        report.explicit_resolutions = decisions.explicit_resolutions;
+        report.decision_release_gates = decisions.release_gates;
     }
     Ok(report)
 }

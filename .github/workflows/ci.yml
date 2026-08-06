@@ -31,10 +31,11 @@ jobs:
           cargo run --quiet -- series-coverage manifests/templates/episodic-series.yaml --output json
           cargo run --quiet -- series-review-queue manifests/templates/episodic-series.yaml --output json
           cargo run --quiet -- continuity-validate manifests/fixtures/shared-continuity/registry.yaml --output json
-      - name: Verify v0.2.12 caption and audio preflights
+      - name: Verify v0.2.13 caption, audio, and review preflights
         run: |
           cargo run --quiet -- caption-check manifests/fixtures/vertical-sound-off/captions.srt --output json
           cargo test --test v029_cli speaker_caption_policies_preserve_srt_and_timing_at_both_aspects -- --exact
+          cargo test --test v0213_cli -- --exact
 
   ffmpeg-linux:
     runs-on: ubuntu-latest
@@ -64,7 +65,7 @@ jobs:
           test "$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0:s=x target/ci-vertical-sound-off.mp4)" = "720x1280"
           test -z "$(ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 target/ci-vertical-sound-off.mp4)"
           test "$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 target/ci-vertical-sound-off.mp4)" = "6.000000"
-      - name: Verify v0.2.12 captions, motion, receipt, and shared-video check
+      - name: Verify v0.2.13 captions, motion, receipt, and shared-video check
         run: |
           cargo test --test v022_cli real_sanitized_pan_makes_legacy_fail_and_smooth_pass -- --ignored --exact
           mkdir -p target/ci-motion
@@ -79,13 +80,13 @@ jobs:
           if cargo run --quiet -- motion-analyze target/ci-motion/legacy.mp4 --output json > target/ci-motion/legacy-cadence.json; then exit 1; fi
           test "$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height,r_frame_rate -of csv=p=0:s=x target/ci-motion/smooth.mp4)" = "1280x720x24/1"
           test "$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 target/ci-motion/smooth.mp4)" = "20.000000"
-          jq -e '.tool_version == "0.2.12" and .render_environment.schema == "reel.render-environment.v0.1" and .render_environment.passed and (.render_environment.fingerprint_sha256 | length == 64) and (.render_environment.checks | length == 7 and all(.available)) and .motion.backend == "ffmpeg-perspective" and .motion.interpolation == "cubic" and .motion.curve == "ease-in-out" and .motion.safety[0].passed and .output_duration_ms == 20000' target/ci-motion/smooth.artifacts.json
+          jq -e '.tool_version == "0.2.13" and .render_environment.schema == "reel.render-environment.v0.1" and .render_environment.passed and (.render_environment.fingerprint_sha256 | length == 64) and (.render_environment.checks | length == 7 and all(.available)) and .motion.backend == "ffmpeg-perspective" and .motion.interpolation == "cubic" and .motion.curve == "ease-in-out" and .motion.safety[0].passed and .output_duration_ms == 20000' target/ci-motion/smooth.artifacts.json
           jq -e '.schema == "reel.caption-check.v0.1" and .passed and .cues == 1 and (.captions_sha256 | length == 64) and (.violations | length == 0)' target/ci-motion/smooth-caption-check.json
           jq -e '.schema == "reel.animatic-receipt.v0.1" and .verified and (.source_artifact_sha256 | length == 64) and (.output_sha256 | length == 64) and (.render_environment_fingerprint | length == 64)' target/ci-motion/smooth.receipt.json
           jq -e '.schema == "reel.animatic-receipt-check.v0.1" and .passed and .codec == "h264" and .pixel_format == "yuv420p" and .width == 1280 and .height == 720 and .fps == 24 and .duration_ms == 20000 and .audio_streams == 0' target/ci-motion/smooth-receipt-check.json
           if grep -Eq '(/home/|/github/workspace|target/ci-motion|artifact_manifest|"path"|Sanitized slow-motion cadence proof)' target/ci-motion/smooth.receipt.json target/ci-motion/smooth-receipt-check.json target/ci-motion/smooth-caption-check.json; then exit 1; fi
-          ffmpeg -y -hide_banner -loglevel error -i target/ci-motion/legacy.mp4 -i target/ci-motion/smooth.mp4 -filter_complex "[0:v]scale=640:360,drawtext=text='LEGACY':x=24:y=24:fontsize=28:fontcolor=white:box=1:boxcolor=black@0.65[left];[1:v]scale=640:360,drawtext=text='SMOOTH v0.2.12':x=24:y=24:fontsize=28:fontcolor=white:box=1:boxcolor=black@0.65[right];[left][right]hstack=inputs=2[v]" -map "[v]" -t 10 -an -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p -r 24 target/ci-motion/legacy-vs-smooth.mp4
-      - name: Render v0.2.12 three-speaker policy matrix
+          ffmpeg -y -hide_banner -loglevel error -i target/ci-motion/legacy.mp4 -i target/ci-motion/smooth.mp4 -filter_complex "[0:v]scale=640:360,drawtext=text='LEGACY':x=24:y=24:fontsize=28:fontcolor=white:box=1:boxcolor=black@0.65[left];[1:v]scale=640:360,drawtext=text='SMOOTH v0.2.13':x=24:y=24:fontsize=28:fontcolor=white:box=1:boxcolor=black@0.65[right];[left][right]hstack=inputs=2[v]" -map "[v]" -t 10 -an -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p -r 24 target/ci-motion/legacy-vs-smooth.mp4
+      - name: Render v0.2.13 three-speaker policy matrix
         run: cargo test --test v029_cli real_speaker_caption_matrix_verifies_artifacts_and_receipts -- --ignored --exact
       - name: Verify v0.2.10 caption-layout evidence packet
         run: cargo test --test v0210_cli real_caption_layout_packet_is_bound_private_and_atomic -- --ignored --exact

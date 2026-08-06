@@ -223,6 +223,14 @@ each child receipt and private decode evidence; a separate path-free parent
 receipt deliberately omits IDs and labels. See
 [`docs/comparison-composer-v0.2.12.md`](docs/comparison-composer-v0.2.12.md).
 
+CLI v0.2.13 adds strict, local, append-only `review-record` derivatives bound
+to an exact video/artifact/receipt hash. Independent advisory findings remain
+separate; an explicit final-authority resolution must cite the hashes of an
+actual multi-reviewer disagreement. A separate hash-bound review index lets
+`series-review-queue` report missing findings, disagreement, resolution, and
+remaining gates without exposing private reasons or inferring approval. See
+[`docs/review-decisions-v0.2.13.md`](docs/review-decisions-v0.2.13.md).
+
 ## Renderer direction
 
 The first researched implementation path is Linux-first in WSL2: FFmpeg for
