@@ -234,6 +234,33 @@ fn run_cli() -> Result<()> {
                 ));
             }
         }
+        Command::AudioCheck {
+            audio,
+            narration_stem,
+            effects_music_stem,
+            manifest,
+            profile,
+            report,
+            output,
+        } => {
+            let checked = reel::audio_quality::check(reel::audio_quality::AudioCheckOptions {
+                audio: &audio,
+                narration_stem: narration_stem.as_deref(),
+                effects_music_stem: effects_music_stem.as_deref(),
+                manifest: manifest.as_deref(),
+                profile,
+            })?;
+            if let Some(path) = report {
+                reel::audio_quality::write_report(&path, &checked)?;
+            }
+            print_report(&checked, output)?;
+            if !checked.passed {
+                anyhow::bail!(
+                    "audio quality check failed with {} violation(s)",
+                    checked.violations.len()
+                );
+            }
+        }
         Command::ContinuityValidate { registry, output } => {
             let report = reel::continuity::validate(&registry)?;
             print_report(&report, output)?;
@@ -390,6 +417,7 @@ fn run_cli() -> Result<()> {
             manifest,
             asset_root,
             audio,
+            audio_check_report,
             silent,
             narration_only_audio,
             effects_music_audio,
@@ -410,6 +438,7 @@ fn run_cli() -> Result<()> {
                 manifest,
                 asset_root,
                 audio,
+                audio_check_report,
                 silent,
                 captions,
                 caption_presentation: caption_options.caption_presentation,
@@ -1091,6 +1120,23 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
+    /// Audit local audio loudness, peaks, streams, duration, silence, and optional stems.
+    AudioCheck {
+        audio: PathBuf,
+        #[arg(long, requires = "effects_music_stem")]
+        narration_stem: Option<PathBuf>,
+        #[arg(long, requires = "narration_stem")]
+        effects_music_stem: Option<PathBuf>,
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = reel::audio_quality::AudioProfile::PrivateReview)]
+        profile: reel::audio_quality::AudioProfile,
+        /// Atomically retain the strict path-free JSON report for later artifact binding.
+        #[arg(long)]
+        report: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
     /// Validate a shared, versioned continuity registry without exposing local assets.
     ContinuityValidate {
         registry: PathBuf,
@@ -1162,6 +1208,9 @@ enum Command {
         asset_root: PathBuf,
         #[arg(long, required_unless_present = "silent", conflicts_with = "silent")]
         audio: Option<PathBuf>,
+        /// Bind a successful path-free audio-check report to artifact lineage.
+        #[arg(long, requires = "audio")]
+        audio_check_report: Option<PathBuf>,
         /// Render without an audio stream for sound-optional delivery.
         #[arg(long, conflicts_with = "audio")]
         silent: bool,

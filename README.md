@@ -206,6 +206,14 @@ frames and a contact sheet assist human review; the report makes no OCR,
 translation, device-legibility, or accessibility-expertise claim. See
 [`docs/caption-layout-v0.2.10.md`](docs/caption-layout-v0.2.10.md).
 
+CLI v0.2.11 adds a deterministic, local `audio-check` gate. It records EBU R128
+integrated loudness, loudness range and true peak; sample peak/count evidence;
+stream and duration facts; leading/trailing/internal silence; optional stem
+margin; and a SHA-256 binding under audiobook, podcast, YouTube-audiobook, and
+private-review profiles. Its strict JSON omits paths and creative identity, and
+a successful report can be bound to animatic artifact lineage without changing
+audio. See [`docs/audio-quality-v0.2.11.md`](docs/audio-quality-v0.2.11.md).
+
 ## Renderer direction
 
 The first researched implementation path is Linux-first in WSL2: FFmpeg for

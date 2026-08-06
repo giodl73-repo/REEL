@@ -12,6 +12,7 @@ use tempfile::Builder;
 
 use super::ffmpeg::{FfmpegAdapter, RenderEnvironmentReport};
 use crate::{
+    audio_quality::{AUDIO_CHECK_SCHEMA, AudioCheckReport},
     caption::CaptionThresholds,
     caption_presentation::{
         self, CaptionLineage, CaptionPresentationOptions, CaptionProfile, SpeakerLabelPolicy,
@@ -65,6 +66,7 @@ pub struct AnimaticRenderOptions {
     pub manifest: PathBuf,
     pub asset_root: PathBuf,
     pub audio: Option<PathBuf>,
+    pub audio_check_report: Option<PathBuf>,
     pub silent: bool,
     pub captions: PathBuf,
     pub caption_presentation: Option<PathBuf>,
@@ -102,6 +104,8 @@ pub struct AnimaticRenderReport {
     pub motion: MotionLineage,
     #[serde(default)]
     pub captions: Option<CaptionLineage>,
+    #[serde(default)]
+    pub audio_quality: Option<AudioQualityBinding>,
     pub dry_run: bool,
     pub silent: bool,
     pub command_arguments: Vec<String>,
@@ -109,6 +113,16 @@ pub struct AnimaticRenderReport {
     pub output_sha256: Option<String>,
     pub output_bytes: Option<u64>,
     pub output_duration_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AudioQualityBinding {
+    pub schema: String,
+    pub report_schema: String,
+    pub report_sha256: String,
+    pub profile: String,
+    pub audio_sha256: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -590,6 +604,47 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
             sha256: production::sha256_path(audio)?,
         });
     }
+    let audio_quality = match (&audio, &options.audio_check_report) {
+        (None, Some(_)) => bail!("silent rendering cannot bind an audio-check report"),
+        (Some(audio), Some(report_path)) => {
+            let report_path = report_path.canonicalize().with_context(|| {
+                format!(
+                    "failed to resolve audio-check report {}",
+                    report_path.display()
+                )
+            })?;
+            let report: AudioCheckReport = serde_json::from_slice(&fs::read(&report_path)?)
+                .context("audio-check report is not valid JSON")?;
+            if report.schema != AUDIO_CHECK_SCHEMA || !report.passed {
+                bail!("audio-check report is unsupported or did not pass");
+            }
+            if report.audio.sha256 != production::sha256_path(audio)? {
+                bail!("audio-check report hash does not match render audio");
+            }
+            let expected_duration_ms = durations
+                .iter()
+                .map(|value| (value * 1000.0).round() as u64)
+                .sum::<u64>();
+            if report.audio.duration_ms.abs_diff(expected_duration_ms) > 50 {
+                bail!("audio-check duration does not match the conformed timeline");
+            }
+            let report_sha256 = production::sha256_path(&report_path)?;
+            inputs.push(AnimaticInput {
+                kind: "audio-check-report".to_string(),
+                id: "audio-quality".to_string(),
+                path: report_path.display().to_string(),
+                sha256: report_sha256.clone(),
+            });
+            Some(AudioQualityBinding {
+                schema: "reel.audio-binding.v0.1".to_string(),
+                report_schema: report.schema,
+                report_sha256,
+                profile: report.profile,
+                audio_sha256: report.audio.sha256,
+            })
+        }
+        _ => None,
+    };
     inputs.push(AnimaticInput {
         kind: "captions".to_string(),
         id: "captions".to_string(),
@@ -860,6 +915,7 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         render_environment,
         motion,
         captions: Some(caption_lineage),
+        audio_quality,
         dry_run: options.dry_run,
         silent: options.silent,
         command_arguments: args,
@@ -1421,6 +1477,44 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
         if reconstructed != *lineage {
             bail!("caption preflight or presentation lineage is inconsistent");
         }
+    }
+    let audio_inputs = report
+        .inputs
+        .iter()
+        .filter(|input| input.kind == "audio")
+        .collect::<Vec<_>>();
+    let audio_check_inputs = report
+        .inputs
+        .iter()
+        .filter(|input| input.kind == "audio-check-report")
+        .collect::<Vec<_>>();
+    match &report.audio_quality {
+        Some(binding) => {
+            if binding.schema != "reel.audio-binding.v0.1"
+                || binding.report_schema != AUDIO_CHECK_SCHEMA
+                || audio_inputs.len() != 1
+                || audio_check_inputs.len() != 1
+                || audio_check_inputs[0].sha256 != binding.report_sha256
+                || audio_inputs[0].sha256 != binding.audio_sha256
+            {
+                bail!("audio-quality binding does not match artifact inputs");
+            }
+            let checked: AudioCheckReport =
+                serde_json::from_slice(&fs::read(&audio_check_inputs[0].path)?)
+                    .context("bound audio-check report is not valid JSON")?;
+            if checked.schema != binding.report_schema
+                || checked.profile != binding.profile
+                || checked.audio.sha256 != binding.audio_sha256
+                || checked.audio.duration_ms.abs_diff(report.duration_ms) > 50
+                || !checked.passed
+            {
+                bail!("bound audio-check evidence is inconsistent");
+            }
+        }
+        None if !audio_check_inputs.is_empty() => {
+            bail!("artifact has an unbound audio-check report input");
+        }
+        None => {}
     }
     let adapter = FfmpegAdapter;
     let probe: ProbeReport = serde_json::from_str(&adapter.ffprobe_json(&output)?)
