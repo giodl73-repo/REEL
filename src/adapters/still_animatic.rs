@@ -1474,7 +1474,7 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
                 height: report.height,
             },
         )?;
-        if reconstructed != *lineage {
+        if !caption_lineage_equivalent(&reconstructed, lineage) {
             bail!("caption preflight or presentation lineage is inconsistent");
         }
     }
@@ -1584,6 +1584,41 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
             .map(|environment| environment.fingerprint_sha256.clone()),
         passed: true,
     })
+}
+
+fn caption_lineage_equivalent(left: &CaptionLineage, right: &CaptionLineage) -> bool {
+    let mut normalized = left.clone();
+    let close = |left: f64, right: f64| (left - right).abs() <= 1e-9;
+    if !close(
+        normalized.thresholds.max_reading_speed_cps,
+        right.thresholds.max_reading_speed_cps,
+    ) || !close(
+        normalized.check.thresholds.max_reading_speed_cps,
+        right.check.thresholds.max_reading_speed_cps,
+    ) || !close(
+        normalized.check.max_reading_speed_cps,
+        right.check.max_reading_speed_cps,
+    ) || normalized.check.violations.len() != right.check.violations.len()
+    {
+        return false;
+    }
+    normalized.thresholds.max_reading_speed_cps = right.thresholds.max_reading_speed_cps;
+    normalized.check.thresholds.max_reading_speed_cps =
+        right.check.thresholds.max_reading_speed_cps;
+    normalized.check.max_reading_speed_cps = right.check.max_reading_speed_cps;
+    for (left, right) in normalized
+        .check
+        .violations
+        .iter_mut()
+        .zip(&right.check.violations)
+    {
+        if !close(left.measured, right.measured) || !close(left.limit, right.limit) {
+            return false;
+        }
+        left.measured = right.measured;
+        left.limit = right.limit;
+    }
+    normalized == *right
 }
 
 pub fn write_animatic_receipt(

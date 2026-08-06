@@ -582,6 +582,22 @@ fn run_cli() -> Result<()> {
             let report = reel::caption_layout::write_packet(&artifact_manifest, &output_dir)?;
             print_report(&report, output)?;
         }
+        Command::ComparisonCompose {
+            contract,
+            output_path,
+            output,
+        } => {
+            let report = reel::comparison::compose(&contract, &output_path)?;
+            print_report(&report, output)?;
+        }
+        Command::ComparisonReceiptCheck {
+            receipt,
+            video,
+            output,
+        } => {
+            let report = reel::comparison::check_receipt(&receipt, &video)?;
+            print_report(&report, output)?;
+        }
         Command::AnimaticReceipt {
             artifact_manifest,
             output_path,
@@ -1269,6 +1285,21 @@ enum Command {
         artifact_manifest: PathBuf,
         #[arg(long)]
         output_dir: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Compose verified variants under a strict one-dimension comparison contract.
+    ComparisonCompose {
+        contract: PathBuf,
+        #[arg(long = "output")]
+        output_path: PathBuf,
+        #[arg(long = "format", value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Verify a path-free comparison receipt against the intentionally shared video.
+    ComparisonReceiptCheck {
+        receipt: PathBuf,
+        video: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

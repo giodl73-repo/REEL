@@ -17,6 +17,7 @@ pub mod audio_quality;
 pub mod caption;
 pub mod caption_layout;
 pub mod caption_presentation;
+pub mod comparison;
 pub mod continuity;
 pub mod cue_import;
 pub mod production;
