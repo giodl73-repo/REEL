@@ -50,7 +50,7 @@ fn smooth_motion_is_the_default_and_records_complete_lineage() {
     }));
     assert!(args.iter().any(|arg| {
         arg.as_str()
-            .is_some_and(|text| text.contains("fps=24,settb=AVTB"))
+            .is_some_and(|text| text.contains("framerate=fps=24,settb=AVTB"))
     }));
     assert!(!dir.path().join("proof.mp4").exists());
     assert!(dir.path().join("proof.artifacts.json").exists());

@@ -531,7 +531,7 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
             0.0
         };
         filters.push(format!(
-            "[{index}:v]{},fps={},settb=AVTB,trim=duration={:.3},setpts=PTS-STARTPTS[v{index}]",
+            "[{index}:v]{},framerate=fps={},settb=AVTB,trim=duration={:.3},setpts=PTS-STARTPTS[v{index}]",
             motion_filter(
                 &shot.motion,
                 duration + tail,

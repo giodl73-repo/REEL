@@ -49,6 +49,7 @@ jobs:
           ffmpeg -hide_banner -filters 2>&1 | grep -w drawtext
           ffmpeg -hide_banner -filters 2>&1 | grep -w subtitles
           ffmpeg -hide_banner -filters 2>&1 | grep -w perspective
+          ffmpeg -hide_banner -filters 2>&1 | grep -w framerate
           ffmpeg -hide_banner -encoders 2>&1 | grep -w libx264
       - run: |
           mkdir -p target/ci-assets
