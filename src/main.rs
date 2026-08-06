@@ -400,6 +400,44 @@ fn main() -> Result<()> {
                 );
             }
         }
+        Command::MotionCheck {
+            manifest,
+            video,
+            output,
+        } => {
+            let report = reel::adapters::still_animatic::check_motion(&manifest, &video)?;
+            match output {
+                OutputFormat::Text => {
+                    println!(
+                        "{} | shots={} | passed={}",
+                        report.video,
+                        report.shots.len(),
+                        report.passed
+                    );
+                    for shot in &report.shots {
+                        println!(
+                            "  {} | {} | {} | stationary={:.4} | passed={}",
+                            shot.shot_id,
+                            shot.treatment,
+                            shot.expectation,
+                            shot.near_stationary_fraction,
+                            shot.passed
+                        );
+                    }
+                }
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+            }
+            if !report.passed {
+                anyhow::bail!("manifest-aware motion check failed");
+            }
+        }
+        Command::AnimaticCheck {
+            artifact_manifest,
+            output,
+        } => {
+            let report = reel::adapters::still_animatic::check_animatic(&artifact_manifest)?;
+            print_report(&report, output)?;
+        }
         Command::Adapters { output } => {
             let catalog = reel::adapters::adapter_catalog();
             match output {
@@ -985,6 +1023,19 @@ enum Command {
     /// Measure near-stationary adjacent-frame cadence in a rendered moving shot.
     MotionAnalyze {
         video: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Verify moving shots and intentional holds against a manifest timeline.
+    MotionCheck {
+        manifest: PathBuf,
+        video: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Verify a rendered animatic, its inputs, streams, captions, and artifact lineage.
+    AnimaticCheck {
+        artifact_manifest: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

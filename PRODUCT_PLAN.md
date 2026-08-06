@@ -103,6 +103,12 @@ delivery-resolution integer-step zoompan as the default with bounded,
 frame-evaluated fractional perspective sampling, preserves an explicit legacy
 mode, records motion lineage, and publishes a measurable cadence gate.
 
+CLI v0.2.3 operationalizes that evidence without a scene-schema change:
+manifest-aware per-shot cadence checks distinguish motion from intentional
+holds, declared focal/protected regions are checked against transform extremes,
+multi-shot smooth-render memory is bounded before execution, and
+`animatic-check` verifies the complete render artifact chain.
+
 The foundation wave is documentation-first:
 
 ```powershell
@@ -116,6 +122,8 @@ cargo run --quiet -- series-coverage manifests\templates\episodic-series.yaml --
 cargo run --quiet -- continuity-validate manifests\fixtures\shared-continuity\registry.yaml --output json
 cargo run --quiet -- animatic-render manifests\fixtures\smooth-motion\manifest.yaml --asset-root manifests\fixtures\smooth-motion --silent --captions manifests\fixtures\smooth-motion\captions.srt --output target\smooth-motion.mp4 --motion-quality smooth --format json
 cargo run --quiet -- motion-analyze target\smooth-motion.mp4 --output json
+cargo run --quiet -- motion-check manifests\fixtures\smooth-motion\manifest.yaml target\smooth-motion.mp4 --output json
+cargo run --quiet -- animatic-check target\smooth-motion.artifacts.json --output json
 cargo run --quiet -- adapters
 cargo run --quiet -- adapters --output json
 cargo run --quiet -- adapter-plan works\0001-ash-vale-last-road-before-winter\manifest.yaml

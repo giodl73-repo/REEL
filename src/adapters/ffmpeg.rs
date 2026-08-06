@@ -47,6 +47,21 @@ impl FfmpegAdapter {
         Ok(stdout.trim().to_string())
     }
 
+    pub fn ffprobe_json(&self, path: &Path) -> Result<String> {
+        self.run_external(
+            "ffprobe",
+            &[
+                "-v".to_string(),
+                "error".to_string(),
+                "-show_entries".to_string(),
+                "format=duration:stream=index,codec_type,codec_name,width,height,pix_fmt,r_frame_rate,avg_frame_rate,duration".to_string(),
+                "-of".to_string(),
+                "json".to_string(),
+            ],
+            &[self.path_argument(path)?],
+        )
+    }
+
     pub fn path_argument(&self, path: &Path) -> Result<String> {
         if cfg!(windows) {
             Ok(path_for_wsl(path))

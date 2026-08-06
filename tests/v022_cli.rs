@@ -32,7 +32,7 @@ fn smooth_motion_is_the_default_and_records_complete_lineage() {
         String::from_utf8_lossy(&output.stderr)
     );
     let report = &report[0];
-    assert_eq!(report["tool_version"], "0.2.2");
+    assert_eq!(report["tool_version"], "0.2.3");
     assert_eq!(report["motion"]["backend"], "ffmpeg-perspective");
     assert_eq!(report["motion"]["quality"], "smooth");
     assert_eq!(report["motion"]["interpolation"], "cubic");
@@ -40,10 +40,17 @@ fn smooth_motion_is_the_default_and_records_complete_lineage() {
     assert_eq!(report["motion"]["working_width"], 1280);
     assert_eq!(report["motion"]["working_height"], 720);
     assert_eq!(report["motion"]["fps"], 24);
+    assert_eq!(report["motion"]["perspective_filter_instances"], 1);
+    assert_eq!(report["motion"]["maximum_estimated_peak_memory_mib"], 2048);
+    assert!(report["motion"]["safety"][0]["passed"].as_bool().unwrap());
     let args = report["command_arguments"].as_array().unwrap();
     assert!(args.iter().any(|arg| {
         arg.as_str()
             .is_some_and(|text| text.contains("perspective=") && text.contains("eval=frame"))
+    }));
+    assert!(args.iter().any(|arg| {
+        arg.as_str()
+            .is_some_and(|text| text.contains("framerate=fps=24,settb=AVTB"))
     }));
     assert!(!dir.path().join("proof.mp4").exists());
     assert!(dir.path().join("proof.artifacts.json").exists());
@@ -139,6 +146,56 @@ fn real_sanitized_pan_makes_legacy_fail_and_smooth_pass() {
     assert_eq!(smooth_artifact["width"], 1280);
     assert_eq!(smooth_artifact["height"], 720);
     assert_eq!(smooth_artifact["output_duration_ms"], 20_000);
+
+    let motion_check = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .arg("motion-check")
+        .arg(MANIFEST)
+        .arg(&smooth)
+        .args(["--output", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        motion_check.status.success(),
+        "{}",
+        String::from_utf8_lossy(&motion_check.stderr)
+    );
+    let motion_report: Value = serde_json::from_slice(&motion_check.stdout).unwrap();
+    assert_eq!(motion_report["shots"][0]["expectation"], "moving");
+    assert!(motion_report["shots"][0]["passed"].as_bool().unwrap());
+    assert!(motion_report["safety"][0]["passed"].as_bool().unwrap());
+
+    let artifact_path = smooth.with_extension("artifacts.json");
+    let animatic_check = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .arg("animatic-check")
+        .arg(&artifact_path)
+        .args(["--output", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        animatic_check.status.success(),
+        "{}",
+        String::from_utf8_lossy(&animatic_check.stderr)
+    );
+    let verification: Value = serde_json::from_slice(&animatic_check.stdout).unwrap();
+    assert!(verification["passed"].as_bool().unwrap());
+    assert_eq!(verification["codec"], "h264");
+    assert_eq!(verification["pixel_format"], "yuv420p");
+
+    let mut tampered_artifact = smooth_artifact.clone();
+    tampered_artifact["output_sha256"] = Value::String("0".repeat(64));
+    let tampered_path = dir.path().join("tampered.artifacts.json");
+    fs::write(
+        &tampered_path,
+        serde_json::to_vec_pretty(&tampered_artifact).unwrap(),
+    )
+    .unwrap();
+    let tampered_check = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .arg("animatic-check")
+        .arg(&tampered_path)
+        .output()
+        .unwrap();
+    assert!(!tampered_check.status.success());
+    assert!(String::from_utf8_lossy(&tampered_check.stderr).contains("SHA-256"));
 
     let legacy_analysis = Command::new(env!("CARGO_BIN_EXE_reel"))
         .arg("motion-analyze")
@@ -239,6 +296,17 @@ fn real_sanitized_pan_makes_legacy_fail_and_smooth_pass() {
         assert!(!analysis.status.success());
         let report: Value = serde_json::from_slice(&analysis.stdout).unwrap();
         assert!(report["near_stationary_fraction"].as_f64().unwrap() > 0.85);
+        let manifest_check = Command::new(env!("CARGO_BIN_EXE_reel"))
+            .arg("motion-check")
+            .arg(&variant_manifest)
+            .arg(&video)
+            .args(["--output", "json"])
+            .output()
+            .unwrap();
+        assert!(manifest_check.status.success());
+        let report: Value = serde_json::from_slice(&manifest_check.stdout).unwrap();
+        assert_eq!(report["shots"][0]["expectation"], "stationary");
+        assert!(report["shots"][0]["passed"].as_bool().unwrap());
     }
 
     let corrupt_audio = dir.path().join("corrupt.wav");
