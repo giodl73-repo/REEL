@@ -9,7 +9,7 @@ use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use tempfile::Builder;
 
-use super::ffmpeg::FfmpegAdapter;
+use super::ffmpeg::{FfmpegAdapter, RenderEnvironmentReport};
 use crate::production::{self, TimingStatus};
 
 pub const NEAR_STATIONARY_LUMA_THRESHOLD: f64 = 0.001;
@@ -84,6 +84,8 @@ pub struct AnimaticRenderReport {
     pub duration_ms: u64,
     pub tool_version: String,
     pub ffmpeg_version: String,
+    #[serde(default)]
+    pub render_environment: Option<RenderEnvironmentReport>,
     pub motion: MotionLineage,
     pub dry_run: bool,
     pub silent: bool,
@@ -209,6 +211,8 @@ pub struct AnimaticCheckReport {
     pub duration_ms: u64,
     pub audio_streams: usize,
     pub caption_cues: usize,
+    pub render_capabilities: usize,
+    pub render_environment_fingerprint: Option<String>,
     pub passed: bool,
 }
 
@@ -625,8 +629,8 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         ]);
     }
     args.push(output_argument);
-    let ffmpeg_version = if options.dry_run {
-        "not-probed-dry-run".to_string()
+    let render_environment = if options.dry_run {
+        None
     } else {
         let environment = adapter.render_environment()?;
         let missing = environment
@@ -643,8 +647,12 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                 missing.join(", ")
             );
         }
-        environment.ffmpeg_version
+        Some(environment)
     };
+    let ffmpeg_version = render_environment
+        .as_ref()
+        .map(|environment| environment.ffmpeg_version.clone())
+        .unwrap_or_else(|| "not-probed-dry-run".to_string());
     let expected_duration_ms = durations
         .iter()
         .map(|value| (value * 1000.0).round() as u64)
@@ -749,6 +757,7 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         duration_ms: expected_duration_ms,
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
         ffmpeg_version,
+        render_environment,
         motion,
         dry_run: options.dry_run,
         silent: options.silent,
@@ -1117,6 +1126,19 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
     if report.dry_run {
         bail!("cannot verify a dry-run artifact report");
     }
+    let tool_version = parse_tool_version(&report.tool_version)?;
+    if tool_version >= (0, 2, 5) {
+        let environment = report
+            .render_environment
+            .as_ref()
+            .ok_or_else(|| anyhow!("v0.2.5+ artifact report has no render environment lineage"))?;
+        environment.validate_lineage(report.motion.quality == "smooth")?;
+        if environment.ffmpeg_version != report.ffmpeg_version {
+            bail!("render environment does not match artifact FFmpeg lineage");
+        }
+    } else if let Some(environment) = &report.render_environment {
+        environment.validate_lineage(report.motion.quality == "smooth")?;
+    }
     let output = PathBuf::from(&report.output)
         .canonicalize()
         .with_context(|| format!("failed to resolve reported output {}", report.output))?;
@@ -1289,8 +1311,36 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
         duration_ms,
         audio_streams,
         caption_cues: cues.len(),
+        render_capabilities: report
+            .render_environment
+            .as_ref()
+            .map_or(0, |environment| environment.checks.len()),
+        render_environment_fingerprint: report
+            .render_environment
+            .as_ref()
+            .map(|environment| environment.fingerprint_sha256.clone()),
         passed: true,
     })
+}
+
+fn parse_tool_version(value: &str) -> Result<(u64, u64, u64)> {
+    let mut parts = value.split('.');
+    let major = parts
+        .next()
+        .ok_or_else(|| anyhow!("invalid artifact tool version {value}"))?
+        .parse()?;
+    let minor = parts
+        .next()
+        .ok_or_else(|| anyhow!("invalid artifact tool version {value}"))?
+        .parse()?;
+    let patch = parts
+        .next()
+        .ok_or_else(|| anyhow!("invalid artifact tool version {value}"))?
+        .parse()?;
+    if parts.next().is_some() {
+        bail!("invalid artifact tool version {value}");
+    }
+    Ok((major, minor, patch))
 }
 
 fn escape_drawtext(value: &str) -> String {
@@ -1303,6 +1353,14 @@ fn escape_drawtext(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_semantic_tool_versions_for_lineage_gates() {
+        assert_eq!(parse_tool_version("0.2.4").unwrap(), (0, 2, 4));
+        assert_eq!(parse_tool_version("0.2.5").unwrap(), (0, 2, 5));
+        assert!(parse_tool_version("0.2").is_err());
+        assert!(parse_tool_version("0.2.5.1").is_err());
+    }
     use crate::production::{FocalPoint, ProtectedRegion, Shot};
 
     #[test]

@@ -29,3 +29,6 @@ perspective checks, preserving deterministic reproduction on older builds.
 For BERTICA, retain the JSON doctor report beside the first v0.2.4 rerender as
 environment evidence. Existing manifests, timings, captions, audio choices,
 private paths, and approval states do not need migration or modification.
+
+CLI v0.2.5 additionally fingerprints this report and embeds the same evidence
+inside every real animatic artifact report. See `render-lineage-v0.2.5.md`.

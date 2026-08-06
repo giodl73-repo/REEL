@@ -152,6 +152,13 @@ before BERTICA or another consumer starts an expensive render. Real
 `animatic-render` operations enforce the same gate. See
 [`docs/render-environment-v0.2.4.md`](docs/render-environment-v0.2.4.md).
 
+CLI v0.2.5 keeps `reel.manifest.v0.2` unchanged and binds the successful render
+environment to each real `*.artifacts.json` report. The nested evidence records
+transport, FFmpeg/ffprobe versions, all seven required capabilities, and a
+deterministic SHA-256 fingerprint. `animatic-check` requires and validates this
+lineage for v0.2.5+ artifacts. See
+[`docs/render-lineage-v0.2.5.md`](docs/render-lineage-v0.2.5.md).
+
 ## Renderer direction
 
 The first researched implementation path is Linux-first in WSL2: FFmpeg for
