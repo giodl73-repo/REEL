@@ -214,6 +214,15 @@ private-review profiles. Its strict JSON omits paths and creative identity, and
 a successful report can be bound to animatic artifact lineage without changing
 audio. See [`docs/audio-quality-v0.2.11.md`](docs/audio-quality-v0.2.11.md).
 
+CLI v0.2.12 adds a strict, separate `reel.comparison.v0.1` contract for
+controlled A/B/C review videos. It verifies every child receipt/video and local
+artifact evidence, enforces declared fixed and changed dimensions, creates
+neutral slates with optional chime/protected silence/replay, and supports
+descriptive or deterministically blinded labels. A local parent artifact embeds
+each child receipt and private decode evidence; a separate path-free parent
+receipt deliberately omits IDs and labels. See
+[`docs/comparison-composer-v0.2.12.md`](docs/comparison-composer-v0.2.12.md).
+
 ## Renderer direction
 
 The first researched implementation path is Linux-first in WSL2: FFmpeg for
