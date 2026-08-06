@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
@@ -13,10 +13,44 @@ fn print_report(report: &impl Serialize, output: OutputFormat) -> Result<()> {
     Ok(())
 }
 
+fn run_animatic_receipt(
+    artifact_manifest: &PathBuf,
+    output_path: &PathBuf,
+    output: OutputFormat,
+) -> Result<()> {
+    let receipt =
+        reel::adapters::still_animatic::write_animatic_receipt(artifact_manifest, output_path)?;
+    match output {
+        OutputFormat::Text => println!(
+            "{} | source={} | output={} | {}x{}@{} | duration={}ms | verified={}",
+            output_path.display(),
+            receipt.source_artifact_sha256,
+            receipt.output_sha256,
+            receipt.width,
+            receipt.height,
+            receipt.fps,
+            receipt.duration_ms,
+            receipt.verified
+        ),
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&receipt)?),
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
+    std::thread::Builder::new()
+        .name("reel-cli".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(run_cli)
+        .context("failed to start REEL CLI worker")?
+        .join()
+        .map_err(|_| anyhow!("REEL CLI worker panicked"))?
+}
+
+fn run_cli() -> Result<()> {
     let cli = Cli::parse();
 
-    match cli.command {
+    match *cli.command {
         Command::Validate { manifest, output } => {
             if reel::production::is_production_manifest(&manifest)? {
                 let loaded = reel::production::load(&manifest)?;
@@ -465,6 +499,13 @@ fn main() -> Result<()> {
             let report = reel::adapters::still_animatic::check_animatic(&artifact_manifest)?;
             print_report(&report, output)?;
         }
+        Command::AnimaticReceipt {
+            artifact_manifest,
+            output_path,
+            output,
+        } => {
+            run_animatic_receipt(&artifact_manifest, &output_path, output)?;
+        }
         Command::Adapters { output } => {
             let catalog = reel::adapters::adapter_catalog();
             match output {
@@ -882,7 +923,7 @@ fn ensure_legacy_render_compatible(manifest: &std::path::Path) -> Result<()> {
 #[command(version, about = "REEL manifest and review-pack orchestration")]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Box<Command>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1069,6 +1110,14 @@ enum Command {
     AnimaticCheck {
         artifact_manifest: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Verify locally and write a path-free receipt safe for intentional sharing.
+    AnimaticReceipt {
+        artifact_manifest: PathBuf,
+        #[arg(long = "output")]
+        output_path: PathBuf,
+        #[arg(long = "format", value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
     /// Print available and planned render adapters.
