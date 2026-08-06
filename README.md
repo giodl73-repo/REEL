@@ -136,6 +136,15 @@ ease-in/out; `--motion-quality legacy` reproduces the v0.2.1 zoompan path.
 [`docs/smooth-motion-v0.2.2.md`](docs/smooth-motion-v0.2.2.md) and the fully
 synthetic `manifests/fixtures/smooth-motion/` proof.
 
+CLI v0.2.3 keeps `reel.manifest.v0.2` unchanged and closes the verification
+loop around those renders. `motion-check` evaluates moving shots and intentional
+holds separately against the manifest timeline. `animatic-check` verifies
+hashed inputs/output, H.264/yuv420p CFR delivery, dimensions, duration, audio
+policy, captions, shot lineage, and transform safety. Smooth multi-shot renders
+also fail preflight when their concurrent perspective-filter estimate exceeds
+the published 2048 MiB budget. See
+[`docs/animatic-verification-v0.2.3.md`](docs/animatic-verification-v0.2.3.md).
+
 ## Renderer direction
 
 The first researched implementation path is Linux-first in WSL2: FFmpeg for
