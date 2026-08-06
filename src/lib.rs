@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
 pub mod adapters;
+pub mod caption;
 pub mod continuity;
 pub mod cue_import;
 pub mod production;

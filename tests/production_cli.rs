@@ -160,6 +160,47 @@ fn cli_renders_the_vertical_role_proof_without_an_audio_stream() {
 }
 
 #[test]
+fn cli_checks_caption_accessibility_without_echoing_private_text_or_paths() {
+    let binary = env!("CARGO_BIN_EXE_reel");
+    let captions = "manifests/fixtures/vertical-sound-off/captions.srt";
+    let passing = Command::new(binary)
+        .args(["caption-check", captions, "--output", "json"])
+        .output()
+        .expect("caption check runs");
+    assert!(
+        passing.status.success(),
+        "{}",
+        String::from_utf8_lossy(&passing.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&passing.stdout).unwrap();
+    assert_eq!(report["schema"], "reel.caption-check.v0.1");
+    assert_eq!(report["cues"], 2);
+    assert!(report["passed"].as_bool().unwrap());
+    let report_text = String::from_utf8(passing.stdout).unwrap();
+    assert!(!report_text.contains("La lluvia"));
+    assert!(!report_text.contains("vertical-sound-off"));
+    assert!(!report_text.contains("\"path\""));
+
+    let dir = tempdir().unwrap();
+    let unreadable = dir.path().join("unreadable.srt");
+    fs::write(
+        &unreadable,
+        "1\n00:00:00,000 --> 00:00:00,500\nThis deliberately overlong caption line cannot be read in time.\n",
+    )
+    .unwrap();
+    let failing = Command::new(binary)
+        .arg("caption-check")
+        .arg(&unreadable)
+        .args(["--output", "json"])
+        .output()
+        .expect("unreadable caption check runs");
+    assert!(!failing.status.success());
+    let failed_report: serde_json::Value = serde_json::from_slice(&failing.stdout).unwrap();
+    assert!(!failed_report["passed"].as_bool().unwrap());
+    assert!(failed_report["violations"].as_array().unwrap().len() >= 3);
+}
+
+#[test]
 fn cli_preflights_all_requested_ab_audio_before_rendering() {
     let binary = env!("CARGO_BIN_EXE_reel");
     let dir = tempdir().unwrap();

@@ -1123,10 +1123,24 @@ fn parse_timestamp(value: &str) -> Result<u64> {
         .split(':')
         .map(str::parse::<u64>)
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    if parts.len() != 3 || millis.len() != 3 {
+    if parts.len() != 3 || millis.len() != 3 || parts[1] >= 60 || parts[2] >= 60 {
         bail!("invalid SRT timestamp {value}");
     }
-    Ok(((parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000) + millis.parse::<u64>()?)
+    let millis = millis.parse::<u64>()?;
+    parts[0]
+        .checked_mul(3_600_000)
+        .and_then(|total| {
+            parts[1]
+                .checked_mul(60_000)
+                .and_then(|v| total.checked_add(v))
+        })
+        .and_then(|total| {
+            parts[2]
+                .checked_mul(1_000)
+                .and_then(|v| total.checked_add(v))
+        })
+        .and_then(|total| total.checked_add(millis))
+        .ok_or_else(|| anyhow!("SRT timestamp exceeds supported range: {value}"))
 }
 
 fn format_timestamp(ms: u64) -> String {
