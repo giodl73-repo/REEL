@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use std::{
     fmt::Write as _,
     path::Path,
-    process::{Command, Stdio},
+    process::{Command, Output, Stdio},
     sync::OnceLock,
 };
 
@@ -141,6 +141,19 @@ impl FfmpegAdapter {
         self.run_external("ffmpeg", fixed_args, runtime_args)
     }
 
+    pub fn run_ffmpeg_diagnostics(
+        &self,
+        fixed_args: &[String],
+        runtime_args: &[String],
+    ) -> Result<String> {
+        let output = self.run_external_output("ffmpeg", fixed_args, runtime_args)?;
+        String::from_utf8(output.stderr).context("ffmpeg wrote non-utf8 diagnostics")
+    }
+
+    pub fn run_ffprobe(&self, fixed_args: &[String], runtime_args: &[String]) -> Result<String> {
+        self.run_external("ffprobe", fixed_args, runtime_args)
+    }
+
     pub fn ffprobe_duration(&self, path: &Path) -> Result<String> {
         let stdout = self.run_external(
             "ffprobe",
@@ -191,6 +204,16 @@ impl FfmpegAdapter {
         fixed_args: &[String],
         runtime_args: &[String],
     ) -> Result<String> {
+        let output = self.run_external_output(program, fixed_args, runtime_args)?;
+        String::from_utf8(output.stdout).with_context(|| format!("{program} wrote non-utf8 output"))
+    }
+
+    fn run_external_output(
+        &self,
+        program: &str,
+        fixed_args: &[String],
+        runtime_args: &[String],
+    ) -> Result<Output> {
         let output = if cfg!(windows) {
             let cwd = std::env::current_dir().context("failed to read current directory")?;
             let mut command = format!(
@@ -221,8 +244,7 @@ impl FfmpegAdapter {
             let stderr = String::from_utf8_lossy(&output.stderr);
             bail!("{program} failed: {stderr}");
         }
-
-        String::from_utf8(output.stdout).with_context(|| format!("{program} wrote non-utf8 output"))
+        Ok(output)
     }
 }
 
