@@ -35,6 +35,9 @@ variants:
 reel comparison-compose comparison.yaml --output caption-review.mp4 --format json
 reel comparison-receipt-check caption-review.comparison.receipt.json `
   caption-review.mp4 --output json
+reel comparison-layout caption-review.comparison.artifacts.json `
+  --output-dir caption-review-layout --output json
+reel comparison-layout-check caption-review-layout --output json
 ```
 
 The contract supports `captions`, `motion`, `voice`, `mix`,
@@ -63,3 +66,7 @@ publish as an atomic group.
 Composition order, inclusion, and blind labels are review mechanics only. REEL
 does not infer preference, consensus, consent, or approval. Existing
 `reel.manifest.v0.2` files require no migration.
+
+CLI v0.2.14 adds mandatory pre-render slate fitting plus optional private
+layout evidence without changing this comparison contract or its shareable
+receipt. See `comparison-slate-layout-v0.2.14.md`.
