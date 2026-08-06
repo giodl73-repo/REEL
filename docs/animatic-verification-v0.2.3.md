@@ -16,7 +16,7 @@ must remain inside the canvas, and any declared `focal_point` or
 `protected_regions` must remain visible at every sampled extreme. A violation
 fails before publication. Holds use the full frame and no perspective filter.
 Every filtered shot branch is normalized to the requested frame rate and AV
-time base before trimming and crossfading, including on FFmpeg 7.1.
+time base before trimming and crossfading.
 
 ## Manifest-aware cadence
 
@@ -54,7 +54,7 @@ lineage fields are additive. Verification output uses
 
 ## CI reproducibility
 
-CI installs the FFmpeg 7.1 GPL build through an immutable setup-action commit,
+CI installs the FFmpeg 8.1 GPL build through an immutable setup-action commit,
 records the installed build identity, verifies the required filters/encoder,
 applies a 20-minute job
 timeout, and cancels superseded runs for the same branch. The real-FFmpeg gate
