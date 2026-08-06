@@ -291,6 +291,33 @@ fn main() -> Result<()> {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
             }
         }
+        Command::RenderDoctor { output } => {
+            let report = reel::adapters::ffmpeg::FfmpegAdapter.render_environment()?;
+            match output {
+                OutputFormat::Text => {
+                    println!(
+                        "render environment | transport={} | ffmpeg={} | ffprobe={} | passed={}",
+                        report.transport,
+                        report.ffmpeg_version,
+                        report.ffprobe_version,
+                        report.passed
+                    );
+                    for check in &report.checks {
+                        println!(
+                            "  {} | available={} | {}",
+                            check.id, check.available, check.evidence
+                        );
+                    }
+                }
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+            }
+            if !report.passed {
+                anyhow::bail!(
+                    "render environment is missing required capabilities: {}",
+                    report.missing().join(", ")
+                );
+            }
+        }
         Command::AnimaticRender {
             manifest,
             asset_root,
@@ -978,6 +1005,11 @@ enum Command {
     /// Check long-still motion, focal, crop, and continuity quality controls.
     QualityCheck {
         manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Verify FFmpeg/ffprobe and every capability required by the animatic pipeline.
+    RenderDoctor {
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

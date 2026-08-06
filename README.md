@@ -145,6 +145,13 @@ also fail preflight when their concurrent perspective-filter estimate exceeds
 the published 2048 MiB budget. See
 [`docs/animatic-verification-v0.2.3.md`](docs/animatic-verification-v0.2.3.md).
 
+CLI v0.2.4 keeps `reel.manifest.v0.2` unchanged and makes the render environment
+self-diagnosing. `render-doctor` verifies FFmpeg, ffprobe, the exact filters used
+by composition and verification, cubic perspective interpolation, and libx264
+before BERTICA or another consumer starts an expensive render. Real
+`animatic-render` operations enforce the same gate. See
+[`docs/render-environment-v0.2.4.md`](docs/render-environment-v0.2.4.md).
+
 ## Renderer direction
 
 The first researched implementation path is Linux-first in WSL2: FFmpeg for
@@ -158,6 +165,8 @@ The REEL CLI is the durable orchestration layer:
 cargo run -- smoke
 cargo run -- adapters
 cargo run -- adapters --output json
+cargo run -- render-doctor
+cargo run -- render-doctor --output json
 cargo run -- adapter-plan works\0001-ash-vale-last-road-before-winter\manifest.yaml
 cargo run -- adapter-plan works\0001-ash-vale-last-road-before-winter\manifest.yaml --output json
 cargo run -- scene-plan works\0001-ash-vale-last-road-before-winter\manifest.yaml scene-01 youtube-demo

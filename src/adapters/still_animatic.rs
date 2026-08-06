@@ -628,26 +628,22 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
     let ffmpeg_version = if options.dry_run {
         "not-probed-dry-run".to_string()
     } else {
-        let version = adapter
-            .run_ffmpeg(&["-version".to_string()], &[])?
-            .lines()
-            .next()
-            .unwrap_or("unknown")
-            .to_string();
-        if options.motion_quality == MotionQuality::Smooth {
-            let help = adapter.run_ffmpeg(
-                &[
-                    "-hide_banner".to_string(),
-                    "-h".to_string(),
-                    "filter=perspective".to_string(),
-                ],
-                &[],
-            )?;
-            if !help.contains("perspective") || !help.contains("cubic") {
-                bail!("smooth motion requires FFmpeg's cubic perspective filter");
-            }
+        let environment = adapter.render_environment()?;
+        let missing = environment
+            .missing()
+            .into_iter()
+            .filter(|id| {
+                options.motion_quality == MotionQuality::Smooth
+                    || !matches!(*id, "filter:perspective" | "perspective:cubic")
+            })
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            bail!(
+                "render environment is missing required capabilities: {}; run `reel render-doctor --output json` for evidence",
+                missing.join(", ")
+            );
         }
-        version
+        environment.ffmpeg_version
     };
     let expected_duration_ms = durations
         .iter()
