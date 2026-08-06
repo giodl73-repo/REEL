@@ -1,0 +1,43 @@
+1
+00:00:00,000 --> 00:00:02,000
+A pale marker crosses the quiet grid.
+
+2
+00:00:02,000 --> 00:00:04,000
+Three measured steps follow.
+
+3
+00:00:04,155 --> 00:00:08,155
+A second guide names the turn.
+
+4
+00:00:08,155 --> 00:00:10,655
+The first guide returns softly.
+
+5
+00:00:10,655 --> 00:00:13,155
+The marker keeps its steady pace.
+
+6
+00:00:13,155 --> 00:00:17,155
+A third guide enters the amber field.
+
+7
+00:00:17,155 --> 00:00:19,655
+The second guide checks the line.
+
+8
+00:00:19,655 --> 00:00:22,155
+No source story is present.
+
+9
+00:00:22,155 --> 00:00:28,155
+Neutral shapes hold the timing constant.
+
+10
+00:00:28,155 --> 00:00:35,155
+The first guide returns after an absence.
+
+11
+00:00:35,155 --> 00:00:42,155
+Third guide closes the synthetic proof.

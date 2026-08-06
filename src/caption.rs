@@ -1,13 +1,13 @@
 use std::{fs, path::Path};
 
 use anyhow::{Result, bail};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{production, series::parse_srt};
 
 pub const CAPTION_CHECK_SCHEMA: &str = "reel.caption-check.v0.1";
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CaptionThresholds {
     pub max_chars_per_line: usize,
     pub max_lines_per_cue: usize,
@@ -26,7 +26,7 @@ impl Default for CaptionThresholds {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CaptionThresholdReport {
     pub max_chars_per_line: usize,
     pub max_lines_per_cue: usize,
@@ -34,7 +34,7 @@ pub struct CaptionThresholdReport {
     pub min_duration_ms: u64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CaptionViolation {
     pub cue: usize,
     pub code: String,
@@ -42,7 +42,7 @@ pub struct CaptionViolation {
     pub limit: f64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CaptionCheckReport {
     pub schema: String,
     pub captions_sha256: String,

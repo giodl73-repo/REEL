@@ -95,6 +95,12 @@ fn cli_validates_plans_and_conforms_the_sanitized_fixture() {
         .arg(&audio)
         .arg("--captions")
         .arg(packet.join("captions.srt"))
+        .args([
+            "--max-caption-chars-per-line",
+            "60",
+            "--caption-policy-note",
+            "legacy conform fixture retains its established line",
+        ])
         .arg("--output")
         .arg(&video)
         .args(["--dry-run", "--format", "json"])
