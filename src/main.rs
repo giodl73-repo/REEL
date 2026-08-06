@@ -37,6 +37,15 @@ fn run_animatic_receipt(
     Ok(())
 }
 
+fn run_animatic_receipt_check(
+    receipt: &PathBuf,
+    video: &PathBuf,
+    output: OutputFormat,
+) -> Result<()> {
+    let report = reel::adapters::still_animatic::check_animatic_receipt(receipt, video)?;
+    print_report(&report, output)
+}
+
 fn main() -> Result<()> {
     std::thread::Builder::new()
         .name("reel-cli".to_string())
@@ -505,6 +514,13 @@ fn run_cli() -> Result<()> {
             output,
         } => {
             run_animatic_receipt(&artifact_manifest, &output_path, output)?;
+        }
+        Command::AnimaticReceiptCheck {
+            receipt,
+            video,
+            output,
+        } => {
+            run_animatic_receipt_check(&receipt, &video, output)?;
         }
         Command::Adapters { output } => {
             let catalog = reel::adapters::adapter_catalog();
@@ -1118,6 +1134,13 @@ enum Command {
         #[arg(long = "output")]
         output_path: PathBuf,
         #[arg(long = "format", value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Verify a strict path-free receipt against the intentionally shared video.
+    AnimaticReceiptCheck {
+        receipt: PathBuf,
+        video: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
     /// Print available and planned render adapters.

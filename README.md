@@ -116,6 +116,8 @@ cargo run -- motion-analyze production/video/private-review-smooth-v026.mp4 --ou
 cargo run -- animatic-check production/video/private-review-smooth-v026.artifacts.json --output json
 cargo run -- animatic-receipt production/video/private-review-smooth-v026.artifacts.json `
   --output production/video/private-review-smooth-v026.receipt.json --format json
+cargo run -- animatic-receipt-check production/video/private-review-smooth-v026.receipt.json `
+  production/video/private-review-smooth-v026.mp4 --output json
 ```
 
 Untimed manifests validate and produce useful storyboard plans while render and
@@ -169,6 +171,13 @@ motion facts, generic input counts, transport, and the render-environment
 fingerprint. It carries no work ID, filenames, local paths, or input IDs/hashes
 and does not imply approval. See
 [`docs/privacy-safe-receipt-v0.2.6.md`](docs/privacy-safe-receipt-v0.2.6.md).
+
+CLI v0.2.7 keeps `reel.manifest.v0.2` unchanged and lets a recipient verify an
+intentionally shared video without the private artifact report.
+`animatic-receipt-check` strictly rejects unknown receipt fields, hashes and
+probes the video, and checks its H.264/yuv420p delivery, dimensions, CFR,
+duration, byte length, and audio state. Its JSON report is also path-free. See
+[`docs/receipt-check-v0.2.7.md`](docs/receipt-check-v0.2.7.md).
 
 ## Renderer direction
 

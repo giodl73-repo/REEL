@@ -32,7 +32,7 @@ fn smooth_motion_is_the_default_and_records_complete_lineage() {
         String::from_utf8_lossy(&output.stderr)
     );
     let report = &report[0];
-    assert_eq!(report["tool_version"], "0.2.6");
+    assert_eq!(report["tool_version"], "0.2.7");
     assert!(report["render_environment"].is_null());
     assert_eq!(report["motion"]["backend"], "ffmpeg-perspective");
     assert_eq!(report["motion"]["quality"], "smooth");
@@ -236,6 +236,66 @@ fn real_sanitized_pan_makes_legacy_fail_and_smooth_pass() {
     assert!(!receipt_text.contains(&dir.path().display().to_string()));
     assert!(!receipt_text.contains("artifact_manifest"));
     assert!(!receipt_text.contains("\"path\""));
+
+    let receipt_check = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .arg("animatic-receipt-check")
+        .arg(&receipt_path)
+        .arg(&smooth)
+        .args(["--output", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        receipt_check.status.success(),
+        "{}",
+        String::from_utf8_lossy(&receipt_check.stderr)
+    );
+    let receipt_verification: Value = serde_json::from_slice(&receipt_check.stdout).unwrap();
+    assert_eq!(
+        receipt_verification["schema"],
+        "reel.animatic-receipt-check.v0.1"
+    );
+    assert!(receipt_verification["passed"].as_bool().unwrap());
+    assert_eq!(
+        receipt_verification["video_sha256"],
+        receipt["output_sha256"]
+    );
+    let verification_text = serde_json::to_string(&receipt_verification).unwrap();
+    assert!(!verification_text.contains(&dir.path().display().to_string()));
+    assert!(!verification_text.contains("\"path\""));
+
+    let mut receipt_with_path = receipt.clone();
+    receipt_with_path["path"] = Value::String(r"C:\private\frame.png".to_string());
+    let receipt_with_path_file = dir.path().join("receipt-with-path.json");
+    fs::write(
+        &receipt_with_path_file,
+        serde_json::to_vec_pretty(&receipt_with_path).unwrap(),
+    )
+    .unwrap();
+    let receipt_with_path_check = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .arg("animatic-receipt-check")
+        .arg(&receipt_with_path_file)
+        .arg(&smooth)
+        .output()
+        .unwrap();
+    assert!(!receipt_with_path_check.status.success());
+
+    let mut wrong_video_hash = receipt.clone();
+    wrong_video_hash["output_sha256"] = Value::String("0".repeat(64));
+    let wrong_video_hash_file = dir.path().join("wrong-video-hash.receipt.json");
+    fs::write(
+        &wrong_video_hash_file,
+        serde_json::to_vec_pretty(&wrong_video_hash).unwrap(),
+    )
+    .unwrap();
+    let wrong_video_hash_check = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .arg("animatic-receipt-check")
+        .arg(&wrong_video_hash_file)
+        .arg(&smooth)
+        .output()
+        .unwrap();
+    assert!(!wrong_video_hash_check.status.success());
+    assert!(String::from_utf8_lossy(&wrong_video_hash_check.stderr).contains("SHA-256"));
+
     let preserved_receipt = fs::read(&receipt_path).unwrap();
     let overwrite_receipt = Command::new(env!("CARGO_BIN_EXE_reel"))
         .arg("animatic-receipt")
