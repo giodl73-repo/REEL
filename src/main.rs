@@ -603,6 +603,18 @@ fn run_cli() -> Result<()> {
             let report = reel::comparison::check_receipt(&receipt, &video)?;
             print_report(&report, output)?;
         }
+        Command::ComparisonLayout {
+            artifact,
+            output_dir,
+            output,
+        } => {
+            let report = reel::comparison::write_layout_packet(&artifact, &output_dir)?;
+            print_report(&report, output)?;
+        }
+        Command::ComparisonLayoutCheck { packet_dir, output } => {
+            let report = reel::comparison::check_layout_packet(&packet_dir)?;
+            print_report(&report, output)?;
+        }
         Command::ReviewRecord {
             target,
             finding,
@@ -1316,6 +1328,20 @@ enum Command {
     ComparisonReceiptCheck {
         receipt: PathBuf,
         video: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Write a private artifact-bound packet of comparison-slate geometry and frames.
+    ComparisonLayout {
+        artifact: PathBuf,
+        #[arg(long)]
+        output_dir: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Verify a private comparison-layout packet, its artifact, video, and images.
+    ComparisonLayoutCheck {
+        packet_dir: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

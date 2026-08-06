@@ -675,6 +675,50 @@ For the v0.2.9+ follow-up, the recommended order is:
 4. Controlled comparison composition.
 5. Independent human-decision records and series-queue integration.
 
+## v0.2.14 follow-up — comparison-slate text fitting
+
+BERTICA's first real v0.2.13 comparison package verified successfully, but a
+long opening title and instruction line rendered beyond both horizontal frame
+edges. The receipt correctly proved encoding and child lineage; it did not
+detect that the slate copy was visibly clipped. BERTICA shortened the local
+copy and rendered a clean v2 rather than sharing the clipped proof.
+
+Please add deterministic preflight and layout evidence for opening and variant
+slates.
+
+Required behavior:
+
+- measure every slate text box against the actual output geometry and safe area;
+- wrap or deterministically scale copy within documented minimum font and line
+  limits, rather than allowing horizontal clipping;
+- fail before FFmpeg and publish nothing when text cannot fit policy;
+- record chosen font size, line breaks, bounding boxes, safe-area result, and
+  maximum occupied screen percentage in the local comparison artifact;
+- include representative opening and variant-slate PNGs in an optional private
+  layout packet analogous to `caption-layout`;
+- keep all slate copy, labels, images, and local paths out of the shareable
+  comparison receipt;
+- make `comparison-receipt-check` continue to verify only the intentionally
+  shareable lineage and delivery facts.
+
+Suggested command shape:
+
+```text
+reel comparison-layout review.comparison.artifacts.json \
+  --output-dir review-comparison-layout --output json
+```
+
+Automated acceptance test:
+
+1. A 1280x720 opening title and instruction that previously clipped are either
+   wrapped inside safe bounds or rejected before rendering.
+2. Long descriptive variant labels receive the same treatment.
+3. A successful packet records bound geometry and representative PNG hashes.
+4. Tampering with the comparison video, artifact, or layout images fails
+   verification.
+5. The privacy-safe comparison receipt contains no slate text, presented label,
+   screenshot, path, or private review instruction.
+
 ## Cross-repo handoff request
 
 Please respond with:

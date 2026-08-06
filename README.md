@@ -231,6 +231,16 @@ actual multi-reviewer disagreement. A separate hash-bound review index lets
 remaining gates without exposing private reasons or inferring approval. See
 [`docs/review-decisions-v0.2.13.md`](docs/review-decisions-v0.2.13.md).
 
+CLI v0.2.14 preflights every comparison opening, variant, and replay slate
+against the actual output geometry and an 8% safe area before starting FFmpeg.
+Copy wraps deterministically and scales only to a documented font/line floor;
+infeasible copy leaves no video, artifact, or receipt. The local comparison
+artifact records lines, font geometry, bounds, and occupancy. Opt-in
+`comparison-layout` and `comparison-layout-check` commands create and verify a
+private artifact/video-bound PNG packet, while the existing shareable receipt
+remains free of copy, labels, images, and paths. See
+[`docs/comparison-slate-layout-v0.2.14.md`](docs/comparison-slate-layout-v0.2.14.md).
+
 ## Renderer direction
 
 The first researched implementation path is Linux-first in WSL2: FFmpeg for
