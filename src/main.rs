@@ -177,8 +177,13 @@ fn run_cli() -> Result<()> {
             let report = reel::series::coverage(&manifest)?;
             print_report(&report, output)?;
         }
-        Command::SeriesReviewQueue { manifest, output } => {
-            let report = reel::series::review_queue(&manifest)?;
+        Command::SeriesReviewQueue {
+            manifest,
+            decision_index,
+            output,
+        } => {
+            let report =
+                reel::series::review_queue_with_decisions(&manifest, decision_index.as_deref())?;
             print_report(&report, output)?;
         }
         Command::EpisodeCompose {
@@ -596,6 +601,15 @@ fn run_cli() -> Result<()> {
             output,
         } => {
             let report = reel::comparison::check_receipt(&receipt, &video)?;
+            print_report(&report, output)?;
+        }
+        Command::ReviewRecord {
+            target,
+            finding,
+            output_path,
+            output,
+        } => {
+            let report = reel::review_decision::write_record(&target, &finding, &output_path)?;
             print_report(&report, output)?;
         }
         Command::AnimaticReceipt {
@@ -1095,6 +1109,8 @@ enum Command {
     /// Report open human review and release-blocked episodes.
     SeriesReviewQueue {
         manifest: PathBuf,
+        #[arg(long)]
+        decision_index: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
@@ -1301,6 +1317,15 @@ enum Command {
         receipt: PathBuf,
         video: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Append an independent private human finding bound to an exact artifact hash.
+    ReviewRecord {
+        target: PathBuf,
+        finding: PathBuf,
+        #[arg(long = "output")]
+        output_path: PathBuf,
+        #[arg(long = "format", value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
     /// Verify locally and write a path-free receipt safe for intentional sharing.

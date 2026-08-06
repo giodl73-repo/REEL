@@ -21,6 +21,7 @@ pub mod comparison;
 pub mod continuity;
 pub mod cue_import;
 pub mod production;
+pub mod review_decision;
 pub mod series;
 
 const SUPPORTED_MANIFEST_VERSION: &str = "reel.manifest.v0.1";
