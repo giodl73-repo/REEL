@@ -4,12 +4,13 @@
 voice timing, deterministic voice conform, input provenance, private-reference
 protection, explicit derivatives, and long-still review.
 
-REEL CLI v0.2.5 does not revise this contract. Smooth subpixel motion,
+REEL CLI v0.2.6 does not revise this contract. Smooth subpixel motion,
 ease-in/out, cadence analysis, legacy reproduction, artifact verification, and
-render-environment diagnostics and lineage are CLI and artifact-report behavior;
-existing `reel.manifest.v0.2` files need no migration. See
+render-environment diagnostics, lineage, and privacy-safe receipts are CLI and
+artifact behavior; existing `reel.manifest.v0.2` files need no migration. See
 `smooth-motion-v0.2.2.md`, `animatic-verification-v0.2.3.md`,
-`render-environment-v0.2.4.md`, and `render-lineage-v0.2.5.md`.
+`render-environment-v0.2.4.md`, `render-lineage-v0.2.5.md`, and
+`privacy-safe-receipt-v0.2.6.md`.
 
 The supported profiles are `animatic`, `voice-audition`, and
 `production-package`. Migration recognizes legacy work IDs containing

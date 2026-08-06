@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -214,6 +215,33 @@ pub struct AnimaticCheckReport {
     pub render_capabilities: usize,
     pub render_environment_fingerprint: Option<String>,
     pub passed: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AnimaticReceipt {
+    pub schema: String,
+    pub source_artifact_schema: String,
+    pub source_artifact_sha256: String,
+    pub tool_version: String,
+    pub output_sha256: String,
+    pub output_bytes: u64,
+    pub width: u32,
+    pub height: u32,
+    pub fps: u32,
+    pub duration_ms: u64,
+    pub silent: bool,
+    pub audio_streams: usize,
+    pub caption_cues: usize,
+    pub input_kinds: BTreeMap<String, usize>,
+    pub motion_backend: String,
+    pub motion_quality: String,
+    pub motion_interpolation: String,
+    pub motion_curve: String,
+    pub motion_shots: usize,
+    pub motion_safety_passed: bool,
+    pub render_transport: Option<String>,
+    pub render_environment_fingerprint: Option<String>,
+    pub verified: bool,
 }
 
 pub fn variant_output(output: &Path, label: &str) -> PathBuf {
@@ -1192,11 +1220,18 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
     let quality = match report.motion.quality.as_str() {
         "smooth"
             if report.motion.backend == "ffmpeg-perspective"
-                && report.motion.interpolation == "cubic" =>
+                && report.motion.interpolation == "cubic"
+                && matches!(report.motion.curve.as_str(), "ease-in-out" | "linear") =>
         {
             MotionQuality::Smooth
         }
-        "legacy" if report.motion.backend == "ffmpeg-zoompan" => MotionQuality::Legacy,
+        "legacy"
+            if report.motion.backend == "ffmpeg-zoompan"
+                && report.motion.interpolation == "zoompan-default"
+                && report.motion.curve == "legacy-linear" =>
+        {
+            MotionQuality::Legacy
+        }
         _ => bail!("motion backend lineage is inconsistent"),
     };
     let (expected_memory, expected_instances) =
@@ -1323,6 +1358,81 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
     })
 }
 
+pub fn write_animatic_receipt(
+    artifact_manifest: impl AsRef<Path>,
+    output: impl AsRef<Path>,
+) -> Result<AnimaticReceipt> {
+    let artifact_manifest = artifact_manifest.as_ref().canonicalize().with_context(|| {
+        format!(
+            "failed to resolve artifact report {}",
+            artifact_manifest.as_ref().display()
+        )
+    })?;
+    let output = output.as_ref();
+    if output.exists() {
+        bail!(
+            "refusing to overwrite existing animatic receipt: {}",
+            output.display()
+        );
+    }
+    let check = check_animatic(&artifact_manifest)?;
+    let report: AnimaticRenderReport = serde_json::from_slice(&fs::read(&artifact_manifest)?)
+        .context("artifact report is not valid JSON")?;
+    let mut input_kinds = BTreeMap::new();
+    for input in &report.inputs {
+        let kind = match input.kind.as_str() {
+            "manifest" | "visual" | "audio" | "captions" => input.kind.as_str(),
+            _ => "other",
+        };
+        *input_kinds.entry(kind.to_string()).or_insert(0) += 1;
+    }
+    let environment = report.render_environment.as_ref();
+    let receipt = AnimaticReceipt {
+        schema: "reel.animatic-receipt.v0.1".to_string(),
+        source_artifact_schema: report.schema,
+        source_artifact_sha256: production::sha256_path(&artifact_manifest)?,
+        tool_version: report.tool_version,
+        output_sha256: check.output_sha256,
+        output_bytes: report
+            .output_bytes
+            .ok_or_else(|| anyhow!("verified artifact report has no output byte length"))?,
+        width: check.width,
+        height: check.height,
+        fps: report.fps,
+        duration_ms: check.duration_ms,
+        silent: report.silent,
+        audio_streams: check.audio_streams,
+        caption_cues: check.caption_cues,
+        input_kinds,
+        motion_backend: report.motion.backend,
+        motion_quality: report.motion.quality,
+        motion_interpolation: report.motion.interpolation,
+        motion_curve: report.motion.curve,
+        motion_shots: report.motion.shots.len(),
+        motion_safety_passed: report.motion.safety.iter().all(|shot| shot.passed),
+        render_transport: environment.map(|value| value.transport.clone()),
+        render_environment_fingerprint: environment.map(|value| value.fingerprint_sha256.clone()),
+        verified: true,
+    };
+    let output_parent = output
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(output_parent)?;
+    let mut temp = Builder::new()
+        .prefix(".reel-receipt-")
+        .tempfile_in(output_parent)?;
+    temp.write_all(&serde_json::to_vec_pretty(&receipt)?)?;
+    temp.flush()?;
+    temp.persist_noclobber(output).with_context(|| {
+        format!(
+            "failed to publish animatic receipt atomically: {}",
+            output.display()
+        )
+    })?;
+    Ok(receipt)
+}
+
 fn parse_tool_version(value: &str) -> Result<(u64, u64, u64)> {
     let mut parts = value.split('.');
     let major = parts
@@ -1360,6 +1470,42 @@ mod tests {
         assert_eq!(parse_tool_version("0.2.5").unwrap(), (0, 2, 5));
         assert!(parse_tool_version("0.2").is_err());
         assert!(parse_tool_version("0.2.5.1").is_err());
+    }
+
+    #[test]
+    fn shareable_receipt_schema_has_no_path_bearing_fields() {
+        let receipt = AnimaticReceipt {
+            schema: "reel.animatic-receipt.v0.1".to_string(),
+            source_artifact_schema: "reel.animatic-artifacts.v0.1".to_string(),
+            source_artifact_sha256: "a".repeat(64),
+            tool_version: "0.2.6".to_string(),
+            output_sha256: "b".repeat(64),
+            output_bytes: 42,
+            width: 1280,
+            height: 720,
+            fps: 24,
+            duration_ms: 20_000,
+            silent: true,
+            audio_streams: 0,
+            caption_cues: 1,
+            input_kinds: BTreeMap::from([("visual".to_string(), 1)]),
+            motion_backend: "ffmpeg-perspective".to_string(),
+            motion_quality: "smooth".to_string(),
+            motion_interpolation: "cubic".to_string(),
+            motion_curve: "ease-in-out".to_string(),
+            motion_shots: 1,
+            motion_safety_passed: true,
+            render_transport: Some("wsl".to_string()),
+            render_environment_fingerprint: Some("c".repeat(64)),
+            verified: true,
+        };
+        let json = serde_json::to_string(&receipt).unwrap();
+
+        assert!(!json.contains("C:\\"));
+        assert!(!json.contains("/home/"));
+        assert!(!json.contains("\"path\""));
+        assert!(!json.contains("artifact_manifest"));
+        assert!(!json.contains("\"inputs\""));
     }
     use crate::production::{FocalPoint, ProtectedRegion, Shot};
 

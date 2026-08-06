@@ -110,9 +110,12 @@ cargo run -- quality-check production/conformed/scene-v2/manifest.yaml --output 
 cargo run -- animatic-render production/conformed/scene-v2/manifest.yaml `
   --asset-root C:/src/consumer --audio production/audio/master.wav `
   --captions production/conformed/scene-v2/captions.srt `
-  --output production/video/private-review-smooth-v022.mp4 `
+  --output production/video/private-review-smooth-v026.mp4 `
   --motion-quality smooth --motion-curve ease-in-out
-cargo run -- motion-analyze production/video/private-review-smooth-v022.mp4 --output json
+cargo run -- motion-analyze production/video/private-review-smooth-v026.mp4 --output json
+cargo run -- animatic-check production/video/private-review-smooth-v026.artifacts.json --output json
+cargo run -- animatic-receipt production/video/private-review-smooth-v026.artifacts.json `
+  --output production/video/private-review-smooth-v026.receipt.json --format json
 ```
 
 Untimed manifests validate and produce useful storyboard plans while render and
@@ -158,6 +161,14 @@ transport, FFmpeg/ffprobe versions, all seven required capabilities, and a
 deterministic SHA-256 fingerprint. `animatic-check` requires and validates this
 lineage for v0.2.5+ artifacts. See
 [`docs/render-lineage-v0.2.5.md`](docs/render-lineage-v0.2.5.md).
+
+CLI v0.2.6 keeps `reel.manifest.v0.2` unchanged and adds a privacy-safe sharing
+boundary. `animatic-receipt` verifies the full local artifact, then writes a
+path-free `reel.animatic-receipt.v0.1` containing binding hashes, delivery and
+motion facts, generic input counts, transport, and the render-environment
+fingerprint. It carries no work ID, filenames, local paths, or input IDs/hashes
+and does not imply approval. See
+[`docs/privacy-safe-receipt-v0.2.6.md`](docs/privacy-safe-receipt-v0.2.6.md).
 
 ## Renderer direction
 

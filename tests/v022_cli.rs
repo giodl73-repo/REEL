@@ -32,7 +32,7 @@ fn smooth_motion_is_the_default_and_records_complete_lineage() {
         String::from_utf8_lossy(&output.stderr)
     );
     let report = &report[0];
-    assert_eq!(report["tool_version"], "0.2.5");
+    assert_eq!(report["tool_version"], "0.2.6");
     assert!(report["render_environment"].is_null());
     assert_eq!(report["motion"]["backend"], "ffmpeg-perspective");
     assert_eq!(report["motion"]["quality"], "smooth");
@@ -208,6 +208,72 @@ fn real_sanitized_pan_makes_legacy_fail_and_smooth_pass() {
             .len(),
         64
     );
+
+    let receipt_path = dir.path().join("shareable.receipt.json");
+    let receipt_command = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .arg("animatic-receipt")
+        .arg(&artifact_path)
+        .arg("--output")
+        .arg(&receipt_path)
+        .args(["--format", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        receipt_command.status.success(),
+        "{}",
+        String::from_utf8_lossy(&receipt_command.stderr)
+    );
+    let receipt: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+    assert_eq!(receipt["schema"], "reel.animatic-receipt.v0.1");
+    assert_eq!(receipt["output_sha256"], smooth_artifact["output_sha256"]);
+    assert!(receipt["verified"].as_bool().unwrap());
+    assert_eq!(
+        receipt["render_environment_fingerprint"],
+        smooth_artifact["render_environment"]["fingerprint_sha256"]
+    );
+    let receipt_text = serde_json::to_string(&receipt).unwrap();
+    assert!(!receipt_text.contains(MANIFEST));
+    assert!(!receipt_text.contains(&dir.path().display().to_string()));
+    assert!(!receipt_text.contains("artifact_manifest"));
+    assert!(!receipt_text.contains("\"path\""));
+    let preserved_receipt = fs::read(&receipt_path).unwrap();
+    let overwrite_receipt = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .arg("animatic-receipt")
+        .arg(&artifact_path)
+        .arg("--output")
+        .arg(&receipt_path)
+        .output()
+        .unwrap();
+    assert!(!overwrite_receipt.status.success());
+    assert_eq!(fs::read(&receipt_path).unwrap(), preserved_receipt);
+
+    let mut unknown_kind_artifact = smooth_artifact.clone();
+    let visual_input = unknown_kind_artifact["inputs"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|input| input["kind"] == "visual")
+        .unwrap();
+    visual_input["kind"] = Value::String(r"C:\private\photo.jpg".to_string());
+    let unknown_kind_path = dir.path().join("unknown-kind.artifacts.json");
+    fs::write(
+        &unknown_kind_path,
+        serde_json::to_vec_pretty(&unknown_kind_artifact).unwrap(),
+    )
+    .unwrap();
+    let unknown_kind_receipt_path = dir.path().join("unknown-kind.receipt.json");
+    let unknown_kind_receipt = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .arg("animatic-receipt")
+        .arg(&unknown_kind_path)
+        .arg("--output")
+        .arg(&unknown_kind_receipt_path)
+        .output()
+        .unwrap();
+    assert!(unknown_kind_receipt.status.success());
+    let unknown_kind_text = fs::read_to_string(&unknown_kind_receipt_path).unwrap();
+    assert!(!unknown_kind_text.contains("private"));
+    let unknown_kind_value: Value = serde_json::from_str(&unknown_kind_text).unwrap();
+    assert_eq!(unknown_kind_value["input_kinds"]["other"], 1);
 
     let mut tampered_artifact = smooth_artifact.clone();
     tampered_artifact["output_sha256"] = Value::String("0".repeat(64));
