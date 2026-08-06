@@ -11,7 +11,13 @@ use serde::{Deserialize, Serialize};
 use tempfile::Builder;
 
 use super::ffmpeg::{FfmpegAdapter, RenderEnvironmentReport};
-use crate::production::{self, TimingStatus};
+use crate::{
+    caption::CaptionThresholds,
+    caption_presentation::{
+        self, CaptionLineage, CaptionPresentationOptions, CaptionProfile, SpeakerLabelPolicy,
+    },
+    production::{self, TimingStatus},
+};
 
 pub const NEAR_STATIONARY_LUMA_THRESHOLD: f64 = 0.001;
 pub const MAX_NEAR_STATIONARY_FRACTION: f64 = 0.10;
@@ -61,6 +67,12 @@ pub struct AnimaticRenderOptions {
     pub audio: Option<PathBuf>,
     pub silent: bool,
     pub captions: PathBuf,
+    pub caption_presentation: Option<PathBuf>,
+    pub caption_profile: CaptionProfile,
+    pub speaker_label_policy: SpeakerLabelPolicy,
+    pub speaker_reintroduce_after_ms: Option<u64>,
+    pub caption_thresholds: CaptionThresholds,
+    pub caption_policy_note: Option<String>,
     pub output: PathBuf,
     pub width: u32,
     pub height: u32,
@@ -88,6 +100,8 @@ pub struct AnimaticRenderReport {
     #[serde(default)]
     pub render_environment: Option<RenderEnvironmentReport>,
     pub motion: MotionLineage,
+    #[serde(default)]
+    pub captions: Option<CaptionLineage>,
     pub dry_run: bool,
     pub silent: bool,
     pub command_arguments: Vec<String>,
@@ -472,6 +486,24 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
             options.output.display()
         );
     }
+    let captions = options
+        .captions
+        .canonicalize()
+        .with_context(|| format!("failed to resolve captions {}", options.captions.display()))?;
+    let caption_lineage = caption_presentation::prepare(
+        &loaded,
+        CaptionPresentationOptions {
+            captions: &captions,
+            presentation: options.caption_presentation.as_deref(),
+            profile: options.caption_profile,
+            policy: options.speaker_label_policy,
+            reintroduce_after_ms: options.speaker_reintroduce_after_ms,
+            thresholds: options.caption_thresholds,
+            threshold_policy_note: options.caption_policy_note.as_deref(),
+            width: options.width,
+            height: options.height,
+        },
+    )?;
     let asset_root = options.asset_root.canonicalize().with_context(|| {
         format!(
             "failed to resolve asset root {}",
@@ -542,10 +574,6 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         ]);
         durations.push(duration);
     }
-    let captions = options
-        .captions
-        .canonicalize()
-        .with_context(|| format!("failed to resolve captions {}", options.captions.display()))?;
     let audio = options
         .audio
         .as_ref()
@@ -568,6 +596,20 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         path: captions.display().to_string(),
         sha256: production::sha256_path(&captions)?,
     });
+    if let Some(presentation) = &options.caption_presentation {
+        let presentation = presentation.canonicalize().with_context(|| {
+            format!(
+                "failed to resolve caption presentation {}",
+                presentation.display()
+            )
+        })?;
+        inputs.push(AnimaticInput {
+            kind: "caption-presentation".to_string(),
+            id: "caption-presentation".to_string(),
+            path: presentation.display().to_string(),
+            sha256: production::sha256_path(&presentation)?,
+        });
+    }
     if let Some(audio) = &audio {
         args.extend(["-i".to_string(), adapter.path_argument(audio)?]);
     }
@@ -611,23 +653,36 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         .replace(':', "\\:")
         .replace('\'', "\\'");
     let disclosure = escape_drawtext(&options.disclosure);
-    let caption_font_size = if options.height > options.width {
-        20
-    } else {
-        18
-    };
-    let caption_margin = if options.height > options.width {
-        32
-    } else {
-        16
-    };
+    let caption_font_size = caption_lineage.style.caption_font_size;
+    let caption_margin = options.height.saturating_sub(
+        caption_lineage.style.caption_region.y + caption_lineage.style.caption_region.height,
+    );
+    let caption_margin_x = caption_lineage.style.caption_region.x;
     let disclosure_font_size = if options.height > options.width {
         18
     } else {
         14
     };
+    let mut presentation_filters = format!(
+        "subtitles=filename='{caption_path}':force_style='FontName=Sans,FontSize={caption_font_size},MarginL={caption_margin_x},MarginR={caption_margin_x},MarginV={caption_margin},Outline={},Shadow=0,Alignment=2',drawtext=text='{disclosure}':fontcolor=white@0.68:fontsize={disclosure_font_size}:x=w-tw-24:y=20:box=1:boxcolor=black@0.3:boxborderw=5",
+        caption_lineage.style.caption_outline_px
+    );
+    for event in &caption_lineage.label_events {
+        let label = escape_drawtext(&event.audience_label);
+        presentation_filters.push_str(&format!(
+            ",drawtext=text='{label}':fontcolor={}:fontsize={}:x={}:y={}:box=1:boxcolor={}:boxborderw={}:enable='between(t,{:.3},{:.3})'",
+            caption_lineage.style.badge_text_color,
+            caption_lineage.style.badge_font_size_px,
+            caption_lineage.style.badge_region.x,
+            caption_lineage.style.badge_region.y,
+            caption_lineage.style.badge_background,
+            caption_lineage.style.badge_padding_px,
+            event.start_ms as f64 / 1000.0,
+            event.end_ms as f64 / 1000.0,
+        ));
+    }
     filters.push(format!(
-        "[{previous}]subtitles=filename='{caption_path}':force_style='FontSize={caption_font_size},MarginV={caption_margin},Outline=2,Shadow=0,Alignment=2',drawtext=text='{disclosure}':fontcolor=white@0.68:fontsize={disclosure_font_size}:x=w-tw-24:y=20:box=1:boxcolor=black@0.3:boxborderw=5,format=yuv420p[finalv]"
+        "[{previous}]{presentation_filters},format=yuv420p[finalv]"
     ));
     let output_parent = options
         .output
@@ -804,6 +859,7 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         ffmpeg_version,
         render_environment,
         motion,
+        captions: Some(caption_lineage),
         dry_run: options.dry_run,
         silent: options.silent,
         command_arguments: args,
@@ -1295,6 +1351,15 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
         .iter()
         .find(|input| input.kind == "captions")
         .ok_or_else(|| anyhow!("artifact report has no captions input"))?;
+    if report
+        .inputs
+        .iter()
+        .filter(|input| input.kind == "captions")
+        .count()
+        != 1
+    {
+        bail!("artifact report must contain exactly one captions input");
+    }
     let cues = crate::series::parse_srt(&fs::read_to_string(&captions.path)?)?;
     if cues.first().is_none_or(|cue| cue.index != 1) {
         bail!("captions must contain contiguous cues beginning at 1");
@@ -1304,6 +1369,58 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
         .is_some_and(|cue| cue.end_ms > report.duration_ms)
     {
         bail!("captions extend beyond the conformed duration");
+    }
+    if tool_version >= (0, 2, 9) && report.captions.is_none() {
+        bail!("v0.2.9+ artifact report has no caption preflight lineage");
+    }
+    if let Some(lineage) = &report.captions {
+        if lineage.schema != caption_presentation::CAPTION_LINEAGE_SCHEMA
+            || lineage.captions_sha256 != captions.sha256
+            || !lineage.passed
+        {
+            bail!("caption lineage does not match the artifact captions input");
+        }
+        let presentation_inputs = report
+            .inputs
+            .iter()
+            .filter(|input| input.kind == "caption-presentation")
+            .collect::<Vec<_>>();
+        let presentation = match &lineage.presentation_input_sha256 {
+            Some(expected) => {
+                if presentation_inputs.len() != 1 || presentation_inputs[0].sha256 != *expected {
+                    bail!("caption presentation lineage does not match artifact inputs");
+                }
+                Some(Path::new(&presentation_inputs[0].path))
+            }
+            None => {
+                if !presentation_inputs.is_empty() {
+                    bail!("artifact has an unexpected caption presentation input");
+                }
+                None
+            }
+        };
+        let reconstructed = caption_presentation::prepare(
+            &loaded,
+            CaptionPresentationOptions {
+                captions: Path::new(&captions.path),
+                presentation,
+                profile: CaptionProfile::parse(&lineage.profile)?,
+                policy: SpeakerLabelPolicy::parse(&lineage.speaker_label_policy)?,
+                reintroduce_after_ms: lineage.speaker_reintroduce_after_ms,
+                thresholds: CaptionThresholds {
+                    max_chars_per_line: lineage.thresholds.max_chars_per_line,
+                    max_lines_per_cue: lineage.thresholds.max_lines_per_cue,
+                    max_reading_speed_cps: lineage.thresholds.max_reading_speed_cps,
+                    min_duration_ms: lineage.thresholds.min_duration_ms,
+                },
+                threshold_policy_note: lineage.threshold_policy_note.as_deref(),
+                width: report.width,
+                height: report.height,
+            },
+        )?;
+        if reconstructed != *lineage {
+            bail!("caption preflight or presentation lineage is inconsistent");
+        }
     }
     let adapter = FfmpegAdapter;
     let probe: ProbeReport = serde_json::from_str(&adapter.ffprobe_json(&output)?)

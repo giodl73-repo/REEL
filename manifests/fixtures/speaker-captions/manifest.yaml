@@ -1,0 +1,218 @@
+manifest_version: reel.manifest.v0.2
+profile: animatic
+timing_status: conformed
+work: fixture-speaker-caption-presentation
+title: Synthetic three-speaker caption presentation
+source_scenario:
+  repo: FIXTURE
+  path: fixtures/synthetic-speaker-grid
+  id: speaker-caption-presentation
+  source_commit: fixture-only
+format: explainer
+style: illustrated-2d
+audience:
+  primary: caption presentation testers
+  context: sanitized local acceptance
+  desired_effect: distinguish explicit speaker badges from spoken captions
+platforms:
+  - name: widescreen-review
+    aspect_ratio: "16:9"
+    target_duration_seconds: 42.155
+    sound_optional: true
+    device: desktop
+  - name: phone-review
+    aspect_ratio: "9:16"
+    target_duration_seconds: 42.155
+    sound_optional: true
+    device: phone
+continuity:
+  entities: []
+  canon_constraints:
+    - All speakers, text, frames, and timing are synthetic fixture material.
+scenes:
+  - id: scene-speakers
+    duration_seconds: 42.155
+    purpose: Exercise separate caption and speaker-label presentation.
+    story_beat: Three abstract guides enter, return, and hand off a neutral pattern.
+    location: synthetic color grid
+    characters: []
+    continuity_notes: []
+shots:
+  - id: shot-a
+    scene_id: scene-speakers
+    start_seconds: 0.0
+    duration_seconds: 14.0
+    camera: restrained hold
+    action: The blue grid establishes the first two guides.
+    visual_prompt: Synthetic blue geometry without source material.
+    visual_asset: frame-a.ppm
+    motion: hold
+    style_constraints: [synthetic fixture, caption-safe]
+    transition_out: cut
+    narration_cue_ids: [cue-a, cue-b, cue-c, cue-d]
+    source_refs: [fixture-source]
+    focal_point: { x: 0.5, y: 0.45 }
+    protected_regions:
+      - { id: caption-safe, x: 0.05, y: 0.72, width: 0.90, height: 0.22 }
+      - { id: badge-safe, x: 0.05, y: 0.05, width: 0.55, height: 0.12 }
+  - id: shot-b
+    scene_id: scene-speakers
+    start_seconds: 14.0
+    duration_seconds: 14.0
+    camera: restrained hold
+    action: The amber grid carries the second and third guides.
+    visual_prompt: Synthetic amber geometry without source material.
+    visual_asset: frame-b.ppm
+    motion: hold
+    style_constraints: [synthetic fixture, caption-safe]
+    transition_out: cut
+    narration_cue_ids: [cue-d, cue-e, cue-f]
+    source_refs: [fixture-source]
+    focal_point: { x: 0.5, y: 0.45 }
+    protected_regions:
+      - { id: caption-safe, x: 0.05, y: 0.72, width: 0.90, height: 0.22 }
+      - { id: badge-safe, x: 0.05, y: 0.05, width: 0.55, height: 0.12 }
+  - id: shot-c
+    scene_id: scene-speakers
+    start_seconds: 28.0
+    duration_seconds: 14.155
+    camera: restrained hold
+    action: The green grid returns to the first and third guides.
+    visual_prompt: Synthetic green geometry without source material.
+    visual_asset: frame-c.ppm
+    motion: hold
+    style_constraints: [synthetic fixture, caption-safe]
+    transition_out: fade
+    narration_cue_ids: [cue-g, cue-h]
+    source_refs: [fixture-source]
+    focal_point: { x: 0.5, y: 0.45 }
+    protected_regions:
+      - { id: caption-safe, x: 0.05, y: 0.72, width: 0.90, height: 0.22 }
+      - { id: badge-safe, x: 0.05, y: 0.05, width: 0.55, height: 0.12 }
+speakers:
+  - id: guide-alpha
+    display_name: Internal Alpha Guide
+    language: en
+    pronunciation_profile: fixture-neutral
+    performance_direction: measured
+    approval_reference: fixture/no-human-voice
+    asset_kind: guide
+  - id: guide-beta
+    display_name: Internal Beta Guide
+    language: en
+    pronunciation_profile: fixture-neutral
+    performance_direction: measured
+    approval_reference: fixture/no-human-voice
+    asset_kind: guide
+  - id: guide-gamma
+    display_name: Internal Gamma Guide
+    language: en
+    pronunciation_profile: fixture-neutral
+    performance_direction: measured
+    approval_reference: fixture/no-human-voice
+    asset_kind: guide
+narration_cues:
+  - id: cue-a
+    speaker_id: guide-alpha
+    text: A pale marker crosses the quiet grid. Three measured steps follow.
+    source_refs: [fixture-source]
+    shot_ids: [shot-a]
+    start_seconds: 0.0
+    duration_seconds: 4.0
+  - id: cue-b
+    speaker_id: guide-beta
+    text: A second guide names the turn.
+    source_refs: [fixture-source]
+    shot_ids: [shot-a]
+    start_seconds: 4.155
+    duration_seconds: 4.0
+  - id: cue-c
+    speaker_id: guide-alpha
+    text: The first guide returns softly. The marker keeps its steady pace.
+    source_refs: [fixture-source]
+    shot_ids: [shot-a]
+    start_seconds: 8.155
+    duration_seconds: 5.0
+  - id: cue-d
+    speaker_id: guide-gamma
+    text: A third guide enters at the amber field.
+    source_refs: [fixture-source]
+    shot_ids: [shot-a, shot-b]
+    start_seconds: 13.155
+    duration_seconds: 4.0
+  - id: cue-e
+    speaker_id: guide-beta
+    text: The second guide checks the line. No source story is present.
+    source_refs: [fixture-source]
+    shot_ids: [shot-b]
+    start_seconds: 17.155
+    duration_seconds: 5.0
+  - id: cue-f
+    speaker_id: guide-gamma
+    text: Neutral shapes hold the timing constant.
+    source_refs: [fixture-source]
+    shot_ids: [shot-b]
+    start_seconds: 22.155
+    duration_seconds: 6.0
+  - id: cue-g
+    speaker_id: guide-alpha
+    text: The first guide returns after a long absence.
+    source_refs: [fixture-source]
+    shot_ids: [shot-c]
+    start_seconds: 28.155
+    duration_seconds: 7.0
+  - id: cue-h
+    speaker_id: guide-gamma
+    text: The third guide closes the synthetic proof.
+    source_refs: [fixture-source]
+    shot_ids: [shot-c]
+    start_seconds: 35.155
+    duration_seconds: 7.0
+protected_pauses: []
+source_ranges:
+  - { id: fixture-source, start: 1, end: 8, label: synthetic cue units }
+omissions: []
+audio:
+  narration_voice: none
+  music_direction: none
+  effects_direction: none
+  silence_notes: intentionally silent fixture
+captions:
+  required: true
+  style: separate-speaker-badge
+  language: en
+  sound_off_complete: true
+renderer_assumptions:
+  candidates: [ffmpeg]
+  blockers: []
+exports:
+  - id: widescreen-review
+    filename: speaker-caption-widescreen.mp4
+    aspect_ratio: "16:9"
+    duration_seconds: 42.155
+  - id: phone-review
+    filename: speaker-caption-phone.mp4
+    aspect_ratio: "9:16"
+    duration_seconds: 42.155
+lineage:
+  parent_manifest: null
+  root_work: fixture-speaker-caption-presentation
+  scene_key: scene-speakers
+  transformation_reason: sanitized v0.2.9 caption presentation acceptance fixture
+  changed_dimensions: [captions]
+  review_candidate: true
+  principal_approved: false
+  created_unix: 1786089600
+review:
+  required_roles: [editor, platform-audience, sound-designer]
+  status: fixture
+  principal_findings: []
+quality_controls:
+  max_uninterrupted_hold_seconds: 43
+  require_focal_points: true
+  require_protected_regions: true
+  no_lip_sync: true
+  ab_outputs: []
+provider_handoff:
+  asset_ids: []
+  text_fields: []

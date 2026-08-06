@@ -1,0 +1,20 @@
+schema: reel.caption-presentation.v0.1
+speakers:
+  - speaker_id: guide-alpha
+    audience_label: Guide One
+  - speaker_id: guide-beta
+    audience_label: Guide Two
+  - speaker_id: guide-gamma
+    audience_label: Guide Three
+cues:
+  - { srt_index: 1, narration_cue_id: cue-a }
+  - { srt_index: 2, narration_cue_id: cue-a }
+  - { srt_index: 3, narration_cue_id: cue-b }
+  - { srt_index: 4, narration_cue_id: cue-c }
+  - { srt_index: 5, narration_cue_id: cue-c }
+  - { srt_index: 6, narration_cue_id: cue-d }
+  - { srt_index: 7, narration_cue_id: cue-e }
+  - { srt_index: 8, narration_cue_id: cue-e }
+  - { srt_index: 9, narration_cue_id: cue-f }
+  - { srt_index: 10, narration_cue_id: cue-g }
+  - { srt_index: 11, narration_cue_id: cue-h }

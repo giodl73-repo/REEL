@@ -7,7 +7,7 @@ source_scenario: C:/src/bertica
 author: bertica-production
 rubric_version: v0.1
 created: 2026-08-04
-updated: 2026-08-05
+updated: 2026-08-06
 sources:
   - C:/src/bertica/production/reel
   - C:/src/bertica/production/visual
@@ -410,6 +410,240 @@ Please respond with:
 - confirmation that current `reel.manifest.v0.2` files need no migration;
 - the artifact-report fields BERTICA should retain with each rerender.
 
+## v0.2.9+ follow-up after BERTICA caption and review labs
+
+REEL v0.2.8 is a strong production baseline. BERTICA verified the complete test
+suite, render-environment fingerprinting, privacy-safe receipts, recipient-side
+receipt checks, and the new caption-accessibility gate. Applying `caption-check`
+to a real three-speaker experiment immediately found line-length and reading-load
+problems that were not obvious from a desktop frame review.
+
+The next requests are narrower. They should remain additive to
+`reel.manifest.v0.2` where practical and should not pull manuscript truth, voice
+synthesis, private photographs, or human approval authority into REEL.
+
+### P0 — Speaker-aware caption presentation and automatic preflight
+
+BERTICA now has narration cues with stable `speaker_id` values, speaker display
+names, exact caption timing, and three experimentally useful presentation rules:
+
+- no visible speaker label;
+- label a speaker on first audible entrance;
+- label every spoken cue;
+- later, reintroduce a speaker after a configurable absence.
+
+Today BERTICA must insert names into SRT text. That consumes the same two lines
+and reading-speed budget as the spoken words, and it cannot distinguish a
+speaker badge from dialogue transcription. Please add a renderer-neutral
+speaker-caption presentation layer that can consume the existing manifest
+speaker/cue identities.
+
+Required behavior:
+
+- Support policies such as `none`, `first-entrance`, `persistent`, and
+  `reintroduce-after-ms`.
+- Permit an audience-facing label distinct from internal speaker identity and
+  formal display name, for example `Abuela Sara` rather than a production ID.
+- Render the speaker label as a small, separately styled badge or name line so
+  it does not silently mutate the caption text.
+- Define deterministic placement, font, scale, contrast, background, margins,
+  and platform-safe regions for 16:9 and 9:16 outputs.
+- Keep the SRT text and speaker-label presentation separately hashed and
+  represented in artifact lineage.
+- Run the v0.2.8 caption policy automatically before `animatic-render` sends an
+  expensive graph to FFmpeg. A failing preflight must leave no partial MP4 or
+  artifact report.
+- Record the threshold policy, caption report hash, speaker-label policy, style
+  profile, and presentation-input hash in the successful artifact report.
+- Preserve an explicit override for a documented language/platform policy; the
+  override and values must remain visible in the report.
+- Never infer a speaker label from caption text or filename. Use explicit cue
+  mapping and fail on an unknown speaker.
+
+Suggested command shape, with exact names left to REEL:
+
+```text
+reel animatic-render manifest.yaml ... \
+  --caption-profile youtube-review \
+  --speaker-label-policy first-entrance \
+  --speaker-reintroduce-after-ms 30000
+```
+
+Automated acceptance test:
+
+1. Use a sanitized 42.155-second, three-speaker fixture with eleven delivery
+   cues derived from eight source cues. Do not use BERTICA text, names, audio,
+   images, or paths.
+2. Render `none`, `first-entrance`, and `persistent` variants from one fixed
+   audio/video timeline.
+3. Prove all text cues meet 42 characters per line, two lines per cue, 20 CPS,
+   and 1,000-ms minimum duration.
+4. Prove the name badge is present only at the correct entrances, stays inside
+   its protected region, and does not alter the SRT hash or spoken-word timing.
+5. Repeat at 1280×720 and a phone-first 9:16 target.
+6. Reject an unknown speaker, overlapping badge/caption safe areas, an
+   accessibility failure, and an infeasible font/margin profile atomically.
+7. Verify `animatic-check`, privacy-safe receipt generation, and receipt-to-video
+   verification under the new artifact fields.
+
+### P1 — Deterministic local audio-quality gate
+
+Long-form narration needs the same preflight discipline now available for
+captions and render environments. Please add a local `audio-check` that audits a
+master or declared stems without uploading audio or exposing private paths.
+
+Required measurements:
+
+- integrated loudness (LUFS-I), loudness range, and true peak;
+- clipping or near-clipping samples;
+- channel count, sample rate, codec/bit depth where available, and duration;
+- leading, trailing, and unexpectedly long internal silence;
+- optional narration-versus-effects/music level margin when stems are supplied;
+- hash binding to the inspected audio;
+- configurable audiobook, podcast, and private-review profiles.
+
+Output requirements:
+
+- JSON must omit filenames, local paths, transcript text, speaker names, and
+  manuscript references.
+- Violations should identify time ranges and measurements without reproducing
+  private speech.
+- A successful `animatic-render` should optionally bind the audio-check report
+  hash and chosen profile into its artifact lineage.
+- This is analysis and gating only. REEL must not normalize, clone, synthesize,
+  or upload a voice unless a separate explicit derivative command is designed.
+
+Suggested command shape:
+
+```text
+reel audio-check narration.wav --profile private-review --output json
+reel audio-check mix.wav --narration-stem narration.wav \
+  --effects-music-stem effects.wav --profile youtube-audiobook --output json
+```
+
+Automated acceptance test:
+
+1. A sanitized narration master near -19 LUFS passes the private-review profile.
+2. A clipped master fails with measured evidence and no private path.
+3. A narration-plus-ambience fixture reports the declared level margin.
+4. A duration mismatch between checked audio and a conformed manifest fails
+   before rendering.
+5. Tampering with the audio invalidates its report binding.
+
+### P1 — Controlled comparison composer
+
+BERTICA repeatedly creates A/B/C decision aids: voice candidates, legacy versus
+smooth motion, speaker-caption policies, magical-realist visual distance, and
+sound treatments. We currently assemble titles, ordering, chimes, blind labels,
+and review instructions outside REEL.
+
+Please add a small comparison contract, separate from scene canon, that
+references already verified videos or privacy-safe receipts.
+
+Required behavior:
+
+- Compose two or more variants in declared order.
+- Support an opening explanation slate, per-variant slate, optional local chime,
+  protected silence, and optional replay.
+- Support descriptive labels and deterministic blinded labels from a recorded
+  seed, while keeping the private decode map out of the shareable receipt.
+- Declare which dimensions are fixed and which one is allowed to change, such
+  as captions, motion, voice, mix, or visual treatment.
+- When a dimension is declared fixed, compare the available hashes, duration,
+  stream facts, and artifact evidence and reject a mismatch rather than merely
+  trusting the label.
+- Preserve each child receipt and create a parent artifact report plus a new
+  path-free receipt for the comparison MP4.
+- Do not treat inclusion, order, or a blind label as human preference or
+  approval.
+
+Suggested contract and command shape:
+
+```text
+reel comparison-compose comparison.yaml \
+  --output speaker-identity-review.mp4 --format json
+```
+
+Automated acceptance test:
+
+1. Compose three sanitized 42.155-second variants whose only declared changed
+   dimension is caption presentation.
+2. Add a neutral opening slate, labels A/B/C, and a short non-startling chime.
+3. Prove the three child timelines are intact and the declared fixed audio facts
+   match.
+4. Reject one child with a changed duration or audio hash.
+5. Produce and verify a privacy-safe parent receipt.
+
+### P1 — Explicit independent human-decision records
+
+BERTICA and Herman are separate principals and may disagree. Existing manifest
+review fields and series queues correctly avoid inferred approval, but recording
+an actual artifact-specific choice is still a manual document workflow.
+
+Please add an explicit, local, append-only review-decision derivative.
+
+Required behavior:
+
+- Bind a finding to an exact video hash, artifact-report hash, or privacy-safe
+  receipt hash.
+- Record reviewer key, selected option or objection, reason, timestamp, scope,
+  and whether the finding is advisory or exercises final authority.
+- Preserve multiple reviewers independently. Never average, overwrite, or infer
+  consensus.
+- Permit a later resolution record that cites the earlier disagreement without
+  deleting it.
+- Do not claim authentication, signature, consent, or approval merely because a
+  reviewer name is present.
+- Keep free-form human reasons private by default; any shareable summary must be
+  a separate intentional derivative.
+- Let `series-review-queue` report missing findings, disagreement, explicit
+  resolution, and remaining release gates without copying private prose.
+
+Suggested command shape:
+
+```text
+reel review-record artifact.receipt.json finding.yaml \
+  --output reviews/2026-08-06-reviewer-a.json --format json
+```
+
+Automated acceptance test:
+
+1. Reviewer A selects variant B and reviewer B selects variant C.
+2. The queue reports disagreement and remains release-blocked.
+3. A later final-authority resolution cites both findings and selects B.
+4. The original findings remain immutable and inspectable.
+5. A name without an artifact hash, a finding that invents approval, or an
+   overwrite attempt fails.
+
+### P2 — Rendered caption-layout evidence
+
+`caption-check` correctly states that it does not inspect burned pixels. Add a
+small deterministic layout report so human device review has better evidence.
+
+Useful outputs:
+
+- computed caption and speaker-badge bounding boxes per cue;
+- font size in output pixels, margins, safe-area intersections, and maximum
+  occupied screen percentage;
+- contrast/background treatment declared by the renderer;
+- representative first/middle/last caption frames or a caption contact sheet;
+- artifact binding without OCR or claims about translation accuracy.
+
+This can follow the P0 presentation layer. It should not attempt to replace
+human phone/television review or accessibility expertise.
+
+### Explicit non-requests
+
+BERTICA does not need REEL to:
+
+- clone, synthesize, select, or approve a person's voice;
+- ingest private voice samples or photographs;
+- decide family-facing names or character likeness;
+- rewrite manuscript text, captions, translations, or poetry;
+- infer Bertica's or Herman's approval;
+- publish or upload a derivative;
+- become a required runtime dependency of the BERTICA repository.
+
 ## Recommended implementation order
 
 1. Untimed planning manifests.
@@ -432,6 +666,14 @@ For v0.2.2, the recommended order is:
 2. Implement a subpixel-capable smooth path plus explicit legacy mode.
 3. Add motion lineage, duration/atomicity checks, and cross-platform tests.
 4. Deliver a short legacy-versus-smooth visual proof and consumption commands.
+
+For the v0.2.9+ follow-up, the recommended order is:
+
+1. Automatic caption preflight and speaker-label presentation.
+2. Rendered caption-layout evidence.
+3. Local audio-quality gate and artifact binding.
+4. Controlled comparison composition.
+5. Independent human-decision records and series-queue integration.
 
 ## Cross-repo handoff request
 

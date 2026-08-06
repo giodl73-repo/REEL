@@ -14,6 +14,7 @@ use tempfile::tempdir;
 
 pub mod adapters;
 pub mod caption;
+pub mod caption_presentation;
 pub mod continuity;
 pub mod cue_import;
 pub mod production;

@@ -111,6 +111,8 @@ cargo run -- caption-check production/conformed/scene-v2/captions.srt --output j
 cargo run -- animatic-render production/conformed/scene-v2/manifest.yaml `
   --asset-root C:/src/consumer --audio production/audio/master.wav `
   --captions production/conformed/scene-v2/captions.srt `
+  --caption-presentation production/conformed/scene-v2/caption-presentation.yaml `
+  --caption-profile youtube-review --speaker-label-policy first-entrance `
   --output production/video/private-review-smooth-v026.mp4 `
   --motion-quality smooth --motion-curve ease-in-out
 cargo run -- motion-analyze production/video/private-review-smooth-v026.mp4 --output json
@@ -186,6 +188,15 @@ minimum display time, characters per line, lines per cue, and reading speed.
 Thresholds are explicit and configurable, while JSON output omits caption text
 and local paths. See
 [`docs/caption-accessibility-v0.2.8.md`](docs/caption-accessibility-v0.2.8.md).
+
+CLI v0.2.9 keeps `reel.manifest.v0.2` unchanged and runs that caption policy
+automatically before every `animatic-render`. A strict, separately versioned
+caption-presentation sidecar maps delivery cues to existing narration cues and
+audience-facing speaker labels. Deterministic `none`, `first-entrance`,
+`persistent`, and timed-reintroduction policies render a separate badge without
+mutating SRT text; artifact verification reconstructs every caption and
+presentation hash. See
+[`docs/speaker-caption-presentation-v0.2.9.md`](docs/speaker-caption-presentation-v0.2.9.md).
 
 ## Renderer direction
 

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
 fn print_report(report: &impl Serialize, output: OutputFormat) -> Result<()> {
@@ -394,6 +394,7 @@ fn run_cli() -> Result<()> {
             narration_only_audio,
             effects_music_audio,
             captions,
+            caption_options,
             output_path,
             width,
             height,
@@ -411,6 +412,17 @@ fn run_cli() -> Result<()> {
                 audio,
                 silent,
                 captions,
+                caption_presentation: caption_options.caption_presentation,
+                caption_profile: caption_options.caption_profile,
+                speaker_label_policy: caption_options.speaker_label_policy,
+                speaker_reintroduce_after_ms: caption_options.speaker_reintroduce_after_ms,
+                caption_thresholds: reel::caption::CaptionThresholds {
+                    max_chars_per_line: caption_options.max_caption_chars_per_line,
+                    max_lines_per_cue: caption_options.max_caption_lines_per_cue,
+                    max_reading_speed_cps: caption_options.max_caption_reading_speed_cps,
+                    min_duration_ms: caption_options.min_caption_duration_ms,
+                },
+                caption_policy_note: caption_options.caption_policy_note,
                 output: output_path,
                 width,
                 height,
@@ -967,6 +979,32 @@ struct Cli {
     command: Box<Command>,
 }
 
+#[derive(Debug, Args)]
+struct AnimaticCaptionArgs {
+    /// Strict renderer-neutral cue/speaker mapping used for visible speaker badges.
+    #[arg(long)]
+    caption_presentation: Option<PathBuf>,
+    /// Select deterministic caption and speaker-badge geometry.
+    #[arg(long, value_enum, default_value_t = reel::caption_presentation::CaptionProfile::PrivateReview)]
+    caption_profile: reel::caption_presentation::CaptionProfile,
+    /// Select when explicit audience-facing speaker labels are shown.
+    #[arg(long, value_enum, default_value_t = reel::caption_presentation::SpeakerLabelPolicy::None)]
+    speaker_label_policy: reel::caption_presentation::SpeakerLabelPolicy,
+    #[arg(long)]
+    speaker_reintroduce_after_ms: Option<u64>,
+    #[arg(long, default_value_t = 42)]
+    max_caption_chars_per_line: usize,
+    #[arg(long, default_value_t = 2)]
+    max_caption_lines_per_cue: usize,
+    #[arg(long, default_value_t = 20.0)]
+    max_caption_reading_speed_cps: f64,
+    #[arg(long, default_value_t = 1_000)]
+    min_caption_duration_ms: u64,
+    /// Required note when overriding the default caption accessibility policy.
+    #[arg(long)]
+    caption_policy_note: Option<String>,
+}
+
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Validate a REEL manifest contract.
@@ -1125,6 +1163,8 @@ enum Command {
         effects_music_audio: Option<PathBuf>,
         #[arg(long)]
         captions: PathBuf,
+        #[command(flatten)]
+        caption_options: Box<AnimaticCaptionArgs>,
         #[arg(long = "output")]
         output_path: PathBuf,
         #[arg(long, default_value_t = 1280)]
