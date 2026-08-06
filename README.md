@@ -198,6 +198,14 @@ mutating SRT text; artifact verification reconstructs every caption and
 presentation hash. See
 [`docs/speaker-caption-presentation-v0.2.9.md`](docs/speaker-caption-presentation-v0.2.9.md).
 
+CLI v0.2.10 adds an artifact-bound `caption-layout` evidence packet without
+changing `reel.manifest.v0.2`. It records per-cue declared caption/badge boxes,
+pixel sizing, margins, renderer-declared contrast treatment, overlap and frame
+safety, and maximum occupied screen percentage. Deterministic first/middle/last
+frames and a contact sheet assist human review; the report makes no OCR,
+translation, device-legibility, or accessibility-expertise claim. See
+[`docs/caption-layout-v0.2.10.md`](docs/caption-layout-v0.2.10.md).
+
 ## Renderer direction
 
 The first researched implementation path is Linux-first in WSL2: FFmpeg for

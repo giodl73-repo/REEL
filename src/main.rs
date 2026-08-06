@@ -545,6 +545,14 @@ fn run_cli() -> Result<()> {
             let report = reel::adapters::still_animatic::check_animatic(&artifact_manifest)?;
             print_report(&report, output)?;
         }
+        Command::CaptionLayout {
+            artifact_manifest,
+            output_dir,
+            output,
+        } => {
+            let report = reel::caption_layout::write_packet(&artifact_manifest, &output_dir)?;
+            print_report(&report, output)?;
+        }
         Command::AnimaticReceipt {
             artifact_manifest,
             output_path,
@@ -1204,6 +1212,14 @@ enum Command {
     /// Verify a rendered animatic, its inputs, streams, captions, and artifact lineage.
     AnimaticCheck {
         artifact_manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Write artifact-bound caption-region geometry and representative-frame evidence.
+    CaptionLayout {
+        artifact_manifest: PathBuf,
+        #[arg(long)]
+        output_dir: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
