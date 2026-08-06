@@ -218,6 +218,7 @@ pub struct AnimaticCheckReport {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct AnimaticReceipt {
     pub schema: String,
     pub source_artifact_schema: String,
@@ -242,6 +243,22 @@ pub struct AnimaticReceipt {
     pub render_transport: Option<String>,
     pub render_environment_fingerprint: Option<String>,
     pub verified: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AnimaticReceiptCheckReport {
+    pub schema: String,
+    pub receipt_sha256: String,
+    pub video_sha256: String,
+    pub output_bytes: u64,
+    pub codec: String,
+    pub pixel_format: String,
+    pub width: u32,
+    pub height: u32,
+    pub fps: f64,
+    pub duration_ms: u64,
+    pub audio_streams: usize,
+    pub passed: bool,
 }
 
 pub fn variant_output(output: &Path, label: &str) -> PathBuf {
@@ -1414,6 +1431,7 @@ pub fn write_animatic_receipt(
         render_environment_fingerprint: environment.map(|value| value.fingerprint_sha256.clone()),
         verified: true,
     };
+    validate_animatic_receipt(&receipt)?;
     let output_parent = output
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
@@ -1431,6 +1449,185 @@ pub fn write_animatic_receipt(
         )
     })?;
     Ok(receipt)
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn validate_animatic_receipt(receipt: &AnimaticReceipt) -> Result<()> {
+    if receipt.schema != "reel.animatic-receipt.v0.1" {
+        bail!("unsupported animatic receipt schema {}", receipt.schema);
+    }
+    if receipt.source_artifact_schema != "reel.animatic-artifacts.v0.1" {
+        bail!(
+            "unsupported source artifact schema {}",
+            receipt.source_artifact_schema
+        );
+    }
+    if parse_tool_version(&receipt.tool_version)? < (0, 2, 6) {
+        bail!("animatic receipt tool version predates v0.2.6");
+    }
+    if !is_sha256(&receipt.source_artifact_sha256)
+        || !is_sha256(&receipt.output_sha256)
+        || receipt
+            .render_environment_fingerprint
+            .as_deref()
+            .is_none_or(|value| !is_sha256(value))
+    {
+        bail!("animatic receipt contains an invalid SHA-256 value");
+    }
+    if receipt.output_bytes == 0
+        || receipt.width == 0
+        || receipt.height == 0
+        || receipt.width % 2 != 0
+        || receipt.height % 2 != 0
+        || receipt.fps == 0
+        || receipt.duration_ms == 0
+        || receipt.caption_cues == 0
+        || receipt.motion_shots == 0
+    {
+        bail!("animatic receipt contains invalid delivery counts");
+    }
+    if !receipt.verified || !receipt.motion_safety_passed {
+        bail!("animatic receipt does not record successful verification");
+    }
+    if !matches!(receipt.render_transport.as_deref(), Some("native" | "wsl")) {
+        bail!("animatic receipt has an invalid render transport");
+    }
+    let motion_valid = match receipt.motion_quality.as_str() {
+        "smooth" => {
+            receipt.motion_backend == "ffmpeg-perspective"
+                && receipt.motion_interpolation == "cubic"
+                && matches!(receipt.motion_curve.as_str(), "ease-in-out" | "linear")
+        }
+        "legacy" => {
+            receipt.motion_backend == "ffmpeg-zoompan"
+                && receipt.motion_interpolation == "zoompan-default"
+                && receipt.motion_curve == "legacy-linear"
+        }
+        _ => false,
+    };
+    if !motion_valid {
+        bail!("animatic receipt has inconsistent motion lineage");
+    }
+    if receipt.input_kinds.keys().any(|kind| {
+        !matches!(
+            kind.as_str(),
+            "manifest" | "visual" | "audio" | "captions" | "other"
+        )
+    }) || receipt.input_kinds.get("manifest") != Some(&1)
+        || receipt.input_kinds.get("captions") != Some(&1)
+        || receipt
+            .input_kinds
+            .get("visual")
+            .copied()
+            .unwrap_or_default()
+            + receipt
+                .input_kinds
+                .get("other")
+                .copied()
+                .unwrap_or_default()
+            == 0
+    {
+        bail!("animatic receipt has invalid input-kind counts");
+    }
+    let audio_inputs = receipt
+        .input_kinds
+        .get("audio")
+        .copied()
+        .unwrap_or_default();
+    if (receipt.silent && (receipt.audio_streams != 0 || audio_inputs != 0))
+        || (!receipt.silent && (receipt.audio_streams != 1 || audio_inputs != 1))
+    {
+        bail!("animatic receipt audio counts do not match silent mode");
+    }
+    Ok(())
+}
+
+pub fn check_animatic_receipt(
+    receipt_path: impl AsRef<Path>,
+    video: impl AsRef<Path>,
+) -> Result<AnimaticReceiptCheckReport> {
+    let receipt_path = receipt_path.as_ref().canonicalize().with_context(|| {
+        format!(
+            "failed to resolve animatic receipt {}",
+            receipt_path.as_ref().display()
+        )
+    })?;
+    let video = video.as_ref().canonicalize().with_context(|| {
+        format!(
+            "failed to resolve receipt video {}",
+            video.as_ref().display()
+        )
+    })?;
+    let receipt: AnimaticReceipt = serde_json::from_slice(&fs::read(&receipt_path)?)
+        .context("animatic receipt is not valid strict JSON")?;
+    validate_animatic_receipt(&receipt)?;
+    let video_sha256 = production::sha256_path(&video)?;
+    if video_sha256 != receipt.output_sha256 {
+        bail!("video SHA-256 does not match animatic receipt");
+    }
+    let output_bytes = fs::metadata(&video)?.len();
+    if output_bytes != receipt.output_bytes {
+        bail!("video byte length does not match animatic receipt");
+    }
+    let adapter = FfmpegAdapter;
+    let probe: ProbeReport = serde_json::from_str(&adapter.ffprobe_json(&video)?)
+        .context("ffprobe returned invalid JSON")?;
+    let video_streams = probe
+        .streams
+        .iter()
+        .filter(|stream| stream.codec_type.as_deref() == Some("video"))
+        .collect::<Vec<_>>();
+    if video_streams.len() != 1 {
+        bail!("receipt video must contain exactly one video stream");
+    }
+    let stream = video_streams[0];
+    if stream.codec_name.as_deref() != Some("h264") || stream.pix_fmt.as_deref() != Some("yuv420p")
+    {
+        bail!("receipt video must be H.264 yuv420p");
+    }
+    if stream.width != Some(receipt.width) || stream.height != Some(receipt.height) {
+        bail!("video dimensions do not match animatic receipt");
+    }
+    let r_fps = fraction(stream.r_frame_rate.as_deref().unwrap_or("0/1"))?;
+    let avg_fps = fraction(stream.avg_frame_rate.as_deref().unwrap_or("0/1"))?;
+    if (r_fps - f64::from(receipt.fps)).abs() > 0.001
+        || (avg_fps - f64::from(receipt.fps)).abs() > 0.001
+    {
+        bail!("video frame rate does not match animatic receipt");
+    }
+    let duration_ms = (probe.format.duration.parse::<f64>()? * 1000.0).round() as u64;
+    let frame_ms = (1000.0 / f64::from(receipt.fps)).ceil() as u64;
+    if duration_ms.abs_diff(receipt.duration_ms) > frame_ms {
+        bail!("video duration does not match animatic receipt");
+    }
+    let audio_streams = probe
+        .streams
+        .iter()
+        .filter(|stream| stream.codec_type.as_deref() == Some("audio"))
+        .count();
+    if audio_streams != receipt.audio_streams {
+        bail!("video audio streams do not match animatic receipt");
+    }
+    Ok(AnimaticReceiptCheckReport {
+        schema: "reel.animatic-receipt-check.v0.1".to_string(),
+        receipt_sha256: production::sha256_path(&receipt_path)?,
+        video_sha256,
+        output_bytes,
+        codec: "h264".to_string(),
+        pixel_format: "yuv420p".to_string(),
+        width: receipt.width,
+        height: receipt.height,
+        fps: r_fps,
+        duration_ms,
+        audio_streams,
+        passed: true,
+    })
 }
 
 fn parse_tool_version(value: &str) -> Result<(u64, u64, u64)> {
@@ -1488,7 +1685,11 @@ mod tests {
             silent: true,
             audio_streams: 0,
             caption_cues: 1,
-            input_kinds: BTreeMap::from([("visual".to_string(), 1)]),
+            input_kinds: BTreeMap::from([
+                ("captions".to_string(), 1),
+                ("manifest".to_string(), 1),
+                ("visual".to_string(), 1),
+            ]),
             motion_backend: "ffmpeg-perspective".to_string(),
             motion_quality: "smooth".to_string(),
             motion_interpolation: "cubic".to_string(),
@@ -1506,6 +1707,18 @@ mod tests {
         assert!(!json.contains("\"path\""));
         assert!(!json.contains("artifact_manifest"));
         assert!(!json.contains("\"inputs\""));
+        validate_animatic_receipt(&receipt).expect("receipt validates");
+
+        let mut with_path: serde_json::Value = serde_json::from_str(&json).unwrap();
+        with_path["path"] = serde_json::Value::String(r"C:\private\frame.png".to_string());
+        assert!(
+            serde_json::from_value::<AnimaticReceipt>(with_path).is_err(),
+            "unknown path field must be rejected"
+        );
+
+        let mut bad_hash = receipt;
+        bad_hash.output_sha256 = "NOT-A-HASH".to_string();
+        assert!(validate_animatic_receipt(&bad_hash).is_err());
     }
     use crate::production::{FocalPoint, ProtectedRegion, Shot};
 

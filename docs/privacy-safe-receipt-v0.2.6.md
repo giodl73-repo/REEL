@@ -37,3 +37,6 @@ The receipt is safe for intentional operational sharing under this path-free
 contract. It is not a signature, release approval, consent record, or direction
 to publish the underlying video. Keep the complete artifact report local for
 reverification.
+
+CLI v0.2.7 adds strict receipt-to-video verification without requiring the
+private source artifact report. See `receipt-check-v0.2.7.md`.
