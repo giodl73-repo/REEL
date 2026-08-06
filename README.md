@@ -107,6 +107,7 @@ cargo run -- conform planning.yaml --cues cue-measurements.yaml `
   --speaker-tempo narrator=85 --output-dir production/conformed/scene-v2
 cargo run -- source-coverage production/conformed/scene-v2/manifest.yaml --output json
 cargo run -- quality-check production/conformed/scene-v2/manifest.yaml --output json
+cargo run -- caption-check production/conformed/scene-v2/captions.srt --output json
 cargo run -- animatic-render production/conformed/scene-v2/manifest.yaml `
   --asset-root C:/src/consumer --audio production/audio/master.wav `
   --captions production/conformed/scene-v2/captions.srt `
@@ -178,6 +179,13 @@ intentionally shared video without the private artifact report.
 probes the video, and checks its H.264/yuv420p delivery, dimensions, CFR,
 duration, byte length, and audio state. Its JSON report is also path-free. See
 [`docs/receipt-check-v0.2.7.md`](docs/receipt-check-v0.2.7.md).
+
+CLI v0.2.8 keeps `reel.manifest.v0.2` unchanged and adds a deterministic caption
+accessibility gate. `caption-check` validates strict SRT order/timing and audits
+minimum display time, characters per line, lines per cue, and reading speed.
+Thresholds are explicit and configurable, while JSON output omits caption text
+and local paths. See
+[`docs/caption-accessibility-v0.2.8.md`](docs/caption-accessibility-v0.2.8.md).
 
 ## Renderer direction
 

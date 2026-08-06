@@ -209,6 +209,31 @@ fn run_cli() -> Result<()> {
             )?;
             print_report(&report, output)?;
         }
+        Command::CaptionCheck {
+            captions,
+            max_chars_per_line,
+            max_lines_per_cue,
+            max_reading_speed_cps,
+            min_duration_ms,
+            output,
+        } => {
+            let report = reel::caption::check(
+                &captions,
+                reel::caption::CaptionThresholds {
+                    max_chars_per_line,
+                    max_lines_per_cue,
+                    max_reading_speed_cps,
+                    min_duration_ms,
+                },
+            )?;
+            print_report(&report, output)?;
+            if !report.passed {
+                return Err(anyhow!(
+                    "caption accessibility check failed with {} violation(s)",
+                    report.violations.len()
+                ));
+            }
+        }
         Command::ContinuityValidate { registry, output } => {
             let report = reel::continuity::validate(&registry)?;
             print_report(&report, output)?;
@@ -1004,6 +1029,20 @@ enum Command {
         #[arg(long = "output")]
         output_path: PathBuf,
         #[arg(long = "format", value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Audit SRT readability and emit no caption text or local paths.
+    CaptionCheck {
+        captions: PathBuf,
+        #[arg(long, default_value_t = 42)]
+        max_chars_per_line: usize,
+        #[arg(long, default_value_t = 2)]
+        max_lines_per_cue: usize,
+        #[arg(long, default_value_t = 20.0)]
+        max_reading_speed_cps: f64,
+        #[arg(long, default_value_t = 1_000)]
+        min_duration_ms: u64,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
     /// Validate a shared, versioned continuity registry without exposing local assets.
