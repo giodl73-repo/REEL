@@ -15,6 +15,8 @@ REEL also samples the full transform range for each shot. The source rectangle
 must remain inside the canvas, and any declared `focal_point` or
 `protected_regions` must remain visible at every sampled extreme. A violation
 fails before publication. Holds use the full frame and no perspective filter.
+Every filtered shot branch is normalized to the requested frame rate and AV
+time base before trimming and crossfading, including on FFmpeg 7.1.
 
 ## Manifest-aware cadence
 
