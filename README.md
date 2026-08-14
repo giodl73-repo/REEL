@@ -249,6 +249,13 @@ prevents a prose note from being mistaken for a parameter the voice engine
 actually received. See
 [`docs/voice-performance-v0.2.15.md`](docs/voice-performance-v0.2.15.md).
 
+CLI v0.2.16 additively separates emotion scope, baseline register, pitch
+contour, terminal boundary, relative semitone targets and span joins. New
+prosody-evidence commands bind external per-span measurements to the exact plan
+and rendered-audio hash, detect rising/falling contour mismatches, and preserve
+human listening as the approval gate. See
+[`docs/voice-prosody-evidence-v0.2.16.md`](docs/voice-prosody-evidence-v0.2.16.md).
+
 ## Renderer direction
 
 The first researched implementation path is Linux-first in WSL2: FFmpeg for

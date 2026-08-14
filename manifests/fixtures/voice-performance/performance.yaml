@@ -15,8 +15,12 @@ cues:
         intensity: 0.32
         pace: conversational
         pitch_shape: gentle-fall
+        emotion_scope: whole-span
+        baseline_register: speaker-reference
+        pitch_contour: level
         energy: 0.36
         onset: natural
+        join_after: seamless
       - id: explosive-interruption
         text_sha256: d0c8beb1381bd48a8f3bec0a20854c856482060dd0e4c0ea350700818dfff406
         start_char: 11
@@ -25,9 +29,14 @@ cues:
         intensity: 0.95
         pace: fast
         pitch_shape: sharp-rise-drop
+        emotion_scope: onset
+        baseline_register: higher
+        pitch_contour: rise-fall
+        terminal_boundary: decisive-fall
         energy: 0.98
         onset: hard
         pause_after_ms: 180
+        join_after: protected-pause
         stress_tokens: [basta]
       - id: fear-warning
         text_sha256: 60926e1194ced2236590477233e5ad3483e969d95bf5ad3c85b72d25ced74910
@@ -37,6 +46,10 @@ cues:
         intensity: 0.82
         pace: urgent
         pitch_shape: rising-question-fall
+        emotion_scope: body
+        baseline_register: speaker-reference
+        pitch_contour: rise-fall
+        terminal_boundary: decisive-fall
         energy: 0.88
         onset: hard
         pause_before_ms: 180
@@ -52,9 +65,13 @@ cues:
         intensity: 0.62
         pace: slow
         pitch_shape: low-tight
+        emotion_scope: body
+        baseline_register: lower
+        pitch_contour: rising
         energy: 0.55
         onset: soft
         pause_after_ms: 650
+        join_after: protected-pause
       - id: decisive-action
         text_sha256: 92cd492f0f986743574c0f71ea9f98609e518b3d8584f853a1614bc3b65389b2
         start_char: 11
@@ -63,10 +80,16 @@ cues:
         intensity: 0.86
         pace: measured
         pitch_shape: sharp-rise-drop
+        emotion_scope: onset
+        baseline_register: speaker-reference
+        pitch_contour: falling
+        terminal_boundary: decisive-fall
+        relative_pitch_target_semitones: { start: 0, middle: -1, end: -3 }
         energy: 0.84
         onset: hard
         pause_before_ms: 650
         pause_after_ms: 500
+        join_after: protected-pause
         stress_tokens: [paso]
       - id: comic-button
         text_sha256: 818245dc4673e61d4bb837b860836d4c326f72e896725af726b3aad5c216f640
@@ -76,6 +99,10 @@ cues:
         intensity: 0.42
         pace: measured
         pitch_shape: gentle-fall
+        emotion_scope: terminal
+        baseline_register: speaker-reference
+        pitch_contour: falling
+        terminal_boundary: decisive-fall
         energy: 0.38
         onset: natural
         pause_before_ms: 500

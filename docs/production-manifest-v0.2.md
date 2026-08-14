@@ -4,7 +4,7 @@
 voice timing, deterministic voice conform, input provenance, private-reference
 protection, explicit derivatives, and long-still review.
 
-REEL CLI v0.2.15 does not revise this contract. Smooth subpixel motion,
+REEL CLI v0.2.16 does not revise this contract. Smooth subpixel motion,
 ease-in/out, cadence analysis, legacy reproduction, artifact verification, and
 render-environment diagnostics, lineage, and privacy-safe receipts are CLI and
 artifact behavior; existing `reel.manifest.v0.2` files need no migration. See

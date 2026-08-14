@@ -302,6 +302,38 @@ fn run_cli() -> Result<()> {
             )?;
             print_report(&report, output)?;
         }
+        Command::VoiceProsodyEvidence {
+            packet_dir,
+            measurements,
+            rendered_audio,
+            output_dir,
+            output,
+        } => {
+            let report = reel::voice_performance::write_prosody_evidence(
+                reel::voice_performance::ProsodyOptions {
+                    packet_dir: &packet_dir,
+                    measurements: &measurements,
+                    rendered_audio: &rendered_audio,
+                    output_dir: &output_dir,
+                },
+            )?;
+            print_report(&report, output)?;
+        }
+        Command::VoiceProsodyEvidenceCheck {
+            evidence_dir,
+            packet_dir,
+            measurements,
+            rendered_audio,
+            output,
+        } => {
+            let report = reel::voice_performance::check_prosody_evidence(
+                &evidence_dir,
+                &packet_dir,
+                &measurements,
+                &rendered_audio,
+            )?;
+            print_report(&report, output)?;
+        }
         Command::ContinuityValidate { registry, output } => {
             let report = reel::continuity::validate(&registry)?;
             print_report(&report, output)?;
@@ -1241,6 +1273,25 @@ enum Command {
         performance: PathBuf,
         #[arg(long)]
         reference_audio: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Bind measured rendered-audio prosody to a performance plan and evaluate contour intent.
+    VoiceProsodyEvidence {
+        packet_dir: PathBuf,
+        measurements: PathBuf,
+        rendered_audio: PathBuf,
+        #[arg(long)]
+        output_dir: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Recompute and verify a prosody-evidence packet against its bound inputs.
+    VoiceProsodyEvidenceCheck {
+        evidence_dir: PathBuf,
+        packet_dir: PathBuf,
+        measurements: PathBuf,
+        rendered_audio: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

@@ -137,3 +137,50 @@ should prove:
 Once implemented, BERTICA will bind its emotional score to exact narration cues,
 compile a local Chatterbox plan, render a short private audition, and obtain
 separate Bertica/Herman findings before replacing the full scene performance.
+
+## v0.2.16+ follow-up — scoped emotion versus cadence contour
+
+BERTICA's subsequent local IndexTTS 2.5 experiments exposed a distinction that
+`reel.voice-performance.v0.1` names but cannot yet verify or compile precisely:
+an emotion category, a speaker's baseline register, and the direction of a pitch
+contour are separate production facts. Applying `surprise` to an entire sentence
+raised the narrator's global register. Scoping it to the decisive clause restored
+an adult overall register, but the terminal phrase rose when the intended
+boundary was falling.
+
+The next additive contract should support, per exact hashed span:
+
+- `emotion_scope`: `whole-span`, `onset`, `body`, or `terminal`;
+- `baseline_register`: `speaker-reference`, `lower`, `level`, or `higher`;
+- `pitch_contour`: `level`, `rising`, `falling`, `rise-fall`, or `fall-rise`;
+- `terminal_boundary`: `open`, `suspended`, `decisive-fall`, or
+  `question-rise`;
+- optional relative contour targets expressed in semitones, never absolute
+  gendered or age-coded pitch values;
+- span-specific join/pause intent so a surprised action can return to a neutral
+  adult terminal without post-render tempo manipulation.
+
+Engine plans must distinguish native emotion conditioning from actual contour
+control. If an adapter can execute an emotion vector but cannot guarantee a
+falling boundary, it must mark `pitch_contour` and `terminal_boundary` as
+`advisory-only`; it must not claim that surprise implies a rise-fall contour.
+Post-render global pitch shifting and phrase time stretching must be separately
+disclosed and may be prohibited by the sidecar.
+
+Add a path-free prosody evidence receipt with per-span median F0, robust first /
+middle / final F0 summaries, voiced-frame coverage, duration and detected trend.
+These measurements verify whether a requested contour occurred; they do not
+prove emotion, age, gender, authenticity or human approval.
+
+Acceptance fixture: neutral adult-reference setup, localized surprise on a
+short action span, and a separate decisive-fall terminal. Prove that global
+emotion spillover and an accidentally rising terminal are detectable while the
+fixture remains synthetic and contains no BERTICA text, voice, name or path.
+
+Follow-up evidence from BERTICA packet 025 strengthens this requirement. A real
+falling performance reference moved from roughly 215.5 Hz to 137.3 Hz, yet the
+short synthesized terminal conditioned from it moved from roughly 162.8 Hz to
+242.6 Hz. Treat an `emotion_audio_prompt` or equivalent style reference as
+conditioning provenance, not proof that `pitch_contour` executed. Only measured
+output evidence may report the resulting trend, and a mismatch must remain a
+visible failed or advisory-only direction rather than silently passing.
