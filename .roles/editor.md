@@ -1,3 +1,9 @@
+---
+name: Editor
+slug: editor
+tier: project
+---
+
 # Role: Editor
 
 ## Focus

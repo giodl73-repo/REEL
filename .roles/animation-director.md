@@ -1,3 +1,9 @@
+---
+name: Animation Director
+slug: animation-director
+tier: project
+---
+
 # Role: Animation Director
 
 ## Focus

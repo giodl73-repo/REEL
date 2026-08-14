@@ -241,6 +241,14 @@ private artifact/video-bound PNG packet, while the existing shareable receipt
 remains free of copy, labels, images, and paths. See
 [`docs/comparison-slate-layout-v0.2.14.md`](docs/comparison-slate-layout-v0.2.14.md).
 
+CLI v0.2.15 adds a strict `reel.voice-performance.v0.1` sidecar and deterministic
+performance-plan receipt. Exact cue substrings can now carry controlled dramatic
+actions, intensity, pace, pitch-shape intent, onset, stress and pauses while the
+engine compiler distinguishes executed controls from advisory direction. This
+prevents a prose note from being mistaken for a parameter the voice engine
+actually received. See
+[`docs/voice-performance-v0.2.15.md`](docs/voice-performance-v0.2.15.md).
+
 ## Renderer direction
 
 The first researched implementation path is Linux-first in WSL2: FFmpeg for

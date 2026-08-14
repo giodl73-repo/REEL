@@ -32,7 +32,7 @@ fn smooth_motion_is_the_default_and_records_complete_lineage() {
         String::from_utf8_lossy(&output.stderr)
     );
     let report = &report[0];
-    assert_eq!(report["tool_version"], "0.2.14");
+    assert_eq!(report["tool_version"], "0.2.15");
     assert!(report["render_environment"].is_null());
     assert_eq!(report["motion"]["backend"], "ffmpeg-perspective");
     assert_eq!(report["motion"]["quality"], "smooth");

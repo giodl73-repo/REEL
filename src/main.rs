@@ -266,6 +266,42 @@ fn run_cli() -> Result<()> {
                 );
             }
         }
+        Command::VoicePerformancePlan {
+            manifest,
+            performance,
+            engine,
+            engine_version,
+            reference_audio,
+            seed,
+            output_dir,
+            output,
+        } => {
+            let report = reel::voice_performance::write_plan(reel::voice_performance::Options {
+                manifest: &manifest,
+                performance: &performance,
+                engine,
+                engine_version: &engine_version,
+                reference_audio: reference_audio.as_deref(),
+                seed,
+                output_dir: &output_dir,
+            })?;
+            print_report(&report, output)?;
+        }
+        Command::VoicePerformancePlanCheck {
+            packet_dir,
+            manifest,
+            performance,
+            reference_audio,
+            output,
+        } => {
+            let report = reel::voice_performance::check(
+                &packet_dir,
+                &manifest,
+                &performance,
+                reference_audio.as_deref(),
+            )?;
+            print_report(&report, output)?;
+        }
         Command::ContinuityValidate { registry, output } => {
             let report = reel::continuity::validate(&registry)?;
             print_report(&report, output)?;
@@ -1178,6 +1214,33 @@ enum Command {
         /// Atomically retain the strict path-free JSON report for later artifact binding.
         #[arg(long)]
         report: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate and compile exact cue spans into an auditable engine performance plan.
+    VoicePerformancePlan {
+        manifest: PathBuf,
+        performance: PathBuf,
+        #[arg(long, value_enum)]
+        engine: reel::voice_performance::VoiceEngine,
+        #[arg(long)]
+        engine_version: String,
+        #[arg(long)]
+        reference_audio: Option<PathBuf>,
+        #[arg(long, default_value_t = 0)]
+        seed: u64,
+        #[arg(long)]
+        output_dir: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Re-verify a performance plan against its manifest, sidecar, and reference audio.
+    VoicePerformancePlanCheck {
+        packet_dir: PathBuf,
+        manifest: PathBuf,
+        performance: PathBuf,
+        #[arg(long)]
+        reference_audio: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

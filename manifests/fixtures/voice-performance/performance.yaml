@@ -1,0 +1,82 @@
+schema: reel.voice-performance.v0.1
+manifest_sha256: d4b39a0204641cca7cde6d6984576ccda1230432d39b04ec8b90bb0a5888a452
+language: es-CU
+directing_context:
+  register: intimate-family-storytelling
+  constraint: heightened but not caricatured
+cues:
+  - cue_id: argument
+    spans:
+      - id: neutral-setup
+        text_sha256: 62e57355df88ab1f2bd8d02bdb3ba72c51ed551aba4bb95d28d4843f545aac44
+        start_char: 0
+        end_char: 11
+        action: neutral-narration
+        intensity: 0.32
+        pace: conversational
+        pitch_shape: gentle-fall
+        energy: 0.36
+        onset: natural
+      - id: explosive-interruption
+        text_sha256: d0c8beb1381bd48a8f3bec0a20854c856482060dd0e4c0ea350700818dfff406
+        start_char: 11
+        end_char: 21
+        action: explosive-interruption
+        intensity: 0.95
+        pace: fast
+        pitch_shape: sharp-rise-drop
+        energy: 0.98
+        onset: hard
+        pause_after_ms: 180
+        stress_tokens: [basta]
+      - id: fear-warning
+        text_sha256: 60926e1194ced2236590477233e5ad3483e969d95bf5ad3c85b72d25ced74910
+        start_char: 21
+        end_char: 53
+        action: fear-driven-warning
+        intensity: 0.82
+        pace: urgent
+        pitch_shape: rising-question-fall
+        energy: 0.88
+        onset: hard
+        pause_before_ms: 180
+        pause_after_ms: 220
+        stress_tokens: [seguimos, pierde]
+  - cue_id: hinge
+    spans:
+      - id: suspense-build
+        text_sha256: 5c7ac01320bbab3cdf4abbce0a9d0598e598505b9434246aa8f5129eeca4e116
+        start_char: 0
+        end_char: 11
+        action: suspense-build
+        intensity: 0.62
+        pace: slow
+        pitch_shape: low-tight
+        energy: 0.55
+        onset: soft
+        pause_after_ms: 650
+      - id: decisive-action
+        text_sha256: 92cd492f0f986743574c0f71ea9f98609e518b3d8584f853a1614bc3b65389b2
+        start_char: 11
+        end_char: 24
+        action: suspended-decision
+        intensity: 0.86
+        pace: measured
+        pitch_shape: sharp-rise-drop
+        energy: 0.84
+        onset: hard
+        pause_before_ms: 650
+        pause_after_ms: 500
+        stress_tokens: [paso]
+      - id: comic-button
+        text_sha256: 818245dc4673e61d4bb837b860836d4c326f72e896725af726b3aad5c216f640
+        start_char: 24
+        end_char: 40
+        action: dry-comic-button
+        intensity: 0.42
+        pace: measured
+        pitch_shape: gentle-fall
+        energy: 0.38
+        onset: natural
+        pause_before_ms: 500
+        stress_tokens: [nada]

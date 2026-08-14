@@ -1,3 +1,9 @@
+---
+name: Sound Designer
+slug: sound-designer
+tier: project
+---
+
 # Role: Sound Designer
 
 ## Focus

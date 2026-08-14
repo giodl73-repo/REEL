@@ -1,3 +1,9 @@
+---
+name: Story Director
+slug: story-director
+tier: project
+---
+
 # Role: Story Director
 
 ## Focus
