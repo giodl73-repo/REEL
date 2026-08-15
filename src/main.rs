@@ -334,6 +334,25 @@ fn run_cli() -> Result<()> {
             )?;
             print_report(&report, output)?;
         }
+        Command::VoiceConsistencyCheck {
+            manifest,
+            profile,
+            measurements,
+            report,
+            output,
+        } => {
+            let checked = reel::voice_consistency::check(&manifest, &profile, &measurements)?;
+            if let Some(path) = report {
+                reel::voice_consistency::write_report(&path, &checked)?;
+            }
+            print_report(&checked, output)?;
+            if !checked.passed {
+                anyhow::bail!(
+                    "voice consistency check failed with {} violation(s)",
+                    checked.violations.len()
+                );
+            }
+        }
         Command::ContinuityValidate { registry, output } => {
             let report = reel::continuity::validate(&registry)?;
             print_report(&report, output)?;
@@ -1292,6 +1311,17 @@ enum Command {
         packet_dir: PathBuf,
         measurements: PathBuf,
         rendered_audio: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Gate auditions or complete scenes against approved cross-scene voice identities, pace, and pauses.
+    VoiceConsistencyCheck {
+        manifest: PathBuf,
+        profile: PathBuf,
+        measurements: PathBuf,
+        /// Atomically retain the strict path-free JSON report for artifact binding.
+        #[arg(long)]
+        report: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

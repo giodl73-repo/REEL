@@ -1,0 +1,13 @@
+schema: reel.voice-consistency-profile.v0.1
+profile_id: sanitized-series-voice-v1
+approval_reference: fixture-review-only
+speakers:
+  - speaker_id: narrator
+    continuity_key: sanitized-narrator-natural-a
+    mode: narrator-self
+    target_wpm: 120
+    minimum_wpm: 108
+    maximum_wpm: 132
+    minimum_pause_after_ms: 250
+    reference_audio_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    approval_reference: fixture-review-only

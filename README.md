@@ -256,6 +256,13 @@ and rendered-audio hash, detect rising/falling contour mismatches, and preserve
 human listening as the approval gate. See
 [`docs/voice-prosody-evidence-v0.2.16.md`](docs/voice-prosody-evidence-v0.2.16.md).
 
+CLI v0.2.17 adds an approved cross-scene voice profile and a strict
+`voice-consistency-check` preflight. Auditions and full scenes now inherit stable
+speaker identities, narrator/poet/cast modes, measured speaking-rate envelopes,
+and minimum cue gaps. Stale bindings, identity drift, incomplete coverage, fast
+delivery, and compressed pauses fail before final assembly. See
+[`docs/voice-consistency-v0.2.17.md`](docs/voice-consistency-v0.2.17.md).
+
 ## Renderer direction
 
 The first researched implementation path is Linux-first in WSL2: FFmpeg for

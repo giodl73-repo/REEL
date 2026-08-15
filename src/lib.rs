@@ -23,6 +23,7 @@ pub mod cue_import;
 pub mod production;
 pub mod review_decision;
 pub mod series;
+pub mod voice_consistency;
 pub mod voice_performance;
 
 const SUPPORTED_MANIFEST_VERSION: &str = "reel.manifest.v0.1";

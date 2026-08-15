@@ -1,0 +1,21 @@
+schema: reel.voice-consistency-measurements.v0.1
+manifest_sha256: d4b39a0204641cca7cde6d6984576ccda1230432d39b04ec8b90bb0a5888a452
+scene_id: sanitized-scene-01-fast
+scope: scene
+cues:
+  - cue_id: argument
+    speaker_id: narrator
+    continuity_key: sanitized-narrator-natural-a
+    mode: narrator-self
+    duration_ms: 3000
+    head_silence_ms: 100
+    tail_silence_ms: 100
+    pause_after_ms: 100
+  - cue_id: hinge
+    speaker_id: narrator
+    continuity_key: sanitized-narrator-natural-a
+    mode: narrator-self
+    duration_ms: 2800
+    head_silence_ms: 100
+    tail_silence_ms: 100
+    pause_after_ms: 100
