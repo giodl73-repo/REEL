@@ -103,6 +103,11 @@ CLI v0.2.18 adds an opt-in `montage` edit mode with true hard cuts and crop-safe
 `cinematic` mode is unchanged. See
 [`docs/fast-cut-photo-montage-v0.2.18.md`](docs/fast-cut-photo-montage-v0.2.18.md).
 
+CLI v0.2.19 adds opt-in trailer motion without changing the manifest schema or
+cinematic defaults: `slam-in`, `whip-left`, and `whip-right` shot treatments,
+plus the global `--motion-curve ease-out` setting. See
+[`docs/trailer-motion-v0.2.19.md`](docs/trailer-motion-v0.2.19.md).
+
 The main BERTICA-driven workflow is:
 
 ```powershell

@@ -49,6 +49,7 @@ impl MotionQuality {
 pub enum MotionCurve {
     #[default]
     EaseInOut,
+    EaseOut,
     Linear,
 }
 
@@ -64,6 +65,7 @@ impl MotionCurve {
     fn as_str(self) -> &'static str {
         match self {
             Self::EaseInOut => "ease-in-out",
+            Self::EaseOut => "ease-out",
             Self::Linear => "linear",
         }
     }
@@ -331,6 +333,8 @@ fn sampled_rects(motion: &str) -> Vec<NormalizedRect> {
     };
     let zoom = match motion {
         "pan-left" | "pan-right" => 1.035,
+        "whip-left" | "whip-right" => 1.12,
+        "slam-in" => 1.28,
         "punch-in" | "punch-out" => 1.20,
         _ => 1.04,
     };
@@ -343,7 +347,7 @@ fn sampled_rects(motion: &str) -> Vec<NormalizedRect> {
     };
     match motion {
         "hold" | "hold-dark" => vec![full],
-        "pan-right" => vec![
+        "pan-right" | "whip-right" => vec![
             NormalizedRect {
                 left: 0.0,
                 top: inset,
@@ -357,7 +361,7 @@ fn sampled_rects(motion: &str) -> Vec<NormalizedRect> {
                 bottom: 1.0 - inset,
             },
         ],
-        "pan-left" => vec![
+        "pan-left" | "whip-left" => vec![
             NormalizedRect {
                 left: 1.0 - 1.0 / zoom,
                 top: inset,
@@ -372,7 +376,7 @@ fn sampled_rects(motion: &str) -> Vec<NormalizedRect> {
             },
         ],
         "pull" | "punch-out" => vec![centered, full],
-        "punch-in" => vec![full, centered],
+        "punch-in" | "slam-in" => vec![full, centered],
         _ => vec![full, centered],
     }
 }
@@ -1035,6 +1039,21 @@ fn legacy_motion_filter(motion: &str, duration: f64, fps: u32, width: u32, heigh
             format!("(iw-iw/zoom)*(1-on/{frames})"),
             "ih/2-(ih/zoom/2)".to_string(),
         ),
+        "whip-right" => (
+            "1.12".to_string(),
+            format!("(iw-iw/zoom)*on/{frames}"),
+            "ih/2-(ih/zoom/2)".to_string(),
+        ),
+        "whip-left" => (
+            "1.12".to_string(),
+            format!("(iw-iw/zoom)*(1-on/{frames})"),
+            "ih/2-(ih/zoom/2)".to_string(),
+        ),
+        "slam-in" => (
+            format!("min(1.28,1.0+0.28*on/{frames})"),
+            "iw/2-(iw/zoom/2)".to_string(),
+            "ih/2-(ih/zoom/2)".to_string(),
+        ),
         "hold" | "hold-dark" => ("1.0".to_string(), "0".to_string(), "0".to_string()),
         _ => (
             format!("min(1.04,1.0+0.04*on/{frames})"),
@@ -1064,7 +1083,8 @@ fn smooth_motion_filter(
     let linear = format!("min(max(on/{last_frame},0),1)");
     let progress = match curve {
         MotionCurve::EaseInOut => format!("0.5-0.5*cos(PI*{linear})"),
-        MotionCurve::Linear => linear,
+        MotionCurve::EaseOut => format!("1-pow(1-({linear}),3)"),
+        MotionCurve::Linear => linear.clone(),
     };
     let base = format!(
         "scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
@@ -1080,6 +1100,7 @@ fn smooth_motion_filter(
         "pull" => (format!("1.04-0.04*({progress})"), None),
         "punch-in" => (format!("1+0.20*({progress})"), None),
         "punch-out" => (format!("1.20-0.20*({progress})"), None),
+        "slam-in" => (format!("1+0.28*(1-pow(1-({linear}),4))"), None),
         "pan-right" => (
             "1.035".to_string(),
             Some(format!("(W-W/1.035)*({progress})")),
@@ -1087,6 +1108,14 @@ fn smooth_motion_filter(
         "pan-left" => (
             "1.035".to_string(),
             Some(format!("(W-W/1.035)*(1-({progress}))")),
+        ),
+        "whip-right" => (
+            "1.12".to_string(),
+            Some(format!("(W-W/1.12)*(1-pow(1-({linear}),4))")),
+        ),
+        "whip-left" => (
+            "1.12".to_string(),
+            Some(format!("(W-W/1.12)*(1-(1-pow(1-({linear}),4)))")),
         ),
         _ => (format!("1+0.04*({progress})"), None),
     };
@@ -2101,6 +2130,40 @@ mod tests {
         let edge = Shot {
             id: "unsafe-punch".to_string(),
             motion: "punch-in".to_string(),
+            focal_point: Some(FocalPoint { x: 0.01, y: 0.5 }),
+            ..Shot::default()
+        };
+        assert!(!safety_report(&edge).passed);
+    }
+
+    #[test]
+    fn trailer_motion_treatments_are_fast_and_crop_safe() {
+        let slam = motion_filter(
+            "slam-in",
+            0.7,
+            24,
+            1280,
+            720,
+            MotionQuality::Smooth,
+            MotionCurve::EaseOut,
+        );
+        let whip = motion_filter(
+            "whip-right",
+            0.7,
+            24,
+            1280,
+            720,
+            MotionQuality::Smooth,
+            MotionCurve::EaseOut,
+        );
+        assert!(slam.contains("1+0.28*"));
+        assert!(slam.contains("pow(1-"));
+        assert!(whip.contains("1.12"));
+        assert!(whip.contains("pow(1-"));
+
+        let edge = Shot {
+            id: "unsafe-whip".to_string(),
+            motion: "whip-right".to_string(),
             focal_point: Some(FocalPoint { x: 0.01, y: 0.5 }),
             ..Shot::default()
         };
