@@ -166,6 +166,61 @@ fn cli_renders_the_vertical_role_proof_without_an_audio_stream() {
 }
 
 #[test]
+fn montage_mode_is_opt_in_and_preserves_the_cinematic_default() {
+    let binary = env!("CARGO_BIN_EXE_reel");
+    let fixture = "manifests/fixtures/vertical-sound-off/manifest.yaml";
+    let captions = "manifests/fixtures/vertical-sound-off/captions.srt";
+    let output_dir = tempdir().unwrap();
+
+    let cinematic = output_dir.path().join("cinematic.mp4");
+    let cinematic_render = Command::new(binary)
+        .arg("animatic-render")
+        .arg(fixture)
+        .arg("--asset-root")
+        .arg("manifests/fixtures/vertical-sound-off")
+        .arg("--silent")
+        .arg("--captions")
+        .arg(captions)
+        .arg("--output")
+        .arg(&cinematic)
+        .arg("--dry-run")
+        .output()
+        .expect("default cinematic plan runs");
+    assert!(cinematic_render.status.success());
+    let cinematic_report = fs::read_to_string(cinematic.with_extension("artifacts.json")).unwrap();
+    assert!(cinematic_report.contains("\"edit_assembly\": \"crossfade\""));
+    assert!(cinematic_report.contains("xfade=transition=fade:duration=0.800"));
+    assert!(!cinematic_report.contains("concat=n=2:v=1:a=0"));
+
+    let montage = output_dir.path().join("montage.mp4");
+    let montage_render = Command::new(binary)
+        .arg("animatic-render")
+        .arg(fixture)
+        .arg("--asset-root")
+        .arg("manifests/fixtures/vertical-sound-off")
+        .arg("--silent")
+        .arg("--captions")
+        .arg(captions)
+        .arg("--edit-mode")
+        .arg("montage")
+        .arg("--output")
+        .arg(&montage)
+        .arg("--dry-run")
+        .output()
+        .expect("montage plan runs");
+    assert!(
+        montage_render.status.success(),
+        "{}",
+        String::from_utf8_lossy(&montage_render.stderr)
+    );
+    let montage_report = fs::read_to_string(montage.with_extension("artifacts.json")).unwrap();
+    assert!(montage_report.contains("\"edit_assembly\": \"hard-cut-concat\""));
+    assert!(montage_report.contains("\"transition_seconds\": 0.0"));
+    assert!(montage_report.contains("concat=n=2:v=1:a=0"));
+    assert!(!montage_report.contains("xfade=transition=fade"));
+}
+
+#[test]
 fn cli_checks_caption_accessibility_without_echoing_private_text_or_paths() {
     let binary = env!("CARGO_BIN_EXE_reel");
     let captions = "manifests/fixtures/vertical-sound-off/captions.srt";

@@ -10,6 +10,7 @@ exports/
 *.aiff
 
 # Local scratch
+/.work/
 .DS_Store
 Thumbs.db
 *.tmp

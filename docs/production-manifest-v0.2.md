@@ -4,7 +4,7 @@
 voice timing, deterministic voice conform, input provenance, private-reference
 protection, explicit derivatives, and long-still review.
 
-REEL CLI v0.2.17 does not revise this contract. Smooth subpixel motion,
+REEL CLI v0.2.18 does not revise this contract. Smooth subpixel motion,
 ease-in/out, cadence analysis, legacy reproduction, artifact verification, and
 render-environment diagnostics, lineage, and privacy-safe receipts are CLI and
 artifact behavior; existing `reel.manifest.v0.2` files need no migration. See
@@ -127,6 +127,17 @@ cargo run -- quality-check manifest.yaml --output json
 ```
 
 ## Asset-backed animatic rendering
+
+### Edit modes
+
+The renderer defaults to `--edit-mode cinematic`, preserving the established
+0.8-second dissolve behavior used by BERTICA and existing consumers. Select
+`--edit-mode montage` for true hard cuts. Montage mode is opt-in and does not
+change manifest timing or existing render defaults.
+
+Conformed montage shots may be shorter than one second. `motion: punch-in` and
+`motion: punch-out` provide a deliberate 20 percent scale change; focal points
+and protected regions remain binding across the deeper crop.
 
 ```powershell
 cargo run -- animatic-render conformed/manifest.yaml `

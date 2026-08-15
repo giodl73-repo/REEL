@@ -98,6 +98,11 @@ source coverage, privacy-safe continuity references, derivative lineage, and
 long-still motion controls. See
 [`docs/production-manifest-v0.2.md`](docs/production-manifest-v0.2.md).
 
+CLI v0.2.18 adds an opt-in `montage` edit mode with true hard cuts and crop-safe
+`punch-in` / `punch-out` treatments for sub-second photo bursts. The default
+`cinematic` mode is unchanged. See
+[`docs/fast-cut-photo-montage-v0.2.18.md`](docs/fast-cut-photo-montage-v0.2.18.md).
+
 The main BERTICA-driven workflow is:
 
 ```powershell

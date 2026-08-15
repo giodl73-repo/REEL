@@ -52,6 +52,14 @@ pub enum MotionCurve {
     Linear,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum EditMode {
+    #[default]
+    Cinematic,
+    Montage,
+}
+
 impl MotionCurve {
     fn as_str(self) -> &'static str {
         match self {
@@ -96,6 +104,10 @@ pub struct AnimaticRenderReport {
     pub width: u32,
     pub height: u32,
     pub fps: u32,
+    #[serde(default)]
+    pub edit_assembly: String,
+    #[serde(default)]
+    pub transition_seconds: f64,
     pub duration_ms: u64,
     pub tool_version: String,
     pub ffmpeg_version: String,
@@ -317,10 +329,10 @@ fn sampled_rects(motion: &str) -> Vec<NormalizedRect> {
         right: 1.0,
         bottom: 1.0,
     };
-    let zoom = if matches!(motion, "pan-left" | "pan-right") {
-        1.035
-    } else {
-        1.04
+    let zoom = match motion {
+        "pan-left" | "pan-right" => 1.035,
+        "punch-in" | "punch-out" => 1.20,
+        _ => 1.04,
     };
     let inset = (1.0 - 1.0 / zoom) / 2.0;
     let centered = NormalizedRect {
@@ -359,7 +371,8 @@ fn sampled_rects(motion: &str) -> Vec<NormalizedRect> {
                 bottom: 1.0 - inset,
             },
         ],
-        "pull" => vec![centered, full],
+        "pull" | "punch-out" => vec![centered, full],
+        "punch-in" => vec![full, centered],
         _ => vec![full, centered],
     }
 }
@@ -691,17 +704,31 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
             duration + tail
         ));
     }
-    let mut cumulative = durations[0];
-    let mut previous = "v0".to_string();
-    for (index, duration) in durations.iter().enumerate().skip(1) {
-        let output = format!("x{index}");
+    let previous = if durations.len() == 1 {
+        "v0".to_string()
+    } else if options.transition_seconds == 0.0 {
+        let inputs = (0..durations.len())
+            .map(|index| format!("[v{index}]"))
+            .collect::<String>();
         filters.push(format!(
-            "[{previous}][v{index}]xfade=transition=fade:duration={:.3}:offset={cumulative:.3}[{output}]",
-            options.transition_seconds
+            "{inputs}concat=n={}:v=1:a=0[sequence]",
+            durations.len()
         ));
-        previous = output;
-        cumulative += duration;
-    }
+        "sequence".to_string()
+    } else {
+        let mut cumulative = durations[0];
+        let mut previous = "v0".to_string();
+        for (index, duration) in durations.iter().enumerate().skip(1) {
+            let output = format!("x{index}");
+            filters.push(format!(
+                "[{previous}][v{index}]xfade=transition=fade:duration={:.3}:offset={cumulative:.3}[{output}]",
+                options.transition_seconds
+            ));
+            previous = output;
+            cumulative += duration;
+        }
+        previous
+    };
     let caption_path = adapter
         .path_argument(&captions)?
         .replace('\\', "/")
@@ -909,6 +936,13 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         width: options.width,
         height: options.height,
         fps: options.fps,
+        edit_assembly: if options.transition_seconds == 0.0 {
+            "hard-cut-concat"
+        } else {
+            "crossfade"
+        }
+        .to_string(),
+        transition_seconds: options.transition_seconds,
         duration_ms: expected_duration_ms,
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
         ffmpeg_version,
@@ -981,6 +1015,16 @@ fn legacy_motion_filter(motion: &str, duration: f64, fps: u32, width: u32, heigh
             "iw/2-(iw/zoom/2)".to_string(),
             "ih/2-(ih/zoom/2)".to_string(),
         ),
+        "punch-in" => (
+            format!("min(1.20,1.0+0.20*on/{frames})"),
+            "iw/2-(iw/zoom/2)".to_string(),
+            "ih/2-(ih/zoom/2)".to_string(),
+        ),
+        "punch-out" => (
+            format!("if(eq(on,0),1.20,max(1.0,zoom-0.20/{frames}))"),
+            "iw/2-(iw/zoom/2)".to_string(),
+            "ih/2-(ih/zoom/2)".to_string(),
+        ),
         "pan-right" => (
             "1.035".to_string(),
             format!("(iw-iw/zoom)*on/{frames}"),
@@ -1034,6 +1078,8 @@ fn smooth_motion_filter(
     }
     let (zoom, left) = match motion {
         "pull" => (format!("1.04-0.04*({progress})"), None),
+        "punch-in" => (format!("1+0.20*({progress})"), None),
+        "punch-out" => (format!("1.20-0.20*({progress})"), None),
         "pan-right" => (
             "1.035".to_string(),
             Some(format!("(W-W/1.035)*({progress})")),
@@ -2027,6 +2073,38 @@ mod tests {
         assert!(!hold.contains("perspective"));
         assert!(!dark.contains("perspective"));
         assert!(dark.contains("brightness=-0.72"));
+    }
+
+    #[test]
+    fn punch_treatments_use_a_deliberate_twenty_percent_scale_change() {
+        let punch_in = motion_filter(
+            "punch-in",
+            0.6,
+            24,
+            1280,
+            720,
+            MotionQuality::Smooth,
+            MotionCurve::EaseInOut,
+        );
+        let punch_out = motion_filter(
+            "punch-out",
+            0.6,
+            24,
+            1280,
+            720,
+            MotionQuality::Legacy,
+            MotionCurve::EaseInOut,
+        );
+        assert!(punch_in.contains("1+0.20*"));
+        assert!(punch_out.contains("1.20"));
+
+        let edge = Shot {
+            id: "unsafe-punch".to_string(),
+            motion: "punch-in".to_string(),
+            focal_point: Some(FocalPoint { x: 0.01, y: 0.5 }),
+            ..Shot::default()
+        };
+        assert!(!safety_report(&edge).passed);
     }
 
     #[test]

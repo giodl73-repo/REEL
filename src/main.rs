@@ -519,6 +519,7 @@ fn run_cli() -> Result<()> {
             width,
             height,
             fps,
+            edit_mode,
             transition_seconds,
             disclosure,
             motion_quality,
@@ -526,6 +527,10 @@ fn run_cli() -> Result<()> {
             dry_run,
             output,
         } => {
+            let effective_transition_seconds = match edit_mode {
+                reel::adapters::still_animatic::EditMode::Cinematic => transition_seconds,
+                reel::adapters::still_animatic::EditMode::Montage => 0.0,
+            };
             let base_options = reel::adapters::still_animatic::AnimaticRenderOptions {
                 manifest,
                 asset_root,
@@ -548,7 +553,7 @@ fn run_cli() -> Result<()> {
                 width,
                 height,
                 fps,
-                transition_seconds,
+                transition_seconds: effective_transition_seconds,
                 disclosure,
                 motion_quality,
                 motion_curve,
@@ -1418,6 +1423,9 @@ enum Command {
         height: u32,
         #[arg(long, default_value_t = 24)]
         fps: u32,
+        /// Select the default cinematic dissolve language or hard-cut montage assembly.
+        #[arg(long, value_enum, default_value_t = reel::adapters::still_animatic::EditMode::Cinematic)]
+        edit_mode: reel::adapters::still_animatic::EditMode,
         #[arg(long, default_value_t = 0.8)]
         transition_seconds: f64,
         #[arg(long, default_value = "ILLUSTRATED RECONSTRUCTION - PRIVATE REVIEW")]
