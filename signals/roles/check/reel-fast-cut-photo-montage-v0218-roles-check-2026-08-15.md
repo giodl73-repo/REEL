@@ -65,7 +65,7 @@ lineage. This is a CLI/renderer feature; `reel.manifest.v0.2` is unchanged.
 
 ## Synthesis
 
-Roles reviewed: 5  
+Roles reviewed: 5
 P1 blockers: 0 | P2 issues: 0 | P3 notes: 15
 
 Verdict: **APPROVED**
