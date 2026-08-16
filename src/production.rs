@@ -136,6 +136,12 @@ pub struct Shot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visual_asset: Option<String>,
     #[serde(default)]
+    pub media_kind: MediaKind,
+    #[serde(default)]
+    pub source_in_seconds: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beat_marker_id: Option<String>,
+    #[serde(default)]
     pub motion: String,
     #[serde(default)]
     pub style_constraints: Vec<String>,
@@ -165,6 +171,111 @@ pub struct Shot {
     pub captions: Value,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MediaKind {
+    #[default]
+    Still,
+    Video,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AudioRole {
+    Music,
+    Ambience,
+    Effect,
+    Narration,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AudioEvent {
+    pub id: String,
+    pub role: AudioRole,
+    pub source: String,
+    pub start_seconds: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_seconds: Option<f64>,
+    #[serde(default)]
+    pub source_in_seconds: f64,
+    #[serde(default)]
+    pub gain_db: f64,
+    #[serde(default)]
+    pub loop_source: bool,
+    #[serde(default)]
+    pub fade_in_ms: u64,
+    #[serde(default)]
+    pub fade_out_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beat_marker_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct BeatMarker {
+    pub id: String,
+    pub time_seconds: f64,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub accent: bool,
+}
+
+fn default_ducking_threshold() -> f64 {
+    0.03
+}
+
+fn default_ducking_ratio() -> f64 {
+    8.0
+}
+
+fn default_ducking_attack_ms() -> u64 {
+    20
+}
+
+fn default_ducking_release_ms() -> u64 {
+    300
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct NarrationDucking {
+    #[serde(default = "default_ducking_threshold")]
+    pub threshold: f64,
+    #[serde(default = "default_ducking_ratio")]
+    pub ratio: f64,
+    #[serde(default = "default_ducking_attack_ms")]
+    pub attack_ms: u64,
+    #[serde(default = "default_ducking_release_ms")]
+    pub release_ms: u64,
+}
+
+fn default_master_lufs() -> f64 {
+    -18.0
+}
+
+fn default_master_lra() -> f64 {
+    11.0
+}
+
+fn default_master_true_peak() -> f64 {
+    -2.0
+}
+
+fn default_master_limiter() -> f64 {
+    0.88
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AudioMastering {
+    #[serde(default = "default_master_lufs")]
+    pub integrated_lufs: f64,
+    #[serde(default = "default_master_lra")]
+    pub loudness_range_lu: f64,
+    #[serde(default = "default_master_true_peak")]
+    pub true_peak_dbfs: f64,
+    #[serde(default = "default_master_limiter")]
+    pub limiter: f64,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -397,6 +508,14 @@ pub struct ProductionManifest {
     #[serde(default)]
     pub protected_pauses: Vec<ProtectedPause>,
     #[serde(default)]
+    pub audio_events: Vec<AudioEvent>,
+    #[serde(default)]
+    pub beat_markers: Vec<BeatMarker>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub narration_ducking: Option<NarrationDucking>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_mastering: Option<AudioMastering>,
+    #[serde(default)]
     pub source_ranges: Vec<SourceRange>,
     #[serde(default)]
     pub omissions: Vec<Omission>,
@@ -437,6 +556,12 @@ pub struct ProductionValidationReport {
     pub shots: usize,
     pub speakers: usize,
     pub narration_cues: usize,
+    pub still_events: usize,
+    pub video_events: usize,
+    pub audio_events: usize,
+    pub beat_markers: usize,
+    pub narration_ducking: bool,
+    pub audio_mastering: bool,
     pub duration_ms: Option<u64>,
     pub preview_ready: bool,
     pub delivery_ready: bool,
@@ -662,6 +787,14 @@ pub fn validate(loaded: &LoadedProductionManifest) -> Result<ProductionValidatio
         "source range",
         manifest.source_ranges.iter().map(|item| item.id.as_str()),
     )?;
+    unique(
+        "audio event",
+        manifest.audio_events.iter().map(|item| item.id.as_str()),
+    )?;
+    unique(
+        "beat marker",
+        manifest.beat_markers.iter().map(|item| item.id.as_str()),
+    )?;
     let scene_ids = manifest
         .scenes
         .iter()
@@ -694,6 +827,12 @@ pub fn validate(loaded: &LoadedProductionManifest) -> Result<ProductionValidatio
             if !cue_ids.contains(cue.as_str()) {
                 bail!("shot {} references unknown narration cue {cue}", shot.id);
             }
+        }
+        if shot.source_in_seconds < 0.0 || !shot.source_in_seconds.is_finite() {
+            bail!(
+                "shot {} source_in_seconds must be finite and non-negative",
+                shot.id
+            );
         }
     }
     for cue in &manifest.narration_cues {
@@ -748,6 +887,7 @@ pub fn validate(loaded: &LoadedProductionManifest) -> Result<ProductionValidatio
         }
         None
     };
+    validate_mixed_media(manifest, duration_ms)?;
     let gated_commands = if manifest.timing_status == TimingStatus::Untimed {
         vec![
             "scene-preview".to_string(),
@@ -772,12 +912,168 @@ pub fn validate(loaded: &LoadedProductionManifest) -> Result<ProductionValidatio
         shots: manifest.shots.len(),
         speakers: manifest.speakers.len(),
         narration_cues: manifest.narration_cues.len(),
+        still_events: manifest
+            .shots
+            .iter()
+            .filter(|shot| shot.media_kind == MediaKind::Still)
+            .count(),
+        video_events: manifest
+            .shots
+            .iter()
+            .filter(|shot| shot.media_kind == MediaKind::Video)
+            .count(),
+        audio_events: manifest.audio_events.len(),
+        beat_markers: manifest.beat_markers.len(),
+        narration_ducking: manifest.narration_ducking.is_some(),
+        audio_mastering: manifest.audio_mastering.is_some(),
         duration_ms,
         preview_ready: manifest.timing_status.allows_preview(),
         delivery_ready: manifest.timing_status.allows_delivery(),
         gated_commands,
         warnings,
     })
+}
+
+fn validate_mixed_media(manifest: &ProductionManifest, duration_ms: Option<u64>) -> Result<()> {
+    let marker_times = manifest
+        .beat_markers
+        .iter()
+        .map(|marker| {
+            if marker.time_seconds < 0.0 || !marker.time_seconds.is_finite() {
+                bail!(
+                    "beat marker {} time_seconds must be finite and non-negative",
+                    marker.id
+                );
+            }
+            let time_ms = seconds_to_ms(marker.time_seconds);
+            if duration_ms.is_some_and(|duration| time_ms > duration) {
+                bail!(
+                    "beat marker {} falls outside the production timeline",
+                    marker.id
+                );
+            }
+            Ok((marker.id.as_str(), time_ms))
+        })
+        .collect::<Result<HashMap<_, _>>>()?;
+
+    for shot in &manifest.shots {
+        if shot.media_kind == MediaKind::Still && shot.source_in_seconds != 0.0 {
+            bail!("still shot {} cannot declare source_in_seconds", shot.id);
+        }
+        if let Some(marker_id) = &shot.beat_marker_id {
+            let marker_ms = marker_times.get(marker_id.as_str()).ok_or_else(|| {
+                anyhow!(
+                    "shot {} references unknown beat marker {}",
+                    shot.id,
+                    marker_id
+                )
+            })?;
+            if let Some(start) = shot.start_seconds {
+                let start_ms = seconds_to_ms(start);
+                if start_ms.abs_diff(*marker_ms) > 1 {
+                    bail!(
+                        "shot {} start does not align with beat marker {}",
+                        shot.id,
+                        marker_id
+                    );
+                }
+            }
+        }
+    }
+
+    for event in &manifest.audio_events {
+        require_nonempty("audio event source", &event.source)?;
+        if event.start_seconds < 0.0
+            || event.source_in_seconds < 0.0
+            || !event.start_seconds.is_finite()
+            || !event.source_in_seconds.is_finite()
+            || !event.gain_db.is_finite()
+        {
+            bail!(
+                "audio event {} timing and gain must be finite and non-negative where applicable",
+                event.id
+            );
+        }
+        let start_ms = seconds_to_ms(event.start_seconds);
+        if duration_ms.is_some_and(|duration| start_ms >= duration) {
+            bail!(
+                "audio event {} starts outside the production timeline",
+                event.id
+            );
+        }
+        if let Some(event_duration) = event.duration_seconds {
+            let event_duration_ms = required_ms(
+                Some(event_duration),
+                &format!("audio event {} duration", event.id),
+            )?;
+            if event_duration_ms == 0 {
+                bail!("audio event {} duration must be positive", event.id);
+            }
+            if duration_ms.is_some_and(|duration| start_ms + event_duration_ms > duration + 1) {
+                bail!(
+                    "audio event {} extends beyond the production timeline",
+                    event.id
+                );
+            }
+            if event.fade_in_ms + event.fade_out_ms > event_duration_ms {
+                bail!("audio event {} fades exceed its duration", event.id);
+            }
+        }
+        if let Some(marker_id) = &event.beat_marker_id {
+            let marker_ms = marker_times.get(marker_id.as_str()).ok_or_else(|| {
+                anyhow!(
+                    "audio event {} references unknown beat marker {}",
+                    event.id,
+                    marker_id
+                )
+            })?;
+            if start_ms.abs_diff(*marker_ms) > 1 {
+                bail!(
+                    "audio event {} start does not align with beat marker {}",
+                    event.id,
+                    marker_id
+                );
+            }
+        }
+    }
+
+    if let Some(ducking) = &manifest.narration_ducking {
+        if !(0.000_001..=1.0).contains(&ducking.threshold)
+            || !(1.0..=20.0).contains(&ducking.ratio)
+            || !(1..=2_000).contains(&ducking.attack_ms)
+            || !(1..=10_000).contains(&ducking.release_ms)
+        {
+            bail!(
+                "narration_ducking must use threshold 0..1, ratio 1..20, attack 1..2000ms, and release 1..10000ms"
+            );
+        }
+        if !manifest
+            .audio_events
+            .iter()
+            .any(|event| event.role == AudioRole::Narration)
+            || !manifest
+                .audio_events
+                .iter()
+                .any(|event| event.role != AudioRole::Narration)
+        {
+            bail!("narration_ducking requires both narration and background audio events");
+        }
+    }
+    if let Some(mastering) = &manifest.audio_mastering {
+        if manifest.audio_events.is_empty() {
+            bail!("audio_mastering requires manifest audio_events");
+        }
+        if !(-36.0..=-5.0).contains(&mastering.integrated_lufs)
+            || !(1.0..=20.0).contains(&mastering.loudness_range_lu)
+            || !(-12.0..=-0.1).contains(&mastering.true_peak_dbfs)
+            || !(0.1..=1.0).contains(&mastering.limiter)
+        {
+            bail!(
+                "audio_mastering must use integrated_lufs -36..-5, loudness_range_lu 1..20, true_peak_dbfs -12..-0.1, and limiter 0.1..1"
+            );
+        }
+    }
+    Ok(())
 }
 
 fn validate_timeline(manifest: &ProductionManifest) -> Result<u64> {
@@ -1978,6 +2274,50 @@ review: { required_roles: [editor], status: planning }
         let plan = plan(&loaded).unwrap();
         assert_eq!(plan.scenes[0].shots.len(), 2);
         assert!(plan.scenes[0].shots[0].duration_ms.is_none());
+    }
+
+    #[test]
+    fn mixed_media_timeline_validates_named_beat_anchors() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mixed-media.yaml");
+        fs::write(
+            &path,
+            r#"
+manifest_version: reel.manifest.v0.2
+profile: animatic
+timing_status: conformed
+work: mixed-media-fixture
+title: Mixed Media Fixture
+scenes:
+  - { id: scene-01, duration_seconds: 2.0 }
+shots:
+  - { id: still-01, scene_id: scene-01, start_seconds: 0.0, duration_seconds: 1.0, visual_asset: still.png, media_kind: still, beat_marker_id: downbeat }
+  - { id: clip-01, scene_id: scene-01, start_seconds: 1.0, duration_seconds: 1.0, visual_asset: clip.mp4, media_kind: video, source_in_seconds: 3.5, beat_marker_id: cut }
+beat_markers:
+  - { id: downbeat, time_seconds: 0.0, label: Downbeat, accent: true }
+  - { id: cut, time_seconds: 1.0, label: Cut }
+audio_events:
+  - { id: room, role: ambience, source: room.wav, start_seconds: 0.0, duration_seconds: 2.0, loop_source: true, gain_db: -8 }
+  - { id: hit, role: effect, source: hit.wav, start_seconds: 1.0, duration_seconds: 0.25, beat_marker_id: cut }
+  - { id: voice, role: narration, source: voice.wav, start_seconds: 0.25, duration_seconds: 1.0 }
+narration_ducking: { threshold: 0.03, ratio: 8, attack_ms: 20, release_ms: 300 }
+"#,
+        )
+        .unwrap();
+
+        let loaded = load(&path).unwrap();
+        let report = validate(&loaded).unwrap();
+        assert_eq!(report.duration_ms, Some(2_000));
+        assert_eq!(loaded.manifest.shots[1].media_kind, MediaKind::Video);
+        assert_eq!(loaded.manifest.audio_events[0].role, AudioRole::Ambience);
+
+        let invalid = fs::read_to_string(&path).unwrap().replace(
+            "start_seconds: 1.0, duration_seconds: 0.25",
+            "start_seconds: 1.1, duration_seconds: 0.25",
+        );
+        fs::write(&path, invalid).unwrap();
+        let error = validate(&load(&path).unwrap()).unwrap_err().to_string();
+        assert!(error.contains("does not align with beat marker cut"));
     }
 
     #[test]

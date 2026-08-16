@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
 pub mod adapters;
+pub mod audio_preview;
 pub mod audio_quality;
 pub mod caption;
 pub mod caption_layout;
@@ -22,6 +23,7 @@ pub mod continuity;
 pub mod cue_import;
 pub mod production;
 pub mod review_decision;
+pub mod selection_lock;
 pub mod series;
 pub mod voice_consistency;
 pub mod voice_performance;

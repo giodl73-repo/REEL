@@ -17,6 +17,17 @@ renderer default selected with CLI options, and the v0.2.1 integer-step path is
 available through `--motion-quality legacy`. The sanitized acceptance manifest
 and grid live under `manifests/fixtures/smooth-motion/`.
 
+CLI v0.2.20 keeps `reel.manifest.v0.2` and adds optional typed mixed-media
+fields. Shots may declare `media_kind: still|video`, `source_in_seconds`, and a
+`beat_marker_id`. Top-level `beat_markers`, `audio_events`, and
+`narration_ducking` move edit and mix timing into the portable manifest. See
+`../docs/mixed-media-timeline-v0.2.20.md`.
+
+CLI v0.2.21 keeps the manifest schema stable. Selection locks and planning
+derivatives are external governance packets; audio-only previews and cached-
+picture remux reports bind the unchanged v0.2 manifest by SHA-256. See
+`../docs/selection-lock-and-audio-cache-v0.2.21.md`.
+
 ## Required top-level fields
 
 | Field | Required | Purpose |
@@ -80,6 +91,14 @@ Each shot must define:
 - `audio`
 - `captions`
 - `transition_out`
+
+Optional mixed-media shot fields are `media_kind` (defaults to `still`),
+`source_in_seconds` (for video trimming), and `beat_marker_id` (an exact named
+start-time anchor). Optional top-level `audio_events` support `music`,
+`ambience`, `effect`, and `narration` roles; `beat_markers` define reusable
+timeline anchors; and `narration_ducking` configures the narration sidechain.
+Optional `audio_mastering` declares final integrated loudness, loudness range,
+true peak, and limiter policy after event mixing.
 
 ## Games Design scenario rules
 

@@ -44,7 +44,7 @@ reel animatic-render trailer.yaml --asset-root assets --audio score.wav `
   --output trailer-review.mp4
 ```
 
-## Follow-on candidates
+## Follow-on candidates at v0.2.19
 
 These remain explicit future work rather than implied behavior:
 
@@ -55,3 +55,8 @@ These remain explicit future work rather than implied behavior:
 5. manifest-owned sound-effect events and ducking.
 
 That order keeps authored timing and evidence ahead of convenience automation.
+
+Beat-marker validation, video inputs, manifest-owned audio events, and
+narration ducking shipped in v0.2.20. The remaining candidates are transform
+keyframes, optical-flow speed ramps, subject-aware reframing, and layered 2.5D
+parallax.

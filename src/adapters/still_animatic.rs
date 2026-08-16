@@ -17,7 +17,7 @@ use crate::{
     caption_presentation::{
         self, CaptionLineage, CaptionPresentationOptions, CaptionProfile, SpeakerLabelPolicy,
     },
-    production::{self, TimingStatus},
+    production::{self, AudioRole, MediaKind, TimingStatus},
 };
 
 pub const NEAR_STATIONARY_LUMA_THRESHOLD: f64 = 0.001;
@@ -26,6 +26,21 @@ pub const MIN_HOLD_STATIONARY_FRACTION: f64 = 0.85;
 const MAX_RENDER_PIXELS: u64 = 1920 * 1080;
 const MAX_RENDER_FPS: u32 = 60;
 const MAX_ESTIMATED_PEAK_MEMORY_MIB: u64 = 2048;
+
+fn mix_audio_labels(filters: &mut Vec<String>, labels: &[String], output: &str) {
+    let inputs = labels
+        .iter()
+        .map(|label| format!("[{label}]"))
+        .collect::<String>();
+    if labels.len() == 1 {
+        filters.push(format!("{inputs}anull[{output}]"));
+    } else {
+        filters.push(format!(
+            "{inputs}amix=inputs={}:normalize=0:dropout_transition=0[{output}]",
+            labels.len()
+        ));
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "kebab-case")]
@@ -61,6 +76,23 @@ pub enum EditMode {
     Montage,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum EncodingPreset {
+    Medium,
+    #[default]
+    Slow,
+}
+
+impl EncodingPreset {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Medium => "medium",
+            Self::Slow => "slow",
+        }
+    }
+}
+
 impl MotionCurve {
     fn as_str(self) -> &'static str {
         match self {
@@ -78,7 +110,7 @@ pub struct AnimaticRenderOptions {
     pub audio: Option<PathBuf>,
     pub audio_check_report: Option<PathBuf>,
     pub silent: bool,
-    pub captions: PathBuf,
+    pub captions: Option<PathBuf>,
     pub caption_presentation: Option<PathBuf>,
     pub caption_profile: CaptionProfile,
     pub speaker_label_policy: SpeakerLabelPolicy,
@@ -93,6 +125,7 @@ pub struct AnimaticRenderOptions {
     pub disclosure: String,
     pub motion_quality: MotionQuality,
     pub motion_curve: MotionCurve,
+    pub encoding_preset: EncodingPreset,
     pub dry_run: bool,
 }
 
@@ -120,6 +153,8 @@ pub struct AnimaticRenderReport {
     pub captions: Option<CaptionLineage>,
     #[serde(default)]
     pub audio_quality: Option<AudioQualityBinding>,
+    #[serde(default)]
+    pub mixed_media: MixedMediaLineage,
     pub dry_run: bool,
     pub silent: bool,
     pub command_arguments: Vec<String>,
@@ -127,6 +162,16 @@ pub struct AnimaticRenderReport {
     pub output_sha256: Option<String>,
     pub output_bytes: Option<u64>,
     pub output_duration_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct MixedMediaLineage {
+    pub still_events: usize,
+    pub video_events: usize,
+    pub audio_events: usize,
+    pub beat_markers: usize,
+    pub narration_ducking: bool,
+    pub audio_mastering: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -476,8 +521,12 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
             MAX_RENDER_FPS
         );
     }
-    if options.silent == options.audio.is_some() {
-        bail!("provide exactly one of audio or silent rendering");
+    let manifest_audio = !loaded.manifest.audio_events.is_empty();
+    let audio_modes = usize::from(options.silent)
+        + usize::from(options.audio.is_some())
+        + usize::from(manifest_audio);
+    if audio_modes != 1 {
+        bail!("provide exactly one audio mode: --audio, --silent, or manifest audio_events");
     }
     if !(0.0..=5.0).contains(&options.transition_seconds) {
         bail!("transition-seconds must be within 0..5");
@@ -517,24 +566,36 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
             options.output.display()
         );
     }
+    if options.captions.is_none() && options.caption_presentation.is_some() {
+        bail!("caption presentation requires captions");
+    }
     let captions = options
         .captions
-        .canonicalize()
-        .with_context(|| format!("failed to resolve captions {}", options.captions.display()))?;
-    let caption_lineage = caption_presentation::prepare(
-        &loaded,
-        CaptionPresentationOptions {
-            captions: &captions,
-            presentation: options.caption_presentation.as_deref(),
-            profile: options.caption_profile,
-            policy: options.speaker_label_policy,
-            reintroduce_after_ms: options.speaker_reintroduce_after_ms,
-            thresholds: options.caption_thresholds,
-            threshold_policy_note: options.caption_policy_note.as_deref(),
-            width: options.width,
-            height: options.height,
-        },
-    )?;
+        .as_ref()
+        .map(|path| {
+            path.canonicalize()
+                .with_context(|| format!("failed to resolve captions {}", path.display()))
+        })
+        .transpose()?;
+    let caption_lineage = captions
+        .as_ref()
+        .map(|captions| {
+            caption_presentation::prepare(
+                &loaded,
+                CaptionPresentationOptions {
+                    captions,
+                    presentation: options.caption_presentation.as_deref(),
+                    profile: options.caption_profile,
+                    policy: options.speaker_label_policy,
+                    reintroduce_after_ms: options.speaker_reintroduce_after_ms,
+                    thresholds: options.caption_thresholds,
+                    threshold_policy_note: options.caption_policy_note.as_deref(),
+                    width: options.width,
+                    height: options.height,
+                },
+            )
+        })
+        .transpose()?;
     let asset_root = options.asset_root.canonicalize().with_context(|| {
         format!(
             "failed to resolve asset root {}",
@@ -583,7 +644,11 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
             bail!("shot {} visual_asset escapes asset root", shot.id);
         }
         inputs.push(AnimaticInput {
-            kind: "visual".to_string(),
+            kind: match shot.media_kind {
+                MediaKind::Still => "still",
+                MediaKind::Video => "video",
+            }
+            .to_string(),
             id: shot.id.clone(),
             path: resolved.display().to_string(),
             sha256: production::sha256_path(&resolved)?,
@@ -593,16 +658,28 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         } else {
             0.0
         };
-        args.extend([
-            "-loop".to_string(),
-            "1".to_string(),
-            "-framerate".to_string(),
-            options.fps.to_string(),
-            "-t".to_string(),
-            format!("{:.3}", duration + tail),
-            "-i".to_string(),
-            adapter.path_argument(&resolved)?,
-        ]);
+        match shot.media_kind {
+            MediaKind::Still => args.extend([
+                "-threads".to_string(),
+                "1".to_string(),
+                "-loop".to_string(),
+                "1".to_string(),
+                "-framerate".to_string(),
+                options.fps.to_string(),
+                "-t".to_string(),
+                format!("{:.3}", duration + tail),
+                "-i".to_string(),
+                adapter.path_argument(&resolved)?,
+            ]),
+            MediaKind::Video => args.extend([
+                "-ss".to_string(),
+                format!("{:.3}", shot.source_in_seconds),
+                "-t".to_string(),
+                format!("{:.3}", duration + tail),
+                "-i".to_string(),
+                adapter.path_argument(&resolved)?,
+            ]),
+        }
         durations.push(duration);
     }
     let audio = options
@@ -620,6 +697,41 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
             path: audio.display().to_string(),
             sha256: production::sha256_path(audio)?,
         });
+    }
+    for event in &loaded.manifest.audio_events {
+        let candidate = if Path::new(&event.source).is_absolute() {
+            PathBuf::from(&event.source)
+        } else {
+            asset_root.join(&event.source)
+        };
+        let resolved = candidate.canonicalize().with_context(|| {
+            format!(
+                "missing source for audio event {}: {}",
+                event.id,
+                candidate.display()
+            )
+        })?;
+        if !Path::new(&event.source).is_absolute() && !resolved.starts_with(&asset_root) {
+            bail!("audio event {} source escapes asset root", event.id);
+        }
+        inputs.push(AnimaticInput {
+            kind: format!(
+                "audio-{}",
+                match event.role {
+                    AudioRole::Music => "music",
+                    AudioRole::Ambience => "ambience",
+                    AudioRole::Effect => "effect",
+                    AudioRole::Narration => "narration",
+                }
+            ),
+            id: event.id.clone(),
+            path: resolved.display().to_string(),
+            sha256: production::sha256_path(&resolved)?,
+        });
+        if event.loop_source {
+            args.extend(["-stream_loop".to_string(), "-1".to_string()]);
+        }
+        args.extend(["-i".to_string(), adapter.path_argument(&resolved)?]);
     }
     let audio_quality = match (&audio, &options.audio_check_report) {
         (None, Some(_)) => bail!("silent rendering cannot bind an audio-check report"),
@@ -662,12 +774,14 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         }
         _ => None,
     };
-    inputs.push(AnimaticInput {
-        kind: "captions".to_string(),
-        id: "captions".to_string(),
-        path: captions.display().to_string(),
-        sha256: production::sha256_path(&captions)?,
-    });
+    if let Some(captions) = &captions {
+        inputs.push(AnimaticInput {
+            kind: "captions".to_string(),
+            id: "captions".to_string(),
+            path: captions.display().to_string(),
+            sha256: production::sha256_path(captions)?,
+        });
+    }
     if let Some(presentation) = &options.caption_presentation {
         let presentation = presentation.canonicalize().with_context(|| {
             format!(
@@ -693,9 +807,8 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         } else {
             0.0
         };
-        filters.push(format!(
-            "[{index}:v]{},framerate=fps={},settb=AVTB,trim=duration={:.3},setpts=PTS-STARTPTS[v{index}]",
-            motion_filter(
+        let treatment = match shot.media_kind {
+            MediaKind::Still => motion_filter(
                 &shot.motion,
                 duration + tail,
                 options.fps,
@@ -704,6 +817,13 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                 options.motion_quality,
                 options.motion_curve,
             ),
+            MediaKind::Video => format!(
+                "scale={}:{}:force_original_aspect_ratio=increase,crop={}:{},setsar=1",
+                options.width, options.height, options.width, options.height
+            ),
+        };
+        filters.push(format!(
+            "[{index}:v]{treatment},framerate=fps={},setsar=1,settb=AVTB,trim=duration={:.3},setpts=PTS-STARTPTS[v{index}]",
             options.fps,
             duration + tail
         ));
@@ -733,43 +853,157 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         }
         previous
     };
-    let caption_path = adapter
-        .path_argument(&captions)?
-        .replace('\\', "/")
-        .replace(':', "\\:")
-        .replace('\'', "\\'");
     let disclosure = escape_drawtext(&options.disclosure);
-    let caption_font_size = caption_lineage.style.caption_font_size;
-    let caption_margin = options.height.saturating_sub(
-        caption_lineage.style.caption_region.y + caption_lineage.style.caption_region.height,
-    );
-    let caption_margin_x = caption_lineage.style.caption_region.x;
     let disclosure_font_size = if options.height > options.width {
         18
     } else {
         14
     };
-    let mut presentation_filters = format!(
-        "subtitles=filename='{caption_path}':force_style='FontName=Sans,FontSize={caption_font_size},MarginL={caption_margin_x},MarginR={caption_margin_x},MarginV={caption_margin},Outline={},Shadow=0,Alignment=2',drawtext=text='{disclosure}':fontcolor=white@0.68:fontsize={disclosure_font_size}:x=w-tw-24:y=20:box=1:boxcolor=black@0.3:boxborderw=5",
-        caption_lineage.style.caption_outline_px
-    );
-    for event in &caption_lineage.label_events {
-        let label = escape_drawtext(&event.audience_label);
-        presentation_filters.push_str(&format!(
-            ",drawtext=text='{label}':fontcolor={}:fontsize={}:x={}:y={}:box=1:boxcolor={}:boxborderw={}:enable='between(t,{:.3},{:.3})'",
-            caption_lineage.style.badge_text_color,
-            caption_lineage.style.badge_font_size_px,
-            caption_lineage.style.badge_region.x,
-            caption_lineage.style.badge_region.y,
-            caption_lineage.style.badge_background,
-            caption_lineage.style.badge_padding_px,
-            event.start_ms as f64 / 1000.0,
-            event.end_ms as f64 / 1000.0,
+    let mut presentation_filters = Vec::new();
+    if let (Some(captions), Some(caption_lineage)) = (&captions, &caption_lineage) {
+        let caption_path = adapter
+            .path_argument(captions)?
+            .replace('\\', "/")
+            .replace(':', "\\:")
+            .replace('\'', "\\'");
+        let caption_font_size = caption_lineage.style.caption_font_size;
+        let caption_margin = options.height.saturating_sub(
+            caption_lineage.style.caption_region.y + caption_lineage.style.caption_region.height,
+        );
+        let caption_margin_x = caption_lineage.style.caption_region.x;
+        presentation_filters.push(format!(
+            "subtitles=filename='{caption_path}':force_style='FontName=Sans,FontSize={caption_font_size},MarginL={caption_margin_x},MarginR={caption_margin_x},MarginV={caption_margin},Outline={},Shadow=0,Alignment=2'",
+            caption_lineage.style.caption_outline_px
+        ));
+        for event in &caption_lineage.label_events {
+            let label = escape_drawtext(&event.audience_label);
+            presentation_filters.push(format!(
+                "drawtext=text='{label}':fontcolor={}:fontsize={}:x={}:y={}:box=1:boxcolor={}:boxborderw={}:enable='between(t,{:.3},{:.3})'",
+                caption_lineage.style.badge_text_color,
+                caption_lineage.style.badge_font_size_px,
+                caption_lineage.style.badge_region.x,
+                caption_lineage.style.badge_region.y,
+                caption_lineage.style.badge_background,
+                caption_lineage.style.badge_padding_px,
+                event.start_ms as f64 / 1000.0,
+                event.end_ms as f64 / 1000.0,
+            ));
+        }
+    }
+    if !options.disclosure.is_empty() {
+        presentation_filters.push(format!(
+            "drawtext=text='{disclosure}':fontcolor=white@0.68:fontsize={disclosure_font_size}:x=w-tw-24:y=20:box=1:boxcolor=black@0.3:boxborderw=5"
         ));
     }
+    let presentation_filters = if presentation_filters.is_empty() {
+        "null".to_string()
+    } else {
+        presentation_filters.join(",")
+    };
     filters.push(format!(
         "[{previous}]{presentation_filters},format=yuv420p[finalv]"
     ));
+    let timeline_seconds = durations.iter().sum::<f64>();
+    let audio_map = if manifest_audio {
+        let mut narration = Vec::new();
+        let mut background = Vec::new();
+        for (index, event) in loaded.manifest.audio_events.iter().enumerate() {
+            let input_index = loaded.manifest.shots.len() + index;
+            let duration = event
+                .duration_seconds
+                .unwrap_or(timeline_seconds - event.start_seconds);
+            let mut chain = format!(
+                "[{input_index}:a:0]atrim=start={:.3}:duration={duration:.3},asetpts=PTS-STARTPTS,volume={:.3}dB",
+                event.source_in_seconds, event.gain_db
+            );
+            if event.fade_in_ms > 0 {
+                chain.push_str(&format!(
+                    ",afade=t=in:st=0:d={:.3}",
+                    event.fade_in_ms as f64 / 1000.0
+                ));
+            }
+            if event.fade_out_ms > 0 {
+                let fade_duration = event.fade_out_ms as f64 / 1000.0;
+                chain.push_str(&format!(
+                    ",afade=t=out:st={:.3}:d={fade_duration:.3}",
+                    (duration - fade_duration).max(0.0)
+                ));
+            }
+            chain.push_str(&format!(
+                ",adelay={}:all=1[ae{index}]",
+                (event.start_seconds * 1000.0).round() as u64
+            ));
+            filters.push(chain);
+            let label = format!("ae{index}");
+            if event.role == AudioRole::Narration {
+                narration.push(label);
+            } else {
+                background.push(label);
+            }
+        }
+        let mixed = match (background.is_empty(), narration.is_empty()) {
+            (false, false) => {
+                mix_audio_labels(&mut filters, &background, "background");
+                mix_audio_labels(&mut filters, &narration, "narration");
+                if let Some(ducking) = &loaded.manifest.narration_ducking {
+                    filters.push(
+                        "[narration]asplit=2[narration_detector][narration_program]".to_string(),
+                    );
+                    filters.push(format!(
+                        "[background][narration_detector]sidechaincompress=threshold={:.6}:ratio={:.3}:attack={}:release={}[ducked]",
+                        ducking.threshold,
+                        ducking.ratio,
+                        ducking.attack_ms,
+                        ducking.release_ms
+                    ));
+                    filters.push(
+                        "[ducked][narration_program]amix=inputs=2:normalize=0:dropout_transition=0[mixedaudio]"
+                            .to_string(),
+                    );
+                } else {
+                    filters.push(
+                        "[background][narration]amix=inputs=2:normalize=0:dropout_transition=0[mixedaudio]"
+                            .to_string(),
+                    );
+                }
+                "mixedaudio"
+            }
+            (false, true) => {
+                mix_audio_labels(&mut filters, &background, "mixedaudio");
+                "mixedaudio"
+            }
+            (true, false) => {
+                mix_audio_labels(&mut filters, &narration, "mixedaudio");
+                "mixedaudio"
+            }
+            (true, true) => unreachable!("manifest audio mode requires audio events"),
+        };
+        let mastering =
+            loaded
+                .manifest
+                .audio_mastering
+                .as_ref()
+                .map_or_else(String::new, |mastering| {
+                    format!(
+                        ",loudnorm=I={:.3}:LRA={:.3}:TP={:.3},alimiter=limit={:.3}:level=false",
+                        mastering.integrated_lufs,
+                        mastering.loudness_range_lu,
+                        mastering.true_peak_dbfs,
+                        mastering.limiter
+                    )
+                });
+        filters.push(format!(
+            "[{mixed}]aresample=async=1:first_pts=0,apad{mastering},atrim=duration={timeline_seconds:.3}[finala]"
+        ));
+        Some("[finala]".to_string())
+    } else if audio.is_some() {
+        Some(format!(
+            "{}:a:0",
+            loaded.manifest.shots.len() + loaded.manifest.audio_events.len()
+        ))
+    } else {
+        None
+    };
     let output_parent = options
         .output
         .parent()
@@ -783,15 +1017,18 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
             .ok_or_else(|| anyhow!("output path has no filename"))?,
     );
     let output_argument = adapter.path_argument(&options.output)?;
+    let filter_graph = filters.join(";");
     args.extend([
+        "-filter_complex_threads".to_string(),
+        "2".to_string(),
         "-filter_complex".to_string(),
-        filters.join(";"),
+        filter_graph.clone(),
         "-map".to_string(),
         "[finalv]".to_string(),
         "-c:v".to_string(),
         "libx264".to_string(),
         "-preset".to_string(),
-        "slow".to_string(),
+        options.encoding_preset.as_str().to_string(),
         "-crf".to_string(),
         "18".to_string(),
         "-r".to_string(),
@@ -803,10 +1040,10 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         "-metadata".to_string(),
         format!("comment={}", options.disclosure),
     ]);
-    if audio.is_some() {
+    if let Some(audio_map) = audio_map {
         args.extend([
             "-map".to_string(),
-            format!("{}:a:0", loaded.manifest.shots.len()),
+            audio_map,
             "-c:a".to_string(),
             "aac".to_string(),
             "-b:a".to_string(),
@@ -853,6 +1090,18 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
             .tempfile_in(output_parent)?
             .into_temp_path();
         let mut render_args = args.clone();
+        let mut filter_script = Builder::new()
+            .prefix(".reel-filter-")
+            .suffix(".txt")
+            .tempfile_in(output_parent)?;
+        filter_script.write_all(filter_graph.as_bytes())?;
+        filter_script.flush()?;
+        let filter_index = render_args
+            .iter()
+            .position(|argument| argument == "-filter_complex")
+            .ok_or_else(|| anyhow!("render command has no filter graph"))?;
+        render_args[filter_index] = "-filter_complex_script".to_string();
+        render_args[filter_index + 1] = adapter.path_argument(filter_script.path())?;
         let temp_argument = adapter.path_argument(&temp)?;
         *render_args.last_mut().expect("output argument exists") = temp_argument;
         adapter.run_ffmpeg(&render_args, &[])?;
@@ -952,8 +1201,26 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         ffmpeg_version,
         render_environment,
         motion,
-        captions: Some(caption_lineage),
+        captions: caption_lineage,
         audio_quality,
+        mixed_media: MixedMediaLineage {
+            still_events: loaded
+                .manifest
+                .shots
+                .iter()
+                .filter(|shot| shot.media_kind == MediaKind::Still)
+                .count(),
+            video_events: loaded
+                .manifest
+                .shots
+                .iter()
+                .filter(|shot| shot.media_kind == MediaKind::Video)
+                .count(),
+            audio_events: loaded.manifest.audio_events.len(),
+            beat_markers: loaded.manifest.beat_markers.len(),
+            narration_ducking: loaded.manifest.narration_ducking.is_some(),
+            audio_mastering: loaded.manifest.audio_mastering.is_some(),
+        },
         dry_run: options.dry_run,
         silent: options.silent,
         command_arguments: args,
@@ -1414,6 +1681,34 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
     if expected_duration != report.duration_ms {
         bail!("artifact duration does not match manifest timeline");
     }
+    let expected_mixed_media = MixedMediaLineage {
+        still_events: loaded
+            .manifest
+            .shots
+            .iter()
+            .filter(|shot| shot.media_kind == MediaKind::Still)
+            .count(),
+        video_events: loaded
+            .manifest
+            .shots
+            .iter()
+            .filter(|shot| shot.media_kind == MediaKind::Video)
+            .count(),
+        audio_events: loaded.manifest.audio_events.len(),
+        beat_markers: loaded.manifest.beat_markers.len(),
+        narration_ducking: loaded.manifest.narration_ducking.is_some(),
+        audio_mastering: loaded.manifest.audio_mastering.is_some(),
+    };
+    if tool_version >= (0, 2, 20)
+        && (report.mixed_media.still_events != expected_mixed_media.still_events
+            || report.mixed_media.video_events != expected_mixed_media.video_events
+            || report.mixed_media.audio_events != expected_mixed_media.audio_events
+            || report.mixed_media.beat_markers != expected_mixed_media.beat_markers
+            || report.mixed_media.narration_ducking != expected_mixed_media.narration_ducking
+            || report.mixed_media.audio_mastering != expected_mixed_media.audio_mastering)
+    {
+        bail!("mixed-media lineage does not match manifest");
+    }
     if report.motion.working_width != report.width
         || report.motion.working_height != report.height
         || report.motion.fps != report.fps
@@ -1477,45 +1772,27 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
     if report.motion.safety != expected_safety || expected_safety.iter().any(|shot| !shot.passed) {
         bail!("artifact motion safety evidence does not match the manifest");
     }
-    let captions = report
-        .inputs
-        .iter()
-        .find(|input| input.kind == "captions")
-        .ok_or_else(|| anyhow!("artifact report has no captions input"))?;
-    if report
+    let caption_inputs = report
         .inputs
         .iter()
         .filter(|input| input.kind == "captions")
-        .count()
-        != 1
-    {
-        bail!("artifact report must contain exactly one captions input");
-    }
-    let cues = crate::series::parse_srt(&fs::read_to_string(&captions.path)?)?;
-    if cues.first().is_none_or(|cue| cue.index != 1) {
-        bail!("captions must contain contiguous cues beginning at 1");
-    }
-    if cues
-        .last()
-        .is_some_and(|cue| cue.end_ms > report.duration_ms)
-    {
-        bail!("captions extend beyond the conformed duration");
-    }
-    if tool_version >= (0, 2, 9) && report.captions.is_none() {
-        bail!("v0.2.9+ artifact report has no caption preflight lineage");
-    }
-    if let Some(lineage) = &report.captions {
+        .collect::<Vec<_>>();
+    let presentation_inputs = report
+        .inputs
+        .iter()
+        .filter(|input| input.kind == "caption-presentation")
+        .collect::<Vec<_>>();
+    let cues = if let Some(lineage) = &report.captions {
+        if caption_inputs.len() != 1 {
+            bail!("captioned artifact must contain exactly one captions input");
+        }
+        let captions = caption_inputs[0];
         if lineage.schema != caption_presentation::CAPTION_LINEAGE_SCHEMA
             || lineage.captions_sha256 != captions.sha256
             || !lineage.passed
         {
             bail!("caption lineage does not match the artifact captions input");
         }
-        let presentation_inputs = report
-            .inputs
-            .iter()
-            .filter(|input| input.kind == "caption-presentation")
-            .collect::<Vec<_>>();
         let presentation = match &lineage.presentation_input_sha256 {
             Some(expected) => {
                 if presentation_inputs.len() != 1 || presentation_inputs[0].sha256 != *expected {
@@ -1552,7 +1829,25 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
         if !caption_lineage_equivalent(&reconstructed, lineage) {
             bail!("caption preflight or presentation lineage is inconsistent");
         }
-    }
+        let cues = crate::series::parse_srt(&fs::read_to_string(&captions.path)?)?;
+        if cues.first().is_none_or(|cue| cue.index != 1) {
+            bail!("captions must contain contiguous cues beginning at 1");
+        }
+        if cues
+            .last()
+            .is_some_and(|cue| cue.end_ms > report.duration_ms)
+        {
+            bail!("captions extend beyond the conformed duration");
+        }
+        cues
+    } else if tool_version >= (0, 2, 20) {
+        if !caption_inputs.is_empty() || !presentation_inputs.is_empty() {
+            bail!("caption-free artifact carries unexpected caption inputs");
+        }
+        Vec::new()
+    } else {
+        bail!("v0.2.9 through v0.2.19 artifact report has no caption preflight lineage");
+    };
     let audio_inputs = report
         .inputs
         .iter()
@@ -1718,9 +2013,14 @@ pub fn write_animatic_receipt(
         .context("artifact report is not valid JSON")?;
     let mut input_kinds = BTreeMap::new();
     for input in &report.inputs {
-        let kind = match input.kind.as_str() {
-            "manifest" | "visual" | "audio" | "captions" => input.kind.as_str(),
-            _ => "other",
+        let kind = if matches!(input.kind.as_str(), "still" | "video" | "visual") {
+            "visual"
+        } else if input.kind == "audio" || input.kind.starts_with("audio-") {
+            "audio"
+        } else if matches!(input.kind.as_str(), "manifest" | "captions") {
+            input.kind.as_str()
+        } else {
+            "other"
         };
         *input_kinds.entry(kind.to_string()).or_insert(0) += 1;
     }
@@ -1789,7 +2089,8 @@ fn validate_animatic_receipt(receipt: &AnimaticReceipt) -> Result<()> {
             receipt.source_artifact_schema
         );
     }
-    if parse_tool_version(&receipt.tool_version)? < (0, 2, 6) {
+    let tool_version = parse_tool_version(&receipt.tool_version)?;
+    if tool_version < (0, 2, 6) {
         bail!("animatic receipt tool version predates v0.2.6");
     }
     if !is_sha256(&receipt.source_artifact_sha256)
@@ -1808,7 +2109,7 @@ fn validate_animatic_receipt(receipt: &AnimaticReceipt) -> Result<()> {
         || receipt.height % 2 != 0
         || receipt.fps == 0
         || receipt.duration_ms == 0
-        || receipt.caption_cues == 0
+        || (receipt.caption_cues == 0 && tool_version < (0, 2, 20))
         || receipt.motion_shots == 0
     {
         bail!("animatic receipt contains invalid delivery counts");
@@ -1841,7 +2142,14 @@ fn validate_animatic_receipt(receipt: &AnimaticReceipt) -> Result<()> {
             "manifest" | "visual" | "audio" | "captions" | "other"
         )
     }) || receipt.input_kinds.get("manifest") != Some(&1)
-        || receipt.input_kinds.get("captions") != Some(&1)
+        || (receipt.caption_cues == 0
+            && receipt
+                .input_kinds
+                .get("captions")
+                .copied()
+                .unwrap_or_default()
+                != 0)
+        || (receipt.caption_cues > 0 && receipt.input_kinds.get("captions") != Some(&1))
         || receipt
             .input_kinds
             .get("visual")
@@ -1862,7 +2170,7 @@ fn validate_animatic_receipt(receipt: &AnimaticReceipt) -> Result<()> {
         .copied()
         .unwrap_or_default();
     if (receipt.silent && (receipt.audio_streams != 0 || audio_inputs != 0))
-        || (!receipt.silent && (receipt.audio_streams != 1 || audio_inputs != 1))
+        || (!receipt.silent && (receipt.audio_streams != 1 || audio_inputs == 0))
     {
         bail!("animatic receipt audio counts do not match silent mode");
     }
@@ -1981,6 +2289,7 @@ fn escape_drawtext(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn parses_semantic_tool_versions_for_lineage_gates() {
@@ -1988,6 +2297,235 @@ mod tests {
         assert_eq!(parse_tool_version("0.2.5").unwrap(), (0, 2, 5));
         assert!(parse_tool_version("0.2").is_err());
         assert!(parse_tool_version("0.2.5.1").is_err());
+    }
+
+    #[test]
+    fn dry_run_compiles_mixed_media_audio_and_ducking_into_one_graph() {
+        let temp = tempdir().unwrap();
+        let fixture_root = Path::new("manifests/fixtures/vertical-sound-off")
+            .canonicalize()
+            .unwrap();
+        let mut manifest = production::load(fixture_root.join("manifest.yaml"))
+            .unwrap()
+            .manifest;
+        manifest.shots[0].beat_marker_id = Some("downbeat".to_string());
+        manifest.shots[1].media_kind = MediaKind::Video;
+        manifest.shots[1].source_in_seconds = 1.25;
+        manifest.beat_markers = vec![production::BeatMarker {
+            id: "downbeat".to_string(),
+            time_seconds: 0.0,
+            label: "opening beat".to_string(),
+            accent: true,
+        }];
+        manifest.audio_events = vec![
+            production::AudioEvent {
+                id: "room".to_string(),
+                role: AudioRole::Ambience,
+                source: "frame-hook.ppm".to_string(),
+                start_seconds: 0.0,
+                duration_seconds: Some(6.0),
+                source_in_seconds: 0.0,
+                gain_db: -10.0,
+                loop_source: true,
+                fade_in_ms: 100,
+                fade_out_ms: 200,
+                beat_marker_id: Some("downbeat".to_string()),
+            },
+            production::AudioEvent {
+                id: "voice".to_string(),
+                role: AudioRole::Narration,
+                source: "frame-landing.ppm".to_string(),
+                start_seconds: 0.5,
+                duration_seconds: Some(2.0),
+                source_in_seconds: 0.0,
+                gain_db: 0.0,
+                loop_source: false,
+                fade_in_ms: 0,
+                fade_out_ms: 0,
+                beat_marker_id: None,
+            },
+        ];
+        manifest.narration_ducking = Some(production::NarrationDucking {
+            threshold: 0.03,
+            ratio: 8.0,
+            attack_ms: 20,
+            release_ms: 300,
+        });
+        let manifest_path = temp.path().join("manifest.yaml");
+        fs::write(&manifest_path, serde_yaml::to_string(&manifest).unwrap()).unwrap();
+
+        let report = render(&AnimaticRenderOptions {
+            manifest: manifest_path,
+            asset_root: fixture_root.clone(),
+            audio: None,
+            audio_check_report: None,
+            silent: false,
+            captions: Some(fixture_root.join("captions.srt")),
+            caption_presentation: None,
+            caption_profile: CaptionProfile::YoutubeReview,
+            speaker_label_policy: SpeakerLabelPolicy::None,
+            speaker_reintroduce_after_ms: None,
+            caption_thresholds: CaptionThresholds::default(),
+            caption_policy_note: None,
+            output: temp.path().join("mixed.mp4"),
+            width: 1280,
+            height: 720,
+            fps: 24,
+            transition_seconds: 0.0,
+            disclosure: "FIXTURE".to_string(),
+            motion_quality: MotionQuality::Smooth,
+            motion_curve: MotionCurve::EaseInOut,
+            encoding_preset: EncodingPreset::Slow,
+            dry_run: true,
+        })
+        .unwrap();
+
+        let command = report.command_arguments.join(" ");
+        assert!(command.contains("-ss 1.250"));
+        assert!(command.contains("-stream_loop -1"));
+        assert!(command.contains("sidechaincompress="));
+        assert!(command.contains("adelay=500:all=1"));
+        assert!(command.contains("[finala]"));
+        assert_eq!(report.mixed_media.video_events, 1);
+        assert_eq!(report.mixed_media.audio_events, 2);
+        assert!(report.mixed_media.narration_ducking);
+    }
+
+    #[test]
+    #[ignore = "requires external FFmpeg/ffprobe and renders a six-second mixed-media fixture"]
+    fn real_mixed_media_render_verifies_audio_event_lineage() {
+        let temp = tempdir().unwrap();
+        let fixture_root = Path::new("manifests/fixtures/vertical-sound-off")
+            .canonicalize()
+            .unwrap();
+        fs::copy(
+            fixture_root.join("frame-hook.ppm"),
+            temp.path().join("still.ppm"),
+        )
+        .unwrap();
+        fs::copy(
+            fixture_root.join("captions.srt"),
+            temp.path().join("captions.srt"),
+        )
+        .unwrap();
+        let adapter = FfmpegAdapter;
+        let video = temp.path().join("clip.mp4");
+        adapter
+            .run_ffmpeg(
+                &[
+                    "-y".to_string(),
+                    "-loop".to_string(),
+                    "1".to_string(),
+                    "-i".to_string(),
+                    adapter
+                        .path_argument(&fixture_root.join("frame-landing.ppm"))
+                        .unwrap(),
+                    "-t".to_string(),
+                    "4".to_string(),
+                    "-vf".to_string(),
+                    "scale=640:360".to_string(),
+                    "-r".to_string(),
+                    "24".to_string(),
+                    "-pix_fmt".to_string(),
+                    "yuv420p".to_string(),
+                    adapter.path_argument(&video).unwrap(),
+                ],
+                &[],
+            )
+            .unwrap();
+        for (name, frequency, duration) in [("bed.wav", 220, 6), ("voice.wav", 660, 2)] {
+            let output = temp.path().join(name);
+            adapter
+                .run_ffmpeg(
+                    &[
+                        "-y".to_string(),
+                        "-f".to_string(),
+                        "lavfi".to_string(),
+                        "-i".to_string(),
+                        format!("sine=frequency={frequency}:sample_rate=48000"),
+                        "-t".to_string(),
+                        duration.to_string(),
+                        adapter.path_argument(&output).unwrap(),
+                    ],
+                    &[],
+                )
+                .unwrap();
+        }
+
+        let mut manifest = production::load(fixture_root.join("manifest.yaml"))
+            .unwrap()
+            .manifest;
+        manifest.shots[0].visual_asset = Some("still.ppm".to_string());
+        manifest.shots[1].visual_asset = Some("clip.mp4".to_string());
+        manifest.shots[1].media_kind = MediaKind::Video;
+        manifest.shots[1].source_in_seconds = 0.2;
+        manifest.audio_events = vec![
+            production::AudioEvent {
+                id: "bed".to_string(),
+                role: AudioRole::Music,
+                source: "bed.wav".to_string(),
+                start_seconds: 0.0,
+                duration_seconds: Some(6.0),
+                source_in_seconds: 0.0,
+                gain_db: -12.0,
+                loop_source: false,
+                fade_in_ms: 100,
+                fade_out_ms: 200,
+                beat_marker_id: None,
+            },
+            production::AudioEvent {
+                id: "voice".to_string(),
+                role: AudioRole::Narration,
+                source: "voice.wav".to_string(),
+                start_seconds: 0.5,
+                duration_seconds: Some(2.0),
+                source_in_seconds: 0.0,
+                gain_db: -3.0,
+                loop_source: false,
+                fade_in_ms: 0,
+                fade_out_ms: 0,
+                beat_marker_id: None,
+            },
+        ];
+        manifest.narration_ducking = Some(production::NarrationDucking {
+            threshold: 0.03,
+            ratio: 8.0,
+            attack_ms: 20,
+            release_ms: 300,
+        });
+        let manifest_path = temp.path().join("manifest.yaml");
+        fs::write(&manifest_path, serde_yaml::to_string(&manifest).unwrap()).unwrap();
+        let output = temp.path().join("mixed.mp4");
+        let report = render(&AnimaticRenderOptions {
+            manifest: manifest_path,
+            asset_root: temp.path().to_path_buf(),
+            audio: None,
+            audio_check_report: None,
+            silent: false,
+            captions: Some(temp.path().join("captions.srt")),
+            caption_presentation: None,
+            caption_profile: CaptionProfile::YoutubeReview,
+            speaker_label_policy: SpeakerLabelPolicy::None,
+            speaker_reintroduce_after_ms: None,
+            caption_thresholds: CaptionThresholds::default(),
+            caption_policy_note: None,
+            output,
+            width: 1280,
+            height: 720,
+            fps: 24,
+            transition_seconds: 0.0,
+            disclosure: "FIXTURE".to_string(),
+            motion_quality: MotionQuality::Legacy,
+            motion_curve: MotionCurve::EaseInOut,
+            encoding_preset: EncodingPreset::Slow,
+            dry_run: false,
+        })
+        .unwrap();
+        let checked = check_animatic(&report.artifact_manifest).unwrap();
+        assert!(checked.passed);
+        assert_eq!(checked.audio_streams, 1);
+        assert_eq!(report.mixed_media.video_events, 1);
+        assert_eq!(report.mixed_media.audio_events, 2);
     }
 
     #[test]

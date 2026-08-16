@@ -66,13 +66,19 @@ fn run_cli() -> Result<()> {
                 let report = reel::production::validate(&loaded)?;
                 match output {
                     OutputFormat::Text => println!(
-                        "manifest ok: {} version={} profile={} timing={} scenes={} shots={} speakers={} cues={} duration={} preview_ready={} delivery_ready={} gated={}",
+                        "manifest ok: {} version={} profile={} timing={} scenes={} shots={} stills={} videos={} audio_events={} beats={} ducking={} mastering={} speakers={} cues={} duration={} preview_ready={} delivery_ready={} gated={}",
                         report.manifest,
                         report.version,
                         report.profile,
                         report.timing_status,
                         report.scenes,
                         report.shots,
+                        report.still_events,
+                        report.video_events,
+                        report.audio_events,
+                        report.beat_markers,
+                        report.narration_ducking,
+                        report.audio_mastering,
                         report.speakers,
                         report.narration_cues,
                         report
@@ -514,6 +520,7 @@ fn run_cli() -> Result<()> {
             narration_only_audio,
             effects_music_audio,
             captions,
+            no_captions: _,
             caption_options,
             output_path,
             width,
@@ -524,6 +531,7 @@ fn run_cli() -> Result<()> {
             disclosure,
             motion_quality,
             motion_curve,
+            encoding_preset,
             dry_run,
             output,
         } => {
@@ -557,12 +565,17 @@ fn run_cli() -> Result<()> {
                 disclosure,
                 motion_quality,
                 motion_curve,
+                encoding_preset,
                 dry_run,
             };
-            let requested = reel::production::load(&base_options.manifest)?
-                .manifest
-                .quality_controls
-                .ab_outputs;
+            let requested_manifest = reel::production::load(&base_options.manifest)?.manifest;
+            let requested = requested_manifest.quality_controls.ab_outputs;
+            let has_manifest_audio = !requested_manifest.audio_events.is_empty();
+            if has_manifest_audio && !requested.is_empty() {
+                anyhow::bail!(
+                    "manifest audio_events cannot be combined with pre-mixed A/B audio outputs"
+                );
+            }
             if silent && !requested.is_empty() {
                 anyhow::bail!(
                     "silent rendering cannot satisfy requested A/B audio outputs: {}",
@@ -669,6 +682,77 @@ fn run_cli() -> Result<()> {
             output,
         } => {
             let report = reel::adapters::still_animatic::check_animatic(&artifact_manifest)?;
+            print_report(&report, output)?;
+        }
+        Command::AnimaticAudioRender {
+            manifest,
+            asset_root,
+            output_path,
+            dry_run,
+            output,
+        } => {
+            let report = reel::audio_preview::render_audio_preview(
+                &reel::audio_preview::AudioPreviewOptions {
+                    manifest,
+                    asset_root,
+                    output: output_path,
+                    dry_run,
+                },
+            )?;
+            print_report(&report, output)?;
+        }
+        Command::AnimaticAudioCheck {
+            artifact_report,
+            output,
+        } => {
+            let report = reel::audio_preview::check_audio_preview(&artifact_report)?;
+            print_report(&report, output)?;
+        }
+        Command::AnimaticRemux {
+            picture_artifact,
+            audio_artifact,
+            output_path,
+            output,
+        } => {
+            let report = reel::audio_preview::remux_picture(
+                &picture_artifact,
+                &audio_artifact,
+                &output_path,
+            )?;
+            print_report(&report, output)?;
+        }
+        Command::AnimaticRemuxCheck {
+            artifact_report,
+            output,
+        } => {
+            let report = reel::audio_preview::check_picture_remux(&artifact_report)?;
+            print_report(&report, output)?;
+        }
+        Command::AnimaticLock {
+            artifact_manifest,
+            output_dir,
+            output,
+        } => {
+            let report = reel::selection_lock::lock_selection(&artifact_manifest, &output_dir)?;
+            print_report(&report, output)?;
+        }
+        Command::AnimaticLockCheck { packet, output } => {
+            let report = reel::selection_lock::check_selection_lock(&packet)?;
+            print_report(&report, output)?;
+        }
+        Command::PlanningDerive {
+            locked_manifest,
+            output_path,
+            reason,
+            changed_dimensions,
+            output,
+        } => {
+            let report = reel::selection_lock::derive_planning_manifest(
+                &locked_manifest,
+                &output_path,
+                &reason,
+                &changed_dimensions,
+            )?;
             print_report(&report, output)?;
         }
         Command::CaptionLayout {
@@ -1394,25 +1478,33 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
-    /// Render an asset-backed still-image animatic through FFmpeg with captions and provenance.
+    /// Render a manifest-owned still/video and audio-event timeline through FFmpeg.
     AnimaticRender {
         manifest: PathBuf,
         #[arg(long)]
         asset_root: PathBuf,
-        #[arg(long, required_unless_present = "silent", conflicts_with = "silent")]
+        /// Use a pre-mixed master instead of manifest audio_events.
+        #[arg(long, conflicts_with = "silent")]
         audio: Option<PathBuf>,
         /// Bind a successful path-free audio-check report to artifact lineage.
         #[arg(long, requires = "audio")]
         audio_check_report: Option<PathBuf>,
-        /// Render without an audio stream for sound-optional delivery.
+        /// Render without an audio stream; conflicts with a manifest that owns audio_events.
         #[arg(long, conflicts_with = "audio")]
         silent: bool,
         #[arg(long)]
         narration_only_audio: Option<PathBuf>,
         #[arg(long)]
         effects_music_audio: Option<PathBuf>,
+        #[arg(
+            long,
+            required_unless_present = "no_captions",
+            conflicts_with = "no_captions"
+        )]
+        captions: Option<PathBuf>,
+        /// Render without burned-in captions or speaker badges.
         #[arg(long)]
-        captions: PathBuf,
+        no_captions: bool,
         #[command(flatten)]
         caption_options: Box<AnimaticCaptionArgs>,
         #[arg(long = "output")]
@@ -1436,6 +1528,9 @@ enum Command {
         /// Select the motion progress curve used by the smooth backend.
         #[arg(long, value_enum, default_value_t = reel::adapters::still_animatic::MotionCurve::EaseInOut)]
         motion_curve: reel::adapters::still_animatic::MotionCurve,
+        /// Select the H.264 encoding speed/quality preset.
+        #[arg(long, value_enum, default_value_t = reel::adapters::still_animatic::EncodingPreset::Slow)]
+        encoding_preset: reel::adapters::still_animatic::EncodingPreset,
         #[arg(long)]
         dry_run: bool,
         #[arg(long = "format", value_enum, default_value_t = OutputFormat::Text)]
@@ -1458,6 +1553,65 @@ enum Command {
     AnimaticCheck {
         artifact_manifest: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Render only manifest-owned audio events for rapid mix review.
+    AnimaticAudioRender {
+        manifest: PathBuf,
+        #[arg(long)]
+        asset_root: PathBuf,
+        #[arg(long = "output")]
+        output_path: PathBuf,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long = "format", value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Verify an audio-only preview and its manifest/source lineage.
+    AnimaticAudioCheck {
+        artifact_report: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Reuse verified picture while replacing its audio with a verified audio preview.
+    AnimaticRemux {
+        picture_artifact: PathBuf,
+        audio_artifact: PathBuf,
+        #[arg(long = "output")]
+        output_path: PathBuf,
+        #[arg(long = "format", value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Re-verify a cached-picture remux and both source artifact lineages.
+    AnimaticRemuxCheck {
+        artifact_report: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Verify a selected proof and atomically create a receipt-bound locked manifest packet.
+    AnimaticLock {
+        artifact_manifest: PathBuf,
+        #[arg(long)]
+        output_dir: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Re-verify a selection lock packet, its source artifact, and selected output.
+    AnimaticLockCheck {
+        packet: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Create an unlocked, lineage-bearing planning derivative from a locked manifest.
+    PlanningDerive {
+        locked_manifest: PathBuf,
+        #[arg(long = "output")]
+        output_path: PathBuf,
+        #[arg(long)]
+        reason: String,
+        #[arg(long = "changed-dimension", required = true)]
+        changed_dimensions: Vec<String>,
+        #[arg(long = "format", value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
     /// Write artifact-bound caption-region geometry and representative-frame evidence.

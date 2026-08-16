@@ -108,6 +108,23 @@ cinematic defaults: `slam-in`, `whip-left`, and `whip-right` shot treatments,
 plus the global `--motion-curve ease-out` setting. See
 [`docs/trailer-motion-v0.2.19.md`](docs/trailer-motion-v0.2.19.md).
 
+CLI v0.2.20 adds manifest-owned still/video source semantics, timed music,
+ambience, effect, and narration events, named beat-marker validation, and
+narration-driven sidechain ducking. It also supports manifest-owned final audio
+mastering, intentional caption-free renders, bounded large-timeline execution,
+and selectable medium/slow encoding. Existing pre-mixed `--audio` renders
+remain compatible. See
+[`docs/mixed-media-timeline-v0.2.20.md`](docs/mixed-media-timeline-v0.2.20.md).
+
+CLI v0.2.21 adds proof selection locks and fast audio revision. `animatic-lock`
+creates an atomic packet containing the selected verified artifact, a locked
+manifest derivative, and a receipt binding both hashes without invalidating the
+manifest that produced the proof. `planning-derive` explicitly unlocks a new
+lineage-bearing revision. `animatic-audio-render` compiles only manifest-owned
+audio events, while `animatic-remux` stream-copies previously verified picture
+and replaces only its audio. See
+[`docs/selection-lock-and-audio-cache-v0.2.21.md`](docs/selection-lock-and-audio-cache-v0.2.21.md).
+
 The main BERTICA-driven workflow is:
 
 ```powershell
