@@ -1,0 +1,282 @@
+schema: reel.craft-plan.v0.1
+plan_id: three-period-memoir-fixture
+title: Three Rooms, Three Seasons
+production_binding:
+  manifest: ../shared-production/manifest.yaml
+  manifest_sha256: 99957ce88740be4112f54d0c8bfdc166a09c8b292a3409cd8f7b6ea6a3d74823
+  work: shared-production-fixture
+  shots:
+    shot-early-window: shot-early-window
+    shot-middle-letter: shot-middle-letter
+    shot-late-chair: shot-late-chair
+  beats:
+    middle-start: middle-start
+    late-start: late-start
+
+periods:
+  - { id: early, label: Early period, sequence: 1 }
+  - { id: middle, label: Middle period, sequence: 2 }
+  - { id: late, label: Late period, sequence: 3 }
+
+evidence:
+  ev-photo-early:
+    kind: fictional-reference-note
+    reference: fixture://evidence/early-room-photo
+    description: Sanitized fictional note describing the early room and clothing silhouette.
+    distribution: approval-required
+  ev-letter-middle:
+    kind: fictional-reference-note
+    reference: fixture://evidence/middle-letter
+    description: Sanitized fictional note supporting the middle-period desk and hero letter.
+    distribution: shareable
+  ev-audio-late:
+    kind: fictional-reference-note
+    reference: fixture://evidence/late-room-tone
+    description: Sanitized fictional note describing late-period room tone and clock rhythm.
+    distribution: shareable
+  ev-reconstruction-policy:
+    kind: policy
+    reference: fixture://policy/reconstruction
+    description: Fixture policy requiring visible disclosure for invented connective imagery.
+    distribution: shareable
+
+assets:
+  asset-early-window:
+    kind: generated-reference
+    reference: fixture://assets/early-window
+    description: Abstract window and curtain reference with no real identity or address.
+    disclosure: fictional-generated-reference
+    distribution: approval-required
+  asset-middle-letter:
+    kind: prop-reference
+    reference: fixture://assets/middle-letter
+    description: Invented blank letter prop used only for continuity planning.
+    disclosure: fictional-prop
+    distribution: shareable
+  asset-late-clock:
+    kind: sound-reference
+    reference: fixture://assets/late-clock
+    description: Generic clock pulse reference without copyrighted recording.
+    disclosure: synthetic-reference
+    distribution: shareable
+  asset-rain-layer:
+    kind: vfx-reference
+    reference: fixture://assets/rain-layer
+    description: Generic rain overlay reference for the middle-period window.
+    disclosure: synthetic-reference
+    distribution: shareable
+
+continuity:
+  - id: early-room-a
+    match_group: early-look
+    subject: subject-a
+    period: early
+    age: young-adult
+    wardrobe: [light-shirt, dark-trousers]
+    hair: short-natural-shape
+    hero_props: [small-notebook]
+    location_zone: room-window-zone
+    time_of_day: morning
+    lighting_source: soft-window-left
+    screen_direction: left-to-right
+    reconstruction_disclosure: disclosed-reconstruction
+  - id: early-room-b
+    match_group: early-look
+    subject: subject-a
+    period: early
+    age: young-adult
+    wardrobe: [light-shirt, dark-trousers]
+    hair: short-natural-shape
+    hero_props: [small-notebook]
+    location_zone: room-window-zone
+    time_of_day: morning
+    lighting_source: soft-window-left
+    screen_direction: left-to-right
+    reconstruction_disclosure: disclosed-reconstruction
+  - id: middle-desk
+    subject: subject-a
+    period: middle
+    age: mid-adult
+    wardrobe: [rolled-sleeve-shirt, neutral-skirt]
+    hair: shoulder-length-tied-back
+    hero_props: [sealed-letter]
+    location_zone: apartment-desk-zone
+    time_of_day: rainy-afternoon
+    lighting_source: cool-window-right-and-warm-desk-lamp
+    screen_direction: right-to-left
+    reconstruction_disclosure: disclosed-reconstruction
+  - id: late-chair
+    subject: subject-a
+    period: late
+    age: older-adult
+    wardrobe: [textured-cardigan, dark-dress]
+    hair: short-silver-shape
+    hero_props: [small-notebook, table-clock]
+    location_zone: quiet-chair-zone
+    time_of_day: evening
+    lighting_source: warm-practical-right
+    screen_direction: neutral
+    reconstruction_disclosure: disclosed-reconstruction
+
+editorial:
+  - id: edit-early-window
+    period: early
+    shot_ref: shot-early-window
+    departments: [directing, cinematography, editing, sound, accessibility]
+    cut_reason: Cut on the subject turning from the window to the notebook.
+    eye_trace: Preserve attention in the lower-left notebook area.
+    sound_bridge: Morning room tone begins before the window image.
+    protected_hold: { required: true, duration_ms: 1500, reason: Hold the disclosure and room geography long enough to read. }
+    movement_motivation: The notebook, not the camera, motivates the turn.
+    evidence_refs: [ev-photo-early, ev-reconstruction-policy]
+    continuity_refs: [early-room-a, early-room-b]
+  - id: edit-middle-letter
+    period: middle
+    shot_ref: shot-middle-letter
+    departments: [directing, performance, editing, sound, score, accessibility]
+    cut_reason: Enter after the hand reaches the sealed letter; leave on release.
+    eye_trace: Carry attention from hand to seal without a competing insert.
+    sound_bridge: Rain continues across the cut; music remains undecided.
+    protected_hold: { required: true, duration_ms: 1167, reason: Protect the hand-to-letter action and disclosure. }
+    movement_motivation: The decision to touch the letter motivates the shot change.
+    evidence_refs: [ev-letter-middle, ev-reconstruction-policy]
+    continuity_refs: [middle-desk]
+  - id: edit-late-chair
+    period: late
+    shot_ref: shot-late-chair
+    departments: [directing, cinematography, editing, sound, score, accessibility]
+    cut_reason: Land after the clock pulse and remain with the seated subject.
+    eye_trace: Hold central face-to-notebook relationship.
+    sound_bridge: Clock pulse may bridge from the preceding dark frame; final music decision remains human.
+    protected_hold: { required: true, duration_ms: 2000, reason: Preserve the final quiet beat and reconstruction disclosure. }
+    movement_motivation: A small notebook closure supplies the only planned movement.
+    evidence_refs: [ev-audio-late, ev-reconstruction-policy]
+    continuity_refs: [late-chair]
+
+vfx:
+  - id: vfx-middle-rain
+    period: middle
+    shot_ref: shot-middle-letter
+    departments: [cinematography, production-design, animation-vfx, provenance]
+    layers: [room-plate, window-reflection, rain-layer, foreground-hand]
+    depth: Rain remains behind the subject and in front of the exterior plate.
+    occlusion: [foreground-hand-occludes-letter-edge]
+    reflections: Window reflection must not duplicate or alter the subject identity.
+    particles: Restrained rain droplets only; no atmospheric dust.
+    interaction_contacts: [hand-contacts-letter, rain-contacts-window]
+    cleanup_requirements: [remove-tracking-markers, preserve-letter-edge]
+    evidence_refs: [ev-letter-middle, ev-reconstruction-policy]
+    continuity_refs: [middle-desk]
+    assets: [asset-middle-letter, asset-rain-layer]
+  - id: vfx-late-practical
+    period: late
+    shot_ref: shot-late-chair
+    departments: [cinematography, animation-vfx, provenance]
+    layers: [room-plate, practical-light-glow, subject, clock]
+    depth: Practical glow remains behind the subject silhouette.
+    occlusion: [subject-occludes-practical]
+    reflections: none
+    particles: none
+    interaction_contacts: [hand-contacts-notebook]
+    cleanup_requirements: [preserve-clock-face, remove-rig-edge]
+    evidence_refs: [ev-audio-late, ev-reconstruction-policy]
+    continuity_refs: [late-chair]
+    assets: [asset-late-clock]
+
+departments:
+  directing:
+    intent: Preserve a clear three-period progression while leaving performance choices to the human director.
+    source_evidence: [ev-photo-early, ev-letter-middle, ev-audio-late, ev-reconstruction-policy]
+    continuity_refs: [early-room-a, middle-desk, late-chair]
+    owner: directing-department
+    status: planned
+    assets: []
+    human_review_gate: { required: true, status: pending, reviewer_role: human-director }
+  cinematography:
+    intent: Track period changes through motivated source direction and time-of-day contrast.
+    source_evidence: [ev-photo-early, ev-letter-middle, ev-audio-late]
+    continuity_refs: [early-room-a, middle-desk, late-chair]
+    owner: cinematography-department
+    status: planned
+    assets: [asset-early-window, asset-rain-layer]
+    human_review_gate: { required: true, status: pending, reviewer_role: human-cinematographer }
+  production-design:
+    intent: Maintain three fictional location zones and legible hero-prop placement.
+    source_evidence: [ev-photo-early, ev-letter-middle]
+    continuity_refs: [early-room-a, middle-desk, late-chair]
+    owner: production-design-department
+    status: planned
+    assets: [asset-early-window, asset-middle-letter]
+    human_review_gate: { required: true, status: pending, reviewer_role: human-production-designer }
+  costume:
+    intent: Distinguish periods through silhouette and texture without asserting cultural authenticity.
+    source_evidence: [ev-photo-early]
+    continuity_refs: [early-room-a, middle-desk, late-chair]
+    owner: costume-department
+    status: planned
+    assets: []
+    human_review_gate: { required: true, status: pending, reviewer_role: human-costume-designer }
+  hair-makeup:
+    intent: Record age-period hair states while leaving actual design and application to specialists.
+    source_evidence: [ev-photo-early]
+    continuity_refs: [early-room-a, middle-desk, late-chair]
+    owner: hair-makeup-department
+    status: planned
+    assets: []
+    human_review_gate: { required: true, status: pending, reviewer_role: human-hair-makeup-lead }
+  performance:
+    intent: Preserve action motivations and protected emotional space without prescribing emotion.
+    source_evidence: [ev-letter-middle, ev-audio-late]
+    continuity_refs: [middle-desk, late-chair]
+    owner: performance-department
+    status: planned
+    assets: []
+    human_review_gate: { required: true, status: pending, reviewer_role: human-director-and-performer }
+  editing:
+    intent: Protect action causality, eye trace, disclosure holds, and sound bridges across periods.
+    source_evidence: [ev-photo-early, ev-letter-middle, ev-audio-late, ev-reconstruction-policy]
+    continuity_refs: [early-room-a, middle-desk, late-chair]
+    owner: editing-department
+    status: in-progress
+    assets: []
+    human_review_gate: { required: true, status: pending, reviewer_role: human-editor }
+  sound:
+    intent: Carry location and period transitions with room tone while leaving final sound choices unresolved.
+    source_evidence: [ev-audio-late]
+    continuity_refs: [early-room-a, middle-desk, late-chair]
+    owner: sound-department
+    status: planned
+    assets: [asset-late-clock]
+    human_review_gate: { required: true, status: pending, reviewer_role: human-sound-designer }
+  score:
+    intent: Record where score decisions are pending without deciding which moments deserve music.
+    source_evidence: [ev-audio-late]
+    continuity_refs: [middle-desk, late-chair]
+    owner: score-department
+    status: blocked
+    assets: []
+    human_review_gate: { required: true, status: pending, reviewer_role: human-composer-and-director }
+  animation-vfx:
+    intent: Track compositing layers, contacts, depth, cleanup, and reconstruction disclosure.
+    source_evidence: [ev-letter-middle, ev-audio-late, ev-reconstruction-policy]
+    continuity_refs: [middle-desk, late-chair]
+    owner: animation-vfx-department
+    status: planned
+    assets: [asset-middle-letter, asset-rain-layer, asset-late-clock]
+    human_review_gate: { required: true, status: pending, reviewer_role: human-vfx-supervisor }
+  accessibility:
+    intent: Preserve readable disclosures, protected holds, and understandable structure without judging the edit.
+    source_evidence: [ev-reconstruction-policy]
+    continuity_refs: [early-room-a, middle-desk, late-chair]
+    owner: accessibility-department
+    status: planned
+    assets: []
+    human_review_gate: { required: true, status: pending, reviewer_role: human-accessibility-reviewer }
+  provenance:
+    intent: Keep fictional evidence, generated references, and reconstruction disclosures attributable.
+    source_evidence: [ev-photo-early, ev-letter-middle, ev-audio-late, ev-reconstruction-policy]
+    continuity_refs: [early-room-a, middle-desk, late-chair]
+    owner: provenance-department
+    status: ready-for-review
+    assets: [asset-early-window, asset-middle-letter, asset-late-clock, asset-rain-layer]
+    human_review_gate: { required: true, status: pending, reviewer_role: human-provenance-reviewer }

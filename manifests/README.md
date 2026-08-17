@@ -18,7 +18,8 @@ available through `--motion-quality legacy`. The sanitized acceptance manifest
 and grid live under `manifests/fixtures/smooth-motion/`.
 
 CLI v0.2.20 keeps `reel.manifest.v0.2` and adds optional typed mixed-media
-fields. Shots may declare `media_kind: still|video`, `source_in_seconds`, and a
+fields. Shots may declare
+`media_kind: still|video|animation|sprite-animation`, `source_in_seconds`, and a
 `beat_marker_id`. Top-level `beat_markers`, `audio_events`, and
 `narration_ducking` move edit and mix timing into the portable manifest. See
 `../docs/mixed-media-timeline-v0.2.20.md`.
@@ -27,6 +28,13 @@ CLI v0.2.21 keeps the manifest schema stable. Selection locks and planning
 derivatives are external governance packets; audio-only previews and cached-
 picture remux reports bind the unchanged v0.2 manifest by SHA-256. See
 `../docs/selection-lock-and-audio-cache-v0.2.21.md`.
+
+CLI v0.2.22 adds an optional top-level `score` block for provider-neutral music
+direction. It owns originality policy, creative brief, motifs, instrument
+palette, chapter cues, emotion and energy movement, tempo/meter, transitions,
+montage/picture notes, and exact sync points. `reel score-plan` compiles those
+fields into `reel.score-plan.v0.1`; it does not synthesize or license music. See
+`../docs/chapter-score-direction-v0.2.22.md`.
 
 ## Required top-level fields
 
@@ -93,12 +101,42 @@ Each shot must define:
 - `transition_out`
 
 Optional mixed-media shot fields are `media_kind` (defaults to `still`),
-`source_in_seconds` (for video trimming), and `beat_marker_id` (an exact named
+`source_in_seconds` (for video trimming), `animation` (ordered authored cels
+with explicit frame holds), `sprite_animation` (a background plus keyframed
+pose tracks), and `beat_marker_id` (an exact named
 start-time anchor). Optional top-level `audio_events` support `music`,
 `ambience`, `effect`, and `narration` roles; `beat_markers` define reusable
 timeline anchors; and `narration_ducking` configures the narration sidechain.
 Optional `audio_mastering` declares final integrated loudness, loudness range,
 true peak, and limiter policy after event mixing.
+
+Optional `score` direction is complementary to `audio_events`: it specifies
+what original or licensed music should do, while audio events specify which
+rendered sources enter the mix and when. A score plan is creative direction,
+not proof that the requested instruments, performance, originality, or license
+exist in a rendered track.
+
+## Additive planning sidecars
+
+`reel.choreography.v0.1` describes renderer-neutral stage marks, beats,
+performer phrases, prop handoffs, and reactions. It compiles to a flattened
+blocking plan without changing the production-manifest contract. See
+[`../docs/choreography-v0.2.24.md`](../docs/choreography-v0.2.24.md).
+
+`reel.craft-plan.v0.1` records cross-department intent, evidence, assets,
+continuity, workflow status, and explicit human-review gates. Its coverage
+report measures structural presence and references only; it never scores
+artistic quality. Department packets contain only explicitly routed and
+referenced information. See
+[`../docs/craft-plan-v0.2.25.md`](../docs/craft-plan-v0.2.25.md).
+
+The shared hash-pinned production fixture, choreography asset binding, sprite
+manifest compiler, packet distribution rules, and packet receipts introduced
+in v0.2.26 are documented in
+[`../docs/production-handoff-v0.2.26.md`](../docs/production-handoff-v0.2.26.md).
+
+Both contracts are optional sidecars. Neither silently changes
+`reel.manifest.v0.2`, grants approval, or makes a department's creative choice.
 
 ## Games Design scenario rules
 

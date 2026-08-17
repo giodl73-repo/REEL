@@ -116,6 +116,35 @@ and selectable medium/slow encoding. Existing pre-mixed `--audio` renders
 remain compatible. See
 [`docs/mixed-media-timeline-v0.2.20.md`](docs/mixed-media-timeline-v0.2.20.md).
 
+CLI v0.2.23 adds provider-neutral limited-animation shots: an ordered sequence
+of individually hashed authored cels, each with an explicit delivery-frame
+hold. This supports short fully animated vignettes without coupling REEL to an
+image or video generator. See
+[`docs/limited-animation-v0.2.23.md`](docs/limited-animation-v0.2.23.md).
+The same release adds keyframed sprite animation for efficient pose swaps and
+motion over a stable background. See
+[`docs/sprite-animation-v0.2.23.md`](docs/sprite-animation-v0.2.23.md).
+
+CLI v0.2.24 adds a strict, additive choreography sidecar and fast abstract
+blocking preview. Named stage marks, exact beats, performer approaches, prop
+handoffs, reactions, spatial paths, and timing curves compile into a flattened
+renderer-neutral plan. See
+[`docs/choreography-v0.2.24.md`](docs/choreography-v0.2.24.md).
+
+CLI v0.2.25 adds a strict, additive cross-department craft plan. It records
+department intent, evidence, assets, continuity, ownership, status, and explicit
+human-review gates; audits structural coverage without scoring art; and exports
+least-information department packets. See
+[`docs/craft-plan-v0.2.25.md`](docs/craft-plan-v0.2.25.md).
+
+CLI v0.2.26 closes the production-handoff boundary between those features. A
+shared SHA-256-pinned production binding maps choreography and craft references
+to exact shots and beat markers; choreography can compile pose assets and
+beat-synchronized camera phrases into a real sprite production manifest; and
+external department packets enforce per-record distribution policy and support
+path-free cryptographic receipts. See
+[`docs/production-handoff-v0.2.26.md`](docs/production-handoff-v0.2.26.md).
+
 CLI v0.2.21 adds proof selection locks and fast audio revision. `animatic-lock`
 creates an atomic packet containing the selected verified artifact, a locked
 manifest derivative, and a receipt binding both hashes without invalidating the
@@ -124,6 +153,14 @@ lineage-bearing revision. `animatic-audio-render` compiles only manifest-owned
 audio events, while `animatic-remux` stream-copies previously verified picture
 and replaces only its audio. See
 [`docs/selection-lock-and-audio-cache-v0.2.21.md`](docs/selection-lock-and-audio-cache-v0.2.21.md).
+
+CLI v0.2.22 adds manifest-owned chapter score direction and a deterministic
+`score-plan` handoff. Films can express original-music policy, motifs,
+instrument families and articulations, mood/energy movement, tempo, story or
+location palettes, transitions, montage notes, and exact picture hits tied to
+beat markers without coupling the manifest to a composer or model provider.
+Existing v0.2 manifests remain valid. See
+[`docs/chapter-score-direction-v0.2.22.md`](docs/chapter-score-direction-v0.2.22.md).
 
 The main BERTICA-driven workflow is:
 

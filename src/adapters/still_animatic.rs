@@ -168,10 +168,43 @@ pub struct AnimaticRenderReport {
 pub struct MixedMediaLineage {
     pub still_events: usize,
     pub video_events: usize,
+    #[serde(default)]
+    pub animation_events: usize,
+    #[serde(default)]
+    pub sprite_animation_events: usize,
     pub audio_events: usize,
     pub beat_markers: usize,
     pub narration_ducking: bool,
     pub audio_mastering: bool,
+}
+
+#[derive(Clone, Debug)]
+enum ShotVisualPlan {
+    Single {
+        input_index: usize,
+    },
+    Sprites {
+        background_input_index: usize,
+        segments: Vec<SpriteRenderSegment>,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct SpriteRenderSegment {
+    input_index: usize,
+    z_index: i32,
+    start_seconds: f64,
+    end_seconds: f64,
+    start_x: f64,
+    start_y: f64,
+    end_x: f64,
+    end_y: f64,
+    start_width: f64,
+    end_width: f64,
+    anchor_x: f64,
+    anchor_y: f64,
+    movement: production::SpriteMovement,
+    movement_steps: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -620,65 +653,253 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         "warning".to_string(),
     ];
     let mut durations = Vec::new();
+    let mut animation_lists = Vec::new();
+    let mut visual_plans = Vec::new();
+    let mut ffmpeg_input_count = 0_usize;
     for (index, shot) in loaded.manifest.shots.iter().enumerate() {
         let duration = shot
             .duration_seconds
             .ok_or_else(|| anyhow!("timing not conformed: shot {} has no duration", shot.id))?;
-        let visual = shot
-            .visual_asset
-            .as_deref()
-            .ok_or_else(|| anyhow!("shot {} has no visual_asset", shot.id))?;
-        let candidate = if Path::new(visual).is_absolute() {
-            PathBuf::from(visual)
-        } else {
-            asset_root.join(visual)
-        };
-        let resolved = candidate.canonicalize().with_context(|| {
-            format!(
-                "missing visual asset for shot {}: {}",
-                shot.id,
-                candidate.display()
-            )
-        })?;
-        if !Path::new(visual).is_absolute() && !resolved.starts_with(&asset_root) {
-            bail!("shot {} visual_asset escapes asset root", shot.id);
-        }
-        inputs.push(AnimaticInput {
-            kind: match shot.media_kind {
-                MediaKind::Still => "still",
-                MediaKind::Video => "video",
-            }
-            .to_string(),
-            id: shot.id.clone(),
-            path: resolved.display().to_string(),
-            sha256: production::sha256_path(&resolved)?,
-        });
         let tail = if index + 1 < loaded.manifest.shots.len() {
             options.transition_seconds
         } else {
             0.0
         };
         match shot.media_kind {
-            MediaKind::Still => args.extend([
-                "-threads".to_string(),
-                "1".to_string(),
-                "-loop".to_string(),
-                "1".to_string(),
-                "-framerate".to_string(),
-                options.fps.to_string(),
-                "-t".to_string(),
-                format!("{:.3}", duration + tail),
-                "-i".to_string(),
-                adapter.path_argument(&resolved)?,
-            ]),
-            MediaKind::Video => args.extend([
-                "-ss".to_string(),
-                format!("{:.3}", shot.source_in_seconds),
-                "-t".to_string(),
-                format!("{:.3}", duration + tail),
-                "-i".to_string(),
-                adapter.path_argument(&resolved)?,
-            ]),
+            MediaKind::Still | MediaKind::Video => {
+                let visual = shot
+                    .visual_asset
+                    .as_deref()
+                    .ok_or_else(|| anyhow!("shot {} has no visual_asset", shot.id))?;
+                let candidate = if Path::new(visual).is_absolute() {
+                    PathBuf::from(visual)
+                } else {
+                    asset_root.join(visual)
+                };
+                let resolved = candidate.canonicalize().with_context(|| {
+                    format!(
+                        "missing visual asset for shot {}: {}",
+                        shot.id,
+                        candidate.display()
+                    )
+                })?;
+                if !Path::new(visual).is_absolute() && !resolved.starts_with(&asset_root) {
+                    bail!("shot {} visual_asset escapes asset root", shot.id);
+                }
+                inputs.push(AnimaticInput {
+                    kind: match shot.media_kind {
+                        MediaKind::Still => "still",
+                        MediaKind::Video => "video",
+                        MediaKind::Animation | MediaKind::SpriteAnimation => unreachable!(),
+                    }
+                    .to_string(),
+                    id: shot.id.clone(),
+                    path: resolved.display().to_string(),
+                    sha256: production::sha256_path(&resolved)?,
+                });
+                match shot.media_kind {
+                    MediaKind::Still => args.extend([
+                        "-threads".to_string(),
+                        "1".to_string(),
+                        "-loop".to_string(),
+                        "1".to_string(),
+                        "-framerate".to_string(),
+                        options.fps.to_string(),
+                        "-t".to_string(),
+                        format!("{:.3}", duration + tail),
+                        "-i".to_string(),
+                        adapter.path_argument(&resolved)?,
+                    ]),
+                    MediaKind::Video => args.extend([
+                        "-ss".to_string(),
+                        format!("{:.3}", shot.source_in_seconds),
+                        "-t".to_string(),
+                        format!("{:.3}", duration + tail),
+                        "-i".to_string(),
+                        adapter.path_argument(&resolved)?,
+                    ]),
+                    MediaKind::Animation | MediaKind::SpriteAnimation => unreachable!(),
+                }
+                visual_plans.push(ShotVisualPlan::Single {
+                    input_index: ffmpeg_input_count,
+                });
+                ffmpeg_input_count += 1;
+            }
+            MediaKind::Animation => {
+                let animation = shot
+                    .animation
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("animation shot {} has no sequence", shot.id))?;
+                let mut list = Builder::new().suffix(".ffconcat").tempfile()?;
+                writeln!(list, "ffconcat version 1.0")?;
+                let mut last_path = None;
+                for (frame_index, frame) in animation.frames.iter().enumerate() {
+                    let candidate = if Path::new(&frame.asset).is_absolute() {
+                        PathBuf::from(&frame.asset)
+                    } else {
+                        asset_root.join(&frame.asset)
+                    };
+                    let resolved = candidate.canonicalize().with_context(|| {
+                        format!(
+                            "missing animation frame for shot {}: {}",
+                            shot.id,
+                            candidate.display()
+                        )
+                    })?;
+                    if !Path::new(&frame.asset).is_absolute() && !resolved.starts_with(&asset_root)
+                    {
+                        bail!("shot {} animation frame escapes asset root", shot.id);
+                    }
+                    inputs.push(AnimaticInput {
+                        kind: "animation-frame".to_string(),
+                        id: format!("{}:{}", shot.id, frame_index + 1),
+                        path: resolved.display().to_string(),
+                        sha256: production::sha256_path(&resolved)?,
+                    });
+                    let concat_path = adapter
+                        .path_argument(&resolved)?
+                        .replace('\\', "/")
+                        .replace('\'', "'\\''");
+                    writeln!(list, "file '{concat_path}'")?;
+                    let mut frame_duration = frame.hold_frames as f64 / animation.timing_fps as f64;
+                    if frame_index + 1 == animation.frames.len() {
+                        frame_duration += tail;
+                    }
+                    writeln!(list, "duration {frame_duration:.9}")?;
+                    last_path = Some(concat_path);
+                }
+                writeln!(
+                    list,
+                    "file '{}'",
+                    last_path.expect("validated animation has at least one frame")
+                )?;
+                list.flush()?;
+                args.extend([
+                    "-f".to_string(),
+                    "concat".to_string(),
+                    "-safe".to_string(),
+                    "0".to_string(),
+                    "-t".to_string(),
+                    format!("{:.3}", duration + tail),
+                    "-i".to_string(),
+                    adapter.path_argument(list.path())?,
+                ]);
+                animation_lists.push(list);
+                visual_plans.push(ShotVisualPlan::Single {
+                    input_index: ffmpeg_input_count,
+                });
+                ffmpeg_input_count += 1;
+            }
+            MediaKind::SpriteAnimation => {
+                let animation = shot
+                    .sprite_animation
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("sprite-animation shot {} has no sequence", shot.id))?;
+                let background_candidate = if Path::new(&animation.background).is_absolute() {
+                    PathBuf::from(&animation.background)
+                } else {
+                    asset_root.join(&animation.background)
+                };
+                let background = background_candidate.canonicalize().with_context(|| {
+                    format!(
+                        "missing sprite-animation background for shot {}: {}",
+                        shot.id,
+                        background_candidate.display()
+                    )
+                })?;
+                if !Path::new(&animation.background).is_absolute()
+                    && !background.starts_with(&asset_root)
+                {
+                    bail!("shot {} sprite background escapes asset root", shot.id);
+                }
+                inputs.push(AnimaticInput {
+                    kind: "sprite-background".to_string(),
+                    id: format!("{}:background", shot.id),
+                    path: background.display().to_string(),
+                    sha256: production::sha256_path(&background)?,
+                });
+                args.extend([
+                    "-threads".to_string(),
+                    "1".to_string(),
+                    "-loop".to_string(),
+                    "1".to_string(),
+                    "-framerate".to_string(),
+                    options.fps.to_string(),
+                    "-t".to_string(),
+                    format!("{:.3}", duration + tail),
+                    "-i".to_string(),
+                    adapter.path_argument(&background)?,
+                ]);
+                let background_input_index = ffmpeg_input_count;
+                ffmpeg_input_count += 1;
+                let mut segments = Vec::new();
+                for track in &animation.sprites {
+                    for (keyframe_index, keyframe) in track.keyframes.iter().enumerate() {
+                        let candidate = if Path::new(&keyframe.asset).is_absolute() {
+                            PathBuf::from(&keyframe.asset)
+                        } else {
+                            asset_root.join(&keyframe.asset)
+                        };
+                        let resolved = candidate.canonicalize().with_context(|| {
+                            format!(
+                                "missing sprite asset for shot {} track {}: {}",
+                                shot.id,
+                                track.id,
+                                candidate.display()
+                            )
+                        })?;
+                        if !Path::new(&keyframe.asset).is_absolute()
+                            && !resolved.starts_with(&asset_root)
+                        {
+                            bail!("shot {} sprite asset escapes asset root", shot.id);
+                        }
+                        inputs.push(AnimaticInput {
+                            kind: "sprite-pose".to_string(),
+                            id: format!("{}:{}:{}", shot.id, track.id, keyframe_index + 1),
+                            path: resolved.display().to_string(),
+                            sha256: production::sha256_path(&resolved)?,
+                        });
+                        args.extend([
+                            "-threads".to_string(),
+                            "1".to_string(),
+                            "-loop".to_string(),
+                            "1".to_string(),
+                            "-framerate".to_string(),
+                            options.fps.to_string(),
+                            "-t".to_string(),
+                            format!("{:.3}", duration + tail),
+                            "-i".to_string(),
+                            adapter.path_argument(&resolved)?,
+                        ]);
+                        let next = track.keyframes.get(keyframe_index + 1);
+                        let end_seconds = next.map_or(duration + tail, |next| {
+                            next.frame as f64 / animation.timing_fps as f64
+                        });
+                        segments.push(SpriteRenderSegment {
+                            input_index: ffmpeg_input_count,
+                            z_index: keyframe.z_index.unwrap_or(track.z_index),
+                            start_seconds: keyframe.frame as f64 / animation.timing_fps as f64,
+                            end_seconds,
+                            start_x: keyframe.x,
+                            start_y: keyframe.y,
+                            end_x: next.map_or(keyframe.x, |next| next.x),
+                            end_y: next.map_or(keyframe.y, |next| next.y),
+                            start_width: keyframe.width,
+                            end_width: next.map_or(keyframe.width, |next| next.width),
+                            anchor_x: track.anchor_x.unwrap_or(0.5),
+                            anchor_y: track.anchor_y.unwrap_or(0.5),
+                            movement: track.movement,
+                            movement_steps: track.movement_steps.unwrap_or(3),
+                        });
+                        ffmpeg_input_count += 1;
+                    }
+                }
+                segments.sort_by_key(|segment| segment.z_index);
+                visual_plans.push(ShotVisualPlan::Sprites {
+                    background_input_index,
+                    segments,
+                });
+            }
         }
         durations.push(duration);
     }
@@ -807,26 +1028,91 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         } else {
             0.0
         };
-        let treatment = match shot.media_kind {
-            MediaKind::Still => motion_filter(
-                &shot.motion,
-                duration + tail,
-                options.fps,
-                options.width,
-                options.height,
-                options.motion_quality,
-                options.motion_curve,
-            ),
-            MediaKind::Video => format!(
-                "scale={}:{}:force_original_aspect_ratio=increase,crop={}:{},setsar=1",
-                options.width, options.height, options.width, options.height
-            ),
-        };
-        filters.push(format!(
-            "[{index}:v]{treatment},framerate=fps={},setsar=1,settb=AVTB,trim=duration={:.3},setpts=PTS-STARTPTS[v{index}]",
-            options.fps,
-            duration + tail
-        ));
+        match &visual_plans[index] {
+            ShotVisualPlan::Single { input_index } => {
+                let treatment = match shot.media_kind {
+                    MediaKind::Still => motion_filter(
+                        &shot.motion,
+                        duration + tail,
+                        options.fps,
+                        options.width,
+                        options.height,
+                        options.motion_quality,
+                        options.motion_curve,
+                    ),
+                    MediaKind::Video | MediaKind::Animation => format!(
+                        "scale={}:{}:force_original_aspect_ratio=increase,crop={}:{},setsar=1",
+                        options.width, options.height, options.width, options.height
+                    ),
+                    MediaKind::SpriteAnimation => unreachable!(),
+                };
+                filters.push(format!(
+                    "[{input_index}:v]{treatment},framerate=fps={},setsar=1,settb=AVTB,trim=duration={:.3},setpts=PTS-STARTPTS[v{index}]",
+                    options.fps,
+                    duration + tail
+                ));
+            }
+            ShotVisualPlan::Sprites {
+                background_input_index,
+                segments,
+            } => {
+                let background = format!("sprite{index}_base");
+                let background_treatment = motion_filter(
+                    &shot.motion,
+                    duration + tail,
+                    options.fps,
+                    options.width,
+                    options.height,
+                    options.motion_quality,
+                    options.motion_curve,
+                );
+                filters.push(format!(
+                    "[{background_input_index}:v]{background_treatment},framerate=fps={},setsar=1,settb=AVTB,trim=duration={:.3},setpts=PTS-STARTPTS[{background}]",
+                    options.fps,
+                    duration + tail
+                ));
+                let mut previous = background;
+                for (segment_index, segment) in segments.iter().enumerate() {
+                    let sprite = format!("sprite{index}_{segment_index}");
+                    let output = format!("sprite{index}_out{segment_index}");
+                    let span = segment.end_seconds - segment.start_seconds;
+                    let start_width = (options.width as f64 * segment.start_width).max(1.0);
+                    let width_delta =
+                        options.width as f64 * (segment.end_width - segment.start_width);
+                    let progress = match segment.movement {
+                        production::SpriteMovement::Linear => {
+                            format!("(t-{:.9})/{span:.9}", segment.start_seconds)
+                        }
+                        production::SpriteMovement::Stepped => format!(
+                            "floor(((t-{:.9})/{span:.9})*{})/{}",
+                            segment.start_seconds, segment.movement_steps, segment.movement_steps
+                        ),
+                        production::SpriteMovement::Hold => "0".to_string(),
+                    };
+                    filters.push(format!(
+                        "[{}:v]scale=w='{start_width:.9}+{width_delta:.9}*({progress})':h=-1:eval=frame:flags=lanczos,format=rgba[{sprite}]",
+                        segment.input_index,
+                    ));
+                    let x_delta = segment.end_x - segment.start_x;
+                    let y_delta = segment.end_y - segment.start_y;
+                    filters.push(format!(
+                        "[{previous}][{sprite}]overlay=x='W*({:.9}+{x_delta:.9}*({progress}))-w*{:.9}':y='H*({:.9}+{y_delta:.9}*({progress}))-h*{:.9}':eval=frame:enable='gte(t,{:.9})*lt(t,{:.9})'[{output}]",
+                        segment.start_x,
+                        segment.anchor_x,
+                        segment.start_y,
+                        segment.anchor_y,
+                        segment.start_seconds,
+                        segment.end_seconds,
+                    ));
+                    previous = output;
+                }
+                filters.push(format!(
+                    "[{previous}]framerate=fps={},setsar=1,trim=duration={:.3},setpts=PTS-STARTPTS[v{index}]",
+                    options.fps,
+                    duration + tail
+                ));
+            }
+        }
     }
     let previous = if durations.len() == 1 {
         "v0".to_string()
@@ -853,6 +1139,9 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         }
         previous
     };
+    let timeline_frames = (durations.iter().sum::<f64>() * f64::from(options.fps))
+        .round()
+        .max(1.0) as u64;
     let disclosure = escape_drawtext(&options.disclosure);
     let disclosure_font_size = if options.height > options.width {
         18
@@ -901,14 +1190,14 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         presentation_filters.join(",")
     };
     filters.push(format!(
-        "[{previous}]{presentation_filters},format=yuv420p[finalv]"
+        "[{previous}]trim=end_frame={timeline_frames},setpts=PTS-STARTPTS,{presentation_filters},format=yuv420p[finalv]"
     ));
     let timeline_seconds = durations.iter().sum::<f64>();
     let audio_map = if manifest_audio {
         let mut narration = Vec::new();
         let mut background = Vec::new();
         for (index, event) in loaded.manifest.audio_events.iter().enumerate() {
-            let input_index = loaded.manifest.shots.len() + index;
+            let input_index = ffmpeg_input_count + index;
             let duration = event
                 .duration_seconds
                 .unwrap_or(timeline_seconds - event.start_seconds);
@@ -999,7 +1288,7 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
     } else if audio.is_some() {
         Some(format!(
             "{}:a:0",
-            loaded.manifest.shots.len() + loaded.manifest.audio_events.len()
+            ffmpeg_input_count + loaded.manifest.audio_events.len()
         ))
     } else {
         None
@@ -1215,6 +1504,18 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                 .shots
                 .iter()
                 .filter(|shot| shot.media_kind == MediaKind::Video)
+                .count(),
+            animation_events: loaded
+                .manifest
+                .shots
+                .iter()
+                .filter(|shot| shot.media_kind == MediaKind::Animation)
+                .count(),
+            sprite_animation_events: loaded
+                .manifest
+                .shots
+                .iter()
+                .filter(|shot| shot.media_kind == MediaKind::SpriteAnimation)
                 .count(),
             audio_events: loaded.manifest.audio_events.len(),
             beat_markers: loaded.manifest.beat_markers.len(),
@@ -1694,6 +1995,18 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
             .iter()
             .filter(|shot| shot.media_kind == MediaKind::Video)
             .count(),
+        animation_events: loaded
+            .manifest
+            .shots
+            .iter()
+            .filter(|shot| shot.media_kind == MediaKind::Animation)
+            .count(),
+        sprite_animation_events: loaded
+            .manifest
+            .shots
+            .iter()
+            .filter(|shot| shot.media_kind == MediaKind::SpriteAnimation)
+            .count(),
         audio_events: loaded.manifest.audio_events.len(),
         beat_markers: loaded.manifest.beat_markers.len(),
         narration_ducking: loaded.manifest.narration_ducking.is_some(),
@@ -1702,6 +2015,9 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
     if tool_version >= (0, 2, 20)
         && (report.mixed_media.still_events != expected_mixed_media.still_events
             || report.mixed_media.video_events != expected_mixed_media.video_events
+            || report.mixed_media.animation_events != expected_mixed_media.animation_events
+            || report.mixed_media.sprite_animation_events
+                != expected_mixed_media.sprite_animation_events
             || report.mixed_media.audio_events != expected_mixed_media.audio_events
             || report.mixed_media.beat_markers != expected_mixed_media.beat_markers
             || report.mixed_media.narration_ducking != expected_mixed_media.narration_ducking
@@ -2385,10 +2701,167 @@ mod tests {
         assert!(command.contains("-stream_loop -1"));
         assert!(command.contains("sidechaincompress="));
         assert!(command.contains("adelay=500:all=1"));
+        assert!(command.contains("trim=end_frame=144"));
         assert!(command.contains("[finala]"));
         assert_eq!(report.mixed_media.video_events, 1);
         assert_eq!(report.mixed_media.audio_events, 2);
         assert!(report.mixed_media.narration_ducking);
+    }
+
+    #[test]
+    fn dry_run_compiles_limited_animation_frames_as_one_timed_shot() {
+        let temp = tempdir().unwrap();
+        let fixture_root = Path::new("manifests/fixtures/vertical-sound-off")
+            .canonicalize()
+            .unwrap();
+        let mut manifest = production::load(fixture_root.join("manifest.yaml"))
+            .unwrap()
+            .manifest;
+        manifest.shots[0].media_kind = MediaKind::Animation;
+        manifest.shots[0].visual_asset = None;
+        manifest.shots[0].animation = Some(production::AnimationSequence {
+            timing_fps: 24,
+            frames: vec![
+                production::AnimationFrame {
+                    asset: "frame-hook.ppm".to_string(),
+                    hold_frames: 24,
+                    pose: Some("anticipation".to_string()),
+                },
+                production::AnimationFrame {
+                    asset: "frame-landing.ppm".to_string(),
+                    hold_frames: 42,
+                    pose: Some("impact".to_string()),
+                },
+            ],
+        });
+        let manifest_path = temp.path().join("animation.yaml");
+        fs::write(&manifest_path, serde_yaml::to_string(&manifest).unwrap()).unwrap();
+
+        let report = render(&AnimaticRenderOptions {
+            manifest: manifest_path,
+            asset_root: fixture_root,
+            audio: None,
+            audio_check_report: None,
+            silent: true,
+            captions: None,
+            caption_presentation: None,
+            caption_profile: CaptionProfile::YoutubeReview,
+            speaker_label_policy: SpeakerLabelPolicy::None,
+            speaker_reintroduce_after_ms: None,
+            caption_thresholds: CaptionThresholds::default(),
+            caption_policy_note: None,
+            output: temp.path().join("animation.mp4"),
+            width: 1280,
+            height: 720,
+            fps: 24,
+            transition_seconds: 0.0,
+            disclosure: "FIXTURE".to_string(),
+            motion_quality: MotionQuality::Smooth,
+            motion_curve: MotionCurve::EaseInOut,
+            encoding_preset: EncodingPreset::Slow,
+            dry_run: true,
+        })
+        .unwrap();
+
+        assert_eq!(report.mixed_media.animation_events, 1);
+        assert_eq!(
+            report
+                .inputs
+                .iter()
+                .filter(|input| input.kind == "animation-frame")
+                .count(),
+            2
+        );
+        let command = report.command_arguments.join(" ");
+        assert!(command.contains("-f concat -safe 0"));
+    }
+
+    #[test]
+    fn dry_run_compiles_keyframed_sprite_motion_and_pose_swaps() {
+        let temp = tempdir().unwrap();
+        let fixture_root = Path::new("manifests/fixtures/vertical-sound-off")
+            .canonicalize()
+            .unwrap();
+        let mut manifest = production::load(fixture_root.join("manifest.yaml"))
+            .unwrap()
+            .manifest;
+        manifest.shots[0].media_kind = MediaKind::SpriteAnimation;
+        manifest.shots[0].visual_asset = None;
+        manifest.shots[0].sprite_animation = Some(production::SpriteAnimation {
+            background: "frame-hook.ppm".to_string(),
+            timing_fps: 24,
+            sprites: vec![production::SpriteTrack {
+                id: "puck".to_string(),
+                z_index: 10,
+                anchor_x: Some(0.5),
+                anchor_y: Some(0.75),
+                movement: production::SpriteMovement::Stepped,
+                movement_steps: Some(3),
+                keyframes: vec![
+                    production::SpriteKeyframe {
+                        frame: 0,
+                        asset: "frame-landing.ppm".to_string(),
+                        z_index: None,
+                        x: 0.2,
+                        y: 0.6,
+                        width: 0.1,
+                    },
+                    production::SpriteKeyframe {
+                        frame: 33,
+                        asset: "frame-landing.ppm".to_string(),
+                        z_index: Some(20),
+                        x: 0.8,
+                        y: 0.4,
+                        width: 0.05,
+                    },
+                ],
+            }],
+        });
+        let manifest_path = temp.path().join("sprites.yaml");
+        fs::write(&manifest_path, serde_yaml::to_string(&manifest).unwrap()).unwrap();
+
+        let report = render(&AnimaticRenderOptions {
+            manifest: manifest_path,
+            asset_root: fixture_root,
+            audio: None,
+            audio_check_report: None,
+            silent: true,
+            captions: None,
+            caption_presentation: None,
+            caption_profile: CaptionProfile::YoutubeReview,
+            speaker_label_policy: SpeakerLabelPolicy::None,
+            speaker_reintroduce_after_ms: None,
+            caption_thresholds: CaptionThresholds::default(),
+            caption_policy_note: None,
+            output: temp.path().join("sprites.mp4"),
+            width: 1280,
+            height: 720,
+            fps: 24,
+            transition_seconds: 0.0,
+            disclosure: "FIXTURE".to_string(),
+            motion_quality: MotionQuality::Smooth,
+            motion_curve: MotionCurve::EaseInOut,
+            encoding_preset: EncodingPreset::Slow,
+            dry_run: true,
+        })
+        .unwrap();
+
+        assert_eq!(report.mixed_media.sprite_animation_events, 1);
+        assert_eq!(
+            report
+                .inputs
+                .iter()
+                .filter(|input| input.kind == "sprite-pose")
+                .count(),
+            2
+        );
+        let command = report.command_arguments.join(" ");
+        assert!(command.contains("overlay=x="));
+        assert!(command.contains("eval=frame:flags=lanczos"));
+        assert!(command.contains("floor(((t-0.000000000)/1.375000000)*3)/3"));
+        assert!(command.contains("-w*0.500000000"));
+        assert!(command.contains("-h*0.750000000"));
+        assert!(command.contains("gte(t,0.000000000)*lt(t,1.375000000)"));
     }
 
     #[test]

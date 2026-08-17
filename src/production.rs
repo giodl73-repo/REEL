@@ -137,6 +137,10 @@ pub struct Shot {
     pub visual_asset: Option<String>,
     #[serde(default)]
     pub media_kind: MediaKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub animation: Option<AnimationSequence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sprite_animation: Option<SpriteAnimation>,
     #[serde(default)]
     pub source_in_seconds: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -179,6 +183,65 @@ pub enum MediaKind {
     #[default]
     Still,
     Video,
+    Animation,
+    SpriteAnimation,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AnimationSequence {
+    pub timing_fps: u32,
+    pub frames: Vec<AnimationFrame>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AnimationFrame {
+    pub asset: String,
+    pub hold_frames: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pose: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SpriteAnimation {
+    pub background: String,
+    pub timing_fps: u32,
+    pub sprites: Vec<SpriteTrack>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SpriteTrack {
+    pub id: String,
+    #[serde(default)]
+    pub z_index: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_x: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_y: Option<f64>,
+    #[serde(default)]
+    pub movement: SpriteMovement,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub movement_steps: Option<u32>,
+    pub keyframes: Vec<SpriteKeyframe>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SpriteMovement {
+    #[default]
+    Linear,
+    Stepped,
+    Hold,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SpriteKeyframe {
+    pub frame: u32,
+    pub asset: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub z_index: Option<i32>,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -220,6 +283,118 @@ pub struct BeatMarker {
     pub label: String,
     #[serde(default)]
     pub accent: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScoreOriginalityPolicy {
+    #[default]
+    OriginalOnly,
+    Licensed,
+    TempReview,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ScoreInstrument {
+    pub family: String,
+    #[serde(default)]
+    pub role: String,
+    #[serde(default)]
+    pub timbre: String,
+    #[serde(default)]
+    pub articulations: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ScoreMotif {
+    pub id: String,
+    pub description: String,
+    #[serde(default)]
+    pub instruments: Vec<String>,
+    #[serde(default)]
+    pub recurrence_notes: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScoreSyncKind {
+    Downbeat,
+    Accent,
+    Break,
+    Swell,
+    Cadence,
+    Transition,
+    PictureHit,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ScoreSyncPoint {
+    pub id: String,
+    pub time_seconds: f64,
+    pub kind: ScoreSyncKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beat_marker_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emphasis: Option<f64>,
+    #[serde(default)]
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ScoreCue {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_seconds: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_seconds: Option<f64>,
+    #[serde(default)]
+    pub chapter: String,
+    pub narrative_function: String,
+    #[serde(default)]
+    pub mood_from: String,
+    #[serde(default)]
+    pub mood_to: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub energy_from: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub energy_to: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tempo_bpm: Option<f64>,
+    #[serde(default)]
+    pub meter: String,
+    #[serde(default)]
+    pub style_tags: Vec<String>,
+    #[serde(default)]
+    pub instruments: Vec<ScoreInstrument>,
+    #[serde(default)]
+    pub motif_ids: Vec<String>,
+    #[serde(default)]
+    pub transition_in: String,
+    #[serde(default)]
+    pub transition_out: String,
+    #[serde(default)]
+    pub montage_intent: String,
+    #[serde(default)]
+    pub picture_notes: Vec<String>,
+    #[serde(default)]
+    pub sync_points: Vec<ScoreSyncPoint>,
+    #[serde(default)]
+    pub notes: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ScoreDirection {
+    #[serde(default)]
+    pub originality_policy: ScoreOriginalityPolicy,
+    pub creative_brief: String,
+    #[serde(default)]
+    pub global_instruments: Vec<ScoreInstrument>,
+    #[serde(default)]
+    pub motifs: Vec<ScoreMotif>,
+    #[serde(default)]
+    pub avoid: Vec<String>,
+    #[serde(default)]
+    pub cues: Vec<ScoreCue>,
 }
 
 fn default_ducking_threshold() -> f64 {
@@ -515,6 +690,8 @@ pub struct ProductionManifest {
     pub narration_ducking: Option<NarrationDucking>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio_mastering: Option<AudioMastering>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score: Option<ScoreDirection>,
     #[serde(default)]
     pub source_ranges: Vec<SourceRange>,
     #[serde(default)]
@@ -558,8 +735,11 @@ pub struct ProductionValidationReport {
     pub narration_cues: usize,
     pub still_events: usize,
     pub video_events: usize,
+    pub animation_events: usize,
+    pub sprite_animation_events: usize,
     pub audio_events: usize,
     pub beat_markers: usize,
+    pub score_cues: usize,
     pub narration_ducking: bool,
     pub audio_mastering: bool,
     pub duration_ms: Option<u64>,
@@ -575,6 +755,20 @@ pub struct ProductionPlan {
     pub timing_status: String,
     pub scenes: Vec<PlanScene>,
     pub gated_commands: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ScorePlan {
+    pub schema: String,
+    pub work: String,
+    pub timing_status: String,
+    pub duration_ms: Option<u64>,
+    pub originality_policy: ScoreOriginalityPolicy,
+    pub creative_brief: String,
+    pub global_instruments: Vec<ScoreInstrument>,
+    pub motifs: Vec<ScoreMotif>,
+    pub avoid: Vec<String>,
+    pub cues: Vec<ScoreCue>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -795,6 +989,13 @@ pub fn validate(loaded: &LoadedProductionManifest) -> Result<ProductionValidatio
         "beat marker",
         manifest.beat_markers.iter().map(|item| item.id.as_str()),
     )?;
+    if let Some(score) = &manifest.score {
+        unique("score cue", score.cues.iter().map(|item| item.id.as_str()))?;
+        unique(
+            "score motif",
+            score.motifs.iter().map(|item| item.id.as_str()),
+        )?;
+    }
     let scene_ids = manifest
         .scenes
         .iter()
@@ -888,6 +1089,7 @@ pub fn validate(loaded: &LoadedProductionManifest) -> Result<ProductionValidatio
         None
     };
     validate_mixed_media(manifest, duration_ms)?;
+    validate_score_direction(manifest, duration_ms)?;
     let gated_commands = if manifest.timing_status == TimingStatus::Untimed {
         vec![
             "scene-preview".to_string(),
@@ -922,8 +1124,19 @@ pub fn validate(loaded: &LoadedProductionManifest) -> Result<ProductionValidatio
             .iter()
             .filter(|shot| shot.media_kind == MediaKind::Video)
             .count(),
+        animation_events: manifest
+            .shots
+            .iter()
+            .filter(|shot| shot.media_kind == MediaKind::Animation)
+            .count(),
+        sprite_animation_events: manifest
+            .shots
+            .iter()
+            .filter(|shot| shot.media_kind == MediaKind::SpriteAnimation)
+            .count(),
         audio_events: manifest.audio_events.len(),
         beat_markers: manifest.beat_markers.len(),
+        score_cues: manifest.score.as_ref().map_or(0, |score| score.cues.len()),
         narration_ducking: manifest.narration_ducking.is_some(),
         audio_mastering: manifest.audio_mastering.is_some(),
         duration_ms,
@@ -932,6 +1145,205 @@ pub fn validate(loaded: &LoadedProductionManifest) -> Result<ProductionValidatio
         gated_commands,
         warnings,
     })
+}
+
+pub fn score_plan(loaded: &LoadedProductionManifest) -> Result<ScorePlan> {
+    let report = validate(loaded)?;
+    let score = loaded
+        .manifest
+        .score
+        .as_ref()
+        .ok_or_else(|| anyhow!("score-plan requires manifest score direction"))?;
+    Ok(ScorePlan {
+        schema: "reel.score-plan.v0.1".to_string(),
+        work: loaded.manifest.work.clone(),
+        timing_status: loaded.manifest.timing_status.as_str().to_string(),
+        duration_ms: report.duration_ms,
+        originality_policy: score.originality_policy,
+        creative_brief: score.creative_brief.clone(),
+        global_instruments: score.global_instruments.clone(),
+        motifs: score.motifs.clone(),
+        avoid: score.avoid.clone(),
+        cues: score.cues.clone(),
+    })
+}
+
+fn validate_score_instrument(instrument: &ScoreInstrument, context: &str) -> Result<()> {
+    require_nonempty(&format!("{context} instrument family"), &instrument.family)?;
+    if instrument.role.trim().is_empty() && instrument.timbre.trim().is_empty() {
+        bail!(
+            "{context} instrument {} requires role or timbre",
+            instrument.family
+        );
+    }
+    for articulation in &instrument.articulations {
+        require_nonempty(&format!("{context} articulation"), articulation)?;
+    }
+    Ok(())
+}
+
+fn validate_score_direction(manifest: &ProductionManifest, duration_ms: Option<u64>) -> Result<()> {
+    let Some(score) = &manifest.score else {
+        return Ok(());
+    };
+    require_nonempty("score creative_brief", &score.creative_brief)?;
+    if score.cues.is_empty() {
+        bail!("score requires at least one cue");
+    }
+    if score.global_instruments.is_empty()
+        && score.cues.iter().all(|cue| cue.instruments.is_empty())
+    {
+        bail!("score requires at least one global or cue instrument direction");
+    }
+    for instrument in &score.global_instruments {
+        validate_score_instrument(instrument, "global score")?;
+    }
+    for item in &score.avoid {
+        require_nonempty("score avoid note", item)?;
+    }
+
+    let motif_ids = score
+        .motifs
+        .iter()
+        .map(|motif| motif.id.as_str())
+        .collect::<HashSet<_>>();
+    for motif in &score.motifs {
+        require_nonempty("score motif description", &motif.description)?;
+        for instrument in &motif.instruments {
+            require_nonempty(&format!("score motif {} instrument", motif.id), instrument)?;
+        }
+    }
+
+    let marker_times = manifest
+        .beat_markers
+        .iter()
+        .map(|marker| (marker.id.as_str(), seconds_to_ms(marker.time_seconds)))
+        .collect::<HashMap<_, _>>();
+    for cue in &score.cues {
+        require_nonempty(
+            &format!("score cue {} narrative_function", cue.id),
+            &cue.narrative_function,
+        )?;
+        if cue.start_seconds.is_some() != cue.duration_seconds.is_some() {
+            bail!(
+                "score cue {} must declare start_seconds and duration_seconds together",
+                cue.id
+            );
+        }
+        if manifest.timing_status.is_timed()
+            && (cue.start_seconds.is_none() || cue.duration_seconds.is_none())
+        {
+            bail!(
+                "timed score cue {} requires start_seconds and duration_seconds",
+                cue.id
+            );
+        }
+        let cue_range = cue
+            .start_seconds
+            .zip(cue.duration_seconds)
+            .map(|(start, duration)| -> Result<(u64, u64)> {
+                if start < 0.0 || !start.is_finite() {
+                    bail!(
+                        "score cue {} start_seconds must be finite and non-negative",
+                        cue.id
+                    );
+                }
+                let cue_duration_ms =
+                    required_ms(Some(duration), &format!("score cue {} duration", cue.id))?;
+                let start_ms = seconds_to_ms(start);
+                if cue_duration_ms == 0 {
+                    bail!("score cue {} duration must be positive", cue.id);
+                }
+                if cue_duration_ms.checked_add(start_ms).is_none()
+                    || cue_duration_ms
+                        .checked_add(start_ms)
+                        .is_some_and(|end| duration_ms.is_some_and(|timeline| end > timeline + 1))
+                {
+                    bail!(
+                        "score cue {} extends beyond the production timeline",
+                        cue.id
+                    );
+                }
+                Ok((start_ms, cue_duration_ms))
+            })
+            .transpose()?;
+
+        for (label, energy) in [
+            ("energy_from", cue.energy_from),
+            ("energy_to", cue.energy_to),
+        ] {
+            if energy.is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value)) {
+                bail!("score cue {} {label} must be between 0 and 1", cue.id);
+            }
+        }
+        if cue
+            .tempo_bpm
+            .is_some_and(|tempo| !tempo.is_finite() || !(20.0..=320.0).contains(&tempo))
+        {
+            bail!("score cue {} tempo_bpm must be between 20 and 320", cue.id);
+        }
+        for instrument in &cue.instruments {
+            validate_score_instrument(instrument, &format!("score cue {}", cue.id))?;
+        }
+        for motif_id in &cue.motif_ids {
+            if !motif_ids.contains(motif_id.as_str()) {
+                bail!("score cue {} references unknown motif {}", cue.id, motif_id);
+            }
+        }
+        for note in &cue.picture_notes {
+            require_nonempty(&format!("score cue {} picture note", cue.id), note)?;
+        }
+        unique(
+            &format!("score cue {} sync point", cue.id),
+            cue.sync_points.iter().map(|point| point.id.as_str()),
+        )?;
+        for point in &cue.sync_points {
+            if point.time_seconds < 0.0 || !point.time_seconds.is_finite() {
+                bail!(
+                    "score sync point {} time_seconds must be finite and non-negative",
+                    point.id
+                );
+            }
+            let point_ms = seconds_to_ms(point.time_seconds);
+            if duration_ms.is_some_and(|timeline| point_ms > timeline) {
+                bail!(
+                    "score sync point {} falls outside the production timeline",
+                    point.id
+                );
+            }
+            if let Some((start_ms, cue_duration_ms)) = cue_range
+                && (point_ms < start_ms || point_ms > start_ms + cue_duration_ms)
+            {
+                bail!("score sync point {} falls outside cue {}", point.id, cue.id);
+            }
+            if point
+                .emphasis
+                .is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value))
+            {
+                bail!(
+                    "score sync point {} emphasis must be between 0 and 1",
+                    point.id
+                );
+            }
+            if let Some(marker_id) = &point.beat_marker_id {
+                let marker_ms = marker_times.get(marker_id.as_str()).ok_or_else(|| {
+                    anyhow!(
+                        "score sync point {} references unknown beat marker {}",
+                        point.id,
+                        marker_id
+                    )
+                })?;
+                if point_ms.abs_diff(*marker_ms) > 1 {
+                    bail!(
+                        "score sync point {} time does not align with beat marker {}",
+                        point.id,
+                        marker_id
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_mixed_media(manifest: &ProductionManifest, duration_ms: Option<u64>) -> Result<()> {
@@ -957,8 +1369,197 @@ fn validate_mixed_media(manifest: &ProductionManifest, duration_ms: Option<u64>)
         .collect::<Result<HashMap<_, _>>>()?;
 
     for shot in &manifest.shots {
-        if shot.media_kind == MediaKind::Still && shot.source_in_seconds != 0.0 {
-            bail!("still shot {} cannot declare source_in_seconds", shot.id);
+        if shot.media_kind != MediaKind::Video && shot.source_in_seconds != 0.0 {
+            bail!(
+                "{} shot {} cannot declare source_in_seconds",
+                match shot.media_kind {
+                    MediaKind::Still => "still",
+                    MediaKind::Video => "video",
+                    MediaKind::Animation => "animation",
+                    MediaKind::SpriteAnimation => "sprite-animation",
+                },
+                shot.id
+            );
+        }
+        match (&shot.media_kind, &shot.animation) {
+            (MediaKind::Animation, Some(animation)) => {
+                if shot.visual_asset.is_some() {
+                    bail!(
+                        "animation shot {} uses animation.frames instead of visual_asset",
+                        shot.id
+                    );
+                }
+                if animation.timing_fps == 0 || animation.timing_fps > 60 {
+                    bail!(
+                        "animation shot {} timing_fps must be between 1 and 60",
+                        shot.id
+                    );
+                }
+                if animation.frames.is_empty() {
+                    bail!("animation shot {} must declare at least one frame", shot.id);
+                }
+                let mut held_frames = 0_u64;
+                for (index, frame) in animation.frames.iter().enumerate() {
+                    require_nonempty("animation frame asset", &frame.asset)?;
+                    if frame.hold_frames == 0 {
+                        bail!(
+                            "animation shot {} frame {} hold_frames must be positive",
+                            shot.id,
+                            index + 1
+                        );
+                    }
+                    held_frames = held_frames
+                        .checked_add(u64::from(frame.hold_frames))
+                        .ok_or_else(|| {
+                            anyhow!("animation shot {} frame holds overflow", shot.id)
+                        })?;
+                }
+                if let Some(duration) = shot.duration_seconds {
+                    let sequence_duration = held_frames as f64 / animation.timing_fps as f64;
+                    let tolerance = 1.0 / animation.timing_fps as f64 / 2.0;
+                    if (sequence_duration - duration).abs() > tolerance {
+                        bail!(
+                            "animation shot {} frame holds total {:.3}s but shot duration is {:.3}s",
+                            shot.id,
+                            sequence_duration,
+                            duration
+                        );
+                    }
+                }
+            }
+            (MediaKind::Animation, None) => {
+                bail!("animation shot {} has no animation sequence", shot.id)
+            }
+            (_, Some(_)) => bail!(
+                "{} shot {} cannot declare an animation sequence",
+                match shot.media_kind {
+                    MediaKind::Still => "still",
+                    MediaKind::Video => "video",
+                    MediaKind::Animation => "animation",
+                    MediaKind::SpriteAnimation => "sprite-animation",
+                },
+                shot.id
+            ),
+            (_, None) => {}
+        }
+        match (&shot.media_kind, &shot.sprite_animation) {
+            (MediaKind::SpriteAnimation, Some(animation)) => {
+                if shot.visual_asset.is_some() || shot.animation.is_some() {
+                    bail!(
+                        "sprite-animation shot {} uses sprite_animation instead of visual_asset or animation",
+                        shot.id
+                    );
+                }
+                require_nonempty("sprite-animation background", &animation.background)?;
+                if animation.timing_fps == 0 || animation.timing_fps > 60 {
+                    bail!(
+                        "sprite-animation shot {} timing_fps must be between 1 and 60",
+                        shot.id
+                    );
+                }
+                if animation.sprites.is_empty() {
+                    bail!(
+                        "sprite-animation shot {} must declare at least one sprite track",
+                        shot.id
+                    );
+                }
+                unique(
+                    "sprite track id",
+                    animation.sprites.iter().map(|track| track.id.as_str()),
+                )?;
+                let total_frames = shot
+                    .duration_seconds
+                    .map(|duration| (duration * animation.timing_fps as f64).round() as u64);
+                for track in &animation.sprites {
+                    if track
+                        .anchor_x
+                        .is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value))
+                        || track.anchor_y.is_some_and(|value| {
+                            !value.is_finite() || !(0.0..=1.0).contains(&value)
+                        })
+                    {
+                        bail!(
+                            "sprite-animation shot {} track {} anchors must be between 0 and 1",
+                            shot.id,
+                            track.id
+                        );
+                    }
+                    match (track.movement, track.movement_steps) {
+                        (SpriteMovement::Stepped, Some(steps)) if !(2..=12).contains(&steps) => {
+                            bail!(
+                                "sprite-animation shot {} track {} movement_steps must be between 2 and 12",
+                                shot.id,
+                                track.id
+                            );
+                        }
+                        (SpriteMovement::Linear | SpriteMovement::Hold, Some(_)) => {
+                            bail!(
+                                "sprite-animation shot {} track {} movement_steps requires stepped movement",
+                                shot.id,
+                                track.id
+                            );
+                        }
+                        _ => {}
+                    }
+                    if track.keyframes.is_empty() {
+                        bail!(
+                            "sprite-animation shot {} track {} has no keyframes",
+                            shot.id,
+                            track.id
+                        );
+                    }
+                    if track.keyframes[0].frame != 0 {
+                        bail!(
+                            "sprite-animation shot {} track {} must begin at frame 0",
+                            shot.id,
+                            track.id
+                        );
+                    }
+                    let mut prior = None;
+                    for keyframe in &track.keyframes {
+                        require_nonempty("sprite keyframe asset", &keyframe.asset)?;
+                        if prior.is_some_and(|frame| keyframe.frame <= frame) {
+                            bail!(
+                                "sprite-animation shot {} track {} keyframe frames must increase",
+                                shot.id,
+                                track.id
+                            );
+                        }
+                        if total_frames.is_some_and(|frames| u64::from(keyframe.frame) >= frames) {
+                            bail!(
+                                "sprite-animation shot {} track {} keyframe {} falls outside the shot",
+                                shot.id,
+                                track.id,
+                                keyframe.frame
+                            );
+                        }
+                        if !keyframe.x.is_finite()
+                            || !keyframe.y.is_finite()
+                            || !keyframe.width.is_finite()
+                            || !(-1.0..=2.0).contains(&keyframe.x)
+                            || !(-1.0..=2.0).contains(&keyframe.y)
+                            || !(0.0..=2.0).contains(&keyframe.width)
+                            || keyframe.width == 0.0
+                        {
+                            bail!(
+                                "sprite-animation shot {} track {} keyframe geometry is invalid",
+                                shot.id,
+                                track.id
+                            );
+                        }
+                        prior = Some(keyframe.frame);
+                    }
+                }
+            }
+            (MediaKind::SpriteAnimation, None) => bail!(
+                "sprite-animation shot {} has no sprite_animation sequence",
+                shot.id
+            ),
+            (_, Some(_)) => bail!(
+                "non-sprite shot {} cannot declare a sprite_animation sequence",
+                shot.id
+            ),
+            (_, None) => {}
         }
         if let Some(marker_id) = &shot.beat_marker_id {
             let marker_ms = marker_times.get(marker_id.as_str()).ok_or_else(|| {
@@ -2318,6 +2919,91 @@ narration_ducking: { threshold: 0.03, ratio: 8, attack_ms: 20, release_ms: 300 }
         fs::write(&path, invalid).unwrap();
         let error = validate(&load(&path).unwrap()).unwrap_err().to_string();
         assert!(error.contains("does not align with beat marker cut"));
+    }
+
+    #[test]
+    fn score_direction_validates_and_compiles_chapter_plan() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("score.yaml");
+        fs::write(
+            &path,
+            r#"
+manifest_version: reel.manifest.v0.2
+profile: animatic
+timing_status: conformed
+work: score-fixture
+title: Chapter Score Fixture
+scenes:
+  - { id: career, duration_seconds: 10.0 }
+shots:
+  - { id: first, scene_id: career, start_seconds: 0.0, duration_seconds: 4.0 }
+  - { id: second, scene_id: career, start_seconds: 4.0, duration_seconds: 6.0 }
+beat_markers:
+  - { id: opening, time_seconds: 0.0 }
+  - { id: desert, time_seconds: 4.0, accent: true }
+score:
+  originality_policy: original-only
+  creative_brief: Carry one motif through changing city palettes without imitating a song or artist.
+  global_instruments:
+    - { family: brass, role: recurring identity, timbre: warm and human, articulations: [swell, short accent] }
+  motifs:
+    - { id: next-shift, description: rising three-note persistence idea, instruments: [brass], recurrence_notes: return in every chapter }
+  avoid: [copyrighted melodies, artist imitation]
+  cues:
+    - id: ontario
+      start_seconds: 0.0
+      duration_seconds: 4.0
+      chapter: Ontario
+      narrative_function: reflective setup before the move
+      mood_from: uncertain
+      mood_to: determined
+      energy_from: 0.2
+      energy_to: 0.4
+      tempo_bpm: 72
+      meter: 4/4
+      style_tags: [movie-montage, reflective]
+      motif_ids: [next-shift]
+      transition_out: descend into the desert on one unmistakable down-note phrase
+      montage_intent: let the longer game calls breathe
+      picture_notes: [do not accent every cut]
+      sync_points:
+        - { id: opening-note, time_seconds: 0.0, kind: downbeat, beat_marker_id: opening, emphasis: 0.5 }
+    - id: palm-desert
+      start_seconds: 4.0
+      duration_seconds: 6.0
+      chapter: Palm Desert
+      narrative_function: first professional lift
+      mood_from: displaced
+      mood_to: joyful
+      energy_from: 0.35
+      energy_to: 0.8
+      tempo_bpm: 108
+      style_tags: [desert, festival-color]
+      instruments:
+        - { family: hand-percussion, role: pulse, timbre: dry and sunlit }
+        - { family: plucked-strings, role: hook, timbre: airy }
+      motif_ids: [next-shift]
+      transition_in: start exactly on the geographic arrival
+      sync_points:
+        - { id: desert-arrival, time_seconds: 4.0, kind: transition, beat_marker_id: desert, emphasis: 0.9 }
+"#,
+        )
+        .unwrap();
+
+        let loaded = load(&path).unwrap();
+        let report = validate(&loaded).unwrap();
+        assert_eq!(report.score_cues, 2);
+        let plan = score_plan(&loaded).unwrap();
+        assert_eq!(plan.schema, "reel.score-plan.v0.1");
+        assert_eq!(plan.cues[1].chapter, "Palm Desert");
+        assert_eq!(plan.cues[1].instruments.len(), 2);
+
+        let invalid = fs::read_to_string(&path)
+            .unwrap()
+            .replace("tempo_bpm: 108", "tempo_bpm: 400");
+        fs::write(&path, invalid).unwrap();
+        let error = validate(&load(&path).unwrap()).unwrap_err().to_string();
+        assert!(error.contains("tempo_bpm must be between 20 and 320"));
     }
 
     #[test]

@@ -312,8 +312,8 @@ fn real_sanitized_pan_makes_legacy_fail_and_smooth_pass() {
         .as_array_mut()
         .unwrap()
         .iter_mut()
-        .find(|input| input["kind"] == "visual")
-        .unwrap();
+        .find(|input| matches!(input["kind"].as_str(), Some("still" | "video")))
+        .expect("render should include a still or video input");
     visual_input["kind"] = Value::String(r"C:\private\photo.jpg".to_string());
     let unknown_kind_path = dir.path().join("unknown-kind.artifacts.json");
     fs::write(

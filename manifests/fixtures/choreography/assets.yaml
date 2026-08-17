@@ -1,0 +1,23 @@
+schema: reel.choreography-assets.v0.1
+choreography_sha256: 8bba6a06f3ebf3aa23a07402c13f2c17de6c6715d44952bc251f0ae6c70235e4
+background: background.ppm
+performers:
+  initiator:
+    default_asset: blue.ppm
+    width: 0.08
+    z_index: 20
+  receiver:
+    default_asset: red.ppm
+    poses: { celebrate: yellow.ppm }
+    width: 0.08
+    z_index: 20
+  observer:
+    default_asset: green.ppm
+    poses: { recoil: gray.ppm }
+    width: 0.07
+    z_index: 15
+props:
+  token:
+    asset: token.ppm
+    width: 0.025
+    z_index: 30
