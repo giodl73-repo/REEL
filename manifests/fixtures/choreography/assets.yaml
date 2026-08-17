@@ -1,5 +1,5 @@
 schema: reel.choreography-assets.v0.1
-choreography_sha256: 8bba6a06f3ebf3aa23a07402c13f2c17de6c6715d44952bc251f0ae6c70235e4
+choreography_sha256: fd46892b48b865e7c1fb1ad270e21bb971ee8a81e033ca4b4bfa1388ca612c9a
 background: background.ppm
 performers:
   initiator:

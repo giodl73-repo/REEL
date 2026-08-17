@@ -59,8 +59,15 @@ REEL performs the movement, pose timing, compositing, and final render but does
 not generate the art. Transparent PNG or WebP sprites are recommended.
 
 The shot-level `motion` treatment applies to the background plate before sprite
-composition. For example, `motion: pan-right` lets the camera travel across the
-rink while sprite tracks retain independent screen-space movement.
+composition. For example, `motion: pan-right` lets the background travel across
+the rink while sprite tracks retain independent screen-space movement.
+
+As of v0.2.27, `sprite_animation.camera` can instead control the completed
+composition with increasing frame-keyed center and zoom states. `linear`,
+`ease-in-out`, `ease-out`, and `hold-then-burst` curves are supported. Tracks
+begin at frame zero, remain inside the shot, and use zoom values from 1 through
+4. The renderer crop-clamps their centers for the requested output geometry, so
+16:9, 9:16, and square deliveries can be proven separately.
 
 For a short hockey play, use separate tracks for the passer, scorer, goalie,
 puck, and optionally the net response. A player usually needs only two to four

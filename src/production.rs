@@ -206,6 +206,28 @@ pub struct SpriteAnimation {
     pub background: String,
     pub timing_fps: u32,
     pub sprites: Vec<SpriteTrack>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub camera: Vec<SpriteCameraKeyframe>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SpriteCameraKeyframe {
+    pub frame: u32,
+    pub center_x: f64,
+    pub center_y: f64,
+    pub zoom: f64,
+    #[serde(default)]
+    pub curve_to_next: SpriteCameraCurve,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SpriteCameraCurve {
+    #[default]
+    Linear,
+    EaseInOut,
+    EaseOut,
+    HoldThenBurst,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1470,6 +1492,43 @@ fn validate_mixed_media(manifest: &ProductionManifest, duration_ms: Option<u64>)
                 let total_frames = shot
                     .duration_seconds
                     .map(|duration| (duration * animation.timing_fps as f64).round() as u64);
+                if !animation.camera.is_empty() {
+                    if animation.camera[0].frame != 0 {
+                        bail!(
+                            "sprite-animation shot {} camera must begin at frame 0",
+                            shot.id
+                        );
+                    }
+                    let mut prior = None;
+                    for keyframe in &animation.camera {
+                        if prior.is_some_and(|frame| keyframe.frame <= frame) {
+                            bail!(
+                                "sprite-animation shot {} camera keyframe frames must increase",
+                                shot.id
+                            );
+                        }
+                        if total_frames.is_some_and(|frames| u64::from(keyframe.frame) >= frames) {
+                            bail!(
+                                "sprite-animation shot {} camera keyframe {} falls outside the shot",
+                                shot.id,
+                                keyframe.frame
+                            );
+                        }
+                        if !keyframe.center_x.is_finite()
+                            || !keyframe.center_y.is_finite()
+                            || !keyframe.zoom.is_finite()
+                            || !(0.0..=1.0).contains(&keyframe.center_x)
+                            || !(0.0..=1.0).contains(&keyframe.center_y)
+                            || !(1.0..=4.0).contains(&keyframe.zoom)
+                        {
+                            bail!(
+                                "sprite-animation shot {} camera keyframe geometry is invalid",
+                                shot.id
+                            );
+                        }
+                        prior = Some(keyframe.frame);
+                    }
+                }
                 for track in &animation.sprites {
                     if track
                         .anchor_x

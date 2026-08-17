@@ -793,11 +793,7 @@ fn compile_camera(
         };
         let (from, to, timing) = match phrase.action {
             CameraAction::Hold => (center, center, TimingCurve::Linear),
-            CameraAction::Follow => (
-                target_at(start_frame),
-                target_at(end_frame),
-                TimingCurve::EaseInOut,
-            ),
+            CameraAction::Follow => (center, target_at(end_frame), TimingCurve::EaseInOut),
             CameraAction::Whip => (center, target_at(end_frame), TimingCurve::HoldThenBurst),
             CameraAction::Settle => (center, target_at(end_frame), TimingCurve::EaseOut),
         };
@@ -1173,10 +1169,53 @@ fn build_sprite_animation(
             keyframes,
         });
     }
+    let mut camera = BTreeMap::new();
+    for segment in &plan.camera {
+        let curve = match segment.timing {
+            TimingCurve::Linear | TimingCurve::EaseIn => production::SpriteCameraCurve::Linear,
+            TimingCurve::EaseInOut => production::SpriteCameraCurve::EaseInOut,
+            TimingCurve::EaseOut => production::SpriteCameraCurve::EaseOut,
+            TimingCurve::HoldThenBurst => production::SpriteCameraCurve::HoldThenBurst,
+        };
+        let safe = |value: f64, zoom: f64| value.clamp(0.5 / zoom, 1.0 - 0.5 / zoom);
+        camera
+            .entry(segment.start_frame)
+            .and_modify(|keyframe: &mut production::SpriteCameraKeyframe| {
+                keyframe.curve_to_next = curve;
+            })
+            .or_insert_with(|| production::SpriteCameraKeyframe {
+                frame: segment.start_frame,
+                center_x: safe(segment.from.x, segment.zoom_from),
+                center_y: safe(segment.from.y, segment.zoom_from),
+                zoom: segment.zoom_from,
+                curve_to_next: curve,
+            });
+        camera
+            .entry(segment.end_frame)
+            .or_insert_with(|| production::SpriteCameraKeyframe {
+                frame: segment.end_frame,
+                center_x: safe(segment.to.x, segment.zoom_to),
+                center_y: safe(segment.to.y, segment.zoom_to),
+                zoom: segment.zoom_to,
+                curve_to_next: production::SpriteCameraCurve::Linear,
+            });
+    }
+    if let Some(last) = camera.values().next_back().cloned()
+        && last.frame < plan.duration_frames - 1
+    {
+        camera.insert(
+            plan.duration_frames - 1,
+            production::SpriteCameraKeyframe {
+                frame: plan.duration_frames - 1,
+                ..last
+            },
+        );
+    }
     Ok(production::SpriteAnimation {
         background: assets.background.clone(),
         timing_fps: plan.fps,
         sprites,
+        camera: camera.into_values().collect(),
     })
 }
 
