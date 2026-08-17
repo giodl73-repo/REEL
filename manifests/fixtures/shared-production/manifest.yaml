@@ -1,0 +1,34 @@
+manifest_version: reel.manifest.v0.2
+profile: animatic
+timing_status: conformed
+work: shared-production-fixture
+title: Shared Production Binding Fixture
+format: short-film
+style: storyboard-animatic
+platforms:
+  - { name: private-review, aspect_ratio: "16:9", target_duration_seconds: 12.0, sound_optional: true }
+scenes:
+  - { id: three-periods, duration_seconds: 12.0, purpose: bind sidecars to exact shots, story_beat: early middle late }
+shots:
+  - { id: shot-early-window, scene_id: three-periods, start_seconds: 0.0, duration_seconds: 4.0 }
+  - { id: shot-middle-letter, scene_id: three-periods, start_seconds: 4.0, duration_seconds: 4.0 }
+  - { id: shot-late-chair, scene_id: three-periods, start_seconds: 8.0, duration_seconds: 4.0 }
+beat_markers:
+  - { id: early-read, time_seconds: 0.0 }
+  - { id: early-commit, time_seconds: 1.0 }
+  - { id: early-release, time_seconds: 1.5 }
+  - { id: early-receive, time_seconds: 2.25 }
+  - { id: early-result, time_seconds: 3.0 }
+  - { id: early-settle, time_seconds: 3.666667 }
+  - { id: middle-start, time_seconds: 4.0 }
+  - { id: late-start, time_seconds: 8.0 }
+audio:
+  narration_voice: none
+  music_direction: none
+  effects_direction: none
+  silence_notes: fixture is silent
+captions: { required: false, style: none, language: en }
+renderer_assumptions: { candidates: [ffmpeg], blockers: [] }
+exports:
+  - { id: private-review, filename: shared-production-fixture.mp4, aspect_ratio: "16:9", duration_seconds: 12.0 }
+review: { required_roles: [editor, animation], status: fixture }

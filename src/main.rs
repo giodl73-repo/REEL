@@ -66,7 +66,7 @@ fn run_cli() -> Result<()> {
                 let report = reel::production::validate(&loaded)?;
                 match output {
                     OutputFormat::Text => println!(
-                        "manifest ok: {} version={} profile={} timing={} scenes={} shots={} stills={} videos={} audio_events={} beats={} ducking={} mastering={} speakers={} cues={} duration={} preview_ready={} delivery_ready={} gated={}",
+                        "manifest ok: {} version={} profile={} timing={} scenes={} shots={} stills={} videos={} animations={} sprite_animations={} audio_events={} beats={} score_cues={} ducking={} mastering={} speakers={} cues={} duration={} preview_ready={} delivery_ready={} gated={}",
                         report.manifest,
                         report.version,
                         report.profile,
@@ -75,8 +75,11 @@ fn run_cli() -> Result<()> {
                         report.shots,
                         report.still_events,
                         report.video_events,
+                        report.animation_events,
+                        report.sprite_animation_events,
                         report.audio_events,
                         report.beat_markers,
+                        report.score_cues,
                         report.narration_ducking,
                         report.audio_mastering,
                         report.speakers,
@@ -170,6 +173,223 @@ fn run_cli() -> Result<()> {
                     }
                 }
             }
+        }
+        Command::ScorePlan { manifest, output } => {
+            let loaded = reel::production::load(&manifest)?;
+            let plan = reel::production::score_plan(&loaded)?;
+            match output {
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&plan)?),
+                OutputFormat::Text => {
+                    println!(
+                        "{} | timing={} | score_cues={} | motifs={} | instruments={}",
+                        plan.work,
+                        plan.timing_status,
+                        plan.cues.len(),
+                        plan.motifs.len(),
+                        plan.global_instruments.len()
+                    );
+                    for cue in plan.cues {
+                        println!(
+                            "{} | chapter={} | start={} | duration={} | energy={}->{} | tempo={} | function={}",
+                            cue.id,
+                            cue.chapter,
+                            cue.start_seconds
+                                .map(|value| format!("{value:.3}s"))
+                                .unwrap_or_else(|| "untimed".to_string()),
+                            cue.duration_seconds
+                                .map(|value| format!("{value:.3}s"))
+                                .unwrap_or_else(|| "untimed".to_string()),
+                            cue.energy_from
+                                .map(|value| format!("{value:.2}"))
+                                .unwrap_or_else(|| "unspecified".to_string()),
+                            cue.energy_to
+                                .map(|value| format!("{value:.2}"))
+                                .unwrap_or_else(|| "unspecified".to_string()),
+                            cue.tempo_bpm
+                                .map(|value| format!("{value:.1}bpm"))
+                                .unwrap_or_else(|| "free".to_string()),
+                            cue.narrative_function
+                        );
+                    }
+                }
+            }
+        }
+        Command::ChoreographyValidate {
+            choreography,
+            output,
+        } => {
+            let loaded = reel::choreography::load(&choreography)?;
+            let report = reel::choreography::validate(&loaded)?;
+            match output {
+                OutputFormat::Text => println!(
+                    "choreography ok: {} frames={} fps={} performers={} props={} approach={} handoff={} react={}",
+                    choreography.display(),
+                    report.duration_frames,
+                    report.fps,
+                    report.performers,
+                    report.props,
+                    report.approach_phrases,
+                    report.handoff_phrases,
+                    report.react_phrases
+                ),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+            }
+        }
+        Command::ChoreographyCompile {
+            choreography,
+            output_path,
+            output,
+        } => {
+            let loaded = reel::choreography::load(&choreography)?;
+            let plan = reel::choreography::compile(&loaded)?;
+            if let Some(path) = &output_path {
+                reel::choreography::write_plan(&plan, path)?;
+            }
+            match output {
+                OutputFormat::Text if output_path.is_some() => println!(
+                    "{} | performers={} | props={} | reactions={} | frames={}",
+                    output_path.expect("checked output path").display(),
+                    plan.performers.len(),
+                    plan.props.len(),
+                    plan.reactions.len(),
+                    plan.duration_frames
+                ),
+                OutputFormat::Text | OutputFormat::Json => {
+                    println!("{}", serde_json::to_string_pretty(&plan)?)
+                }
+            }
+        }
+        Command::ChoreographyPreview {
+            choreography,
+            output_dir,
+            output,
+        } => {
+            let loaded = reel::choreography::load(&choreography)?;
+            let report = reel::choreography::render_preview(&loaded, &output_dir)?;
+            match output {
+                OutputFormat::Text => println!(
+                    "{} | {}x{}@{} | frames={} | files={} | passed={}",
+                    output_dir.display(),
+                    report.width,
+                    report.height,
+                    report.fps,
+                    report.duration_frames,
+                    report.files.len(),
+                    report.passed
+                ),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+            }
+        }
+        Command::ChoreographySpriteManifest {
+            choreography,
+            assets,
+            output_path,
+            output,
+        } => {
+            let loaded = reel::choreography::load(&choreography)?;
+            let report = reel::choreography::write_sprite_manifest(&loaded, &assets, &output_path)?;
+            match output {
+                OutputFormat::Text => println!(
+                    "{} | shot={} | performers={} | props={} | camera={} | passed={}",
+                    output_path.display(),
+                    report.bound_shot_id,
+                    report.performers,
+                    report.props,
+                    report.camera_phrases,
+                    report.passed
+                ),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+            }
+        }
+        Command::CraftValidate { craft_plan, output } => {
+            let loaded = reel::craft_plan::load(&craft_plan)?;
+            let report = reel::craft_plan::validate(&loaded)?;
+            match output {
+                OutputFormat::Text => println!(
+                    "craft plan ok: {} periods={} departments={} continuity={} editorial={} vfx={} pending_review={}",
+                    craft_plan.display(),
+                    report.periods,
+                    report.departments_present,
+                    report.continuity_states,
+                    report.editorial_decisions,
+                    report.vfx_requirements,
+                    report.human_review_pending
+                ),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+            }
+        }
+        Command::CraftCoverage { craft_plan, output } => {
+            let loaded = reel::craft_plan::load(&craft_plan)?;
+            let report = reel::craft_plan::coverage(&loaded)?;
+            match output {
+                OutputFormat::Text => println!(
+                    "{} | present={} | missing={} | blocked={} | pending_review={} | structurally_complete={} | artistic_quality_assessed={}",
+                    report.plan_id,
+                    report.present_departments.len(),
+                    report.missing_departments.len(),
+                    report.blocked_departments.len(),
+                    report.pending_human_review.len(),
+                    report.structurally_complete,
+                    report.artistic_quality_assessed
+                ),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+            }
+        }
+        Command::DepartmentPacket {
+            craft_plan,
+            department,
+            output_path,
+            distribution,
+            approval_reference,
+            output,
+        } => {
+            let loaded = reel::craft_plan::load(&craft_plan)?;
+            let department = department.parse::<reel::craft_plan::Department>()?;
+            let distribution = distribution.parse::<reel::craft_plan::DistributionScope>()?;
+            let packet = reel::craft_plan::department_packet_for_distribution(
+                &loaded,
+                department,
+                distribution,
+                approval_reference,
+            )?;
+            reel::craft_plan::write_department_packet(&packet, &output_path)?;
+            match output {
+                OutputFormat::Text => println!(
+                    "{} | department={} | evidence={} | assets={} | continuity={} | editorial={} | vfx={}",
+                    output_path.display(),
+                    packet.department,
+                    packet.evidence.len(),
+                    packet.assets.len(),
+                    packet.continuity.len(),
+                    packet.editorial.len(),
+                    packet.vfx.len()
+                ),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&packet)?),
+            }
+        }
+        Command::DepartmentPacketReceipt {
+            packet,
+            output_path,
+            output,
+        } => {
+            let receipt = reel::craft_plan::write_department_packet_receipt(&packet, &output_path)?;
+            match output {
+                OutputFormat::Text => println!(
+                    "{} | packet_sha256={} | department={}",
+                    output_path.display(),
+                    receipt.packet_sha256,
+                    receipt.department
+                ),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&receipt)?),
+            }
+        }
+        Command::DepartmentPacketCheck {
+            receipt,
+            packet,
+            output,
+        } => {
+            let report = reel::craft_plan::check_department_packet(&receipt, &packet)?;
+            print_report(&report, output)?;
         }
         Command::SeriesValidate { manifest, output } => {
             let report = reel::series::validate(&manifest)?;
@@ -1276,6 +1496,83 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
+    /// Compile manifest-owned music intent into a renderer/provider-neutral score plan.
+    ScorePlan {
+        manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate a strict renderer-neutral choreography sidecar.
+    ChoreographyValidate {
+        choreography: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Compile choreography phrases into a flattened renderer-neutral plan.
+    ChoreographyCompile {
+        choreography: PathBuf,
+        #[arg(long)]
+        output_path: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Render an atomic blocking-preview packet with paths and contact sheet.
+    ChoreographyPreview {
+        choreography: PathBuf,
+        #[arg(long)]
+        output_dir: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Compile bound choreography plus pose assets into a valid sprite production manifest.
+    ChoreographySpriteManifest {
+        choreography: PathBuf,
+        assets: PathBuf,
+        #[arg(long)]
+        output_path: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate a strict cross-department craft-plan sidecar without judging art.
+    CraftValidate {
+        craft_plan: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Report structural department coverage, references, and human-review state.
+    CraftCoverage {
+        craft_plan: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Export an atomic least-information packet for one named department.
+    DepartmentPacket {
+        craft_plan: PathBuf,
+        department: String,
+        #[arg(long)]
+        output_path: PathBuf,
+        #[arg(long, default_value = "internal")]
+        distribution: String,
+        #[arg(long)]
+        approval_reference: Option<String>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Write a path-free cryptographic receipt for a department packet.
+    DepartmentPacketReceipt {
+        packet: PathBuf,
+        #[arg(long)]
+        output_path: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Verify a department packet against its cryptographic receipt.
+    DepartmentPacketCheck {
+        receipt: PathBuf,
+        packet: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
     /// Validate an episodic-series index and all referenced child manifests.
     SeriesValidate {
         manifest: PathBuf,
@@ -1478,7 +1775,7 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
-    /// Render a manifest-owned still/video and audio-event timeline through FFmpeg.
+    /// Render a manifest-owned still/video/animation and audio-event timeline through FFmpeg.
     AnimaticRender {
         manifest: PathBuf,
         #[arg(long)]

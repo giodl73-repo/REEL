@@ -1,0 +1,90 @@
+schema: reel.choreography.v0.1
+fps: 24
+duration_frames: 96
+shot_ref: primary
+production_binding:
+  manifest: ../shared-production/manifest.yaml
+  manifest_sha256: 99957ce88740be4112f54d0c8bfdc166a09c8b292a3409cd8f7b6ea6a3d74823
+  work: shared-production-fixture
+  shots:
+    primary: shot-early-window
+  beats:
+    read: early-read
+    commit: early-commit
+    release: early-release
+    receive: early-receive
+    result: early-result
+    settle: early-settle
+canvas: { width: 640, height: 360 }
+
+stage:
+  marks:
+    origin: { x: 0.16, y: 0.68 }
+    challenge: { x: 0.43, y: 0.52 }
+    destination: { x: 0.76, y: 0.56 }
+    observer_mark: { x: 0.54, y: 0.72 }
+
+beats:
+  - { id: read, frame: 0 }
+  - { id: commit, frame: 24 }
+  - { id: release, frame: 36 }
+  - { id: receive, frame: 54 }
+  - { id: result, frame: 72 }
+  - { id: settle, frame: 88 }
+
+performers:
+  initiator:
+    start: origin
+    color: "#2d7ff9"
+    phrases:
+      - action: approach
+        id: draw-observer
+        to: challenge
+        between: [read, commit]
+        path: arc-right
+        timing: ease-in-out
+      - action: handoff
+        id: transfer-token
+        prop: token
+        target: receiver
+        between: [release, receive]
+        path: arc-left
+        timing: hold-then-burst
+
+  receiver:
+    start: destination
+    color: "#f14f5a"
+    phrases:
+      - action: react
+        id: receiver-result
+        at: result
+        pose: celebrate
+
+  observer:
+    start: observer_mark
+    color: "#74d99f"
+    radius: 0.03
+    phrases:
+      - action: approach
+        id: observer-commit
+        to: challenge
+        between: [commit, receive]
+        path: arc-left
+        timing: ease-out
+      - action: react
+        id: observer-recoil
+        at: receive
+        pose: recoil
+
+props:
+  token:
+    owner: initiator
+    color: "#ffd23f"
+    radius: 0.012
+
+camera:
+  phrases:
+    - { id: establish, action: hold, between: [read, commit], zoom_from: 1.0, zoom_to: 1.0 }
+    - { id: follow-initiator, action: follow, target: initiator, between: [commit, release], zoom_from: 1.15, zoom_to: 1.25 }
+    - { id: whip-to-receiver, action: whip, target: receiver, between: [release, receive], zoom_from: 1.25, zoom_to: 1.5 }
+    - { id: settle-result, action: settle, target: receiver, between: [receive, settle], zoom_from: 1.5, zoom_to: 1.25 }
