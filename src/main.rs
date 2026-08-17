@@ -179,6 +179,14 @@ fn run_cli() -> Result<()> {
             let report = reel::series::plan(&manifest)?;
             print_report(&report, output)?;
         }
+        Command::SeriesTimingAudit {
+            manifest,
+            neighbor_drift_percent,
+            output,
+        } => {
+            let report = reel::series::timing_audit(&manifest, neighbor_drift_percent)?;
+            print_report(&report, output)?;
+        }
         Command::SeriesCoverage { manifest, output } => {
             let report = reel::series::coverage(&manifest)?;
             print_report(&report, output)?;
@@ -1285,6 +1293,14 @@ enum Command {
     /// Print deterministic season, episode, child, timing, and runtime order.
     SeriesPlan {
         manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Compare planned episode and season runtime ranges with available timing.
+    SeriesTimingAudit {
+        manifest: PathBuf,
+        #[arg(long, default_value_t = 35.0)]
+        neighbor_drift_percent: f64,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

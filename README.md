@@ -125,6 +125,14 @@ audio events, while `animatic-remux` stream-copies previously verified picture
 and replaces only its audio. See
 [`docs/selection-lock-and-audio-cache-v0.2.21.md`](docs/selection-lock-and-audio-cache-v0.2.21.md).
 
+CLI v0.2.22 adds optional episode and season runtime plans without changing
+`reel.series.v0.1`. A plan names a runtime class, minimum/target/maximum
+duration, and reviewable component budgets. `series-timing-audit` compares those
+plans with declared, orientation, or planned timing; projects season and series
+runtime; and reports neighboring-episode drift without turning an intentional
+creative exception into a validation failure. See
+[`docs/series-runtime-planning-v0.2.22.md`](docs/series-runtime-planning-v0.2.22.md).
+
 The main BERTICA-driven workflow is:
 
 ```powershell
@@ -334,6 +342,7 @@ cargo run -- conform manifests\fixtures\two-speaker-untimed\planning.yaml --cues
 cargo run -- source-coverage manifests\fixtures\two-speaker-untimed\planning.yaml --output json
 cargo run -- provider-package manifests\fixtures\two-speaker-untimed\planning.yaml --output target\fixture-provider.json --format json
 cargo run -- quality-check manifests\fixtures\two-speaker-untimed\planning.yaml --output json
+cargo run -- series-timing-audit manifests\templates\episodic-series.yaml --output json
 ```
 
 Rust owns contracts, planning, and subprocess orchestration; FFmpeg, Remotion,

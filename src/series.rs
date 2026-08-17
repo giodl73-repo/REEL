@@ -57,6 +57,8 @@ pub struct Season {
     pub order: u32,
     pub title: String,
     #[serde(default)]
+    pub runtime_plan: Option<RuntimePlan>,
+    #[serde(default)]
     pub total_runtime_seconds: Option<f64>,
     pub episodes: Vec<Episode>,
 }
@@ -86,6 +88,8 @@ pub struct Episode {
     pub continuity_entry: Vec<String>,
     #[serde(default)]
     pub continuity_exit: Vec<String>,
+    #[serde(default)]
+    pub runtime_plan: Option<RuntimePlan>,
     pub timing_status: TimingStatus,
     pub human_review_status: String,
     #[serde(default)]
@@ -109,6 +113,17 @@ pub struct Episode {
     pub children: Vec<ChildManifestRef>,
     #[serde(default)]
     pub production_units: Vec<ProductionUnit>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct RuntimePlan {
+    #[serde(default)]
+    pub class: String,
+    pub minimum_seconds: f64,
+    pub target_seconds: f64,
+    pub maximum_seconds: f64,
+    #[serde(default)]
+    pub components_seconds: BTreeMap<String, f64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -206,6 +221,7 @@ pub struct SeriesPlanReport {
 pub struct SeasonPlan {
     pub id: String,
     pub order: u32,
+    pub runtime_plan: Option<RuntimePlan>,
     pub runtime_ms: u64,
     pub episodes: Vec<EpisodePlan>,
 }
@@ -224,6 +240,7 @@ pub struct EpisodePlan {
     pub memory_mode: String,
     pub sensitivity: String,
     pub recurring_motifs: Vec<String>,
+    pub runtime_plan: Option<RuntimePlan>,
     pub timing_status: String,
     pub human_review_status: String,
     pub raw_orientation_ms: u64,
@@ -234,6 +251,72 @@ pub struct EpisodePlan {
     pub children: Vec<String>,
     pub dependencies: Vec<SeriesDependency>,
     pub release_ready: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SeriesTimingAuditReport {
+    pub schema: String,
+    pub series_id: String,
+    pub neighbor_drift_warning_percent: f64,
+    pub planned_episodes: usize,
+    pub unplanned_episodes: Vec<String>,
+    pub evaluated_episodes: usize,
+    pub within_range_episodes: usize,
+    pub under_range_episodes: Vec<String>,
+    pub over_range_episodes: Vec<String>,
+    pub planned_target_runtime_ms: u64,
+    pub projected_runtime_ms: u64,
+    pub seasons: Vec<SeasonTimingAudit>,
+    pub neighbor_drift_warnings: Vec<NeighborTimingDrift>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SeasonTimingAudit {
+    pub id: String,
+    pub runtime_plan: Option<RuntimePlan>,
+    pub derived_episode_budget_ms: Option<RuntimeBudgetMs>,
+    pub episode_target_delta_ms: Option<i64>,
+    pub budget_alignment: String,
+    pub projected_runtime_ms: u64,
+    pub runtime_basis: String,
+    pub status: String,
+    pub episodes: Vec<EpisodeTimingAudit>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct EpisodeTimingAudit {
+    pub id: String,
+    pub runtime_class: String,
+    pub timing_status: String,
+    pub runtime_basis: String,
+    pub effective_runtime_ms: Option<u64>,
+    pub budget_ms: Option<RuntimeBudgetMs>,
+    pub delta_from_target_ms: Option<i64>,
+    pub delta_from_target_percent: Option<f64>,
+    pub measured_narration_ms: u64,
+    pub protected_pause_ms: u64,
+    pub narration_share_percent: Option<f64>,
+    pub protected_pause_share_percent: Option<f64>,
+    pub range_status: String,
+    pub planned_components_ms: BTreeMap<String, u64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct RuntimeBudgetMs {
+    pub minimum_ms: u64,
+    pub target_ms: u64,
+    pub maximum_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NeighborTimingDrift {
+    pub from_episode: String,
+    pub to_episode: String,
+    pub from_runtime_basis: String,
+    pub to_runtime_basis: String,
+    pub from_runtime_ms: u64,
+    pub to_runtime_ms: u64,
+    pub change_percent: f64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -398,6 +481,9 @@ pub fn validate_loaded(loaded: &LoadedSeries) -> Result<SeriesValidationReport> 
         if season.episodes.is_empty() {
             bail!("season {} has no episodes", season.id);
         }
+        if let Some(runtime_plan) = &season.runtime_plan {
+            validate_runtime_plan(&format!("season {}", season.id), runtime_plan)?;
+        }
         let mut season_runtime_ms = 0;
         for (episode_index, episode) in season.episodes.iter().enumerate() {
             episode_count += 1;
@@ -416,6 +502,9 @@ pub fn validate_loaded(loaded: &LoadedSeries) -> Result<SeriesValidationReport> 
             require("production_title", &episode.production_title)?;
             require("manuscript_title", &episode.manuscript_title)?;
             require("human_review_status", &episode.human_review_status)?;
+            if let Some(runtime_plan) = &episode.runtime_plan {
+                validate_runtime_plan(&format!("episode {}", episode.id), runtime_plan)?;
+            }
             for (label, value) in [
                 ("raw_orientation_seconds", episode.raw_orientation_seconds),
                 (
@@ -733,6 +822,7 @@ pub fn plan(path: impl AsRef<Path>) -> Result<SeriesPlanReport> {
             .map(|season| SeasonPlan {
                 id: season.id,
                 order: season.order,
+                runtime_plan: season.runtime_plan,
                 runtime_ms: season
                     .episodes
                     .iter()
@@ -754,6 +844,7 @@ pub fn plan(path: impl AsRef<Path>) -> Result<SeriesPlanReport> {
                         memory_mode: episode.memory_mode,
                         sensitivity: episode.sensitivity,
                         recurring_motifs: episode.recurring_motifs,
+                        runtime_plan: episode.runtime_plan,
                         timing_status: episode.timing_status.as_str().to_string(),
                         human_review_status: episode.human_review_status,
                         raw_orientation_ms: ms(episode.raw_orientation_seconds),
@@ -772,6 +863,225 @@ pub fn plan(path: impl AsRef<Path>) -> Result<SeriesPlanReport> {
                     .collect(),
             })
             .collect(),
+    })
+}
+
+pub fn timing_audit(
+    path: impl AsRef<Path>,
+    neighbor_drift_warning_percent: f64,
+) -> Result<SeriesTimingAuditReport> {
+    let loaded = load(path)?;
+    timing_audit_loaded(&loaded, neighbor_drift_warning_percent)
+}
+
+pub fn timing_audit_loaded(
+    loaded: &LoadedSeries,
+    neighbor_drift_warning_percent: f64,
+) -> Result<SeriesTimingAuditReport> {
+    if !neighbor_drift_warning_percent.is_finite() || neighbor_drift_warning_percent < 0.0 {
+        bail!("neighbor drift warning percent must be finite and non-negative");
+    }
+    validate_loaded(loaded)?;
+
+    let mut planned_episodes = 0;
+    let mut unplanned_episodes = Vec::new();
+    let mut evaluated_episodes = 0;
+    let mut within_range_episodes = 0;
+    let mut under_range_episodes = Vec::new();
+    let mut over_range_episodes = Vec::new();
+    let mut planned_target_runtime_ms = 0;
+    let mut projected_runtime_ms = 0;
+    let mut seasons = Vec::new();
+    let mut neighbor_drift_warnings = Vec::new();
+
+    for season in &loaded.manifest.seasons {
+        let mut episode_audits = Vec::new();
+        let mut season_projected_ms = 0;
+        let mut previous: Option<(&str, u64, &str)> = None;
+        let mut derived_minimum_ms = 0;
+        let mut derived_target_ms = 0;
+        let mut derived_maximum_ms = 0;
+        let mut all_episodes_planned = true;
+        let mut runtime_bases = BTreeSet::new();
+
+        for episode in &season.episodes {
+            let (runtime_basis, effective_runtime_ms) = if episode.total_runtime_seconds > 0.0 {
+                ("declared-runtime", Some(ms(episode.total_runtime_seconds)))
+            } else if episode.raw_orientation_seconds > 0.0 {
+                ("raw-orientation", Some(ms(episode.raw_orientation_seconds)))
+            } else if let Some(plan) = &episode.runtime_plan {
+                ("planned-target", Some(ms(plan.target_seconds)))
+            } else {
+                ("unavailable", None)
+            };
+
+            let mut range_status = "unplanned".to_string();
+            let mut delta_from_target_ms = None;
+            let mut delta_from_target_percent = None;
+            let mut budget_ms = None;
+            let mut planned_components_ms = BTreeMap::new();
+            let runtime_class = episode
+                .runtime_plan
+                .as_ref()
+                .map(|plan| plan.class.clone())
+                .unwrap_or_default();
+
+            if let Some(plan) = &episode.runtime_plan {
+                planned_episodes += 1;
+                let budget = runtime_budget_ms(plan);
+                planned_target_runtime_ms += budget.target_ms;
+                derived_minimum_ms += budget.minimum_ms;
+                derived_target_ms += budget.target_ms;
+                derived_maximum_ms += budget.maximum_ms;
+                planned_components_ms = plan
+                    .components_seconds
+                    .iter()
+                    .map(|(name, seconds)| (name.clone(), ms(*seconds)))
+                    .collect();
+                if let Some(runtime) = effective_runtime_ms
+                    && runtime_basis != "planned-target"
+                {
+                    evaluated_episodes += 1;
+                    let delta = runtime as i128 - budget.target_ms as i128;
+                    delta_from_target_ms =
+                        Some(delta.clamp(i64::MIN as i128, i64::MAX as i128) as i64);
+                    delta_from_target_percent = Some(
+                        (runtime as f64 - budget.target_ms as f64) * 100.0
+                            / budget.target_ms as f64,
+                    );
+                    range_status = if runtime < budget.minimum_ms {
+                        under_range_episodes.push(episode.id.clone());
+                        "under"
+                    } else if runtime > budget.maximum_ms {
+                        over_range_episodes.push(episode.id.clone());
+                        "over"
+                    } else {
+                        within_range_episodes += 1;
+                        "within"
+                    }
+                    .to_string();
+                } else {
+                    range_status = if runtime_basis == "planned-target" {
+                        "planned"
+                    } else {
+                        "not-evaluated"
+                    }
+                    .to_string();
+                }
+                budget_ms = Some(budget);
+            } else {
+                all_episodes_planned = false;
+                unplanned_episodes.push(episode.id.clone());
+            }
+
+            if let Some(runtime) = effective_runtime_ms {
+                runtime_bases.insert(runtime_basis);
+                season_projected_ms += runtime;
+                projected_runtime_ms += runtime;
+                if let Some((previous_id, previous_runtime, previous_basis)) = previous
+                    && previous_runtime > 0
+                {
+                    let change_percent = (runtime as f64 - previous_runtime as f64) * 100.0
+                        / previous_runtime as f64;
+                    if change_percent.abs() > neighbor_drift_warning_percent {
+                        neighbor_drift_warnings.push(NeighborTimingDrift {
+                            from_episode: previous_id.to_string(),
+                            to_episode: episode.id.clone(),
+                            from_runtime_basis: previous_basis.to_string(),
+                            to_runtime_basis: runtime_basis.to_string(),
+                            from_runtime_ms: previous_runtime,
+                            to_runtime_ms: runtime,
+                            change_percent,
+                        });
+                    }
+                }
+                previous = Some((&episode.id, runtime, runtime_basis));
+            } else {
+                previous = None;
+            }
+
+            episode_audits.push(EpisodeTimingAudit {
+                id: episode.id.clone(),
+                runtime_class,
+                timing_status: episode.timing_status.as_str().to_string(),
+                runtime_basis: runtime_basis.to_string(),
+                effective_runtime_ms,
+                budget_ms,
+                delta_from_target_ms,
+                delta_from_target_percent,
+                measured_narration_ms: ms(episode.measured_narration_seconds),
+                protected_pause_ms: ms(episode.protected_pause_seconds),
+                narration_share_percent: share_percent(
+                    episode.measured_narration_seconds,
+                    effective_runtime_ms,
+                ),
+                protected_pause_share_percent: share_percent(
+                    episode.protected_pause_seconds,
+                    effective_runtime_ms,
+                ),
+                range_status,
+                planned_components_ms,
+            });
+        }
+
+        let derived_episode_budget_ms = all_episodes_planned.then_some(RuntimeBudgetMs {
+            minimum_ms: derived_minimum_ms,
+            target_ms: derived_target_ms,
+            maximum_ms: derived_maximum_ms,
+        });
+        let (episode_target_delta_ms, budget_alignment) =
+            match (&season.runtime_plan, &derived_episode_budget_ms) {
+                (Some(plan), Some(derived)) => {
+                    let delta =
+                        derived.target_ms as i128 - runtime_budget_ms(plan).target_ms as i128;
+                    let delta = delta.clamp(i64::MIN as i128, i64::MAX as i128) as i64;
+                    (Some(delta), if delta == 0 { "aligned" } else { "mismatch" })
+                }
+                (Some(_), None) => (None, "partial"),
+                (None, Some(_)) => (None, "derived-only"),
+                (None, None) => (None, "unplanned"),
+            };
+        let runtime_basis = if runtime_bases.is_empty() {
+            "unavailable".to_string()
+        } else if runtime_bases.len() == 1 {
+            runtime_bases.iter().next().unwrap().to_string()
+        } else {
+            "mixed".to_string()
+        };
+        let status = match &season.runtime_plan {
+            None => "unplanned",
+            Some(_) if runtime_basis == "unavailable" => "not-evaluated",
+            Some(_) if runtime_basis == "planned-target" => "planned",
+            Some(plan) => range_status(season_projected_ms, &runtime_budget_ms(plan)),
+        }
+        .to_string();
+        seasons.push(SeasonTimingAudit {
+            id: season.id.clone(),
+            runtime_plan: season.runtime_plan.clone(),
+            derived_episode_budget_ms,
+            episode_target_delta_ms,
+            budget_alignment: budget_alignment.to_string(),
+            projected_runtime_ms: season_projected_ms,
+            runtime_basis,
+            status,
+            episodes: episode_audits,
+        });
+    }
+
+    Ok(SeriesTimingAuditReport {
+        schema: "reel.series-timing-audit.v0.1".to_string(),
+        series_id: loaded.manifest.series_id.clone(),
+        neighbor_drift_warning_percent,
+        planned_episodes,
+        unplanned_episodes,
+        evaluated_episodes,
+        within_range_episodes,
+        under_range_episodes,
+        over_range_episodes,
+        planned_target_runtime_ms,
+        projected_runtime_ms,
+        seasons,
+        neighbor_drift_warnings,
     })
 }
 
@@ -1210,6 +1520,61 @@ fn validate_ranges(id: &str, ranges: &[SeriesRange], omissions: &[SeriesOmission
         }
     }
     Ok(())
+}
+
+fn validate_runtime_plan(label: &str, plan: &RuntimePlan) -> Result<()> {
+    for (field, value) in [
+        ("minimum_seconds", plan.minimum_seconds),
+        ("target_seconds", plan.target_seconds),
+        ("maximum_seconds", plan.maximum_seconds),
+    ] {
+        if !value.is_finite() || value <= 0.0 {
+            bail!("{label} runtime plan has invalid {field}");
+        }
+    }
+    if plan.minimum_seconds > plan.target_seconds || plan.target_seconds > plan.maximum_seconds {
+        bail!("{label} runtime plan must satisfy minimum <= target <= maximum");
+    }
+    let mut component_total_ms = 0;
+    for (name, seconds) in &plan.components_seconds {
+        require("runtime component name", name)?;
+        if !seconds.is_finite() || *seconds < 0.0 {
+            bail!("{label} runtime component {name} has an invalid duration");
+        }
+        component_total_ms += ms(*seconds);
+    }
+    if !plan.components_seconds.is_empty()
+        && component_total_ms.abs_diff(ms(plan.target_seconds)) > 1
+    {
+        bail!("{label} runtime components must sum to target_seconds");
+    }
+    Ok(())
+}
+
+fn runtime_budget_ms(plan: &RuntimePlan) -> RuntimeBudgetMs {
+    RuntimeBudgetMs {
+        minimum_ms: ms(plan.minimum_seconds),
+        target_ms: ms(plan.target_seconds),
+        maximum_ms: ms(plan.maximum_seconds),
+    }
+}
+
+fn range_status(runtime_ms: u64, budget: &RuntimeBudgetMs) -> &'static str {
+    if runtime_ms < budget.minimum_ms {
+        "under"
+    } else if runtime_ms > budget.maximum_ms {
+        "over"
+    } else {
+        "within"
+    }
+}
+
+fn share_percent(seconds: f64, runtime_ms: Option<u64>) -> Option<f64> {
+    (seconds > 0.0)
+        .then_some(runtime_ms)
+        .flatten()
+        .filter(|runtime| *runtime > 0)
+        .map(|runtime| ms(seconds) as f64 * 100.0 / runtime as f64)
 }
 
 fn require(field: &str, value: &str) -> Result<()> {
