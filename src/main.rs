@@ -391,6 +391,32 @@ fn run_cli() -> Result<()> {
             let report = reel::craft_plan::check_department_packet(&receipt, &packet)?;
             print_report(&report, output)?;
         }
+        Command::ProductionPackageReceipt {
+            package,
+            output_path,
+            output,
+        } => {
+            let receipt = reel::production_package::write_receipt(&package, &output_path)?;
+            match output {
+                OutputFormat::Text => println!(
+                    "{} | work={} | components={} | gates={} | release_ready={}",
+                    output_path.display(),
+                    receipt.work,
+                    receipt.components.len(),
+                    receipt.review_gates.len(),
+                    receipt.release_ready
+                ),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&receipt)?),
+            }
+        }
+        Command::ProductionPackageCheck {
+            receipt,
+            package,
+            output,
+        } => {
+            let report = reel::production_package::check(&receipt, &package)?;
+            print_report(&report, output)?;
+        }
         Command::SeriesValidate { manifest, output } => {
             let report = reel::series::validate(&manifest)?;
             print_report(&report, output)?;
@@ -1570,6 +1596,21 @@ enum Command {
     DepartmentPacketCheck {
         receipt: PathBuf,
         packet: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Bind a package descriptor and all contained production components into a path-free receipt.
+    ProductionPackageReceipt {
+        package: PathBuf,
+        #[arg(long)]
+        output_path: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Verify a production package, every component, and its declared review gates.
+    ProductionPackageCheck {
+        receipt: PathBuf,
+        package: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

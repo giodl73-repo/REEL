@@ -25,6 +25,7 @@ pub mod craft_plan;
 pub mod cue_import;
 pub mod production;
 pub mod production_binding;
+pub mod production_package;
 pub mod review_decision;
 pub mod selection_lock;
 pub mod series;

@@ -145,6 +145,12 @@ external department packets enforce per-record distribution policy and support
 path-free cryptographic receipts. See
 [`docs/production-handoff-v0.2.26.md`](docs/production-handoff-v0.2.26.md).
 
+CLI v0.2.27 executes sprite camera tracks in delivery renders and adds a
+path-free production-package receipt. Camera centers are crop-clamped at the
+requested output shape, while package integrity remains explicitly separate
+from human release gates. See
+[`docs/delivery-camera-and-production-package-v0.2.27.md`](docs/delivery-camera-and-production-package-v0.2.27.md).
+
 CLI v0.2.21 adds proof selection locks and fast audio revision. `animatic-lock`
 creates an atomic packet containing the selected verified artifact, a locked
 manifest derivative, and a receipt binding both hashes without invalidating the

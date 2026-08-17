@@ -84,7 +84,7 @@ props:
 
 camera:
   phrases:
-    - { id: establish, action: hold, between: [read, commit], zoom_from: 1.0, zoom_to: 1.0 }
+    - { id: establish, action: hold, between: [read, commit], zoom_from: 1.0, zoom_to: 1.15 }
     - { id: follow-initiator, action: follow, target: initiator, between: [commit, release], zoom_from: 1.15, zoom_to: 1.25 }
     - { id: whip-to-receiver, action: whip, target: receiver, between: [release, receive], zoom_from: 1.25, zoom_to: 1.5 }
     - { id: settle-result, action: settle, target: receiver, between: [receive, settle], zoom_from: 1.5, zoom_to: 1.25 }
