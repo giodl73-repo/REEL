@@ -464,6 +464,23 @@ Add `--output json` to emit the generated index path, index generation and
 verification timestamps, review-pack paths, artifact-manifest paths, and
 artifact-check summaries plus review handoff metadata for automation.
 
+## Portfolio reuse contract
+
+REEL's bounded reusable contract is the
+[`reel.manifest.v0.2`](docs/production-manifest-v0.2.md) production schema and
+the CLI's corresponding `validate` and `plan` behavior. Source repositories
+retain scenario truth, rights decisions, and release authority; REEL owns
+manifest validation and renderer-neutral planning. Internal Rust modules,
+personas, scores, review prose, and work-specific production assets are not
+shared APIs.
+
+[ICELINES](https://github.com/giodl73-repo/ICELINES) is the current portfolio
+adopter. Its hockey-film templates record REEL provenance separately and declare
+`reel.manifest.v0.2` as their production handoff target. Those templates are
+consumer-owned pre-conform overlays, not valid REEL manifests until converted
+and accepted by the pinned REEL CLI. Compatibility follows the manifest version
+and validation behavior rather than the REEL crate version alone.
+
 ## Pipeline
 
 ```text
