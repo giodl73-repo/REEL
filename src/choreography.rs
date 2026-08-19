@@ -115,6 +115,8 @@ pub struct Beat {
 #[serde(deny_unknown_fields)]
 pub struct Performer {
     pub start: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible_between: Option<[String; 2]>,
     #[serde(default = "default_performer_color")]
     pub color: String,
     #[serde(default = "default_performer_radius")]
@@ -226,6 +228,7 @@ pub struct ValidationReport {
     pub marks: usize,
     pub beats: usize,
     pub performers: usize,
+    pub visibility_windows: usize,
     pub props: usize,
     pub approach_phrases: usize,
     pub handoff_phrases: usize,
@@ -273,6 +276,8 @@ pub struct ResolvedPerformer {
     pub id: String,
     pub color: String,
     pub radius: f64,
+    pub visible_start_frame: u32,
+    pub visible_end_frame: u32,
     pub start: Mark,
     pub segments: Vec<MotionSegment>,
 }
@@ -349,8 +354,20 @@ pub struct ChoreographyAssets {
     pub schema: String,
     pub choreography_sha256: String,
     pub background: String,
+    #[serde(default = "default_performer_path_subdivisions")]
+    pub performer_path_subdivisions: u32,
+    #[serde(default = "default_prop_path_subdivisions")]
+    pub prop_path_subdivisions: u32,
     pub performers: BTreeMap<String, PerformerAssets>,
     pub props: BTreeMap<String, PropAssets>,
+}
+
+fn default_performer_path_subdivisions() -> u32 {
+    6
+}
+
+fn default_prop_path_subdivisions() -> u32 {
+    8
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -473,6 +490,19 @@ fn validate_contract(loaded: &LoadedChoreography) -> Result<ValidationReport> {
     if performer_ids.is_empty() {
         bail!("choreography must declare at least one performer");
     }
+    let visibility_ranges = choreography
+        .performers
+        .iter()
+        .map(|(id, performer)| {
+            let range = performer
+                .visible_between
+                .as_ref()
+                .map(|between| beat_range(&beat_frames, between))
+                .transpose()?
+                .unwrap_or((0, choreography.duration_frames - 1));
+            Ok((id.as_str(), range))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
     let mut approaches = 0;
     let mut handoffs = 0;
     let mut reactions = 0;
@@ -482,6 +512,7 @@ fn validate_contract(loaded: &LoadedChoreography) -> Result<ValidationReport> {
         parse_color(&performer.color)
             .with_context(|| format!("performer {id} has invalid color"))?;
         validate_radius("performer", id, performer.radius)?;
+        let visibility = visibility_ranges[id.as_str()];
         let mut motion_ranges = Vec::new();
         let mut phrase_ids = BTreeSet::new();
         for phrase in &performer.phrases {
@@ -502,6 +533,9 @@ fn validate_contract(loaded: &LoadedChoreography) -> Result<ValidationReport> {
                     approaches += 1;
                     require_mark(choreography, to, "approach destination")?;
                     let range = beat_range(&beat_frames, between)?;
+                    if range.0 < visibility.0 || range.1 > visibility.1 {
+                        bail!("performer {id} approach falls outside its visibility window");
+                    }
                     motion_ranges.push(range);
                 }
                 Phrase::Handoff {
@@ -522,11 +556,23 @@ fn validate_contract(loaded: &LoadedChoreography) -> Result<ValidationReport> {
                     if target == id {
                         bail!("performer {id} cannot hand a prop to itself");
                     }
-                    beat_range(&beat_frames, between)?;
+                    let range = beat_range(&beat_frames, between)?;
+                    if range.0 < visibility.0 || range.1 > visibility.1 {
+                        bail!("performer {id} handoff falls outside its visibility window");
+                    }
+                    let target_visibility = visibility_ranges[target.as_str()];
+                    if range.0 < target_visibility.0 || range.1 > target_visibility.1 {
+                        bail!(
+                            "performer {id} hands off to {target} outside the target visibility window"
+                        );
+                    }
                 }
                 Phrase::React { id: _, at, pose } => {
                     reactions += 1;
-                    require_beat(&beat_frames, at)?;
+                    let frame = require_beat(&beat_frames, at)?;
+                    if frame < visibility.0 || frame > visibility.1 {
+                        bail!("performer {id} reaction falls outside its visibility window");
+                    }
                     if pose.trim().is_empty() {
                         bail!("performer {id} reaction pose cannot be empty");
                     }
@@ -547,10 +593,21 @@ fn validate_contract(loaded: &LoadedChoreography) -> Result<ValidationReport> {
         }
         parse_color(&prop.color).with_context(|| format!("prop {id} has invalid color"))?;
         validate_radius("prop", id, prop.radius)?;
+        if visibility_ranges[prop.owner.as_str()].0 != 0 {
+            bail!(
+                "prop {id} initial owner {} must be visible at frame 0",
+                prop.owner
+            );
+        }
     }
 
     validate_handoff_ownership(choreography, &beat_frames)?;
-    validate_camera(choreography, &beat_frames, &performer_ids)?;
+    validate_camera(
+        choreography,
+        &beat_frames,
+        &performer_ids,
+        &visibility_ranges,
+    )?;
     let resolved_binding = resolve_production_binding(loaded)?;
 
     Ok(ValidationReport {
@@ -562,6 +619,11 @@ fn validate_contract(loaded: &LoadedChoreography) -> Result<ValidationReport> {
         marks: choreography.stage.marks.len(),
         beats: choreography.beats.len(),
         performers: choreography.performers.len(),
+        visibility_windows: choreography
+            .performers
+            .values()
+            .filter(|performer| performer.visible_between.is_some())
+            .count(),
         props: choreography.props.len(),
         approach_phrases: approaches,
         handoff_phrases: handoffs,
@@ -601,6 +663,16 @@ fn compile_unchecked(loaded: &LoadedChoreography) -> ChoreographyPlan {
             .marks
             .get(&performer.start)
             .expect("validated performer start");
+        let (visible_start_frame, visible_end_frame) = performer
+            .visible_between
+            .as_ref()
+            .map(|between| {
+                (
+                    beat_frames[between[0].as_str()],
+                    beat_frames[between[1].as_str()],
+                )
+            })
+            .unwrap_or((0, choreography.duration_frames - 1));
         let mut approaches = performer
             .phrases
             .iter()
@@ -660,6 +732,8 @@ fn compile_unchecked(loaded: &LoadedChoreography) -> ChoreographyPlan {
             id: id.clone(),
             color: performer.color.clone(),
             radius: performer.radius,
+            visible_start_frame,
+            visible_end_frame,
             start,
             segments,
         });
@@ -727,6 +801,7 @@ fn validate_camera(
     choreography: &Choreography,
     beats: &BTreeMap<&str, u32>,
     performers: &BTreeSet<&str>,
+    visibility_ranges: &BTreeMap<&str, (u32, u32)>,
 ) -> Result<()> {
     let mut ids = BTreeSet::new();
     let mut ranges = Vec::new();
@@ -754,6 +829,11 @@ fn validate_camera(
         if let Some(target) = phrase.target.as_deref() {
             if !performers.contains(target) && !choreography.stage.marks.contains_key(target) {
                 bail!("camera phrase references unknown target {target}");
+            }
+            if let Some(visibility) = visibility_ranges.get(target)
+                && (range.0 < visibility.0 || range.1 > visibility.1)
+            {
+                bail!("camera phrase follows {target} outside its visibility window");
             }
         }
     }
@@ -1017,6 +1097,13 @@ fn validate_assets(
     if assets.background.trim().is_empty() {
         bail!("choreography asset binding requires background");
     }
+    if !(1..=12).contains(&assets.performer_path_subdivisions)
+        || !(1..=16).contains(&assets.prop_path_subdivisions)
+    {
+        bail!(
+            "choreography asset path subdivisions must be 1..=12 for performers and 1..=16 for props"
+        );
+    }
     let performer_ids = plan
         .performers
         .iter()
@@ -1088,9 +1175,11 @@ fn build_sprite_animation(
         let binding = &assets.performers[&performer.id];
         let mut frames = BTreeSet::from([0, plan.duration_frames - 1]);
         for segment in &performer.segments {
-            for step in 0..=6 {
+            for step in 0..=assets.performer_path_subdivisions {
                 frames.insert(
-                    segment.start_frame + (segment.end_frame - segment.start_frame) * step / 6,
+                    segment.start_frame
+                        + (segment.end_frame - segment.start_frame) * step
+                            / assets.performer_path_subdivisions,
                 );
             }
         }
@@ -1125,13 +1214,19 @@ fn build_sprite_animation(
                 })
             })
             .collect::<Result<Vec<_>>>()?;
+        let full_visibility = performer.visible_start_frame == 0
+            && performer.visible_end_frame == plan.duration_frames - 1;
         sprites.push(production::SpriteTrack {
             id: performer.id.clone(),
             z_index: binding.z_index,
+            visible_start_frame: (!full_visibility).then_some(performer.visible_start_frame),
+            visible_end_frame: (!full_visibility).then_some(performer.visible_end_frame),
             anchor_x: Some(binding.anchor_x),
             anchor_y: Some(binding.anchor_y),
             movement: production::SpriteMovement::Linear,
             movement_steps: None,
+            parent: None,
+            position_space: production::SpritePositionSpace::Canvas,
             keyframes,
         });
     }
@@ -1139,9 +1234,11 @@ fn build_sprite_animation(
         let binding = &assets.props[&prop.id];
         let mut frames = BTreeSet::from([0, plan.duration_frames - 1]);
         for handoff in &prop.handoffs {
-            for step in 0..=8 {
+            for step in 0..=assets.prop_path_subdivisions {
                 frames.insert(
-                    handoff.start_frame + (handoff.end_frame - handoff.start_frame) * step / 8,
+                    handoff.start_frame
+                        + (handoff.end_frame - handoff.start_frame) * step
+                            / assets.prop_path_subdivisions,
                 );
             }
         }
@@ -1162,10 +1259,14 @@ fn build_sprite_animation(
         sprites.push(production::SpriteTrack {
             id: prop.id.clone(),
             z_index: binding.z_index,
+            visible_start_frame: None,
+            visible_end_frame: None,
             anchor_x: Some(0.5),
             anchor_y: Some(0.5),
             movement: production::SpriteMovement::Linear,
             movement_steps: None,
+            parent: None,
+            position_space: production::SpritePositionSpace::Canvas,
             keyframes,
         });
     }
@@ -1216,6 +1317,8 @@ fn build_sprite_animation(
         timing_fps: plan.fps,
         sprites,
         camera: camera.into_values().collect(),
+        intentional_holds: Vec::new(),
+        emissions: Vec::new(),
     })
 }
 
@@ -1619,6 +1722,9 @@ fn render_frame(plan: &ChoreographyPlan, frame: u32, path_overlay: bool) -> Resu
         }
     }
     for (performer_index, performer) in plan.performers.iter().enumerate() {
+        if frame < performer.visible_start_frame || frame > performer.visible_end_frame {
+            continue;
+        }
         let position = performer_position(plan, &performer.id, frame)?;
         let (x, y) = raster.point(position);
         let color = parse_color(&performer.color)?;
@@ -2014,6 +2120,7 @@ performers:
       - { action: handoff, prop: token, target: scorer, between: [release, receive] }
   scorer:
     start: back
+    visible_between: [release, finish]
     color: "#f14f5a"
     phrases:
       - { action: react, at: finish, pose: celebrate }
@@ -2035,6 +2142,13 @@ props:
         assert_eq!(report.react_phrases, 1);
         let plan = compile(&loaded).unwrap();
         assert_eq!(plan.performers.len(), 2);
+        let scorer = plan
+            .performers
+            .iter()
+            .find(|performer| performer.id == "scorer")
+            .unwrap();
+        assert_eq!(scorer.visible_start_frame, 28);
+        assert_eq!(scorer.visible_end_frame, 60);
         assert_eq!(plan.props[0].handoffs.len(), 1);
         assert_eq!(plan.reactions[0].pose, "celebrate");
     }
@@ -2043,8 +2157,27 @@ props:
     fn rejects_handoff_by_non_owner() {
         let mut loaded = fixture();
         loaded.choreography.props.get_mut("token").unwrap().owner = "scorer".to_string();
+        loaded
+            .choreography
+            .performers
+            .get_mut("scorer")
+            .unwrap()
+            .visible_between = None;
         let error = validate(&loaded).unwrap_err().to_string();
         assert!(error.contains("cannot hand it off"));
+    }
+
+    #[test]
+    fn rejects_action_outside_performer_visibility() {
+        let mut loaded = fixture();
+        loaded
+            .choreography
+            .performers
+            .get_mut("scorer")
+            .unwrap()
+            .visible_between = Some(["receive".to_string(), "finish".to_string()]);
+        let error = validate(&loaded).unwrap_err().to_string();
+        assert!(error.contains("outside the target visibility window"));
     }
 
     #[test]

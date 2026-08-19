@@ -59,6 +59,33 @@ impl TimingStatus {
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum VisualAssetStatus {
+    PlannedUnrendered,
+    #[serde(alias = "candidate-unreviewed")]
+    Candidate,
+    Selected,
+    Approved,
+    Missing,
+}
+
+impl VisualAssetStatus {
+    fn is_selected(self) -> bool {
+        matches!(self, Self::Selected | Self::Approved)
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::PlannedUnrendered => "planned-unrendered",
+            Self::Candidate => "candidate",
+            Self::Selected => "selected",
+            Self::Approved => "approved",
+            Self::Missing => "missing",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct SourceScenario {
     #[serde(default)]
@@ -135,6 +162,10 @@ pub struct Shot {
     pub visual_prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visual_asset: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visual_asset_status: Option<VisualAssetStatus>,
+    #[serde(default)]
+    pub render_from_prompt: bool,
     #[serde(default)]
     pub media_kind: MediaKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -208,6 +239,51 @@ pub struct SpriteAnimation {
     pub sprites: Vec<SpriteTrack>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub camera: Vec<SpriteCameraKeyframe>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub intentional_holds: Vec<SpriteIntentionalHold>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub emissions: Vec<SpriteEmission>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SpriteIntentionalHold {
+    pub start_frame: u32,
+    pub end_frame: u32,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SpriteEmission {
+    pub id: String,
+    pub asset: String,
+    pub parent: String,
+    pub frame: u32,
+    pub duration_frames: u32,
+    pub offset_x: f64,
+    pub offset_y: f64,
+    pub width: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_width: Option<f64>,
+    #[serde(default)]
+    pub drift_x: f64,
+    #[serde(default)]
+    pub drift_y: f64,
+    #[serde(default)]
+    pub rotation_degrees: f64,
+    #[serde(default)]
+    pub end_rotation_degrees: f64,
+    #[serde(default)]
+    pub fade_out_frames: u32,
+    #[serde(default)]
+    pub z_index: i32,
+    #[serde(default = "default_sprite_anchor")]
+    pub anchor_x: f64,
+    #[serde(default = "default_sprite_anchor")]
+    pub anchor_y: f64,
+}
+
+fn default_sprite_anchor() -> f64 {
+    0.5
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -236,6 +312,10 @@ pub struct SpriteTrack {
     #[serde(default)]
     pub z_index: i32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible_start_frame: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible_end_frame: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anchor_x: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anchor_y: Option<f64>,
@@ -243,7 +323,19 @@ pub struct SpriteTrack {
     pub movement: SpriteMovement,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub movement_steps: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    #[serde(default)]
+    pub position_space: SpritePositionSpace,
     pub keyframes: Vec<SpriteKeyframe>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SpritePositionSpace {
+    #[default]
+    Canvas,
+    ParentWidth,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -765,10 +857,22 @@ pub struct ProductionValidationReport {
     pub narration_ducking: bool,
     pub audio_mastering: bool,
     pub duration_ms: Option<u64>,
+    pub timing_ready: bool,
+    pub generation_ready: bool,
+    pub asset_ready: bool,
     pub preview_ready: bool,
     pub delivery_ready: bool,
+    pub asset_status_counts: BTreeMap<String, usize>,
+    pub semantic_blockers: Vec<String>,
     pub gated_commands: Vec<String>,
     pub warnings: Vec<String>,
+}
+
+struct AssetReadiness {
+    generation_ready: bool,
+    asset_ready: bool,
+    status_counts: BTreeMap<String, usize>,
+    semantic_blockers: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1112,7 +1216,15 @@ pub fn validate(loaded: &LoadedProductionManifest) -> Result<ProductionValidatio
     };
     validate_mixed_media(manifest, duration_ms)?;
     validate_score_direction(manifest, duration_ms)?;
-    let gated_commands = if manifest.timing_status == TimingStatus::Untimed {
+    let timing_ready = manifest.timing_status.allows_preview();
+    let asset_readiness = evaluate_asset_readiness(manifest)?;
+    let generation_ready = asset_readiness.generation_ready;
+    let asset_ready = asset_readiness.asset_ready;
+    let asset_status_counts = asset_readiness.status_counts;
+    let semantic_blockers = asset_readiness.semantic_blockers;
+    let preview_ready = timing_ready && asset_ready;
+    let delivery_ready = manifest.timing_status.allows_delivery() && asset_ready;
+    let mut gated_commands = if manifest.timing_status == TimingStatus::Untimed {
         vec![
             "scene-preview".to_string(),
             "scene-previews".to_string(),
@@ -1127,6 +1239,20 @@ pub fn validate(loaded: &LoadedProductionManifest) -> Result<ProductionValidatio
     } else {
         Vec::new()
     };
+    if !asset_ready {
+        for command in [
+            "scene-preview",
+            "scene-previews",
+            "work-preview",
+            "animatic-render",
+            "artifact-manifest",
+            "delivery",
+        ] {
+            if !gated_commands.iter().any(|gated| gated == command) {
+                gated_commands.push(command.to_string());
+            }
+        }
+    }
     Ok(ProductionValidationReport {
         manifest: loaded.path.display().to_string(),
         version: manifest.manifest_version.clone(),
@@ -1162,11 +1288,102 @@ pub fn validate(loaded: &LoadedProductionManifest) -> Result<ProductionValidatio
         narration_ducking: manifest.narration_ducking.is_some(),
         audio_mastering: manifest.audio_mastering.is_some(),
         duration_ms,
-        preview_ready: manifest.timing_status.allows_preview(),
-        delivery_ready: manifest.timing_status.allows_delivery(),
+        timing_ready,
+        generation_ready,
+        asset_ready,
+        preview_ready,
+        delivery_ready,
+        asset_status_counts,
+        semantic_blockers,
         gated_commands,
         warnings,
     })
+}
+
+fn evaluate_asset_readiness(manifest: &ProductionManifest) -> Result<AssetReadiness> {
+    let mut counts = BTreeMap::new();
+    let mut blockers = Vec::new();
+    let mut generation_blockers = 0_usize;
+    let mut asset_blockers = 0_usize;
+
+    for shot in &manifest.shots {
+        let has_asset = shot_has_materialized_picture(shot);
+        if shot.render_from_prompt && shot.visual_prompt.trim().is_empty() {
+            bail!(
+                "shot {} enables render_from_prompt but has no visual_prompt",
+                shot.id
+            );
+        }
+        if shot
+            .visual_asset_status
+            .is_some_and(VisualAssetStatus::is_selected)
+            && !has_asset
+        {
+            bail!(
+                "shot {} declares selected media without a materialized picture source",
+                shot.id
+            );
+        }
+
+        let status = shot.visual_asset_status.map_or_else(
+            || {
+                if has_asset {
+                    "selected"
+                } else if shot.render_from_prompt {
+                    "prompt-renderable"
+                } else {
+                    "missing"
+                }
+            },
+            VisualAssetStatus::as_str,
+        );
+        *counts.entry(status.to_string()).or_insert(0) += 1;
+
+        let selected = shot
+            .visual_asset_status
+            .map_or(has_asset, VisualAssetStatus::is_selected);
+        if !selected {
+            asset_blockers += 1;
+            if !shot.render_from_prompt {
+                generation_blockers += 1;
+            }
+        }
+    }
+
+    for (status, count) in &counts {
+        if matches!(
+            status.as_str(),
+            "planned-unrendered" | "candidate" | "missing"
+        ) {
+            blockers.push(format!("{count} shot(s) have asset status {status}"));
+        }
+    }
+    let prompt_only = asset_blockers.saturating_sub(generation_blockers);
+    if prompt_only > 0 {
+        blockers.push(format!(
+            "{prompt_only} shot(s) require prompt rendering before picture preview"
+        ));
+    }
+    Ok(AssetReadiness {
+        generation_ready: generation_blockers == 0,
+        asset_ready: asset_blockers == 0,
+        status_counts: counts,
+        semantic_blockers: blockers,
+    })
+}
+
+fn shot_has_materialized_picture(shot: &Shot) -> bool {
+    match shot.media_kind {
+        MediaKind::Still | MediaKind::Video => shot
+            .visual_asset
+            .as_deref()
+            .is_some_and(|asset| !asset.trim().is_empty()),
+        MediaKind::Animation => shot
+            .animation
+            .as_ref()
+            .is_some_and(|animation| !animation.frames.is_empty()),
+        MediaKind::SpriteAnimation => shot.sprite_animation.is_some(),
+    }
 }
 
 pub fn score_plan(loaded: &LoadedProductionManifest) -> Result<ScorePlan> {
@@ -1489,9 +1706,146 @@ fn validate_mixed_media(manifest: &ProductionManifest, duration_ms: Option<u64>)
                     "sprite track id",
                     animation.sprites.iter().map(|track| track.id.as_str()),
                 )?;
+                let sprite_ids = animation
+                    .sprites
+                    .iter()
+                    .map(|track| track.id.as_str())
+                    .collect::<BTreeSet<_>>();
+                unique(
+                    "sprite emission id",
+                    animation
+                        .emissions
+                        .iter()
+                        .map(|emission| emission.id.as_str()),
+                )?;
                 let total_frames = shot
                     .duration_seconds
                     .map(|duration| (duration * animation.timing_fps as f64).round() as u64);
+                let mut prior_hold_end = None;
+                let mut intentional_hold_transitions = 0_u64;
+                for hold in &animation.intentional_holds {
+                    require_nonempty("sprite intentional hold reason", &hold.reason)?;
+                    if hold.start_frame >= hold.end_frame {
+                        bail!(
+                            "sprite-animation shot {} intentional hold must span at least one transition",
+                            shot.id
+                        );
+                    }
+                    if prior_hold_end.is_some_and(|end| hold.start_frame < end) {
+                        bail!(
+                            "sprite-animation shot {} intentional holds must be ordered and non-overlapping",
+                            shot.id
+                        );
+                    }
+                    if total_frames.is_some_and(|frames| u64::from(hold.end_frame) >= frames) {
+                        bail!(
+                            "sprite-animation shot {} intentional hold end frame {} falls outside the shot",
+                            shot.id,
+                            hold.end_frame
+                        );
+                    }
+                    intentional_hold_transitions += u64::from(hold.end_frame - hold.start_frame);
+                    prior_hold_end = Some(hold.end_frame);
+                }
+                if total_frames.is_some_and(|frames| {
+                    let transitions = frames.saturating_sub(1);
+                    transitions > 0 && intentional_hold_transitions * 2 > transitions
+                }) {
+                    bail!(
+                        "sprite-animation shot {} intentional holds cannot exceed half of shot transitions",
+                        shot.id
+                    );
+                }
+                if animation.emissions.len() > 64 {
+                    bail!(
+                        "sprite-animation shot {} cannot declare more than 64 emissions",
+                        shot.id
+                    );
+                }
+                for emission in &animation.emissions {
+                    require_nonempty("sprite emission asset", &emission.asset)?;
+                    if !sprite_ids.contains(emission.parent.as_str()) {
+                        bail!(
+                            "sprite-animation shot {} emission {} has unknown parent {}",
+                            shot.id,
+                            emission.id,
+                            emission.parent
+                        );
+                    }
+                    let parent = animation
+                        .sprites
+                        .iter()
+                        .find(|track| track.id == emission.parent)
+                        .expect("validated emission parent");
+                    if parent
+                        .visible_start_frame
+                        .is_some_and(|start| emission.frame < start)
+                        || parent
+                            .visible_end_frame
+                            .is_some_and(|end| emission.frame > end)
+                    {
+                        bail!(
+                            "sprite-animation shot {} emission {} starts outside parent {} visibility",
+                            shot.id,
+                            emission.id,
+                            emission.parent
+                        );
+                    }
+                    if parent.position_space != SpritePositionSpace::Canvas {
+                        bail!(
+                            "sprite-animation shot {} emission {} parent must use canvas position space",
+                            shot.id,
+                            emission.id
+                        );
+                    }
+                    let end_frame = emission.frame.saturating_add(emission.duration_frames);
+                    if emission.duration_frames == 0
+                        || total_frames.is_some_and(|frames| u64::from(end_frame) > frames)
+                    {
+                        bail!(
+                            "sprite-animation shot {} emission {} duration falls outside the shot",
+                            shot.id,
+                            emission.id
+                        );
+                    }
+                    if emission.fade_out_frames > emission.duration_frames {
+                        bail!(
+                            "sprite-animation shot {} emission {} fade exceeds its duration",
+                            shot.id,
+                            emission.id
+                        );
+                    }
+                    let end_width = emission.end_width.unwrap_or(emission.width);
+                    if !emission.offset_x.is_finite()
+                        || !emission.offset_y.is_finite()
+                        || !emission.drift_x.is_finite()
+                        || !emission.drift_y.is_finite()
+                        || !emission.width.is_finite()
+                        || !end_width.is_finite()
+                        || !emission.rotation_degrees.is_finite()
+                        || !emission.end_rotation_degrees.is_finite()
+                        || !emission.anchor_x.is_finite()
+                        || !emission.anchor_y.is_finite()
+                        || !(-4.0..=4.0).contains(&emission.offset_x)
+                        || !(-4.0..=4.0).contains(&emission.offset_y)
+                        || !(-2.0..=2.0).contains(&emission.drift_x)
+                        || !(-2.0..=2.0).contains(&emission.drift_y)
+                        || !(0.0..=2.0).contains(&emission.width)
+                        || emission.width == 0.0
+                        || !(0.0..=2.0).contains(&end_width)
+                        || end_width == 0.0
+                        || !(-720.0..=720.0).contains(&emission.rotation_degrees)
+                        || !(-720.0..=720.0).contains(&emission.end_rotation_degrees)
+                        || !(0.0..=1.0).contains(&emission.anchor_x)
+                        || !(0.0..=1.0).contains(&emission.anchor_y)
+                    {
+                        bail!(
+                            "sprite-animation shot {} emission {} geometry is invalid",
+                            shot.id,
+                            emission.id
+                        );
+                    }
+                }
                 if !animation.camera.is_empty() {
                     if animation.camera[0].frame != 0 {
                         bail!(
@@ -1530,6 +1884,90 @@ fn validate_mixed_media(manifest: &ProductionManifest, duration_ms: Option<u64>)
                     }
                 }
                 for track in &animation.sprites {
+                    match (track.visible_start_frame, track.visible_end_frame) {
+                        (None, None) => {}
+                        (Some(start), Some(end)) => {
+                            if start > end
+                                || total_frames.is_some_and(|frames| u64::from(end) >= frames)
+                            {
+                                bail!(
+                                    "sprite-animation shot {} track {} visibility window is invalid",
+                                    shot.id,
+                                    track.id
+                                );
+                            }
+                        }
+                        _ => bail!(
+                            "sprite-animation shot {} track {} must declare both visibility frames or neither",
+                            shot.id,
+                            track.id
+                        ),
+                    }
+                    match (track.position_space, track.parent.as_deref()) {
+                        (SpritePositionSpace::Canvas, None) => {}
+                        (SpritePositionSpace::Canvas, Some(_)) => bail!(
+                            "sprite-animation shot {} track {} declares a parent but uses canvas position space",
+                            shot.id,
+                            track.id
+                        ),
+                        (SpritePositionSpace::ParentWidth, None) => bail!(
+                            "sprite-animation shot {} track {} uses parent-width position space without a parent",
+                            shot.id,
+                            track.id
+                        ),
+                        (SpritePositionSpace::ParentWidth, Some(parent)) => {
+                            if parent == track.id || !sprite_ids.contains(parent) {
+                                bail!(
+                                    "sprite-animation shot {} track {} has invalid parent {}",
+                                    shot.id,
+                                    track.id,
+                                    parent
+                                );
+                            }
+                            let parent_track = animation
+                                .sprites
+                                .iter()
+                                .find(|candidate| candidate.id == parent)
+                                .expect("validated sprite parent");
+                            if parent_track.parent.is_some() {
+                                bail!(
+                                    "sprite-animation shot {} track {} cannot attach to nested parent {}",
+                                    shot.id,
+                                    track.id,
+                                    parent
+                                );
+                            }
+                            if track.movement != parent_track.movement
+                                || track.movement_steps != parent_track.movement_steps
+                            {
+                                bail!(
+                                    "sprite-animation shot {} track {} must share movement cadence with parent {}",
+                                    shot.id,
+                                    track.id,
+                                    parent
+                                );
+                            }
+                            let child_frames = track
+                                .keyframes
+                                .iter()
+                                .map(|keyframe| keyframe.frame)
+                                .collect::<BTreeSet<_>>();
+                            if let Some(missing) = parent_track
+                                .keyframes
+                                .iter()
+                                .map(|keyframe| keyframe.frame)
+                                .find(|frame| !child_frames.contains(frame))
+                            {
+                                bail!(
+                                    "sprite-animation shot {} track {} must key parent {} frame {}",
+                                    shot.id,
+                                    track.id,
+                                    parent,
+                                    missing
+                                );
+                            }
+                        }
+                    }
                     if track
                         .anchor_x
                         .is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value))
@@ -1592,11 +2030,20 @@ fn validate_mixed_media(manifest: &ProductionManifest, duration_ms: Option<u64>)
                                 keyframe.frame
                             );
                         }
+                        let valid_position = match track.position_space {
+                            SpritePositionSpace::Canvas => {
+                                (-1.0..=2.0).contains(&keyframe.x)
+                                    && (-1.0..=2.0).contains(&keyframe.y)
+                            }
+                            SpritePositionSpace::ParentWidth => {
+                                (-4.0..=4.0).contains(&keyframe.x)
+                                    && (-4.0..=4.0).contains(&keyframe.y)
+                            }
+                        };
                         if !keyframe.x.is_finite()
                             || !keyframe.y.is_finite()
                             || !keyframe.width.is_finite()
-                            || !(-1.0..=2.0).contains(&keyframe.x)
-                            || !(-1.0..=2.0).contains(&keyframe.y)
+                            || !valid_position
                             || !(0.0..=2.0).contains(&keyframe.width)
                             || keyframe.width == 0.0
                         {
@@ -1856,8 +2303,25 @@ pub fn plan(loaded: &LoadedProductionManifest) -> Result<ProductionPlan> {
 
 pub fn require_preview_ready(path: impl AsRef<Path>) -> Result<LoadedProductionManifest> {
     let loaded = load(path)?;
-    validate(&loaded)?;
-    if !loaded.manifest.timing_status.allows_preview() {
+    let report = validate(&loaded)?;
+    if !report.preview_ready {
+        if !report.timing_ready {
+            bail!(
+                "timing not conformed: preview and render commands are gated for untimed manifests"
+            );
+        }
+        bail!(
+            "visual assets not ready: {}",
+            report.semantic_blockers.join("; ")
+        );
+    }
+    Ok(loaded)
+}
+
+pub fn require_timing_ready(path: impl AsRef<Path>) -> Result<LoadedProductionManifest> {
+    let loaded = load(path)?;
+    let report = validate(&loaded)?;
+    if !report.timing_ready {
         bail!("timing not conformed: preview and render commands are gated for untimed manifests");
     }
     Ok(loaded)
@@ -2213,7 +2677,7 @@ pub fn caption_export(
     manifest_path: impl AsRef<Path>,
     output: impl AsRef<Path>,
 ) -> Result<PathBuf> {
-    let loaded = require_preview_ready(manifest_path)?;
+    let loaded = require_timing_ready(manifest_path)?;
     let mut timeline = BTreeMap::new();
     for cue in &loaded.manifest.narration_cues {
         let start = required_ms(cue.start_seconds, &format!("cue {} start", cue.id))?;

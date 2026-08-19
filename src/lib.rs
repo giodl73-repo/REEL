@@ -25,10 +25,14 @@ pub mod craft_plan;
 pub mod cue_import;
 pub mod production;
 pub mod production_binding;
+pub mod production_operations;
 pub mod production_package;
 pub mod review_decision;
 pub mod selection_lock;
 pub mod series;
+pub mod sprite_choreography;
+pub mod sprite_library;
+pub mod sprite_materializer;
 pub mod voice_consistency;
 pub mod voice_performance;
 

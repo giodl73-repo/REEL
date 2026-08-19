@@ -66,7 +66,7 @@ fn run_cli() -> Result<()> {
                 let report = reel::production::validate(&loaded)?;
                 match output {
                     OutputFormat::Text => println!(
-                        "manifest ok: {} version={} profile={} timing={} scenes={} shots={} stills={} videos={} animations={} sprite_animations={} audio_events={} beats={} score_cues={} ducking={} mastering={} speakers={} cues={} duration={} preview_ready={} delivery_ready={} gated={}",
+                        "manifest ok: {} version={} profile={} timing={} scenes={} shots={} stills={} videos={} animations={} sprite_animations={} audio_events={} beats={} score_cues={} ducking={} mastering={} speakers={} cues={} duration={} timing_ready={} generation_ready={} asset_ready={} preview_ready={} delivery_ready={} blockers={} gated={}",
                         report.manifest,
                         report.version,
                         report.profile,
@@ -88,8 +88,12 @@ fn run_cli() -> Result<()> {
                             .duration_ms
                             .map(|value| format!("{value}ms"))
                             .unwrap_or_else(|| "untimed".to_string()),
+                        report.timing_ready,
+                        report.generation_ready,
+                        report.asset_ready,
                         report.preview_ready,
                         report.delivery_ready,
+                        report.semantic_blockers.join("|"),
                         report.gated_commands.join(",")
                     ),
                     OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
@@ -301,6 +305,124 @@ fn run_cli() -> Result<()> {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
             }
         }
+        Command::SpriteLibraryValidate { library, output } => {
+            let loaded = reel::sprite_library::load_library(&library)?;
+            let report = reel::sprite_library::validate_library(&loaded)?;
+            print_report(&report, output)?;
+        }
+        Command::SpriteProfileValidate {
+            library,
+            profile,
+            output,
+        } => {
+            let library = reel::sprite_library::load_library(&library)?;
+            let profile = reel::sprite_library::load_profile(&profile)?;
+            let report = reel::sprite_library::validate_profile(&library, &profile)?;
+            print_report(&report, output)?;
+        }
+        Command::SpriteCastResolve {
+            library,
+            profile,
+            cast,
+            output_path,
+            output,
+        } => {
+            let library = reel::sprite_library::load_library(&library)?;
+            let profile = reel::sprite_library::load_profile(&profile)?;
+            let cast = reel::sprite_library::load_cast(&cast)?;
+            let plan = reel::sprite_library::resolve_cast(&library, &profile, &cast)?;
+            if let Some(path) = &output_path {
+                reel::sprite_library::write_cache_plan(&plan, path)?;
+            }
+            print_report(&plan, output)?;
+        }
+        Command::SpriteCoverage {
+            cache_plan,
+            library,
+            profile,
+            cast,
+            output_path,
+            output,
+        } => {
+            let report = if let Some(cache_plan) = cache_plan {
+                reel::sprite_library::coverage_from_cache_plan(cache_plan)?
+            } else {
+                let library = reel::sprite_library::load_library(
+                    library.as_ref().expect("clap requires library"),
+                )?;
+                let profile = reel::sprite_library::load_profile(
+                    profile.as_ref().expect("clap requires profile"),
+                )?;
+                let cast =
+                    reel::sprite_library::load_cast(cast.as_ref().expect("clap requires cast"))?;
+                reel::sprite_library::coverage_from_cast(&library, &profile, &cast)?
+            };
+            if let Some(path) = output_path {
+                reel::sprite_library::write_coverage_report(&report, path)?;
+            }
+            print_report(&report, output)?;
+        }
+        Command::SpriteCacheMaterialize {
+            catalog,
+            cache_plan,
+            output_root,
+            width,
+            height,
+            receipt_path,
+            output,
+        } => {
+            let catalog = reel::sprite_materializer::load_catalog(&catalog)?;
+            let cache_plan = reel::sprite_materializer::load_cache_plan(&cache_plan)?;
+            let receipt = reel::sprite_materializer::materialize(
+                &catalog,
+                &cache_plan,
+                &output_root,
+                width,
+                height,
+            )?;
+            if let Some(path) = &receipt_path {
+                reel::sprite_materializer::write_receipt(&receipt, path)?;
+            }
+            print_report(&receipt, output)?;
+        }
+        Command::SpriteCacheContactSheet {
+            receipt,
+            cache_root,
+            output_path,
+            columns,
+            tile_size,
+            report_path,
+            output,
+        } => {
+            let report = reel::sprite_materializer::create_contact_sheet(
+                &receipt,
+                &cache_root,
+                &output_path,
+                columns,
+                tile_size,
+            )?;
+            if let Some(path) = &report_path {
+                reel::sprite_materializer::write_contact_sheet_report(&report, path)?;
+            }
+            print_report(&report, output)?;
+        }
+        Command::SpriteChoreographyStage {
+            binding,
+            receipt,
+            base_assets,
+            cache_root,
+            output_path,
+            output,
+        } => {
+            let report = reel::sprite_choreography::stage_assets(
+                &binding,
+                &receipt,
+                &base_assets,
+                &cache_root,
+                &output_path,
+            )?;
+            print_report(&report, output)?;
+        }
         Command::CraftValidate { craft_plan, output } => {
             let loaded = reel::craft_plan::load(&craft_plan)?;
             let report = reel::craft_plan::validate(&loaded)?;
@@ -415,6 +537,105 @@ fn run_cli() -> Result<()> {
             output,
         } => {
             let report = reel::production_package::check(&receipt, &package)?;
+            print_report(&report, output)?;
+        }
+        Command::GenerationPlan {
+            manifest,
+            input,
+            output_path,
+            output,
+        } => {
+            let report = reel::production_operations::write_generation_plan(
+                &manifest,
+                &input,
+                &output_path,
+            )?;
+            print_report(&report, output)?;
+        }
+        Command::MaterializationResult {
+            plan,
+            input,
+            output_path,
+            output,
+        } => {
+            let report = reel::production_operations::write_materialization_receipt(
+                &plan,
+                &input,
+                &output_path,
+            )?;
+            print_report(&report, output)?;
+        }
+        Command::AssetPromote {
+            input,
+            output_path,
+            output,
+        } => {
+            let report = reel::production_operations::write_asset_promotion(&input, &output_path)?;
+            print_report(&report, output)?;
+        }
+        Command::PicturePlan {
+            manifest,
+            input,
+            prior_index,
+            output_path,
+            output,
+        } => {
+            let report = reel::production_operations::picture_plan(
+                &manifest,
+                &input,
+                prior_index.as_deref(),
+                output_path.as_deref(),
+            )?;
+            print_report(&report, output)?;
+        }
+        Command::ReviewRepairQueue {
+            manifest,
+            findings,
+            output_path,
+            output,
+        } => {
+            let report = reel::production_operations::repair_queue(
+                &manifest,
+                &findings,
+                output_path.as_deref(),
+            )?;
+            print_report(&report, output)?;
+        }
+        Command::ProductionStateAudit {
+            index,
+            output_path,
+            output,
+        } => {
+            let report = reel::production_operations::production_state_audit(
+                &index,
+                output_path.as_deref(),
+            )?;
+            print_report(&report, output)?;
+        }
+        Command::VoiceTakeLedger {
+            manifest,
+            input,
+            output_path,
+            output,
+        } => {
+            let report = reel::production_operations::voice_take_ledger(
+                &manifest,
+                &input,
+                output_path.as_deref(),
+            )?;
+            print_report(&report, output)?;
+        }
+        Command::MusicProvenance {
+            manifest,
+            input,
+            output_path,
+            output,
+        } => {
+            let report = reel::production_operations::music_provenance(
+                &manifest,
+                &input,
+                output_path.as_deref(),
+            )?;
             print_report(&report, output)?;
         }
         Command::SeriesValidate { manifest, output } => {
@@ -908,11 +1129,13 @@ fn run_cli() -> Result<()> {
                     );
                     for shot in &report.shots {
                         println!(
-                            "  {} | {} | {} | stationary={:.4} | passed={}",
+                            "  {} | {} | {} | stationary={:.4} | intentional_hold_transitions={} | unexpected_stationary={:.4} | passed={}",
                             shot.shot_id,
                             shot.treatment,
                             shot.expectation,
                             shot.near_stationary_fraction,
+                            shot.declared_hold_transitions,
+                            shot.unexpected_near_stationary_fraction,
                             shot.passed
                         );
                     }
@@ -1559,6 +1782,91 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
+    /// Validate a provider-neutral layered sprite library.
+    SpriteLibraryValidate {
+        library: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate an opaque domain profile against an exact sprite library.
+    SpriteProfileValidate {
+        library: PathBuf,
+        profile: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Resolve a customer cast through a domain profile into a path-free cache plan.
+    SpriteCastResolve {
+        library: PathBuf,
+        profile: PathBuf,
+        cast: PathBuf,
+        #[arg(long)]
+        output_path: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Summarize exact, declared-fallback, and unresolved selector requests as a character matrix.
+    SpriteCoverage {
+        #[arg(
+            long,
+            required_unless_present = "library",
+            conflicts_with_all = ["library", "profile", "cast"]
+        )]
+        cache_plan: Option<PathBuf>,
+        #[arg(
+            long,
+            required_unless_present = "cache_plan",
+            requires_all = ["profile", "cast"],
+            conflicts_with = "cache_plan"
+        )]
+        library: Option<PathBuf>,
+        #[arg(long, requires = "library", conflicts_with = "cache_plan")]
+        profile: Option<PathBuf>,
+        #[arg(long, requires = "library", conflicts_with = "cache_plan")]
+        cast: Option<PathBuf>,
+        #[arg(long)]
+        output_path: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Materialize a resolved sprite cache plan into transparent PNG cache entries.
+    SpriteCacheMaterialize {
+        catalog: PathBuf,
+        cache_plan: PathBuf,
+        output_root: PathBuf,
+        #[arg(long, default_value_t = 512)]
+        width: u32,
+        #[arg(long, default_value_t = 512)]
+        height: u32,
+        #[arg(long)]
+        receipt_path: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Build a checkerboard visual-review sheet from materialized cache entries.
+    SpriteCacheContactSheet {
+        receipt: PathBuf,
+        cache_root: PathBuf,
+        output_path: PathBuf,
+        #[arg(long, default_value_t = 5)]
+        columns: u32,
+        #[arg(long, default_value_t = 256)]
+        tile_size: u32,
+        #[arg(long)]
+        report_path: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Bind materialized cache entries into a machine-local choreography asset map.
+    SpriteChoreographyStage {
+        binding: PathBuf,
+        receipt: PathBuf,
+        base_assets: PathBuf,
+        cache_root: PathBuf,
+        output_path: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
     /// Validate a strict cross-department craft-plan sidecar without judging art.
     CraftValidate {
         craft_plan: PathBuf,
@@ -1611,6 +1919,78 @@ enum Command {
     ProductionPackageCheck {
         receipt: PathBuf,
         package: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Bind prompt and input hashes to a validated production manifest without executing a provider.
+    GenerationPlan {
+        manifest: PathBuf,
+        input: PathBuf,
+        #[arg(long)]
+        output_path: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Verify materialized image hashes, bytes, and dimensions against a generation plan.
+    MaterializationResult {
+        plan: PathBuf,
+        input: PathBuf,
+        #[arg(long)]
+        output_path: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Append a hash-bound candidate, selected, or approved asset promotion record.
+    AssetPromote {
+        input: PathBuf,
+        #[arg(long)]
+        output_path: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Plan deterministic exact-byte reuse, recipe regeneration, render, stale, and missing picture work.
+    PicturePlan {
+        manifest: PathBuf,
+        input: PathBuf,
+        #[arg(long)]
+        prior_index: Option<PathBuf>,
+        #[arg(long)]
+        output_path: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Compile strict timecoded findings into a deterministic open repair queue.
+    ReviewRepairQueue {
+        manifest: PathBuf,
+        findings: PathBuf,
+        #[arg(long)]
+        output_path: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Audit an explicit portfolio or series index for readiness and stale manifest hashes.
+    ProductionStateAudit {
+        index: PathBuf,
+        #[arg(long)]
+        output_path: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Verify rendered voice takes, explicit selections, and rejected or missing retake spans.
+    VoiceTakeLedger {
+        manifest: PathBuf,
+        input: PathBuf,
+        #[arg(long)]
+        output_path: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Verify score provenance and exact scored/no-score comparison variants.
+    MusicProvenance {
+        manifest: PathBuf,
+        input: PathBuf,
+        #[arg(long)]
+        output_path: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

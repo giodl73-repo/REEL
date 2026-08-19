@@ -1,0 +1,71 @@
+schema: reel.sprite-library.v0.1
+library: generic-athletic-figures-v1
+version: "1.0"
+cache_namespace: sprite-libraries/generic-athletic-figures/v1
+layer_slots:
+  - { id: body, order: 10, source: pose, transform_stage: pose-space, required: true }
+  - { id: equipment, order: 20, source: pose, transform_stage: pose-space, required: false }
+  - { id: uniform, order: 30, source: skin, transform_stage: pose-space, required: true }
+  - { id: identity, order: 40, source: skin, transform_stage: pose-space, required: false }
+  - { id: readable-decal, order: 50, source: skin, transform_stage: post-transform, required: true }
+poses:
+  - id: lateral-glide
+    asset_recipe: generic-athlete/lateral-glide/v1
+    base_facing: right
+    mirror_x_allowed: true
+    layers: { body: body/lateral-glide, equipment: equipment/stick-neutral }
+    anchors: { pivot: { x: 0.50, y: 0.86 }, head: { x: 0.52, y: 0.18 }, chest-decal: { x: 0.50, y: 0.40 }, prop-contact: { x: 0.78, y: 0.72 } }
+  - id: lateral-one-foot-touch
+    asset_recipe: generic-athlete/lateral-one-foot-touch/v1
+    base_facing: right
+    mirror_x_allowed: true
+    layers: { body: body/lateral-one-foot-touch, equipment: equipment/stick-neutral }
+    anchors: { pivot: { x: 0.50, y: 0.86 }, head: { x: 0.54, y: 0.18 }, chest-decal: { x: 0.51, y: 0.40 }, prop-contact: { x: 0.35, y: 0.88 } }
+  - id: lateral-stick-carry
+    asset_recipe: generic-athlete/lateral-stick-carry/v1
+    base_facing: right
+    mirror_x_allowed: true
+    layers: { body: body/lateral-stick-carry, equipment: equipment/stick-control }
+    anchors: { pivot: { x: 0.50, y: 0.86 }, head: { x: 0.52, y: 0.18 }, chest-decal: { x: 0.50, y: 0.40 }, prop-contact: { x: 0.78, y: 0.76 } }
+  - id: lateral-two-hand-sweep
+    asset_recipe: generic-athlete/lateral-two-hand-sweep/v1
+    base_facing: right
+    mirror_x_allowed: true
+    layers: { body: body/lateral-two-hand-sweep, equipment: equipment/stick-release }
+    anchors: { pivot: { x: 0.50, y: 0.86 }, head: { x: 0.47, y: 0.20 }, chest-decal: { x: 0.48, y: 0.42 }, prop-contact: { x: 0.82, y: 0.61 } }
+  - id: lateral-torso-twist-release
+    asset_recipe: generic-athlete/lateral-torso-twist-release/v1
+    base_facing: right
+    mirror_x_allowed: true
+    layers: { body: body/lateral-torso-twist-release, equipment: equipment/stick-shot }
+    anchors: { pivot: { x: 0.50, y: 0.86 }, head: { x: 0.48, y: 0.17 }, chest-decal: { x: 0.49, y: 0.39 }, prop-contact: { x: 0.80, y: 0.69 } }
+  - id: lateral-low-ready
+    asset_recipe: generic-athlete/lateral-low-ready/v1
+    base_facing: right
+    mirror_x_allowed: true
+    layers: { body: body/lateral-low-ready, equipment: equipment/stick-ready }
+    anchors: { pivot: { x: 0.50, y: 0.86 }, head: { x: 0.51, y: 0.17 }, chest-decal: { x: 0.50, y: 0.40 }, prop-contact: { x: 0.73, y: 0.77 } }
+  - id: lateral-defensive-brace
+    asset_recipe: generic-athlete/lateral-defensive-brace/v1
+    base_facing: right
+    mirror_x_allowed: true
+    layers: { body: body/lateral-defensive-brace, equipment: equipment/stick-defend }
+    anchors: { pivot: { x: 0.50, y: 0.86 }, head: { x: 0.50, y: 0.17 }, chest-decal: { x: 0.50, y: 0.40 }, prop-contact: { x: 0.72, y: 0.78 } }
+  - id: front-wide-set
+    asset_recipe: generic-athlete/front-wide-set/v1
+    base_facing: front
+    mirror_x_allowed: false
+    layers: { body: body/front-wide-set, equipment: equipment/large-protective-set }
+    anchors: { pivot: { x: 0.50, y: 0.88 }, head: { x: 0.50, y: 0.16 }, chest-decal: { x: 0.50, y: 0.40 }, prop-contact: { x: 0.68, y: 0.76 } }
+  - id: front-wide-recoil
+    asset_recipe: generic-athlete/front-wide-recoil/v1
+    base_facing: front
+    mirror_x_allowed: false
+    layers: { body: body/front-wide-recoil, equipment: equipment/large-protective-recoil }
+    anchors: { pivot: { x: 0.50, y: 0.88 }, head: { x: 0.47, y: 0.18 }, chest-decal: { x: 0.49, y: 0.42 }, prop-contact: { x: 0.70, y: 0.79 } }
+  - id: front-arms-raised
+    asset_recipe: generic-athlete/front-arms-raised/v1
+    base_facing: front
+    mirror_x_allowed: false
+    layers: { body: body/front-arms-raised, equipment: equipment/handheld-raised }
+    anchors: { pivot: { x: 0.50, y: 0.88 }, head: { x: 0.50, y: 0.22 }, chest-decal: { x: 0.50, y: 0.46 }, prop-contact: { x: 0.79, y: 0.20 } }

@@ -1,0 +1,22 @@
+schema: reel.sprite-recipe-catalog.v0.1
+library: generic-athletic-figures-v1
+library_sha256: 1e4367c1b582c2fce74659bd2579179e177f6329a87e375554e73b743dfe88f4
+recipes:
+  body/lateral-stick-carry: { kind: transparent }
+  equipment/stick-control: { kind: transparent }
+  body/lateral-two-hand-sweep: { kind: transparent }
+  equipment/stick-release: { kind: transparent }
+  body/front-wide-set: { kind: transparent }
+  equipment/large-protective-set: { kind: transparent }
+  fixture/uniform/blue/v1: { kind: transparent }
+  fixture/decal/08/v1: { kind: transparent }
+  fixture/decal/30/v1: { kind: transparent }
+  fixture/identity/initiator/v1:
+    kind: asset
+    path: two-color.ppm
+    sha256: 04d51491a8fda866404157f3c5e591e3f8d7150ef98240ffb9205590428b5477
+  fixture/identity/keeper/v1:
+    kind: asset
+    path: two-color.ppm
+    sha256: 04d51491a8fda866404157f3c5e591e3f8d7150ef98240ffb9205590428b5477
+    mirror_behavior: preserve

@@ -4,10 +4,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     fmt::Write as _,
+    io::Write as _,
     path::Path,
     process::{Command, Output, Stdio},
     sync::OnceLock,
 };
+use tempfile::Builder;
 
 static RENDER_ENVIRONMENT: OnceLock<RenderEnvironmentReport> = OnceLock::new();
 const RENDER_ENVIRONMENT_SCHEMA: &str = "reel.render-environment.v0.1";
@@ -226,8 +228,26 @@ impl FfmpegAdapter {
                 command.push_str(&shell_quote(arg));
             }
 
+            // Windows limits process command lines to roughly 32K characters. A
+            // sprite-heavy render can exceed that even after moving the filter
+            // graph into a file because every image input is still an argument.
+            // Hand WSL a short script path so the full command never crosses the
+            // Windows process boundary.
+            let mut script = Builder::new()
+                .prefix(".reel-wsl-command-")
+                .suffix(".sh")
+                .tempfile()
+                .context("failed to create temporary WSL command script")?;
+            script
+                .write_all(format!("set -e\n{command}\n").as_bytes())
+                .context("failed to write temporary WSL command script")?;
+            script
+                .flush()
+                .context("failed to flush temporary WSL command script")?;
+            let script_path = path_for_wsl(script.path());
+            let login_command = format!("exec {}", shell_quote(&script_path));
             Command::new("wsl")
-                .args(["--", "bash", "-lc", &command])
+                .args(["--", "bash", "-lc", &login_command])
                 .stdin(Stdio::null())
                 .output()
                 .with_context(|| format!("failed to run {program} through WSL"))?

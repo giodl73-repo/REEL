@@ -1,0 +1,26 @@
+schema: reel.sprite-profile.v0.1
+profile: sanitized-rink-action-v1
+version: "1.0"
+domain: sanitized-team-sport
+library: generic-athletic-figures-v1
+library_sha256: 1e4367c1b582c2fce74659bd2579179e177f6329a87e375554e73b743dfe88f4
+selector_dimensions: [role, action, phase, facing]
+bindings:
+  - id: mover-carry-left
+    selectors: { role: mover, action: carry, phase: action, facing: left }
+    pose: lateral-stick-carry
+    mirror_x: true
+    quality: exact
+    required_anchors: [pivot, head, chest-decal, prop-contact]
+  - id: mover-release-left
+    selectors: { role: mover, action: release, phase: contact, facing: left }
+    pose: lateral-two-hand-sweep
+    mirror_x: true
+    quality: exact
+    required_anchors: [pivot, head, chest-decal, prop-contact]
+  - id: keeper-set-front
+    selectors: { role: keeper, action: set, phase: action, facing: front }
+    pose: front-wide-set
+    mirror_x: false
+    quality: exact
+    required_anchors: [pivot, head, chest-decal]

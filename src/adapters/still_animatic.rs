@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -174,6 +174,10 @@ pub struct MixedMediaLineage {
     pub sprite_animation_events: usize,
     #[serde(default)]
     pub sprite_camera_tracks: usize,
+    #[serde(default)]
+    pub sprite_asset_occurrences: usize,
+    #[serde(default)]
+    pub sprite_unique_asset_inputs: usize,
     pub audio_events: usize,
     pub beat_markers: usize,
     pub narration_ducking: bool,
@@ -195,6 +199,7 @@ enum ShotVisualPlan {
 #[derive(Clone, Debug)]
 struct SpriteRenderSegment {
     input_index: usize,
+    input_use_index: usize,
     z_index: i32,
     start_seconds: f64,
     end_seconds: f64,
@@ -208,6 +213,11 @@ struct SpriteRenderSegment {
     anchor_y: f64,
     movement: production::SpriteMovement,
     movement_steps: u32,
+    start_rotation_radians: f64,
+    end_rotation_radians: f64,
+    fade_out_start_seconds: Option<f64>,
+    visible_start_seconds: f64,
+    visible_end_seconds: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -221,6 +231,82 @@ struct CameraRenderSegment {
     start_zoom: f64,
     end_zoom: f64,
     curve: production::SpriteCameraCurve,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SpriteGeometry {
+    x: f64,
+    y: f64,
+    width: f64,
+}
+
+fn sprite_geometry_at_frame(track: &production::SpriteTrack, frame: u32) -> SpriteGeometry {
+    if let Some(keyframe) = track
+        .keyframes
+        .iter()
+        .find(|keyframe| keyframe.frame == frame)
+    {
+        return SpriteGeometry {
+            x: keyframe.x,
+            y: keyframe.y,
+            width: keyframe.width,
+        };
+    }
+    if let Some(last) = track.keyframes.last().filter(|last| frame > last.frame) {
+        return SpriteGeometry {
+            x: last.x,
+            y: last.y,
+            width: last.width,
+        };
+    }
+    let pair = track
+        .keyframes
+        .windows(2)
+        .find(|pair| pair[0].frame < frame && frame < pair[1].frame)
+        .unwrap_or_else(|| panic!("validated sprite frame {frame} must be covered by keyframes"));
+    let from = &pair[0];
+    let to = &pair[1];
+    let raw = f64::from(frame - from.frame) / f64::from(to.frame - from.frame);
+    let progress = match track.movement {
+        production::SpriteMovement::Linear => raw,
+        production::SpriteMovement::Stepped => {
+            let steps = f64::from(track.movement_steps.unwrap_or(3));
+            (raw * steps).floor() / steps
+        }
+        production::SpriteMovement::Hold => 0.0,
+    };
+    SpriteGeometry {
+        x: from.x + (to.x - from.x) * progress,
+        y: from.y + (to.y - from.y) * progress,
+        width: from.width + (to.width - from.width) * progress,
+    }
+}
+
+fn resolved_sprite_keyframes(
+    animation: &production::SpriteAnimation,
+    track: &production::SpriteTrack,
+    canvas_aspect_ratio: f64,
+) -> Vec<production::SpriteKeyframe> {
+    let Some(parent_id) = track.parent.as_deref() else {
+        return track.keyframes.clone();
+    };
+    let parent = animation
+        .sprites
+        .iter()
+        .find(|candidate| candidate.id == parent_id)
+        .expect("validated sprite parent");
+    track
+        .keyframes
+        .iter()
+        .map(|keyframe| {
+            let parent_geometry = sprite_geometry_at_frame(parent, keyframe.frame);
+            let mut resolved = keyframe.clone();
+            resolved.x = parent_geometry.x + keyframe.x * parent_geometry.width;
+            resolved.y =
+                parent_geometry.y + keyframe.y * parent_geometry.width * canvas_aspect_ratio;
+            resolved
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy)]
@@ -364,6 +450,10 @@ pub struct ShotCadenceReport {
     pub frame_transitions: usize,
     pub near_stationary_transitions: usize,
     pub near_stationary_fraction: f64,
+    pub declared_hold_transitions: usize,
+    pub permitted_near_stationary_transitions: usize,
+    pub unexpected_near_stationary_transitions: usize,
+    pub unexpected_near_stationary_fraction: f64,
     pub passed: bool,
 }
 
@@ -899,8 +989,14 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                 let background_input_index = ffmpeg_input_count;
                 ffmpeg_input_count += 1;
                 let mut segments = Vec::new();
+                let mut sprite_input_cache: BTreeMap<PathBuf, (usize, usize)> = BTreeMap::new();
                 for track in &animation.sprites {
-                    for (keyframe_index, keyframe) in track.keyframes.iter().enumerate() {
+                    let resolved_keyframes = resolved_sprite_keyframes(
+                        animation,
+                        track,
+                        options.width as f64 / options.height as f64,
+                    );
+                    for (keyframe_index, keyframe) in resolved_keyframes.iter().enumerate() {
                         let candidate = if Path::new(&keyframe.asset).is_absolute() {
                             PathBuf::from(&keyframe.asset)
                         } else {
@@ -925,24 +1021,40 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                             path: resolved.display().to_string(),
                             sha256: production::sha256_path(&resolved)?,
                         });
-                        args.extend([
-                            "-threads".to_string(),
-                            "1".to_string(),
-                            "-loop".to_string(),
-                            "1".to_string(),
-                            "-framerate".to_string(),
-                            options.fps.to_string(),
-                            "-t".to_string(),
-                            format!("{:.3}", duration + tail),
-                            "-i".to_string(),
-                            adapter.path_argument(&resolved)?,
-                        ]);
-                        let next = track.keyframes.get(keyframe_index + 1);
+                        let (sprite_input_index, input_use_index, is_new_input) =
+                            if let Some((input_index, use_count)) =
+                                sprite_input_cache.get_mut(&resolved)
+                            {
+                                let use_index = *use_count;
+                                *use_count += 1;
+                                (*input_index, use_index, false)
+                            } else {
+                                let input_index = ffmpeg_input_count;
+                                sprite_input_cache.insert(resolved.clone(), (input_index, 1));
+                                (input_index, 0, true)
+                            };
+                        if is_new_input {
+                            args.extend([
+                                "-threads".to_string(),
+                                "1".to_string(),
+                                "-loop".to_string(),
+                                "1".to_string(),
+                                "-framerate".to_string(),
+                                options.fps.to_string(),
+                                "-t".to_string(),
+                                format!("{:.3}", duration + tail),
+                                "-i".to_string(),
+                                adapter.path_argument(&resolved)?,
+                            ]);
+                            ffmpeg_input_count += 1;
+                        }
+                        let next = resolved_keyframes.get(keyframe_index + 1);
                         let end_seconds = next.map_or(duration + tail, |next| {
                             next.frame as f64 / animation.timing_fps as f64
                         });
                         segments.push(SpriteRenderSegment {
-                            input_index: ffmpeg_input_count,
+                            input_index: sprite_input_index,
+                            input_use_index,
                             z_index: keyframe.z_index.unwrap_or(track.z_index),
                             start_seconds: keyframe.frame as f64 / animation.timing_fps as f64,
                             end_seconds,
@@ -956,9 +1068,111 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                             anchor_y: track.anchor_y.unwrap_or(0.5),
                             movement: track.movement,
                             movement_steps: track.movement_steps.unwrap_or(3),
+                            start_rotation_radians: 0.0,
+                            end_rotation_radians: 0.0,
+                            fade_out_start_seconds: None,
+                            visible_start_seconds: track.visible_start_frame.unwrap_or(0) as f64
+                                / animation.timing_fps as f64,
+                            visible_end_seconds: track.visible_end_frame.map_or(
+                                duration + tail,
+                                |frame| {
+                                    f64::from(frame.saturating_add(1)) / animation.timing_fps as f64
+                                },
+                            ),
                         });
+                    }
+                }
+                for emission in &animation.emissions {
+                    let candidate = if Path::new(&emission.asset).is_absolute() {
+                        PathBuf::from(&emission.asset)
+                    } else {
+                        asset_root.join(&emission.asset)
+                    };
+                    let resolved = candidate.canonicalize().with_context(|| {
+                        format!(
+                            "missing sprite emission asset for shot {} emission {}: {}",
+                            shot.id,
+                            emission.id,
+                            candidate.display()
+                        )
+                    })?;
+                    if !Path::new(&emission.asset).is_absolute()
+                        && !resolved.starts_with(&asset_root)
+                    {
+                        bail!("shot {} sprite emission asset escapes asset root", shot.id);
+                    }
+                    inputs.push(AnimaticInput {
+                        kind: "sprite-emission".to_string(),
+                        id: format!("{}:{}", shot.id, emission.id),
+                        path: resolved.display().to_string(),
+                        sha256: production::sha256_path(&resolved)?,
+                    });
+                    let (sprite_input_index, input_use_index, is_new_input) =
+                        if let Some((input_index, use_count)) =
+                            sprite_input_cache.get_mut(&resolved)
+                        {
+                            let use_index = *use_count;
+                            *use_count += 1;
+                            (*input_index, use_index, false)
+                        } else {
+                            let input_index = ffmpeg_input_count;
+                            sprite_input_cache.insert(resolved.clone(), (input_index, 1));
+                            (input_index, 0, true)
+                        };
+                    if is_new_input {
+                        args.extend([
+                            "-threads".to_string(),
+                            "1".to_string(),
+                            "-loop".to_string(),
+                            "1".to_string(),
+                            "-framerate".to_string(),
+                            options.fps.to_string(),
+                            "-t".to_string(),
+                            format!("{:.3}", duration + tail),
+                            "-i".to_string(),
+                            adapter.path_argument(&resolved)?,
+                        ]);
                         ffmpeg_input_count += 1;
                     }
+                    let parent = animation
+                        .sprites
+                        .iter()
+                        .find(|track| track.id == emission.parent)
+                        .expect("validated emission parent");
+                    let parent_geometry = sprite_geometry_at_frame(parent, emission.frame);
+                    let start_x = parent_geometry.x + emission.offset_x * parent_geometry.width;
+                    let start_y = parent_geometry.y
+                        + emission.offset_y
+                            * parent_geometry.width
+                            * (options.width as f64 / options.height as f64);
+                    let start_seconds = emission.frame as f64 / animation.timing_fps as f64;
+                    let end_seconds = (emission.frame + emission.duration_frames) as f64
+                        / animation.timing_fps as f64;
+                    let fade_out_start_seconds = (emission.fade_out_frames > 0).then(|| {
+                        end_seconds - emission.fade_out_frames as f64 / animation.timing_fps as f64
+                    });
+                    segments.push(SpriteRenderSegment {
+                        input_index: sprite_input_index,
+                        input_use_index,
+                        z_index: emission.z_index,
+                        start_seconds,
+                        end_seconds,
+                        start_x,
+                        start_y,
+                        end_x: start_x + emission.drift_x,
+                        end_y: start_y + emission.drift_y,
+                        start_width: emission.width,
+                        end_width: emission.end_width.unwrap_or(emission.width),
+                        anchor_x: emission.anchor_x,
+                        anchor_y: emission.anchor_y,
+                        movement: production::SpriteMovement::Linear,
+                        movement_steps: 1,
+                        start_rotation_radians: emission.rotation_degrees.to_radians(),
+                        end_rotation_radians: emission.end_rotation_degrees.to_radians(),
+                        fade_out_start_seconds,
+                        visible_start_seconds: start_seconds,
+                        visible_end_seconds: end_seconds,
+                    });
                 }
                 segments.sort_by_key(|segment| segment.z_index);
                 let camera = animation
@@ -1154,6 +1368,23 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                     options.fps,
                     duration + tail
                 ));
+                let mut sprite_input_use_counts = BTreeMap::new();
+                for segment in segments {
+                    sprite_input_use_counts
+                        .entry(segment.input_index)
+                        .and_modify(|count: &mut usize| {
+                            *count = (*count).max(segment.input_use_index + 1)
+                        })
+                        .or_insert(segment.input_use_index + 1);
+                }
+                for (input_index, use_count) in &sprite_input_use_counts {
+                    if *use_count > 1 {
+                        let outputs = (0..*use_count)
+                            .map(|use_index| format!("[sprite_input_{input_index}_{use_index}]"))
+                            .collect::<String>();
+                        filters.push(format!("[{input_index}:v]split={use_count}{outputs}"));
+                    }
+                }
                 let mut previous = background;
                 for (segment_index, segment) in segments.iter().enumerate() {
                     let sprite = format!("sprite{index}_{segment_index}");
@@ -1172,26 +1403,54 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                         ),
                         production::SpriteMovement::Hold => "0".to_string(),
                     };
-                    filters.push(format!(
-                        "[{}:v]scale=w='{start_width:.9}+{width_delta:.9}*({progress})':h=-1:eval=frame:flags=lanczos,format=rgba[{sprite}]",
-                        segment.input_index,
-                    ));
+                    let rotation_delta =
+                        segment.end_rotation_radians - segment.start_rotation_radians;
+                    let input_use_count = sprite_input_use_counts[&segment.input_index];
+                    let input_label = if input_use_count > 1 {
+                        format!(
+                            "sprite_input_{}_{}",
+                            segment.input_index, segment.input_use_index
+                        )
+                    } else {
+                        format!("{}:v", segment.input_index)
+                    };
+                    let mut sprite_filter = format!(
+                        "[{input_label}]trim=start={:.9}:end={:.9},scale=w='{start_width:.9}+{width_delta:.9}*({progress})':h=-1:eval=frame:flags=lanczos,format=rgba",
+                        segment.start_seconds, segment.end_seconds,
+                    );
+                    if segment.start_rotation_radians.abs() > f64::EPSILON
+                        || rotation_delta.abs() > f64::EPSILON
+                    {
+                        sprite_filter.push_str(&format!(
+                            ",rotate=angle='{:.9}+{rotation_delta:.9}*({progress})':ow=rotw(iw):oh=roth(ih):c=none",
+                            segment.start_rotation_radians,
+                        ));
+                    }
+                    if let Some(fade_start) = segment.fade_out_start_seconds {
+                        let fade_duration = segment.end_seconds - fade_start;
+                        sprite_filter.push_str(&format!(
+                            ",fade=t=out:st={fade_start:.9}:d={fade_duration:.9}:alpha=1"
+                        ));
+                    }
+                    filters.push(format!("{sprite_filter}[{sprite}]"));
                     let x_delta = segment.end_x - segment.start_x;
                     let y_delta = segment.end_y - segment.start_y;
+                    let visible_start = segment.start_seconds.max(segment.visible_start_seconds);
+                    let visible_end = segment.end_seconds.min(segment.visible_end_seconds);
                     filters.push(format!(
                         "[{previous}][{sprite}]overlay=x='W*({:.9}+{x_delta:.9}*({progress}))-w*{:.9}':y='H*({:.9}+{y_delta:.9}*({progress}))-h*{:.9}':eval=frame:enable='gte(t,{:.9})*lt(t,{:.9})'[{output}]",
                         segment.start_x,
                         segment.anchor_x,
                         segment.start_y,
                         segment.anchor_y,
-                        segment.start_seconds,
-                        segment.end_seconds,
+                        visible_start,
+                        visible_end,
                     ));
                     previous = output;
                 }
                 if camera.is_empty() {
                     filters.push(format!(
-                        "[{previous}]framerate=fps={},setsar=1,trim=duration={:.3},setpts=PTS-STARTPTS[v{index}]",
+                        "[{previous}]framerate=fps={},setsar=1,settb=AVTB,trim=duration={:.3},setpts=PTS-STARTPTS[v{index}]",
                         options.fps,
                         duration + tail
                     ));
@@ -1202,7 +1461,7 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                     let x = format!("max(0\\,min(iw-iw/zoom\\,iw*({center_x})-iw/zoom/2))");
                     let y = format!("max(0\\,min(ih-ih/zoom\\,ih*({center_y})-ih/zoom/2))");
                     filters.push(format!(
-                        "[{previous}]zoompan=z='{zoom}':x='{x}':y='{y}':d=1:s={}x{}:fps={},framerate=fps={},setsar=1,trim=duration={:.3},setpts=PTS-STARTPTS[v{index}]",
+                        "[{previous}]zoompan=z='{zoom}':x='{x}':y='{y}':d=1:s={}x{}:fps={},framerate=fps={},setsar=1,settb=AVTB,trim=duration={:.3},setpts=PTS-STARTPTS[v{index}]",
                         options.width,
                         options.height,
                         options.fps,
@@ -1565,6 +1824,16 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
             })
             .collect(),
     };
+    let sprite_asset_occurrences = inputs
+        .iter()
+        .filter(|input| matches!(input.kind.as_str(), "sprite-pose" | "sprite-emission"))
+        .count();
+    let sprite_unique_asset_inputs = inputs
+        .iter()
+        .filter(|input| matches!(input.kind.as_str(), "sprite-pose" | "sprite-emission"))
+        .map(|input| input.path.as_str())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
     let report = AnimaticRenderReport {
         schema: "reel.animatic-artifacts.v0.1".to_string(),
         work: loaded.manifest.work,
@@ -1623,6 +1892,8 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                 .filter_map(|shot| shot.sprite_animation.as_ref())
                 .filter(|animation| !animation.camera.is_empty())
                 .count(),
+            sprite_asset_occurrences,
+            sprite_unique_asset_inputs,
             audio_events: loaded.manifest.audio_events.len(),
             beat_markers: loaded.manifest.beat_markers.len(),
             narration_ducking: loaded.manifest.narration_ducking.is_some(),
@@ -1891,6 +2162,53 @@ fn cadence_values(video: &Path, start_seconds: f64, duration_seconds: f64) -> Re
     Ok(values)
 }
 
+fn sprite_animation_has_authored_motion(animation: &production::SpriteAnimation) -> bool {
+    let camera_moves = animation.camera.windows(2).any(|keyframes| {
+        let from = &keyframes[0];
+        let to = &keyframes[1];
+        (from.center_x - to.center_x).abs() > f64::EPSILON
+            || (from.center_y - to.center_y).abs() > f64::EPSILON
+            || (from.zoom - to.zoom).abs() > f64::EPSILON
+    });
+    let sprite_moves = animation.sprites.iter().any(|track| {
+        track.keyframes.windows(2).any(|keyframes| {
+            let from = &keyframes[0];
+            let to = &keyframes[1];
+            from.asset != to.asset
+                || from.z_index != to.z_index
+                || (from.x - to.x).abs() > f64::EPSILON
+                || (from.y - to.y).abs() > f64::EPSILON
+                || (from.width - to.width).abs() > f64::EPSILON
+        })
+    });
+    let visibility_changes = animation
+        .sprites
+        .iter()
+        .any(|track| track.visible_start_frame.is_some() || track.visible_end_frame.is_some());
+    camera_moves || sprite_moves || visibility_changes || !animation.emissions.is_empty()
+}
+
+fn intentional_hold_mask(
+    animation: &production::SpriteAnimation,
+    transition_count: usize,
+    duration_seconds: f64,
+) -> Vec<bool> {
+    if animation.intentional_holds.is_empty() || transition_count == 0 {
+        return vec![false; transition_count];
+    }
+    let total_frames = (duration_seconds * f64::from(animation.timing_fps)).round() as usize;
+    (0..transition_count)
+        .map(|index| {
+            let frame = (((index + 1) as f64 * total_frames as f64) / (transition_count + 1) as f64)
+                .round() as u32;
+            animation
+                .intentional_holds
+                .iter()
+                .any(|hold| frame > hold.start_frame && frame <= hold.end_frame)
+        })
+        .collect()
+}
+
 pub fn check_motion(
     manifest: impl AsRef<Path>,
     video: impl AsRef<Path>,
@@ -1945,20 +2263,53 @@ pub fn check_motion(
         } else {
             &shot.motion
         };
-        let hold = matches!(treatment, "hold" | "hold-dark");
+        let authored_sprite_motion = shot
+            .sprite_animation
+            .as_ref()
+            .is_some_and(sprite_animation_has_authored_motion);
+        let hold = matches!(treatment, "hold" | "hold-dark") && !authored_sprite_motion;
+        let hold_mask = shot.sprite_animation.as_ref().map_or_else(
+            || vec![false; values.len()],
+            |animation| intentional_hold_mask(animation, values.len(), duration),
+        );
+        let declared_hold_transitions = hold_mask.iter().filter(|declared| **declared).count();
+        let permitted_near_stationary_transitions = values
+            .iter()
+            .zip(&hold_mask)
+            .filter(|(value, declared)| **declared && **value < NEAR_STATIONARY_LUMA_THRESHOLD)
+            .count();
+        let unexpected_near_stationary_transitions =
+            stationary.saturating_sub(permitted_near_stationary_transitions);
+        let unexpected_transition_count = values.len().saturating_sub(declared_hold_transitions);
+        let unexpected_near_stationary_fraction = if unexpected_transition_count == 0 {
+            0.0
+        } else {
+            unexpected_near_stationary_transitions as f64 / unexpected_transition_count as f64
+        };
         shots.push(ShotCadenceReport {
             shot_id: shot.id.clone(),
             treatment: treatment.to_string(),
-            expectation: if hold { "stationary" } else { "moving" }.to_string(),
+            expectation: if hold {
+                "stationary"
+            } else if declared_hold_transitions > 0 {
+                "moving-with-intentional-holds"
+            } else {
+                "moving"
+            }
+            .to_string(),
             start_ms: (start * 1000.0).round() as u64,
             duration_ms: (duration * 1000.0).round() as u64,
             frame_transitions: values.len(),
             near_stationary_transitions: stationary,
             near_stationary_fraction: fraction,
+            declared_hold_transitions,
+            permitted_near_stationary_transitions,
+            unexpected_near_stationary_transitions,
+            unexpected_near_stationary_fraction,
             passed: if hold {
                 fraction >= MIN_HOLD_STATIONARY_FRACTION
             } else {
-                fraction <= MAX_NEAR_STATIONARY_FRACTION
+                unexpected_near_stationary_fraction <= MAX_NEAR_STATIONARY_FRACTION
             },
         });
     }
@@ -2088,6 +2439,46 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
     if expected_duration != report.duration_ms {
         bail!("artifact duration does not match manifest timeline");
     }
+    let aspect_ratio = report.width as f64 / report.height as f64;
+    let expected_sprite_input_ids = loaded
+        .manifest
+        .shots
+        .iter()
+        .filter_map(|shot| {
+            shot.sprite_animation
+                .as_ref()
+                .map(|animation| (shot, animation))
+        })
+        .flat_map(|(shot, animation)| {
+            let mut ids = Vec::new();
+            for track in &animation.sprites {
+                ids.extend(
+                    resolved_sprite_keyframes(animation, track, aspect_ratio)
+                        .iter()
+                        .enumerate()
+                        .map(|(index, _)| format!("{}:{}:{}", shot.id, track.id, index + 1)),
+                );
+            }
+            ids.extend(
+                animation
+                    .emissions
+                    .iter()
+                    .map(|emission| format!("{}:{}", shot.id, emission.id)),
+            );
+            ids
+        })
+        .collect::<BTreeSet<_>>();
+    let actual_sprite_input_ids = report
+        .inputs
+        .iter()
+        .filter(|input| matches!(input.kind.as_str(), "sprite-pose" | "sprite-emission"))
+        .map(|input| input.id.clone())
+        .collect::<BTreeSet<_>>();
+    let actual_sprite_input_count = report
+        .inputs
+        .iter()
+        .filter(|input| matches!(input.kind.as_str(), "sprite-pose" | "sprite-emission"))
+        .count();
     let expected_mixed_media = MixedMediaLineage {
         still_events: loaded
             .manifest
@@ -2120,6 +2511,14 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
             .filter_map(|shot| shot.sprite_animation.as_ref())
             .filter(|animation| !animation.camera.is_empty())
             .count(),
+        sprite_asset_occurrences: expected_sprite_input_ids.len(),
+        sprite_unique_asset_inputs: report
+            .inputs
+            .iter()
+            .filter(|input| matches!(input.kind.as_str(), "sprite-pose" | "sprite-emission"))
+            .map(|input| input.path.as_str())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
         audio_events: loaded.manifest.audio_events.len(),
         beat_markers: loaded.manifest.beat_markers.len(),
         narration_ducking: loaded.manifest.narration_ducking.is_some(),
@@ -2142,6 +2541,16 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
         && report.mixed_media.sprite_camera_tracks != expected_mixed_media.sprite_camera_tracks
     {
         bail!("sprite camera lineage does not match manifest");
+    }
+    if tool_version >= (0, 2, 35)
+        && (actual_sprite_input_ids != expected_sprite_input_ids
+            || actual_sprite_input_count != expected_sprite_input_ids.len()
+            || report.mixed_media.sprite_asset_occurrences
+                != expected_mixed_media.sprite_asset_occurrences
+            || report.mixed_media.sprite_unique_asset_inputs
+                != expected_mixed_media.sprite_unique_asset_inputs)
+    {
+        bail!("sprite render-locality lineage does not match artifact inputs");
     }
     if report.motion.working_width != report.width
         || report.motion.working_height != report.height
@@ -2908,6 +3317,26 @@ mod tests {
         manifest.shots[0].sprite_animation = Some(production::SpriteAnimation {
             background: "frame-hook.ppm".to_string(),
             timing_fps: 24,
+            intentional_holds: Vec::new(),
+            emissions: vec![production::SpriteEmission {
+                id: "contact-snow".to_string(),
+                asset: "frame-hook.ppm".to_string(),
+                parent: "puck".to_string(),
+                frame: 12,
+                duration_frames: 6,
+                offset_x: 0.25,
+                offset_y: 0.1,
+                width: 0.05,
+                end_width: Some(0.07),
+                drift_x: -0.02,
+                drift_y: 0.01,
+                rotation_degrees: 0.0,
+                end_rotation_degrees: 30.0,
+                fade_out_frames: 3,
+                z_index: 20,
+                anchor_x: 0.5,
+                anchor_y: 0.5,
+            }],
             camera: vec![
                 production::SpriteCameraKeyframe {
                     frame: 0,
@@ -2927,10 +3356,14 @@ mod tests {
             sprites: vec![production::SpriteTrack {
                 id: "puck".to_string(),
                 z_index: 10,
+                visible_start_frame: Some(4),
+                visible_end_frame: Some(40),
                 anchor_x: Some(0.5),
                 anchor_y: Some(0.75),
                 movement: production::SpriteMovement::Stepped,
                 movement_steps: Some(3),
+                parent: None,
+                position_space: production::SpritePositionSpace::Canvas,
                 keyframes: vec![
                     production::SpriteKeyframe {
                         frame: 0,
@@ -2981,6 +3414,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(report.mixed_media.sprite_animation_events, 1);
+        assert_eq!(report.mixed_media.sprite_asset_occurrences, 3);
+        assert_eq!(report.mixed_media.sprite_unique_asset_inputs, 2);
         assert_eq!(
             report
                 .inputs
@@ -2989,16 +3424,207 @@ mod tests {
                 .count(),
             2
         );
+        assert_eq!(
+            report
+                .inputs
+                .iter()
+                .filter(|input| input.kind == "sprite-emission")
+                .count(),
+            1
+        );
         let command = report.command_arguments.join(" ");
         assert!(command.contains("overlay=x="));
         assert!(command.contains("eval=frame:flags=lanczos"));
         assert!(command.contains("floor(((t-0.000000000)/1.375000000)*3)/3"));
         assert!(command.contains("-w*0.500000000"));
         assert!(command.contains("-h*0.750000000"));
-        assert!(command.contains("gte(t,0.000000000)*lt(t,1.375000000)"));
+        assert!(command.contains("gte(t,0.166666667)*lt(t,1.375000000)"));
         assert!(command.contains("zoompan=z="));
         assert!(command.contains("between(on\\,0\\,47)"));
         assert!(command.contains("max(0\\,min(iw-iw/zoom"));
+        assert!(command.contains("rotate=angle="));
+        assert!(command.contains("fade=t=out"));
+        assert!(command.contains("split=2"));
+        assert!(command.contains("trim=start=0.000000000:end=1.375000000"));
+        assert!(command.contains("setsar=1,settb=AVTB,trim=duration="));
+    }
+
+    #[test]
+    fn motion_check_treats_authored_sprite_and_camera_changes_as_motion() {
+        let moving = production::SpriteAnimation {
+            background: "rink.ppm".to_string(),
+            timing_fps: 24,
+            intentional_holds: Vec::new(),
+            emissions: Vec::new(),
+            camera: vec![
+                production::SpriteCameraKeyframe {
+                    frame: 0,
+                    center_x: 0.5,
+                    center_y: 0.5,
+                    zoom: 1.0,
+                    curve_to_next: production::SpriteCameraCurve::EaseInOut,
+                },
+                production::SpriteCameraKeyframe {
+                    frame: 23,
+                    center_x: 0.6,
+                    center_y: 0.5,
+                    zoom: 1.5,
+                    curve_to_next: production::SpriteCameraCurve::Linear,
+                },
+            ],
+            sprites: vec![production::SpriteTrack {
+                id: "puck".to_string(),
+                z_index: 10,
+                visible_start_frame: None,
+                visible_end_frame: None,
+                anchor_x: Some(0.5),
+                anchor_y: Some(0.5),
+                movement: production::SpriteMovement::Linear,
+                movement_steps: None,
+                parent: None,
+                position_space: production::SpritePositionSpace::Canvas,
+                keyframes: vec![
+                    production::SpriteKeyframe {
+                        frame: 0,
+                        asset: "puck.png".to_string(),
+                        z_index: None,
+                        x: 0.2,
+                        y: 0.6,
+                        width: 0.03,
+                    },
+                    production::SpriteKeyframe {
+                        frame: 23,
+                        asset: "puck.png".to_string(),
+                        z_index: None,
+                        x: 0.8,
+                        y: 0.4,
+                        width: 0.02,
+                    },
+                ],
+            }],
+        };
+        assert!(sprite_animation_has_authored_motion(&moving));
+
+        let stationary = production::SpriteAnimation {
+            camera: vec![moving.camera[0].clone(), moving.camera[0].clone()],
+            sprites: vec![production::SpriteTrack {
+                keyframes: vec![
+                    moving.sprites[0].keyframes[0].clone(),
+                    moving.sprites[0].keyframes[0].clone(),
+                ],
+                ..moving.sprites[0].clone()
+            }],
+            ..moving
+        };
+        assert!(!sprite_animation_has_authored_motion(&stationary));
+    }
+
+    #[test]
+    fn parent_width_tracks_resolve_offsets_against_parent_geometry() {
+        let parent = production::SpriteTrack {
+            id: "skater".to_string(),
+            z_index: 10,
+            visible_start_frame: None,
+            visible_end_frame: None,
+            anchor_x: Some(0.5),
+            anchor_y: Some(0.5),
+            movement: production::SpriteMovement::Linear,
+            movement_steps: None,
+            parent: None,
+            position_space: production::SpritePositionSpace::Canvas,
+            keyframes: vec![
+                production::SpriteKeyframe {
+                    frame: 0,
+                    asset: "skater-a.png".to_string(),
+                    z_index: None,
+                    x: 0.4,
+                    y: 0.5,
+                    width: 0.2,
+                },
+                production::SpriteKeyframe {
+                    frame: 10,
+                    asset: "skater-b.png".to_string(),
+                    z_index: None,
+                    x: 0.6,
+                    y: 0.5,
+                    width: 0.2,
+                },
+            ],
+        };
+        let child = production::SpriteTrack {
+            id: "puck".to_string(),
+            z_index: 20,
+            visible_start_frame: None,
+            visible_end_frame: None,
+            anchor_x: Some(0.5),
+            anchor_y: Some(0.5),
+            movement: production::SpriteMovement::Linear,
+            movement_steps: None,
+            parent: Some("skater".to_string()),
+            position_space: production::SpritePositionSpace::ParentWidth,
+            keyframes: vec![
+                production::SpriteKeyframe {
+                    frame: 0,
+                    asset: "puck.png".to_string(),
+                    z_index: None,
+                    x: 0.5,
+                    y: 0.25,
+                    width: 0.01,
+                },
+                production::SpriteKeyframe {
+                    frame: 10,
+                    asset: "puck.png".to_string(),
+                    z_index: None,
+                    x: 0.5,
+                    y: 0.25,
+                    width: 0.01,
+                },
+            ],
+        };
+        let animation = production::SpriteAnimation {
+            background: "rink.png".to_string(),
+            timing_fps: 24,
+            sprites: vec![parent, child.clone()],
+            camera: Vec::new(),
+            intentional_holds: Vec::new(),
+            emissions: Vec::new(),
+        };
+        let resolved = resolved_sprite_keyframes(&animation, &child, 16.0 / 9.0);
+        assert!((resolved[0].x - 0.5).abs() < 1e-9);
+        assert!((resolved[1].x - 0.7).abs() < 1e-9);
+        assert!((resolved[0].y - 0.5888888889).abs() < 1e-9);
+    }
+
+    #[test]
+    fn intentional_hold_mask_maps_authored_frames_to_video_transitions() {
+        let animation = production::SpriteAnimation {
+            background: "rink.png".to_string(),
+            timing_fps: 24,
+            sprites: Vec::new(),
+            camera: Vec::new(),
+            intentional_holds: vec![
+                production::SpriteIntentionalHold {
+                    start_frame: 0,
+                    end_frame: 8,
+                    reason: "anticipation".to_string(),
+                },
+                production::SpriteIntentionalHold {
+                    start_frame: 12,
+                    end_frame: 15,
+                    reason: "concealment".to_string(),
+                },
+            ],
+            emissions: Vec::new(),
+        };
+        let mask = intentional_hold_mask(&animation, 32, 1.375);
+        assert_eq!(mask.iter().filter(|declared| **declared).count(), 11);
+        assert!(mask[0]);
+        assert!(mask[7]);
+        assert!(!mask[8]);
+        assert!(!mask[11]);
+        assert!(mask[12]);
+        assert!(mask[14]);
+        assert!(!mask[15]);
     }
 
     #[test]

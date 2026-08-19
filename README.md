@@ -151,6 +151,67 @@ requested output shape, while package integrity remains explicitly separate
 from human release gates. See
 [`docs/delivery-camera-and-production-package-v0.2.27.md`](docs/delivery-camera-and-production-package-v0.2.27.md).
 
+CLI v0.2.28 adds parent-relative sprite tracks and phrase-aware intentional
+holds. Small props can follow a performer's changing position and scale through
+pose swaps, while motion review excludes only explicitly declared hold spans
+and continues measuring unexpected stationary transitions. See
+[`docs/sprite-contact-and-holds-v0.2.28.md`](docs/sprite-contact-and-holds-v0.2.28.md).
+
+CLI v0.2.29 adds sprite emissions: an effect resolves once from a named parent
+at a specific frame, then detaches into canvas space with independent drift,
+scale, rotation, lifetime, layer, and fade. This supports contact snow, dust,
+sparks, motion residue, and other world-space aftermath without keeping the
+effect glued to its moving source. See
+[`docs/sprite-emissions-v0.2.29.md`](docs/sprite-emissions-v0.2.29.md).
+
+CLI v0.2.30 adds inclusive performer and sprite visibility windows. A
+choreography performer can enter after the opening beat or leave before the
+ending beat without remaining frozen on stage, and the compiled sprite manifest
+carries the same window into final FFmpeg overlays. See
+[`docs/performer-visibility-v0.2.30.md`](docs/performer-visibility-v0.2.30.md).
+
+CLI v0.2.31 adds portable layered-sprite libraries, domain-owned selector
+profiles, character skin bindings, and content-derived cache plans. Mirrored
+pose layers and post-transform readable decals remain separate, and unresolved
+selectors fail instead of silently choosing a nearby pose. See
+[`docs/layered-sprite-libraries-v0.2.31.md`](docs/layered-sprite-libraries-v0.2.31.md).
+
+CLI v0.2.32 materializes those plans into deterministic transparent PNG cache
+entries using hash-pinned relative recipe catalogs. Physical cache roots remain
+outside receipts, reviewed precomposed sprites require an explicit preservation
+mode, and a checkerboard contact-sheet command supports visual alpha review.
+See [`docs/sprite-materialization-v0.2.32.md`](docs/sprite-materialization-v0.2.32.md).
+
+CLI v0.2.33 bridges materialized sprites into choreography through a portable,
+hash-pinned character/request binding. It requires explicit handling for every
+performer and pose, verifies physical cache hashes, and writes only a
+machine-local staged asset map for the existing choreography compiler. See
+[`docs/sprite-choreography-staging-v0.2.33.md`](docs/sprite-choreography-staging-v0.2.33.md).
+
+CLI v0.2.34 makes raster-cache invalidation recipe-local. Each raster key pins
+the effective source layers used by that character request, so editing one pose
+does not evict unrelated poses merely because they share a catalog. The receipt
+continues to pin the complete catalog for provenance. See
+[`docs/sprite-cache-locality-v0.2.34.md`](docs/sprite-cache-locality-v0.2.34.md).
+
+CLI v0.2.35 deduplicates repeated sprite assets inside each rendered shot.
+Logical pose and emission occurrences remain individually represented in
+artifact lineage, while FFmpeg opens each unique raster once, splits that
+decoded stream, and trims every branch to its visible segment. Dense pose-cycle
+manifests therefore retain exact frame timing without multiplying full-duration
+image decodes. See
+[`docs/sprite-render-locality-v0.2.35.md`](docs/sprite-render-locality-v0.2.35.md).
+
+CLI v0.2.36 adds strict, provider-neutral production operations: hash-only
+generation plans and verified materialization evidence; append-only asset
+promotion; incremental picture reuse/regeneration planning with explicit proxy
+disclosure; timecoded repair queues; path-free portfolio readiness audits;
+explicit voice-take selection and surgical retakes; music provenance with exact
+no-score comparison; and sprite selector coverage matrices. Technical
+readiness and promotion states never imply creative, principal, rights,
+publication, or release approval. See
+[`docs/production-operations-v0.2.36.md`](docs/production-operations-v0.2.36.md).
+
 CLI v0.2.21 adds proof selection locks and fast audio revision. `animatic-lock`
 creates an atomic packet containing the selected verified artifact, a locked
 manifest derivative, and a receipt binding both hashes without invalidating the

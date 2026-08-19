@@ -58,6 +58,12 @@ Every background and pose asset is independently hashed in artifact lineage.
 REEL performs the movement, pose timing, compositing, and final render but does
 not generate the art. Transparent PNG or WebP sprites are recommended.
 
+As of v0.2.35, repeated references to the same sprite raster are opened once
+per shot. REEL splits the decoded stream and trims each branch to the exact
+keyframe segment while retaining every logical pose occurrence in artifact
+lineage. Dense stride cycles and other rapid pose swaps can therefore reuse a
+small cel library without paying for one full-duration decode per keyframe.
+
 The shot-level `motion` treatment applies to the background plate before sprite
 composition. For example, `motion: pan-right` lets the background travel across
 the rink while sprite tracks retain independent screen-space movement.
@@ -68,6 +74,26 @@ composition with increasing frame-keyed center and zoom states. `linear`,
 begin at frame zero, remain inside the shot, and use zoom values from 1 through
 4. The renderer crop-clamps their centers for the requested output geometry, so
 16:9, 9:16, and square deliveries can be proven separately.
+
+As of v0.2.28, a track may declare `parent` plus
+`position_space: parent-width`. Its keyframe `x` and `y` values then become
+pose-specific offsets measured in parent widths and are resolved against the
+parent's authored geometry. Sprite animation may also declare bounded,
+reason-bearing `intentional_holds`; motion checking reports both total and
+unexpected stationary transitions instead of treating authored anticipation as
+an accidental freeze. See
+[`sprite-contact-and-holds-v0.2.28.md`](sprite-contact-and-holds-v0.2.28.md).
+
+As of v0.2.29, `sprite_animation.emissions` can resolve an effect from a parent
+at one authored frame and then leave it in canvas space. Emissions own a bounded
+lifetime plus optional drift, scale, rotation, fade, and layer controls. See
+[`sprite-emissions-v0.2.29.md`](sprite-emissions-v0.2.29.md).
+
+As of v0.2.30, a sprite track may declare both `visible_start_frame` and
+`visible_end_frame`. The inclusive window limits final overlay visibility while
+preserving the complete authored keyframe path. Choreography
+`visible_between` windows compile into the same fields. See
+[`performer-visibility-v0.2.30.md`](performer-visibility-v0.2.30.md).
 
 For a short hockey play, use separate tracks for the passer, scorer, goalie,
 puck, and optionally the net response. A player usually needs only two to four

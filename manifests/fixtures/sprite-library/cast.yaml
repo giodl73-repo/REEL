@@ -1,0 +1,30 @@
+schema: reel.sprite-cast.v0.1
+cast: sanitized-rink-cast-v1
+library: generic-athletic-figures-v1
+library_sha256: 1e4367c1b582c2fce74659bd2579179e177f6329a87e375554e73b743dfe88f4
+profile: sanitized-rink-action-v1
+profile_sha256: 12573bbcbc503c5b741c7a5b7e2bb8de56725aa3ca73f821feb8e85c7707a43a
+skins:
+  blue:
+    layers:
+      uniform: fixture/uniform/blue/v1
+characters:
+  - id: initiator
+    stable_subject_id: fixture:initiator
+    skin: blue
+    layers:
+      identity: fixture/identity/initiator/v1
+      readable-decal: fixture/decal/08/v1
+    traits: { role: mover, facing: left }
+    pose_requests:
+      carry: { action: carry, phase: action }
+      release: { action: release, phase: contact }
+  - id: keeper
+    stable_subject_id: fixture:keeper
+    skin: blue
+    layers:
+      identity: fixture/identity/keeper/v1
+      readable-decal: fixture/decal/30/v1
+    traits: { role: keeper, facing: front }
+    pose_requests:
+      set: { action: set, phase: action }
