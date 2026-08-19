@@ -29,6 +29,11 @@ pub const VOICE_TAKE_INPUT_SCHEMA: &str = "reel.voice-take-ledger-input.v0.1";
 pub const VOICE_TAKE_REPORT_SCHEMA: &str = "reel.voice-take-ledger.v0.1";
 pub const MUSIC_PROVENANCE_INPUT_SCHEMA: &str = "reel.music-provenance-input.v0.1";
 pub const MUSIC_PROVENANCE_REPORT_SCHEMA: &str = "reel.music-provenance.v0.1";
+pub const PROVIDER_ATTEMPT_INPUT_SCHEMA: &str = "reel.provider-attempt-input.v0.1";
+pub const PROVIDER_ATTEMPT_RECEIPT_SCHEMA: &str = "reel.provider-attempt-receipt.v0.1";
+pub const PROVIDER_ATTEMPT_CHECK_SCHEMA: &str = "reel.provider-attempt-check.v0.1";
+pub const PROVIDER_ATTEMPT_RESUME_INPUT_SCHEMA: &str = "reel.provider-attempt-resume-input.v0.1";
+pub const PROVIDER_ATTEMPT_RESUME_PLAN_SCHEMA: &str = "reel.provider-attempt-resume-plan.v0.1";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -134,6 +139,506 @@ pub struct MaterializedUnit {
     pub width: u32,
     pub height: u32,
     pub media_type: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderAttemptOperationKind {
+    Initial,
+    Retry,
+    Retake,
+    Remix,
+    Extension,
+}
+
+impl ProviderAttemptOperationKind {
+    fn requires_parent(self) -> bool {
+        self != Self::Initial
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderAttemptLifecycleState {
+    Submitted,
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderAttemptReplayGrade {
+    ExactByteReuse,
+    DeterministicLocalReplay,
+    BestEffortProviderReplay,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderFailureClassification {
+    Authentication,
+    Cancelled,
+    ContentPolicy,
+    ExecutionError,
+    InvalidRequest,
+    ProviderRejected,
+    ProviderUnavailable,
+    QuotaExceeded,
+    RateLimited,
+    Timeout,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderAttemptTimedSpan {
+    pub start_ms: u64,
+    pub end_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderAttemptScope {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shot_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cue_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timed_span: Option<ProviderAttemptTimedSpan>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderAttemptLifecycleObservation {
+    pub state: ProviderAttemptLifecycleState,
+    pub observed_at_utc: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderAttemptArtifactInput {
+    pub path: PathBuf,
+    pub sha256: String,
+    pub bytes: u64,
+    pub media_type: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderAttemptCapturedImage {
+    pub sha256: String,
+    pub bytes: u64,
+    pub media_type: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderAttemptInput {
+    pub schema: String,
+    pub intent_id: String,
+    pub attempt_id: String,
+    pub attempt_sequence: u32,
+    pub production_manifest_sha256: String,
+    pub operation_kind: ProviderAttemptOperationKind,
+    pub scope: ProviderAttemptScope,
+    pub generation_plan_sha256: String,
+    pub requested_policy_sha256: String,
+    pub resolved_configuration_sha256: String,
+    pub provider_identifier: String,
+    pub provider_job_id_sha256: String,
+    pub lifecycle_state: ProviderAttemptLifecycleState,
+    pub lifecycle_observations: Vec<ProviderAttemptLifecycleObservation>,
+    #[serde(default)]
+    pub artifact: Option<ProviderAttemptArtifactInput>,
+    #[serde(default)]
+    pub failure_classification: Option<ProviderFailureClassification>,
+    #[serde(default)]
+    pub parent_receipt: Option<LocalFileHash>,
+    pub replay_grade: ProviderAttemptReplayGrade,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderAttemptReceipt {
+    pub schema: String,
+    pub intent_id: String,
+    pub attempt_id: String,
+    pub attempt_sequence: u32,
+    pub production_manifest_sha256: String,
+    pub operation_kind: ProviderAttemptOperationKind,
+    pub scope: ProviderAttemptScope,
+    pub generation_plan_sha256: String,
+    pub requested_policy_sha256: String,
+    pub resolved_configuration_sha256: String,
+    pub provider_identifier: String,
+    pub provider_job_id_sha256: String,
+    pub lifecycle_state: ProviderAttemptLifecycleState,
+    pub lifecycle_observations: Vec<ProviderAttemptLifecycleObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub captured_image: Option<ProviderAttemptCapturedImage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_classification: Option<ProviderFailureClassification>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_receipt_sha256: Option<String>,
+    pub replay_grade: ProviderAttemptReplayGrade,
+    pub provider_executed_by_reel: bool,
+    pub human_authority_required: bool,
+    pub output_selected: bool,
+    pub output_promoted: bool,
+    pub output_superseded: bool,
+    pub creative_approved: bool,
+    pub rights_approved: bool,
+    pub publication_approved: bool,
+    pub release_approved: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderAttemptCheckReport {
+    pub schema: String,
+    pub receipt_sha256: String,
+    pub intent_id: String,
+    pub attempt_id: String,
+    pub attempt_sequence: u32,
+    pub lifecycle_state: ProviderAttemptLifecycleState,
+    pub captured_artifact_verified: bool,
+    pub passed: bool,
+    pub provider_executed_by_reel: bool,
+    pub human_authority_required: bool,
+    pub creative_approved: bool,
+    pub rights_approved: bool,
+    pub publication_approved: bool,
+    pub release_approved: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderAttemptResumeInput {
+    pub schema: String,
+    pub intent_id: String,
+    pub production_manifest_sha256: String,
+    pub generation_plan_sha256: String,
+    pub requested_policy_sha256: String,
+    pub resolved_configuration_sha256: String,
+    pub receipt_files: Vec<LocalFileHash>,
+    #[serde(default)]
+    pub captured_artifact: Option<LocalFileHash>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderAttemptResumeDecision {
+    ReuseCaptured,
+    CaptureOutput,
+    PollExisting,
+    RetryTerminal,
+    BlockedStaleInput,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderAttemptResumeReasonCode {
+    CapturedOutputVerified,
+    CompletedOutputNotCaptured,
+    CapturedArtifactNotAvailable,
+    ProviderAttemptActive,
+    TerminalFailure,
+    StaleIntent,
+    StaleProductionManifest,
+    StaleGenerationPlan,
+    StaleRequestedPolicy,
+    StaleResolvedConfiguration,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderAttemptResumePlan {
+    pub schema: String,
+    pub receipts_validated: usize,
+    pub latest_attempt_id: String,
+    pub latest_attempt_sequence: u32,
+    pub latest_receipt_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub captured_artifact_sha256: Option<String>,
+    pub decision: ProviderAttemptResumeDecision,
+    pub reason_code: ProviderAttemptResumeReasonCode,
+    pub provider_executed_by_reel: bool,
+    pub human_authority_required: bool,
+    pub output_selected: bool,
+    pub output_promoted: bool,
+    pub output_superseded: bool,
+    pub creative_approved: bool,
+    pub rights_approved: bool,
+    pub publication_approved: bool,
+    pub release_approved: bool,
+}
+
+pub fn write_provider_attempt_receipt(
+    input_path: impl AsRef<Path>,
+    output_path: impl AsRef<Path>,
+) -> Result<ProviderAttemptReceipt> {
+    let input_path = input_path.as_ref();
+    let input: ProviderAttemptInput = read_contract(input_path)?;
+    require_schema(&input.schema, PROVIDER_ATTEMPT_INPUT_SCHEMA)?;
+    validate_provider_attempt_core_identity(
+        &input.intent_id,
+        &input.attempt_id,
+        input.attempt_sequence,
+        &input.production_manifest_sha256,
+        &input.scope,
+    )?;
+    validate_provider_attempt_execution_binding(
+        &input.generation_plan_sha256,
+        &input.requested_policy_sha256,
+        &input.resolved_configuration_sha256,
+        &input.provider_identifier,
+        &input.provider_job_id_sha256,
+    )?;
+    validate_provider_attempt_lifecycle(input.lifecycle_state, &input.lifecycle_observations)?;
+
+    let captured_image = input
+        .artifact
+        .as_ref()
+        .map(|artifact| verify_provider_attempt_artifact(input_path, artifact))
+        .transpose()?;
+    validate_provider_attempt_state_evidence(
+        input.lifecycle_state,
+        captured_image.as_ref(),
+        input.failure_classification,
+        input.replay_grade,
+    )?;
+
+    let parent_receipt_sha256 = match (input.operation_kind, input.parent_receipt.as_ref()) {
+        (ProviderAttemptOperationKind::Initial, None) => None,
+        (ProviderAttemptOperationKind::Initial, Some(_)) => {
+            bail!("initial provider attempt must not cite a parent receipt")
+        }
+        (operation, None) if operation.requires_parent() => {
+            bail!("{operation:?} provider attempt requires a parent receipt")
+        }
+        (_, Some(parent)) => {
+            let parent_file =
+                verify_local_file_hash("provider attempt parent receipt", input_path, parent)?;
+            let parent_receipt: ProviderAttemptReceipt = serde_json::from_slice(&parent_file.bytes)
+                .context("provider attempt parent receipt is not valid strict JSON")?;
+            validate_provider_attempt_receipt(&parent_receipt)?;
+            validate_provider_attempt_parent(&input, &parent_receipt)?;
+            Some(parent.sha256.clone())
+        }
+        _ => unreachable!("all provider attempt operation kinds are covered"),
+    };
+
+    let receipt = ProviderAttemptReceipt {
+        schema: PROVIDER_ATTEMPT_RECEIPT_SCHEMA.to_string(),
+        intent_id: input.intent_id,
+        attempt_id: input.attempt_id,
+        attempt_sequence: input.attempt_sequence,
+        production_manifest_sha256: input.production_manifest_sha256,
+        operation_kind: input.operation_kind,
+        scope: input.scope,
+        generation_plan_sha256: input.generation_plan_sha256,
+        requested_policy_sha256: input.requested_policy_sha256,
+        resolved_configuration_sha256: input.resolved_configuration_sha256,
+        provider_identifier: input.provider_identifier,
+        provider_job_id_sha256: input.provider_job_id_sha256,
+        lifecycle_state: input.lifecycle_state,
+        lifecycle_observations: input.lifecycle_observations,
+        captured_image,
+        failure_classification: input.failure_classification,
+        parent_receipt_sha256,
+        replay_grade: input.replay_grade,
+        provider_executed_by_reel: false,
+        human_authority_required: true,
+        output_selected: false,
+        output_promoted: false,
+        output_superseded: false,
+        creative_approved: false,
+        rights_approved: false,
+        publication_approved: false,
+        release_approved: false,
+    };
+    validate_provider_attempt_receipt(&receipt)?;
+    write_json_new(&receipt, output_path.as_ref())?;
+    Ok(receipt)
+}
+
+pub fn check_provider_attempt_receipt(
+    receipt_path: impl AsRef<Path>,
+    artifact_path: Option<&Path>,
+    output_path: Option<&Path>,
+) -> Result<ProviderAttemptCheckReport> {
+    let receipt_path = receipt_path.as_ref();
+    let receipt_bytes = fs::read(receipt_path).with_context(|| {
+        format!(
+            "failed to read provider attempt receipt {}",
+            receipt_path.display()
+        )
+    })?;
+    let receipt: ProviderAttemptReceipt = serde_json::from_slice(&receipt_bytes)
+        .context("provider attempt receipt is not valid strict JSON")?;
+    validate_provider_attempt_receipt(&receipt)?;
+    let captured_artifact_verified = match (&receipt.captured_image, artifact_path) {
+        (Some(expected), Some(path)) => {
+            verify_captured_provider_attempt_artifact(path, expected)?;
+            true
+        }
+        (Some(_), None) => bail!("captured provider attempt requires an artifact for checking"),
+        (None, Some(_)) => {
+            bail!("non-captured provider attempt must not be checked with an artifact")
+        }
+        (None, None) => false,
+    };
+    let report = ProviderAttemptCheckReport {
+        schema: PROVIDER_ATTEMPT_CHECK_SCHEMA.to_string(),
+        receipt_sha256: hash_bytes(&receipt_bytes),
+        intent_id: receipt.intent_id,
+        attempt_id: receipt.attempt_id,
+        attempt_sequence: receipt.attempt_sequence,
+        lifecycle_state: receipt.lifecycle_state,
+        captured_artifact_verified,
+        passed: true,
+        provider_executed_by_reel: false,
+        human_authority_required: true,
+        creative_approved: false,
+        rights_approved: false,
+        publication_approved: false,
+        release_approved: false,
+    };
+    if let Some(output_path) = output_path {
+        write_json_new(&report, output_path)?;
+    }
+    Ok(report)
+}
+
+pub fn plan_provider_attempt_resume(
+    input_path: impl AsRef<Path>,
+    output_path: Option<&Path>,
+) -> Result<ProviderAttemptResumePlan> {
+    let input_path = input_path.as_ref();
+    let input: ProviderAttemptResumeInput = read_contract(input_path)?;
+    require_schema(&input.schema, PROVIDER_ATTEMPT_RESUME_INPUT_SCHEMA)?;
+    require_token("provider attempt resume intent_id", &input.intent_id)?;
+    require_hash(&input.production_manifest_sha256)?;
+    require_hash(&input.generation_plan_sha256)?;
+    require_hash(&input.requested_policy_sha256)?;
+    require_hash(&input.resolved_configuration_sha256)?;
+    if input.receipt_files.is_empty() {
+        bail!("provider attempt resume requires at least one hash-pinned receipt file");
+    }
+
+    let mut attempts = Vec::new();
+    let mut attempt_ids = BTreeSet::new();
+    let mut attempt_sequences = BTreeSet::new();
+    for binding in &input.receipt_files {
+        let file = verify_local_file_hash("provider attempt resume receipt", input_path, binding)?;
+        let receipt: ProviderAttemptReceipt = serde_json::from_slice(&file.bytes)
+            .context("provider attempt resume receipt is not valid strict JSON")?;
+        validate_provider_attempt_receipt(&receipt)?;
+        if !attempt_ids.insert(receipt.attempt_id.clone()) {
+            bail!("provider attempt resume contains a duplicate attempt identity");
+        }
+        if !attempt_sequences.insert(receipt.attempt_sequence) {
+            bail!("provider attempt resume contains a duplicate attempt sequence");
+        }
+        attempts.push((binding.sha256.clone(), receipt));
+    }
+    attempts.sort_by_key(|(_, receipt)| receipt.attempt_sequence);
+    validate_provider_attempt_chain(&attempts)?;
+
+    let latest = attempts
+        .last()
+        .expect("provider attempt resume input was checked as non-empty");
+    let latest_artifact_verified = match (
+        latest.1.captured_image.as_ref(),
+        input.captured_artifact.as_ref(),
+    ) {
+        (Some(expected), Some(binding)) => {
+            require_hash(&binding.sha256)?;
+            if binding.sha256 != expected.sha256 {
+                bail!("provider attempt resume artifact binding does not match latest receipt");
+            }
+            let path = resolve_relative_to(input_path, &binding.path);
+            verify_captured_provider_attempt_artifact(&path, expected)?;
+            true
+        }
+        (Some(_), None) => false,
+        (None, Some(_)) => {
+            bail!("provider attempt resume artifact is only valid for a captured latest receipt")
+        }
+        (None, None) => false,
+    };
+    let stale_reason = attempts.iter().find_map(|(_, receipt)| {
+        if receipt.intent_id != input.intent_id {
+            Some(ProviderAttemptResumeReasonCode::StaleIntent)
+        } else if receipt.production_manifest_sha256 != input.production_manifest_sha256 {
+            Some(ProviderAttemptResumeReasonCode::StaleProductionManifest)
+        } else if receipt.generation_plan_sha256 != input.generation_plan_sha256 {
+            Some(ProviderAttemptResumeReasonCode::StaleGenerationPlan)
+        } else if receipt.requested_policy_sha256 != input.requested_policy_sha256 {
+            Some(ProviderAttemptResumeReasonCode::StaleRequestedPolicy)
+        } else if receipt.resolved_configuration_sha256 != input.resolved_configuration_sha256 {
+            Some(ProviderAttemptResumeReasonCode::StaleResolvedConfiguration)
+        } else {
+            None
+        }
+    });
+    let (decision, reason_code) = if let Some(reason) = stale_reason {
+        (ProviderAttemptResumeDecision::BlockedStaleInput, reason)
+    } else {
+        match latest.1.lifecycle_state {
+            ProviderAttemptLifecycleState::Completed if latest_artifact_verified => (
+                ProviderAttemptResumeDecision::ReuseCaptured,
+                ProviderAttemptResumeReasonCode::CapturedOutputVerified,
+            ),
+            ProviderAttemptLifecycleState::Completed if latest.1.captured_image.is_some() => (
+                ProviderAttemptResumeDecision::CaptureOutput,
+                ProviderAttemptResumeReasonCode::CapturedArtifactNotAvailable,
+            ),
+            ProviderAttemptLifecycleState::Completed => (
+                ProviderAttemptResumeDecision::CaptureOutput,
+                ProviderAttemptResumeReasonCode::CompletedOutputNotCaptured,
+            ),
+            ProviderAttemptLifecycleState::Submitted | ProviderAttemptLifecycleState::Running => (
+                ProviderAttemptResumeDecision::PollExisting,
+                ProviderAttemptResumeReasonCode::ProviderAttemptActive,
+            ),
+            ProviderAttemptLifecycleState::Failed => (
+                ProviderAttemptResumeDecision::RetryTerminal,
+                ProviderAttemptResumeReasonCode::TerminalFailure,
+            ),
+        }
+    };
+    let report = ProviderAttemptResumePlan {
+        schema: PROVIDER_ATTEMPT_RESUME_PLAN_SCHEMA.to_string(),
+        receipts_validated: attempts.len(),
+        latest_attempt_id: latest.1.attempt_id.clone(),
+        latest_attempt_sequence: latest.1.attempt_sequence,
+        latest_receipt_sha256: latest.0.clone(),
+        captured_artifact_sha256: latest
+            .1
+            .captured_image
+            .as_ref()
+            .map(|artifact| artifact.sha256.clone()),
+        decision,
+        reason_code,
+        provider_executed_by_reel: false,
+        human_authority_required: true,
+        output_selected: false,
+        output_promoted: false,
+        output_superseded: false,
+        creative_approved: false,
+        rights_approved: false,
+        publication_approved: false,
+        release_approved: false,
+    };
+    if let Some(output_path) = output_path {
+        write_json_new(&report, output_path)?;
+    }
+    Ok(report)
 }
 
 pub fn write_generation_plan(
@@ -1479,6 +1984,431 @@ pub fn music_provenance(
         write_json_new(&report, output_path)?;
     }
     Ok(report)
+}
+
+fn validate_provider_attempt_core_identity(
+    intent_id: &str,
+    attempt_id: &str,
+    attempt_sequence: u32,
+    production_manifest_sha256: &str,
+    scope: &ProviderAttemptScope,
+) -> Result<()> {
+    require_token("provider attempt intent_id", intent_id)?;
+    require_token("provider attempt attempt_id", attempt_id)?;
+    if attempt_sequence == 0 {
+        bail!("provider attempt sequence must start at one");
+    }
+    require_hash(production_manifest_sha256)?;
+    validate_provider_attempt_scope(scope)?;
+    Ok(())
+}
+
+fn validate_provider_attempt_execution_binding(
+    generation_plan_sha256: &str,
+    requested_policy_sha256: &str,
+    resolved_configuration_sha256: &str,
+    provider_identifier: &str,
+    provider_job_id_sha256: &str,
+) -> Result<()> {
+    require_hash(generation_plan_sha256)?;
+    require_hash(requested_policy_sha256)?;
+    require_hash(resolved_configuration_sha256)?;
+    require_provider_identifier(provider_identifier)?;
+    require_hash(provider_job_id_sha256)?;
+    Ok(())
+}
+
+fn validate_provider_attempt_scope(scope: &ProviderAttemptScope) -> Result<()> {
+    if scope.shot_id.is_none() && scope.cue_id.is_none() && scope.timed_span.is_none() {
+        bail!("provider attempt scope requires a shot, cue, or timed span");
+    }
+    if let Some(shot_id) = &scope.shot_id {
+        require_token("provider attempt shot_id", shot_id)?;
+    }
+    if let Some(cue_id) = &scope.cue_id {
+        require_token("provider attempt cue_id", cue_id)?;
+    }
+    if let Some(span) = &scope.timed_span {
+        if span.end_ms <= span.start_ms {
+            bail!("provider attempt timed span must have positive duration");
+        }
+    }
+    Ok(())
+}
+
+fn validate_provider_attempt_lifecycle(
+    lifecycle_state: ProviderAttemptLifecycleState,
+    observations: &[ProviderAttemptLifecycleObservation],
+) -> Result<()> {
+    let states = observations
+        .iter()
+        .map(|observation| observation.state)
+        .collect::<Vec<_>>();
+    let valid = matches!(
+        states.as_slice(),
+        [ProviderAttemptLifecycleState::Submitted]
+            | [
+                ProviderAttemptLifecycleState::Submitted,
+                ProviderAttemptLifecycleState::Running
+            ]
+            | [
+                ProviderAttemptLifecycleState::Submitted,
+                ProviderAttemptLifecycleState::Completed
+            ]
+            | [
+                ProviderAttemptLifecycleState::Submitted,
+                ProviderAttemptLifecycleState::Failed
+            ]
+            | [
+                ProviderAttemptLifecycleState::Submitted,
+                ProviderAttemptLifecycleState::Running,
+                ProviderAttemptLifecycleState::Completed
+            ]
+            | [
+                ProviderAttemptLifecycleState::Submitted,
+                ProviderAttemptLifecycleState::Running,
+                ProviderAttemptLifecycleState::Failed
+            ]
+    );
+    if !valid || observations.last().map(|value| value.state) != Some(lifecycle_state) {
+        bail!("provider attempt lifecycle observations contain an invalid transition");
+    }
+    let mut prior_timestamp = None;
+    for observation in observations {
+        require_utc_timestamp(&observation.observed_at_utc)?;
+        if prior_timestamp.is_some_and(|prior| prior > observation.observed_at_utc.as_str()) {
+            bail!("provider attempt lifecycle observation timestamps are out of order");
+        }
+        prior_timestamp = Some(observation.observed_at_utc.as_str());
+    }
+    Ok(())
+}
+
+fn validate_provider_attempt_state_evidence(
+    lifecycle_state: ProviderAttemptLifecycleState,
+    captured_image: Option<&ProviderAttemptCapturedImage>,
+    failure_classification: Option<ProviderFailureClassification>,
+    replay_grade: ProviderAttemptReplayGrade,
+) -> Result<()> {
+    match lifecycle_state {
+        ProviderAttemptLifecycleState::Completed => {
+            if failure_classification.is_some() {
+                bail!("completed provider attempt must not contain a failure classification");
+            }
+        }
+        ProviderAttemptLifecycleState::Failed => {
+            if captured_image.is_some() {
+                bail!("failed provider attempt must not contain a captured artifact");
+            }
+            if failure_classification.is_none() {
+                bail!("failed provider attempt requires a normalized failure classification");
+            }
+        }
+        ProviderAttemptLifecycleState::Submitted | ProviderAttemptLifecycleState::Running => {
+            if captured_image.is_some() || failure_classification.is_some() {
+                bail!(
+                    "non-terminal provider attempt must not contain artifact or failure evidence"
+                );
+            }
+        }
+    }
+    match (lifecycle_state, captured_image, replay_grade) {
+        (
+            ProviderAttemptLifecycleState::Completed,
+            Some(_),
+            ProviderAttemptReplayGrade::ExactByteReuse,
+        ) => {}
+        (
+            ProviderAttemptLifecycleState::Completed,
+            None,
+            ProviderAttemptReplayGrade::DeterministicLocalReplay
+            | ProviderAttemptReplayGrade::BestEffortProviderReplay,
+        ) => {}
+        (
+            ProviderAttemptLifecycleState::Completed,
+            Some(_),
+            ProviderAttemptReplayGrade::DeterministicLocalReplay
+            | ProviderAttemptReplayGrade::BestEffortProviderReplay,
+        ) => {
+            bail!("captured completion must use the exact-byte-reuse replay grade")
+        }
+        (
+            ProviderAttemptLifecycleState::Submitted
+            | ProviderAttemptLifecycleState::Running
+            | ProviderAttemptLifecycleState::Failed,
+            None,
+            ProviderAttemptReplayGrade::BestEffortProviderReplay,
+        ) => {}
+        _ => bail!("provider attempt replay grade is inconsistent with lifecycle and capture"),
+    }
+    Ok(())
+}
+
+fn verify_provider_attempt_artifact(
+    input_path: &Path,
+    artifact: &ProviderAttemptArtifactInput,
+) -> Result<ProviderAttemptCapturedImage> {
+    require_hash(&artifact.sha256)?;
+    require_supported_image_media_type(&artifact.media_type)?;
+    if artifact.width == 0 || artifact.height == 0 {
+        bail!("provider attempt artifact dimensions must be positive");
+    }
+    let path = resolve_relative_to(input_path, &artifact.path);
+    let bytes = fs::read(&path).context("failed to read provider attempt artifact")?;
+    let actual_sha256 = hash_bytes(&bytes);
+    if actual_sha256 != artifact.sha256 {
+        bail!("provider attempt artifact hash mismatch");
+    }
+    if bytes.len() as u64 != artifact.bytes {
+        bail!("provider attempt artifact byte count mismatch");
+    }
+    let actual_media_type = detected_image_media_type_bytes(&bytes)?;
+    if actual_media_type != artifact.media_type {
+        bail!("provider attempt artifact media type mismatch");
+    }
+    let image = image::load_from_memory(&bytes)
+        .context("failed to decode provider attempt PNG artifact")?;
+    if image.width() != artifact.width || image.height() != artifact.height {
+        bail!("provider attempt artifact dimensions mismatch");
+    }
+    Ok(ProviderAttemptCapturedImage {
+        sha256: actual_sha256,
+        bytes: bytes.len() as u64,
+        media_type: actual_media_type.to_string(),
+        width: image.width(),
+        height: image.height(),
+    })
+}
+
+fn verify_captured_provider_attempt_artifact(
+    artifact_path: &Path,
+    expected: &ProviderAttemptCapturedImage,
+) -> Result<()> {
+    let bytes =
+        fs::read(artifact_path).context("failed to read captured provider attempt artifact")?;
+    let actual_sha256 = hash_bytes(&bytes);
+    if actual_sha256 != expected.sha256 {
+        bail!("captured provider attempt artifact hash mismatch");
+    }
+    if bytes.len() as u64 != expected.bytes {
+        bail!("captured provider attempt artifact byte count mismatch");
+    }
+    let actual_media_type = detected_image_media_type_bytes(&bytes)?;
+    if actual_media_type != expected.media_type {
+        bail!("captured provider attempt artifact media type mismatch");
+    }
+    let image = image::load_from_memory(&bytes)
+        .context("failed to decode captured provider attempt PNG")?;
+    if image.width() != expected.width || image.height() != expected.height {
+        bail!("captured provider attempt artifact dimensions mismatch");
+    }
+    Ok(())
+}
+
+fn validate_provider_attempt_parent(
+    input: &ProviderAttemptInput,
+    parent: &ProviderAttemptReceipt,
+) -> Result<()> {
+    if parent.intent_id != input.intent_id
+        || parent.production_manifest_sha256 != input.production_manifest_sha256
+        || parent.generation_plan_sha256 != input.generation_plan_sha256
+        || parent.requested_policy_sha256 != input.requested_policy_sha256
+        || parent.resolved_configuration_sha256 != input.resolved_configuration_sha256
+    {
+        bail!("provider attempt parent receipt has stale immutable input bindings");
+    }
+    if parent.attempt_id == input.attempt_id {
+        bail!("provider attempt parent and child identities must differ");
+    }
+    if parent.attempt_sequence.checked_add(1) != Some(input.attempt_sequence) {
+        bail!("provider attempt parent must be the immediately preceding sequence");
+    }
+    match input.operation_kind {
+        ProviderAttemptOperationKind::Initial => {
+            bail!("initial provider attempt must not have a parent")
+        }
+        ProviderAttemptOperationKind::Retry
+            if parent.lifecycle_state != ProviderAttemptLifecycleState::Failed =>
+        {
+            bail!("provider attempt retry requires a failed parent receipt")
+        }
+        ProviderAttemptOperationKind::Retake
+        | ProviderAttemptOperationKind::Remix
+        | ProviderAttemptOperationKind::Extension
+            if parent.lifecycle_state != ProviderAttemptLifecycleState::Completed =>
+        {
+            bail!(
+                "provider attempt retake, remix, or extension requires a completed parent receipt"
+            )
+        }
+        ProviderAttemptOperationKind::Retry
+        | ProviderAttemptOperationKind::Retake
+        | ProviderAttemptOperationKind::Remix
+        | ProviderAttemptOperationKind::Extension => {}
+    }
+    Ok(())
+}
+
+fn validate_provider_attempt_receipt(receipt: &ProviderAttemptReceipt) -> Result<()> {
+    require_schema(&receipt.schema, PROVIDER_ATTEMPT_RECEIPT_SCHEMA)?;
+    validate_provider_attempt_core_identity(
+        &receipt.intent_id,
+        &receipt.attempt_id,
+        receipt.attempt_sequence,
+        &receipt.production_manifest_sha256,
+        &receipt.scope,
+    )?;
+    validate_provider_attempt_execution_binding(
+        &receipt.generation_plan_sha256,
+        &receipt.requested_policy_sha256,
+        &receipt.resolved_configuration_sha256,
+        &receipt.provider_identifier,
+        &receipt.provider_job_id_sha256,
+    )?;
+    validate_provider_attempt_lifecycle(receipt.lifecycle_state, &receipt.lifecycle_observations)?;
+    if let Some(artifact) = &receipt.captured_image {
+        require_hash(&artifact.sha256)?;
+        require_supported_image_media_type(&artifact.media_type)?;
+        if artifact.bytes == 0 || artifact.width == 0 || artifact.height == 0 {
+            bail!("provider attempt receipt contains invalid captured image facts");
+        }
+    }
+    validate_provider_attempt_state_evidence(
+        receipt.lifecycle_state,
+        receipt.captured_image.as_ref(),
+        receipt.failure_classification,
+        receipt.replay_grade,
+    )?;
+    match (
+        receipt.operation_kind.requires_parent(),
+        receipt.parent_receipt_sha256.as_deref(),
+    ) {
+        (false, None) if receipt.attempt_sequence == 1 => {}
+        (false, None) => bail!("initial provider attempt receipt must use sequence one"),
+        (false, Some(_)) => bail!("initial provider attempt receipt must not cite a parent"),
+        (true, Some(parent_sha256)) if receipt.attempt_sequence > 1 => {
+            require_hash(parent_sha256)?;
+        }
+        (true, Some(_)) => bail!("child provider attempt receipt sequence must exceed one"),
+        (true, None) => bail!("child provider attempt receipt requires a parent hash"),
+    }
+    if receipt.provider_executed_by_reel
+        || !receipt.human_authority_required
+        || receipt.output_selected
+        || receipt.output_promoted
+        || receipt.output_superseded
+        || receipt.creative_approved
+        || receipt.rights_approved
+        || receipt.publication_approved
+        || receipt.release_approved
+    {
+        bail!("provider attempt receipt violates the execution or human authority boundary");
+    }
+    Ok(())
+}
+
+fn require_provider_identifier(value: &str) -> Result<()> {
+    require_text("provider identifier", value)?;
+    if value.len() > 128
+        || !value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"._-".contains(&byte)
+        })
+        || !value
+            .as_bytes()
+            .first()
+            .is_some_and(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    {
+        bail!("provider identifier must be a bounded lowercase portable identifier");
+    }
+    Ok(())
+}
+
+fn validate_provider_attempt_chain(attempts: &[(String, ProviderAttemptReceipt)]) -> Result<()> {
+    let (_, first) = attempts
+        .first()
+        .ok_or_else(|| anyhow!("provider attempt chain is empty"))?;
+    for pair in attempts.windows(2) {
+        let (parent_sha256, parent) = &pair[0];
+        let (_, child) = &pair[1];
+        if parent.intent_id != child.intent_id
+            || parent.production_manifest_sha256 != child.production_manifest_sha256
+            || parent.generation_plan_sha256 != child.generation_plan_sha256
+            || parent.requested_policy_sha256 != child.requested_policy_sha256
+            || parent.resolved_configuration_sha256 != child.resolved_configuration_sha256
+        {
+            bail!("provider attempt receipt chain changes immutable input bindings");
+        }
+        if parent.attempt_sequence.checked_add(1) != Some(child.attempt_sequence)
+            || child.parent_receipt_sha256.as_deref() != Some(parent_sha256.as_str())
+        {
+            bail!("provider attempt receipt chain has broken parent lineage");
+        }
+        match child.operation_kind {
+            ProviderAttemptOperationKind::Retry
+                if parent.lifecycle_state != ProviderAttemptLifecycleState::Failed =>
+            {
+                bail!("provider attempt receipt chain has a retry with a non-failed parent")
+            }
+            ProviderAttemptOperationKind::Retake
+            | ProviderAttemptOperationKind::Remix
+            | ProviderAttemptOperationKind::Extension
+                if parent.lifecycle_state != ProviderAttemptLifecycleState::Completed =>
+            {
+                bail!(
+                    "provider attempt receipt chain has a retake, remix, or extension with a non-completed parent"
+                )
+            }
+            ProviderAttemptOperationKind::Initial => {
+                bail!("provider attempt receipt chain contains a child initial attempt")
+            }
+            ProviderAttemptOperationKind::Retry
+            | ProviderAttemptOperationKind::Retake
+            | ProviderAttemptOperationKind::Remix
+            | ProviderAttemptOperationKind::Extension => {}
+        }
+    }
+    if first.attempt_sequence != 1
+        || first.operation_kind != ProviderAttemptOperationKind::Initial
+        || first.parent_receipt_sha256.is_some()
+    {
+        bail!("provider attempt receipt chain must begin with an initial sequence-one receipt");
+    }
+    Ok(())
+}
+
+fn require_utc_timestamp(value: &str) -> Result<()> {
+    let bytes = value.as_bytes();
+    if bytes.len() != 20
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || bytes[10] != b'T'
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+        || bytes[19] != b'Z'
+        || bytes.iter().enumerate().any(|(index, byte)| {
+            !matches!(index, 4 | 7 | 10 | 13 | 16 | 19) && !byte.is_ascii_digit()
+        })
+    {
+        bail!("provider attempt timestamps must use canonical UTC YYYY-MM-DDTHH:MM:SSZ");
+    }
+    let year: u32 = value[0..4].parse()?;
+    let month: u32 = value[5..7].parse()?;
+    let day: u32 = value[8..10].parse()?;
+    let hour: u32 = value[11..13].parse()?;
+    let minute: u32 = value[14..16].parse()?;
+    let second: u32 = value[17..19].parse()?;
+    let leap_year = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap_year => 29,
+        2 => 28,
+        _ => 0,
+    };
+    if year == 0 || day == 0 || day > days_in_month || hour > 23 || minute > 59 || second > 59 {
+        bail!("provider attempt timestamp contains an invalid UTC date or time");
+    }
+    Ok(())
 }
 
 fn read_contract<T: DeserializeOwned>(path: impl AsRef<Path>) -> Result<T> {
