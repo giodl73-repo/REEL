@@ -212,6 +212,13 @@ readiness and promotion states never imply creative, principal, rights,
 publication, or release approval. See
 [`docs/production-operations-v0.2.36.md`](docs/production-operations-v0.2.36.md).
 
+CLI v0.2.37 adds immutable provider-attempt receipts for sanitized evidence
+from owner-controlled adapters, independent captured-PNG verification, and a
+deterministic hash-pinned resume planner. REEL never calls a provider, stores
+provider payloads or paths in portable output, or selects and approves an
+output. See
+[`docs/provider-attempt-evidence-v0.2.37.md`](docs/provider-attempt-evidence-v0.2.37.md).
+
 CLI v0.2.21 adds proof selection locks and fast audio revision. `animatic-lock`
 creates an atomic packet containing the selected verified artifact, a locked
 manifest derivative, and a receipt binding both hashes without invalidating the

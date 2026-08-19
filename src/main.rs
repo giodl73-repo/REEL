@@ -565,6 +565,39 @@ fn run_cli() -> Result<()> {
             )?;
             print_report(&report, output)?;
         }
+        Command::ProviderAttemptReceipt {
+            input,
+            output_path,
+            output,
+        } => {
+            let report =
+                reel::production_operations::write_provider_attempt_receipt(&input, &output_path)?;
+            print_report(&report, output)?;
+        }
+        Command::ProviderAttemptCheck {
+            receipt,
+            artifact_path,
+            output_path,
+            output,
+        } => {
+            let report = reel::production_operations::check_provider_attempt_receipt(
+                &receipt,
+                artifact_path.as_deref(),
+                output_path.as_deref(),
+            )?;
+            print_report(&report, output)?;
+        }
+        Command::ProviderAttemptResume {
+            input,
+            output_path,
+            output,
+        } => {
+            let report = reel::production_operations::plan_provider_attempt_resume(
+                &input,
+                output_path.as_deref(),
+            )?;
+            print_report(&report, output)?;
+        }
         Command::AssetPromote {
             input,
             output_path,
@@ -1937,6 +1970,32 @@ enum Command {
         input: PathBuf,
         #[arg(long)]
         output_path: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Write a strict path-free receipt for one externally executed provider attempt.
+    ProviderAttemptReceipt {
+        input: PathBuf,
+        #[arg(long)]
+        output_path: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Independently validate a provider-attempt receipt and optional captured PNG.
+    ProviderAttemptCheck {
+        receipt: PathBuf,
+        #[arg(long)]
+        artifact_path: Option<PathBuf>,
+        #[arg(long)]
+        output_path: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Verify a hash-pinned provider-attempt chain and plan deterministic resume work.
+    ProviderAttemptResume {
+        input: PathBuf,
+        #[arg(long)]
+        output_path: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
