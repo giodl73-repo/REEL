@@ -598,6 +598,15 @@ fn run_cli() -> Result<()> {
             )?;
             print_report(&report, output)?;
         }
+        Command::ProviderEconomicsReport {
+            input,
+            output_path,
+            output,
+        } => {
+            let report =
+                reel::production_operations::write_provider_economics_report(&input, &output_path)?;
+            print_report(&report, output)?;
+        }
         Command::ApprovalSign {
             input,
             output_path,
@@ -2021,6 +2030,14 @@ enum Command {
         input: PathBuf,
         #[arg(long)]
         output_path: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Reconcile exact provider cost, latency, retry, and owner-defined budget evidence.
+    ProviderEconomicsReport {
+        input: PathBuf,
+        #[arg(long)]
+        output_path: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

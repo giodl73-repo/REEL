@@ -236,6 +236,15 @@ network retrieval. Future trust requires an explicit hash-pinned input. No
 signature or manifest implies rights, publication, or release approval. See
 [`docs/signed-approvals-c2pa-v0.2.38.md`](docs/signed-approvals-c2pa-v0.2.38.md).
 
+CLI v0.2.39 adds provider-neutral economics reconciliation over a complete,
+hash-pinned attempt chain. It keeps quote, reservation, and realized charge
+independent; derives queue, execution, capture, and total observed latency from
+canonical observations; counts retry, retake, remix, and extension operations
+separately; and evaluates an owner-authored budget as pass, warn, or block.
+Unavailable realized charges remain unavailable, currencies cannot mix with
+provider credits, and no result grants spending or creative authority. See
+[`docs/provider-economics-v0.2.39.md`](docs/provider-economics-v0.2.39.md).
+
 CLI v0.2.21 adds proof selection locks and fast audio revision. `animatic-lock`
 creates an atomic packet containing the selected verified artifact, a locked
 manifest derivative, and a receipt binding both hashes without invalidating the

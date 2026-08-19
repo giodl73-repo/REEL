@@ -34,6 +34,8 @@ pub const PROVIDER_ATTEMPT_RECEIPT_SCHEMA: &str = "reel.provider-attempt-receipt
 pub const PROVIDER_ATTEMPT_CHECK_SCHEMA: &str = "reel.provider-attempt-check.v0.1";
 pub const PROVIDER_ATTEMPT_RESUME_INPUT_SCHEMA: &str = "reel.provider-attempt-resume-input.v0.1";
 pub const PROVIDER_ATTEMPT_RESUME_PLAN_SCHEMA: &str = "reel.provider-attempt-resume-plan.v0.1";
+pub const PROVIDER_ECONOMICS_INPUT_SCHEMA: &str = "reel.provider-economics-input.v0.1";
+pub const PROVIDER_ECONOMICS_REPORT_SCHEMA: &str = "reel.provider-economics-report.v0.1";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -377,6 +379,178 @@ pub struct ProviderAttemptResumePlan {
     pub release_approved: bool,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderEconomicsDenominationKind {
+    Currency,
+    ProviderCredits,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderEconomicsDenomination {
+    pub kind: ProviderEconomicsDenominationKind,
+    pub code: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderEconomicsAmount {
+    pub denomination: ProviderEconomicsDenomination,
+    pub amount_micros: u64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderEconomicsAvailability {
+    Reported,
+    Pending,
+    Unavailable,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderEconomicsValue {
+    pub availability: ProviderEconomicsAvailability,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount: Option<ProviderEconomicsAmount>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_sha256: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderAttemptEconomicsInput {
+    pub receipt_file: LocalFileHash,
+    pub quote: ProviderEconomicsValue,
+    pub reservation: ProviderEconomicsValue,
+    pub realized_charge: ProviderEconomicsValue,
+    #[serde(default)]
+    pub artifact_captured_at_utc: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderEconomicsBudgetPolicy {
+    pub policy_id: String,
+    pub denomination: ProviderEconomicsDenomination,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_total_quote_micros: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_total_reservation_micros: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_total_realized_charge_micros: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_retry_attempts: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_total_observed_latency_ms: Option<u64>,
+    #[serde(default)]
+    pub require_realized_charges: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderEconomicsInput {
+    pub schema: String,
+    pub report_id: String,
+    pub intent_id: String,
+    pub production_manifest_sha256: String,
+    pub attempts: Vec<ProviderAttemptEconomicsInput>,
+    pub budget_policy: ProviderEconomicsBudgetPolicy,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderBudgetDisposition {
+    Pass,
+    Warn,
+    Block,
+    NotEvaluated,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderEconomicsLatency {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_to_capture_ms: Option<u64>,
+    pub total_observed_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderAttemptEconomics {
+    pub receipt_sha256: String,
+    pub attempt_id: String,
+    pub attempt_sequence: u32,
+    pub operation_kind: ProviderAttemptOperationKind,
+    pub lifecycle_state: ProviderAttemptLifecycleState,
+    pub provider_identifier: String,
+    pub quote: ProviderEconomicsValue,
+    pub reservation: ProviderEconomicsValue,
+    pub realized_charge: ProviderEconomicsValue,
+    pub latency: ProviderEconomicsLatency,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderEconomicsOperationCounts {
+    pub initial: u32,
+    pub retry: u32,
+    pub retake: u32,
+    pub remix: u32,
+    pub extension: u32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderEconomicsTotals {
+    pub reported_quote_micros: u64,
+    pub all_quotes_reported: bool,
+    pub reported_reservation_micros: u64,
+    pub all_reservations_reported: bool,
+    pub reported_realized_charge_micros: u64,
+    pub all_realized_charges_reported: bool,
+    pub total_observed_latency_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderEconomicsBudgetEvaluation {
+    pub quote: ProviderBudgetDisposition,
+    pub reservation: ProviderBudgetDisposition,
+    pub realized_charge: ProviderBudgetDisposition,
+    pub retry: ProviderBudgetDisposition,
+    pub latency: ProviderBudgetDisposition,
+    pub overall: ProviderBudgetDisposition,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderEconomicsReport {
+    pub schema: String,
+    pub source_contract_sha256: String,
+    pub report_id: String,
+    pub intent_id: String,
+    pub production_manifest_sha256: String,
+    pub attempts: Vec<ProviderAttemptEconomics>,
+    pub operation_counts: ProviderEconomicsOperationCounts,
+    pub totals: ProviderEconomicsTotals,
+    pub budget_policy: ProviderEconomicsBudgetPolicy,
+    pub budget_evaluation: ProviderEconomicsBudgetEvaluation,
+    pub provider_executed_by_reel: bool,
+    pub spending_authority_granted: bool,
+    pub human_authority_required: bool,
+    pub output_selected: bool,
+    pub creative_approved: bool,
+    pub rights_approved: bool,
+    pub publication_approved: bool,
+    pub release_approved: bool,
+}
+
 pub fn write_provider_attempt_receipt(
     input_path: impl AsRef<Path>,
     output_path: impl AsRef<Path>,
@@ -638,6 +812,162 @@ pub fn plan_provider_attempt_resume(
     if let Some(output_path) = output_path {
         write_json_new(&report, output_path)?;
     }
+    Ok(report)
+}
+
+pub fn write_provider_economics_report(
+    input_path: impl AsRef<Path>,
+    output_path: impl AsRef<Path>,
+) -> Result<ProviderEconomicsReport> {
+    let input_path = input_path.as_ref();
+    let (input, source_contract_sha256): (ProviderEconomicsInput, String) =
+        read_contract_with_hash(input_path)?;
+    require_schema(&input.schema, PROVIDER_ECONOMICS_INPUT_SCHEMA)?;
+    require_token("provider economics report_id", &input.report_id)?;
+    require_token("provider economics intent_id", &input.intent_id)?;
+    require_hash(&input.production_manifest_sha256)?;
+    validate_provider_economics_budget_policy(&input.budget_policy)?;
+    if input.attempts.is_empty() {
+        bail!("provider economics report requires at least one attempt");
+    }
+
+    let mut loaded = Vec::new();
+    let mut attempt_ids = BTreeSet::new();
+    let mut attempt_sequences = BTreeSet::new();
+    for attempt in input.attempts {
+        let receipt_file = verify_local_file_hash(
+            "provider economics attempt receipt",
+            input_path,
+            &attempt.receipt_file,
+        )?;
+        let receipt: ProviderAttemptReceipt = serde_json::from_slice(&receipt_file.bytes)
+            .context("provider economics attempt receipt is not valid strict JSON")?;
+        validate_provider_attempt_receipt(&receipt)?;
+        if receipt.intent_id != input.intent_id
+            || receipt.production_manifest_sha256 != input.production_manifest_sha256
+        {
+            bail!("provider economics attempt changes the report identity binding");
+        }
+        if !attempt_ids.insert(receipt.attempt_id.clone()) {
+            bail!("provider economics report contains a duplicate attempt identity");
+        }
+        if !attempt_sequences.insert(receipt.attempt_sequence) {
+            bail!("provider economics report contains a duplicate attempt sequence");
+        }
+        validate_provider_economics_value(
+            "quote",
+            &attempt.quote,
+            &input.budget_policy.denomination,
+        )?;
+        validate_provider_economics_value(
+            "reservation",
+            &attempt.reservation,
+            &input.budget_policy.denomination,
+        )?;
+        validate_provider_economics_value(
+            "realized charge",
+            &attempt.realized_charge,
+            &input.budget_policy.denomination,
+        )?;
+        let latency =
+            provider_economics_latency(&receipt, attempt.artifact_captured_at_utc.as_deref())?;
+        loaded.push((
+            attempt.receipt_file.sha256,
+            receipt,
+            attempt.quote,
+            attempt.reservation,
+            attempt.realized_charge,
+            latency,
+        ));
+    }
+    loaded.sort_by_key(|(_, receipt, _, _, _, _)| receipt.attempt_sequence);
+    let receipt_chain = loaded
+        .iter()
+        .map(|(sha256, receipt, _, _, _, _)| (sha256.clone(), receipt.clone()))
+        .collect::<Vec<_>>();
+    validate_provider_attempt_chain(&receipt_chain)?;
+
+    let mut operation_counts = ProviderEconomicsOperationCounts {
+        initial: 0,
+        retry: 0,
+        retake: 0,
+        remix: 0,
+        extension: 0,
+    };
+    let mut totals = ProviderEconomicsTotals {
+        reported_quote_micros: 0,
+        all_quotes_reported: true,
+        reported_reservation_micros: 0,
+        all_reservations_reported: true,
+        reported_realized_charge_micros: 0,
+        all_realized_charges_reported: true,
+        total_observed_latency_ms: 0,
+    };
+    let mut attempts = Vec::with_capacity(loaded.len());
+    for (receipt_sha256, receipt, quote, reservation, realized_charge, latency) in loaded {
+        match receipt.operation_kind {
+            ProviderAttemptOperationKind::Initial => operation_counts.initial += 1,
+            ProviderAttemptOperationKind::Retry => operation_counts.retry += 1,
+            ProviderAttemptOperationKind::Retake => operation_counts.retake += 1,
+            ProviderAttemptOperationKind::Remix => operation_counts.remix += 1,
+            ProviderAttemptOperationKind::Extension => operation_counts.extension += 1,
+        }
+        add_provider_economics_value(
+            &mut totals.reported_quote_micros,
+            &mut totals.all_quotes_reported,
+            &quote,
+        )?;
+        add_provider_economics_value(
+            &mut totals.reported_reservation_micros,
+            &mut totals.all_reservations_reported,
+            &reservation,
+        )?;
+        add_provider_economics_value(
+            &mut totals.reported_realized_charge_micros,
+            &mut totals.all_realized_charges_reported,
+            &realized_charge,
+        )?;
+        totals.total_observed_latency_ms = totals
+            .total_observed_latency_ms
+            .checked_add(latency.total_observed_ms)
+            .ok_or_else(|| anyhow!("provider economics latency total overflowed"))?;
+        attempts.push(ProviderAttemptEconomics {
+            receipt_sha256,
+            attempt_id: receipt.attempt_id,
+            attempt_sequence: receipt.attempt_sequence,
+            operation_kind: receipt.operation_kind,
+            lifecycle_state: receipt.lifecycle_state,
+            provider_identifier: receipt.provider_identifier,
+            quote,
+            reservation,
+            realized_charge,
+            latency,
+        });
+    }
+
+    let budget_evaluation =
+        evaluate_provider_economics_budget(&input.budget_policy, &operation_counts, &totals);
+    let report = ProviderEconomicsReport {
+        schema: PROVIDER_ECONOMICS_REPORT_SCHEMA.to_string(),
+        source_contract_sha256,
+        report_id: input.report_id,
+        intent_id: input.intent_id,
+        production_manifest_sha256: input.production_manifest_sha256,
+        attempts,
+        operation_counts,
+        totals,
+        budget_policy: input.budget_policy,
+        budget_evaluation,
+        provider_executed_by_reel: false,
+        spending_authority_granted: false,
+        human_authority_required: true,
+        output_selected: false,
+        creative_approved: false,
+        rights_approved: false,
+        publication_approved: false,
+        release_approved: false,
+    };
+    write_json_new(&report, output_path.as_ref())?;
     Ok(report)
 }
 
@@ -2374,6 +2704,216 @@ fn validate_provider_attempt_chain(attempts: &[(String, ProviderAttemptReceipt)]
         bail!("provider attempt receipt chain must begin with an initial sequence-one receipt");
     }
     Ok(())
+}
+
+fn validate_provider_economics_budget_policy(policy: &ProviderEconomicsBudgetPolicy) -> Result<()> {
+    require_token("provider economics policy_id", &policy.policy_id)?;
+    validate_provider_economics_denomination(&policy.denomination)?;
+    if policy.max_total_quote_micros.is_none()
+        && policy.max_total_reservation_micros.is_none()
+        && policy.max_total_realized_charge_micros.is_none()
+        && policy.max_retry_attempts.is_none()
+        && policy.max_total_observed_latency_ms.is_none()
+        && !policy.require_realized_charges
+    {
+        bail!("provider economics budget policy requires at least one owner-defined check");
+    }
+    Ok(())
+}
+
+fn validate_provider_economics_denomination(
+    denomination: &ProviderEconomicsDenomination,
+) -> Result<()> {
+    match denomination.kind {
+        ProviderEconomicsDenominationKind::Currency => {
+            if denomination.code.len() != 3
+                || !denomination
+                    .code
+                    .bytes()
+                    .all(|byte| byte.is_ascii_uppercase())
+            {
+                bail!("provider economics currency code must be three uppercase ASCII letters");
+            }
+        }
+        ProviderEconomicsDenominationKind::ProviderCredits => {
+            require_provider_identifier(&denomination.code)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_provider_economics_value(
+    label: &str,
+    value: &ProviderEconomicsValue,
+    expected_denomination: &ProviderEconomicsDenomination,
+) -> Result<()> {
+    if let Some(sha256) = &value.evidence_sha256 {
+        require_hash(sha256)?;
+    }
+    match value.availability {
+        ProviderEconomicsAvailability::Reported => {
+            let amount = value
+                .amount
+                .as_ref()
+                .ok_or_else(|| anyhow!("reported provider economics {label} requires an amount"))?;
+            validate_provider_economics_denomination(&amount.denomination)?;
+            if amount.denomination != *expected_denomination {
+                bail!("provider economics {label} denomination does not match the budget policy");
+            }
+            if value.evidence_sha256.is_none() {
+                bail!("reported provider economics {label} requires an evidence hash");
+            }
+        }
+        ProviderEconomicsAvailability::Pending | ProviderEconomicsAvailability::Unavailable => {
+            if value.amount.is_some() {
+                bail!("non-reported provider economics {label} must not contain an amount");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn provider_economics_latency(
+    receipt: &ProviderAttemptReceipt,
+    artifact_captured_at_utc: Option<&str>,
+) -> Result<ProviderEconomicsLatency> {
+    let observations = &receipt.lifecycle_observations;
+    let submitted_ms = utc_timestamp_ms(&observations[0].observed_at_utc)?;
+    let latest_ms = utc_timestamp_ms(&observations[observations.len() - 1].observed_at_utc)?;
+    let running_ms = observations
+        .iter()
+        .find(|observation| observation.state == ProviderAttemptLifecycleState::Running)
+        .map(|observation| utc_timestamp_ms(&observation.observed_at_utc))
+        .transpose()?;
+    let terminal = matches!(
+        receipt.lifecycle_state,
+        ProviderAttemptLifecycleState::Completed | ProviderAttemptLifecycleState::Failed
+    );
+    let capture_ms = artifact_captured_at_utc.map(utc_timestamp_ms).transpose()?;
+    if capture_ms.is_some()
+        && (receipt.lifecycle_state != ProviderAttemptLifecycleState::Completed
+            || receipt.captured_image.is_none())
+    {
+        bail!("provider economics capture time requires a completed captured artifact");
+    }
+    if capture_ms.is_some_and(|captured| captured < latest_ms) {
+        bail!("provider economics capture time precedes the terminal observation");
+    }
+    let end_ms = capture_ms.unwrap_or(latest_ms);
+    Ok(ProviderEconomicsLatency {
+        queue_ms: running_ms.map(|running| running - submitted_ms),
+        execution_ms: running_ms
+            .filter(|_| terminal)
+            .map(|running| latest_ms - running),
+        terminal_to_capture_ms: capture_ms.map(|captured| captured - latest_ms),
+        total_observed_ms: end_ms - submitted_ms,
+    })
+}
+
+fn add_provider_economics_value(
+    total: &mut u64,
+    all_reported: &mut bool,
+    value: &ProviderEconomicsValue,
+) -> Result<()> {
+    if value.availability == ProviderEconomicsAvailability::Reported {
+        *total = total
+            .checked_add(
+                value
+                    .amount
+                    .as_ref()
+                    .expect("reported economics value was validated")
+                    .amount_micros,
+            )
+            .ok_or_else(|| anyhow!("provider economics amount total overflowed"))?;
+    } else {
+        *all_reported = false;
+    }
+    Ok(())
+}
+
+fn evaluate_provider_economics_amount(
+    limit: Option<u64>,
+    total: u64,
+    all_reported: bool,
+) -> ProviderBudgetDisposition {
+    match limit {
+        None => ProviderBudgetDisposition::NotEvaluated,
+        Some(limit) if total > limit => ProviderBudgetDisposition::Block,
+        Some(_) if !all_reported => ProviderBudgetDisposition::Warn,
+        Some(_) => ProviderBudgetDisposition::Pass,
+    }
+}
+
+fn evaluate_provider_economics_budget(
+    policy: &ProviderEconomicsBudgetPolicy,
+    counts: &ProviderEconomicsOperationCounts,
+    totals: &ProviderEconomicsTotals,
+) -> ProviderEconomicsBudgetEvaluation {
+    let quote = evaluate_provider_economics_amount(
+        policy.max_total_quote_micros,
+        totals.reported_quote_micros,
+        totals.all_quotes_reported,
+    );
+    let reservation = evaluate_provider_economics_amount(
+        policy.max_total_reservation_micros,
+        totals.reported_reservation_micros,
+        totals.all_reservations_reported,
+    );
+    let realized_charge = match (
+        policy.max_total_realized_charge_micros,
+        policy.require_realized_charges,
+        totals.all_realized_charges_reported,
+    ) {
+        (None, false, _) => ProviderBudgetDisposition::NotEvaluated,
+        (Some(limit), _, _) if totals.reported_realized_charge_micros > limit => {
+            ProviderBudgetDisposition::Block
+        }
+        (_, true, false) | (Some(_), false, false) => ProviderBudgetDisposition::Warn,
+        (None, true, true) => ProviderBudgetDisposition::Pass,
+        (Some(_), _, true) => ProviderBudgetDisposition::Pass,
+    };
+    let retry = match policy.max_retry_attempts {
+        None => ProviderBudgetDisposition::NotEvaluated,
+        Some(limit) if counts.retry > limit => ProviderBudgetDisposition::Block,
+        Some(_) => ProviderBudgetDisposition::Pass,
+    };
+    let latency = match policy.max_total_observed_latency_ms {
+        None => ProviderBudgetDisposition::NotEvaluated,
+        Some(limit) if totals.total_observed_latency_ms > limit => ProviderBudgetDisposition::Block,
+        Some(_) => ProviderBudgetDisposition::Pass,
+    };
+    let axes = [quote, reservation, realized_charge, retry, latency];
+    let overall = if axes.contains(&ProviderBudgetDisposition::Block) {
+        ProviderBudgetDisposition::Block
+    } else if axes.contains(&ProviderBudgetDisposition::Warn) {
+        ProviderBudgetDisposition::Warn
+    } else {
+        ProviderBudgetDisposition::Pass
+    };
+    ProviderEconomicsBudgetEvaluation {
+        quote,
+        reservation,
+        realized_charge,
+        retry,
+        latency,
+        overall,
+    }
+}
+
+fn utc_timestamp_ms(value: &str) -> Result<u64> {
+    require_utc_timestamp(value)?;
+    let year: u64 = value[0..4].parse()?;
+    let month: usize = value[5..7].parse()?;
+    let day: u64 = value[8..10].parse()?;
+    let hour: u64 = value[11..13].parse()?;
+    let minute: u64 = value[14..16].parse()?;
+    let second: u64 = value[17..19].parse()?;
+    let prior_year = year - 1;
+    let days_before_year = 365 * prior_year + prior_year / 4 - prior_year / 100 + prior_year / 400;
+    let month_offsets = [0_u64, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+    let leap_day = u64::from(month > 2 && year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
+    let days = days_before_year + month_offsets[month - 1] + leap_day + day - 1;
+    Ok((days * 86_400 + hour * 3_600 + minute * 60 + second) * 1_000)
 }
 
 fn require_utc_timestamp(value: &str) -> Result<()> {
