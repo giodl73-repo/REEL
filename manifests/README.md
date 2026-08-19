@@ -4,8 +4,11 @@ The production manifest is the ordered handoff from REEL design work to a future
 renderer. It should be detailed enough for a human or agent to render a draft,
 but neutral enough that the renderer can be selected later.
 
-Use YAML for foundation manifests. The first template lives at
-`manifests/templates/scenario-video.yaml`.
+Use YAML for production manifests. New integrations should start from the
+sanitized v0.2 planning fixture at
+`manifests/fixtures/two-speaker-untimed/planning.yaml`. The
+`manifests/templates/scenario-video.yaml` v0.1 template remains a legacy example
+for existing canonical works, not the current adoption surface.
 
 Scene production remains `reel.manifest.v0.2`. CLI v0.2.1 also provides the
 separate reference-only `reel.series.v0.1` template at
@@ -36,11 +39,16 @@ montage/picture notes, and exact sync points. `reel score-plan` compiles those
 fields into `reel.score-plan.v0.1`; it does not synthesize or license music. See
 `../docs/chapter-score-direction-v0.2.22.md`.
 
-## Required top-level fields
+The field reference below documents the legacy timed v0.1 shape retained by the
+canonical works. The v0.2 planning/timing lifecycle, including untimed
+manifests, speakers, narration cues, and conform state, is documented in
+[`docs/production-manifest-v0.2.md`](../docs/production-manifest-v0.2.md).
+
+## Required top-level fields (legacy v0.1)
 
 | Field | Required | Purpose |
 |---|---:|---|
-| `manifest_version` | yes | Contract version. Start with `reel.manifest.v0.1`. |
+| `manifest_version` | yes | Legacy contract version: `reel.manifest.v0.1`. |
 | `work` | yes | REEL work id, usually `NNNN-slug`. |
 | `title` | yes | Human-readable video title. |
 | `source_scenario` | yes | Upstream repo/path/id that owns scenario truth. |
