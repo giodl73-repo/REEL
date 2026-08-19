@@ -311,7 +311,7 @@ fn write_json_new<T: Serialize>(value: &T, output: &Path) -> Result<()> {
     let mut temporary = NamedTempFile::new_in(parent)?;
     temporary.write_all(format!("{}\n", serde_json::to_string_pretty(value)?).as_bytes())?;
     temporary
-        .persist(output)
+        .persist_noclobber(output)
         .map_err(|error| error.error)
         .with_context(|| {
             format!(

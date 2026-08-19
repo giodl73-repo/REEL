@@ -528,6 +528,8 @@ pub fn write_report(path: &Path, report: &ConsistencyReport) -> Result<()> {
         temporary.path(),
         format!("{}\n", serde_json::to_string_pretty(report)?),
     )?;
-    temporary.persist(path).map_err(|error| error.error)?;
+    temporary
+        .persist_noclobber(path)
+        .map_err(|error| error.error)?;
     Ok(())
 }

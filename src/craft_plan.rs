@@ -776,7 +776,7 @@ pub fn write_department_packet(packet: &DepartmentPacket, output: impl AsRef<Pat
     let mut temporary = NamedTempFile::new_in(parent)?;
     temporary.write_all(format!("{}\n", serde_json::to_string_pretty(packet)?).as_bytes())?;
     temporary
-        .persist(output)
+        .persist_noclobber(output)
         .map_err(|error| error.error)
         .with_context(|| format!("failed to publish department packet {}", output.display()))?;
     Ok(())
@@ -865,7 +865,7 @@ fn write_json_exclusive<T: Serialize>(value: &T, output: &Path, label: &str) -> 
     let mut temporary = NamedTempFile::new_in(parent)?;
     temporary.write_all(format!("{}\n", serde_json::to_string_pretty(value)?).as_bytes())?;
     temporary
-        .persist(output)
+        .persist_noclobber(output)
         .map_err(|error| error.error)
         .with_context(|| format!("failed to publish {label} {}", output.display()))?;
     Ok(())

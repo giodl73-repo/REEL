@@ -951,7 +951,7 @@ pub fn write_plan(plan: &ChoreographyPlan, output: impl AsRef<Path>) -> Result<(
     let mut temporary = NamedTempFile::new_in(parent)?;
     temporary.write_all(format!("{}\n", serde_json::to_string_pretty(plan)?).as_bytes())?;
     temporary
-        .persist(output)
+        .persist_noclobber(output)
         .map_err(|error| error.error)
         .with_context(|| format!("failed to publish choreography plan {}", output.display()))?;
     Ok(())
@@ -1331,7 +1331,7 @@ fn write_atomic_new(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut temporary = NamedTempFile::new_in(parent)?;
     temporary.write_all(bytes)?;
     temporary
-        .persist(path)
+        .persist_noclobber(path)
         .map_err(|error| error.error)
         .with_context(|| format!("failed to publish {}", path.display()))?;
     Ok(())

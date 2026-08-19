@@ -245,7 +245,7 @@ impl FfmpegAdapter {
                 .flush()
                 .context("failed to flush temporary WSL command script")?;
             let script_path = path_for_wsl(script.path());
-            let login_command = format!("exec {}", shell_quote(&script_path));
+            let login_command = format!("exec bash {}", shell_quote(&script_path));
             Command::new("wsl")
                 .args(["--", "bash", "-lc", &login_command])
                 .stdin(Stdio::null())
