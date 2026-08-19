@@ -598,6 +598,31 @@ fn run_cli() -> Result<()> {
             )?;
             print_report(&report, output)?;
         }
+        Command::ApprovalSign {
+            input,
+            output_path,
+            output,
+        } => {
+            let attestation = reel::approval_attestation::sign_attestation(&input, &output_path)?;
+            print_report(&attestation, output)?;
+        }
+        Command::ApprovalVerify {
+            input,
+            output_path,
+            output,
+        } => {
+            let report =
+                reel::approval_attestation::verify_attestation(&input, output_path.as_deref())?;
+            print_report(&report, output)?;
+        }
+        Command::C2paVerify {
+            input,
+            output_path,
+            output,
+        } => {
+            let report = reel::c2pa_verification::verify_c2pa(&input, output_path.as_deref())?;
+            print_report(&report, output)?;
+        }
         Command::AssetPromote {
             input,
             output_path,
@@ -1993,6 +2018,30 @@ enum Command {
     },
     /// Verify a hash-pinned provider-attempt chain and plan deterministic resume work.
     ProviderAttemptResume {
+        input: PathBuf,
+        #[arg(long)]
+        output_path: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Sign one owner-issued approval attestation from a strict local authorization contract.
+    ApprovalSign {
+        input: PathBuf,
+        #[arg(long)]
+        output_path: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Independently verify a hash-pinned approval chain against a trusted registry digest.
+    ApprovalVerify {
+        input: PathBuf,
+        #[arg(long)]
+        output_path: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Verify Content Credentials on an asset through the official pinned c2patool executable.
+    C2paVerify {
         input: PathBuf,
         #[arg(long)]
         output_path: Option<PathBuf>,
