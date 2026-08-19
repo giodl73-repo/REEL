@@ -607,6 +607,14 @@ fn run_cli() -> Result<()> {
                 reel::production_operations::write_provider_economics_report(&input, &output_path)?;
             print_report(&report, output)?;
         }
+        Command::OtioExport {
+            manifest,
+            output_path,
+            output,
+        } => {
+            let report = reel::otio_export::export(&manifest, &output_path)?;
+            print_report(&report, output)?;
+        }
         Command::ApprovalSign {
             input,
             output_path,
@@ -2036,6 +2044,14 @@ enum Command {
     /// Reconcile exact provider cost, latency, retry, and owner-defined budget evidence.
     ProviderEconomicsReport {
         input: PathBuf,
+        #[arg(long)]
+        output_path: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Export one validated offline picture timeline as native OpenTimelineIO JSON.
+    OtioExport {
+        manifest: PathBuf,
         #[arg(long)]
         output_path: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]

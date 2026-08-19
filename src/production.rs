@@ -2211,8 +2211,13 @@ fn validate_timeline(manifest: &ProductionManifest) -> Result<u64> {
                 expected
             );
         }
-        expected += duration;
-        *shot_by_scene.entry(&shot.scene_id).or_default() += duration;
+        expected = expected
+            .checked_add(duration)
+            .ok_or_else(|| anyhow!("production timeline duration exceeds supported range"))?;
+        let scene_total = shot_by_scene.entry(&shot.scene_id).or_default();
+        *scene_total = scene_total
+            .checked_add(duration)
+            .ok_or_else(|| anyhow!("scene {} duration exceeds supported range", shot.scene_id))?;
     }
     for scene in &manifest.scenes {
         let actual = shot_by_scene.get(scene.id.as_str()).copied().unwrap_or(0);

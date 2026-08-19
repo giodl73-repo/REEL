@@ -245,6 +245,13 @@ Unavailable realized charges remain unavailable, currencies cannot mix with
 provider credits, and no result grants spending or creative authority. See
 [`docs/provider-economics-v0.2.39.md`](docs/provider-economics-v0.2.39.md).
 
+CLI v0.2.40 adds deterministic OpenTimelineIO export for validated conformed or
+locked picture timelines. Every shot becomes one offline `Clip.2` at an exact
+1000-unit millisecond timebase, with stable REEL identity and asset status in
+namespaced metadata. V1 exports no media paths, prompts, audio, transitions,
+effects, selection, or approval claims. See
+[`docs/otio-export-v0.2.40.md`](docs/otio-export-v0.2.40.md).
+
 CLI v0.2.21 adds proof selection locks and fast audio revision. `animatic-lock`
 creates an atomic packet containing the selected verified artifact, a locked
 manifest derivative, and a receipt binding both hashes without invalidating the
