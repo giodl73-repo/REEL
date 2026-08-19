@@ -506,19 +506,20 @@ pub fn validate_loaded(loaded: &LoadedSeries) -> Result<SeriesValidationReport> 
                 }
                 let loaded_child = production::load(&canonical)?;
                 let child_report = production::validate(&loaded_child)?;
-                if let Some(default_registry) = &series.defaults.continuity_registry
-                    && let Some(raw_child_registry) = loaded_child
+                if let Some(default_registry) = &series.defaults.continuity_registry {
+                    if let Some(raw_child_registry) = loaded_child
                         .manifest
                         .continuity
                         .extra
                         .get("external_registry")
-                {
-                    let child_registry: ContinuityRegistryRef =
-                        serde_yaml::from_value(raw_child_registry.clone())?;
-                    if child_registry.version != default_registry.version
-                        || child_registry.sha256 != default_registry.sha256
                     {
-                        bail!("child {} has incompatible continuity registry", child.path);
+                        let child_registry: ContinuityRegistryRef =
+                            serde_yaml::from_value(raw_child_registry.clone())?;
+                        if child_registry.version != default_registry.version
+                            || child_registry.sha256 != default_registry.sha256
+                        {
+                            bail!("child {} has incompatible continuity registry", child.path);
+                        }
                     }
                 }
                 if loaded_child.manifest.work != child.work_id {
@@ -609,10 +610,10 @@ pub fn validate_loaded(loaded: &LoadedSeries) -> Result<SeriesValidationReport> 
                     release_blockers.push(format!("{} coverage", child.path));
                 }
                 let duration = child_report.duration_ms.unwrap_or(0);
-                if let Some(expected) = child.duration_seconds
-                    && duration.abs_diff(ms(expected)) > 1
-                {
-                    bail!("child {} duration mismatch", child.path);
+                if let Some(expected) = child.duration_seconds {
+                    if duration.abs_diff(ms(expected)) > 1 {
+                        bail!("child {} duration mismatch", child.path);
+                    }
                 }
                 resolved_duration_ms += duration;
             }
@@ -697,10 +698,10 @@ pub fn validate_loaded(loaded: &LoadedSeries) -> Result<SeriesValidationReport> 
             }
             season_runtime_ms += resolved_duration_ms;
         }
-        if let Some(expected) = season.total_runtime_seconds
-            && season_runtime_ms.abs_diff(ms(expected)) > 1
-        {
-            bail!("season {} total runtime mismatch", season.id);
+        if let Some(expected) = season.total_runtime_seconds {
+            if season_runtime_ms.abs_diff(ms(expected)) > 1 {
+                bail!("season {} total runtime mismatch", season.id);
+            }
         }
         total_runtime_ms += season_runtime_ms;
     }

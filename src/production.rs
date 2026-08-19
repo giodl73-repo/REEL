@@ -1550,10 +1550,10 @@ fn validate_score_direction(manifest: &ProductionManifest, duration_ms: Option<u
                     point.id
                 );
             }
-            if let Some((start_ms, cue_duration_ms)) = cue_range
-                && (point_ms < start_ms || point_ms > start_ms + cue_duration_ms)
-            {
-                bail!("score sync point {} falls outside cue {}", point.id, cue.id);
+            if let Some((start_ms, cue_duration_ms)) = cue_range {
+                if point_ms < start_ms || point_ms > start_ms + cue_duration_ms {
+                    bail!("score sync point {} falls outside cue {}", point.id, cue.id);
+                }
             }
             if point
                 .emphasis
@@ -3147,14 +3147,14 @@ pub fn quality_check(path: impl AsRef<Path>) -> Result<QualityReport> {
         if let (Some(max), Some(duration)) = (
             controls.max_uninterrupted_hold_seconds,
             shot.duration_seconds,
-        ) && duration > max
-            && matches!(shot.motion.as_str(), "" | "hold" | "hold-dark")
-        {
-            warnings.push(QualityWarning {
-                shot_id: shot.id.clone(),
-                code: "long-low-motion-hold".to_string(),
-                message: format!("{duration:.3}s hold exceeds configured {max:.3}s maximum"),
-            });
+        ) {
+            if duration > max && matches!(shot.motion.as_str(), "" | "hold" | "hold-dark") {
+                warnings.push(QualityWarning {
+                    shot_id: shot.id.clone(),
+                    code: "long-low-motion-hold".to_string(),
+                    message: format!("{duration:.3}s hold exceeds configured {max:.3}s maximum"),
+                });
+            }
         }
         if controls.require_focal_points && shot.focal_point.is_none() {
             warnings.push(QualityWarning {
@@ -3171,14 +3171,14 @@ pub fn quality_check(path: impl AsRef<Path>) -> Result<QualityReport> {
                 message: "face/caption crop safety has no protected region".to_string(),
             });
         }
-        if let Some(point) = &shot.focal_point
-            && (!(0.0..=1.0).contains(&point.x) || !(0.0..=1.0).contains(&point.y))
-        {
-            warnings.push(QualityWarning {
-                shot_id: shot.id.clone(),
-                code: "invalid-focal-point".to_string(),
-                message: "focal point coordinates must remain within 0..1".to_string(),
-            });
+        if let Some(point) = &shot.focal_point {
+            if !(0.0..=1.0).contains(&point.x) || !(0.0..=1.0).contains(&point.y) {
+                warnings.push(QualityWarning {
+                    shot_id: shot.id.clone(),
+                    code: "invalid-focal-point".to_string(),
+                    message: "focal point coordinates must remain within 0..1".to_string(),
+                });
+            }
         }
         for region in &shot.protected_regions {
             if region.x < 0.0
@@ -3200,15 +3200,14 @@ pub fn quality_check(path: impl AsRef<Path>) -> Result<QualityReport> {
         }
     }
     for pair in loaded.manifest.shots.windows(2) {
-        if let (Some(left), Some(right)) = (&pair[0].screen_position, &pair[1].screen_position)
-            && left != right
-            && pair[0].eye_line == pair[1].eye_line
-        {
-            warnings.push(QualityWarning {
-                shot_id: pair[1].id.clone(),
-                code: "screen-direction-review".to_string(),
-                message: "screen position changes while eye-line direction is unchanged; review continuity".to_string(),
-            });
+        if let (Some(left), Some(right)) = (&pair[0].screen_position, &pair[1].screen_position) {
+            if left != right && pair[0].eye_line == pair[1].eye_line {
+                warnings.push(QualityWarning {
+                    shot_id: pair[1].id.clone(),
+                    code: "screen-direction-review".to_string(),
+                    message: "screen position changes while eye-line direction is unchanged; review continuity".to_string(),
+                });
+            }
         }
     }
     let narration_only = controls

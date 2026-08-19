@@ -830,10 +830,10 @@ fn validate_camera(
             if !performers.contains(target) && !choreography.stage.marks.contains_key(target) {
                 bail!("camera phrase references unknown target {target}");
             }
-            if let Some(visibility) = visibility_ranges.get(target)
-                && (range.0 < visibility.0 || range.1 > visibility.1)
-            {
-                bail!("camera phrase follows {target} outside its visibility window");
+            if let Some(visibility) = visibility_ranges.get(target) {
+                if range.0 < visibility.0 || range.1 > visibility.1 {
+                    bail!("camera phrase follows {target} outside its visibility window");
+                }
             }
         }
     }
@@ -1301,16 +1301,16 @@ fn build_sprite_animation(
                 curve_to_next: production::SpriteCameraCurve::Linear,
             });
     }
-    if let Some(last) = camera.values().next_back().cloned()
-        && last.frame < plan.duration_frames - 1
-    {
-        camera.insert(
-            plan.duration_frames - 1,
-            production::SpriteCameraKeyframe {
-                frame: plan.duration_frames - 1,
-                ..last
-            },
-        );
+    if let Some(last) = camera.values().next_back().cloned() {
+        if last.frame < plan.duration_frames - 1 {
+            camera.insert(
+                plan.duration_frames - 1,
+                production::SpriteCameraKeyframe {
+                    frame: plan.duration_frames - 1,
+                    ..last
+                },
+            );
+        }
     }
     Ok(production::SpriteAnimation {
         background: assets.background.clone(),

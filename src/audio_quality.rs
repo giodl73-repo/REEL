@@ -185,18 +185,18 @@ pub fn check(options: AudioCheckOptions<'_>) -> Result<AudioCheckReport> {
         _ => None,
     };
     let mut violations = violations(&audio, &silence, &policy);
-    if let Some(expected) = expected_duration_ms
-        && audio.duration_ms.abs_diff(expected) > 50
-    {
-        violations.push(AudioViolation {
-            code: "duration-mismatch".to_string(),
-            measurement: format!(
-                "measured={}ms expected={}ms tolerance=50ms",
-                audio.duration_ms, expected
-            ),
-            start_ms: None,
-            end_ms: None,
-        });
+    if let Some(expected) = expected_duration_ms {
+        if audio.duration_ms.abs_diff(expected) > 50 {
+            violations.push(AudioViolation {
+                code: "duration-mismatch".to_string(),
+                measurement: format!(
+                    "measured={}ms expected={}ms tolerance=50ms",
+                    audio.duration_ms, expected
+                ),
+                start_ms: None,
+                end_ms: None,
+            });
+        }
     }
     if stem_margin.as_ref().is_some_and(|margin| !margin.passed) {
         let margin = stem_margin.as_ref().expect("stem margin exists");
