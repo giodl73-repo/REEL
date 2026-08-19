@@ -219,6 +219,23 @@ provider payloads or paths in portable output, or selects and approves an
 output. See
 [`docs/provider-attempt-evidence-v0.2.37.md`](docs/provider-attempt-evidence-v0.2.37.md).
 
+CLI v0.2.38 adds owner-issued signed approval attestations and C2PA
+verification. `approval-sign` binds a single human decision to an exact target,
+policy, scope, and authority registry with an Ed25519 signature over documented
+domain-separated canonical bytes; the private key never leaves its local file.
+`approval-verify` independently checks a hash-pinned decision chain against a
+trusted registry digest and reports cryptographic validity, registry authority,
+target integrity, and a current decision only after receiving the complete
+sequence-one lineage. `c2pa-verify` verifies an
+asset's Content Credentials through an externally supplied, hash-pinned
+`c2patool` snapshot and reports current C2PA manifest integrity as valid when
+the official `validation_state` is `Valid`. Certificate trust is deliberately
+not evaluated in V1: REEL does not invoke `c2patool trust` or load trust
+resources, and its fixed private settings disable remote-manifest and other
+network retrieval. Future trust requires an explicit hash-pinned input. No
+signature or manifest implies rights, publication, or release approval. See
+[`docs/signed-approvals-c2pa-v0.2.38.md`](docs/signed-approvals-c2pa-v0.2.38.md).
+
 CLI v0.2.21 adds proof selection locks and fast audio revision. `animatic-lock`
 creates an atomic packet containing the selected verified artifact, a locked
 manifest derivative, and a receipt binding both hashes without invalidating the
