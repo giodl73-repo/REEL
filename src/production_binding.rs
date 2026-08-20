@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::production;
@@ -54,8 +54,8 @@ pub fn resolve(sidecar_path: &Path, binding: &ProductionBinding) -> Result<Bound
     require_hash(&binding.manifest_sha256)?;
     require_text("production binding work", &binding.work)?;
     let manifest_path = resolve_relative(sidecar_path, &binding.manifest);
-    let actual_hash = production::sha256_path(&manifest_path)
-        .with_context(|| format!("failed to hash bound manifest {}", manifest_path.display()))?;
+    let loaded = production::load(&manifest_path)?;
+    let actual_hash = production::sha256_bytes(&loaded.bytes);
     if actual_hash != binding.manifest_sha256 {
         bail!(
             "production binding manifest hash mismatch: expected {}, found {}",
@@ -63,7 +63,6 @@ pub fn resolve(sidecar_path: &Path, binding: &ProductionBinding) -> Result<Bound
             actual_hash
         );
     }
-    let loaded = production::load(&manifest_path)?;
     production::validate(&loaded)?;
     if loaded.manifest.work != binding.work {
         bail!(

@@ -26,6 +26,7 @@ pub mod comparison;
 pub mod continuity;
 pub mod craft_plan;
 pub mod cue_import;
+pub mod exposure_sheet;
 pub mod otio_export;
 pub mod production;
 pub mod production_binding;

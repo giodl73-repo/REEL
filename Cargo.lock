@@ -609,7 +609,7 @@ dependencies = [
 
 [[package]]
 name = "reel"
-version = "0.2.42"
+version = "0.2.43"
 dependencies = [
  "anyhow",
  "clap",

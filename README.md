@@ -266,6 +266,13 @@ path-free receipt, and re-verifies those bytes before advancing local state.
 Execution, result choice, approval, and rollback remain owner-controlled. See
 [`docs/changed-only-results-v0.2.42.md`](docs/changed-only-results-v0.2.42.md).
 
+CLI v0.2.43 adds strict owner-authored animation exposure sheets. Exact
+inclusive frame spans for drawings, poses, props, effects, camera states, and
+dialogue relationships bind to one SHA-pinned production shot and emit a
+path-free coverage report. REEL validates timing but does not choose drawings,
+render frames, mutate DCC projects, or claim a delivery frame rate. See
+[`docs/animation-exposure-sheets-v0.2.43.md`](docs/animation-exposure-sheets-v0.2.43.md).
+
 CLI v0.2.21 adds proof selection locks and fast audio revision. `animatic-lock`
 creates an atomic packet containing the selected verified artifact, a locked
 manifest derivative, and a receipt binding both hashes without invalidating the

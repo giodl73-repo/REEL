@@ -3315,7 +3315,7 @@ pub fn sha256_path(path: impl AsRef<Path>) -> Result<String> {
     Ok(sha256_bytes(&fs::read(path.as_ref())?))
 }
 
-fn sha256_bytes(bytes: &[u8]) -> String {
+pub fn sha256_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     let digest = hasher.finalize();

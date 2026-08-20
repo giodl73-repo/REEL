@@ -305,6 +305,32 @@ fn run_cli() -> Result<()> {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
             }
         }
+        Command::ExposureSheetCheck {
+            exposure_sheet,
+            output_path,
+            output,
+        } => {
+            let loaded = reel::exposure_sheet::load(&exposure_sheet)?;
+            let report = if let Some(path) = &output_path {
+                reel::exposure_sheet::write_report(&loaded, path)?
+            } else {
+                reel::exposure_sheet::validate(&loaded)?
+            };
+            match output {
+                OutputFormat::Text => println!(
+                    "exposure sheet ok: {} shot={} frames={} fps={} tracks={} exposures={} declared_hashes={} planned={}",
+                    exposure_sheet.display(),
+                    report.shot_id,
+                    report.duration_frames,
+                    report.fps,
+                    report.tracks.len(),
+                    report.exposure_count,
+                    report.declared_asset_hash_exposures,
+                    report.planned_exposures
+                ),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+            }
+        }
         Command::SpriteLibraryValidate { library, output } => {
             let loaded = reel::sprite_library::load_library(&library)?;
             let report = reel::sprite_library::validate_library(&loaded)?;
@@ -1896,6 +1922,14 @@ enum Command {
         assets: PathBuf,
         #[arg(long)]
         output_path: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate owner-authored frame exposures against one exact production shot.
+    ExposureSheetCheck {
+        exposure_sheet: PathBuf,
+        #[arg(long)]
+        output_path: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

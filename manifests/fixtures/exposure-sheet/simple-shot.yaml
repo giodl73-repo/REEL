@@ -1,0 +1,30 @@
+schema: reel.exposure-sheet.v0.1
+sheet_id: simple-shot-xsheet
+fps: 24
+duration_frames: 96
+shot_ref: primary
+production_binding:
+  manifest: ../shared-production/manifest.yaml
+  manifest_sha256: 99957ce88740be4112f54d0c8bfdc166a09c8b292a3409cd8f7b6ea6a3d74823
+  work: shared-production-fixture
+  shots:
+    primary: shot-early-window
+tracks:
+  - track_id: camera
+    kind: camera
+    coverage: complete
+    exposures:
+      - { start_frame: 0, end_frame: 95, exposure_id: locked-wide }
+  - track_id: character-a
+    kind: drawing
+    coverage: complete
+    exposures:
+      - { start_frame: 0, end_frame: 23, exposure_id: anticipation, asset_sha256: 1111111111111111111111111111111111111111111111111111111111111111 }
+      - { start_frame: 24, end_frame: 47, exposure_id: action }
+      - { start_frame: 48, end_frame: 71, exposure_id: reaction, asset_sha256: 2222222222222222222222222222222222222222222222222222222222222222 }
+      - { start_frame: 72, end_frame: 95, exposure_id: settle }
+  - track_id: effect-spark
+    kind: effect
+    coverage: sparse
+    exposures:
+      - { start_frame: 36, end_frame: 41, exposure_id: spark-burst }
