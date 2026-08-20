@@ -280,6 +280,12 @@ It does not execute commands, control browsers, create captures, verify visible
 semantics or redaction, select footage, or approve release. See
 [`docs/screen-demo-capture-evidence-v0.2.44.md`](docs/screen-demo-capture-evidence-v0.2.44.md).
 
+CLI v0.2.45 adds frame-keyed camera tracks for ordinary still plates. Owner
+systems retain image semantics and waypoint meaning while REEL validates
+bounded center/zoom paths, executes crop-clamped FFmpeg motion, and records the
+track in artifact lineage. See
+[`docs/still-plate-camera-tracks-v0.2.45.md`](docs/still-plate-camera-tracks-v0.2.45.md).
+
 CLI v0.2.21 adds proof selection locks and fast audio revision. `animatic-lock`
 creates an atomic packet containing the selected verified artifact, a locked
 manifest derivative, and a receipt binding both hashes without invalidating the

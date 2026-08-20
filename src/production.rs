@@ -172,6 +172,8 @@ pub struct Shot {
     pub animation: Option<AnimationSequence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sprite_animation: Option<SpriteAnimation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub camera_track: Option<StillCameraTrack>,
     #[serde(default)]
     pub source_in_seconds: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -294,6 +296,12 @@ pub struct SpriteCameraKeyframe {
     pub zoom: f64,
     #[serde(default)]
     pub curve_to_next: SpriteCameraCurve,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct StillCameraTrack {
+    pub timing_fps: u32,
+    pub keyframes: Vec<SpriteCameraKeyframe>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -1585,6 +1593,51 @@ fn validate_score_direction(manifest: &ProductionManifest, duration_ms: Option<u
     Ok(())
 }
 
+fn camera_keyframes_have_motion(keyframes: &[SpriteCameraKeyframe]) -> bool {
+    keyframes.windows(2).any(|pair| {
+        let from = &pair[0];
+        let to = &pair[1];
+        (from.center_x - to.center_x).abs() > f64::EPSILON
+            || (from.center_y - to.center_y).abs() > f64::EPSILON
+            || (from.zoom - to.zoom).abs() > f64::EPSILON
+    })
+}
+
+fn validate_camera_keyframes(
+    shot_kind: &str,
+    shot_id: &str,
+    field: &str,
+    keyframes: &[SpriteCameraKeyframe],
+    total_frames: Option<u64>,
+) -> Result<()> {
+    if keyframes[0].frame != 0 {
+        bail!("{shot_kind} shot {shot_id} {field} must begin at frame 0");
+    }
+    let mut prior = None;
+    for keyframe in keyframes {
+        if prior.is_some_and(|frame| keyframe.frame <= frame) {
+            bail!("{shot_kind} shot {shot_id} {field} keyframe frames must increase");
+        }
+        if total_frames.is_some_and(|frames| u64::from(keyframe.frame) >= frames) {
+            bail!(
+                "{shot_kind} shot {shot_id} {field} keyframe {} falls outside the shot",
+                keyframe.frame
+            );
+        }
+        if !keyframe.center_x.is_finite()
+            || !keyframe.center_y.is_finite()
+            || !keyframe.zoom.is_finite()
+            || !(0.0..=1.0).contains(&keyframe.center_x)
+            || !(0.0..=1.0).contains(&keyframe.center_y)
+            || !(1.0..=4.0).contains(&keyframe.zoom)
+        {
+            bail!("{shot_kind} shot {shot_id} {field} keyframe geometry is invalid");
+        }
+        prior = Some(keyframe.frame);
+    }
+    Ok(())
+}
+
 fn validate_mixed_media(manifest: &ProductionManifest, duration_ms: Option<u64>) -> Result<()> {
     let marker_times = manifest
         .beat_markers
@@ -1619,6 +1672,55 @@ fn validate_mixed_media(manifest: &ProductionManifest, duration_ms: Option<u64>)
                 },
                 shot.id
             );
+        }
+        match (&shot.media_kind, &shot.camera_track) {
+            (MediaKind::Still, Some(track)) => {
+                if !shot.motion.is_empty() {
+                    bail!(
+                        "still shot {} cannot combine camera_track with motion",
+                        shot.id
+                    );
+                }
+                if track.timing_fps == 0 || track.timing_fps > 60 {
+                    bail!(
+                        "still shot {} camera_track timing_fps must be between 1 and 60",
+                        shot.id
+                    );
+                }
+                if track.keyframes.len() < 2 {
+                    bail!(
+                        "still shot {} camera_track must declare at least two keyframes",
+                        shot.id
+                    );
+                }
+                let total_frames = shot
+                    .duration_seconds
+                    .map(|duration| (duration * f64::from(track.timing_fps)).round() as u64);
+                validate_camera_keyframes(
+                    "still",
+                    &shot.id,
+                    "camera_track",
+                    &track.keyframes,
+                    total_frames,
+                )?;
+                if !camera_keyframes_have_motion(&track.keyframes) {
+                    bail!(
+                        "still shot {} camera_track must change center or zoom",
+                        shot.id
+                    );
+                }
+            }
+            (_, Some(_)) => bail!(
+                "{} shot {} cannot declare camera_track",
+                match shot.media_kind {
+                    MediaKind::Still => "still",
+                    MediaKind::Video => "video",
+                    MediaKind::Animation => "animation",
+                    MediaKind::SpriteAnimation => "sprite-animation",
+                },
+                shot.id
+            ),
+            (_, None) => {}
         }
         match (&shot.media_kind, &shot.animation) {
             (MediaKind::Animation, Some(animation)) => {
@@ -1847,41 +1949,13 @@ fn validate_mixed_media(manifest: &ProductionManifest, duration_ms: Option<u64>)
                     }
                 }
                 if !animation.camera.is_empty() {
-                    if animation.camera[0].frame != 0 {
-                        bail!(
-                            "sprite-animation shot {} camera must begin at frame 0",
-                            shot.id
-                        );
-                    }
-                    let mut prior = None;
-                    for keyframe in &animation.camera {
-                        if prior.is_some_and(|frame| keyframe.frame <= frame) {
-                            bail!(
-                                "sprite-animation shot {} camera keyframe frames must increase",
-                                shot.id
-                            );
-                        }
-                        if total_frames.is_some_and(|frames| u64::from(keyframe.frame) >= frames) {
-                            bail!(
-                                "sprite-animation shot {} camera keyframe {} falls outside the shot",
-                                shot.id,
-                                keyframe.frame
-                            );
-                        }
-                        if !keyframe.center_x.is_finite()
-                            || !keyframe.center_y.is_finite()
-                            || !keyframe.zoom.is_finite()
-                            || !(0.0..=1.0).contains(&keyframe.center_x)
-                            || !(0.0..=1.0).contains(&keyframe.center_y)
-                            || !(1.0..=4.0).contains(&keyframe.zoom)
-                        {
-                            bail!(
-                                "sprite-animation shot {} camera keyframe geometry is invalid",
-                                shot.id
-                            );
-                        }
-                        prior = Some(keyframe.frame);
-                    }
+                    validate_camera_keyframes(
+                        "sprite-animation",
+                        &shot.id,
+                        "camera",
+                        &animation.camera,
+                        total_frames,
+                    )?;
                 }
                 for track in &animation.sprites {
                     match (track.visible_start_frame, track.visible_end_frame) {

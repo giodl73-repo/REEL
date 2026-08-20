@@ -175,6 +175,8 @@ pub struct MixedMediaLineage {
     #[serde(default)]
     pub sprite_camera_tracks: usize,
     #[serde(default)]
+    pub still_camera_tracks: usize,
+    #[serde(default)]
     pub sprite_asset_occurrences: usize,
     #[serde(default)]
     pub sprite_unique_asset_inputs: usize,
@@ -188,6 +190,7 @@ pub struct MixedMediaLineage {
 enum ShotVisualPlan {
     Single {
         input_index: usize,
+        camera: Vec<CameraRenderSegment>,
     },
     Sprites {
         background_input_index: usize,
@@ -348,7 +351,7 @@ fn camera_expression(
             }
             production::SpriteCameraCurve::HoldThenBurst => {
                 let burst = format!("((({progress})-0.65)/0.35)");
-                format!(r"gte(on\,{})*({burst})*({burst})", start + span * 65 / 100)
+                format!(r"gte(({progress})\,0.65)*({burst})*({burst})")
             }
         };
         let from = value(segment, false);
@@ -357,6 +360,74 @@ fn camera_expression(
         expression = format!(r"if(between(on\,{start}\,{end})\,{interpolated}\,{expression})");
     }
     expression
+}
+
+fn camera_render_segments(
+    keyframes: &[production::SpriteCameraKeyframe],
+    timing_fps: u32,
+) -> Vec<CameraRenderSegment> {
+    keyframes
+        .windows(2)
+        .map(|pair| CameraRenderSegment {
+            start_seconds: pair[0].frame as f64 / timing_fps as f64,
+            end_seconds: pair[1].frame as f64 / timing_fps as f64,
+            start_center_x: pair[0].center_x,
+            start_center_y: pair[0].center_y,
+            end_center_x: pair[1].center_x,
+            end_center_y: pair[1].center_y,
+            start_zoom: pair[0].zoom,
+            end_zoom: pair[1].zoom,
+            curve: pair[0].curve_to_next,
+        })
+        .collect()
+}
+
+fn camera_zoompan_filter(
+    camera: &[CameraRenderSegment],
+    width: u32,
+    height: u32,
+    fps: u32,
+) -> String {
+    let zoom = camera_expression(camera, fps, CameraProperty::Zoom);
+    let center_x = camera_expression(camera, fps, CameraProperty::CenterX);
+    let center_y = camera_expression(camera, fps, CameraProperty::CenterY);
+    let x = format!("max(0\\,min(iw-iw/zoom\\,iw*({center_x})-iw/zoom/2))");
+    let y = format!("max(0\\,min(ih-ih/zoom\\,ih*({center_y})-ih/zoom/2))");
+    format!("zoompan=z='{zoom}':x='{x}':y='{y}':d=1:s={width}x{height}:fps={fps}")
+}
+
+fn camera_perspective_filter(
+    camera: &[CameraRenderSegment],
+    width: u32,
+    height: u32,
+    fps: u32,
+) -> String {
+    let zoom = camera_expression(camera, fps, CameraProperty::Zoom);
+    let center_x = camera_expression(camera, fps, CameraProperty::CenterX);
+    let center_y = camera_expression(camera, fps, CameraProperty::CenterY);
+    let left = format!("max(0,min(W-W/({zoom}),W*({center_x})-W/({zoom})/2))");
+    let top = format!("max(0,min(H-H/({zoom}),H*({center_y})-H/({zoom})/2))");
+    let right = format!("({left})+W/({zoom})");
+    let bottom = format!("({top})+H/({zoom})");
+    format!(
+        "scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},perspective=x0='{left}':y0='{top}':x1='{right}':y1='{top}':x2='{left}':y2='{bottom}':x3='{right}':y3='{bottom}':interpolation=cubic:sense=source:eval=frame"
+    )
+}
+
+fn still_camera_filter(
+    camera: &[CameraRenderSegment],
+    width: u32,
+    height: u32,
+    fps: u32,
+    quality: MotionQuality,
+) -> String {
+    match quality {
+        MotionQuality::Smooth => camera_perspective_filter(camera, width, height, fps),
+        MotionQuality::Legacy => format!(
+            "scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},{}",
+            camera_zoompan_filter(camera, width, height, fps)
+        ),
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -615,6 +686,52 @@ fn sampled_rects(motion: &str) -> Vec<NormalizedRect> {
     }
 }
 
+fn camera_sampled_rects(track: &production::StillCameraTrack) -> Vec<NormalizedRect> {
+    track
+        .keyframes
+        .windows(2)
+        .flat_map(|pair| {
+            (0..=16).map(move |sample| {
+                let raw = f64::from(sample) / 16.0;
+                let progress = match pair[0].curve_to_next {
+                    production::SpriteCameraCurve::Linear => raw,
+                    production::SpriteCameraCurve::EaseInOut => raw * raw * (3.0 - 2.0 * raw),
+                    production::SpriteCameraCurve::EaseOut => 1.0 - (1.0 - raw) * (1.0 - raw),
+                    production::SpriteCameraCurve::HoldThenBurst => {
+                        if raw < 0.65 {
+                            0.0
+                        } else {
+                            ((raw - 0.65) / 0.35).powi(2)
+                        }
+                    }
+                };
+                let center_x = pair[0].center_x + (pair[1].center_x - pair[0].center_x) * progress;
+                let center_y = pair[0].center_y + (pair[1].center_y - pair[0].center_y) * progress;
+                let zoom = pair[0].zoom + (pair[1].zoom - pair[0].zoom) * progress;
+                let span = 1.0 / zoom;
+                let left = (center_x - span / 2.0).clamp(0.0, 1.0 - span);
+                let top = (center_y - span / 2.0).clamp(0.0, 1.0 - span);
+                NormalizedRect {
+                    left,
+                    top,
+                    right: left + span,
+                    bottom: top + span,
+                }
+            })
+        })
+        .collect()
+}
+
+fn shot_motion_treatment(shot: &production::Shot) -> &str {
+    if shot.camera_track.is_some() {
+        "camera-track"
+    } else if shot.motion.is_empty() {
+        "push"
+    } else {
+        &shot.motion
+    }
+}
+
 fn contains(rect: NormalizedRect, left: f64, top: f64, right: f64, bottom: f64) -> bool {
     const EPSILON: f64 = 1e-9;
     left + EPSILON >= rect.left
@@ -624,12 +741,11 @@ fn contains(rect: NormalizedRect, left: f64, top: f64, right: f64, bottom: f64) 
 }
 
 fn safety_report(shot: &production::Shot) -> ShotSafetyReport {
-    let treatment = if shot.motion.is_empty() {
-        "push"
-    } else {
-        &shot.motion
-    };
-    let rects = sampled_rects(treatment);
+    let treatment = shot_motion_treatment(shot);
+    let rects = shot
+        .camera_track
+        .as_ref()
+        .map_or_else(|| sampled_rects(treatment), camera_sampled_rects);
     let blank_canvas_safe = rects
         .iter()
         .all(|rect| rect.left >= 0.0 && rect.top >= 0.0 && rect.right <= 1.0 && rect.bottom <= 1.0);
@@ -876,8 +992,12 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                     ]),
                     MediaKind::Animation | MediaKind::SpriteAnimation => unreachable!(),
                 }
+                let camera = shot.camera_track.as_ref().map_or_else(Vec::new, |track| {
+                    camera_render_segments(&track.keyframes, track.timing_fps)
+                });
                 visual_plans.push(ShotVisualPlan::Single {
                     input_index: ffmpeg_input_count,
+                    camera,
                 });
                 ffmpeg_input_count += 1;
             }
@@ -943,6 +1063,7 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                 animation_lists.push(list);
                 visual_plans.push(ShotVisualPlan::Single {
                     input_index: ffmpeg_input_count,
+                    camera: Vec::new(),
                 });
                 ffmpeg_input_count += 1;
             }
@@ -1175,21 +1296,7 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                     });
                 }
                 segments.sort_by_key(|segment| segment.z_index);
-                let camera = animation
-                    .camera
-                    .windows(2)
-                    .map(|pair| CameraRenderSegment {
-                        start_seconds: pair[0].frame as f64 / animation.timing_fps as f64,
-                        end_seconds: pair[1].frame as f64 / animation.timing_fps as f64,
-                        start_center_x: pair[0].center_x,
-                        start_center_y: pair[0].center_y,
-                        end_center_x: pair[1].center_x,
-                        end_center_y: pair[1].center_y,
-                        start_zoom: pair[0].zoom,
-                        end_zoom: pair[1].zoom,
-                        curve: pair[0].curve_to_next,
-                    })
-                    .collect();
+                let camera = camera_render_segments(&animation.camera, animation.timing_fps);
                 visual_plans.push(ShotVisualPlan::Sprites {
                     background_input_index,
                     segments,
@@ -1325,8 +1432,18 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
             0.0
         };
         match &visual_plans[index] {
-            ShotVisualPlan::Single { input_index } => {
+            ShotVisualPlan::Single {
+                input_index,
+                camera,
+            } => {
                 let treatment = match shot.media_kind {
+                    MediaKind::Still if !camera.is_empty() => still_camera_filter(
+                        camera,
+                        options.width,
+                        options.height,
+                        options.fps,
+                        options.motion_quality,
+                    ),
                     MediaKind::Still => motion_filter(
                         &shot.motion,
                         duration + tail,
@@ -1455,16 +1572,10 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                         duration + tail
                     ));
                 } else {
-                    let zoom = camera_expression(camera, options.fps, CameraProperty::Zoom);
-                    let center_x = camera_expression(camera, options.fps, CameraProperty::CenterX);
-                    let center_y = camera_expression(camera, options.fps, CameraProperty::CenterY);
-                    let x = format!("max(0\\,min(iw-iw/zoom\\,iw*({center_x})-iw/zoom/2))");
-                    let y = format!("max(0\\,min(ih-ih/zoom\\,ih*({center_y})-ih/zoom/2))");
+                    let camera_filter =
+                        camera_zoompan_filter(camera, options.width, options.height, options.fps);
                     filters.push(format!(
-                        "[{previous}]zoompan=z='{zoom}':x='{x}':y='{y}':d=1:s={}x{}:fps={},framerate=fps={},setsar=1,settb=AVTB,trim=duration={:.3},setpts=PTS-STARTPTS[v{index}]",
-                        options.width,
-                        options.height,
-                        options.fps,
+                        "[{previous}]{camera_filter},framerate=fps={},setsar=1,settb=AVTB,trim=duration={:.3},setpts=PTS-STARTPTS[v{index}]",
                         options.fps,
                         duration + tail
                     ));
@@ -1815,11 +1926,7 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
             .zip(durations.iter())
             .map(|(shot, duration)| ShotMotionLineage {
                 shot_id: shot.id.clone(),
-                treatment: if shot.motion.is_empty() {
-                    "push".to_string()
-                } else {
-                    shot.motion.clone()
-                },
+                treatment: shot_motion_treatment(shot).to_string(),
                 frames: (duration * f64::from(options.fps)).round().max(1.0) as u64,
             })
             .collect(),
@@ -1891,6 +1998,12 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                 .iter()
                 .filter_map(|shot| shot.sprite_animation.as_ref())
                 .filter(|animation| !animation.camera.is_empty())
+                .count(),
+            still_camera_tracks: loaded
+                .manifest
+                .shots
+                .iter()
+                .filter(|shot| shot.camera_track.is_some())
                 .count(),
             sprite_asset_occurrences,
             sprite_unique_asset_inputs,
@@ -2209,6 +2322,36 @@ fn intentional_hold_mask(
         .collect()
 }
 
+fn camera_track_hold_mask(
+    track: &production::StillCameraTrack,
+    transition_count: usize,
+    duration_seconds: f64,
+) -> Vec<bool> {
+    if transition_count == 0 {
+        return Vec::new();
+    }
+    let timing_fps = f64::from(track.timing_fps);
+    (0..transition_count)
+        .map(|index| {
+            let seconds = (index + 1) as f64 * duration_seconds / (transition_count + 1) as f64;
+            let frame = seconds * timing_fps;
+            let authored_hold = track.keyframes.windows(2).any(|pair| {
+                if pair[0].curve_to_next != production::SpriteCameraCurve::HoldThenBurst {
+                    return false;
+                }
+                let start = f64::from(pair[0].frame);
+                let burst_start = start + f64::from(pair[1].frame - pair[0].frame) * 0.65;
+                frame > start && frame <= burst_start
+            });
+            authored_hold
+                || track
+                    .keyframes
+                    .last()
+                    .is_some_and(|last| frame > f64::from(last.frame))
+        })
+        .collect()
+}
+
 pub fn check_motion(
     manifest: impl AsRef<Path>,
     video: impl AsRef<Path>,
@@ -2258,20 +2401,19 @@ pub fn check_motion(
             .filter(|value| **value < NEAR_STATIONARY_LUMA_THRESHOLD)
             .count();
         let fraction = stationary as f64 / values.len() as f64;
-        let treatment = if shot.motion.is_empty() {
-            "push"
-        } else {
-            &shot.motion
-        };
+        let treatment = shot_motion_treatment(shot);
         let authored_sprite_motion = shot
             .sprite_animation
             .as_ref()
             .is_some_and(sprite_animation_has_authored_motion);
         let hold = matches!(treatment, "hold" | "hold-dark") && !authored_sprite_motion;
-        let hold_mask = shot.sprite_animation.as_ref().map_or_else(
-            || vec![false; values.len()],
-            |animation| intentional_hold_mask(animation, values.len(), duration),
-        );
+        let hold_mask = if let Some(animation) = &shot.sprite_animation {
+            intentional_hold_mask(animation, values.len(), duration)
+        } else if let Some(track) = &shot.camera_track {
+            camera_track_hold_mask(track, values.len(), duration)
+        } else {
+            vec![false; values.len()]
+        };
         let declared_hold_transitions = hold_mask.iter().filter(|declared| **declared).count();
         let permitted_near_stationary_transitions = values
             .iter()
@@ -2511,6 +2653,12 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
             .filter_map(|shot| shot.sprite_animation.as_ref())
             .filter(|animation| !animation.camera.is_empty())
             .count(),
+        still_camera_tracks: loaded
+            .manifest
+            .shots
+            .iter()
+            .filter(|shot| shot.camera_track.is_some())
+            .count(),
         sprite_asset_occurrences: expected_sprite_input_ids.len(),
         sprite_unique_asset_inputs: report
             .inputs
@@ -2541,6 +2689,11 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
         && report.mixed_media.sprite_camera_tracks != expected_mixed_media.sprite_camera_tracks
     {
         bail!("sprite camera lineage does not match manifest");
+    }
+    if tool_version >= (0, 2, 45)
+        && report.mixed_media.still_camera_tracks != expected_mixed_media.still_camera_tracks
+    {
+        bail!("still camera lineage does not match manifest");
     }
     if tool_version >= (0, 2, 35)
         && (actual_sprite_input_ids != expected_sprite_input_ids
@@ -2591,11 +2744,7 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
             .iter()
             .zip(&loaded.manifest.shots)
             .any(|(actual, expected)| {
-                let treatment = if expected.motion.is_empty() {
-                    "push"
-                } else {
-                    &expected.motion
-                };
+                let treatment = shot_motion_treatment(expected);
                 let frames = (expected.duration_seconds.unwrap_or_default() * f64::from(report.fps))
                     .round()
                     .max(1.0) as u64;
@@ -3517,6 +3666,54 @@ mod tests {
             ..moving
         };
         assert!(!sprite_animation_has_authored_motion(&stationary));
+    }
+
+    #[test]
+    fn short_hold_then_burst_segments_do_not_overshoot_before_the_threshold() {
+        let expression = camera_expression(
+            &[CameraRenderSegment {
+                start_seconds: 0.0,
+                end_seconds: 1.0 / 24.0,
+                start_center_x: 0.2,
+                start_center_y: 0.5,
+                end_center_x: 0.8,
+                end_center_y: 0.5,
+                start_zoom: 1.0,
+                end_zoom: 2.0,
+                curve: production::SpriteCameraCurve::HoldThenBurst,
+            }],
+            24,
+            CameraProperty::CenterX,
+        );
+        assert!(expression.contains(r"gte(((on-0)/1)\,0.65)"));
+        assert!(!expression.contains(r"gte(on\,0)"));
+    }
+
+    #[test]
+    fn camera_hold_mask_covers_authored_burst_holds_and_the_trailing_hold() {
+        let track = production::StillCameraTrack {
+            timing_fps: 24,
+            keyframes: vec![
+                production::SpriteCameraKeyframe {
+                    frame: 0,
+                    center_x: 0.2,
+                    center_y: 0.5,
+                    zoom: 1.0,
+                    curve_to_next: production::SpriteCameraCurve::HoldThenBurst,
+                },
+                production::SpriteCameraKeyframe {
+                    frame: 24,
+                    center_x: 0.8,
+                    center_y: 0.5,
+                    zoom: 2.0,
+                    curve_to_next: production::SpriteCameraCurve::Linear,
+                },
+            ],
+        };
+        let mask = camera_track_hold_mask(&track, 47, 2.0);
+        assert!(mask[0]);
+        assert!(!mask[20]);
+        assert!(mask[30]);
     }
 
     #[test]

@@ -126,6 +126,13 @@ position, and eye line.
 cargo run -- quality-check manifest.yaml --output json
 ```
 
+Still shots may replace the named `motion` treatment with a frame-keyed
+`camera_track`. The track declares a 1-60 FPS timebase and at least two
+strictly ordered normalized center/zoom keyframes. It is crop-clamped during
+rendering and cannot be attached to another media kind or combined with
+`motion`. See
+[`still-plate-camera-tracks-v0.2.45.md`](still-plate-camera-tracks-v0.2.45.md).
+
 ## Asset-backed animatic rendering
 
 ### Edit modes
