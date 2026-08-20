@@ -103,6 +103,11 @@ CLI v0.2.46 adds owner-selected `cover` or `contain` visual fit while preserving
 `hold_frames`. See
 [`docs/visual-fit-and-animation-holds-v0.2.46.md`](docs/visual-fit-and-animation-holds-v0.2.46.md).
 
+CLI v0.2.47 allows a still camera track to begin from a contained full-source
+overview before moving through delivery-canvas keyframes. Existing cover-camera
+renders remain unchanged. See
+[`docs/contained-still-camera-tracks-v0.2.47.md`](docs/contained-still-camera-tracks-v0.2.47.md).
+
 CLI v0.2.18 adds an opt-in `montage` edit mode with true hard cuts and crop-safe
 `punch-in` / `punch-out` treatments for sub-second photo bursts. The default
 `cinematic` mode is unchanged. See

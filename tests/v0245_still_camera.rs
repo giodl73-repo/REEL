@@ -1,6 +1,8 @@
 use std::{fs, path::Path, process::Command};
 
-use reel::production::{self, SpriteCameraCurve, SpriteCameraKeyframe, StillCameraTrack};
+use reel::production::{
+    self, SpriteCameraCurve, SpriteCameraKeyframe, StillCameraTrack, VisualFit,
+};
 use serde_json::Value;
 use tempfile::tempdir;
 
@@ -144,4 +146,112 @@ fn validation_rejects_invalid_still_camera_contracts() {
         keyframe.zoom = first.2;
     }
     assert!(validation_error(&manifest).contains("must change center or zoom"));
+
+    let mut manifest = camera_manifest();
+    manifest.shots[0].visual_fit = VisualFit::Contain;
+    manifest.shots[0].focal_point = Some(production::FocalPoint { x: 0.5, y: 0.5 });
+    assert!(
+        validation_error(&manifest)
+            .contains("cannot combine a contained camera_track with source-space focal_point")
+    );
+
+    let mut manifest = camera_manifest();
+    manifest.shots[0].visual_fit = VisualFit::Contain;
+    manifest.shots[0]
+        .protected_regions
+        .push(production::ProtectedRegion {
+            id: "owner-label".to_string(),
+            x: 0.1,
+            y: 0.1,
+            width: 0.2,
+            height: 0.2,
+        });
+    assert!(
+        validation_error(&manifest)
+            .contains("cannot combine a contained camera_track with source-space focal_point")
+    );
+}
+
+#[test]
+fn dry_run_executes_a_contained_still_camera_track() {
+    let temp = tempdir().unwrap();
+    let mut manifest = camera_manifest();
+    manifest.shots[0].visual_fit = VisualFit::Contain;
+    let manifest_path = temp.path().join("contained-camera.yaml");
+    fs::write(&manifest_path, serde_yaml::to_string(&manifest).unwrap()).unwrap();
+    let output_path = temp.path().join("contained-camera.mp4");
+    let output = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .args(["animatic-render"])
+        .arg(&manifest_path)
+        .args([
+            "--asset-root",
+            ASSETS,
+            "--silent",
+            "--captions",
+            CAPTIONS,
+            "--output",
+        ])
+        .arg(&output_path)
+        .args(["--dry-run", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let report = &report[0];
+    assert_eq!(report["motion"]["shots"][0]["visual_fit"], "contain");
+    assert!(
+        report["command_arguments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|argument| argument.as_str().is_some_and(|argument| {
+                argument.contains("force_original_aspect_ratio=decrease")
+                    && argument.contains("pad=1280:720")
+                    && argument.contains("perspective=x0=")
+            }))
+    );
+
+    let legacy_output_path = temp.path().join("contained-camera-legacy.mp4");
+    let output = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .args(["animatic-render"])
+        .arg(&manifest_path)
+        .args([
+            "--asset-root",
+            ASSETS,
+            "--silent",
+            "--captions",
+            CAPTIONS,
+            "--output",
+        ])
+        .arg(&legacy_output_path)
+        .args([
+            "--motion-quality",
+            "legacy",
+            "--dry-run",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        report[0]["command_arguments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|argument| argument.as_str().is_some_and(|argument| {
+                argument.contains("force_original_aspect_ratio=decrease")
+                    && argument.contains("pad=1280:720")
+                    && argument.contains("zoompan=z=")
+            }))
+    );
 }

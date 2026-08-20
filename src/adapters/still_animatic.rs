@@ -401,6 +401,7 @@ fn camera_perspective_filter(
     width: u32,
     height: u32,
     fps: u32,
+    visual_fit: production::VisualFit,
 ) -> String {
     let zoom = camera_expression(camera, fps, CameraProperty::Zoom);
     let center_x = camera_expression(camera, fps, CameraProperty::CenterX);
@@ -409,9 +410,21 @@ fn camera_perspective_filter(
     let top = format!("max(0,min(H-H/({zoom}),H*({center_y})-H/({zoom})/2))");
     let right = format!("({left})+W/({zoom})");
     let bottom = format!("({top})+H/({zoom})");
+    let fit = visual_fit_scale_filter(visual_fit, width, height);
     format!(
-        "scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},perspective=x0='{left}':y0='{top}':x1='{right}':y1='{top}':x2='{left}':y2='{bottom}':x3='{right}':y3='{bottom}':interpolation=cubic:sense=source:eval=frame"
+        "{fit},perspective=x0='{left}':y0='{top}':x1='{right}':y1='{top}':x2='{left}':y2='{bottom}':x3='{right}':y3='{bottom}':interpolation=cubic:sense=source:eval=frame"
     )
+}
+
+fn visual_fit_scale_filter(fit: production::VisualFit, width: u32, height: u32) -> String {
+    match fit {
+        production::VisualFit::Cover => format!(
+            "scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
+        ),
+        production::VisualFit::Contain => format!(
+            "scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black"
+        ),
+    }
 }
 
 fn still_camera_filter(
@@ -420,13 +433,17 @@ fn still_camera_filter(
     height: u32,
     fps: u32,
     quality: MotionQuality,
+    visual_fit: production::VisualFit,
 ) -> String {
     match quality {
-        MotionQuality::Smooth => camera_perspective_filter(camera, width, height, fps),
-        MotionQuality::Legacy => format!(
-            "scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},{}",
-            camera_zoompan_filter(camera, width, height, fps)
-        ),
+        MotionQuality::Smooth => camera_perspective_filter(camera, width, height, fps, visual_fit),
+        MotionQuality::Legacy => {
+            let fit = visual_fit_scale_filter(visual_fit, width, height);
+            format!(
+                "{fit},{}",
+                camera_zoompan_filter(camera, width, height, fps)
+            )
+        }
     }
 }
 
@@ -750,14 +767,14 @@ fn contains(rect: NormalizedRect, left: f64, top: f64, right: f64, bottom: f64) 
 
 fn safety_report(shot: &production::Shot) -> ShotSafetyReport {
     let treatment = shot_motion_treatment(shot);
-    let rects = if shot.media_kind == MediaKind::Animation
-        || shot.visual_fit == production::VisualFit::Contain
-    {
-        sampled_rects("hold")
-    } else {
-        shot.camera_track
-            .as_ref()
-            .map_or_else(|| sampled_rects(treatment), camera_sampled_rects)
+    let rects = match &shot.camera_track {
+        Some(track) => camera_sampled_rects(track),
+        None if shot.media_kind == MediaKind::Animation
+            || shot.visual_fit == production::VisualFit::Contain =>
+        {
+            sampled_rects("hold")
+        }
+        None => sampled_rects(treatment),
     };
     let blank_canvas_safe = rects
         .iter()
@@ -1468,6 +1485,7 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                         options.height,
                         options.fps,
                         options.motion_quality,
+                        shot.visual_fit,
                     ),
                     MediaKind::Still if shot.visual_fit == production::VisualFit::Contain => {
                         let mut filter =
@@ -2103,14 +2121,7 @@ fn motion_filter(
 }
 
 fn visual_fit_filter(fit: production::VisualFit, width: u32, height: u32) -> String {
-    match fit {
-        production::VisualFit::Cover => format!(
-            "scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1"
-        ),
-        production::VisualFit::Contain => format!(
-            "scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1"
-        ),
-    }
+    format!("{},setsar=1", visual_fit_scale_filter(fit, width, height))
 }
 
 fn legacy_motion_filter(motion: &str, duration: f64, fps: u32, width: u32, height: u32) -> String {
@@ -2387,11 +2398,11 @@ fn camera_track_hold_mask(
                 let burst_start = start + f64::from(pair[1].frame - pair[0].frame) * 0.65;
                 frame > start && frame <= burst_start
             });
-            authored_hold
-                || track
-                    .keyframes
-                    .last()
-                    .is_some_and(|last| frame > f64::from(last.frame))
+            let trailing_hold = track
+                .keyframes
+                .last()
+                .is_some_and(|last| frame > f64::from(last.frame));
+            authored_hold || trailing_hold
         })
         .collect()
 }
@@ -3564,7 +3575,9 @@ mod tests {
             production::validate(&loaded)
                 .unwrap_err()
                 .to_string()
-                .contains("visual_fit contain requires motion hold or hold-dark")
+                .contains(
+                    "visual_fit contain requires camera_track, motion hold, or motion hold-dark"
+                )
         );
 
         manifest.shots[0].media_kind = MediaKind::SpriteAnimation;

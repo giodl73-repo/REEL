@@ -1683,11 +1683,20 @@ fn validate_mixed_media(manifest: &ProductionManifest, duration_ms: Option<u64>)
         if shot.visual_fit == VisualFit::Contain {
             match shot.media_kind {
                 MediaKind::Still
-                    if shot.camera_track.is_some()
-                        || !matches!(shot.motion.as_str(), "hold" | "hold-dark") =>
+                    if shot.camera_track.is_none()
+                        && !matches!(shot.motion.as_str(), "hold" | "hold-dark") =>
                 {
                     bail!(
-                        "still shot {} visual_fit contain requires motion hold or hold-dark and no camera_track",
+                        "still shot {} visual_fit contain requires camera_track, motion hold, or motion hold-dark",
+                        shot.id
+                    );
+                }
+                MediaKind::Still
+                    if shot.camera_track.is_some()
+                        && (shot.focal_point.is_some() || !shot.protected_regions.is_empty()) =>
+                {
+                    bail!(
+                        "still shot {} cannot combine a contained camera_track with source-space focal_point or protected_regions",
                         shot.id
                     );
                 }
