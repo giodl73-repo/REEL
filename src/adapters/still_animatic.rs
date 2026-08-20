@@ -468,7 +468,13 @@ pub struct MotionLineage {
 pub struct ShotMotionLineage {
     pub shot_id: String,
     pub treatment: String,
+    #[serde(default = "default_visual_fit")]
+    pub visual_fit: String,
     pub frames: u64,
+}
+
+fn default_visual_fit() -> String {
+    "cover".to_string()
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -725,6 +731,8 @@ fn camera_sampled_rects(track: &production::StillCameraTrack) -> Vec<NormalizedR
 fn shot_motion_treatment(shot: &production::Shot) -> &str {
     if shot.camera_track.is_some() {
         "camera-track"
+    } else if shot.media_kind == MediaKind::Animation {
+        "animation-frames"
     } else if shot.motion.is_empty() {
         "push"
     } else {
@@ -742,10 +750,15 @@ fn contains(rect: NormalizedRect, left: f64, top: f64, right: f64, bottom: f64) 
 
 fn safety_report(shot: &production::Shot) -> ShotSafetyReport {
     let treatment = shot_motion_treatment(shot);
-    let rects = shot
-        .camera_track
-        .as_ref()
-        .map_or_else(|| sampled_rects(treatment), camera_sampled_rects);
+    let rects = if shot.media_kind == MediaKind::Animation
+        || shot.visual_fit == production::VisualFit::Contain
+    {
+        sampled_rects("hold")
+    } else {
+        shot.camera_track
+            .as_ref()
+            .map_or_else(|| sampled_rects(treatment), camera_sampled_rects)
+    };
     let blank_canvas_safe = rects
         .iter()
         .all(|rect| rect.left >= 0.0 && rect.top >= 0.0 && rect.right <= 1.0 && rect.bottom <= 1.0);
@@ -793,7 +806,19 @@ fn render_resource_estimate(
     let instances = if quality == MotionQuality::Smooth {
         shots
             .iter()
-            .filter(|shot| !matches!(shot.motion.as_str(), "hold" | "hold-dark"))
+            .filter(|shot| match shot.media_kind {
+                MediaKind::Still => {
+                    shot.camera_track.is_some()
+                        || !matches!(shot.motion.as_str(), "hold" | "hold-dark")
+                }
+                MediaKind::SpriteAnimation => {
+                    shot.sprite_animation
+                        .as_ref()
+                        .is_some_and(|animation| !animation.camera.is_empty())
+                        || !matches!(shot.motion.as_str(), "hold" | "hold-dark")
+                }
+                MediaKind::Video | MediaKind::Animation => false,
+            })
             .count()
     } else {
         1
@@ -1444,6 +1469,14 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                         options.fps,
                         options.motion_quality,
                     ),
+                    MediaKind::Still if shot.visual_fit == production::VisualFit::Contain => {
+                        let mut filter =
+                            visual_fit_filter(shot.visual_fit, options.width, options.height);
+                        if shot.motion == "hold-dark" {
+                            filter.push_str(",eq=brightness=-0.72:saturation=0.45");
+                        }
+                        filter
+                    }
                     MediaKind::Still => motion_filter(
                         &shot.motion,
                         duration + tail,
@@ -1453,10 +1486,9 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                         options.motion_quality,
                         options.motion_curve,
                     ),
-                    MediaKind::Video | MediaKind::Animation => format!(
-                        "scale={}:{}:force_original_aspect_ratio=increase,crop={}:{},setsar=1",
-                        options.width, options.height, options.width, options.height
-                    ),
+                    MediaKind::Video | MediaKind::Animation => {
+                        visual_fit_filter(shot.visual_fit, options.width, options.height)
+                    }
                     MediaKind::SpriteAnimation => unreachable!(),
                 };
                 filters.push(format!(
@@ -1927,6 +1959,7 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
             .map(|(shot, duration)| ShotMotionLineage {
                 shot_id: shot.id.clone(),
                 treatment: shot_motion_treatment(shot).to_string(),
+                visual_fit: shot.visual_fit.as_str().to_string(),
                 frames: (duration * f64::from(options.fps)).round().max(1.0) as u64,
             })
             .collect(),
@@ -2067,6 +2100,17 @@ fn motion_filter(
         return legacy_motion_filter(motion, duration, fps, width, height);
     }
     smooth_motion_filter(motion, duration, fps, width, height, curve)
+}
+
+fn visual_fit_filter(fit: production::VisualFit, width: u32, height: u32) -> String {
+    match fit {
+        production::VisualFit::Cover => format!(
+            "scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1"
+        ),
+        production::VisualFit::Contain => format!(
+            "scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1"
+        ),
+    }
 }
 
 fn legacy_motion_filter(motion: &str, duration: f64, fps: u32, width: u32, height: u32) -> String {
@@ -2352,6 +2396,39 @@ fn camera_track_hold_mask(
         .collect()
 }
 
+fn animation_hold_mask(
+    animation: &production::AnimationSequence,
+    transition_count: usize,
+    duration_seconds: f64,
+) -> Vec<bool> {
+    if transition_count == 0 {
+        return Vec::new();
+    }
+    let total_frames = (duration_seconds * f64::from(animation.timing_fps)).round() as usize;
+    let boundaries = animation
+        .frames
+        .iter()
+        .scan(0_usize, |total, frame| {
+            *total += frame.hold_frames as usize;
+            Some(*total)
+        })
+        .collect::<Vec<_>>();
+    (0..transition_count)
+        .map(|index| {
+            let interval_start = index as f64 * total_frames as f64 / (transition_count + 1) as f64;
+            let interval_end =
+                (index + 1) as f64 * total_frames as f64 / (transition_count + 1) as f64;
+            !boundaries
+                .iter()
+                .take(boundaries.len().saturating_sub(1))
+                .any(|boundary| {
+                    let boundary = *boundary as f64;
+                    boundary > interval_start && boundary <= interval_end
+                })
+        })
+        .collect()
+}
+
 pub fn check_motion(
     manifest: impl AsRef<Path>,
     video: impl AsRef<Path>,
@@ -2409,6 +2486,8 @@ pub fn check_motion(
         let hold = matches!(treatment, "hold" | "hold-dark") && !authored_sprite_motion;
         let hold_mask = if let Some(animation) = &shot.sprite_animation {
             intentional_hold_mask(animation, values.len(), duration)
+        } else if let Some(animation) = &shot.animation {
+            animation_hold_mask(animation, values.len(), duration)
         } else if let Some(track) = &shot.camera_track {
             camera_track_hold_mask(track, values.len(), duration)
         } else {
@@ -2750,6 +2829,8 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
                     .max(1.0) as u64;
                 actual.shot_id != expected.id
                     || actual.treatment != treatment
+                    || (tool_version >= (0, 2, 46)
+                        && actual.visual_fit != expected.visual_fit.as_str())
                     || actual.frames != frames
             })
     {
@@ -3394,6 +3475,7 @@ mod tests {
             .unwrap()
             .manifest;
         manifest.shots[0].media_kind = MediaKind::Animation;
+        manifest.shots[0].visual_fit = production::VisualFit::Contain;
         manifest.shots[0].visual_asset = None;
         manifest.shots[0].animation = Some(production::AnimationSequence {
             timing_fps: 24,
@@ -3440,6 +3522,9 @@ mod tests {
         .unwrap();
 
         assert_eq!(report.mixed_media.animation_events, 1);
+        assert_eq!(report.motion.perspective_filter_instances, 1);
+        assert_eq!(report.motion.shots[0].treatment, "animation-frames");
+        assert_eq!(report.motion.shots[0].visual_fit, "contain");
         assert_eq!(
             report
                 .inputs
@@ -3450,6 +3535,49 @@ mod tests {
         );
         let command = report.command_arguments.join(" ");
         assert!(command.contains("-f concat -safe 0"));
+        assert!(command.contains(
+            "force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=black"
+        ));
+    }
+
+    #[test]
+    fn visual_fit_defaults_to_cover_and_rejects_unknown_values() {
+        assert_eq!(
+            visual_fit_filter(production::VisualFit::Cover, 1280, 720),
+            "scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,setsar=1"
+        );
+        assert!(serde_yaml::from_str::<production::VisualFit>("stretch").is_err());
+    }
+
+    #[test]
+    fn validation_rejects_contain_with_moving_still_or_sprite_composition() {
+        let fixture_root = Path::new("manifests/fixtures/vertical-sound-off");
+        let mut manifest = production::load(fixture_root.join("manifest.yaml"))
+            .unwrap()
+            .manifest;
+        manifest.shots[0].visual_fit = production::VisualFit::Contain;
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("moving-contain.yaml");
+        fs::write(&path, serde_yaml::to_string(&manifest).unwrap()).unwrap();
+        let loaded = production::load(&path).unwrap();
+        assert!(
+            production::validate(&loaded)
+                .unwrap_err()
+                .to_string()
+                .contains("visual_fit contain requires motion hold or hold-dark")
+        );
+
+        manifest.shots[0].media_kind = MediaKind::SpriteAnimation;
+        manifest.shots[0].motion = "hold".to_string();
+        let path = temp.path().join("sprite-contain.yaml");
+        fs::write(&path, serde_yaml::to_string(&manifest).unwrap()).unwrap();
+        let loaded = production::load(&path).unwrap();
+        assert!(
+            production::validate(&loaded)
+                .unwrap_err()
+                .to_string()
+                .contains("cannot declare visual_fit contain")
+        );
     }
 
     #[test]
@@ -3822,6 +3950,66 @@ mod tests {
         assert!(mask[12]);
         assert!(mask[14]);
         assert!(!mask[15]);
+    }
+
+    #[test]
+    fn animation_hold_mask_excludes_authored_frame_boundaries() {
+        let animation = production::AnimationSequence {
+            timing_fps: 24,
+            frames: vec![
+                production::AnimationFrame {
+                    asset: "one.png".to_string(),
+                    hold_frames: 4,
+                    pose: None,
+                },
+                production::AnimationFrame {
+                    asset: "two.png".to_string(),
+                    hold_frames: 4,
+                    pose: None,
+                },
+                production::AnimationFrame {
+                    asset: "three.png".to_string(),
+                    hold_frames: 4,
+                    pose: None,
+                },
+            ],
+        };
+        let mask = animation_hold_mask(&animation, 11, 0.5);
+        assert_eq!(mask.iter().filter(|declared| **declared).count(), 9);
+        assert!(!mask[3]);
+        assert!(!mask[7]);
+    }
+
+    #[test]
+    fn animation_hold_mask_detects_boundaries_between_sampled_endpoints() {
+        let animation = production::AnimationSequence {
+            timing_fps: 60,
+            frames: (0..6)
+                .map(|index| production::AnimationFrame {
+                    asset: format!("{index}.png"),
+                    hold_frames: 10,
+                    pose: None,
+                })
+                .collect(),
+        };
+        let mask = animation_hold_mask(&animation, 23, 1.0);
+        assert_eq!(mask.iter().filter(|declared| !**declared).count(), 5);
+    }
+
+    #[test]
+    fn animation_safety_does_not_invent_a_push_crop() {
+        let fixture_root = Path::new("manifests/fixtures/vertical-sound-off");
+        let mut shot = production::load(fixture_root.join("manifest.yaml"))
+            .unwrap()
+            .manifest
+            .shots
+            .remove(0);
+        shot.media_kind = MediaKind::Animation;
+        shot.focal_point = Some(production::FocalPoint { x: 0.99, y: 0.99 });
+        let report = safety_report(&shot);
+        assert_eq!(report.treatment, "animation-frames");
+        assert_eq!(report.focal_point_safe, Some(true));
+        assert!(report.passed);
     }
 
     #[test]

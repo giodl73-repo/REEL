@@ -133,6 +133,12 @@ rendering and cannot be attached to another media kind or combined with
 `motion`. See
 [`still-plate-camera-tracks-v0.2.45.md`](still-plate-camera-tracks-v0.2.45.md).
 
+Shots default to `visual_fit: cover`. Video and limited-animation shots may opt
+into `visual_fit: contain` to preserve the complete source within the delivery
+canvas. Contained stills require `motion: hold` or `hold-dark`; sprite
+composition remains cover-only. See
+[`visual-fit-and-animation-holds-v0.2.46.md`](visual-fit-and-animation-holds-v0.2.46.md).
+
 ## Asset-backed animatic rendering
 
 ### Edit modes

@@ -168,6 +168,8 @@ pub struct Shot {
     pub render_from_prompt: bool,
     #[serde(default)]
     pub media_kind: MediaKind,
+    #[serde(default)]
+    pub visual_fit: VisualFit,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub animation: Option<AnimationSequence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -218,6 +220,23 @@ pub enum MediaKind {
     Video,
     Animation,
     SpriteAnimation,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum VisualFit {
+    #[default]
+    Cover,
+    Contain,
+}
+
+impl VisualFit {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cover => "cover",
+            Self::Contain => "contain",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1661,6 +1680,26 @@ fn validate_mixed_media(manifest: &ProductionManifest, duration_ms: Option<u64>)
         .collect::<Result<HashMap<_, _>>>()?;
 
     for shot in &manifest.shots {
+        if shot.visual_fit == VisualFit::Contain {
+            match shot.media_kind {
+                MediaKind::Still
+                    if shot.camera_track.is_some()
+                        || !matches!(shot.motion.as_str(), "hold" | "hold-dark") =>
+                {
+                    bail!(
+                        "still shot {} visual_fit contain requires motion hold or hold-dark and no camera_track",
+                        shot.id
+                    );
+                }
+                MediaKind::SpriteAnimation => {
+                    bail!(
+                        "sprite-animation shot {} cannot declare visual_fit contain",
+                        shot.id
+                    );
+                }
+                _ => {}
+            }
+        }
         if shot.media_kind != MediaKind::Video && shot.source_in_seconds != 0.0 {
             bail!(
                 "{} shot {} cannot declare source_in_seconds",
