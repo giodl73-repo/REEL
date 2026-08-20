@@ -259,6 +259,13 @@ dependency outputs; and distinguishes reuse, rebuild, and blocked downstream
 work without executing builds or mutating state. See
 [`docs/changed-only-build-v0.2.41.md`](docs/changed-only-build-v0.2.41.md).
 
+CLI v0.2.42 replaces manual changed-only state hashing with immutable
+owner-result receipts and receipt-bound state advancement. REEL regenerates the
+exact plan from current evidence, measures every expected output, writes a
+path-free receipt, and re-verifies those bytes before advancing local state.
+Execution, result choice, approval, and rollback remain owner-controlled. See
+[`docs/changed-only-results-v0.2.42.md`](docs/changed-only-results-v0.2.42.md).
+
 CLI v0.2.21 adds proof selection locks and fast audio revision. `animatic-lock`
 creates an atomic packet containing the selected verified artifact, a locked
 manifest derivative, and a receipt binding both hashes without invalidating the
@@ -486,6 +493,8 @@ cargo run -- source-coverage manifests\fixtures\two-speaker-untimed\planning.yam
 cargo run -- provider-package manifests\fixtures\two-speaker-untimed\planning.yaml --output target\fixture-provider.json --format json
 cargo run -- quality-check manifests\fixtures\two-speaker-untimed\planning.yaml --output json
 cargo run -- changed-only-plan graph.json state.json --output-path plan.json
+cargo run -- changed-only-result-receipt graph.json state.json plan.json result.json --output-path receipt.json
+cargo run -- changed-only-state-advance graph.json state.json plan.json result.json receipt.json --output-path next-state.json
 ```
 
 Rust owns contracts, planning, and subprocess orchestration; FFmpeg, Remotion,

@@ -623,6 +623,40 @@ fn run_cli() -> Result<()> {
             reel::changed_only::write_changed_only_plan(&graph, &state, &output_path)?;
             println!("wrote {}", output_path.display());
         }
+        Command::ChangedOnlyResultReceipt {
+            graph,
+            state,
+            plan,
+            result,
+            output_path,
+        } => {
+            reel::changed_only::write_changed_only_result_receipt(
+                &graph,
+                &state,
+                &plan,
+                &result,
+                &output_path,
+            )?;
+            println!("wrote {}", output_path.display());
+        }
+        Command::ChangedOnlyStateAdvance {
+            graph,
+            state,
+            plan,
+            result,
+            receipt,
+            output_path,
+        } => {
+            reel::changed_only::advance_changed_only_state(
+                &graph,
+                &state,
+                &plan,
+                &result,
+                &receipt,
+                &output_path,
+            )?;
+            println!("wrote {}", output_path.display());
+        }
         Command::ApprovalSign {
             input,
             output_path,
@@ -2072,6 +2106,36 @@ enum Command {
         /// Prior local node state and output evidence JSON.
         state: PathBuf,
         /// New path-free plan JSON. Existing files are never overwritten.
+        #[arg(long)]
+        output_path: PathBuf,
+    },
+    /// Verify one externally executed planned node and write a path-free result receipt.
+    ChangedOnlyResultReceipt {
+        /// Exact owner-authored dependency graph used by the plan.
+        graph: PathBuf,
+        /// Exact prior state used by the plan.
+        state: PathBuf,
+        /// Exact REEL changed-only plan supplied to the owner executor.
+        plan: PathBuf,
+        /// Owner-attested result binding with local output paths.
+        result: PathBuf,
+        /// New path-free immutable receipt JSON.
+        #[arg(long)]
+        output_path: PathBuf,
+    },
+    /// Advance immutable local changed-only state from a verified result receipt.
+    ChangedOnlyStateAdvance {
+        /// Exact owner-authored dependency graph used by the plan.
+        graph: PathBuf,
+        /// Exact prior state named by the receipt.
+        state: PathBuf,
+        /// Exact REEL changed-only plan named by the receipt.
+        plan: PathBuf,
+        /// Owner result binding that supplies current local output paths.
+        result: PathBuf,
+        /// Immutable path-free result receipt.
+        receipt: PathBuf,
+        /// New local state JSON. Existing files are never overwritten.
         #[arg(long)]
         output_path: PathBuf,
     },

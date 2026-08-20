@@ -1,6 +1,6 @@
 [package]
 name = "reel"
-version = "0.2.41"
+version = "0.2.42"
 edition = "2024"
 rust-version = "1.85"
 description = "Portable moving-image production manifests, series composition, and FFmpeg orchestration"
@@ -19,6 +19,7 @@ sha2 = "0.11.0"
 tempfile = "3.24.0"
 zeroize = "1.8.2"
 image = { version = "0.25.9", default-features = false, features = ["png", "pnm"] }
+same-file = "1.0.6"
 
 [features]
 test-fixtures = []

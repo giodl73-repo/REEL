@@ -58,6 +58,8 @@ bytes. IDs and operation kinds are bounded portable tokens. Nodes reject
 duplicate identities, duplicate edges, self-dependencies, unknown
 dependencies, and cycles. At least one expected output identity is required.
 REEL does not infer undeclared files read by an owner script.
+Relative graph paths resolve against the graph file. Relative prior-output
+paths resolve against the state file, not the caller's working directory.
 
 ## Prior-state contract
 
@@ -88,6 +90,11 @@ outputs from an earlier action:
 The owner-controlled adapter updates this state only after its build succeeds
 and it has measured the new output bytes. REEL does not write state on behalf
 of an executor.
+
+REEL v0.2.42 adds immutable result receipts and generated state v0.2 so owners
+no longer need to author these hashes and byte counts manually. The planner
+continues to accept state v0.1 for compatibility. See
+[`changed-only-results-v0.2.42.md`](changed-only-results-v0.2.42.md).
 
 ## Action keys
 
