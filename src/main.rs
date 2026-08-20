@@ -331,6 +331,25 @@ fn run_cli() -> Result<()> {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
             }
         }
+        Command::ScreenDemoCaptureReceipt {
+            input,
+            output_path,
+            output,
+        } => {
+            let receipt = reel::screen_demo::write_capture_receipt(&input, &output_path)?;
+            match output {
+                OutputFormat::Text => println!(
+                    "{} | demo={} | surfaces={} | captures={} | bytes_verified={} | semantics_verified={}",
+                    output_path.display(),
+                    receipt.demo_id,
+                    receipt.required_surfaces.len(),
+                    receipt.capture_count,
+                    receipt.capture_bytes_verified,
+                    receipt.capture_semantics_verified
+                ),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&receipt)?),
+            }
+        }
         Command::SpriteLibraryValidate { library, output } => {
             let loaded = reel::sprite_library::load_library(&library)?;
             let report = reel::sprite_library::validate_library(&loaded)?;
@@ -1930,6 +1949,14 @@ enum Command {
         exposure_sheet: PathBuf,
         #[arg(long)]
         output_path: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Verify a path-free receipt over owner-created CLI, TUI, and Web PNG captures.
+    ScreenDemoCaptureReceipt {
+        input: PathBuf,
+        #[arg(long)]
+        output_path: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

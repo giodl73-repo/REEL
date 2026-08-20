@@ -273,6 +273,13 @@ path-free coverage report. REEL validates timing but does not choose drawings,
 render frames, mutate DCC projects, or claim a delivery frame rate. See
 [`docs/animation-exposure-sheets-v0.2.43.md`](docs/animation-exposure-sheets-v0.2.43.md).
 
+CLI v0.2.44 adds immutable evidence for owner-created multi-surface product
+demo captures. REEL verifies exact state-document and PNG bytes, dimensions,
+distinct captures, ordered CLI/TUI/Web coverage, and path-free publication.
+It does not execute commands, control browsers, create captures, verify visible
+semantics or redaction, select footage, or approve release. See
+[`docs/screen-demo-capture-evidence-v0.2.44.md`](docs/screen-demo-capture-evidence-v0.2.44.md).
+
 CLI v0.2.21 adds proof selection locks and fast audio revision. `animatic-lock`
 creates an atomic packet containing the selected verified artifact, a locked
 manifest derivative, and a receipt binding both hashes without invalidating the
