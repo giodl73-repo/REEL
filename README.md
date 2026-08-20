@@ -252,6 +252,13 @@ namespaced metadata. V1 exports no media paths, prompts, audio, transitions,
 effects, selection, or approval claims. See
 [`docs/otio-export-v0.2.40.md`](docs/otio-export-v0.2.40.md).
 
+CLI v0.2.41 adds media-generic, content-addressed changed-only build planning
+over owner-authored dependency graphs. It verifies current recipe, direct
+input, and reusable output bytes; derives canonical action keys from exact
+dependency outputs; and distinguishes reuse, rebuild, and blocked downstream
+work without executing builds or mutating state. See
+[`docs/changed-only-build-v0.2.41.md`](docs/changed-only-build-v0.2.41.md).
+
 CLI v0.2.21 adds proof selection locks and fast audio revision. `animatic-lock`
 creates an atomic packet containing the selected verified artifact, a locked
 manifest derivative, and a receipt binding both hashes without invalidating the
@@ -478,6 +485,7 @@ cargo run -- conform manifests\fixtures\two-speaker-untimed\planning.yaml --cues
 cargo run -- source-coverage manifests\fixtures\two-speaker-untimed\planning.yaml --output json
 cargo run -- provider-package manifests\fixtures\two-speaker-untimed\planning.yaml --output target\fixture-provider.json --format json
 cargo run -- quality-check manifests\fixtures\two-speaker-untimed\planning.yaml --output json
+cargo run -- changed-only-plan graph.json state.json --output-path plan.json
 ```
 
 Rust owns contracts, planning, and subprocess orchestration; FFmpeg, Remotion,

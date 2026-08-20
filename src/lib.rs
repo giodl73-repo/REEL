@@ -20,6 +20,7 @@ pub mod c2pa_verification;
 pub mod caption;
 pub mod caption_layout;
 pub mod caption_presentation;
+pub mod changed_only;
 pub mod choreography;
 pub mod comparison;
 pub mod continuity;

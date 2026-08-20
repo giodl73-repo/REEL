@@ -615,6 +615,14 @@ fn run_cli() -> Result<()> {
             let report = reel::otio_export::export(&manifest, &output_path)?;
             print_report(&report, output)?;
         }
+        Command::ChangedOnlyPlan {
+            graph,
+            state,
+            output_path,
+        } => {
+            reel::changed_only::write_changed_only_plan(&graph, &state, &output_path)?;
+            println!("wrote {}", output_path.display());
+        }
         Command::ApprovalSign {
             input,
             output_path,
@@ -2056,6 +2064,16 @@ enum Command {
         output_path: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
+    },
+    /// Plan content-addressed changed-only work without executing builds.
+    ChangedOnlyPlan {
+        /// Owner-authored changed-only dependency graph JSON.
+        graph: PathBuf,
+        /// Prior local node state and output evidence JSON.
+        state: PathBuf,
+        /// New path-free plan JSON. Existing files are never overwritten.
+        #[arg(long)]
+        output_path: PathBuf,
     },
     /// Sign one owner-issued approval attestation from a strict local authorization contract.
     ApprovalSign {
