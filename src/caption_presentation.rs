@@ -56,6 +56,31 @@ pub enum SpeakerLabelPolicy {
     ReintroduceAfterMs,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum CaptionPictureLayout {
+    #[default]
+    Overlay,
+    ReserveCaptionBand,
+}
+
+impl CaptionPictureLayout {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Overlay => "overlay",
+            Self::ReserveCaptionBand => "reserve-caption-band",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self> {
+        match value {
+            "overlay" => Ok(Self::Overlay),
+            "reserve-caption-band" => Ok(Self::ReserveCaptionBand),
+            _ => bail!("unsupported caption picture layout {value}"),
+        }
+    }
+}
+
 impl SpeakerLabelPolicy {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -141,6 +166,12 @@ pub struct CaptionStyleReport {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct CaptionPictureLayoutReport {
+    pub strategy: String,
+    pub picture_region: PixelRect,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct SpeakerLabelEvent {
     pub srt_index: usize,
     pub narration_cue_id: String,
@@ -163,6 +194,8 @@ pub struct CaptionLineage {
     pub presentation_input_sha256: Option<String>,
     pub presentation_sha256: String,
     pub style: CaptionStyleReport,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture_layout: Option<CaptionPictureLayoutReport>,
     pub label_events: Vec<SpeakerLabelEvent>,
     pub check: CaptionCheckReport,
     pub passed: bool,
@@ -173,6 +206,7 @@ pub struct CaptionPresentationOptions<'a> {
     pub captions: &'a Path,
     pub presentation: Option<&'a Path>,
     pub profile: CaptionProfile,
+    pub picture_layout: CaptionPictureLayout,
     pub policy: SpeakerLabelPolicy,
     pub reintroduce_after_ms: Option<u64>,
     pub thresholds: CaptionThresholds,
@@ -213,6 +247,29 @@ pub fn prepare(
     let check_bytes = serde_json::to_vec(&check)?;
     let style = style_for(options.profile, options.width, options.height)?;
     validate_style(&style, options.width, options.height)?;
+    let picture_layout = match options.picture_layout {
+        CaptionPictureLayout::Overlay => None,
+        CaptionPictureLayout::ReserveCaptionBand => {
+            let picture_region = PixelRect {
+                x: 0,
+                y: 0,
+                width: options.width,
+                height: style.caption_region.y,
+            };
+            if picture_region.width == 0
+                || picture_region.height == 0
+                || picture_region.intersects(&style.caption_region)
+            {
+                bail!(
+                    "caption picture layout cannot reserve a valid non-overlapping picture region"
+                );
+            }
+            Some(CaptionPictureLayoutReport {
+                strategy: options.picture_layout.as_str().to_string(),
+                picture_region,
+            })
+        }
+    };
 
     let (presentation_input_sha256, label_events) = if options.policy == SpeakerLabelPolicy::None {
         if options.presentation.is_some() {
@@ -235,13 +292,24 @@ pub fn prepare(
         (Some(sha256(&bytes)), events)
     };
 
-    let presentation_sha256 = sha256(&serde_json::to_vec(&serde_json::json!({
-        "profile": options.profile.as_str(),
-        "policy": options.policy.as_str(),
-        "reintroduce_after_ms": options.reintroduce_after_ms,
-        "style": &style,
-        "events": &label_events,
-    }))?);
+    let presentation = match &picture_layout {
+        None => serde_json::json!({
+            "profile": options.profile.as_str(),
+            "policy": options.policy.as_str(),
+            "reintroduce_after_ms": options.reintroduce_after_ms,
+            "style": &style,
+            "events": &label_events,
+        }),
+        Some(picture_layout) => serde_json::json!({
+            "profile": options.profile.as_str(),
+            "policy": options.policy.as_str(),
+            "reintroduce_after_ms": options.reintroduce_after_ms,
+            "style": &style,
+            "picture_layout": picture_layout,
+            "events": &label_events,
+        }),
+    };
+    let presentation_sha256 = sha256(&serde_json::to_vec(&presentation)?);
     Ok(CaptionLineage {
         schema: CAPTION_LINEAGE_SCHEMA.to_string(),
         captions_sha256: check.captions_sha256.clone(),
@@ -258,6 +326,7 @@ pub fn prepare(
         presentation_input_sha256,
         presentation_sha256,
         style,
+        picture_layout,
         label_events,
         check,
         passed: true,
@@ -527,6 +596,7 @@ mod tests {
                 presentation: (policy != SpeakerLabelPolicy::None)
                     .then_some(Path::new(PRESENTATION)),
                 profile: CaptionProfile::YoutubeReview,
+                picture_layout: CaptionPictureLayout::Overlay,
                 policy,
                 reintroduce_after_ms,
                 thresholds: CaptionThresholds::default(),

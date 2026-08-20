@@ -108,6 +108,12 @@ overview before moving through delivery-canvas keyframes. Existing cover-camera
 renders remain unchanged. See
 [`docs/contained-still-camera-tracks-v0.2.47.md`](docs/contained-still-camera-tracks-v0.2.47.md).
 
+CLI v0.2.48 adds explicit caption-band picture reservation. Captioned still,
+video, and limited-animation renders can fit their picture above the declared
+caption region instead of placing captions over owner visuals; overlay remains
+the default. See
+[`docs/caption-safe-picture-layout-v0.2.48.md`](docs/caption-safe-picture-layout-v0.2.48.md).
+
 CLI v0.2.18 adds an opt-in `montage` edit mode with true hard cuts and crop-safe
 `punch-in` / `punch-out` treatments for sub-second photo bursts. The default
 `cinematic` mode is unchanged. See

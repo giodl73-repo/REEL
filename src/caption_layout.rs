@@ -64,6 +64,10 @@ pub struct CaptionLayoutReport {
     pub speaker_badge_text_color: String,
     pub speaker_badge_background: String,
     pub speaker_badge_padding_px: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture_region: Option<PixelRect>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption_picture_intersection: Option<bool>,
     pub representative_strategy: String,
     pub measurement_scope: String,
     pub cues: Vec<CaptionLayoutCue>,
@@ -159,6 +163,16 @@ pub fn write_packet(
         .iter()
         .map(|cue| cue.occupied_screen_percent)
         .fold(0.0_f64, f64::max);
+    let picture_region = lineage
+        .picture_layout
+        .as_ref()
+        .map(|layout| layout.picture_region.clone());
+    let caption_picture_intersection = picture_region
+        .as_ref()
+        .map(|picture| intersects(picture, &lineage.style.caption_region));
+    if caption_picture_intersection == Some(true) {
+        bail!("caption layout picture region intersects the declared caption region");
+    }
     let report = CaptionLayoutReport {
         schema: CAPTION_LAYOUT_SCHEMA.to_string(),
         artifact_schema: artifact.schema,
@@ -185,8 +199,10 @@ pub fn write_packet(
         speaker_badge_text_color: lineage.style.badge_text_color.clone(),
         speaker_badge_background: lineage.style.badge_background.clone(),
         speaker_badge_padding_px: lineage.style.badge_padding_px,
+        picture_region,
+        caption_picture_intersection,
         representative_strategy: "caption-cue-first-middle-last-midpoint-v1".to_string(),
-        measurement_scope: "declared caption and speaker-badge presentation regions; no OCR, translation, glyph-bound, device, or human-legibility claim".to_string(),
+        measurement_scope: "declared picture, caption, and speaker-badge presentation regions; no OCR, translation, glyph-bound, device, or human-legibility claim".to_string(),
         cues,
         maximum_occupied_screen_percent,
         images,

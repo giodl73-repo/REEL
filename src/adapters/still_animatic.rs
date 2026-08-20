@@ -15,7 +15,8 @@ use crate::{
     audio_quality::{AUDIO_CHECK_SCHEMA, AudioCheckReport},
     caption::CaptionThresholds,
     caption_presentation::{
-        self, CaptionLineage, CaptionPresentationOptions, CaptionProfile, SpeakerLabelPolicy,
+        self, CaptionLineage, CaptionPictureLayout, CaptionPresentationOptions, CaptionProfile,
+        SpeakerLabelPolicy,
     },
     production::{self, AudioRole, MediaKind, TimingStatus},
 };
@@ -113,6 +114,7 @@ pub struct AnimaticRenderOptions {
     pub captions: Option<PathBuf>,
     pub caption_presentation: Option<PathBuf>,
     pub caption_profile: CaptionProfile,
+    pub caption_picture_layout: CaptionPictureLayout,
     pub speaker_label_policy: SpeakerLabelPolicy,
     pub speaker_reintroduce_after_ms: Option<u64>,
     pub caption_thresholds: CaptionThresholds,
@@ -890,22 +892,6 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
             unsafe_shot.shot_id
         );
     }
-    let (estimated_peak_memory_mib, perspective_filter_instances) = render_resource_estimate(
-        options.width,
-        options.height,
-        &loaded.manifest.shots,
-        options.motion_quality,
-    );
-    if estimated_peak_memory_mib > MAX_ESTIMATED_PEAK_MEMORY_MIB {
-        bail!(
-            "requested smooth motion is infeasible: {} perspective filters at {}x{} estimate {} MiB peak memory, above the {} MiB budget; split the render or use --motion-quality legacy",
-            perspective_filter_instances,
-            options.width,
-            options.height,
-            estimated_peak_memory_mib,
-            MAX_ESTIMATED_PEAK_MEMORY_MIB
-        );
-    }
     let artifact_path = options.output.with_extension("artifacts.json");
     if options.output.exists() || artifact_path.exists() {
         bail!(
@@ -915,6 +901,10 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
     }
     if options.captions.is_none() && options.caption_presentation.is_some() {
         bail!("caption presentation requires captions");
+    }
+    if options.captions.is_none() && options.caption_picture_layout != CaptionPictureLayout::Overlay
+    {
+        bail!("caption picture layout reserve-caption-band requires captions");
     }
     let captions = options
         .captions
@@ -933,6 +923,7 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                     captions,
                     presentation: options.caption_presentation.as_deref(),
                     profile: options.caption_profile,
+                    picture_layout: options.caption_picture_layout,
                     policy: options.speaker_label_policy,
                     reintroduce_after_ms: options.speaker_reintroduce_after_ms,
                     thresholds: options.caption_thresholds,
@@ -943,6 +934,54 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
             )
         })
         .transpose()?;
+    let picture_region = caption_lineage
+        .as_ref()
+        .and_then(|lineage| lineage.picture_layout.as_ref())
+        .map(|layout| layout.picture_region.clone());
+    if picture_region.is_some()
+        && loaded
+            .manifest
+            .shots
+            .iter()
+            .any(|shot| shot.media_kind == MediaKind::SpriteAnimation)
+    {
+        bail!(
+            "caption picture layout reserve-caption-band does not support sprite-animation shots"
+        );
+    }
+    let picture_width = picture_region
+        .as_ref()
+        .map_or(options.width, |region| region.width);
+    let picture_height = picture_region
+        .as_ref()
+        .map_or(options.height, |region| region.height);
+    if picture_region.is_some()
+        && loaded
+            .manifest
+            .shots
+            .iter()
+            .any(|shot| shot.focal_point.is_some() || !shot.protected_regions.is_empty())
+    {
+        bail!(
+            "caption picture layout reserve-caption-band cannot map source-space focal_point or protected_regions"
+        );
+    }
+    let (estimated_peak_memory_mib, perspective_filter_instances) = render_resource_estimate(
+        picture_width,
+        picture_height,
+        &loaded.manifest.shots,
+        options.motion_quality,
+    );
+    if estimated_peak_memory_mib > MAX_ESTIMATED_PEAK_MEMORY_MIB {
+        bail!(
+            "requested smooth motion is infeasible: {} perspective filters at {}x{} estimate {} MiB peak memory, above the {} MiB budget; split the render or use --motion-quality legacy",
+            perspective_filter_instances,
+            picture_width,
+            picture_height,
+            estimated_peak_memory_mib,
+            MAX_ESTIMATED_PEAK_MEMORY_MIB
+        );
+    }
     let asset_root = options.asset_root.canonicalize().with_context(|| {
         format!(
             "failed to resolve asset root {}",
@@ -1481,15 +1520,15 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                 let treatment = match shot.media_kind {
                     MediaKind::Still if !camera.is_empty() => still_camera_filter(
                         camera,
-                        options.width,
-                        options.height,
+                        picture_width,
+                        picture_height,
                         options.fps,
                         options.motion_quality,
                         shot.visual_fit,
                     ),
                     MediaKind::Still if shot.visual_fit == production::VisualFit::Contain => {
                         let mut filter =
-                            visual_fit_filter(shot.visual_fit, options.width, options.height);
+                            visual_fit_filter(shot.visual_fit, picture_width, picture_height);
                         if shot.motion == "hold-dark" {
                             filter.push_str(",eq=brightness=-0.72:saturation=0.45");
                         }
@@ -1499,18 +1538,25 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                         &shot.motion,
                         duration + tail,
                         options.fps,
-                        options.width,
-                        options.height,
+                        picture_width,
+                        picture_height,
                         options.motion_quality,
                         options.motion_curve,
                     ),
                     MediaKind::Video | MediaKind::Animation => {
-                        visual_fit_filter(shot.visual_fit, options.width, options.height)
+                        visual_fit_filter(shot.visual_fit, picture_width, picture_height)
                     }
                     MediaKind::SpriteAnimation => unreachable!(),
                 };
+                let picture_placement =
+                    picture_region.as_ref().map_or_else(String::new, |region| {
+                        format!(
+                            ",pad={}:{}:{}:{}:color=black",
+                            options.width, options.height, region.x, region.y
+                        )
+                    });
                 filters.push(format!(
-                    "[{input_index}:v]{treatment},framerate=fps={},setsar=1,settb=AVTB,trim=duration={:.3},setpts=PTS-STARTPTS[v{index}]",
+                    "[{input_index}:v]{treatment}{picture_placement},framerate=fps={},setsar=1,settb=AVTB,trim=duration={:.3},setpts=PTS-STARTPTS[v{index}]",
                     options.fps,
                     duration + tail
                 ));
@@ -1958,8 +2004,8 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
             MotionQuality::Legacy => "delivery-resolution integer crop coordinates",
         }
         .to_string(),
-        working_width: options.width,
-        working_height: options.height,
+        working_width: picture_width,
+        working_height: picture_height,
         fps: options.fps,
         estimated_peak_memory_mib,
         perspective_filter_instances,
@@ -2795,8 +2841,18 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
     {
         bail!("sprite render-locality lineage does not match artifact inputs");
     }
-    if report.motion.working_width != report.width
-        || report.motion.working_height != report.height
+    let expected_working_width = report
+        .captions
+        .as_ref()
+        .and_then(|lineage| lineage.picture_layout.as_ref())
+        .map_or(report.width, |layout| layout.picture_region.width);
+    let expected_working_height = report
+        .captions
+        .as_ref()
+        .and_then(|lineage| lineage.picture_layout.as_ref())
+        .map_or(report.height, |layout| layout.picture_region.height);
+    if report.motion.working_width != expected_working_width
+        || report.motion.working_height != expected_working_height
         || report.motion.fps != report.fps
         || report.motion.backend_version != report.ffmpeg_version
     {
@@ -2819,8 +2875,12 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
         }
         _ => bail!("motion backend lineage is inconsistent"),
     };
-    let (expected_memory, expected_instances) =
-        render_resource_estimate(report.width, report.height, &loaded.manifest.shots, quality);
+    let (expected_memory, expected_instances) = render_resource_estimate(
+        expected_working_width,
+        expected_working_height,
+        &loaded.manifest.shots,
+        quality,
+    );
     if report.motion.estimated_peak_memory_mib != expected_memory
         || report.motion.perspective_filter_instances != expected_instances
         || report.motion.maximum_estimated_peak_memory_mib != MAX_ESTIMATED_PEAK_MEMORY_MIB
@@ -2897,6 +2957,12 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
                 captions: Path::new(&captions.path),
                 presentation,
                 profile: CaptionProfile::parse(&lineage.profile)?,
+                picture_layout: lineage
+                    .picture_layout
+                    .as_ref()
+                    .map_or(Ok(CaptionPictureLayout::Overlay), |layout| {
+                        CaptionPictureLayout::parse(&layout.strategy)
+                    })?,
                 policy: SpeakerLabelPolicy::parse(&lineage.speaker_label_policy)?,
                 reintroduce_after_ms: lineage.speaker_reintroduce_after_ms,
                 thresholds: CaptionThresholds {
@@ -3447,6 +3513,7 @@ mod tests {
             captions: Some(fixture_root.join("captions.srt")),
             caption_presentation: None,
             caption_profile: CaptionProfile::YoutubeReview,
+            caption_picture_layout: CaptionPictureLayout::Overlay,
             speaker_label_policy: SpeakerLabelPolicy::None,
             speaker_reintroduce_after_ms: None,
             caption_thresholds: CaptionThresholds::default(),
@@ -3515,6 +3582,7 @@ mod tests {
             captions: None,
             caption_presentation: None,
             caption_profile: CaptionProfile::YoutubeReview,
+            caption_picture_layout: CaptionPictureLayout::Overlay,
             speaker_label_policy: SpeakerLabelPolicy::None,
             speaker_reintroduce_after_ms: None,
             caption_thresholds: CaptionThresholds::default(),
@@ -3686,6 +3754,7 @@ mod tests {
             captions: None,
             caption_presentation: None,
             caption_profile: CaptionProfile::YoutubeReview,
+            caption_picture_layout: CaptionPictureLayout::Overlay,
             speaker_label_policy: SpeakerLabelPolicy::None,
             speaker_reintroduce_after_ms: None,
             caption_thresholds: CaptionThresholds::default(),
@@ -4139,6 +4208,7 @@ mod tests {
             captions: Some(temp.path().join("captions.srt")),
             caption_presentation: None,
             caption_profile: CaptionProfile::YoutubeReview,
+            caption_picture_layout: CaptionPictureLayout::Overlay,
             speaker_label_policy: SpeakerLabelPolicy::None,
             speaker_reintroduce_after_ms: None,
             caption_thresholds: CaptionThresholds::default(),

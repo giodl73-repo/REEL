@@ -1177,6 +1177,7 @@ fn run_cli() -> Result<()> {
                 captions,
                 caption_presentation: caption_options.caption_presentation,
                 caption_profile: caption_options.caption_profile,
+                caption_picture_layout: caption_options.caption_picture_layout,
                 speaker_label_policy: caption_options.speaker_label_policy,
                 speaker_reintroduce_after_ms: caption_options.speaker_reintroduce_after_ms,
                 caption_thresholds: reel::caption::CaptionThresholds {
@@ -1873,6 +1874,9 @@ struct AnimaticCaptionArgs {
     /// Select deterministic caption and speaker-badge geometry.
     #[arg(long, value_enum, default_value_t = reel::caption_presentation::CaptionProfile::PrivateReview)]
     caption_profile: reel::caption_presentation::CaptionProfile,
+    /// Keep the default caption overlay or reserve its declared lower band from picture.
+    #[arg(long, value_enum, default_value_t = reel::caption_presentation::CaptionPictureLayout::Overlay)]
+    caption_picture_layout: reel::caption_presentation::CaptionPictureLayout,
     /// Select when explicit audience-facing speaker labels are shown.
     #[arg(long, value_enum, default_value_t = reel::caption_presentation::SpeakerLabelPolicy::None)]
     speaker_label_policy: reel::caption_presentation::SpeakerLabelPolicy,
