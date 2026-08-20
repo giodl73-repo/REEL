@@ -32,8 +32,9 @@ that every source label is readable.
 - Still, video, and limited-animation shots are supported.
 - Sprite-animation shots are rejected because their normalized canvas geometry
   has not been mapped into a smaller picture region.
-- `focal_point` and `protected_regions` are rejected because their source-space
-  geometry has not been mapped through the reserved-region fit.
+- `focal_point` and `protected_regions` require the explicit contained-camera
+  geometry mapping introduced in v0.3.0; unmapped or cover-fitted geometry is
+  rejected.
 - Speaker badges remain overlays; this option reserves only the caption band.
 - REEL does not infer semantic importance, select a source crop, rewrite owner
   labels, or establish accessibility or publication approval.

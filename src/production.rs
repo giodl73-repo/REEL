@@ -321,6 +321,16 @@ pub struct SpriteCameraKeyframe {
 pub struct StillCameraTrack {
     pub timing_fps: u32,
     pub keyframes: Vec<SpriteCameraKeyframe>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry: Option<StillCameraGeometry>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct StillCameraGeometry {
+    pub source_width: u32,
+    pub source_height: u32,
+    pub canvas_width: u32,
+    pub canvas_height: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -1692,11 +1702,13 @@ fn validate_mixed_media(manifest: &ProductionManifest, duration_ms: Option<u64>)
                     );
                 }
                 MediaKind::Still
-                    if shot.camera_track.is_some()
-                        && (shot.focal_point.is_some() || !shot.protected_regions.is_empty()) =>
+                    if shot.camera_track.as_ref().is_some_and(|track| {
+                        track.geometry.is_none()
+                            && (shot.focal_point.is_some() || !shot.protected_regions.is_empty())
+                    }) =>
                 {
                     bail!(
-                        "still shot {} cannot combine a contained camera_track with source-space focal_point or protected_regions",
+                        "still shot {} contained camera_track requires geometry to map source-space focal_point or protected_regions",
                         shot.id
                     );
                 }
@@ -1740,6 +1752,24 @@ fn validate_mixed_media(manifest: &ProductionManifest, duration_ms: Option<u64>)
                         "still shot {} camera_track must declare at least two keyframes",
                         shot.id
                     );
+                }
+                if let Some(geometry) = &track.geometry {
+                    if shot.visual_fit != VisualFit::Contain {
+                        bail!(
+                            "still shot {} camera_track geometry requires visual_fit contain",
+                            shot.id
+                        );
+                    }
+                    if geometry.source_width == 0
+                        || geometry.source_height == 0
+                        || geometry.canvas_width == 0
+                        || geometry.canvas_height == 0
+                    {
+                        bail!(
+                            "still shot {} camera_track geometry dimensions must be positive",
+                            shot.id
+                        );
+                    }
                 }
                 let total_frames = shot
                     .duration_seconds

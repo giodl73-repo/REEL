@@ -146,7 +146,7 @@ fn reserve_caption_band_rejects_unmapped_source_safety_geometry() {
     assert!(!output.status.success());
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("cannot map source-space focal_point or protected_regions")
+            .contains("requires visual_fit contain and camera_track geometry")
     );
 }
 

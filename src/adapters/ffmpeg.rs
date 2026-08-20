@@ -180,7 +180,7 @@ impl FfmpegAdapter {
                 "-v".to_string(),
                 "error".to_string(),
                 "-show_entries".to_string(),
-                "format=duration:stream=index,codec_type,codec_name,width,height,pix_fmt,r_frame_rate,avg_frame_rate,duration".to_string(),
+                "format=duration:stream=index,codec_type,codec_name,width,height,sample_aspect_ratio,pix_fmt,r_frame_rate,avg_frame_rate,duration:stream_tags=rotate:stream_side_data=rotation".to_string(),
                 "-of".to_string(),
                 "json".to_string(),
             ],

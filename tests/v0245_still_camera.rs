@@ -1,7 +1,7 @@
 use std::{fs, path::Path, process::Command};
 
 use reel::production::{
-    self, SpriteCameraCurve, SpriteCameraKeyframe, StillCameraTrack, VisualFit,
+    self, SpriteCameraCurve, SpriteCameraKeyframe, StillCameraGeometry, StillCameraTrack, VisualFit,
 };
 use serde_json::Value;
 use tempfile::tempdir;
@@ -41,6 +41,7 @@ fn camera_manifest() -> production::ProductionManifest {
                 curve_to_next: SpriteCameraCurve::Linear,
             },
         ],
+        geometry: None,
     });
     manifest
 }
@@ -152,7 +153,7 @@ fn validation_rejects_invalid_still_camera_contracts() {
     manifest.shots[0].focal_point = Some(production::FocalPoint { x: 0.5, y: 0.5 });
     assert!(
         validation_error(&manifest)
-            .contains("cannot combine a contained camera_track with source-space focal_point")
+            .contains("contained camera_track requires geometry to map source-space focal_point")
     );
 
     let mut manifest = camera_manifest();
@@ -168,8 +169,27 @@ fn validation_rejects_invalid_still_camera_contracts() {
         });
     assert!(
         validation_error(&manifest)
-            .contains("cannot combine a contained camera_track with source-space focal_point")
+            .contains("contained camera_track requires geometry to map source-space focal_point")
     );
+
+    let mut manifest = camera_manifest();
+    manifest.shots[0].camera_track.as_mut().unwrap().geometry = Some(StillCameraGeometry {
+        source_width: 1920,
+        source_height: 1080,
+        canvas_width: 1280,
+        canvas_height: 720,
+    });
+    assert!(validation_error(&manifest).contains("geometry requires visual_fit contain"));
+
+    let mut manifest = camera_manifest();
+    manifest.shots[0].visual_fit = VisualFit::Contain;
+    manifest.shots[0].camera_track.as_mut().unwrap().geometry = Some(StillCameraGeometry {
+        source_width: 0,
+        source_height: 1080,
+        canvas_width: 1280,
+        canvas_height: 720,
+    });
+    assert!(validation_error(&manifest).contains("geometry dimensions must be positive"));
 }
 
 #[test]

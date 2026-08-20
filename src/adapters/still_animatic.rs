@@ -404,6 +404,7 @@ fn camera_perspective_filter(
     height: u32,
     fps: u32,
     visual_fit: production::VisualFit,
+    geometry: Option<&production::StillCameraGeometry>,
 ) -> String {
     let zoom = camera_expression(camera, fps, CameraProperty::Zoom);
     let center_x = camera_expression(camera, fps, CameraProperty::CenterX);
@@ -412,19 +413,42 @@ fn camera_perspective_filter(
     let top = format!("max(0,min(H-H/({zoom}),H*({center_y})-H/({zoom})/2))");
     let right = format!("({left})+W/({zoom})");
     let bottom = format!("({top})+H/({zoom})");
-    let fit = visual_fit_scale_filter(visual_fit, width, height);
+    let fit = visual_fit_scale_filter_with_geometry(visual_fit, width, height, geometry);
     format!(
         "{fit},perspective=x0='{left}':y0='{top}':x1='{right}':y1='{top}':x2='{left}':y2='{bottom}':x3='{right}':y3='{bottom}':interpolation=cubic:sense=source:eval=frame"
     )
 }
 
 fn visual_fit_scale_filter(fit: production::VisualFit, width: u32, height: u32) -> String {
+    visual_fit_scale_filter_with_geometry(fit, width, height, None)
+}
+
+fn visual_fit_scale_filter_with_geometry(
+    fit: production::VisualFit,
+    width: u32,
+    height: u32,
+    geometry: Option<&production::StillCameraGeometry>,
+) -> String {
     match fit {
         production::VisualFit::Cover => format!(
             "scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
         ),
-        production::VisualFit::Contain => format!(
-            "scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black"
+        production::VisualFit::Contain => geometry.map_or_else(
+            || {
+                format!(
+                    "scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black"
+                )
+            },
+            |geometry| {
+                let mapping = source_to_canvas_mapping(geometry);
+                format!(
+                    "format=rgba,scale={}:{},pad={width}:{height}:{}:{}:color=black",
+                    mapping.fitted_width,
+                    mapping.fitted_height,
+                    mapping.fitted_x,
+                    mapping.fitted_y
+                )
+            },
         ),
     }
 }
@@ -436,11 +460,14 @@ fn still_camera_filter(
     fps: u32,
     quality: MotionQuality,
     visual_fit: production::VisualFit,
+    geometry: Option<&production::StillCameraGeometry>,
 ) -> String {
     match quality {
-        MotionQuality::Smooth => camera_perspective_filter(camera, width, height, fps, visual_fit),
+        MotionQuality::Smooth => {
+            camera_perspective_filter(camera, width, height, fps, visual_fit, geometry)
+        }
         MotionQuality::Legacy => {
-            let fit = visual_fit_scale_filter(visual_fit, width, height);
+            let fit = visual_fit_scale_filter_with_geometry(visual_fit, width, height, geometry);
             format!(
                 "{fit},{}",
                 camera_zoompan_filter(camera, width, height, fps)
@@ -527,10 +554,24 @@ pub struct ProtectedRegionSafety {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct SourceToCanvasMapping {
+    pub source_width: u32,
+    pub source_height: u32,
+    pub canvas_width: u32,
+    pub canvas_height: u32,
+    pub fitted_x: u32,
+    pub fitted_y: u32,
+    pub fitted_width: u32,
+    pub fitted_height: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ShotSafetyReport {
     pub shot_id: String,
     pub treatment: String,
     pub blank_canvas_safe: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_to_canvas: Option<SourceToCanvasMapping>,
     pub focal_point_safe: Option<bool>,
     pub protected_regions: Vec<ProtectedRegionSafety>,
     pub passed: bool,
@@ -767,6 +808,56 @@ fn contains(rect: NormalizedRect, left: f64, top: f64, right: f64, bottom: f64) 
         && bottom <= rect.bottom + EPSILON
 }
 
+fn source_to_canvas_mapping(geometry: &production::StillCameraGeometry) -> SourceToCanvasMapping {
+    let source_width = u64::from(geometry.source_width);
+    let source_height = u64::from(geometry.source_height);
+    let canvas_width = u64::from(geometry.canvas_width);
+    let canvas_height = u64::from(geometry.canvas_height);
+    let (fitted_width, fitted_height) =
+        if source_width * canvas_height > source_height * canvas_width {
+            (
+                canvas_width,
+                (source_height * canvas_width / source_width).max(1),
+            )
+        } else {
+            (
+                (source_width * canvas_height / source_height).max(1),
+                canvas_height,
+            )
+        };
+    let fitted_x = (canvas_width - fitted_width) / 2;
+    let fitted_y = (canvas_height - fitted_height) / 2;
+    SourceToCanvasMapping {
+        source_width: geometry.source_width,
+        source_height: geometry.source_height,
+        canvas_width: geometry.canvas_width,
+        canvas_height: geometry.canvas_height,
+        fitted_x: fitted_x as u32,
+        fitted_y: fitted_y as u32,
+        fitted_width: fitted_width as u32,
+        fitted_height: fitted_height as u32,
+    }
+}
+
+fn map_source_rect(
+    mapping: &SourceToCanvasMapping,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> NormalizedRect {
+    let canvas_width = f64::from(mapping.canvas_width);
+    let canvas_height = f64::from(mapping.canvas_height);
+    let left = (f64::from(mapping.fitted_x) + x * f64::from(mapping.fitted_width)) / canvas_width;
+    let top = (f64::from(mapping.fitted_y) + y * f64::from(mapping.fitted_height)) / canvas_height;
+    NormalizedRect {
+        left,
+        top,
+        right: left + width * f64::from(mapping.fitted_width) / canvas_width,
+        bottom: top + height * f64::from(mapping.fitted_height) / canvas_height,
+    }
+}
+
 fn safety_report(shot: &production::Shot) -> ShotSafetyReport {
     let treatment = shot_motion_treatment(shot);
     let rects = match &shot.camera_track {
@@ -778,28 +869,47 @@ fn safety_report(shot: &production::Shot) -> ShotSafetyReport {
         }
         None => sampled_rects(treatment),
     };
+    let source_to_canvas = shot
+        .camera_track
+        .as_ref()
+        .and_then(|track| track.geometry.as_ref())
+        .map(source_to_canvas_mapping);
     let blank_canvas_safe = rects
         .iter()
         .all(|rect| rect.left >= 0.0 && rect.top >= 0.0 && rect.right <= 1.0 && rect.bottom <= 1.0);
     let focal_point_safe = shot.focal_point.as_ref().map(|point| {
+        let mapped = source_to_canvas.as_ref().map_or(
+            NormalizedRect {
+                left: point.x,
+                top: point.y,
+                right: point.x,
+                bottom: point.y,
+            },
+            |mapping| map_source_rect(mapping, point.x, point.y, 0.0, 0.0),
+        );
         rects
             .iter()
-            .all(|rect| contains(*rect, point.x, point.y, point.x, point.y))
+            .all(|rect| contains(*rect, mapped.left, mapped.top, mapped.right, mapped.bottom))
     });
     let protected_regions = shot
         .protected_regions
         .iter()
-        .map(|region| ProtectedRegionSafety {
-            id: region.id.clone(),
-            safe: rects.iter().all(|rect| {
-                contains(
-                    *rect,
-                    region.x,
-                    region.y,
-                    region.x + region.width,
-                    region.y + region.height,
-                )
-            }),
+        .map(|region| {
+            let mapped = source_to_canvas.as_ref().map_or(
+                NormalizedRect {
+                    left: region.x,
+                    top: region.y,
+                    right: region.x + region.width,
+                    bottom: region.y + region.height,
+                },
+                |mapping| map_source_rect(mapping, region.x, region.y, region.width, region.height),
+            );
+            ProtectedRegionSafety {
+                id: region.id.clone(),
+                safe: rects.iter().all(|rect| {
+                    contains(*rect, mapped.left, mapped.top, mapped.right, mapped.bottom)
+                }),
+            }
         })
         .collect::<Vec<_>>();
     let passed = blank_canvas_safe
@@ -809,10 +919,67 @@ fn safety_report(shot: &production::Shot) -> ShotSafetyReport {
         shot_id: shot.id.clone(),
         treatment: treatment.to_string(),
         blank_canvas_safe,
+        source_to_canvas,
         focal_point_safe,
         protected_regions,
         passed,
     }
+}
+
+fn verify_camera_source_geometry(
+    adapter: &FfmpegAdapter,
+    shot: &production::Shot,
+    source: &Path,
+) -> Result<()> {
+    let Some(geometry) = shot
+        .camera_track
+        .as_ref()
+        .and_then(|track| track.geometry.as_ref())
+    else {
+        return Ok(());
+    };
+    let probe: SourceProbe = serde_json::from_str(&adapter.ffprobe_json(source)?)
+        .with_context(|| format!("ffprobe returned invalid JSON for {}", source.display()))?;
+    let video_streams = probe
+        .streams
+        .iter()
+        .filter(|stream| stream.codec_type.as_deref() == Some("video"))
+        .collect::<Vec<_>>();
+    if video_streams.len() != 1 {
+        bail!(
+            "shot {} camera_track geometry requires exactly one visual stream",
+            shot.id
+        );
+    }
+    let stream = video_streams[0];
+    if source_stream_rotation(stream).is_some_and(|rotation| rotation.rem_euclid(360) != 0) {
+        bail!(
+            "shot {} camera_track geometry requires a source with normalized orientation metadata",
+            shot.id
+        );
+    }
+    if stream
+        .sample_aspect_ratio
+        .as_deref()
+        .is_some_and(|ratio| !matches!(ratio, "1:1" | "1/1" | "N/A"))
+    {
+        bail!(
+            "shot {} camera_track geometry requires square source pixels",
+            shot.id
+        );
+    }
+    if stream.width != Some(geometry.source_width) || stream.height != Some(geometry.source_height)
+    {
+        bail!(
+            "shot {} camera_track geometry source {}x{} does not match actual asset dimensions {}x{}",
+            shot.id,
+            geometry.source_width,
+            geometry.source_height,
+            stream.width.unwrap_or_default(),
+            stream.height.unwrap_or_default()
+        );
+    }
+    Ok(())
 }
 
 fn render_resource_estimate(
@@ -880,18 +1047,6 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
     if !(0.0..=5.0).contains(&options.transition_seconds) {
         bail!("transition-seconds must be within 0..5");
     }
-    let safety = loaded
-        .manifest
-        .shots
-        .iter()
-        .map(safety_report)
-        .collect::<Vec<_>>();
-    if let Some(unsafe_shot) = safety.iter().find(|shot| !shot.passed) {
-        bail!(
-            "motion transform would crop a declared focal point or protected region in shot {}",
-            unsafe_shot.shot_id
-        );
-    }
     let artifact_path = options.output.with_extension("artifacts.json");
     if options.output.exists() || artifact_path.exists() {
         bail!(
@@ -956,14 +1111,47 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         .as_ref()
         .map_or(options.height, |region| region.height);
     if picture_region.is_some()
-        && loaded
-            .manifest
-            .shots
-            .iter()
-            .any(|shot| shot.focal_point.is_some() || !shot.protected_regions.is_empty())
+        && loaded.manifest.shots.iter().any(|shot| {
+            (shot.focal_point.is_some() || !shot.protected_regions.is_empty())
+                && (shot.visual_fit != production::VisualFit::Contain
+                    || shot
+                        .camera_track
+                        .as_ref()
+                        .is_none_or(|track| track.geometry.is_none()))
+        })
     {
         bail!(
-            "caption picture layout reserve-caption-band cannot map source-space focal_point or protected_regions"
+            "caption picture layout reserve-caption-band requires visual_fit contain and camera_track geometry to map source-space focal_point or protected_regions"
+        );
+    }
+    for shot in &loaded.manifest.shots {
+        if let Some(geometry) = shot
+            .camera_track
+            .as_ref()
+            .and_then(|track| track.geometry.as_ref())
+        {
+            if geometry.canvas_width != picture_width || geometry.canvas_height != picture_height {
+                bail!(
+                    "shot {} camera_track geometry canvas {}x{} does not match render picture canvas {}x{}",
+                    shot.id,
+                    geometry.canvas_width,
+                    geometry.canvas_height,
+                    picture_width,
+                    picture_height
+                );
+            }
+        }
+    }
+    let safety = loaded
+        .manifest
+        .shots
+        .iter()
+        .map(safety_report)
+        .collect::<Vec<_>>();
+    if let Some(unsafe_shot) = safety.iter().find(|shot| !shot.passed) {
+        bail!(
+            "motion transform would crop a declared focal point or protected region in shot {}",
+            unsafe_shot.shot_id
         );
     }
     let (estimated_peak_memory_mib, perspective_filter_instances) = render_resource_estimate(
@@ -1039,6 +1227,7 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                 if !Path::new(visual).is_absolute() && !resolved.starts_with(&asset_root) {
                     bail!("shot {} visual_asset escapes asset root", shot.id);
                 }
+                verify_camera_source_geometry(&adapter, shot, &resolved)?;
                 inputs.push(AnimaticInput {
                     kind: match shot.media_kind {
                         MediaKind::Still => "still",
@@ -1525,6 +1714,9 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                         options.fps,
                         options.motion_quality,
                         shot.visual_fit,
+                        shot.camera_track
+                            .as_ref()
+                            .and_then(|track| track.geometry.as_ref()),
                     ),
                     MediaKind::Still if shot.visual_fit == production::VisualFit::Contain => {
                         let mut filter =
@@ -2620,18 +2812,44 @@ struct ProbeReport {
     format: ProbeFormat,
 }
 #[derive(Deserialize)]
+struct SourceProbe {
+    streams: Vec<ProbeStream>,
+}
+#[derive(Deserialize)]
 struct ProbeStream {
     codec_type: Option<String>,
     codec_name: Option<String>,
     width: Option<u32>,
     height: Option<u32>,
+    sample_aspect_ratio: Option<String>,
+    #[serde(default)]
+    side_data_list: Vec<ProbeSideData>,
+    #[serde(default)]
+    tags: BTreeMap<String, String>,
     pix_fmt: Option<String>,
     r_frame_rate: Option<String>,
     avg_frame_rate: Option<String>,
 }
 #[derive(Deserialize)]
+struct ProbeSideData {
+    rotation: Option<i32>,
+}
+#[derive(Deserialize)]
 struct ProbeFormat {
     duration: String,
+}
+
+fn source_stream_rotation(stream: &ProbeStream) -> Option<i32> {
+    stream
+        .side_data_list
+        .iter()
+        .find_map(|data| data.rotation)
+        .or_else(|| {
+            stream
+                .tags
+                .get("rotate")
+                .and_then(|rotation| rotation.parse().ok())
+        })
 }
 
 fn fraction(value: &str) -> Result<f64> {
@@ -2906,6 +3124,32 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
             })
     {
         bail!("motion lineage does not match manifest shots");
+    }
+    let source_adapter = FfmpegAdapter;
+    for shot in &loaded.manifest.shots {
+        let Some(geometry) = shot
+            .camera_track
+            .as_ref()
+            .and_then(|track| track.geometry.as_ref())
+        else {
+            continue;
+        };
+        if geometry.canvas_width != expected_working_width
+            || geometry.canvas_height != expected_working_height
+        {
+            bail!("camera_track geometry does not match artifact motion dimensions");
+        }
+        let source = report
+            .inputs
+            .iter()
+            .find(|input| input.kind == "still" && input.id == shot.id)
+            .ok_or_else(|| {
+                anyhow!(
+                    "camera_track geometry has no bound still input for shot {}",
+                    shot.id
+                )
+            })?;
+        verify_camera_source_geometry(&source_adapter, shot, Path::new(&source.path))?;
     }
     let expected_safety = loaded
         .manifest
@@ -3919,6 +4163,7 @@ mod tests {
                     curve_to_next: production::SpriteCameraCurve::Linear,
                 },
             ],
+            geometry: None,
         };
         let mask = camera_track_hold_mask(&track, 47, 2.0);
         assert!(mask[0]);
@@ -4418,6 +4663,21 @@ mod tests {
             escape_drawtext("PRIVATE: author's"),
             "PRIVATE\\: author\\'s"
         );
+    }
+
+    #[test]
+    fn detects_source_rotation_from_side_data_and_legacy_tags() {
+        let side_data: ProbeStream = serde_json::from_value(serde_json::json!({
+            "side_data_list": [{ "rotation": -90 }]
+        }))
+        .unwrap();
+        assert_eq!(source_stream_rotation(&side_data), Some(-90));
+
+        let legacy: ProbeStream = serde_json::from_value(serde_json::json!({
+            "tags": { "rotate": "180" }
+        }))
+        .unwrap();
+        assert_eq!(source_stream_rotation(&legacy), Some(180));
     }
 
     #[test]

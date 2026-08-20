@@ -114,6 +114,12 @@ caption region instead of placing captions over owner visuals; overlay remains
 the default. See
 [`docs/caption-safe-picture-layout-v0.2.48.md`](docs/caption-safe-picture-layout-v0.2.48.md).
 
+CLI v0.3.0 lets contained still-camera tracks declare exact source and working
+canvas geometry. REEL verifies the source dimensions, emits the same
+deterministic fit in FFmpeg, and maps source-space focal/protected geometry into
+camera space for render and review evidence. See
+[`docs/source-to-camera-mapping-v0.3.0.md`](docs/source-to-camera-mapping-v0.3.0.md).
+
 CLI v0.2.18 adds an opt-in `montage` edit mode with true hard cuts and crop-safe
 `punch-in` / `punch-out` treatments for sub-second photo bursts. The default
 `cinematic` mode is unchanged. See
