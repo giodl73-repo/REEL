@@ -83,6 +83,10 @@ fn render(
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "requires FFmpeg/ffprobe inside WSL; GitHub Windows runners have no WSL distribution"
+)]
 fn reserve_caption_band_maps_source_safety_into_the_picture_canvas() {
     let manifest = mapped_manifest();
     let geometry = manifest.shots[0]
@@ -150,6 +154,10 @@ fn reserve_caption_band_maps_source_safety_into_the_picture_canvas() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "requires FFmpeg/ffprobe inside WSL; GitHub Windows runners have no WSL distribution"
+)]
 fn mapped_camera_rejects_stale_source_and_canvas_geometry() {
     let mut stale_source = mapped_manifest();
     stale_source.shots[0]
