@@ -23,6 +23,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Install pinned GPL FFmpeg build for tests
+        if: runner.os != 'Windows'
         uses: AnimMouse/setup-ffmpeg@178e0b4a408f06ce40d896c3cd79f50fa6f8b0c3 # v1.2.5
         with:
           version: "8.1"
