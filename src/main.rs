@@ -339,6 +339,34 @@ fn run_cli() -> Result<()> {
                 );
             }
         }
+        Command::SongValidate { manifest, output } => {
+            let report = reel::song::validate(&manifest)?;
+            print_report(&report, output)?;
+        }
+        Command::SongEnginePlan {
+            manifest,
+            output_dir,
+            output,
+        } => {
+            let report = reel::song::write_plan(&manifest, &output_dir)?;
+            print_report(&report, output)?;
+        }
+        Command::SongEnginePlanCheck {
+            packet_dir,
+            manifest,
+            output,
+        } => {
+            let report = reel::song::check(&packet_dir, &manifest)?;
+            print_report(&report, output)?;
+        }
+        Command::SongEngineDoctor { manifest, output } => {
+            let report = reel::song::doctor(&manifest)?;
+            let ready = report.ready;
+            print_report(&report, output)?;
+            if !ready {
+                anyhow::bail!("local song engine is not ready");
+            }
+        }
         Command::VoicePerformancePlan {
             manifest,
             performance,
@@ -1467,6 +1495,33 @@ enum Command {
         /// Atomically retain the strict path-free JSON report for later artifact binding.
         #[arg(long)]
         report: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate an exact-lyrics, rights-gated local song-generation contract.
+    SongValidate {
+        manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Compile a private local-engine request and a path-free, lyric-free receipt.
+    SongEnginePlan {
+        manifest: PathBuf,
+        #[arg(long)]
+        output_dir: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Re-verify a song-engine packet against its manifest, lyrics, and references.
+    SongEnginePlanCheck {
+        packet_dir: PathBuf,
+        manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Diagnose the declared local song engine without downloading or generating.
+    SongEngineDoctor {
+        manifest: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

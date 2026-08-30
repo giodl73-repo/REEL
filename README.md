@@ -153,6 +153,14 @@ prompt rendering requires an explicit per-shot opt-in and remains separate from
 FFmpeg picture readiness. See
 [`docs/asset-readiness-v0.2.24.md`](docs/asset-readiness-v0.2.24.md).
 
+CLI v0.2.25 adds a provider-neutral, exact-lyrics song-generation contract and
+the first local adapter boundary for ACE-Step 1.5. REEL validates source hashes,
+rights and egress declarations, engine/model/seed provenance, and requested
+outputs; it writes a private engine request beside a path-free, lyric-free
+receipt. It does not download models, execute generation, infer consent, verify
+the generated vocal words, or authorize release. See
+[`docs/song-generation-v0.2.25.md`](docs/song-generation-v0.2.25.md).
+
 The main BERTICA-driven workflow is:
 
 ```powershell
