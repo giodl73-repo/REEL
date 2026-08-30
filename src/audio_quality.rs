@@ -160,7 +160,7 @@ pub fn check(options: AudioCheckOptions<'_>) -> Result<AudioCheckReport> {
     let (audio, silence) = analyze(options.audio)?;
     let expected_duration_ms = match options.manifest {
         Some(path) => Some(
-            production::require_preview_ready(path)?
+            production::require_timing_ready(path)?
                 .manifest
                 .shots
                 .iter()

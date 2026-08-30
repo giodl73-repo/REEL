@@ -88,7 +88,7 @@ pub struct PictureRemuxCheckReport {
 }
 
 pub fn render_audio_preview(options: &AudioPreviewOptions) -> Result<AudioPreviewReport> {
-    let loaded = production::require_preview_ready(&options.manifest)?;
+    let loaded = production::require_timing_ready(&options.manifest)?;
     if loaded.manifest.audio_events.is_empty() {
         bail!("audio-only rendering requires manifest audio_events");
     }

@@ -59,6 +59,33 @@ impl TimingStatus {
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum VisualAssetStatus {
+    PlannedUnrendered,
+    #[serde(alias = "candidate-unreviewed")]
+    Candidate,
+    Selected,
+    Approved,
+    Missing,
+}
+
+impl VisualAssetStatus {
+    fn is_selected(self) -> bool {
+        matches!(self, Self::Selected | Self::Approved)
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::PlannedUnrendered => "planned-unrendered",
+            Self::Candidate => "candidate",
+            Self::Selected => "selected",
+            Self::Approved => "approved",
+            Self::Missing => "missing",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct SourceScenario {
     #[serde(default)]
@@ -135,6 +162,10 @@ pub struct Shot {
     pub visual_prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visual_asset: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visual_asset_status: Option<VisualAssetStatus>,
+    #[serde(default)]
+    pub render_from_prompt: bool,
     #[serde(default)]
     pub media_kind: MediaKind,
     #[serde(default)]
@@ -563,10 +594,22 @@ pub struct ProductionValidationReport {
     pub narration_ducking: bool,
     pub audio_mastering: bool,
     pub duration_ms: Option<u64>,
+    pub timing_ready: bool,
+    pub generation_ready: bool,
+    pub asset_ready: bool,
     pub preview_ready: bool,
     pub delivery_ready: bool,
+    pub asset_status_counts: BTreeMap<String, usize>,
+    pub semantic_blockers: Vec<String>,
     pub gated_commands: Vec<String>,
     pub warnings: Vec<String>,
+}
+
+struct AssetReadiness {
+    generation_ready: bool,
+    asset_ready: bool,
+    status_counts: BTreeMap<String, usize>,
+    semantic_blockers: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -888,7 +931,15 @@ pub fn validate(loaded: &LoadedProductionManifest) -> Result<ProductionValidatio
         None
     };
     validate_mixed_media(manifest, duration_ms)?;
-    let gated_commands = if manifest.timing_status == TimingStatus::Untimed {
+    let timing_ready = manifest.timing_status.allows_preview();
+    let asset_readiness = evaluate_asset_readiness(manifest)?;
+    let generation_ready = asset_readiness.generation_ready;
+    let asset_ready = asset_readiness.asset_ready;
+    let asset_status_counts = asset_readiness.status_counts;
+    let semantic_blockers = asset_readiness.semantic_blockers;
+    let preview_ready = timing_ready && asset_ready;
+    let delivery_ready = manifest.timing_status.allows_delivery() && asset_ready;
+    let mut gated_commands = if manifest.timing_status == TimingStatus::Untimed {
         vec![
             "scene-preview".to_string(),
             "scene-previews".to_string(),
@@ -903,6 +954,20 @@ pub fn validate(loaded: &LoadedProductionManifest) -> Result<ProductionValidatio
     } else {
         Vec::new()
     };
+    if !asset_ready {
+        for command in [
+            "scene-preview",
+            "scene-previews",
+            "work-preview",
+            "animatic-render",
+            "artifact-manifest",
+            "delivery",
+        ] {
+            if !gated_commands.iter().any(|gated| gated == command) {
+                gated_commands.push(command.to_string());
+            }
+        }
+    }
     Ok(ProductionValidationReport {
         manifest: loaded.path.display().to_string(),
         version: manifest.manifest_version.clone(),
@@ -927,10 +992,90 @@ pub fn validate(loaded: &LoadedProductionManifest) -> Result<ProductionValidatio
         narration_ducking: manifest.narration_ducking.is_some(),
         audio_mastering: manifest.audio_mastering.is_some(),
         duration_ms,
-        preview_ready: manifest.timing_status.allows_preview(),
-        delivery_ready: manifest.timing_status.allows_delivery(),
+        timing_ready,
+        generation_ready,
+        asset_ready,
+        preview_ready,
+        delivery_ready,
+        asset_status_counts,
+        semantic_blockers,
         gated_commands,
         warnings,
+    })
+}
+
+fn evaluate_asset_readiness(manifest: &ProductionManifest) -> Result<AssetReadiness> {
+    let mut counts = BTreeMap::new();
+    let mut blockers = Vec::new();
+    let mut generation_blockers = 0_usize;
+    let mut asset_blockers = 0_usize;
+
+    for shot in &manifest.shots {
+        let has_asset = shot
+            .visual_asset
+            .as_deref()
+            .is_some_and(|asset| !asset.trim().is_empty());
+        if shot.render_from_prompt && shot.visual_prompt.trim().is_empty() {
+            bail!(
+                "shot {} enables render_from_prompt but has no visual_prompt",
+                shot.id
+            );
+        }
+        if shot
+            .visual_asset_status
+            .is_some_and(VisualAssetStatus::is_selected)
+            && !has_asset
+        {
+            bail!(
+                "shot {} declares selected media without visual_asset",
+                shot.id
+            );
+        }
+
+        let status = shot.visual_asset_status.map_or_else(
+            || {
+                if has_asset {
+                    "selected"
+                } else if shot.render_from_prompt {
+                    "prompt-renderable"
+                } else {
+                    "missing"
+                }
+            },
+            VisualAssetStatus::as_str,
+        );
+        *counts.entry(status.to_string()).or_insert(0) += 1;
+
+        let selected = shot
+            .visual_asset_status
+            .map_or(has_asset, VisualAssetStatus::is_selected);
+        if !selected {
+            asset_blockers += 1;
+            if !shot.render_from_prompt {
+                generation_blockers += 1;
+            }
+        }
+    }
+
+    for (status, count) in &counts {
+        if matches!(
+            status.as_str(),
+            "planned-unrendered" | "candidate" | "missing"
+        ) {
+            blockers.push(format!("{count} shot(s) have asset status {status}"));
+        }
+    }
+    let prompt_only = asset_blockers.saturating_sub(generation_blockers);
+    if prompt_only > 0 {
+        blockers.push(format!(
+            "{prompt_only} shot(s) require prompt rendering before picture preview"
+        ));
+    }
+    Ok(AssetReadiness {
+        generation_ready: generation_blockers == 0,
+        asset_ready: asset_blockers == 0,
+        status_counts: counts,
+        semantic_blockers: blockers,
     })
 }
 
@@ -1196,8 +1341,25 @@ pub fn plan(loaded: &LoadedProductionManifest) -> Result<ProductionPlan> {
 
 pub fn require_preview_ready(path: impl AsRef<Path>) -> Result<LoadedProductionManifest> {
     let loaded = load(path)?;
-    validate(&loaded)?;
-    if !loaded.manifest.timing_status.allows_preview() {
+    let report = validate(&loaded)?;
+    if !report.preview_ready {
+        if !report.timing_ready {
+            bail!(
+                "timing not conformed: preview and render commands are gated for untimed manifests"
+            );
+        }
+        bail!(
+            "visual assets not ready: {}",
+            report.semantic_blockers.join("; ")
+        );
+    }
+    Ok(loaded)
+}
+
+pub fn require_timing_ready(path: impl AsRef<Path>) -> Result<LoadedProductionManifest> {
+    let loaded = load(path)?;
+    let report = validate(&loaded)?;
+    if !report.timing_ready {
         bail!("timing not conformed: preview and render commands are gated for untimed manifests");
     }
     Ok(loaded)
@@ -1553,7 +1715,7 @@ pub fn caption_export(
     manifest_path: impl AsRef<Path>,
     output: impl AsRef<Path>,
 ) -> Result<PathBuf> {
-    let loaded = require_preview_ready(manifest_path)?;
+    let loaded = require_timing_ready(manifest_path)?;
     let mut timeline = BTreeMap::new();
     for cue in &loaded.manifest.narration_cues {
         let start = required_ms(cue.start_seconds, &format!("cue {} start", cue.id))?;

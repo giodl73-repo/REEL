@@ -66,7 +66,7 @@ fn run_cli() -> Result<()> {
                 let report = reel::production::validate(&loaded)?;
                 match output {
                     OutputFormat::Text => println!(
-                        "manifest ok: {} version={} profile={} timing={} scenes={} shots={} stills={} videos={} audio_events={} beats={} ducking={} mastering={} speakers={} cues={} duration={} preview_ready={} delivery_ready={} gated={}",
+                        "manifest ok: {} version={} profile={} timing={} scenes={} shots={} stills={} videos={} audio_events={} beats={} ducking={} mastering={} speakers={} cues={} duration={} timing_ready={} generation_ready={} asset_ready={} preview_ready={} delivery_ready={} blockers={} gated={}",
                         report.manifest,
                         report.version,
                         report.profile,
@@ -85,8 +85,12 @@ fn run_cli() -> Result<()> {
                             .duration_ms
                             .map(|value| format!("{value}ms"))
                             .unwrap_or_else(|| "untimed".to_string()),
+                        report.timing_ready,
+                        report.generation_ready,
+                        report.asset_ready,
                         report.preview_ready,
                         report.delivery_ready,
+                        report.semantic_blockers.join("|"),
                         report.gated_commands.join(",")
                     ),
                     OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
@@ -199,6 +203,61 @@ fn run_cli() -> Result<()> {
             let report =
                 reel::series::review_queue_with_decisions(&manifest, decision_index.as_deref())?;
             print_report(&report, output)?;
+        }
+        Command::ShowrunnerValidate { plan, output } => {
+            let report = reel::showrunner::validate(&plan)?;
+            match output {
+                OutputFormat::Text => print!("{}", reel::showrunner::validation_markdown(&report)),
+                OutputFormat::Json => print_report(&report, output)?,
+            }
+        }
+        Command::ShowrunnerAudit { plan, output } => {
+            let report = reel::showrunner::audit(&plan)?;
+            match output {
+                OutputFormat::Text => print!("{}", reel::showrunner::audit_markdown(&report)),
+                OutputFormat::Json => print_report(&report, output)?,
+            }
+        }
+        Command::ShowrunnerRevelationMap { plan, output } => {
+            let report = reel::showrunner::revelation_map(&plan)?;
+            match output {
+                OutputFormat::Text => print!("{}", reel::showrunner::revelation_markdown(&report)),
+                OutputFormat::Json => print_report(&report, output)?,
+            }
+        }
+        Command::ShowrunnerRhythmAudit { plan, output } => {
+            let report = reel::showrunner::rhythm_audit(&plan)?;
+            match output {
+                OutputFormat::Text => print!("{}", reel::showrunner::rhythm_markdown(&report)),
+                OutputFormat::Json => print_report(&report, output)?,
+            }
+        }
+        Command::ShowrunnerReviewQueue { plan, output } => {
+            let report = reel::showrunner::review_queue(&plan)?;
+            match output {
+                OutputFormat::Text => {
+                    print!("{}", reel::showrunner::review_queue_markdown(&report))
+                }
+                OutputFormat::Json => print_report(&report, output)?,
+            }
+        }
+        Command::ShowrunnerReviewPack {
+            plan,
+            output,
+            output_path,
+        } => {
+            let report = reel::showrunner::review_pack(&plan)?;
+            let rendered = match output {
+                OutputFormat::Text => reel::showrunner::review_pack_markdown(&report),
+                OutputFormat::Json => serde_json::to_string_pretty(&report)?,
+            };
+            if let Some(path) = output_path {
+                std::fs::write(&path, rendered)
+                    .with_context(|| format!("failed to write {}", path.display()))?;
+                println!("{}", path.display());
+            } else {
+                print!("{rendered}");
+            }
         }
         Command::EpisodeCompose {
             manifest,
@@ -1317,6 +1376,44 @@ enum Command {
         decision_index: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
+    },
+    /// Validate a series-bound showrunner control sidecar.
+    ShowrunnerValidate {
+        plan: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Run combined function, rhythm, viewpoint, revelation, and scale audits.
+    ShowrunnerAudit {
+        plan: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Print ordered audience-revelation threads and viewpoint findings.
+    ShowrunnerRevelationMap {
+        plan: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Audit episode function, tone, intensity, transition, and production-scale cadence.
+    ShowrunnerRhythmAudit {
+        plan: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Report distinct open human reviewers without synthesizing their opinions.
+    ShowrunnerReviewQueue {
+        plan: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Print one combined machine-audit and human-review packet.
+    ShowrunnerReviewPack {
+        plan: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+        #[arg(long)]
+        output_path: Option<PathBuf>,
     },
     /// Atomically compose referenced conformed scene packets into an episode packet.
     EpisodeCompose {

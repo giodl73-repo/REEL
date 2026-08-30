@@ -133,6 +133,26 @@ runtime; and reports neighboring-episode drift without turning an intentional
 creative exception into a validation failure. See
 [`docs/series-runtime-planning-v0.2.22.md`](docs/series-runtime-planning-v0.2.22.md).
 
+CLI v0.2.23 adds the hash-bound `reel.showrunner.v0.1` sidecar above
+`reel.series.v0.1`. It validates complete or partial episode control coverage,
+ordered revelation prerequisites, declared vocabularies, and younger-viewpoint
+knowledge use; advisory audits surface repeated function/tone/intensity runs,
+production-scale clusters, unbridged tonal transitions, finale-delivery gaps,
+thread dormancy, and unmarked later knowledge. Creative strings remain upstream
+and human-authored. The six `showrunner-*` reports include a combined
+Markdown/JSON review packet, authored within-episode tone beats, described
+narrator-knowledge handoffs, and optional production-load estimates without
+inferring creative approval. See
+[`docs/showrunner-control-v0.2.23.md`](docs/showrunner-control-v0.2.23.md).
+
+CLI v0.2.24 separates timeline conformance from selected-media readiness.
+Validation reports `timing_ready`, `generation_ready`, `asset_ready`, normalized
+asset-state counts, and semantic blockers; picture preview and delivery require
+materialized assets. Legacy asset-backed manifests remain compatible, while
+prompt rendering requires an explicit per-shot opt-in and remains separate from
+FFmpeg picture readiness. See
+[`docs/asset-readiness-v0.2.24.md`](docs/asset-readiness-v0.2.24.md).
+
 The main BERTICA-driven workflow is:
 
 ```powershell

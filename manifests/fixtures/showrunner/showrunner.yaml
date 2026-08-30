@@ -1,0 +1,81 @@
+schema: reel.showrunner.v0.1
+showrunner_id: sanitized-threshold-showrunner-v1
+title: Sanitized threshold showrunner fixture
+coverage: full
+series:
+  path: ../../templates/episodic-series.yaml
+  sha256: ddc6607e688fd10e091beacf55f453b9c6352926f2e9ce3eca3fcc60d864b50e
+  series_id: sanitized-threshold-series
+engine:
+  promise: A threshold changes how the audience understands a place.
+  default_movements: [threshold, action, consequence, afterimage]
+  allowed_breaks: [compact-afterpiece]
+audience_contract:
+  assumed_knowledge: No prior story knowledge.
+  no_foreknowledge: true
+  memory_layers: [immediate, adult-afterlight]
+  immediate_narrator_distances: [immediate]
+  later_knowledge_layers: [adult-afterlight]
+vocabularies:
+  function_families: [finale]
+  narrator_distances: [immediate]
+  primary_tones: [mystery]
+  ending_tones: [recognition]
+  ending_modes: [opened-world]
+  production_scales: [intimate]
+  knowledge_layers: [immediate, adult-afterlight]
+policies:
+  max_adjacent_same_function_family: 2
+  max_adjacent_same_primary_tone: 2
+  maximum_intensity: 5
+  max_adjacent_maximum_intensity: 2
+  max_adjacent_scales: { intimate: 2 }
+  high_production_load_threshold: 5
+  max_adjacent_high_production_load: 1
+  abrupt_tone_transitions: []
+seasons:
+  - id: S1
+    action: open
+    audience_job: Learn why the threshold matters.
+    thematic_proposition: A place can change through attention.
+    thematic_counterforce: Recognition does not establish objective truth.
+    finale_delivery: The final image leaves the world open.
+    required_function_families: [finale]
+episodes:
+  - id: S1E01
+    function: series-premiere-and-finale
+    function_family: finale
+    dramatic_question: What changes at the threshold?
+    pressure: The audience lacks orientation.
+    consequential_action: A figure crosses and makes the place legible.
+    narrator_distance: immediate
+    audience_revelation: The threshold is a relationship rather than decoration.
+    revelations: [threshold-open]
+    knowledge_uses:
+      - step_id: threshold-open
+        knowledge_layer: adult-afterlight
+        handoff_declared: true
+        handoff: A reflective sentence follows the immediate crossing.
+    internal_tone_beats: [uncertainty, crossing, recognition]
+    tone: { primary: mystery, ending: recognition, intensity: 3, bridge: "" }
+    ending_invitation:
+      mode: opened-world
+      statement: The revealed place remains available to memory.
+    production_scale: intimate
+    production_load:
+      complexity: 3
+      locations: 1
+      speaking_roles: 1
+      crowd: false
+      new_assets: [threshold-set]
+      reusable_assets: [figure-rig]
+    delivers_season_finale: true
+revelation_threads:
+  - id: place-threshold
+    remain_open: true
+    allow_dormancy: true
+    steps:
+      - id: threshold-open
+        episode_id: S1E01
+        state: The audience recognizes the threshold as consequential.
+reviewers: [bertica, herman]

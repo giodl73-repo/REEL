@@ -25,6 +25,7 @@ pub mod production;
 pub mod review_decision;
 pub mod selection_lock;
 pub mod series;
+pub mod showrunner;
 pub mod voice_consistency;
 pub mod voice_performance;
 
