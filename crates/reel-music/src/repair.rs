@@ -153,10 +153,14 @@ pub struct ValidationReport {
 }
 
 pub fn validate(path: &Path) -> Result<ValidationReport> {
-    let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
-    let manifest: RepairManifest = serde_yaml::from_slice(&bytes)
-        .with_context(|| format!("music repair is not valid YAML: {}", path.display()))?;
+    let manifest = load(path)?;
     validate_loaded(path, &manifest)
+}
+
+pub fn load(path: &Path) -> Result<RepairManifest> {
+    let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    serde_yaml::from_slice(&bytes)
+        .with_context(|| format!("music repair is not valid YAML: {}", path.display()))
 }
 
 fn validate_loaded(path: &Path, manifest: &RepairManifest) -> Result<ValidationReport> {
@@ -403,7 +407,7 @@ fn is_covered(target: SampleRange, ranges: &[SampleRange]) -> bool {
 }
 
 impl Operation {
-    fn id(&self) -> &str {
+    pub fn id(&self) -> &str {
         match self {
             Self::Keep { id, .. }
             | Self::Cut { id, .. }

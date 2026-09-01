@@ -4,7 +4,7 @@ use std::{
 };
 
 use reel_music::{
-    AuthorityRef,
+    AuthorityRef, edl, evidence,
     hash::sha256_path,
     neutral,
     repair::{Operation, RepairManifest, Review, SourceRef},
@@ -105,6 +105,109 @@ fn repair_manifest(source_path: &Path) -> RepairManifest {
             decision_refs: Vec::new(),
         },
     }
+}
+
+fn seam_fixture() -> (Fixture, PathBuf) {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let pcm = temp.path().join("source.raw");
+    let pattern = [
+        128_u8, 150, 169, 181, 185, 181, 169, 150, 128, 106, 87, 75, 71, 75, 87, 112,
+    ];
+    let bytes = pattern.repeat(12);
+    fs::write(&pcm, &bytes).expect("write periodic PCM");
+    let pcm_hash = sha256_path(&pcm).expect("hash PCM");
+    let source = temp.path().join("source.yaml");
+    let source_manifest = SourceManifest {
+        schema: "reel.music-source.v0.1".into(),
+        source_id: "synthetic-periodic-phrase".into(),
+        media: Media {
+            path: PathBuf::from("source.raw"),
+            sha256: pcm_hash.clone(),
+            format: RawPcmFormat::RawPcmU8,
+            timebase: AudioTimebase {
+                sample_rate_hz: 8_000,
+                channels: 1,
+                samples_per_channel: 192,
+            },
+            decoded_pcm_sha256: pcm_hash.clone(),
+        },
+        musical_timebase: MusicalTimebase {
+            pulses_per_quarter: 960,
+            rounding: RoundingMode::HalfAwayFromZero,
+        },
+        authority: AuthorityRef {
+            namespace: "synthetic-fixture".into(),
+            artifact_id: "generated-periodic-tone".into(),
+            content_sha256: pcm_hash,
+            status: "fixture-only".into(),
+            required_roles: vec!["music-reconstruction-engineer".into()],
+            decision_refs: Vec::new(),
+        },
+        egress: Egress {
+            private: true,
+            network_policy: NetworkPolicy::Denied,
+            third_party_upload: false,
+        },
+    };
+    fs::write(
+        &source,
+        serde_yaml::to_string(&source_manifest).expect("serialize source"),
+    )
+    .expect("write source");
+    let source_report = reel_music::source::validate(&source).expect("source validates");
+    let repair = temp.path().join("repair.yaml");
+    let repair_manifest = RepairManifest {
+        schema: "reel.music-repair.v0.1".into(),
+        repair_id: "remove-four-periods".into(),
+        source: SourceRef {
+            manifest: source.clone(),
+            sha256: source_report.manifest_sha256,
+        },
+        source_id: "synthetic-periodic-phrase".into(),
+        decoded_pcm_sha256: source_report.decoded_pcm_sha256,
+        timebase: source_manifest.media.timebase,
+        operations: vec![Operation::Cut {
+            id: "remove-repeat".into(),
+            range: SampleRange {
+                start: 64,
+                end: 128,
+            },
+        }],
+        changed_envelopes: vec![SampleRange {
+            start: 64,
+            end: 128,
+        }],
+        locks: vec![
+            SampleRange { start: 0, end: 64 },
+            SampleRange {
+                start: 128,
+                end: 192,
+            },
+        ],
+        review: Review {
+            status: "not-reviewed".into(),
+            required_roles: vec![
+                "music-reconstruction-engineer".into(),
+                "sound-designer".into(),
+                "editor".into(),
+                "rights-provenance-steward".into(),
+            ],
+            decision_refs: Vec::new(),
+        },
+    };
+    fs::write(
+        &repair,
+        serde_yaml::to_string(&repair_manifest).expect("serialize repair"),
+    )
+    .expect("write repair");
+    (
+        Fixture {
+            _temp: temp,
+            pcm,
+            source,
+        },
+        repair,
+    )
 }
 
 #[test]
@@ -242,4 +345,153 @@ fn canonical_contract_hash_ignores_yaml_key_order() {
     let reordered = reel_music::source::validate(&reordered_path).expect("reordered validates");
     assert_ne!(original.manifest_sha256, reordered.manifest_sha256);
     assert_eq!(original.contract_sha256, reordered.contract_sha256);
+}
+
+#[test]
+fn compiles_cut_only_edl_and_proves_exact_outside_regions_and_seam() {
+    let (fixture, repair) = seam_fixture();
+    let edl_path = fixture._temp.path().join("repair-edl.json");
+    let compiled = edl::write(&repair, &edl_path).expect("EDL compiles");
+    assert_eq!(compiled.segments, 2);
+    assert_eq!(compiled.cuts, 1);
+    assert_eq!(compiled.output_samples_per_channel, 128);
+    assert!(!compiled.shareable);
+
+    let source = fs::read(&fixture.pcm).expect("read source");
+    let candidate = fixture._temp.path().join("candidate.raw");
+    let expected = [&source[..64], &source[128..]].concat();
+    fs::write(&candidate, expected).expect("write cut candidate");
+    let analyzed = evidence::analyze(
+        &edl_path,
+        &repair,
+        &candidate,
+        "test-exact-concatenation",
+        "v1",
+    )
+    .expect("evidence analyzes");
+    assert!(analyzed.outside_regions_exact);
+    assert!(analyzed.passed, "violations: {:?}", analyzed.violations);
+    assert_eq!(analyzed.joins[0].window_correlation_millionths, 1_000_000);
+    assert!(analyzed.joins[0].right_tail_exact);
+
+    let evidence_path = fixture._temp.path().join("evidence.json");
+    evidence::write(&evidence_path, &analyzed).expect("evidence writes");
+    let checked =
+        evidence::check(&evidence_path, &edl_path, &repair, &candidate).expect("evidence rechecks");
+    assert!(checked.passed);
+}
+
+#[test]
+fn evidence_rejects_mutation_outside_the_declared_cut() {
+    let (fixture, repair) = seam_fixture();
+    let edl_path = fixture._temp.path().join("repair-edl.json");
+    edl::write(&repair, &edl_path).expect("EDL compiles");
+    let source = fs::read(&fixture.pcm).expect("read source");
+    let mut changed = [&source[..64], &source[128..]].concat();
+    changed[3] ^= 1;
+    let candidate = fixture._temp.path().join("mutated.raw");
+    fs::write(&candidate, changed).expect("write candidate");
+
+    let analyzed = evidence::analyze(
+        &edl_path,
+        &repair,
+        &candidate,
+        "test-mutated-concatenation",
+        "v1",
+    )
+    .expect("evidence analyzes");
+    assert!(!analyzed.outside_regions_exact);
+    assert!(!analyzed.passed);
+    assert!(
+        analyzed
+            .violations
+            .iter()
+            .any(|violation| violation.contains("keep-001"))
+    );
+}
+
+#[test]
+fn cut_only_edl_rejects_planned_non_cut_operation() {
+    let (fixture, repair) = seam_fixture();
+    let mut manifest = reel_music::repair::load(&repair).expect("load repair");
+    manifest.operations = vec![Operation::Crossfade {
+        id: "crossfade".into(),
+        range: SampleRange {
+            start: 64,
+            end: 128,
+        },
+        curve: reel_music::repair::FadeCurve::EqualPower,
+    }];
+    fs::write(
+        &repair,
+        serde_yaml::to_string(&manifest).expect("serialize repair"),
+    )
+    .expect("rewrite repair");
+
+    let error = edl::write(&repair, &fixture._temp.path().join("unsupported.json"))
+        .expect_err("unsupported operation rejected");
+    assert!(error.to_string().contains("not executable in cut-only EDL"));
+}
+
+#[test]
+fn edl_recheck_rejects_a_changed_repair_manifest() {
+    let (fixture, repair) = seam_fixture();
+    let edl_path = fixture._temp.path().join("repair-edl.json");
+    edl::write(&repair, &edl_path).expect("EDL compiles");
+    let mut manifest = reel_music::repair::load(&repair).expect("load repair");
+    manifest.repair_id = "changed-after-compilation".into();
+    fs::write(
+        &repair,
+        serde_yaml::to_string(&manifest).expect("serialize repair"),
+    )
+    .expect("rewrite repair");
+
+    let error = edl::validate(&edl_path, &repair).expect_err("stale EDL rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("does not match the current repair")
+    );
+}
+
+#[test]
+fn cut_only_edl_requires_retained_signal_between_cuts() {
+    let (fixture, repair) = seam_fixture();
+    let mut manifest = reel_music::repair::load(&repair).expect("load repair");
+    manifest.operations = vec![
+        Operation::Cut {
+            id: "cut-one".into(),
+            range: SampleRange { start: 32, end: 64 },
+        },
+        Operation::Cut {
+            id: "cut-two".into(),
+            range: SampleRange {
+                start: 64,
+                end: 128,
+            },
+        },
+    ];
+    manifest.changed_envelopes = vec![
+        SampleRange { start: 32, end: 64 },
+        SampleRange {
+            start: 64,
+            end: 128,
+        },
+    ];
+    manifest.locks = vec![
+        SampleRange { start: 0, end: 32 },
+        SampleRange {
+            start: 128,
+            end: 192,
+        },
+    ];
+    fs::write(
+        &repair,
+        serde_yaml::to_string(&manifest).expect("serialize repair"),
+    )
+    .expect("rewrite repair");
+
+    let error = edl::write(&repair, &fixture._temp.path().join("adjacent.json"))
+        .expect_err("adjacent cuts rejected");
+    assert!(error.to_string().contains("retained signal between them"));
 }

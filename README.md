@@ -165,9 +165,16 @@ CLI v0.2.26 begins the provider-neutral `reel-music` workspace crate. It
 validates immutable raw-PCM sources and explicit authority/egress declarations,
 writes and rechecks a full-signal neutral keep/lock plan, and validates typed
 repair operations against exact half-open changed envelopes and locks that
-cover every source sample once. It does not render repairs, separate stems, or
-run a music model. See
+cover every source sample once. See
 [`docs/music-reconstruction-v0.2.26.md`](docs/music-reconstruction-v0.2.26.md).
+
+CLI v0.2.27 compiles validated cut-only repairs into canonical sample-indexed
+EDLs, renders raw PCM through the existing FFmpeg boundary, and retains strict
+local evidence for exact unchanged regions, output length, seam continuity,
+and right-tail identity. It refuses overwrite and keeps unsupported repair
+operations in planning state. It does not separate stems, repair with a model,
+or claim listening approval. See
+[`docs/music-repair-render-v0.2.27.md`](docs/music-repair-render-v0.2.27.md).
 
 The main BERTICA-driven workflow is:
 

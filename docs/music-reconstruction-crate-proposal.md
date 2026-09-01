@@ -1,6 +1,6 @@
 # REEL music-reconstruction crate proposal
 
-Status: Slice A implemented and contract-verified in REEL v0.2.26
+Status: Slices A and B implemented and contract-verified through REEL v0.2.27
 Date: 2026-09-01
 Proposed CLI milestone: v0.2.26 foundation, followed by additive repair,
 language-adaptation, and arrangement slices
@@ -300,11 +300,14 @@ the root module implementation.
 
 ### Slice B — deterministic repair rendering
 
-- Compile the edit plan to a resolved decision list.
-- Invoke the existing FFmpeg boundary from the root CLI.
+- Compile the edit plan to a resolved decision list. **Implemented v0.2.27.**
+- Invoke the existing FFmpeg boundary from the root CLI. **Implemented v0.2.27.**
 - Render the synthetic one-phrase repair and verify boundaries, tails, duration,
   acoustic continuity, and outside-region identity.
-- Produce a private artifact plus a path-free receipt and comparison input.
+  **Implemented v0.2.27 with generated periodic raw PCM.**
+- Produce a private artifact plus a path-free evidence contract and comparison
+  input. **Private artifact and evidence implemented v0.2.27; comparison input
+  remains additive future work.**
 
 ### Slice C — corrected model and notation round trip
 

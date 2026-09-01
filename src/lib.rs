@@ -21,6 +21,7 @@ pub mod caption_presentation;
 pub mod comparison;
 pub mod continuity;
 pub mod cue_import;
+pub mod music_render;
 pub mod production;
 pub mod review_decision;
 pub mod selection_lock;

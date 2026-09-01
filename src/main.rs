@@ -364,6 +364,34 @@ fn run_cli() -> Result<()> {
             let report = reel_music::repair::validate(&repair)?;
             print_report(&report, output)?;
         }
+        Command::MusicRepairCompile {
+            repair,
+            output_path,
+            output,
+        } => {
+            let report = reel_music::edl::write(&repair, &output_path)?;
+            print_report(&report, output)?;
+        }
+        Command::MusicRepairRender {
+            edl,
+            repair,
+            output_pcm,
+            evidence_path,
+            output,
+        } => {
+            let report = reel::music_render::render(&edl, &repair, &output_pcm, &evidence_path)?;
+            print_report(&report, output)?;
+        }
+        Command::MusicRepairEvidenceCheck {
+            evidence,
+            edl,
+            repair,
+            candidate_pcm,
+            output,
+        } => {
+            let report = reel::music_render::check(&evidence, &edl, &repair, &candidate_pcm)?;
+            print_report(&report, output)?;
+        }
         Command::SongValidate { manifest, output } => {
             let report = reel::song::validate(&manifest)?;
             print_report(&report, output)?;
@@ -1548,6 +1576,34 @@ enum Command {
     /// Validate a deterministic music-repair plan and complete changed/locked coverage.
     MusicRepairPlan {
         repair: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Compile a validated cut-only repair into a canonical, sample-exact EDL.
+    MusicRepairCompile {
+        repair: PathBuf,
+        #[arg(long)]
+        output_path: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Render a cut-only EDL to raw PCM and write strict local seam evidence.
+    MusicRepairRender {
+        edl: PathBuf,
+        repair: PathBuf,
+        #[arg(long)]
+        output_pcm: PathBuf,
+        #[arg(long)]
+        evidence_path: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Recompute and verify retained evidence for a rendered music repair.
+    MusicRepairEvidenceCheck {
+        evidence: PathBuf,
+        edl: PathBuf,
+        repair: PathBuf,
+        candidate_pcm: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
