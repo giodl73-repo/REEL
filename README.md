@@ -350,6 +350,12 @@ and independently re-imports MIDI and MusicXML to detect lost duration, tempo,
 meter, form, notes, or lyric-layer identities. See
 [`docs/music-score-export-v0.3.1.md`](docs/music-score-export-v0.3.1.md).
 
+CLI v0.3.2 adds a local interchange intake for outputs people already produce
+with separation, transcription, feature-analysis, and notation tools. It binds
+WAV/FLAC stems, MIDI, MusicXML, CSV/lab tables, JAMS, RDF, NPZ, and sonification
+audio without running or replacing those tools. See
+[`docs/music-interchange-intake-v0.3.2.md`](docs/music-interchange-intake-v0.3.2.md).
+
 The main BERTICA-driven workflow is:
 
 ```powershell
