@@ -1,4 +1,5 @@
 pub mod analysis;
+pub mod comparison;
 pub mod edl;
 pub mod evidence;
 pub mod export;

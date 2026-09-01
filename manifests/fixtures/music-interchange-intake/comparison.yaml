@@ -1,0 +1,60 @@
+schema: reel.music-evidence-comparison.v0.1
+comparison_id: synthetic-note-evidence-comparison
+intake:
+  manifest: intake.yaml
+  manifest_sha256: e663624bdd9c18db3a323051285876a34880f8a13f0bc943848026c9466b7478
+  contract_sha256: 6f3a7f51e3d56b5698136c0c4be018b868037dd2500e8c8cbb29678df05cd729
+authority:
+  namespace: synthetic-fixture
+  artifact_id: synthetic-candidate-selection-authority
+  content_sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  status: fixture-only
+  required_roles:
+    - music-reconstruction-engineer
+    - editor
+  decision_refs: []
+sets:
+  - id: melody-note-events
+    purpose: note-events
+    candidates:
+      - artifact_id: synthetic-note-events
+        coverage_millionths: 950000
+        confidence_millionths: 810000
+        alignment_error_samples: 120
+        bleed_millionths: null
+        mixture_consistency_millionths: null
+        event_count: 3
+        assessment: Synthetic measurement supplied for contract testing only.
+      - artifact_id: synthetic-note-events-alternate
+        coverage_millionths: 1000000
+        confidence_millionths: 760000
+        alignment_error_samples: 80
+        bleed_millionths: null
+        mixture_consistency_millionths: null
+        event_count: 3
+        assessment: Synthetic alternate measurement supplied for contract testing only.
+    findings:
+      - id: pitch-disagreement-01
+        dimension: pitch
+        artifact_ids:
+          - synthetic-note-events
+          - synthetic-note-events-alternate
+        outcome: disagrees
+        detail: The candidates disagree on the final synthetic pitch event.
+        evidence_sha256: null
+    corrections:
+      - id: inspect-final-note
+        artifact_id: synthetic-note-events-alternate
+        category: pitch
+        target: event-index-2
+        description: A human reviewer must inspect the alternate final pitch against the source.
+        resolution: null
+    selection: null
+review:
+  status: not-reviewed
+  required_roles:
+    - music-reconstruction-engineer
+    - sound-designer
+    - editor
+    - rights-provenance-steward
+  decision_refs: []

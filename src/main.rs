@@ -1025,6 +1025,10 @@ fn run_cli() -> Result<()> {
             let report = reel_music::interchange::validate(&intake)?;
             print_report(&report, output)?;
         }
+        Command::MusicEvidenceCompare { comparison, output } => {
+            let report = reel_music::comparison::validate(&comparison)?;
+            print_report(&report, output)?;
+        }
         Command::MusicModelValidate { model, output } => {
             let report = reel_music::model::validate(&model)?;
             print_report(&report, output)?;
@@ -2657,6 +2661,12 @@ enum Command {
     /// Validate local outputs from existing music-analysis and notation tools.
     MusicInterchangeValidate {
         intake: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate competing imported evidence and emit its human review queue.
+    MusicEvidenceCompare {
+        comparison: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

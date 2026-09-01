@@ -356,6 +356,12 @@ WAV/FLAC stems, MIDI, MusicXML, CSV/lab tables, JAMS, RDF, NPZ, and sonification
 audio without running or replacing those tools. See
 [`docs/music-interchange-intake-v0.3.2.md`](docs/music-interchange-intake-v0.3.2.md).
 
+CLI v0.3.3 compares competing admitted evidence without automatically ranking
+it. It emits a deterministic private queue for human selection and artifact-
+specific corrections, and requires separate immutable decisions before either
+can close. See
+[`docs/music-evidence-comparison-v0.3.3.md`](docs/music-evidence-comparison-v0.3.3.md).
+
 The main BERTICA-driven workflow is:
 
 ```powershell
