@@ -242,15 +242,23 @@ pub fn write(path: &Path, report: &EvidenceReport) -> Result<WriteReport> {
     write_report(path, report)
 }
 
+pub fn load(path: &Path) -> Result<EvidenceReport> {
+    let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    serde_json::from_slice(&bytes).with_context(|| {
+        format!(
+            "music repair evidence is not valid JSON: {}",
+            path.display()
+        )
+    })
+}
+
 pub fn check(
     evidence_path: &Path,
     edl_path: &Path,
     repair_path: &Path,
     candidate_path: &Path,
 ) -> Result<WriteReport> {
-    let bytes = fs::read(evidence_path)
-        .with_context(|| format!("failed to read {}", evidence_path.display()))?;
-    let saved: EvidenceReport = serde_json::from_slice(&bytes)?;
+    let saved = load(evidence_path)?;
     if saved.schema != SCHEMA || !saved.verified || saved.shareable {
         bail!("invalid local repair evidence contract");
     }
