@@ -9,6 +9,7 @@ pub mod model;
 pub mod model_draft;
 pub mod neutral;
 pub mod repair;
+pub mod repair_intent;
 pub mod semantic_import;
 pub mod source;
 pub mod time;

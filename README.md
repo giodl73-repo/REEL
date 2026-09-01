@@ -372,6 +372,12 @@ every analysis observation entering an editable model, and checks every model
 evidence citation in reverse. See
 [`docs/music-model-draft-v0.3.5.md`](docs/music-model-draft-v0.3.5.md).
 
+CLI v0.3.6 binds each mutating repair operation exactly once to governed model
+targets and an immutable human decision. It also requires the complete
+technical, listening, and selection gate for every future candidate without
+claiming that validation selects or approves one. See
+[`docs/music-repair-intent-v0.3.6.md`](docs/music-repair-intent-v0.3.6.md).
+
 The main BERTICA-driven workflow is:
 
 ```powershell

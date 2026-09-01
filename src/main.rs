@@ -1049,6 +1049,10 @@ fn run_cli() -> Result<()> {
             let report = reel_music::model_draft::validate(&draft)?;
             print_report(&report, output)?;
         }
+        Command::MusicRepairIntentCheck { intent, output } => {
+            let report = reel_music::repair_intent::validate(&intent)?;
+            print_report(&report, output)?;
+        }
         Command::MusicScoreExportPlan {
             model,
             output_path,
@@ -2709,6 +2713,12 @@ enum Command {
     /// Verify every analysis observation's explicit model, omission, or unknown disposition.
     MusicModelDraftCheck {
         draft: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Bind every mutating repair operation to governed model evidence and candidate gates.
+    MusicRepairIntentCheck {
+        intent: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
