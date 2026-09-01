@@ -1,5 +1,5 @@
 schema: reel.music-evidence-comparison.v0.1
-comparison_id: synthetic-note-evidence-comparison
+comparison_id: synthetic-note-evidence-comparison-selected
 intake:
   manifest: intake.yaml
   manifest_sha256: 1c578556ae66c70e449cd3eec048749fd5aaa93f9f0f94699d7bf6e83958d546
@@ -47,9 +47,16 @@ sets:
         artifact_id: synthetic-note-events-alternate
         category: pitch
         target: event-index-2
-        description: A human reviewer must inspect the alternate final pitch against the source.
-        resolution: null
-    selection: null
+        description: A human reviewer inspected the alternate final pitch against the synthetic source.
+        resolution:
+          artifact_id: synthetic-correction-resolution
+          sha256: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    selection:
+      artifact_id: synthetic-note-events-alternate
+      decision:
+        artifact_id: synthetic-candidate-selection
+        sha256: dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+      rationale: Fixture selection exists only to exercise governed semantic promotion.
 review:
   status: not-reviewed
   required_roles:

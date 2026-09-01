@@ -8,6 +8,7 @@ pub mod interchange;
 pub mod model;
 pub mod neutral;
 pub mod repair;
+pub mod semantic_import;
 pub mod source;
 pub mod time;
 

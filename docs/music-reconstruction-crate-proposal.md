@@ -1,6 +1,6 @@
 # REEL music-reconstruction crate proposal
 
-Status: Slices A, B, C1, C2, interchange intake, and evidence comparison implemented through REEL v0.3.3
+Status: Slices A, B, C1, C2, interchange intake, evidence comparison, and governed semantic import implemented through REEL v0.3.4
 Date: 2026-09-01
 Proposed CLI milestone: v0.2.26 foundation, followed by additive repair,
 language-adaptation, and arrangement slices
@@ -323,6 +323,9 @@ the root module implementation.
   **Implemented in C3 v0.3.2.**
 - Compare competing admitted evidence and emit explicit human selection and
   correction queues without automatic ranking. **Implemented in C4 v0.3.3.**
+- Validate adapter-normalized semantic events with exact integer time mappings
+  and promote them into analysis observations with retained import lineage.
+  **Implemented in C5 v0.3.4.**
 
 ### Slice D — same-music second-language proof
 

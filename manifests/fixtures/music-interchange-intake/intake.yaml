@@ -54,7 +54,7 @@ artifacts:
     purpose: note-events
     format: csv
     path: note-events.csv
-    sha256: c4d2c2808802aeb1ba105bee04cbbe63234b7faeb8f503a6697884f557d8a75e
+    sha256: 72c499dfdd8b30cdcfc46b247169d8892290eaab85964c06257b67ed43d5bd1b
     bytes: 93
     semantic_roles: [melody-hypothesis]
     uncertainty: Synthetic rows exercise intake only and are not a transcription claim.
@@ -74,7 +74,7 @@ artifacts:
     purpose: note-events
     format: csv
     path: note-events-alt.csv
-    sha256: f0b3940d7a2c0bfc75ac42ff6d31a81f9d28da95afc76fca7f14d51f57490a4a
+    sha256: 9b2521bb512611154a5e9649ec4cabcd6a5ffe7578a93c6ba61e56c289140d0b
     bytes: 105
     semantic_roles: [melody-hypothesis]
     uncertainty: Synthetic alternate rows exist only to exercise explicit evidence comparison.
