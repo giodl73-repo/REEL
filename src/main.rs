@@ -1045,6 +1045,10 @@ fn run_cli() -> Result<()> {
             let report = reel_music::model::validate(&model)?;
             print_report(&report, output)?;
         }
+        Command::MusicModelDraftCheck { draft, output } => {
+            let report = reel_music::model_draft::validate(&draft)?;
+            print_report(&report, output)?;
+        }
         Command::MusicScoreExportPlan {
             model,
             output_path,
@@ -2699,6 +2703,12 @@ enum Command {
     /// Validate a corrected editable music model and its event-level provenance.
     MusicModelValidate {
         model: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Verify every analysis observation's explicit model, omission, or unknown disposition.
+    MusicModelDraftCheck {
+        draft: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

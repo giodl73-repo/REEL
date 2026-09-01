@@ -1,0 +1,108 @@
+schema: reel.music-model-draft.v0.1
+draft_id: synthetic-governed-model-draft
+model:
+  manifest: model.yaml
+  manifest_sha256: 3072f2c30aa220801187c67d59d5efffd7154eff644261cb54db9247ba5a2848
+  contract_sha256: 995413528d8a4d6a99458174f7bf69198c1b428c0cb025ddf1275eb5e59a516b
+  model_id: synthetic-corrected-editable-model
+authority:
+  namespace: synthetic-fixture
+  artifact_id: synthetic-model-drafting-authority
+  content_sha256: "4444444444444444444444444444444444444444444444444444444444444444"
+  status: fixture-only
+  required_roles:
+    - music-reconstruction-engineer
+    - score-arrangement-director
+    - editor
+  decision_refs: []
+dispositions:
+  - analysis_id: synthetic-corrected-model-analysis
+    observation_id: tempo-120
+    outcome:
+      kind: mapped
+      targets:
+        - target_ref: tempo:0
+          state: observed
+          rationale: Retain the synthetic tempo estimate as an observed model event.
+          correction_ref: null
+  - analysis_id: synthetic-corrected-model-analysis
+    observation_id: meter-4-4
+    outcome:
+      kind: mapped
+      targets:
+        - target_ref: meter:0
+          state: observed
+          rationale: Retain the synthetic meter estimate as an observed model event.
+          correction_ref: null
+  - analysis_id: synthetic-corrected-model-analysis
+    observation_id: form-two-phrases
+    outcome:
+      kind: mapped
+      targets:
+        - target_ref: form:phrase-a
+          state: observed
+          rationale: Map the first half of the synthetic form.
+          correction_ref: null
+        - target_ref: form:phrase-a-prime
+          state: observed
+          rationale: Map the second half of the synthetic form.
+          correction_ref: null
+  - analysis_id: synthetic-corrected-model-analysis
+    observation_id: pitch-opening
+    outcome:
+      kind: mapped
+      targets:
+        - target_ref: note:note-1
+          state: human-corrected
+          rationale: Preserve the fixture author's explicit pitch correction.
+          correction_ref:
+            artifact_id: synthetic-fixture-correction
+            sha256: "2222222222222222222222222222222222222222222222222222222222222222"
+        - target_ref: note:note-2
+          state: inferred
+          rationale: Preserve the explicitly inferred synthetic continuation.
+          correction_ref: null
+        - target_ref: note:note-3
+          state: inferred
+          rationale: Preserve the explicitly inferred synthetic continuation.
+          correction_ref: null
+        - target_ref: note:note-4
+          state: inferred
+          rationale: Preserve the explicitly inferred synthetic continuation.
+          correction_ref: null
+  - analysis_id: synthetic-corrected-model-analysis
+    observation_id: harmony-tonic
+    outcome:
+      kind: mapped
+      targets:
+        - target_ref: harmony:tonic-span
+          state: observed
+          rationale: Retain the synthetic tonic observation.
+          correction_ref: null
+  - analysis_id: synthetic-corrected-model-analysis
+    observation_id: rhythm-quarter
+    outcome:
+      kind: mapped
+      targets:
+        - target_ref: rhythm:quarter-cell
+          state: observed
+          rationale: Retain the synthetic quarter-pulse observation.
+          correction_ref: null
+  - analysis_id: synthetic-corrected-model-analysis
+    observation_id: hook-opening
+    outcome:
+      kind: mapped
+      targets:
+        - target_ref: hook:opening-hook
+          state: inferred
+          rationale: Preserve hook identity as an explicit inference.
+          correction_ref: null
+review:
+  status: not-reviewed
+  required_roles:
+    - music-reconstruction-engineer
+    - score-arrangement-director
+    - sound-designer
+    - editor
+    - rights-provenance-steward
+  decision_refs: []
