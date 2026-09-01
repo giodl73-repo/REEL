@@ -1,0 +1,4 @@
+start_time_s,end_time_s,pitch_midi,amplitude
+0.000,0.375,60,0.82
+0.375,0.750,62,0.76
+0.750,1.125,65,0.79

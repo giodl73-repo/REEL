@@ -37,6 +37,17 @@ producers:
     dataset_disclosure: No external plugin, model, or dataset produced this compatibility fixture.
     parameters_sha256: 6666666666666666666666666666666666666666666666666666666666666666
     network_policy: denied
+  - id: alternate-note-fixture
+    adapter: alternate-note-csv-compatible-fixture
+    version: fixture-1
+    executable_sha256: 9999999999999999999999999999999999999999999999999999999999999999
+    model_revision: null
+    model_sha256: null
+    software_license: fixture-only-no-third-party-code
+    model_license: null
+    dataset_disclosure: No external model or dataset produced this comparison fixture.
+    parameters_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    network_policy: denied
 artifacts:
   - id: synthetic-note-events
     producer_id: note-transcriber-fixture
@@ -57,6 +68,16 @@ artifacts:
     bytes: 584
     semantic_roles: [beat-hypothesis]
     uncertainty: JAMS structure is recognized but upstream namespaces are not fully revalidated.
+    normalized_pcm: null
+  - id: synthetic-note-events-alternate
+    producer_id: alternate-note-fixture
+    purpose: note-events
+    format: csv
+    path: note-events-alt.csv
+    sha256: f0b3940d7a2c0bfc75ac42ff6d31a81f9d28da95afc76fca7f14d51f57490a4a
+    bytes: 105
+    semantic_roles: [melody-hypothesis]
+    uncertainty: Synthetic alternate rows exist only to exercise explicit evidence comparison.
     normalized_pcm: null
 limitations:
   - Intake proves artifact identity and declared container shape, not semantic correctness.

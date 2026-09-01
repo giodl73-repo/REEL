@@ -15,7 +15,12 @@ fn copy_fixture(root: &Path) -> std::path::PathBuf {
     let source = fixtures.join("music-repair-foundation");
     fs::create_dir_all(&intake).unwrap();
     fs::create_dir_all(&source).unwrap();
-    for name in ["intake.yaml", "note-events.csv", "annotations.jams"] {
+    for name in [
+        "intake.yaml",
+        "note-events.csv",
+        "note-events-alt.csv",
+        "annotations.jams",
+    ] {
         fs::copy(
             repository
                 .join("manifests/fixtures/music-interchange-intake")
@@ -41,8 +46,8 @@ fn validates_existing_tool_csv_and_jams_without_executing_them() {
     let temporary = tempdir().unwrap();
     let intake = copy_fixture(temporary.path());
     let report = reel_music::interchange::validate(&intake).unwrap();
-    assert_eq!(report.producers, 2);
-    assert_eq!(report.artifacts, 2);
+    assert_eq!(report.producers, 3);
+    assert_eq!(report.artifacts, 3);
     assert_eq!(report.formats, ["csv", "jams"]);
     assert_eq!(report.normalized_stems, 0);
     assert!(!report.shareable);
@@ -109,7 +114,7 @@ fn binds_a_container_stem_to_exact_normalized_pcm() {
     });
     fs::write(&intake_path, serde_yaml::to_string(&manifest).unwrap()).unwrap();
     let report = reel_music::interchange::validate(&intake_path).unwrap();
-    assert_eq!(report.artifacts, 3);
+    assert_eq!(report.artifacts, 4);
     assert_eq!(report.normalized_stems, 1);
     assert!(report.formats.contains(&"wav".to_string()));
 }
