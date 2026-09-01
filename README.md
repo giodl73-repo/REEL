@@ -325,6 +325,24 @@ beat markers without coupling the manifest to a composer or model provider.
 Existing v0.2 manifests remain valid. See
 [`docs/chapter-score-direction-v0.2.22.md`](docs/chapter-score-direction-v0.2.22.md).
 
+The integrated v0.2.22–v0.2.25 planning line also adds optional episode runtime
+budgets and timing audit, a hash-bound showrunner-control sidecar, explicit
+selected-media readiness, and provider-neutral exact-lyrics song-generation
+contracts. See
+[`docs/series-runtime-planning-v0.2.22.md`](docs/series-runtime-planning-v0.2.22.md),
+[`docs/showrunner-control-v0.2.23.md`](docs/showrunner-control-v0.2.23.md),
+[`docs/asset-readiness-v0.2.24.md`](docs/asset-readiness-v0.2.24.md), and
+[`docs/song-generation-v0.2.25.md`](docs/song-generation-v0.2.25.md).
+
+The integrated music-reconstruction line adds the provider-neutral `reel-music`
+workspace crate. v0.2.26 freezes raw-PCM source identity and validates bounded
+repair plans; v0.2.27 compiles and renders sample-exact cut-only repairs with
+strict local evidence; and v0.2.28 separates analyzer estimates from a corrected
+editable music model with event-level provenance. See
+[`docs/music-reconstruction-v0.2.26.md`](docs/music-reconstruction-v0.2.26.md),
+[`docs/music-repair-render-v0.2.27.md`](docs/music-repair-render-v0.2.27.md), and
+[`docs/music-analysis-model-v0.2.28.md`](docs/music-analysis-model-v0.2.28.md).
+
 The main BERTICA-driven workflow is:
 
 ```powershell

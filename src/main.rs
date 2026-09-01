@@ -808,6 +808,14 @@ fn run_cli() -> Result<()> {
             let report = reel::series::plan(&manifest)?;
             print_report(&report, output)?;
         }
+        Command::SeriesTimingAudit {
+            manifest,
+            neighbor_drift_percent,
+            output,
+        } => {
+            let report = reel::series::timing_audit(&manifest, neighbor_drift_percent)?;
+            print_report(&report, output)?;
+        }
         Command::SeriesCoverage { manifest, output } => {
             let report = reel::series::coverage(&manifest)?;
             print_report(&report, output)?;
@@ -820,6 +828,61 @@ fn run_cli() -> Result<()> {
             let report =
                 reel::series::review_queue_with_decisions(&manifest, decision_index.as_deref())?;
             print_report(&report, output)?;
+        }
+        Command::ShowrunnerValidate { plan, output } => {
+            let report = reel::showrunner::validate(&plan)?;
+            match output {
+                OutputFormat::Text => print!("{}", reel::showrunner::validation_markdown(&report)),
+                OutputFormat::Json => print_report(&report, output)?,
+            }
+        }
+        Command::ShowrunnerAudit { plan, output } => {
+            let report = reel::showrunner::audit(&plan)?;
+            match output {
+                OutputFormat::Text => print!("{}", reel::showrunner::audit_markdown(&report)),
+                OutputFormat::Json => print_report(&report, output)?,
+            }
+        }
+        Command::ShowrunnerRevelationMap { plan, output } => {
+            let report = reel::showrunner::revelation_map(&plan)?;
+            match output {
+                OutputFormat::Text => print!("{}", reel::showrunner::revelation_markdown(&report)),
+                OutputFormat::Json => print_report(&report, output)?,
+            }
+        }
+        Command::ShowrunnerRhythmAudit { plan, output } => {
+            let report = reel::showrunner::rhythm_audit(&plan)?;
+            match output {
+                OutputFormat::Text => print!("{}", reel::showrunner::rhythm_markdown(&report)),
+                OutputFormat::Json => print_report(&report, output)?,
+            }
+        }
+        Command::ShowrunnerReviewQueue { plan, output } => {
+            let report = reel::showrunner::review_queue(&plan)?;
+            match output {
+                OutputFormat::Text => {
+                    print!("{}", reel::showrunner::review_queue_markdown(&report))
+                }
+                OutputFormat::Json => print_report(&report, output)?,
+            }
+        }
+        Command::ShowrunnerReviewPack {
+            plan,
+            output,
+            output_path,
+        } => {
+            let report = reel::showrunner::review_pack(&plan)?;
+            let rendered = match output {
+                OutputFormat::Text => reel::showrunner::review_pack_markdown(&report),
+                OutputFormat::Json => serde_json::to_string_pretty(&report)?,
+            };
+            if let Some(path) = output_path {
+                std::fs::write(&path, rendered)
+                    .with_context(|| format!("failed to write {}", path.display()))?;
+                println!("{}", path.display());
+            } else {
+                print!("{rendered}");
+            }
         }
         Command::EpisodeCompose {
             manifest,
@@ -899,6 +962,95 @@ fn run_cli() -> Result<()> {
                     "audio quality check failed with {} violation(s)",
                     checked.violations.len()
                 );
+            }
+        }
+        Command::MusicSourceValidate { source, output } => {
+            let report = reel_music::source::validate(&source)?;
+            print_report(&report, output)?;
+        }
+        Command::MusicNeutralPlan {
+            source,
+            output_path,
+            output,
+        } => {
+            let report = reel_music::neutral::write_plan(&source, &output_path)?;
+            print_report(&report, output)?;
+        }
+        Command::MusicNeutralCheck {
+            plan,
+            source,
+            candidate_pcm,
+            output,
+        } => {
+            let report = reel_music::neutral::check(&plan, &source, &candidate_pcm)?;
+            print_report(&report, output)?;
+        }
+        Command::MusicRepairPlan { repair, output } => {
+            let report = reel_music::repair::validate(&repair)?;
+            print_report(&report, output)?;
+        }
+        Command::MusicRepairCompile {
+            repair,
+            output_path,
+            output,
+        } => {
+            let report = reel_music::edl::write(&repair, &output_path)?;
+            print_report(&report, output)?;
+        }
+        Command::MusicRepairRender {
+            edl,
+            repair,
+            output_pcm,
+            evidence_path,
+            output,
+        } => {
+            let report = reel::music_render::render(&edl, &repair, &output_pcm, &evidence_path)?;
+            print_report(&report, output)?;
+        }
+        Command::MusicRepairEvidenceCheck {
+            evidence,
+            edl,
+            repair,
+            candidate_pcm,
+            output,
+        } => {
+            let report = reel::music_render::check(&evidence, &edl, &repair, &candidate_pcm)?;
+            print_report(&report, output)?;
+        }
+        Command::MusicAnalysisValidate { analysis, output } => {
+            let report = reel_music::analysis::validate(&analysis)?;
+            print_report(&report, output)?;
+        }
+        Command::MusicModelValidate { model, output } => {
+            let report = reel_music::model::validate(&model)?;
+            print_report(&report, output)?;
+        }
+        Command::SongValidate { manifest, output } => {
+            let report = reel::song::validate(&manifest)?;
+            print_report(&report, output)?;
+        }
+        Command::SongEnginePlan {
+            manifest,
+            output_dir,
+            output,
+        } => {
+            let report = reel::song::write_plan(&manifest, &output_dir)?;
+            print_report(&report, output)?;
+        }
+        Command::SongEnginePlanCheck {
+            packet_dir,
+            manifest,
+            output,
+        } => {
+            let report = reel::song::check(&packet_dir, &manifest)?;
+            print_report(&report, output)?;
+        }
+        Command::SongEngineDoctor { manifest, output } => {
+            let report = reel::song::doctor(&manifest)?;
+            let ready = report.ready;
+            print_report(&report, output)?;
+            if !ready {
+                anyhow::bail!("local song engine is not ready");
             }
         }
         Command::VoicePerformancePlan {
@@ -2294,6 +2446,14 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
+    /// Compare planned episode and season runtime ranges with available timing.
+    SeriesTimingAudit {
+        manifest: PathBuf,
+        #[arg(long, default_value_t = 35.0)]
+        neighbor_drift_percent: f64,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
     /// Report continuous canonical source coverage across a series.
     SeriesCoverage {
         manifest: PathBuf,
@@ -2307,6 +2467,44 @@ enum Command {
         decision_index: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
+    },
+    /// Validate a series-bound showrunner control sidecar.
+    ShowrunnerValidate {
+        plan: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Run combined function, rhythm, viewpoint, revelation, and scale audits.
+    ShowrunnerAudit {
+        plan: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Print ordered audience-revelation threads and viewpoint findings.
+    ShowrunnerRevelationMap {
+        plan: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Audit episode function, tone, intensity, transition, and production-scale cadence.
+    ShowrunnerRhythmAudit {
+        plan: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Report distinct open human reviewers without synthesizing their opinions.
+    ShowrunnerReviewQueue {
+        plan: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Print one combined machine-audit and human-review packet.
+    ShowrunnerReviewPack {
+        plan: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+        #[arg(long)]
+        output_path: Option<PathBuf>,
     },
     /// Atomically compose referenced conformed scene packets into an episode packet.
     EpisodeCompose {
@@ -2360,6 +2558,101 @@ enum Command {
         /// Atomically retain the strict path-free JSON report for later artifact binding.
         #[arg(long)]
         report: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate an immutable raw-PCM music source and its authority boundary.
+    MusicSourceValidate {
+        source: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Write a deterministic full-range keep/lock plan for neutral reconstruction.
+    MusicNeutralPlan {
+        source: PathBuf,
+        #[arg(long)]
+        output_path: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Verify a neutral plan and candidate PCM against the exact source signal.
+    MusicNeutralCheck {
+        plan: PathBuf,
+        source: PathBuf,
+        candidate_pcm: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate a deterministic music-repair plan and complete changed/locked coverage.
+    MusicRepairPlan {
+        repair: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Compile a validated cut-only repair into a canonical, sample-exact EDL.
+    MusicRepairCompile {
+        repair: PathBuf,
+        #[arg(long)]
+        output_path: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Render a cut-only EDL to raw PCM and write strict local seam evidence.
+    MusicRepairRender {
+        edl: PathBuf,
+        repair: PathBuf,
+        #[arg(long)]
+        output_pcm: PathBuf,
+        #[arg(long)]
+        evidence_path: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Recompute and verify retained evidence for a rendered music repair.
+    MusicRepairEvidenceCheck {
+        evidence: PathBuf,
+        edl: PathBuf,
+        repair: PathBuf,
+        candidate_pcm: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate immutable external analyzer evidence without promoting estimates.
+    MusicAnalysisValidate {
+        analysis: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate a corrected editable music model and its event-level provenance.
+    MusicModelValidate {
+        model: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate an exact-lyrics, rights-gated local song-generation contract.
+    SongValidate {
+        manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Compile a private local-engine request and a path-free, lyric-free receipt.
+    SongEnginePlan {
+        manifest: PathBuf,
+        #[arg(long)]
+        output_dir: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Re-verify a song-engine packet against its manifest, lyrics, and references.
+    SongEnginePlanCheck {
+        packet_dir: PathBuf,
+        manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Diagnose the declared local song engine without downloading or generating.
+    SongEngineDoctor {
+        manifest: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

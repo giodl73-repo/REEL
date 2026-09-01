@@ -1,8 +1,11 @@
+.gitattributes text eol=lf
 *.sh text eol=lf
 *.yaml text eol=lf
 *.md text eol=lf
 *.rs text eol=lf
 *.toml text eol=lf
+*.txt text eol=lf
+*.u8 binary
 Cargo.lock text eol=lf
 manifests/fixtures/sprite-library/two-color.ppm text eol=lf
 manifests/fixtures/sprite-library/two-color-reversed.ppm text eol=lf

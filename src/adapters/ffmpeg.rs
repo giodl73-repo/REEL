@@ -36,6 +36,7 @@ pub fn descriptor() -> AdapterDescriptor {
             RenderOperationKind::ScenePreview,
             RenderOperationKind::ReviewPack,
             RenderOperationKind::AnimaticRender,
+            RenderOperationKind::MusicRepairRender,
         ],
     }
 }

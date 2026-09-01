@@ -2157,9 +2157,14 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
             .context("ffprobe returned an invalid animatic duration")?;
         let actual_ms = (actual_seconds * 1000.0).round() as u64;
         let frame_ms = (1000.0 / options.fps as f64).ceil() as u64;
-        if actual_ms.abs_diff(expected_duration_ms) > frame_ms {
+        // FFmpeg can quantize a mixed still/video graph across two adjacent
+        // frame boundaries (one at the graph tail and one at the container
+        // timestamp). Preserve the rendered candidate for deterministic
+        // downstream trim/pad repair while still rejecting material drift.
+        let quantization_budget_ms = frame_ms * 2;
+        if actual_ms.abs_diff(expected_duration_ms) > quantization_budget_ms {
             bail!(
-                "rendered duration {}ms differs from conformed timeline {}ms by more than one frame",
+                "rendered duration {}ms differs from conformed timeline {}ms by more than two frames",
                 actual_ms,
                 expected_duration_ms
             );

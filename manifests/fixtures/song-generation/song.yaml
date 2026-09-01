@@ -1,0 +1,64 @@
+schema: reel.song-generation.v0.1
+song_id: garden-light-title
+title: Garden Light
+source:
+  language: es
+  lyrics:
+    path: lyrics.txt
+    sha256: eaf9d12577287d1da00535653b76c407279d960dc2fa9a18c9c5b9617ec6bec0
+    exact_text: true
+    allow_repetition: false
+  source_ranges:
+    - id: synthetic-stanza
+      start: 1
+      end: 2
+composition:
+  duration_seconds: 30
+  meter: 6/8
+  tempo_bpm: 72
+  key: D minor
+  prompt: >-
+    Original Cuban-rooted chamber song with warm tumbadoras, acoustic guitar,
+    restrained piano, and a mature unassigned contralto; dignified and intimate.
+  negative_prompt: >-
+    no artist imitation, no crowd noise, no synthetic choir, no spoken introduction
+  named_artist_imitation: false
+  listening_references:
+    - Historic Cuban salon-song restraint; listening note only, excluded from engine prompt.
+  references: []
+engine:
+  kind: ace-step-local
+  version: "1.5"
+  model_id: ACE-Step/Ace-Step1.5
+  model_revision: 1.5-pinned-before-generation
+  model_license: MIT
+  local_only: true
+  executable: cargo
+  working_directory: .
+  network_policy: offline-after-install
+  seed: 1940
+  parameters:
+    guidance_scale: 6.0
+    inference_steps: 60
+outputs:
+  requested:
+    - id: audition-full-mix
+      kind: full-mix
+      format: wav
+    - id: audition-instrumental
+      kind: instrumental
+      format: wav
+permissions:
+  lyrics_scope: synthetic-fixture
+  voice_identity: original-unassigned
+  voice_consent: not-applicable
+  voice_consent_evidence: []
+  third_party_upload: false
+  public_release: false
+review:
+  status: not-reviewed
+  required_roles:
+    - sound-designer
+    - editor
+    - platform-audience
+  principal_findings: []

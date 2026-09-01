@@ -9,6 +9,7 @@ private references, or approval state.
 ```powershell
 reel series-validate series.yaml --output json
 reel series-plan series.yaml --output json
+reel series-timing-audit series.yaml --output json
 reel series-coverage series.yaml --output json
 reel series-review-queue series.yaml --output json
 reel episode-compose series.yaml S2E02 --output-dir composed/S2E02-v1 --output json
@@ -19,6 +20,13 @@ accepted timing/review state, required platforms, speakers, privacy state,
 source completeness, and duration. Child references cannot repeat anywhere in a
 series. Season and episode order, identifiers, canonical ranges, omissions,
 poem/prose dependencies, episode totals, and season totals are checked.
+
+Optional season and episode `runtime_plan` blocks provide editorial
+minimum/target/maximum ranges and named component budgets. They do not replace
+the exact conformed runtime fields or make a creative range exception invalid.
+Use `series-timing-audit` to compare the plan with the strongest timing
+available and to report cross-episode drift. See
+`series-runtime-planning-v0.2.22.md`.
 
 An episode cannot be release-ready while a child is untimed, unreviewed,
 privacy-blocked, or source-incomplete. Bertica and Herman findings remain

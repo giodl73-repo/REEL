@@ -17,6 +17,12 @@ seasons:
   - id: S1
     order: 1
     title: Opening season
+    runtime_plan:
+      class: calibration
+      minimum_seconds: 5.0
+      target_seconds: 6.0
+      maximum_seconds: 7.0
+      components_seconds: { narrative: 6.0 }
     total_runtime_seconds: 6.0
     episodes:
       - id: S1E01
@@ -33,6 +39,12 @@ seasons:
         recurring_motifs: [rain, road, doorway]
         continuity_entry: [path-before-threshold]
         continuity_exit: [doorway-open]
+        runtime_plan:
+          class: standard
+          minimum_seconds: 5.0
+          target_seconds: 6.0
+          maximum_seconds: 7.0
+          components_seconds: { narrative: 6.0 }
         timing_status: conformed
         human_review_status: open
         raw_orientation_seconds: 0.0

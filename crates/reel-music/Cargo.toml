@@ -1,0 +1,15 @@
+[package]
+name = "reel-music"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Provider-neutral music reconstruction contracts for REEL"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0.100"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+serde_yaml = "0.9.34"
+sha2 = "0.11.0"
+tempfile = "3.24.0"
