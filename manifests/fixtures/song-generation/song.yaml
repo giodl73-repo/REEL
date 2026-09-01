@@ -5,7 +5,7 @@ source:
   language: es
   lyrics:
     path: lyrics.txt
-    sha256: 4bc49c77b90acdb1117fe189711a0d50e1e46704c90af720392e7110dcf88ee3
+    sha256: eaf9d12577287d1da00535653b76c407279d960dc2fa9a18c9c5b9617ec6bec0
     exact_text: true
     allow_repetition: false
   source_ranges:

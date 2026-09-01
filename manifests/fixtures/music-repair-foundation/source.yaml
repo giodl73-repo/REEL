@@ -1,0 +1,26 @@
+schema: reel.music-source.v0.1
+source_id: synthetic-phrase-repair
+media:
+  path: source.u8
+  sha256: 3583f657661bb8c78a2d978fa6564e4d4fcb5508d5412a738c8544fd8be2fff6
+  format: raw-pcm-u8
+  timebase:
+    sample_rate_hz: 8000
+    channels: 1
+    samples_per_channel: 62
+  decoded_pcm_sha256: 3583f657661bb8c78a2d978fa6564e4d4fcb5508d5412a738c8544fd8be2fff6
+musical_timebase:
+  pulses_per_quarter: 960
+  rounding: half-away-from-zero
+authority:
+  namespace: synthetic-fixture
+  artifact_id: generated-u8-phrase-with-ambience-tail
+  content_sha256: 3583f657661bb8c78a2d978fa6564e4d4fcb5508d5412a738c8544fd8be2fff6
+  status: fixture-only
+  required_roles:
+    - music-reconstruction-engineer
+  decision_refs: []
+egress:
+  private: true
+  network_policy: denied
+  third_party_upload: false

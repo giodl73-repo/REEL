@@ -339,6 +339,31 @@ fn run_cli() -> Result<()> {
                 );
             }
         }
+        Command::MusicSourceValidate { source, output } => {
+            let report = reel_music::source::validate(&source)?;
+            print_report(&report, output)?;
+        }
+        Command::MusicNeutralPlan {
+            source,
+            output_path,
+            output,
+        } => {
+            let report = reel_music::neutral::write_plan(&source, &output_path)?;
+            print_report(&report, output)?;
+        }
+        Command::MusicNeutralCheck {
+            plan,
+            source,
+            candidate_pcm,
+            output,
+        } => {
+            let report = reel_music::neutral::check(&plan, &source, &candidate_pcm)?;
+            print_report(&report, output)?;
+        }
+        Command::MusicRepairPlan { repair, output } => {
+            let report = reel_music::repair::validate(&repair)?;
+            print_report(&report, output)?;
+        }
         Command::SongValidate { manifest, output } => {
             let report = reel::song::validate(&manifest)?;
             print_report(&report, output)?;
@@ -1495,6 +1520,34 @@ enum Command {
         /// Atomically retain the strict path-free JSON report for later artifact binding.
         #[arg(long)]
         report: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate an immutable raw-PCM music source and its authority boundary.
+    MusicSourceValidate {
+        source: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Write a deterministic full-range keep/lock plan for neutral reconstruction.
+    MusicNeutralPlan {
+        source: PathBuf,
+        #[arg(long)]
+        output_path: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Verify a neutral plan and candidate PCM against the exact source signal.
+    MusicNeutralCheck {
+        plan: PathBuf,
+        source: PathBuf,
+        candidate_pcm: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate a deterministic music-repair plan and complete changed/locked coverage.
+    MusicRepairPlan {
+        repair: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

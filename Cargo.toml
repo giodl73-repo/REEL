@@ -1,6 +1,6 @@
 [package]
 name = "reel"
-version = "0.2.25"
+version = "0.2.26"
 edition = "2024"
 rust-version = "1.85"
 description = "Portable moving-image production manifests, series composition, and FFmpeg orchestration"
@@ -16,5 +16,8 @@ serde_json = "1.0.145"
 serde_yaml = "0.9.34"
 sha2 = "0.11.0"
 tempfile = "3.24.0"
+reel-music = { path = "crates/reel-music" }
 
 [workspace]
+members = ["crates/reel-music"]
+resolver = "3"

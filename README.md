@@ -161,6 +161,14 @@ receipt. It does not download models, execute generation, infer consent, verify
 the generated vocal words, or authorize release. See
 [`docs/song-generation-v0.2.25.md`](docs/song-generation-v0.2.25.md).
 
+CLI v0.2.26 begins the provider-neutral `reel-music` workspace crate. It
+validates immutable raw-PCM sources and explicit authority/egress declarations,
+writes and rechecks a full-signal neutral keep/lock plan, and validates typed
+repair operations against exact half-open changed envelopes and locks that
+cover every source sample once. It does not render repairs, separate stems, or
+run a music model. See
+[`docs/music-reconstruction-v0.2.26.md`](docs/music-reconstruction-v0.2.26.md).
+
 The main BERTICA-driven workflow is:
 
 ```powershell

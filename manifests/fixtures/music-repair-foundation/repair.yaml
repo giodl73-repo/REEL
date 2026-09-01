@@ -1,0 +1,33 @@
+schema: reel.music-repair.v0.1
+repair_id: synthetic-single-cut
+source:
+  manifest: source.yaml
+  sha256: d5c63640228e2a87a54cf3f4cebd8c861139862e0e080c2c3df5ce3c04add464
+source_id: synthetic-phrase-repair
+decoded_pcm_sha256: 3583f657661bb8c78a2d978fa6564e4d4fcb5508d5412a738c8544fd8be2fff6
+timebase:
+  sample_rate_hz: 8000
+  channels: 1
+  samples_per_channel: 62
+operations:
+  - kind: cut
+    id: remove-synthetic-repeat
+    range:
+      start: 16
+      end: 32
+changed_envelopes:
+  - start: 16
+    end: 32
+locks:
+  - start: 0
+    end: 16
+  - start: 32
+    end: 62
+review:
+  status: not-reviewed
+  required_roles:
+    - music-reconstruction-engineer
+    - sound-designer
+    - editor
+    - rights-provenance-steward
+  decision_refs: []

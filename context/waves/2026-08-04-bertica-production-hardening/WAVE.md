@@ -15,6 +15,7 @@ or creating a consumer runtime dependency on REEL internals.
 | 03 | Hardening and adoption | complete | Added CI/release/install guidance, completed 12/12 read-only BERTICA migration validation, rendered a 7.500-second Windows/WSL FFmpeg proof with A/B variants, and documented the consumer handoff. |
 | 04 | Executable voice performance | complete | Added exact-span performance direction, Chatterbox/generic compilation, executed-versus-advisory disclosure, atomic path-free receipts, re-verification, sanitized fixtures and v0.2.15 CLI tests. |
 | 05 | Scoped cadence evidence | complete | Separated emotion scope, register, contour, terminal boundary, relative pitch and joins; added explicit IndexTTS 2.5 capability disclosure plus path-free, hash-bound prosody evidence that detects a requested fall rendered as a rise. |
+| 06 | Music reconstruction foundation | complete | Added the provider-neutral `reel-music` crate, immutable raw-PCM and exact timebase contracts, neutral identity proof, typed repair plans with complete changed/locked coverage, specialist roles, synthetic fixtures, and Windows/Linux validation. |
 
 ## Invariants
 
