@@ -56,7 +56,7 @@ narrative artifact, or delivery package.
 
 ## Synthesis
 
-Roles reviewed: 4  
+Roles reviewed: 4
 P1 blockers: 0 | P2 issues: 0 open (13 resolved/passing) | P3 notes: 3
 
 Verdict: **APPROVED**
