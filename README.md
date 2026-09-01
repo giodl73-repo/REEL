@@ -367,6 +367,11 @@ selected artifact, recomputes integer sample/microsecond/musical-tick mappings,
 and atomically writes analysis observations with exact import-event lineage.
 See [`docs/music-semantic-import-v0.3.4.md`](docs/music-semantic-import-v0.3.4.md).
 
+CLI v0.3.5 requires an explicit mapped, omitted, or unknown disposition for
+every analysis observation entering an editable model, and checks every model
+evidence citation in reverse. See
+[`docs/music-model-draft-v0.3.5.md`](docs/music-model-draft-v0.3.5.md).
+
 The main BERTICA-driven workflow is:
 
 ```powershell

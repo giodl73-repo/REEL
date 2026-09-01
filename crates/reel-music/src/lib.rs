@@ -6,6 +6,7 @@ pub mod export;
 pub mod hash;
 pub mod interchange;
 pub mod model;
+pub mod model_draft;
 pub mod neutral;
 pub mod repair;
 pub mod semantic_import;
