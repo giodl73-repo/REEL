@@ -256,7 +256,7 @@ fn load_observation_census(model_path: &Path, model: &MusicModel) -> Result<BTre
     Ok(census)
 }
 
-fn model_targets(model: &MusicModel) -> Result<BTreeMap<String, &Provenance>> {
+pub(crate) fn model_targets(model: &MusicModel) -> Result<BTreeMap<String, &Provenance>> {
     let mut targets = BTreeMap::new();
     for item in &model.tempo_map {
         insert_target(

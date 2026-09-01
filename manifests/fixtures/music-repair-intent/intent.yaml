@@ -1,0 +1,48 @@
+schema: reel.music-repair-intent.v0.1
+intent_id: synthetic-model-bound-repair
+model_draft:
+  manifest: ../music-model-corrected/draft.yaml
+  manifest_sha256: fd6da576de452bf274d3346830a593564235ee891d9df21ff9aee6b02518a4a3
+  contract_sha256: e2ff3cdc5d49b996c00ecaf1dff550de6dd55de3c3d2386853997da5347d081b
+  draft_id: synthetic-governed-model-draft
+repair:
+  manifest: ../music-repair-foundation/repair.yaml
+  manifest_sha256: b70e86db72b015758c142cb15a859c3cf092ace432177d1048a43f1eabae9ba4
+  contract_sha256: 8ce8995cb1ef49fb1dcf49be0698b4658e69d185ab14a3b33b3caa5f634e66d4
+  repair_id: synthetic-single-cut
+authority:
+  namespace: synthetic-fixture
+  artifact_id: synthetic-repair-intent-authority
+  content_sha256: "5555555555555555555555555555555555555555555555555555555555555555"
+  status: fixture-only
+  required_roles:
+    - music-reconstruction-engineer
+    - editor
+  decision_refs: []
+intents:
+  - id: remove-duplicate-phrase-material
+    objective: structure
+    operation_ids:
+      - remove-synthetic-repeat
+    model_target_refs:
+      - form:phrase-a-prime
+    rationale: Remove only the fixture's declared repeated sample span while preserving the governed two-phrase form target.
+    decision:
+      artifact_id: synthetic-remove-repeat-decision
+      sha256: "6666666666666666666666666666666666666666666666666666666666666666"
+candidate_gate:
+  required_checks:
+    - outside-regions-exact
+    - boundary-continuity
+    - right-tail-identity
+    - output-duration
+    - human-listening
+    - human-selection
+review:
+  status: not-reviewed
+  required_roles:
+    - music-reconstruction-engineer
+    - sound-designer
+    - editor
+    - rights-provenance-steward
+  decision_refs: []
