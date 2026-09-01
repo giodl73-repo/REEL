@@ -378,6 +378,12 @@ technical, listening, and selection gate for every future candidate without
 claiming that validation selects or approves one. See
 [`docs/music-repair-intent-v0.3.6.md`](docs/music-repair-intent-v0.3.6.md).
 
+CLI v0.3.7 recursively rechecks an exact repair candidate, C7 intent, repair,
+EDL, and technical evidence before applying separate listening and selection
+gates. Failed candidates remain auditable rejections and can never be promoted
+to selected status. See
+[`docs/music-repair-candidate-v0.3.7.md`](docs/music-repair-candidate-v0.3.7.md).
+
 The main BERTICA-driven workflow is:
 
 ```powershell

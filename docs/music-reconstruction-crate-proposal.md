@@ -1,6 +1,6 @@
 # REEL music-reconstruction crate proposal
 
-Status: Slices A, B, and C1-C7 interchange-to-repair governance implemented through REEL v0.3.6
+Status: Slices A, B, and C1-C8 interchange-to-candidate governance implemented through REEL v0.3.7
 Date: 2026-09-01
 Proposed CLI milestone: v0.2.26 foundation, followed by additive repair,
 language-adaptation, and arrangement slices
@@ -331,6 +331,9 @@ the root module implementation.
 - Bind each mutating repair operation to governed model targets and an immutable
   decision, while requiring technical evidence, listening, and selection as
   separate candidate gates. **Implemented in C7 v0.3.6.**
+- Recursively bind candidate bytes and technical repair evidence to the C7
+  intent, and enforce separately decision-backed listening, selection, and
+  rejection states. **Implemented in C8 v0.3.7.**
 
 ### Slice D — same-music second-language proof
 

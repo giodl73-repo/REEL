@@ -1053,6 +1053,10 @@ fn run_cli() -> Result<()> {
             let report = reel_music::repair_intent::validate(&intent)?;
             print_report(&report, output)?;
         }
+        Command::MusicRepairCandidateCheck { candidate, output } => {
+            let report = reel_music::repair_candidate::validate(&candidate)?;
+            print_report(&report, output)?;
+        }
         Command::MusicScoreExportPlan {
             model,
             output_path,
@@ -2719,6 +2723,12 @@ enum Command {
     /// Bind every mutating repair operation to governed model evidence and candidate gates.
     MusicRepairIntentCheck {
         intent: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Recheck an exact repair candidate and its independent listening and selection gates.
+    MusicRepairCandidateCheck {
+        candidate: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
