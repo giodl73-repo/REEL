@@ -343,6 +343,13 @@ editable music model with event-level provenance. See
 [`docs/music-repair-render-v0.2.27.md`](docs/music-repair-render-v0.2.27.md), and
 [`docs/music-analysis-model-v0.2.28.md`](docs/music-analysis-model-v0.2.28.md).
 
+CLI v0.3.1 adds Slice C2 score export. A validated corrected model can be
+compiled atomically to deterministic Standard MIDI, editable MusicXML, and a
+utilitarian WAV rehearsal guide. The retained local receipt binds every output
+and independently re-imports MIDI and MusicXML to detect lost duration, tempo,
+meter, form, notes, or lyric-layer identities. See
+[`docs/music-score-export-v0.3.1.md`](docs/music-score-export-v0.3.1.md).
+
 The main BERTICA-driven workflow is:
 
 ```powershell

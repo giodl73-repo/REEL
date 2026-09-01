@@ -70,7 +70,8 @@ analysis rejection, unknown-evidence rejection, confidence bounds, correction-
 reference requirements, exact lyric requirements for vocal parts, and immutable
 source lineage on Windows and Linux.
 
-MIDI, MusicXML, score round-trip comparison, audible guides, sample/tick export,
-language adaptation, and arrangement remain pending Slice C2 or later. No
-BERTICA audio, lyrics, titles, identity, paths, or creative judgment appears in
-the fixture.
+MIDI, MusicXML, score round-trip comparison, and an audible rehearsal guide are
+implemented by Slice C2 in REEL v0.3.1. Sample/tick interchange beyond the
+current score adapters, language adaptation, lyric underlay, and arrangement
+remain later work. No BERTICA audio, lyrics, titles, identity, paths, or
+creative judgment appears in the fixture.

@@ -1025,6 +1025,33 @@ fn run_cli() -> Result<()> {
             let report = reel_music::model::validate(&model)?;
             print_report(&report, output)?;
         }
+        Command::MusicScoreExportPlan {
+            model,
+            output_path,
+            output,
+        } => {
+            let report = reel_music::export::write(&model, &output_path)?;
+            print_report(&report, output)?;
+        }
+        Command::MusicScoreExportRender {
+            plan,
+            model,
+            output_dir,
+            output,
+        } => {
+            let report = reel::music_score::render(&plan, &model, &output_dir)?;
+            print_report(&report, output)?;
+        }
+        Command::MusicScoreExportCheck {
+            receipt,
+            plan,
+            model,
+            output_dir,
+            output,
+        } => {
+            let report = reel::music_score::check(&receipt, &plan, &model, &output_dir)?;
+            print_report(&report, output)?;
+        }
         Command::SongValidate { manifest, output } => {
             let report = reel::song::validate(&manifest)?;
             print_report(&report, output)?;
@@ -2626,6 +2653,32 @@ enum Command {
     /// Validate a corrected editable music model and its event-level provenance.
     MusicModelValidate {
         model: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Write a deterministic MIDI/MusicXML/rehearsal-guide export plan.
+    MusicScoreExportPlan {
+        model: PathBuf,
+        #[arg(long)]
+        output_path: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Atomically render score exports and a locally verifiable receipt.
+    MusicScoreExportRender {
+        plan: PathBuf,
+        model: PathBuf,
+        #[arg(long)]
+        output_dir: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Independently re-import and verify a score export packet.
+    MusicScoreExportCheck {
+        receipt: PathBuf,
+        plan: PathBuf,
+        model: PathBuf,
+        output_dir: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
