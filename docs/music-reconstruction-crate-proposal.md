@@ -1,6 +1,6 @@
 # REEL music-reconstruction crate proposal
 
-Status: Slices A and B implemented and contract-verified through REEL v0.2.27
+Status: Slices A, B, and C1 implemented and contract-verified through REEL v0.2.28
 Date: 2026-09-01
 Proposed CLI milestone: v0.2.26 foundation, followed by additive repair,
 language-adaptation, and arrangement slices
@@ -311,12 +311,13 @@ the root module implementation.
 
 ### Slice C — corrected model and notation round trip
 
-- Validate externally produced analysis evidence.
-- Build a small human-corrected synthetic music model.
+- Validate externally produced analysis evidence. **Implemented in C1 v0.2.28.**
+- Build a small human-corrected synthetic music model. **Implemented in C1
+  v0.2.28 with explicit event provenance and fixture-only correction evidence.**
 - Export MIDI and MusicXML through explicit adapters and re-import enough of
-  both to detect lost form, notes, lyrics, or tempo changes.
+  both to detect lost form, notes, lyrics, or tempo changes. **C2 pending.**
 - Generate an audible guide from the corrected model and bind it to the export
-  receipt.
+  receipt. **C2 pending.**
 
 ### Slice D — same-music second-language proof
 

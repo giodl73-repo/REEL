@@ -1,0 +1,162 @@
+schema: reel.music-model.v0.1
+model_id: synthetic-corrected-editable-model
+source:
+  manifest: ../music-repair-foundation/source.yaml
+  manifest_sha256: d5c63640228e2a87a54cf3f4cebd8c861139862e0e080c2c3df5ce3c04add464
+  contract_sha256: 2cc8f8b0de36676bb278133d05414e68ca4baa273ddcf67b36308b9019d6fb41
+  decoded_pcm_sha256: 3583f657661bb8c78a2d978fa6564e4d4fcb5508d5412a738c8544fd8be2fff6
+analyses:
+  - manifest: analysis.yaml
+    manifest_sha256: f9f6772605bd1e9e93c9225ed7ce916ef5cdfd898709de3b555245f3abaab80a
+    contract_sha256: c92cd3b3773e8e9b3e128c5335fee5ac2819628507f554d222f9cf6ee92efcdd
+    analysis_id: synthetic-corrected-model-analysis
+authority:
+  namespace: synthetic-fixture
+  artifact_id: synthetic-corrected-model-authority
+  content_sha256: 3333333333333333333333333333333333333333333333333333333333333333
+  status: fixture-only
+  required_roles:
+    - music-reconstruction-engineer
+    - score-arrangement-director
+  decision_refs: []
+musical_timebase:
+  pulses_per_quarter: 960
+  rounding: half-away-from-zero
+duration_ticks: 7680
+tempo_map:
+  - tick: 0
+    microseconds_per_quarter: 500000
+    provenance:
+      state: observed
+      evidence_refs:
+        - { analysis_id: synthetic-corrected-model-analysis, observation_id: tempo-120 }
+      rationale: Retained from the synthetic tempo observation.
+      correction_ref: null
+meter_map:
+  - tick: 0
+    numerator: 4
+    denominator: 4
+    provenance:
+      state: observed
+      evidence_refs:
+        - { analysis_id: synthetic-corrected-model-analysis, observation_id: meter-4-4 }
+      rationale: Retained from the synthetic meter observation.
+      correction_ref: null
+form:
+  - id: phrase-a
+    label: A
+    range: { start: 0, end: 3840 }
+    provenance:
+      state: observed
+      evidence_refs:
+        - { analysis_id: synthetic-corrected-model-analysis, observation_id: form-two-phrases }
+      rationale: First half of the observed two-phrase fixture form.
+      correction_ref: null
+  - id: phrase-a-prime
+    label: A-prime
+    range: { start: 3840, end: 7680 }
+    provenance:
+      state: observed
+      evidence_refs:
+        - { analysis_id: synthetic-corrected-model-analysis, observation_id: form-two-phrases }
+      rationale: Second half of the observed two-phrase fixture form.
+      correction_ref: null
+parts:
+  - id: melody
+    role: melody
+    name: Synthetic melody
+    notes:
+      - id: note-1
+        voice: 1
+        start_tick: 0
+        duration_ticks: 960
+        midi_note: 60
+        velocity: 80
+        provenance:
+          state: human-corrected
+          evidence_refs:
+            - { analysis_id: synthetic-corrected-model-analysis, observation_id: pitch-opening }
+          rationale: Fixture author corrects the opening hypothesis for deterministic round-trip testing only.
+          correction_ref:
+            artifact_id: synthetic-fixture-correction
+            sha256: 2222222222222222222222222222222222222222222222222222222222222222
+      - id: note-2
+        voice: 1
+        start_tick: 960
+        duration_ticks: 960
+        midi_note: 62
+        velocity: 80
+        provenance:
+          state: inferred
+          evidence_refs:
+            - { analysis_id: synthetic-corrected-model-analysis, observation_id: pitch-opening }
+          rationale: Synthetic continuation inferred for contract testing.
+          correction_ref: null
+      - id: note-3
+        voice: 1
+        start_tick: 1920
+        duration_ticks: 960
+        midi_note: 64
+        velocity: 80
+        provenance:
+          state: inferred
+          evidence_refs:
+            - { analysis_id: synthetic-corrected-model-analysis, observation_id: pitch-opening }
+          rationale: Synthetic continuation inferred for contract testing.
+          correction_ref: null
+      - id: note-4
+        voice: 1
+        start_tick: 2880
+        duration_ticks: 960
+        midi_note: 65
+        velocity: 80
+        provenance:
+          state: inferred
+          evidence_refs:
+            - { analysis_id: synthetic-corrected-model-analysis, observation_id: pitch-opening }
+          rationale: Synthetic continuation inferred for contract testing.
+          correction_ref: null
+harmony:
+  - id: tonic-span
+    range: { start: 0, end: 7680 }
+    symbol: I
+    provenance:
+      state: observed
+      evidence_refs:
+        - { analysis_id: synthetic-corrected-model-analysis, observation_id: harmony-tonic }
+      rationale: Minimal tonic fixture retained from analysis evidence.
+      correction_ref: null
+rhythm_cells:
+  - id: quarter-cell
+    range: { start: 0, end: 3840 }
+    onset_offsets_ticks: [0, 960, 1920, 2880]
+    provenance:
+      state: observed
+      evidence_refs:
+        - { analysis_id: synthetic-corrected-model-analysis, observation_id: rhythm-quarter }
+      rationale: Quarter-pulse fixture retained from analysis evidence.
+      correction_ref: null
+hooks:
+  - id: opening-hook
+    label: Opening four-note hook
+    range: { start: 0, end: 3840 }
+    element_refs: [note-1, note-2, note-3, note-4]
+    provenance:
+      state: inferred
+      evidence_refs:
+        - { analysis_id: synthetic-corrected-model-analysis, observation_id: hook-opening }
+      rationale: Hook label remains an explicit inference, not creative approval.
+      correction_ref: null
+lyric_layers: []
+expressive_timing: []
+unknowns:
+  - Dynamics, articulation, timbre, lyrics, and expressive timing remain unknown.
+review:
+  status: not-reviewed
+  required_roles:
+    - music-reconstruction-engineer
+    - score-arrangement-director
+    - sound-designer
+    - editor
+    - rights-provenance-steward
+  decision_refs: []

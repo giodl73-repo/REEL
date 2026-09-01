@@ -176,6 +176,15 @@ operations in planning state. It does not separate stems, repair with a model,
 or claim listening approval. See
 [`docs/music-repair-render-v0.2.27.md`](docs/music-repair-render-v0.2.27.md).
 
+CLI v0.2.28 begins Slice C with separate external-analysis and corrected-model
+contracts. Analyzer estimates retain engine, parameter, license, confidence,
+uncertainty, and source-region evidence; corrected score events carry explicit
+`observed`, `inferred`, or `human-corrected` provenance. Human corrections
+require immutable decision references, and vocal models require an exact
+hash-bound lyric layer. MIDI, MusicXML, and audible-guide export remain the next
+additive step. See
+[`docs/music-analysis-model-v0.2.28.md`](docs/music-analysis-model-v0.2.28.md).
+
 The main BERTICA-driven workflow is:
 
 ```powershell

@@ -1,6 +1,8 @@
+pub mod analysis;
 pub mod edl;
 pub mod evidence;
 pub mod hash;
+pub mod model;
 pub mod neutral;
 pub mod repair;
 pub mod source;

@@ -392,6 +392,14 @@ fn run_cli() -> Result<()> {
             let report = reel::music_render::check(&evidence, &edl, &repair, &candidate_pcm)?;
             print_report(&report, output)?;
         }
+        Command::MusicAnalysisValidate { analysis, output } => {
+            let report = reel_music::analysis::validate(&analysis)?;
+            print_report(&report, output)?;
+        }
+        Command::MusicModelValidate { model, output } => {
+            let report = reel_music::model::validate(&model)?;
+            print_report(&report, output)?;
+        }
         Command::SongValidate { manifest, output } => {
             let report = reel::song::validate(&manifest)?;
             print_report(&report, output)?;
@@ -1604,6 +1612,18 @@ enum Command {
         edl: PathBuf,
         repair: PathBuf,
         candidate_pcm: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate immutable external analyzer evidence without promoting estimates.
+    MusicAnalysisValidate {
+        analysis: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate a corrected editable music model and its event-level provenance.
+    MusicModelValidate {
+        model: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
