@@ -1,0 +1,84 @@
+schema: reel.music-analysis.v0.1
+analysis_id: synthetic-corrected-model-analysis
+source:
+  manifest: ../music-repair-foundation/source.yaml
+  manifest_sha256: d5c63640228e2a87a54cf3f4cebd8c861139862e0e080c2c3df5ce3c04add464
+  contract_sha256: 2cc8f8b0de36676bb278133d05414e68ca4baa273ddcf67b36308b9019d6fb41
+  decoded_pcm_sha256: 3583f657661bb8c78a2d978fa6564e4d4fcb5508d5412a738c8544fd8be2fff6
+analyzers:
+  - id: synthetic-observer
+    adapter: generated-fixture
+    version: "1"
+    model_revision: none
+    parameters_sha256: 1111111111111111111111111111111111111111111111111111111111111111
+    license: fixture-only
+    network_policy: denied
+stems: []
+observations:
+  - id: tempo-120
+    analyzer_id: synthetic-observer
+    source: { start: 0, end: 62 }
+    confidence_millionths: 900000
+    uncertainty: Synthetic tempo estimate; not a performance judgment.
+    value:
+      kind: tempo
+      milli_bpm: 120000
+  - id: meter-4-4
+    analyzer_id: synthetic-observer
+    source: { start: 0, end: 62 }
+    confidence_millionths: 900000
+    uncertainty: Synthetic meter estimate; pickup behavior remains unknown.
+    value:
+      kind: meter
+      numerator: 4
+      denominator: 4
+  - id: form-two-phrases
+    analyzer_id: synthetic-observer
+    source: { start: 0, end: 62 }
+    confidence_millionths: 800000
+    uncertainty: Form labels are generated solely for contract testing.
+    value:
+      kind: form
+      label: two-phrase form
+  - id: pitch-opening
+    analyzer_id: synthetic-observer
+    source: { start: 0, end: 24 }
+    confidence_millionths: 700000
+    uncertainty: Synthetic pitch hypothesis corrected in the editable model.
+    value:
+      kind: pitch
+      midi_note: 60
+      cents: 0
+  - id: harmony-tonic
+    analyzer_id: synthetic-observer
+    source: { start: 0, end: 62 }
+    confidence_millionths: 700000
+    uncertainty: Harmonic function is a minimal fixture assertion.
+    value:
+      kind: harmony
+      symbol: I
+  - id: rhythm-quarter
+    analyzer_id: synthetic-observer
+    source: { start: 0, end: 62 }
+    confidence_millionths: 800000
+    uncertainty: Microtiming is deliberately not represented.
+    value:
+      kind: rhythm
+      label: quarter pulse
+  - id: hook-opening
+    analyzer_id: synthetic-observer
+    source: { start: 0, end: 24 }
+    confidence_millionths: 750000
+    uncertainty: Hook identity remains a human musical judgment.
+    value:
+      kind: hook
+      label: opening four notes
+limitations:
+  - No separation, lyrics, dynamics, articulation, timbre, or expressive timing were analyzed.
+review:
+  status: not-reviewed
+  required_roles:
+    - music-reconstruction-engineer
+    - sound-designer
+    - rights-provenance-steward
+  decision_refs: []

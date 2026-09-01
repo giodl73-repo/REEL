@@ -615,6 +615,7 @@ dependencies = [
  "clap",
  "ed25519-dalek",
  "image",
+ "reel-music",
  "same-file",
  "serde",
  "serde_json",
@@ -622,6 +623,18 @@ dependencies = [
  "sha2 0.11.0",
  "tempfile",
  "zeroize",
+]
+
+[[package]]
+name = "reel-music"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2 0.11.0",
+ "tempfile",
 ]
 
 [[package]]

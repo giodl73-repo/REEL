@@ -68,6 +68,8 @@ pub enum RenderOperationKind {
     ReviewPack,
     #[serde(rename = "animatic-render")]
     AnimaticRender,
+    #[serde(rename = "music-repair-render")]
+    MusicRepairRender,
 }
 
 impl RenderOperationKind {
@@ -79,6 +81,7 @@ impl RenderOperationKind {
             Self::ScenePreview => "scene-preview",
             Self::ReviewPack => "review-pack",
             Self::AnimaticRender => "animatic-render",
+            Self::MusicRepairRender => "music-repair-render",
         }
     }
 }

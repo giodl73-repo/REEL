@@ -31,6 +31,10 @@ fn cli_exposes_all_v021_series_and_continuity_commands() {
             .contains("\"id\": \"S1E01\"")
     );
     assert!(
+        successful(binary, &["series-timing-audit", SERIES, "--output", "json"])
+            .contains("\"within_range_episodes\": 1")
+    );
+    assert!(
         successful(binary, &["series-coverage", SERIES, "--output", "json"])
             .contains("\"continuous\": true")
     );

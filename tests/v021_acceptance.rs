@@ -93,6 +93,7 @@ fn episode(id: String, order: u32, range: SeriesRange, child: ChildManifestRef) 
         recurring_motifs: vec!["road".to_string()],
         continuity_entry: vec!["road-distant".to_string()],
         continuity_exit: vec!["road-near".to_string()],
+        runtime_plan: None,
         timing_status: TimingStatus::Conformed,
         human_review_status: "open".to_string(),
         raw_orientation_seconds: 0.0,
@@ -149,6 +150,7 @@ fn validates_the_sanitized_five_season_fifty_episode_slate() {
             id: format!("S{season_number}"),
             order: season_number,
             title: format!("Season {season_number}"),
+            runtime_plan: None,
             total_runtime_seconds: Some(60.0),
             episodes,
         });
@@ -177,6 +179,76 @@ fn validates_the_sanitized_five_season_fifty_episode_slate() {
     assert_eq!(series::plan(&path).unwrap().seasons.len(), 5);
     assert!(series::coverage(&path).unwrap().continuous);
     assert_eq!(series::review_queue(&path).unwrap().open.len(), 50);
+}
+
+#[test]
+fn audits_runtime_budgets_without_turning_creative_drift_into_validation_failure() {
+    let mut loaded = series::load(SERIES_TEMPLATE).unwrap();
+    let episode = &mut loaded.manifest.seasons[0].episodes[0];
+    let plan = episode.runtime_plan.as_mut().unwrap();
+    plan.minimum_seconds = 4.0;
+    plan.target_seconds = 5.0;
+    plan.maximum_seconds = 5.5;
+    plan.components_seconds.insert("narrative".to_string(), 5.0);
+
+    let report = series::timing_audit_loaded(&loaded, 35.0).unwrap();
+    assert_eq!(report.planned_episodes, 1);
+    assert_eq!(report.evaluated_episodes, 1);
+    assert_eq!(report.over_range_episodes, vec!["S1E01"]);
+    assert_eq!(
+        report.seasons[0].episodes[0].runtime_basis,
+        "declared-runtime"
+    );
+    assert_eq!(report.seasons[0].episodes[0].range_status, "over");
+    assert_eq!(report.seasons[0].budget_alignment, "mismatch");
+    assert_eq!(report.seasons[0].episode_target_delta_ms, Some(-1000));
+    assert_eq!(
+        report.seasons[0].episodes[0].narration_share_percent,
+        Some(100.0)
+    );
+}
+
+#[test]
+fn rejects_invalid_runtime_budget_order_and_component_totals() {
+    let mut loaded = series::load(SERIES_TEMPLATE).unwrap();
+    let plan = loaded.manifest.seasons[0].episodes[0]
+        .runtime_plan
+        .as_mut()
+        .unwrap();
+    plan.minimum_seconds = 8.0;
+    assert!(
+        series::validate_loaded(&loaded)
+            .unwrap_err()
+            .to_string()
+            .contains("minimum <= target <= maximum")
+    );
+
+    let mut loaded = series::load(SERIES_TEMPLATE).unwrap();
+    loaded.manifest.seasons[0].episodes[0]
+        .runtime_plan
+        .as_mut()
+        .unwrap()
+        .components_seconds
+        .insert("visual-breathing".to_string(), 1.0);
+    assert!(
+        series::validate_loaded(&loaded)
+            .unwrap_err()
+            .to_string()
+            .contains("components must sum to target_seconds")
+    );
+}
+
+#[test]
+fn leaves_unmeasured_narration_and_pause_shares_unknown() {
+    let mut loaded = series::load(SERIES_TEMPLATE).unwrap();
+    let episode = &mut loaded.manifest.seasons[0].episodes[0];
+    episode.measured_narration_seconds = 0.0;
+    episode.protected_pause_seconds = 0.0;
+
+    let report = series::timing_audit_loaded(&loaded, 35.0).unwrap();
+    let episode = &report.seasons[0].episodes[0];
+    assert_eq!(episode.narration_share_percent, None);
+    assert_eq!(episode.protected_pause_share_percent, None);
 }
 
 #[test]
@@ -373,6 +445,7 @@ fn composes_children_and_an_attributed_end_card_atomically() {
         recurring_motifs: vec!["doorway".to_string()],
         continuity_entry: vec!["closed".to_string()],
         continuity_exit: vec!["open".to_string()],
+        runtime_plan: None,
         timing_status: TimingStatus::Conformed,
         human_review_status: "open".to_string(),
         raw_orientation_seconds: 0.0,
@@ -432,6 +505,7 @@ fn composes_children_and_an_attributed_end_card_atomically() {
             id: "S2".to_string(),
             order: 1,
             title: "Season 2".to_string(),
+            runtime_plan: None,
             total_runtime_seconds: Some(8.5),
             episodes: vec![episode],
         }],
