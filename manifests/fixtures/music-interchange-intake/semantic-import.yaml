@@ -1,0 +1,81 @@
+schema: reel.music-semantic-import.v0.1
+import_id: synthetic-selected-note-import
+intake:
+  manifest: intake.yaml
+  manifest_sha256: 1c578556ae66c70e449cd3eec048749fd5aaa93f9f0f94699d7bf6e83958d546
+  contract_sha256: 427b862abfcbaa3c1ab08f4afc474e2c28010a16572c61c37306cbe9d2570018
+comparison:
+  manifest: comparison-selected.yaml
+  manifest_sha256: 8f731f2ac6072a5d242ce7295617293916b7b497e1c9b688a287f1dacfd95366
+  contract_sha256: 56e2fd778c28eaffdd403ac5db01ead4305257f62bdbad89eec3fc0383d06fc5
+comparison_set_id: melody-note-events
+selected_artifact_id: synthetic-note-events-alternate
+authority:
+  namespace: synthetic-fixture
+  artifact_id: synthetic-semantic-mapping-authority
+  content_sha256: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+  status: fixture-only
+  required_roles:
+    - music-reconstruction-engineer
+    - editor
+  decision_refs: []
+adapter:
+  id: normalized-note-event-adapter
+  name: synthetic-csv-to-normalized-events
+  version: fixture-1
+  executable_sha256: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+  parameters_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  model_revision: not-applicable
+  license: fixture-only-no-third-party-code
+  network_policy: denied
+events:
+  - id: row-1-pitch
+    source_locator: csv-data-row-1
+    original_time:
+      unit: microseconds
+      start: 0
+      end: 2000
+    mapped_source: { start: 0, end: 16 }
+    confidence_millionths: 820000
+    uncertainty: Synthetic adapter confidence is not a musical correctness judgment.
+    value:
+      kind: pitch
+      midi_note: 60
+      cents: 0
+  - id: row-2-pitch
+    source_locator: csv-data-row-2
+    original_time:
+      unit: microseconds
+      start: 2000
+      end: 4000
+    mapped_source: { start: 16, end: 32 }
+    confidence_millionths: 760000
+    uncertainty: Synthetic adapter confidence is not a musical correctness judgment.
+    value:
+      kind: pitch
+      midi_note: 62
+      cents: 0
+  - id: row-3-pitch
+    source_locator: csv-data-row-3
+    original_time:
+      unit: microseconds
+      start: 4000
+      end: 7000
+    mapped_source: { start: 32, end: 56 }
+    confidence_millionths: 790000
+    uncertainty: The selected final pitch was separately inspected in the comparison decision.
+    value:
+      kind: pitch
+      midi_note: 65
+      cents: 0
+limitations:
+  - The synthetic adapter sidecar, not REEL, interprets CSV rows and pitch columns.
+  - Promotion preserves selected evidence as observations and does not make it authoritative.
+review:
+  status: not-reviewed
+  required_roles:
+    - music-reconstruction-engineer
+    - sound-designer
+    - editor
+    - rights-provenance-steward
+  decision_refs: []

@@ -77,6 +77,7 @@ fn fixture() -> Fixture {
         confidence_millionths: 850_000,
         uncertainty: "Synthetic estimate for contract testing only.".into(),
         value,
+        import_event_id: None,
     };
     let analysis_manifest = AnalysisManifest {
         schema: "reel.music-analysis.v0.1".into(),
@@ -87,6 +88,7 @@ fn fixture() -> Fixture {
             contract_sha256: source_report.contract_sha256.clone(),
             decoded_pcm_sha256: source_report.decoded_pcm_sha256.clone(),
         },
+        imports: vec![],
         analyzers: vec![Analyzer {
             id: analyzer_id.clone(),
             adapter: "generated-fixture".into(),
@@ -95,6 +97,7 @@ fn fixture() -> Fixture {
             parameters_sha256: "1".repeat(64),
             license: "fixture-only".into(),
             network_policy: NetworkPolicy::Denied,
+            import_id: None,
         }],
         stems: vec![],
         observations: vec![

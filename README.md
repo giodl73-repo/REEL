@@ -362,6 +362,11 @@ specific corrections, and requires separate immutable decisions before either
 can close. See
 [`docs/music-evidence-comparison-v0.3.3.md`](docs/music-evidence-comparison-v0.3.3.md).
 
+CLI v0.3.4 validates adapter-normalized semantic events from an explicitly
+selected artifact, recomputes integer sample/microsecond/musical-tick mappings,
+and atomically writes analysis observations with exact import-event lineage.
+See [`docs/music-semantic-import-v0.3.4.md`](docs/music-semantic-import-v0.3.4.md).
+
 The main BERTICA-driven workflow is:
 
 ```powershell

@@ -1029,6 +1029,18 @@ fn run_cli() -> Result<()> {
             let report = reel_music::comparison::validate(&comparison)?;
             print_report(&report, output)?;
         }
+        Command::MusicSemanticImportValidate { import, output } => {
+            let report = reel_music::semantic_import::validate(&import)?;
+            print_report(&report, output)?;
+        }
+        Command::MusicSemanticImportWrite {
+            import,
+            output_path,
+            output,
+        } => {
+            let report = reel_music::semantic_import::write_analysis(&import, &output_path)?;
+            print_report(&report, output)?;
+        }
         Command::MusicModelValidate { model, output } => {
             let report = reel_music::model::validate(&model)?;
             print_report(&report, output)?;
@@ -2667,6 +2679,20 @@ enum Command {
     /// Validate competing imported evidence and emit its human review queue.
     MusicEvidenceCompare {
         comparison: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate selected, normalized semantic events and exact source-time mappings.
+    MusicSemanticImportValidate {
+        import: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Atomically promote a semantic import into lineage-bound analysis evidence.
+    MusicSemanticImportWrite {
+        import: PathBuf,
+        #[arg(long)]
+        output_path: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

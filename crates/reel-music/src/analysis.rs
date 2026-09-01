@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     DecisionRef,
     hash::{canonical_sha256, sha256_path},
-    nonempty,
+    nonempty, semantic_import,
     source::{self, NetworkPolicy, RawPcmFormat},
     status_requires_decision,
     time::{AudioTimebase, SampleRange},
@@ -30,12 +30,23 @@ pub struct AnalysisManifest {
     pub schema: String,
     pub analysis_id: String,
     pub source: SourceBinding,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub imports: Vec<ImportBinding>,
     pub analyzers: Vec<Analyzer>,
     #[serde(default)]
     pub stems: Vec<StemEvidence>,
     pub observations: Vec<Observation>,
     pub limitations: Vec<String>,
     pub review: Review,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportBinding {
+    pub manifest: PathBuf,
+    pub manifest_sha256: String,
+    pub contract_sha256: String,
+    pub import_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -57,6 +68,8 @@ pub struct Analyzer {
     pub parameters_sha256: String,
     pub license: String,
     pub network_policy: NetworkPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -94,6 +107,8 @@ pub struct Observation {
     pub confidence_millionths: u32,
     pub uncertainty: String,
     pub value: ObservationValue,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import_event_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -157,6 +172,7 @@ pub struct ValidationReport {
     pub manifest_sha256: String,
     pub contract_sha256: String,
     pub source_contract_sha256: String,
+    pub imports: usize,
     pub analyzers: usize,
     pub stems: usize,
     pub observations: usize,
@@ -200,10 +216,14 @@ fn validate_loaded(path: &Path, manifest: &AnalysisManifest) -> Result<Validatio
         bail!("analysis source contract or decoded PCM identity is stale");
     }
 
+    let imports = validate_imports(path, manifest, &source_report.contract_sha256)?;
+
     if manifest.analyzers.is_empty() {
         bail!("analyzers must not be empty");
     }
     let mut analyzer_ids = BTreeSet::new();
+    let mut analyzer_imports = BTreeMap::new();
+    let mut claimed_imports = BTreeSet::new();
     for analyzer in &manifest.analyzers {
         nonempty("analyzers[].id", &analyzer.id)?;
         if !analyzer_ids.insert(analyzer.id.as_str()) {
@@ -217,6 +237,18 @@ fn validate_loaded(path: &Path, manifest: &AnalysisManifest) -> Result<Validatio
         if analyzer.network_policy != NetworkPolicy::Denied {
             bail!("analysis v0.1 requires network_policy denied");
         }
+        if let Some(import_id) = &analyzer.import_id {
+            if !imports.contains_key(import_id.as_str()) {
+                bail!(
+                    "analyzer {} references an unknown semantic import",
+                    analyzer.id
+                );
+            }
+            if !claimed_imports.insert(import_id.as_str()) {
+                bail!("each semantic import must be claimed by exactly one analyzer");
+            }
+        }
+        analyzer_imports.insert(analyzer.id.as_str(), analyzer.import_id.as_deref());
     }
 
     let mut stem_ids = BTreeSet::new();
@@ -258,6 +290,7 @@ fn validate_loaded(path: &Path, manifest: &AnalysisManifest) -> Result<Validatio
         bail!("observations must not be empty");
     }
     let mut observation_ids = BTreeSet::new();
+    let mut imported_event_refs = BTreeSet::new();
     let mut minimum_confidence = 1_000_000;
     for observation in &manifest.observations {
         nonempty("observations[].id", &observation.id)?;
@@ -280,6 +313,51 @@ fn validate_loaded(path: &Path, manifest: &AnalysisManifest) -> Result<Validatio
         minimum_confidence = minimum_confidence.min(observation.confidence_millionths);
         nonempty("observations[].uncertainty", &observation.uncertainty)?;
         validate_observation_value(&observation.value)?;
+        match (
+            analyzer_imports
+                .get(observation.analyzer_id.as_str())
+                .copied()
+                .flatten(),
+            observation.import_event_id.as_deref(),
+        ) {
+            (Some(import_id), Some(event_id)) => {
+                let event = imports
+                    .get(import_id)
+                    .and_then(|events| events.get(event_id))
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "observation {} references an unknown semantic import event",
+                            observation.id
+                        )
+                    })?;
+                if observation.source != event.mapped_source
+                    || observation.confidence_millionths != event.confidence_millionths
+                    || observation.uncertainty != event.uncertainty
+                    || observation.value != event.value
+                {
+                    bail!(
+                        "observation {} does not exactly mirror its semantic import event",
+                        observation.id
+                    );
+                }
+                if !imported_event_refs.insert((import_id, event_id)) {
+                    bail!("semantic import events may be represented only once");
+                }
+            }
+            (Some(_), None) => bail!(
+                "observation {} from an imported analyzer requires import_event_id",
+                observation.id
+            ),
+            (None, Some(_)) => bail!(
+                "observation {} cannot reference an import event without an imported analyzer",
+                observation.id
+            ),
+            (None, None) => {}
+        }
+    }
+    let expected_imported_events = imports.values().map(BTreeMap::len).sum::<usize>();
+    if imported_event_refs.len() != expected_imported_events {
+        bail!("analysis must preserve every bound semantic import event exactly once");
     }
     unique_nonempty("limitations", &manifest.limitations)?;
     if manifest.limitations.is_empty() {
@@ -293,6 +371,7 @@ fn validate_loaded(path: &Path, manifest: &AnalysisManifest) -> Result<Validatio
         manifest_sha256: sha256_path(path)?,
         contract_sha256: canonical_sha256(manifest)?,
         source_contract_sha256: source_report.contract_sha256,
+        imports: manifest.imports.len(),
         analyzers: manifest.analyzers.len(),
         stems: manifest.stems.len(),
         observations: manifest.observations.len(),
@@ -303,7 +382,47 @@ fn validate_loaded(path: &Path, manifest: &AnalysisManifest) -> Result<Validatio
     })
 }
 
-fn validate_observation_value(value: &ObservationValue) -> Result<()> {
+fn validate_imports(
+    path: &Path,
+    manifest: &AnalysisManifest,
+    source_contract_sha256: &str,
+) -> Result<BTreeMap<String, BTreeMap<String, semantic_import::SemanticEvent>>> {
+    let mut imports = BTreeMap::new();
+    for binding in &manifest.imports {
+        nonempty("imports[].import_id", &binding.import_id)?;
+        validate_sha256("imports[].manifest_sha256", &binding.manifest_sha256)?;
+        validate_sha256("imports[].contract_sha256", &binding.contract_sha256)?;
+        let import_path = source::resolve(path, &binding.manifest);
+        if sha256_path(&import_path)? != binding.manifest_sha256.to_lowercase() {
+            bail!(
+                "semantic import {} manifest sha256 is stale",
+                binding.import_id
+            );
+        }
+        let report = semantic_import::validate(&import_path)?;
+        let imported = semantic_import::load(&import_path)?;
+        if report.import_id != binding.import_id
+            || report.contract_sha256 != binding.contract_sha256.to_lowercase()
+            || report.source_contract_sha256 != source_contract_sha256
+        {
+            bail!(
+                "semantic import {} binding or source lineage is stale",
+                binding.import_id
+            );
+        }
+        let events = imported
+            .events
+            .into_iter()
+            .map(|event| (event.id.clone(), event))
+            .collect();
+        if imports.insert(binding.import_id.clone(), events).is_some() {
+            bail!("imports[].import_id must be unique");
+        }
+    }
+    Ok(imports)
+}
+
+pub(crate) fn validate_observation_value(value: &ObservationValue) -> Result<()> {
     match value {
         ObservationValue::Tempo { milli_bpm } => {
             if !(10_000..=600_000).contains(milli_bpm) {
