@@ -1021,6 +1021,10 @@ fn run_cli() -> Result<()> {
             let report = reel_music::analysis::validate(&analysis)?;
             print_report(&report, output)?;
         }
+        Command::MusicInterchangeValidate { intake, output } => {
+            let report = reel_music::interchange::validate(&intake)?;
+            print_report(&report, output)?;
+        }
         Command::MusicModelValidate { model, output } => {
             let report = reel_music::model::validate(&model)?;
             print_report(&report, output)?;
@@ -2647,6 +2651,12 @@ enum Command {
     /// Validate immutable external analyzer evidence without promoting estimates.
     MusicAnalysisValidate {
         analysis: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate local outputs from existing music-analysis and notation tools.
+    MusicInterchangeValidate {
+        intake: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

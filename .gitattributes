@@ -5,6 +5,8 @@
 *.rs text eol=lf
 *.toml text eol=lf
 *.txt text eol=lf
+*.csv text eol=lf
+*.jams text eol=lf
 *.u8 binary
 Cargo.lock text eol=lf
 manifests/fixtures/sprite-library/two-color.ppm text eol=lf

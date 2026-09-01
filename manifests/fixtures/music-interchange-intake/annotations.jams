@@ -1,0 +1,26 @@
+{
+  "sandbox": {},
+  "annotations": [
+    {
+      "namespace": "beat",
+      "data": [
+        {"time": 0.0, "duration": 0.0, "value": 1, "confidence": 0.9},
+        {"time": 0.5, "duration": 0.0, "value": 2, "confidence": 0.8}
+      ],
+      "annotation_metadata": {
+        "data_source": "program",
+        "version": "fixture-1",
+        "annotation_tools": "sanitized fixture analyzer"
+      },
+      "sandbox": {}
+    }
+  ],
+  "file_metadata": {
+    "duration": 4.0,
+    "jams_version": "0.3.5",
+    "identifiers": {},
+    "title": "",
+    "artist": "",
+    "release": ""
+  }
+}

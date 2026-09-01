@@ -1,0 +1,70 @@
+schema: reel.music-interchange-intake.v0.1
+intake_id: synthetic-existing-tool-interchange
+source:
+  manifest: ../music-repair-foundation/source.yaml
+  manifest_sha256: d5c63640228e2a87a54cf3f4cebd8c861139862e0e080c2c3df5ce3c04add464
+  contract_sha256: 2cc8f8b0de36676bb278133d05414e68ca4baa273ddcf67b36308b9019d6fb41
+  decoded_pcm_sha256: 3583f657661bb8c78a2d978fa6564e4d4fcb5508d5412a738c8544fd8be2fff6
+authority:
+  namespace: synthetic-fixture
+  artifact_id: synthetic-interchange-authority
+  content_sha256: 4444444444444444444444444444444444444444444444444444444444444444
+  status: fixture-only
+  required_roles:
+    - music-reconstruction-engineer
+    - rights-provenance-steward
+  decision_refs: []
+producers:
+  - id: note-transcriber-fixture
+    adapter: basic-pitch-compatible-fixture
+    version: fixture-1
+    executable_sha256: 7777777777777777777777777777777777777777777777777777777777777777
+    model_revision: null
+    model_sha256: null
+    software_license: fixture-only-no-third-party-code
+    model_license: null
+    dataset_disclosure: No external model or dataset produced this compatibility fixture.
+    parameters_sha256: 5555555555555555555555555555555555555555555555555555555555555555
+    network_policy: denied
+  - id: annotation-fixture
+    adapter: jams-compatible-feature-fixture
+    version: fixture-1
+    executable_sha256: 8888888888888888888888888888888888888888888888888888888888888888
+    model_revision: null
+    model_sha256: null
+    software_license: fixture-only-no-third-party-code
+    model_license: null
+    dataset_disclosure: No external plugin, model, or dataset produced this compatibility fixture.
+    parameters_sha256: 6666666666666666666666666666666666666666666666666666666666666666
+    network_policy: denied
+artifacts:
+  - id: synthetic-note-events
+    producer_id: note-transcriber-fixture
+    purpose: note-events
+    format: csv
+    path: note-events.csv
+    sha256: c4d2c2808802aeb1ba105bee04cbbe63234b7faeb8f503a6697884f557d8a75e
+    bytes: 93
+    semantic_roles: [melody-hypothesis]
+    uncertainty: Synthetic rows exercise intake only and are not a transcription claim.
+    normalized_pcm: null
+  - id: synthetic-beat-annotations
+    producer_id: annotation-fixture
+    purpose: feature-annotations
+    format: jams
+    path: annotations.jams
+    sha256: 40f6313cfc7d44a8071f2d7928b1ad13d757092ca9ee6093a9c3627a9ddf4486
+    bytes: 584
+    semantic_roles: [beat-hypothesis]
+    uncertainty: JAMS structure is recognized but upstream namespaces are not fully revalidated.
+    normalized_pcm: null
+limitations:
+  - Intake proves artifact identity and declared container shape, not semantic correctness.
+  - Fixture files are synthetic compatibility examples and were not produced by third-party tools.
+review:
+  status: not-reviewed
+  required_roles:
+    - music-reconstruction-engineer
+    - sound-designer
+    - rights-provenance-steward
+  decision_refs: []
