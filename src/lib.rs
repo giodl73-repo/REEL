@@ -42,6 +42,7 @@ pub mod selection_lock;
 pub mod series;
 pub mod showrunner;
 pub mod song;
+pub mod sonic_assets;
 pub mod sprite_choreography;
 pub mod sprite_library;
 pub mod sprite_materializer;

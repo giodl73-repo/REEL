@@ -327,6 +327,14 @@ generated piano reduction as a dependent interpretation, never independent
 proof or automatic approval. See
 [`docs/music-piano-vocal-perspective-v0.3.17.md`](docs/music-piano-vocal-perspective-v0.3.17.md).
 
+CLI v0.3.18 adds a governed sonic-asset catalog and request contract. Exact
+human selections and explicitly approved pools resolve to a frozen local
+sidecar; a separate path-free receipt binds the catalog, request, authority,
+license, lineage, audio geometry, and source hashes. The materializer binds
+those verified files into ordinary manifest `audio_events`, after which the
+existing audio renderer produces its D/M/E and review package unchanged. See
+[`docs/sonic-asset-library-v0.3.18.md`](docs/sonic-asset-library-v0.3.18.md).
+
 CLI v0.3.16 adds an optional, deterministic printable SVG lead sheet to the
 existing score packet. The corrected model must explicitly bind a melody or
 vocal part, an exact lyric layer, and UTF-8 byte-range underlay for every melody
