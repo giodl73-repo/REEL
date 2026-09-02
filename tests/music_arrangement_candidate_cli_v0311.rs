@@ -40,8 +40,10 @@ fn build_fixture(root: &Path) -> PathBuf {
     model.authority = authority("synthetic-arranged-score", '4', "candidate", false);
     model.parts[0].id = "plucked-voice".into();
     model.parts[0].name = "Synthetic plucked voice".into();
+    model.lead_sheet.as_mut().unwrap().melody_part_id = "plucked-voice".into();
     model.review.status = "not-reviewed".into();
     model.review.decision_refs.clear();
+    fs::copy(source_parent.join("lyrics.txt"), root.join("lyrics.txt")).unwrap();
     let model_path = root.join("arranged-model.yaml");
     fs::write(&model_path, serde_yaml::to_string(&model).unwrap()).unwrap();
     let model_report = reel_music::model::validate(&model_path).unwrap();
