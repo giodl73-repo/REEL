@@ -14,6 +14,7 @@ pub mod neutral;
 pub mod repair;
 pub mod repair_candidate;
 pub mod repair_intent;
+pub mod repair_render;
 pub mod semantic_import;
 pub mod source;
 pub mod time;

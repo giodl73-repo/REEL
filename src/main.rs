@@ -1018,6 +1018,29 @@ fn run_cli() -> Result<()> {
             let report = reel::music_render::check(&evidence, &edl, &repair, &candidate_pcm)?;
             print_report(&report, output)?;
         }
+        Command::MusicRepairMaterialize {
+            repair,
+            output_pcm,
+            receipt,
+            output,
+        } => {
+            let report = reel_music::repair_render::render(
+                &repair,
+                &output_pcm,
+                &receipt,
+                env!("CARGO_PKG_VERSION"),
+            )?;
+            print_report(&report, output)?;
+        }
+        Command::MusicRepairMaterializeCheck {
+            repair,
+            output_pcm,
+            receipt,
+            output,
+        } => {
+            let report = reel_music::repair_render::check(&repair, &output_pcm, &receipt)?;
+            print_report(&report, output)?;
+        }
         Command::MusicAnalysisValidate { analysis, output } => {
             let report = reel_music::analysis::validate(&analysis)?;
             print_report(&report, output)?;
@@ -2702,6 +2725,24 @@ enum Command {
         edl: PathBuf,
         repair: PathBuf,
         candidate_pcm: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Materialize deterministic repair operations to raw PCM with exact lock evidence.
+    MusicRepairMaterialize {
+        repair: PathBuf,
+        #[arg(long)]
+        output_pcm: PathBuf,
+        #[arg(long)]
+        receipt: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Recompute and verify a deterministic repair materialization and path-free receipt.
+    MusicRepairMaterializeCheck {
+        repair: PathBuf,
+        output_pcm: PathBuf,
+        receipt: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

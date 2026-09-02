@@ -70,6 +70,7 @@ fn real_ffmpeg_cut_render_is_exact_and_rechecks_retained_evidence() {
         source_id: source_manifest.source_id,
         decoded_pcm_sha256: source_manifest.media.decoded_pcm_sha256,
         timebase,
+        beat_grid: None,
         operations: vec![Operation::Cut {
             id: "remove-repeat".into(),
             range: SampleRange {
@@ -143,6 +144,36 @@ fn real_ffmpeg_cut_render_is_exact_and_rechecks_retained_evidence() {
             .args(["--output", "json"]),
         "evidence recheck",
     );
+
+    let materialized = temp.path().join("materialized.raw");
+    let receipt = temp.path().join("materialized.receipt.json");
+    assert_success(
+        Command::new(reel)
+            .arg("music-repair-materialize")
+            .arg(&repair)
+            .arg("--output-pcm")
+            .arg(&materialized)
+            .arg("--receipt")
+            .arg(&receipt)
+            .args(["--output", "json"]),
+        "general repair materialization",
+    );
+    assert_eq!(
+        fs::read(&materialized).unwrap(),
+        fs::read(&candidate).unwrap()
+    );
+    assert_success(
+        Command::new(reel)
+            .arg("music-repair-materialize-check")
+            .arg(&repair)
+            .arg(&materialized)
+            .arg(&receipt)
+            .args(["--output", "json"]),
+        "general repair materialization recheck",
+    );
+    let receipt_text = fs::read_to_string(&receipt).unwrap();
+    assert!(!receipt_text.contains(temp.path().to_str().unwrap()));
+    assert!(!receipt_text.contains("path"));
 
     let before = fs::read(&candidate).expect("read retained candidate");
     let rerender = Command::new(reel)

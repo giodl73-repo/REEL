@@ -317,6 +317,14 @@ audio events, while `animatic-remux` stream-copies previously verified picture
 and replaces only its audio. See
 [`docs/selection-lock-and-audio-cache-v0.2.21.md`](docs/selection-lock-and-audio-cache-v0.2.21.md).
 
+CLI v0.3.14 adds a deterministic raw-PCM repair materializer for the complete
+v0.1 repair vocabulary: keep, cut, insert, replace, repeat, move, crossfade,
+preserve-tail, match-gain, hash-bound match-EQ, extend-bars, and lock. Its
+path-free receipt binds exact outside-region identity, resolved beat alignment,
+clipping, ambience/loudness, tail/phase correlation, and spectral seam evidence.
+The legacy cut-only FFmpeg EDL and hashes remain unchanged. See
+[`docs/music-repair-materialization-v0.3.14.md`](docs/music-repair-materialization-v0.3.14.md).
+
 CLI v0.3.13 executes the optional speech-keyed dynamic EQ declared by v0.3.12.
 The FFmpeg graph isolates the requested presence band on the declared target
 bus, keys its bounded attenuation from the declared detector bus, then applies
