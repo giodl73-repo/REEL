@@ -1075,6 +1075,10 @@ fn run_cli() -> Result<()> {
             let report = reel_music::arrangement_plan::validate(&arrangement)?;
             print_report(&report, output)?;
         }
+        Command::MusicArrangementCandidateCheck { candidate, output } => {
+            let report = reel::arrangement_candidate::validate(&candidate)?;
+            print_report(&report, output)?;
+        }
         Command::MusicScoreExportPlan {
             model,
             output_path,
@@ -2765,6 +2769,12 @@ enum Command {
     /// Validate a complete score-driven limited-ensemble arrangement plan.
     MusicArrangementPlanCheck {
         arrangement: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate an exact arrangement score/audio candidate and its human gates.
+    MusicArrangementCandidateCheck {
+        candidate: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
