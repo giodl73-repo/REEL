@@ -1,6 +1,6 @@
 # REEL music-reconstruction crate proposal
 
-Status: Slices A, B, C1-C8, D1-D2, and E1 arrangement planning implemented through REEL v0.3.10
+Status: Slices A, B, C1-C8, D1-D2, and E1-E2 arrangement planning/candidates implemented through REEL v0.3.11
 Date: 2026-09-01
 Proposed CLI milestone: v0.2.26 foundation, followed by additive repair,
 language-adaptation, and arrangement slices
@@ -353,7 +353,8 @@ the root module implementation.
 - Validate preserved/developed/replaced/omitted musical elements, part coverage,
   playable note mapping, and polyphony. **Implemented in E1/C11 v0.3.10.**
 - Render an audible comparison and record human listening as the recognition
-  gate.
+  gate. **Implemented as the exact score-derived E2/C12 candidate in v0.3.11,
+  with separately decision-backed listening, recognition, and selection.**
 
 ### Slice F — optional generative performance adapters
 
