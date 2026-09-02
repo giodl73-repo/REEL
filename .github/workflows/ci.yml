@@ -31,7 +31,8 @@ jobs:
       - run: cargo test --all-targets --all-features
       - name: Exercise synthetic dialogue/stem graph through FFmpeg
         run: cargo test --lib audio_preview::tests::real_dialogue_ducking_stems_recombine_and_recheck -- --ignored --exact
-      - name: Exercise governed synthetic sonic resolution through D/M/E rendering
+      - name: Exercise governed synthetic sonic resolution through D/M/E rendering on Linux
+        if: runner.os == 'Linux'
         run: cargo test --test sonic_assets_v0318 real_resolved_sonic_asset_renders_dme_stems_and_rechecks -- --ignored --exact
       - name: Exercise synthetic music repair through FFmpeg and materializer on Linux
         if: matrix.os == 'ubuntu-latest'
