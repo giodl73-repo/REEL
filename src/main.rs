@@ -1057,6 +1057,10 @@ fn run_cli() -> Result<()> {
             let report = reel_music::repair_candidate::validate(&candidate)?;
             print_report(&report, output)?;
         }
+        Command::MusicLanguageAdaptationCheck { adaptation, output } => {
+            let report = reel_music::language_adaptation::validate(&adaptation)?;
+            print_report(&report, output)?;
+        }
         Command::MusicScoreExportPlan {
             model,
             output_path,
@@ -2729,6 +2733,12 @@ enum Command {
     /// Recheck an exact repair candidate and its independent listening and selection gates.
     MusicRepairCandidateCheck {
         candidate: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate same-music target-language text, underlay, accompaniment, and prosody decisions.
+    MusicLanguageAdaptationCheck {
+        adaptation: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

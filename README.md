@@ -384,6 +384,13 @@ gates. Failed candidates remain auditable rejections and can never be promoted
 to selected status. See
 [`docs/music-repair-candidate-v0.3.7.md`](docs/music-repair-candidate-v0.3.7.md).
 
+CLI v0.3.8 adds a strict same-music language-adaptation plan. It binds exact
+canonical-source and approved-target text, complete ordered translation links,
+the complete governed model, an exact-duration accompaniment, target-unit note
+underlay, and decision-backed prosody exceptions. Validation does not translate,
+perform, or approve either wording or release. See
+[`docs/music-language-adaptation-v0.3.8.md`](docs/music-language-adaptation-v0.3.8.md).
+
 The main BERTICA-driven workflow is:
 
 ```powershell
