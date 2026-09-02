@@ -403,6 +403,14 @@ note, checks ranges and polyphony, and requires later score, audible comparison,
 recognition, and selection gates. See
 [`docs/music-arrangement-plan-v0.3.10.md`](docs/music-arrangement-plan-v0.3.10.md).
 
+CLI v0.3.11 adds `music-arrangement-candidate-check` for the first exact
+arrangement proof. It recursively binds the C11 plan, a materialized arranged
+model, deterministic MIDI/MusicXML and audible score round trips, a blind
+source comparison, and separate human listening, recognition, and
+selection/rejection states. Validation is local and read-only; it does not
+render, listen, select, publish, or make a private artifact shareable. See
+[`docs/music-arrangement-candidate-v0.3.11.md`](docs/music-arrangement-candidate-v0.3.11.md).
+
 The main BERTICA-driven workflow is:
 
 ```powershell
