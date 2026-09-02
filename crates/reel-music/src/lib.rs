@@ -4,6 +4,7 @@ pub mod comparison;
 pub mod edl;
 pub mod evidence;
 pub mod export;
+pub mod external_repair;
 pub mod hash;
 pub mod interchange;
 pub mod language_adaptation;

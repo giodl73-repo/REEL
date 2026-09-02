@@ -317,6 +317,15 @@ audio events, while `animatic-remux` stream-copies previously verified picture
 and replaces only its audio. See
 [`docs/selection-lock-and-audio-cache-v0.2.21.md`](docs/selection-lock-and-audio-cache-v0.2.21.md).
 
+CLI v0.3.15 adds a bounded, engine-neutral external re-sing/repaint adapter
+contract. REEL validates a local-only, network-denied, no-download request and
+writes a path-free plan receipt, but never invokes the declared engine. Returned
+full-length candidates must preserve every sample outside the requested region,
+meet boundary/duration/loudness policy, and carry lyric evidence from an
+independent analyzer before becoming audition-ready. Failed generations remain
+explicit rejected candidates. See
+[`docs/music-external-repair-adapter-v0.3.15.md`](docs/music-external-repair-adapter-v0.3.15.md).
+
 CLI v0.3.14 adds a deterministic raw-PCM repair materializer for the complete
 v0.1 repair vocabulary: keep, cut, insert, replace, repeat, move, crossfade,
 preserve-tail, match-gain, hash-bound match-EQ, extend-bars, and lock. Its

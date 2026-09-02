@@ -1,6 +1,6 @@
 [package]
 name = "reel"
-version = "0.3.14"
+version = "0.3.15"
 edition = "2024"
 rust-version = "1.85"
 description = "Portable moving-image production manifests, series composition, and FFmpeg orchestration"
