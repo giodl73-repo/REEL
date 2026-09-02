@@ -5,6 +5,7 @@ pub mod evidence;
 pub mod export;
 pub mod hash;
 pub mod interchange;
+pub mod language_adaptation;
 pub mod model;
 pub mod model_draft;
 pub mod neutral;
