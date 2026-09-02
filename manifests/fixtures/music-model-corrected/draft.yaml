@@ -2,8 +2,8 @@ schema: reel.music-model-draft.v0.1
 draft_id: synthetic-governed-model-draft
 model:
   manifest: model.yaml
-  manifest_sha256: 3072f2c30aa220801187c67d59d5efffd7154eff644261cb54db9247ba5a2848
-  contract_sha256: 995413528d8a4d6a99458174f7bf69198c1b428c0cb025ddf1275eb5e59a516b
+  manifest_sha256: 0998641a7270ab3630986faa42225ce928382c69f684da52cabf1d6435d78ab7
+  contract_sha256: 5db4bbf87d9d28a6cd18660463dfcd3e68c83ef75996d13986d21059f5008737
   model_id: synthetic-corrected-editable-model
 authority:
   namespace: synthetic-fixture

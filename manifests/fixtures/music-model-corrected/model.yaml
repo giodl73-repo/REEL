@@ -147,10 +147,31 @@ hooks:
         - { analysis_id: synthetic-corrected-model-analysis, observation_id: hook-opening }
       rationale: Hook label remains an explicit inference, not creative approval.
       correction_ref: null
-lyric_layers: []
+lyric_layers:
+  - id: canonical-synthetic
+    kind: canonical
+    language: und
+    path: lyrics.txt
+    sha256: fdc1d5e2bf1a632259187726e23882a7c40947ef404b5e2b0f0ed3b2bad9c245
+    authority:
+      namespace: synthetic-fixture
+      artifact_id: synthetic-lyric-authority
+      content_sha256: fdc1d5e2bf1a632259187726e23882a7c40947ef404b5e2b0f0ed3b2bad9c245
+      status: fixture-only
+      required_roles: [lyrics-vocal-adaptation-editor]
+      decision_refs: []
+lead_sheet:
+  title: Synthetic corrected melody
+  melody_part_id: melody
+  lyric_layer_id: canonical-synthetic
+  underlay:
+    - { id: syllable-1, note_ids: [note-1], text_start_byte: 0, text_end_byte: 2, syllabic: single }
+    - { id: syllable-2, note_ids: [note-2], text_start_byte: 3, text_end_byte: 5, syllabic: single }
+    - { id: syllable-3, note_ids: [note-3], text_start_byte: 6, text_end_byte: 8, syllabic: single }
+    - { id: syllable-4, note_ids: [note-4], text_start_byte: 9, text_end_byte: 11, syllabic: single }
 expressive_timing: []
 unknowns:
-  - Dynamics, articulation, timbre, lyrics, and expressive timing remain unknown.
+  - Dynamics, articulation, timbre, and expressive timing remain unknown.
 review:
   status: not-reviewed
   required_roles:

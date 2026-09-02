@@ -41,6 +41,6 @@ fn cli_validates_external_analysis_and_corrected_model_fixture() {
     assert!(model_report.contains("\"verified\": true"));
     assert!(model_report.contains("\"human_corrected_events\": 1"));
     assert!(model_report.contains(
-        "\"contract_sha256\": \"995413528d8a4d6a99458174f7bf69198c1b428c0cb025ddf1275eb5e59a516b\""
+        "\"contract_sha256\": \"5db4bbf87d9d28a6cd18660463dfcd3e68c83ef75996d13986d21059f5008737\""
     ));
 }

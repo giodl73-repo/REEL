@@ -122,6 +122,34 @@ pub fn build(model_path: &Path) -> Result<ScoreExportPlan> {
             sha256: layer.sha256.clone(),
         })
         .collect();
+    let mut artifacts = vec![
+        ArtifactRequest {
+            kind: "midi-smf".into(),
+            filename: "score.mid".into(),
+            adapter: "reel-midi-smf".into(),
+            adapter_version: "0.1.0".into(),
+        },
+        ArtifactRequest {
+            kind: "musicxml-score-partwise".into(),
+            filename: "score.musicxml".into(),
+            adapter: "reel-musicxml".into(),
+            adapter_version: "0.1.0".into(),
+        },
+        ArtifactRequest {
+            kind: "rehearsal-guide-wav".into(),
+            filename: "rehearsal-guide.wav".into(),
+            adapter: "reel-square-guide".into(),
+            adapter_version: "0.1.0".into(),
+        },
+    ];
+    if music.lead_sheet.is_some() {
+        artifacts.push(ArtifactRequest {
+            kind: "printable-lead-sheet-svg".into(),
+            filename: "lead-sheet.svg".into(),
+            adapter: "reel-lead-sheet-svg".into(),
+            adapter_version: "0.1.0".into(),
+        });
+    }
     Ok(ScoreExportPlan {
         schema: SCHEMA.into(),
         export_id: format!("{}-score-export", music.model_id),
@@ -134,26 +162,7 @@ pub fn build(model_path: &Path) -> Result<ScoreExportPlan> {
             tick_policy: "exact-model-ticks".into(),
             expressive_timing_applied: false,
         },
-        artifacts: vec![
-            ArtifactRequest {
-                kind: "midi-smf".into(),
-                filename: "score.mid".into(),
-                adapter: "reel-midi-smf".into(),
-                adapter_version: "0.1.0".into(),
-            },
-            ArtifactRequest {
-                kind: "musicxml-score-partwise".into(),
-                filename: "score.musicxml".into(),
-                adapter: "reel-musicxml".into(),
-                adapter_version: "0.1.0".into(),
-            },
-            ArtifactRequest {
-                kind: "rehearsal-guide-wav".into(),
-                filename: "rehearsal-guide.wav".into(),
-                adapter: "reel-square-guide".into(),
-                adapter_version: "0.1.0".into(),
-            },
-        ],
+        artifacts,
         rehearsal_guide: RehearsalGuide {
             filename: "rehearsal-guide.wav".into(),
             sample_rate_hz: 48_000,

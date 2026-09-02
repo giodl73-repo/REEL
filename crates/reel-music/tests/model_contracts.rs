@@ -8,9 +8,10 @@ use reel_music::{
     },
     hash::sha256_path,
     model::{
-        AnalysisBinding, EvidenceRef, FormSection, HarmonyEvent, Hook, MeterEvent, MusicModel,
-        Note, Part, PartRole, Provenance, ProvenanceState, Review as ModelReview, RhythmCell,
-        SourceBinding as ModelSourceBinding, TempoEvent, TickRange,
+        AnalysisBinding, EvidenceRef, FormSection, HarmonyEvent, Hook, LeadSheet, LyricLayer,
+        LyricLayerKind, LyricUnderlay, MeterEvent, MusicModel, Note, Part, PartRole, Provenance,
+        ProvenanceState, Review as ModelReview, RhythmCell, SourceBinding as ModelSourceBinding,
+        Syllabic, TempoEvent, TickRange,
     },
     source::{Egress, Media, NetworkPolicy, RawPcmFormat, SourceManifest},
     time::{AudioTimebase, MusicalTimebase, RoundingMode, SampleRange},
@@ -26,6 +27,9 @@ struct Fixture {
 
 fn fixture() -> Fixture {
     let temp = tempfile::tempdir().expect("tempdir");
+    let lyrics = temp.path().join("lyrics.txt");
+    fs::write(&lyrics, "la le li lo\n").expect("write lyrics");
+    let lyrics_hash = sha256_path(&lyrics).expect("hash lyrics");
     let pcm = temp.path().join("source.raw");
     fs::write(&pcm, [128_u8; 64]).expect("write PCM");
     let pcm_hash = sha256_path(&pcm).expect("hash PCM");
@@ -311,7 +315,32 @@ fn fixture() -> Fixture {
             ],
             provenance: observed("hook"),
         }],
-        lyric_layers: vec![],
+        lyric_layers: vec![LyricLayer {
+            id: "canonical-synthetic".into(),
+            kind: LyricLayerKind::Canonical,
+            language: "und".into(),
+            path: PathBuf::from("lyrics.txt"),
+            sha256: lyrics_hash.clone(),
+            authority: AuthorityRef {
+                namespace: "synthetic-fixture".into(),
+                artifact_id: "synthetic-lyrics".into(),
+                content_sha256: lyrics_hash,
+                status: "fixture-only".into(),
+                required_roles: vec!["lyrics-vocal-adaptation-editor".into()],
+                decision_refs: vec![],
+            },
+        }],
+        lead_sheet: Some(LeadSheet {
+            title: "Synthetic lead sheet".into(),
+            melody_part_id: "melody".into(),
+            lyric_layer_id: Some("canonical-synthetic".into()),
+            underlay: vec![
+                underlay("syllable-1", "note-1", 0, 2),
+                underlay("syllable-2", "note-2", 3, 5),
+                underlay("syllable-3", "note-3", 6, 8),
+                underlay("syllable-4", "note-4", 9, 11),
+            ],
+        }),
         expressive_timing: vec![],
         unknowns: vec!["Dynamics and articulation remain unknown.".into()],
         review: ModelReview {
@@ -339,6 +368,16 @@ fn fixture() -> Fixture {
     }
 }
 
+fn underlay(id: &str, note_id: &str, start: u64, end: u64) -> LyricUnderlay {
+    LyricUnderlay {
+        id: id.into(),
+        note_ids: vec![note_id.into()],
+        text_start_byte: start,
+        text_end_byte: end,
+        syllabic: Syllabic::Single,
+    }
+}
+
 #[test]
 fn validates_external_analysis_without_promoting_it_to_ground_truth() {
     let fixture = fixture();
@@ -359,6 +398,31 @@ fn validates_a_separate_corrected_editable_model() {
     assert_eq!(report.human_corrected_events, 1);
     assert_eq!(report.hooks, 1);
     assert!(!report.shareable);
+}
+
+#[test]
+fn rejects_stale_or_incomplete_lead_sheet_underlay() {
+    let fixture = fixture();
+    let mut model = reel_music::model::load(&fixture.model).unwrap();
+    model.lead_sheet.as_mut().unwrap().underlay[0].note_ids[0] = "unknown-note".into();
+    fs::write(&fixture.model, serde_yaml::to_string(&model).unwrap()).unwrap();
+    assert!(
+        reel_music::model::validate(&fixture.model)
+            .unwrap_err()
+            .to_string()
+            .contains("unknown melody note")
+    );
+
+    let mut model = model;
+    model.lead_sheet.as_mut().unwrap().underlay[0].note_ids[0] = "note-1".into();
+    model.lead_sheet.as_mut().unwrap().underlay.pop();
+    fs::write(&fixture.model, serde_yaml::to_string(&model).unwrap()).unwrap();
+    assert!(
+        reel_music::model::validate(&fixture.model)
+            .unwrap_err()
+            .to_string()
+            .contains("every melody note")
+    );
 }
 
 #[test]
@@ -424,6 +488,8 @@ fn rejects_vocal_model_without_exact_lyric_layer() {
     let fixture = fixture();
     let mut model = reel_music::model::load(&fixture.model).expect("load model");
     model.parts[0].role = PartRole::Vocal;
+    model.lyric_layers.clear();
+    model.lead_sheet = None;
     fs::write(
         &fixture.model,
         serde_yaml::to_string(&model).expect("serialize model"),

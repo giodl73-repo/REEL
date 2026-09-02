@@ -49,6 +49,19 @@ pub struct RoundTripReceipt {
     pub midi: Comparison,
     pub musicxml: Comparison,
     pub rehearsal_guide: GuideComparison,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead_sheet: Option<LeadSheetComparison>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LeadSheetComparison {
+    pub deterministic_svg_equal: bool,
+    pub treble_clef: bool,
+    pub melody_notes: usize,
+    pub harmony_symbols: usize,
+    pub lyric_syllables: usize,
+    pub passed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -84,6 +97,7 @@ pub struct ExportReport {
     pub midi_round_trip: bool,
     pub musicxml_round_trip: bool,
     pub rehearsal_guide_valid: bool,
+    pub lead_sheet_valid: Option<bool>,
     pub shareable: bool,
     pub verified: bool,
 }
@@ -130,6 +144,13 @@ pub fn render(plan_path: &Path, model_path: &Path, output_dir: &Path) -> Result<
     write_bytes(&temporary.path().join("score.mid"), &midi)?;
     write_bytes(&temporary.path().join("score.musicxml"), xml.as_bytes())?;
     write_bytes(&temporary.path().join("rehearsal-guide.wav"), &wav)?;
+    if model.lead_sheet.is_some() {
+        let lead_sheet = write_lead_sheet_svg(model_path, &model)?;
+        write_bytes(
+            &temporary.path().join("lead-sheet.svg"),
+            lead_sheet.as_bytes(),
+        )?;
+    }
 
     let receipt = build_receipt(plan_path, model_path, temporary.path(), &plan, &model)?;
     let receipt_path = temporary.path().join("receipt.json");
@@ -192,12 +213,40 @@ fn build_receipt(
         .iter()
         .map(|request| (request.filename.as_str(), request))
         .collect::<BTreeMap<_, _>>();
-    let mut artifacts = Vec::new();
-    for (kind, filename) in [
+    let lead_sheet = if let Some(sheet) = &model.lead_sheet {
+        let path = output_dir.join("lead-sheet.svg");
+        let actual = fs::read_to_string(&path)?;
+        let expected_svg = write_lead_sheet_svg(model_path, model)?;
+        let melody = model
+            .parts
+            .iter()
+            .find(|part| part.id == sheet.melody_part_id)
+            .expect("validated lead-sheet melody");
+        let comparison = LeadSheetComparison {
+            deterministic_svg_equal: actual == expected_svg,
+            treble_clef: actual.contains("data-clef=\"treble\""),
+            melody_notes: melody.notes.len(),
+            harmony_symbols: model.harmony.len(),
+            lyric_syllables: sheet.underlay.len(),
+            passed: actual == expected_svg && actual.contains("data-clef=\"treble\""),
+        };
+        if !comparison.passed {
+            bail!("lead-sheet SVG validation failed");
+        }
+        Some(comparison)
+    } else {
+        None
+    };
+    let mut expected_artifacts = vec![
         ("midi-smf", "score.mid"),
         ("musicxml-score-partwise", "score.musicxml"),
         ("rehearsal-guide-wav", "rehearsal-guide.wav"),
-    ] {
+    ];
+    if lead_sheet.is_some() {
+        expected_artifacts.push(("printable-lead-sheet-svg", "lead-sheet.svg"));
+    }
+    let mut artifacts = Vec::new();
+    for (kind, filename) in expected_artifacts {
         let request = requests
             .get(filename)
             .ok_or_else(|| anyhow!("plan does not request {filename}"))?;
@@ -214,6 +263,16 @@ fn build_receipt(
             adapter_version: request.adapter_version.clone(),
         });
     }
+    let mut limitations = vec![
+        "round-trip proves the declared structural fields, not notation layout or playability".into(),
+        "the square-wave guide is for pitch and timing rehearsal, not creative scoring or mastering".into(),
+        "technical verification is not human approval, rights clearance, or publication authorization".into(),
+    ];
+    if lead_sheet.is_some() {
+        limitations.push("lead-sheet SVG is deterministic rehearsal engraving; a musician must review spacing, page turns, enharmonic spelling, and playability".into());
+    } else {
+        limitations.push("lyric bindings preserve layer identities and hashes; no lead-sheet underlay was declared".into());
+    }
     Ok(ExportReceipt {
         schema: RECEIPT_SCHEMA.into(),
         export_id: plan.export_id.clone(),
@@ -226,13 +285,9 @@ fn build_receipt(
             midi: midi_comparison,
             musicxml: xml_comparison,
             rehearsal_guide: guide,
+            lead_sheet,
         },
-        limitations: vec![
-            "round-trip proves the declared structural fields, not notation layout or playability".into(),
-            "the square-wave guide is for pitch and timing rehearsal, not creative scoring or mastering".into(),
-            "lyric bindings preserve layer identities and hashes; v0.1 does not infer syllable-to-note underlay".into(),
-            "technical verification is not human approval, rights clearance, or publication authorization".into(),
-        ],
+        limitations,
         shareable: false,
         verified: true,
     })
@@ -249,6 +304,11 @@ fn report(output_dir: &Path, receipt: &ExportReceipt) -> Result<ExportReport> {
         midi_round_trip: receipt.round_trip.midi.passed,
         musicxml_round_trip: receipt.round_trip.musicxml.passed,
         rehearsal_guide_valid: receipt.round_trip.rehearsal_guide.passed,
+        lead_sheet_valid: receipt
+            .round_trip
+            .lead_sheet
+            .as_ref()
+            .map(|value| value.passed),
         shareable: false,
         verified: true,
     })
@@ -308,6 +368,146 @@ fn snapshot(model: &MusicModel) -> Snapshot {
             })
             .collect(),
     }
+}
+
+fn write_lead_sheet_svg(model_path: &Path, model: &MusicModel) -> Result<String> {
+    let sheet = model
+        .lead_sheet
+        .as_ref()
+        .ok_or_else(|| anyhow!("music model does not declare a lead sheet"))?;
+    let melody = model
+        .parts
+        .iter()
+        .find(|part| part.id == sheet.melody_part_id)
+        .ok_or_else(|| anyhow!("validated lead-sheet melody is missing"))?;
+    let mut notes = melody.notes.iter().collect::<Vec<_>>();
+    notes.sort_by_key(|note| (note.start_tick, note.voice, note.midi_note));
+    let lyric_text = if let Some(layer_id) = &sheet.lyric_layer_id {
+        let layer = model
+            .lyric_layers
+            .iter()
+            .find(|layer| &layer.id == layer_id)
+            .ok_or_else(|| anyhow!("validated lead-sheet lyric layer is missing"))?;
+        let path = if layer.path.is_absolute() {
+            layer.path.clone()
+        } else {
+            model_path
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join(&layer.path)
+        };
+        Some(fs::read_to_string(path)?)
+    } else {
+        None
+    };
+    let mut lyrics = BTreeMap::<&str, (String, bool)>::new();
+    if let Some(text) = &lyric_text {
+        for item in &sheet.underlay {
+            let start = usize::try_from(item.text_start_byte)?;
+            let end = usize::try_from(item.text_end_byte)?;
+            let syllable = text[start..end].to_string();
+            for (index, note_id) in item.note_ids.iter().enumerate() {
+                lyrics.insert(
+                    note_id,
+                    (
+                        if index == 0 {
+                            syllable.clone()
+                        } else {
+                            String::new()
+                        },
+                        index > 0,
+                    ),
+                );
+            }
+        }
+    }
+    let per_system = 12usize;
+    let systems = notes.len().div_ceil(per_system).max(1);
+    let width = 1_100usize;
+    let height = 80 + systems * 150;
+    let mut svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\" role=\"img\" data-clef=\"treble\">\n"
+    );
+    svg.push_str("<style>text{font-family:serif;fill:#111}.title{font-size:24px;font-weight:bold}.chord{font-size:16px;font-weight:bold}.lyric{font-size:15px}.meta{font-size:11px;fill:#555}.staff{stroke:#222;stroke-width:1}.stem{stroke:#111;stroke-width:1.5}.note{fill:#111}</style>\n");
+    svg.push_str(&format!(
+        "<text class=\"title\" x=\"40\" y=\"34\">{}</text>\n",
+        xml_escape(&sheet.title)
+    ));
+    for system in 0..systems {
+        let staff_y = 80 + system * 150;
+        svg.push_str(&format!(
+            "<text x=\"42\" y=\"{}\" font-size=\"42\">𝄞</text>\n",
+            staff_y + 32
+        ));
+        for line in 0..5 {
+            let y = staff_y + line * 10;
+            svg.push_str(&format!(
+                "<line class=\"staff\" x1=\"80\" y1=\"{y}\" x2=\"1060\" y2=\"{y}\"/>\n"
+            ));
+        }
+    }
+    let mut last_harmony = None::<&str>;
+    for (index, note) in notes.iter().enumerate() {
+        let system = index / per_system;
+        let column = index % per_system;
+        let x = 115 + column * 78;
+        let staff_y = 80 + system * 150;
+        let y = (staff_y as i32 + 20 - (i32::from(note.midi_note) - 71) * 2)
+            .clamp(staff_y as i32 - 18, staff_y as i32 + 58);
+        if let Some(section) = model
+            .form
+            .iter()
+            .find(|section| section.range.start == note.start_tick)
+        {
+            svg.push_str(&format!(
+                "<text class=\"meta\" x=\"{x}\" y=\"{}\">{}</text>\n",
+                staff_y - 34,
+                xml_escape(&section.label)
+            ));
+        }
+        if let Some(harmony) = model.harmony.iter().find(|harmony| {
+            harmony.range.start <= note.start_tick && note.start_tick < harmony.range.end
+        }) {
+            if last_harmony != Some(harmony.id.as_str()) {
+                svg.push_str(&format!(
+                    "<text class=\"chord\" x=\"{x}\" y=\"{}\">{}</text>\n",
+                    staff_y - 12,
+                    xml_escape(&harmony.symbol)
+                ));
+                last_harmony = Some(&harmony.id);
+            }
+        }
+        svg.push_str(&format!("<g data-note-id=\"{}\" data-start-tick=\"{}\" data-duration-ticks=\"{}\" data-midi-note=\"{}\"><ellipse class=\"note\" cx=\"{x}\" cy=\"{y}\" rx=\"7\" ry=\"5\" transform=\"rotate(-18 {x} {y})\"/><line class=\"stem\" x1=\"{}\" y1=\"{y}\" x2=\"{}\" y2=\"{}\"/></g>\n", xml_escape(&note.id), note.start_tick, note.duration_ticks, note.midi_note, x + 6, x + 6, y - 30));
+        if let Some((syllable, melisma)) = lyrics.get(note.id.as_str()) {
+            if !syllable.is_empty() {
+                svg.push_str(&format!(
+                    "<text class=\"lyric\" x=\"{x}\" y=\"{}\" text-anchor=\"middle\">{}</text>\n",
+                    staff_y + 82,
+                    xml_escape(syllable)
+                ));
+            }
+            if *melisma {
+                svg.push_str(&format!(
+                    "<line class=\"staff\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>\n",
+                    x - 18,
+                    staff_y + 76,
+                    x + 18,
+                    staff_y + 76
+                ));
+            }
+        }
+    }
+    svg.push_str(&format!("<text class=\"meta\" x=\"40\" y=\"{}\">Deterministic rehearsal lead sheet — musician engraving and playability review required.</text>\n</svg>\n", height - 18));
+    Ok(svg)
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 fn compare(expected: &Snapshot, actual: &Snapshot) -> Comparison {
