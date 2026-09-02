@@ -657,6 +657,16 @@ pub struct AudioMastering {
     pub limiter: f64,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AudioReviewPolicy {
+    pub id: String,
+    pub dialogue_loudness_target_lufs: f64,
+    pub dialogue_loudness_tolerance_lu: f64,
+    pub minimum_speech_to_background_margin_db: f64,
+    pub speech_activity_threshold_dbfs: f64,
+    pub maximum_mono_loss_db: f64,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Export {
     pub id: String,
@@ -896,6 +906,8 @@ pub struct ProductionManifest {
     pub audio_ducking: Vec<AudioDuckingPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio_mastering: Option<AudioMastering>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_review_policy: Option<AudioReviewPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub score: Option<ScoreDirection>,
     #[serde(default)]
@@ -2474,6 +2486,20 @@ fn validate_mixed_media(manifest: &ProductionManifest, duration_ms: Option<u64>)
         if targets.iter().any(|role| !targeted_roles.insert(*role)) {
             bail!("audio_ducking target roles may appear in only one ordered policy");
         }
+        let target_stem_groups = targets
+            .iter()
+            .map(|role| match role {
+                AudioRole::Narration | AudioRole::Dialogue => 0,
+                AudioRole::Music => 1,
+                AudioRole::Ambience | AudioRole::Effect => 2,
+            })
+            .collect::<BTreeSet<_>>();
+        if target_stem_groups.len() != 1 {
+            bail!(
+                "audio_ducking {} target roles must remain within one D, M, or E stem",
+                policy.id
+            );
+        }
         if !policy.threshold.is_finite()
             || !policy.ratio.is_finite()
             || !policy.max_reduction_db.is_finite()
@@ -2513,6 +2539,32 @@ fn validate_mixed_media(manifest: &ProductionManifest, duration_ms: Option<u64>)
         {
             bail!(
                 "audio_mastering must use integrated_lufs -36..-5, loudness_range_lu 1..20, true_peak_dbfs -12..-0.1, and limiter 0.1..1"
+            );
+        }
+    }
+    if let Some(policy) = &manifest.audio_review_policy {
+        require_nonempty("audio review policy id", &policy.id)?;
+        if manifest.audio_events.is_empty()
+            || !manifest
+                .audio_events
+                .iter()
+                .any(|event| matches!(event.role, AudioRole::Narration | AudioRole::Dialogue))
+        {
+            bail!("audio_review_policy requires narration or dialogue audio events");
+        }
+        if !policy.dialogue_loudness_target_lufs.is_finite()
+            || !policy.dialogue_loudness_tolerance_lu.is_finite()
+            || !policy.minimum_speech_to_background_margin_db.is_finite()
+            || !policy.speech_activity_threshold_dbfs.is_finite()
+            || !policy.maximum_mono_loss_db.is_finite()
+            || !(-70.0..=-5.0).contains(&policy.dialogue_loudness_target_lufs)
+            || !(0.1..=20.0).contains(&policy.dialogue_loudness_tolerance_lu)
+            || !(-20.0..=40.0).contains(&policy.minimum_speech_to_background_margin_db)
+            || !(-80.0..=-1.0).contains(&policy.speech_activity_threshold_dbfs)
+            || !(0.0..=30.0).contains(&policy.maximum_mono_loss_db)
+        {
+            bail!(
+                "audio_review_policy contains invalid loudness, margin, activity, or mono-loss values"
             );
         }
     }

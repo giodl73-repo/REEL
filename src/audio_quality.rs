@@ -157,7 +157,7 @@ pub fn check(options: AudioCheckOptions<'_>) -> Result<AudioCheckReport> {
         bail!("provide both narration and effects/music stems or neither");
     }
     let policy = options.profile.policy();
-    let (audio, silence) = analyze(options.audio)?;
+    let (audio, silence) = analyze_audio(options.audio)?;
     let expected_duration_ms = match options.manifest {
         Some(path) => Some(
             production::require_timing_ready(path)?
@@ -171,8 +171,8 @@ pub fn check(options: AudioCheckOptions<'_>) -> Result<AudioCheckReport> {
     };
     let stem_margin = match (options.narration_stem, options.effects_music_stem) {
         (Some(narration), Some(effects)) => {
-            let narration = analyze(narration)?.0;
-            let effects_music = analyze(effects)?.0;
+            let narration = analyze_audio(narration)?.0;
+            let effects_music = analyze_audio(effects)?.0;
             let margin = narration.integrated_lufs - effects_music.integrated_lufs;
             Some(StemMarginReport {
                 narration,
@@ -243,7 +243,7 @@ pub fn write_report(path: &Path, report: &AudioCheckReport) -> Result<()> {
     Ok(())
 }
 
-fn analyze(path: &Path) -> Result<(AudioFacts, Vec<SilenceRange>)> {
+pub fn analyze_audio(path: &Path) -> Result<(AudioFacts, Vec<SilenceRange>)> {
     let path = path
         .canonicalize()
         .with_context(|| format!("failed to resolve audio {}", path.display()))?;

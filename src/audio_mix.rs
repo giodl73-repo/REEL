@@ -4,7 +4,8 @@ use anyhow::{Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::production::{
-    AudioDuckingPolicy, AudioRole, GainAutomationPoint, GainCurve, ProductionManifest,
+    AudioDuckingPolicy, AudioRole, DynamicEqPolicy, GainAutomationPoint, GainCurve,
+    ProductionManifest,
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -31,6 +32,7 @@ pub struct CompiledDuckingPolicy {
     pub attack_ms: u64,
     pub release_ms: u64,
     pub dynamic_eq_render_supported: bool,
+    pub dynamic_eq: Option<DynamicEqPolicy>,
 }
 
 #[derive(Clone, Debug)]
@@ -39,6 +41,9 @@ pub struct StemLabels {
     pub music: String,
     pub effects: String,
     pub pre_master: String,
+    pub no_score: String,
+    pub mono_review: String,
+    pub small_speaker_review: String,
 }
 
 #[derive(Clone, Debug)]
@@ -130,13 +135,7 @@ pub fn compile(
             .iter()
             .any(|event| event.role == AudioRole::Dialogue);
     if legacy_only {
-        return compile_legacy(
-            manifest,
-            timeline_seconds,
-            filters,
-            by_role,
-            resolved_automation,
-        );
+        return compile_legacy(manifest, timeline_seconds, filters, resolved_automation);
     }
 
     let mut role_labels = BTreeMap::new();
@@ -164,33 +163,11 @@ pub fn compile(
             attack_ms: policy.attack_ms,
             release_ms: policy.release_ms,
             dynamic_eq_render_supported: !*dynamic,
+            dynamic_eq: policy.dynamic_eq.clone(),
         })
         .collect::<Vec<_>>();
 
-    let mut stem_role_labels = BTreeMap::new();
-    let mut mix_role_labels = BTreeMap::new();
-    for (role, label) in role_labels {
-        if include_stems {
-            let stem = format!("{}_stem", role_name(role));
-            let mix = format!("{}_mix", role_name(role));
-            filters.push(format!("[{label}]asplit=2[{stem}][{mix}]"));
-            stem_role_labels.insert(role, stem);
-            mix_role_labels.insert(role, mix);
-        } else {
-            mix_role_labels.insert(role, label);
-        }
-    }
-    let stems = if include_stems {
-        Some(compile_stems(
-            &mut filters,
-            &stem_role_labels,
-            timeline_seconds,
-            sample_rate_hz,
-            channels,
-        ))
-    } else {
-        None
-    };
+    let mix_role_labels = role_labels;
 
     let mut detector_uses = BTreeMap::<AudioRole, usize>::new();
     for (policy, _) in &policies {
@@ -268,20 +245,58 @@ pub fn compile(
             filters.push(format!("[duck_wet_{policy_index}][duck_floor_{policy_index}]amix=inputs=2:normalize=0:dropout_transition=0[{output}]"));
         }
         targeted.extend(policy.target_roles.iter().copied());
-        ducked_groups.push(output);
+        ducked_groups.push((stem_group(policy.target_roles[0]), output));
     }
     let mut final_components = programs
         .into_iter()
         .filter(|(role, _)| !targeted.contains(role))
-        .map(|(_, label)| label)
+        .map(|(role, label)| (stem_group(role), label))
         .collect::<Vec<_>>();
     final_components.extend(ducked_groups);
     let premaster = "mixedaudio";
-    mix_labels(&mut filters, &final_components, premaster);
+    let stems = if include_stems {
+        Some(compile_stems(
+            &mut filters,
+            &final_components,
+            timeline_seconds,
+            sample_rate_hz,
+            channels,
+            premaster,
+        ))
+    } else {
+        mix_labels(
+            &mut filters,
+            &final_components
+                .iter()
+                .map(|(_, label)| label.clone())
+                .collect::<Vec<_>>(),
+            premaster,
+        );
+        None
+    };
     let mastering = mastering_filter(manifest);
+    let mastered_label = if include_stems {
+        "mastered_base"
+    } else {
+        "finala"
+    };
     filters.push(format!(
-        "[{premaster}]aresample=async=1:first_pts=0,apad{mastering},atrim=duration={timeline_seconds:.3}[finala]"
+        "[{premaster}]aresample=async=1:first_pts=0,apad{mastering},atrim=duration={timeline_seconds:.3}[{mastered_label}]"
     ));
+    if include_stems {
+        filters.push(
+            "[mastered_base]asplit=3[finala][review_mono_source][review_small_source]".into(),
+        );
+        let downmix = if channels == 1 {
+            "anull".to_string()
+        } else {
+            "pan=mono|c0=0.5*c0+0.5*c1".to_string()
+        };
+        filters.push(format!("[review_mono_source]{downmix}[review_mono]"));
+        filters.push(format!(
+            "[review_small_source]{downmix},highpass=f=180,lowpass=f=5500[review_small_speaker]"
+        ));
+    }
     Ok(CompiledAudioMix {
         filters,
         final_label: "finala".into(),
@@ -296,17 +311,21 @@ fn compile_legacy(
     manifest: &ProductionManifest,
     timeline_seconds: f64,
     mut filters: Vec<String>,
-    by_role: BTreeMap<AudioRole, Vec<String>>,
     resolved_automation: Vec<ResolvedGainAutomation>,
 ) -> Result<CompiledAudioMix> {
-    let narration = by_role
-        .get(&AudioRole::Narration)
-        .cloned()
-        .unwrap_or_default();
-    let background = by_role
-        .into_iter()
-        .filter(|(role, _)| *role != AudioRole::Narration)
-        .flat_map(|(_, labels)| labels)
+    let narration = manifest
+        .audio_events
+        .iter()
+        .enumerate()
+        .filter(|(_, event)| event.role == AudioRole::Narration)
+        .map(|(index, _)| format!("ae{index}"))
+        .collect::<Vec<_>>();
+    let background = manifest
+        .audio_events
+        .iter()
+        .enumerate()
+        .filter(|(_, event)| event.role != AudioRole::Narration)
+        .map(|(index, _)| format!("ae{index}"))
         .collect::<Vec<_>>();
     let mixed = match (background.is_empty(), narration.is_empty()) {
         (false, false) => {
@@ -348,34 +367,69 @@ fn compile_legacy(
 
 fn compile_stems(
     filters: &mut Vec<String>,
-    roles: &BTreeMap<AudioRole, String>,
+    components: &[(StemGroup, String)],
     timeline_seconds: f64,
     sample_rate_hz: u32,
     channels: u8,
+    premaster: &str,
 ) -> StemLabels {
     let layout = if channels == 1 { "mono" } else { "stereo" };
-    let mut group = |name: &str, members: &[AudioRole]| {
-        let labels = members
+    let mut group = |name: &str, wanted: StemGroup| {
+        let labels = components
             .iter()
-            .filter_map(|role| roles.get(role).cloned())
+            .filter(|(group, _)| *group == wanted)
+            .map(|(_, label)| label.clone())
             .collect::<Vec<_>>();
         if labels.is_empty() {
-            filters.push(format!("anullsrc=r={sample_rate_hz}:cl={layout},atrim=duration={timeline_seconds:.3}[{name}_group]"));
+            filters.push(format!("anullsrc=r={sample_rate_hz}:cl={layout},atrim=duration={timeline_seconds:.3}[{name}_raw]"));
         } else {
-            mix_labels(filters, &labels, &format!("{name}_group"));
+            mix_labels(filters, &labels, &format!("{name}_raw"));
         }
-        filters.push(format!("[{name}_group]asplit=2[{name}_out][{name}_sum]"));
+        filters.push(format!(
+            "[{name}_raw]aresample={sample_rate_hz}:async=0,apad,atrim=duration={timeline_seconds:.3},aformat=sample_rates={sample_rate_hz}:channel_layouts={layout}[{name}_group]"
+        ));
+        let split = if wanted == StemGroup::Music { 2 } else { 3 };
+        let review = if split == 3 {
+            format!("[{name}_no_score]")
+        } else {
+            String::new()
+        };
+        filters.push(format!(
+            "[{name}_group]asplit={split}[{name}_out][{name}_sum]{review}"
+        ));
         format!("{name}_out")
     };
-    let dialogue = group("stem_d", &[AudioRole::Narration, AudioRole::Dialogue]);
-    let music = group("stem_m", &[AudioRole::Music]);
-    let effects = group("stem_e", &[AudioRole::Ambience, AudioRole::Effect]);
-    filters.push("[stem_d_sum][stem_m_sum][stem_e_sum]amix=inputs=3:normalize=0:dropout_transition=0[stem_premaster]".into());
+    let dialogue = group("stem_d", StemGroup::Dialogue);
+    let music = group("stem_m", StemGroup::Music);
+    let effects = group("stem_e", StemGroup::Effects);
+    filters.push("[stem_d_sum][stem_m_sum][stem_e_sum]amix=inputs=3:normalize=0:dropout_transition=0[stem_premaster_base]".into());
+    filters.push(format!(
+        "[stem_premaster_base]asplit=2[stem_premaster][{premaster}]"
+    ));
+    filters.push("[stem_d_no_score][stem_e_no_score]amix=inputs=2:normalize=0:dropout_transition=0[review_no_score]".into());
     StemLabels {
         dialogue,
         music,
         effects,
         pre_master: "stem_premaster".into(),
+        no_score: "review_no_score".into(),
+        mono_review: "review_mono".into(),
+        small_speaker_review: "review_small_speaker".into(),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StemGroup {
+    Dialogue,
+    Music,
+    Effects,
+}
+
+fn stem_group(role: AudioRole) -> StemGroup {
+    match role {
+        AudioRole::Narration | AudioRole::Dialogue => StemGroup::Dialogue,
+        AudioRole::Music => StemGroup::Music,
+        AudioRole::Ambience | AudioRole::Effect => StemGroup::Effects,
     }
 }
 
@@ -529,4 +583,231 @@ fn role_name(role: AudioRole) -> &'static str {
 
 fn seconds_to_ms(seconds: f64) -> u64 {
     (seconds * 1000.0).round() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::production::{self, AudioDuckingPolicy, AudioEvent, BeatMarker, DynamicEqPolicy};
+    use std::path::Path;
+
+    fn manifest() -> ProductionManifest {
+        production::load(Path::new(
+            "manifests/fixtures/vertical-sound-off/manifest.yaml",
+        ))
+        .unwrap()
+        .manifest
+    }
+
+    fn event(id: &str, role: AudioRole) -> AudioEvent {
+        AudioEvent {
+            id: id.into(),
+            role,
+            source: format!("{id}.wav"),
+            start_seconds: 0.0,
+            duration_seconds: Some(6.0),
+            source_in_seconds: 0.0,
+            gain_db: 0.0,
+            loop_source: false,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
+            beat_marker_id: None,
+            gain_automation: vec![],
+        }
+    }
+
+    #[test]
+    fn dialogue_routes_to_d_and_only_music_is_ducked() {
+        let mut manifest = manifest();
+        manifest.audio_events = vec![
+            event("dialogue", AudioRole::Dialogue),
+            event("music", AudioRole::Music),
+            event("effect", AudioRole::Effect),
+        ];
+        manifest.audio_ducking = vec![AudioDuckingPolicy {
+            id: "speech-over-score".into(),
+            detector_roles: vec![AudioRole::Dialogue],
+            target_roles: vec![AudioRole::Music],
+            threshold: 0.03,
+            ratio: 3.0,
+            max_reduction_db: 6.0,
+            attack_ms: 25,
+            release_ms: 350,
+            dynamic_eq: None,
+        }];
+        let compiled = compile(&manifest, 6.0, 0, true, 48_000, 2).unwrap();
+        let graph = compiled.filters.join(";");
+        assert!(graph.contains("[role_dialogue]asplit="));
+        assert!(graph.contains("[role_music]anull[duck_target_0]"));
+        assert!(graph.contains("[role_effect]"));
+        assert!(graph.contains("volume=0.501187234[duck_floor_0]"));
+        assert!(!graph.contains("[role_effect]anull[duck_target_0]"));
+        assert_eq!(compiled.stems.unwrap().dialogue, "stem_d_out");
+    }
+
+    #[test]
+    fn automation_resolves_local_and_beat_anchors_deterministically() {
+        let mut manifest = manifest();
+        manifest.beat_markers = vec![BeatMarker {
+            id: "reaction".into(),
+            time_seconds: 3.0,
+            label: String::new(),
+            accent: false,
+        }];
+        let mut score = event("score", AudioRole::Music);
+        score.start_seconds = 1.0;
+        score.duration_seconds = Some(4.0);
+        score.gain_db = -10.0;
+        score.gain_automation = vec![
+            GainAutomationPoint {
+                time_seconds: Some(0.5),
+                beat_marker_id: None,
+                gain_db: -4.0,
+                curve: GainCurve::Smooth,
+            },
+            GainAutomationPoint {
+                time_seconds: None,
+                beat_marker_id: Some("reaction".into()),
+                gain_db: 2.0,
+                curve: GainCurve::Linear,
+            },
+        ];
+        manifest.audio_events = vec![score];
+        let compiled = compile(&manifest, 6.0, 0, false, 48_000, 2).unwrap();
+        assert_eq!(compiled.resolved_automation[0].points[0].time_ms, 500);
+        assert_eq!(compiled.resolved_automation[0].points[1].time_ms, 2_000);
+        let graph = compiled.filters.join(";");
+        assert!(graph.contains("eval=frame"));
+        assert!(graph.contains("3-2*"));
+    }
+
+    #[test]
+    fn dynamic_eq_is_a_complete_engine_neutral_plan_but_not_render_claim() {
+        let mut manifest = manifest();
+        manifest.audio_events = vec![
+            event("dialogue", AudioRole::Dialogue),
+            event("music", AudioRole::Music),
+        ];
+        manifest.audio_ducking = vec![AudioDuckingPolicy {
+            id: "presence-carve".into(),
+            detector_roles: vec![AudioRole::Dialogue],
+            target_roles: vec![AudioRole::Music],
+            threshold: 0.03,
+            ratio: 3.0,
+            max_reduction_db: 6.0,
+            attack_ms: 25,
+            release_ms: 350,
+            dynamic_eq: Some(DynamicEqPolicy {
+                frequency_hz: 2_500.0,
+                q: 1.2,
+                max_cut_db: 4.0,
+                attack_ms: 20,
+                release_ms: 200,
+            }),
+        }];
+        let compiled = compile(&manifest, 6.0, 0, false, 48_000, 2).unwrap();
+        assert!(!compiled.dynamic_eq_render_supported);
+        let plan = compiled.ducking[0].dynamic_eq.as_ref().unwrap();
+        assert_eq!(plan.frequency_hz, 2_500.0);
+        assert_eq!(compiled.ducking[0].target_roles, vec![AudioRole::Music]);
+    }
+
+    #[test]
+    fn legacy_graph_keeps_the_original_filter_shape() {
+        let mut manifest = manifest();
+        manifest.audio_events = vec![
+            event("room", AudioRole::Ambience),
+            event("voice", AudioRole::Narration),
+            event("music", AudioRole::Music),
+        ];
+        manifest.narration_ducking = Some(production::NarrationDucking {
+            threshold: 0.03,
+            ratio: 8.0,
+            attack_ms: 20,
+            release_ms: 300,
+        });
+        let compiled = compile(&manifest, 6.0, 0, false, 48_000, 2).unwrap();
+        let graph = compiled.filters.join(";");
+        assert!(graph.contains("[background][narration_detector]sidechaincompress=threshold=0.030000:ratio=8.000:attack=20:release=300[ducked]"));
+        assert!(
+            graph.contains("[ae0][ae2]amix=inputs=2:normalize=0:dropout_transition=0[background]")
+        );
+        assert!(!graph.contains("role_"));
+        assert!(compiled.ducking.is_empty());
+    }
+
+    #[test]
+    fn validation_rejects_invalid_automation_anchors_and_times() {
+        let fixture = Path::new("manifests/fixtures/vertical-sound-off/manifest.yaml");
+        let mut loaded = production::load(fixture).unwrap();
+        let mut score = event("score", AudioRole::Music);
+        score.duration_seconds = Some(2.0);
+        score.gain_automation = vec![GainAutomationPoint {
+            time_seconds: Some(0.5),
+            beat_marker_id: Some("hit".into()),
+            gain_db: -3.0,
+            curve: GainCurve::Hold,
+        }];
+        loaded.manifest.beat_markers = vec![BeatMarker {
+            id: "hit".into(),
+            time_seconds: 0.5,
+            label: String::new(),
+            accent: false,
+        }];
+        loaded.manifest.audio_events = vec![score.clone()];
+        assert!(
+            production::validate(&loaded)
+                .unwrap_err()
+                .to_string()
+                .contains("exactly one")
+        );
+
+        score.gain_automation = vec![
+            GainAutomationPoint {
+                time_seconds: Some(0.5),
+                beat_marker_id: None,
+                gain_db: -3.0,
+                curve: GainCurve::Linear,
+            },
+            GainAutomationPoint {
+                time_seconds: Some(0.5),
+                beat_marker_id: None,
+                gain_db: -4.0,
+                curve: GainCurve::Smooth,
+            },
+        ];
+        loaded.manifest.audio_events = vec![score.clone()];
+        assert!(
+            production::validate(&loaded)
+                .unwrap_err()
+                .to_string()
+                .contains("unique ascending")
+        );
+
+        score.gain_automation = vec![GainAutomationPoint {
+            time_seconds: Some(2.1),
+            beat_marker_id: None,
+            gain_db: -3.0,
+            curve: GainCurve::Linear,
+        }];
+        loaded.manifest.audio_events = vec![score];
+        assert!(
+            production::validate(&loaded)
+                .unwrap_err()
+                .to_string()
+                .contains("outside the event")
+        );
+    }
+
+    #[test]
+    fn dialogue_role_deserializes_without_changing_narration() {
+        assert_eq!(
+            serde_yaml::from_str::<AudioRole>("dialogue").unwrap(),
+            AudioRole::Dialogue
+        );
+        assert_eq!(
+            serde_yaml::from_str::<AudioRole>("narration").unwrap(),
+            AudioRole::Narration
+        );
+    }
 }

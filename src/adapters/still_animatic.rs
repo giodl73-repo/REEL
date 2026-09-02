@@ -1946,7 +1946,7 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
             48_000,
             2,
         )?;
-        if !compiled.dynamic_eq_render_supported {
+        if !compiled.dynamic_eq_render_supported && !options.dry_run {
             bail!(
                 "dynamic_eq is validated and compiled as policy, but portable rendering is not implemented"
             );

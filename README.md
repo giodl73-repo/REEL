@@ -317,6 +317,16 @@ audio events, while `animatic-remux` stream-copies previously verified picture
 and replaces only its audio. See
 [`docs/selection-lock-and-audio-cache-v0.2.21.md`](docs/selection-lock-and-audio-cache-v0.2.21.md).
 
+CLI v0.3.12 adds dialogue-aware score mixing without changing legacy narration
+behavior. Events can use the `dialogue` role and deterministic local/beat-keyed
+gain automation. Ordered `audio_ducking` policies route declared detector roles
+to declared target roles with a maximum reduction floor. Optional stem delivery
+writes post-duck/pre-master D, M, E and pre-master WAVs plus a mastered full mix,
+no-score, mono, and small-speaker review variants with path-free receipts and a
+sample-level recombination proof. Dynamic-EQ intent is validated and visible in
+dry-run plans, but portable dynamic-EQ rendering is intentionally gated. See
+[`docs/dialogue-score-mixing-v0.3.12.md`](docs/dialogue-score-mixing-v0.3.12.md).
+
 CLI v0.2.22 adds manifest-owned chapter score direction and a deterministic
 `score-plan` handoff. Films can express original-music policy, motifs,
 instrument families and articulations, mood/energy movement, tempo, story or

@@ -54,7 +54,10 @@ off-beat event starts fail `reel validate` before rendering.
 
 ## Audio events
 
-`audio_events` are independently timed sources with one of four roles:
+In v0.2.20, `audio_events` are independently timed sources with one of four
+roles. v0.3.12 adds the optional `dialogue` role without changing these legacy
+roles or `narration_ducking`; see
+[`dialogue-score-mixing-v0.3.12.md`](dialogue-score-mixing-v0.3.12.md).
 `music`, `ambience`, `effect`, or `narration`.
 
 ```yaml
