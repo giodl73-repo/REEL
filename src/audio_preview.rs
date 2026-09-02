@@ -260,11 +260,6 @@ pub fn render_audio_preview(options: &AudioPreviewOptions) -> Result<AudioPrevie
     }
     let input_args = args.clone();
     let compiled = audio_mix::compile(&loaded.manifest, timeline_seconds, 0, false, 48_000, 2)?;
-    if !compiled.dynamic_eq_render_supported && !options.dry_run {
-        bail!(
-            "dynamic_eq is validated and compiled as policy, but portable rendering is not implemented"
-        );
-    }
     let filters = compiled.filters.clone();
     let filter_graph = filters.join(";");
     args.extend([
@@ -535,11 +530,6 @@ fn render_stem_package(
         channels,
         temp.path(),
     )?;
-    if !compiled.dynamic_eq_render_supported {
-        bail!(
-            "dynamic_eq is validated and compiled as policy, but portable rendering is not implemented"
-        );
-    }
     let filter_index = command
         .iter()
         .position(|argument| argument == "-filter_complex")
@@ -1240,8 +1230,8 @@ fn sha256_bytes(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use crate::production::{
-        AudioDuckingPolicy, AudioEvent, AudioMastering, GainAutomationPoint, GainCurve,
-        NarrationDucking,
+        AudioDuckingPolicy, AudioEvent, AudioMastering, DynamicEqPolicy, GainAutomationPoint,
+        GainCurve, NarrationDucking,
     };
     use std::collections::BTreeSet;
     use tempfile::tempdir;
@@ -1391,9 +1381,9 @@ mod tests {
             .canonicalize()
             .unwrap();
         for (name, frequency, duration) in [
-            ("music.wav", 220, 6),
+            ("music.wav", 2_500, 6),
             ("dialogue.wav", 880, 2),
-            ("effect.wav", 440, 1),
+            ("effect.wav", 440, 6),
         ] {
             let status = std::process::Command::new("ffmpeg")
                 .args([
@@ -1439,7 +1429,7 @@ mod tests {
                     GainAutomationPoint {
                         time_seconds: Some(2.0),
                         beat_marker_id: None,
-                        gain_db: 0.0,
+                        gain_db: -3.0,
                         curve: GainCurve::Linear,
                     },
                 ],
@@ -1462,8 +1452,8 @@ mod tests {
                 id: "impact".into(),
                 role: AudioRole::Effect,
                 source: "effect.wav".into(),
-                start_seconds: 4.0,
-                duration_seconds: Some(1.0),
+                start_seconds: 0.0,
+                duration_seconds: Some(6.0),
                 source_in_seconds: 0.0,
                 gain_db: -12.0,
                 loop_source: false,
@@ -1482,7 +1472,13 @@ mod tests {
             max_reduction_db: 6.0,
             attack_ms: 25,
             release_ms: 350,
-            dynamic_eq: None,
+            dynamic_eq: Some(DynamicEqPolicy {
+                frequency_hz: 2_500.0,
+                q: 1.2,
+                max_cut_db: 4.0,
+                attack_ms: 20,
+                release_ms: 200,
+            }),
         }];
         manifest.audio_mastering = Some(AudioMastering {
             integrated_lufs: -18.0,
@@ -1541,6 +1537,7 @@ mod tests {
                     .unwrap()
                     .passed
             );
+            assert_dynamic_eq_ducking_and_untouched_effects(&m, &e);
             return;
         }
         let output = temp.path().join("review.m4a");
@@ -1580,6 +1577,9 @@ mod tests {
                 .len(),
             1
         );
+        let music = read_pcm24_wav(&stems.join("music.pre-master.wav")).unwrap();
+        let effects = read_pcm24_wav(&stems.join("effects.pre-master.wav")).unwrap();
+        assert_dynamic_eq_ducking_and_untouched_effects(&music, &effects);
         let artifact = output.with_extension("audio-artifacts.json");
         assert!(check_audio_preview(&artifact).is_ok());
         assert!(
@@ -1620,5 +1620,36 @@ mod tests {
         )
         .unwrap();
         assert!(check_audio_preview(&artifact).is_err());
+    }
+
+    fn assert_dynamic_eq_ducking_and_untouched_effects(music: &Pcm24Wav, effects: &Pcm24Wav) {
+        let music_before = pcm_rms_window(music, 400, 800);
+        let music_during_speech = pcm_rms_window(music, 1_400, 1_800);
+        assert!(
+            music_during_speech < music_before * 0.8,
+            "speech-keyed music attenuation was too small: before={music_before} during={music_during_speech}"
+        );
+        let effects_before = pcm_rms_window(effects, 400, 800);
+        let effects_during_speech = pcm_rms_window(effects, 1_400, 1_800);
+        let relative_delta = (effects_before - effects_during_speech).abs() / effects_before;
+        assert!(
+            relative_delta < 0.01,
+            "non-target effect changed during speech: before={effects_before} during={effects_during_speech}"
+        );
+    }
+
+    fn pcm_rms_window(wav: &Pcm24Wav, start_ms: u64, end_ms: u64) -> f64 {
+        let channels = usize::from(wav.channels);
+        let start_frame = (u64::from(wav.sample_rate_hz) * start_ms / 1_000) as usize;
+        let end_frame = (u64::from(wav.sample_rate_hz) * end_ms / 1_000) as usize;
+        let start = start_frame * channels;
+        let end = end_frame * channels;
+        let samples = &wav.samples[start..end];
+        (samples
+            .iter()
+            .map(|sample| f64::from(*sample).powi(2))
+            .sum::<f64>()
+            / samples.len() as f64)
+            .sqrt()
     }
 }

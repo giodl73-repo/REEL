@@ -5,9 +5,12 @@ use std::{
 
 use reel_music::{
     AuthorityRef, edl, evidence,
-    hash::sha256_path,
+    hash::{canonical_sha256, sha256_path},
     neutral,
-    repair::{Operation, RepairManifest, Review, SourceRef},
+    repair::{
+        AssetRange, BeatGrid, EqBand, FadeCurve, Operation, RepairManifest, Review, SourceRef,
+    },
+    repair_render,
     source::{Egress, Media, NetworkPolicy, RawPcmFormat, SourceManifest},
     time::{AudioTimebase, MusicalTimebase, RoundingMode, SampleRange},
 };
@@ -85,6 +88,7 @@ fn repair_manifest(source_path: &Path) -> RepairManifest {
             channels: 1,
             samples_per_channel: 16,
         },
+        beat_grid: None,
         operations: vec![Operation::Cut {
             id: "remove-repeat".into(),
             range: SampleRange { start: 4, end: 8 },
@@ -166,6 +170,7 @@ fn seam_fixture() -> (Fixture, PathBuf) {
         source_id: "synthetic-periodic-phrase".into(),
         decoded_pcm_sha256: source_report.decoded_pcm_sha256,
         timebase: source_manifest.media.timebase,
+        beat_grid: None,
         operations: vec![Operation::Cut {
             id: "remove-repeat".into(),
             range: SampleRange {
@@ -494,4 +499,188 @@ fn cut_only_edl_requires_retained_signal_between_cuts() {
     let error = edl::write(&repair, &fixture._temp.path().join("adjacent.json"))
         .expect_err("adjacent cuts rejected");
     assert!(error.to_string().contains("retained signal between them"));
+}
+
+#[test]
+fn structural_renderer_executes_insert_and_replace_with_exact_lock_evidence() {
+    let fixture = fixture();
+    let asset_path = fixture._temp.path().join("asset.raw");
+    fs::write(&asset_path, [200_u8, 201, 202, 203]).expect("write asset");
+    let asset_hash = sha256_path(&asset_path).expect("hash asset");
+    let asset = AssetRange {
+        path: PathBuf::from("asset.raw"),
+        sha256: asset_hash.clone(),
+        decoded_pcm_sha256: asset_hash,
+        format: RawPcmFormat::RawPcmU8,
+        timebase: AudioTimebase {
+            sample_rate_hz: 8_000,
+            channels: 1,
+            samples_per_channel: 4,
+        },
+        range: SampleRange { start: 0, end: 4 },
+    };
+    let mut manifest = repair_manifest(&fixture.source);
+    manifest.repair_id = "insert-and-replace".into();
+    manifest.operations = vec![
+        Operation::Insert {
+            id: "insert-before-phrase".into(),
+            destination: SampleRange { start: 4, end: 8 },
+            asset: asset.clone(),
+        },
+        Operation::Replace {
+            id: "replace-phrase".into(),
+            destination: SampleRange { start: 8, end: 12 },
+            asset,
+        },
+    ];
+    manifest.changed_envelopes = vec![SampleRange { start: 4, end: 12 }];
+    manifest.locks = vec![
+        SampleRange { start: 0, end: 4 },
+        SampleRange { start: 12, end: 16 },
+    ];
+    let repair_path = fixture._temp.path().join("structural.yaml");
+    fs::write(&repair_path, serde_yaml::to_string(&manifest).unwrap()).unwrap();
+    let output = fixture._temp.path().join("structural.raw");
+    let receipt = fixture._temp.path().join("structural.receipt.json");
+    let report = repair_render::render(&repair_path, &output, &receipt, "test-v1").unwrap();
+    assert!(report.outside_regions_exact);
+    assert_eq!(report.output_samples_per_channel, 20);
+    let source = fs::read(&fixture.pcm).unwrap();
+    assert_eq!(
+        fs::read(&output).unwrap(),
+        [
+            &source[0..4],
+            &[200, 201, 202, 203],
+            &source[4..8],
+            &[200, 201, 202, 203],
+            &source[12..16],
+        ]
+        .concat()
+    );
+    assert!(repair_render::check(&repair_path, &output, &receipt).is_ok());
+    let mut tampered = fs::read(&output).unwrap();
+    tampered[0] ^= 1;
+    fs::write(&output, tampered).unwrap();
+    assert!(repair_render::check(&repair_path, &output, &receipt).is_err());
+    let receipt_text = fs::read_to_string(receipt).unwrap();
+    assert!(!receipt_text.contains(fixture._temp.path().to_str().unwrap()));
+    assert!(!receipt_text.contains("path"));
+}
+
+#[test]
+fn renderer_executes_repeat_move_and_beat_locked_bar_extension() {
+    let fixture = fixture();
+    let render = |name: &str, manifest: &RepairManifest| {
+        let repair = fixture._temp.path().join(format!("{name}.yaml"));
+        let output = fixture._temp.path().join(format!("{name}.raw"));
+        let receipt = fixture._temp.path().join(format!("{name}.receipt.json"));
+        fs::write(&repair, serde_yaml::to_string(manifest).unwrap()).unwrap();
+        let report = repair_render::render(&repair, &output, &receipt, "test-v1").unwrap();
+        (fs::read(output).unwrap(), report)
+    };
+    let source = fs::read(&fixture.pcm).unwrap();
+
+    let mut repeat = repair_manifest(&fixture.source);
+    repeat.operations = vec![Operation::Repeat {
+        id: "repeat".into(),
+        source: SampleRange { start: 0, end: 4 },
+        destination: SampleRange { start: 4, end: 8 },
+    }];
+    let (bytes, report) = render("repeat", &repeat);
+    assert_eq!(report.output_samples_per_channel, 20);
+    assert_eq!(bytes, [&source[..4], &source[..]].concat());
+
+    let mut moved = repair_manifest(&fixture.source);
+    moved.repair_id = "move".into();
+    moved.operations = vec![Operation::Move {
+        id: "move".into(),
+        source: SampleRange { start: 4, end: 8 },
+        destination: SampleRange { start: 12, end: 16 },
+    }];
+    moved.changed_envelopes = vec![
+        SampleRange { start: 4, end: 8 },
+        SampleRange { start: 12, end: 16 },
+    ];
+    moved.locks = vec![
+        SampleRange { start: 0, end: 4 },
+        SampleRange { start: 8, end: 12 },
+    ];
+    let (bytes, report) = render("move", &moved);
+    assert_eq!(report.output_samples_per_channel, 16);
+    assert_eq!(
+        bytes,
+        [&source[..4], &source[8..12], &source[4..8], &source[12..]].concat()
+    );
+
+    let mut extended = repair_manifest(&fixture.source);
+    extended.repair_id = "extend".into();
+    extended.beat_grid = Some(BeatGrid {
+        origin_sample: 0,
+        samples_per_beat: 1,
+        beats_per_bar: 4,
+        boundary_tolerance_samples: 0,
+    });
+    extended.operations = vec![Operation::ExtendBars {
+        id: "extend".into(),
+        range: SampleRange { start: 4, end: 8 },
+        bars: 1,
+    }];
+    let (bytes, report) = render("extend", &extended);
+    assert_eq!(report.output_samples_per_channel, 20);
+    assert!(report.beat_alignment_passed);
+    assert_eq!(
+        bytes,
+        [&source[..4], &source[4..8], &source[4..8], &source[8..]].concat()
+    );
+}
+
+#[test]
+fn renderer_executes_crossfade_tail_gain_and_hash_bound_eq() {
+    let fixture = fixture();
+    let render = |name: &str, manifest: &RepairManifest| {
+        let repair = fixture._temp.path().join(format!("{name}.yaml"));
+        let output = fixture._temp.path().join(format!("{name}.raw"));
+        let receipt = fixture._temp.path().join(format!("{name}.receipt.json"));
+        fs::write(&repair, serde_yaml::to_string(manifest).unwrap()).unwrap();
+        repair_render::render(&repair, &output, &receipt, "test-v1").unwrap();
+        fs::read(output).unwrap()
+    };
+
+    let mut crossfade = repair_manifest(&fixture.source);
+    crossfade.operations = vec![Operation::Crossfade {
+        id: "crossfade".into(),
+        range: SampleRange { start: 4, end: 8 },
+        curve: FadeCurve::EqualPower,
+    }];
+    assert_eq!(render("crossfade", &crossfade).len(), 14);
+
+    let mut tail = repair_manifest(&fixture.source);
+    tail.operations = vec![Operation::PreserveTail {
+        id: "tail".into(),
+        source: SampleRange { start: 0, end: 4 },
+        destination: SampleRange { start: 4, end: 8 },
+    }];
+    assert_ne!(render("tail", &tail), fs::read(&fixture.pcm).unwrap());
+
+    let mut gain = repair_manifest(&fixture.source);
+    gain.operations = vec![Operation::MatchGain {
+        id: "gain".into(),
+        range: SampleRange { start: 4, end: 8 },
+        target_millilufs: -12_000,
+    }];
+    assert_ne!(render("gain", &gain), fs::read(&fixture.pcm).unwrap());
+
+    let bands = vec![EqBand {
+        frequency_millihz: 1_000_000,
+        q_milli: 1_000,
+        gain_millidb: -6_000,
+    }];
+    let mut eq = repair_manifest(&fixture.source);
+    eq.operations = vec![Operation::MatchEq {
+        id: "eq".into(),
+        range: SampleRange { start: 4, end: 8 },
+        profile_sha256: canonical_sha256(&bands).unwrap(),
+        bands,
+    }];
+    assert_ne!(render("eq", &eq), fs::read(&fixture.pcm).unwrap());
 }

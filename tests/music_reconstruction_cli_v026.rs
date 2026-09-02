@@ -95,6 +95,7 @@ fn music_cli_validates_source_neutral_identity_and_repair_plan() {
         source_id: source_manifest.source_id,
         decoded_pcm_sha256: source_manifest.media.decoded_pcm_sha256,
         timebase,
+        beat_grid: None,
         operations: vec![Operation::Cut {
             id: "remove-repeat".into(),
             range: SampleRange { start: 8, end: 12 },

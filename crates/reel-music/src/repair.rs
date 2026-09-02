@@ -32,6 +32,8 @@ pub struct RepairManifest {
     pub source_id: String,
     pub decoded_pcm_sha256: String,
     pub timebase: AudioTimebase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beat_grid: Option<BeatGrid>,
     pub operations: Vec<Operation>,
     pub changed_envelopes: Vec<SampleRange>,
     pub locks: Vec<SampleRange>,
@@ -104,6 +106,8 @@ pub enum Operation {
         id: String,
         range: SampleRange,
         profile_sha256: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        bands: Vec<EqBand>,
     },
     ExtendBars {
         id: String,
@@ -132,6 +136,24 @@ pub struct AssetRange {
 pub enum FadeCurve {
     Linear,
     EqualPower,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BeatGrid {
+    pub origin_sample: u64,
+    pub samples_per_beat: u64,
+    pub beats_per_bar: u16,
+    #[serde(default)]
+    pub boundary_tolerance_samples: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EqBand {
+    pub frequency_millihz: u32,
+    pub q_milli: u32,
+    pub gain_millidb: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -171,6 +193,7 @@ fn validate_loaded(path: &Path, manifest: &RepairManifest) -> Result<ValidationR
     validate_sha256("source.sha256", &manifest.source.sha256)?;
     validate_sha256("decoded_pcm_sha256", &manifest.decoded_pcm_sha256)?;
     manifest.timebase.validate()?;
+    validate_beat_grid(manifest.beat_grid, manifest.timebase)?;
     let source_path = source::resolve(path, &manifest.source.manifest);
     if sha256_path(&source_path)? != manifest.source.sha256.to_lowercase() {
         bail!("source manifest sha256 does not match source.sha256");
@@ -289,8 +312,38 @@ fn validate_operations(
                     bail!("operation {id} destination and asset ranges must have equal length");
                 }
             }
-            Operation::MatchEq { profile_sha256, .. } => {
+            Operation::Repeat {
+                source,
+                destination,
+                ..
+            }
+            | Operation::PreserveTail {
+                source,
+                destination,
+                ..
+            } if source.len() != destination.len() => {
+                bail!("operation {id} source and destination ranges must have equal length");
+            }
+            Operation::Crossfade { range, .. } if range.len() < 2 || range.len() % 2 != 0 => {
+                bail!("crossfade operation {id} requires an even range of at least two samples");
+            }
+            Operation::MatchGain {
+                target_millilufs, ..
+            } if !(-70_000..=-1_000).contains(target_millilufs) => {
+                bail!("match-gain operation {id} target must be -70000..=-1000 millilufs");
+            }
+            Operation::MatchEq {
+                profile_sha256,
+                bands,
+                ..
+            } => {
                 validate_sha256("operations[].profile_sha256", profile_sha256)?;
+                if !bands.is_empty() {
+                    validate_eq_bands(id, bands, manifest.timebase.sample_rate_hz)?;
+                    if canonical_sha256(bands)? != profile_sha256.to_lowercase() {
+                        bail!("match-eq operation {id} profile hash does not bind its bands");
+                    }
+                }
             }
             Operation::ExtendBars { bars, .. } if *bars == 0 => {
                 bail!("extend-bars operation {id} requires positive bars");
@@ -317,6 +370,41 @@ fn validate_operations(
                 "changed envelope {}..{} is not fully covered by operations",
                 changed.start,
                 changed.end
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_beat_grid(grid: Option<BeatGrid>, timebase: AudioTimebase) -> Result<()> {
+    let Some(grid) = grid else {
+        return Ok(());
+    };
+    if grid.origin_sample >= timebase.samples_per_channel
+        || grid.samples_per_beat == 0
+        || !(1..=32).contains(&grid.beats_per_bar)
+        || u64::from(grid.boundary_tolerance_samples) >= grid.samples_per_beat
+    {
+        bail!(
+            "beat_grid requires an in-range origin, positive beat length, 1..=32 beats per bar, and tolerance below one beat"
+        );
+    }
+    grid.samples_per_beat
+        .checked_mul(u64::from(grid.beats_per_bar))
+        .ok_or_else(|| anyhow::anyhow!("beat_grid bar length overflows u64"))?;
+    Ok(())
+}
+
+fn validate_eq_bands(id: &str, bands: &[EqBand], sample_rate_hz: u32) -> Result<()> {
+    let nyquist_millihz = u64::from(sample_rate_hz) * 500;
+    for band in bands {
+        if band.frequency_millihz < 20_000
+            || u64::from(band.frequency_millihz) >= nyquist_millihz
+            || !(100..=24_000).contains(&band.q_milli)
+            || !(-24_000..=24_000).contains(&band.gain_millidb)
+        {
+            bail!(
+                "match-eq operation {id} bands require 20Hz..<Nyquist, q 0.1..=24, and gain -24..=24dB"
             );
         }
     }

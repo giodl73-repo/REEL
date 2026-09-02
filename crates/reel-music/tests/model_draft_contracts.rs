@@ -13,7 +13,7 @@ fn copy_fixture(root: &Path) -> std::path::PathBuf {
     let source_dir = fixtures.join("music-repair-foundation");
     fs::create_dir_all(&model_dir).unwrap();
     fs::create_dir_all(&source_dir).unwrap();
-    for name in ["draft.yaml", "model.yaml", "analysis.yaml"] {
+    for name in ["draft.yaml", "model.yaml", "analysis.yaml", "lyrics.txt"] {
         fs::copy(
             repository
                 .join("manifests/fixtures/music-model-corrected")

@@ -85,6 +85,10 @@ the declared detector and target roles. v0.3.12 does not claim portable render
 support: a non-dry render fails explicitly, while `animatic-audio-render
 --dry-run` exposes the plan with `dynamic_eq_render_supported: false`.
 
+REEL v0.3.13 implements the previously gated render path without changing this
+schema. See `speech-keyed-dynamic-eq-v0.3.13.md` for processing order, bounds,
+and portability evidence.
+
 ## Stem package and review variants
 
 ```powershell

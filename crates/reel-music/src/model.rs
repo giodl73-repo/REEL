@@ -46,6 +46,8 @@ pub struct MusicModel {
     pub hooks: Vec<Hook>,
     #[serde(default)]
     pub lyric_layers: Vec<LyricLayer>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead_sheet: Option<LeadSheet>,
     #[serde(default)]
     pub expressive_timing: Vec<ExpressiveTiming>,
     pub unknowns: Vec<String>,
@@ -196,6 +198,36 @@ pub enum LyricLayerKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct LeadSheet {
+    pub title: String,
+    pub melody_part_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lyric_layer_id: Option<String>,
+    #[serde(default)]
+    pub underlay: Vec<LyricUnderlay>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LyricUnderlay {
+    pub id: String,
+    pub note_ids: Vec<String>,
+    pub text_start_byte: u64,
+    pub text_end_byte: u64,
+    pub syllabic: Syllabic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Syllabic {
+    Single,
+    Begin,
+    Middle,
+    End,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExpressiveTiming {
     pub note_id: String,
     pub onset_offset_ticks: i32,
@@ -298,6 +330,7 @@ fn validate_loaded(path: &Path, model: &MusicModel) -> Result<ValidationReport> 
     validate_rhythm(model, &evidence, &mut element_ids, &mut human_corrected)?;
     validate_hooks(model, &evidence, &element_ids, &mut human_corrected)?;
     validate_lyrics(path, model)?;
+    validate_lead_sheet(path, model)?;
     validate_expressive_timing(model, &evidence, &note_ids, &mut human_corrected)?;
     unique_nonempty("unknowns", &model.unknowns)?;
     validate_review(&model.review)?;
@@ -327,6 +360,77 @@ fn validate_loaded(path: &Path, model: &MusicModel) -> Result<ValidationReport> 
         shareable: false,
         verified: true,
     })
+}
+
+fn validate_lead_sheet(path: &Path, model: &MusicModel) -> Result<()> {
+    let Some(lead_sheet) = &model.lead_sheet else {
+        return Ok(());
+    };
+    nonempty("lead_sheet.title", &lead_sheet.title)?;
+    let part = model
+        .parts
+        .iter()
+        .find(|part| part.id == lead_sheet.melody_part_id)
+        .ok_or_else(|| anyhow::anyhow!("lead_sheet.melody_part_id is unknown"))?;
+    if !matches!(part.role, PartRole::Melody | PartRole::Vocal) || part.notes.is_empty() {
+        bail!("lead_sheet melody part must be a non-empty melody or vocal part");
+    }
+    let Some(layer_id) = &lead_sheet.lyric_layer_id else {
+        if !lead_sheet.underlay.is_empty() {
+            bail!("lead_sheet underlay requires lyric_layer_id");
+        }
+        return Ok(());
+    };
+    let layer = model
+        .lyric_layers
+        .iter()
+        .find(|layer| &layer.id == layer_id)
+        .ok_or_else(|| anyhow::anyhow!("lead_sheet.lyric_layer_id is unknown"))?;
+    let lyric_path = source::resolve(path, &layer.path);
+    let text = fs::read_to_string(lyric_path)?;
+    if lead_sheet.underlay.is_empty() {
+        bail!("lead_sheet with lyrics requires underlay");
+    }
+    let note_starts = part
+        .notes
+        .iter()
+        .map(|note| (note.id.as_str(), note.start_tick))
+        .collect::<BTreeMap<_, _>>();
+    let mut underlay_ids = BTreeSet::new();
+    let mut mapped_notes = BTreeSet::new();
+    let mut prior_text_end = 0usize;
+    let mut prior_note_tick = 0u64;
+    for (index, item) in lead_sheet.underlay.iter().enumerate() {
+        register_id(&mut underlay_ids, "lead_sheet.underlay[].id", &item.id)?;
+        if item.note_ids.is_empty() {
+            bail!("lead_sheet underlay note_ids must not be empty");
+        }
+        let start = usize::try_from(item.text_start_byte)?;
+        let end = usize::try_from(item.text_end_byte)?;
+        if start >= end
+            || end > text.len()
+            || !text.is_char_boundary(start)
+            || !text.is_char_boundary(end)
+            || text[start..end].trim().is_empty()
+            || (index > 0 && start < prior_text_end)
+        {
+            bail!("lead_sheet underlay text ranges must be ordered UTF-8 syllable spans");
+        }
+        prior_text_end = end;
+        for note_id in &item.note_ids {
+            let tick = *note_starts.get(note_id.as_str()).ok_or_else(|| {
+                anyhow::anyhow!("lead_sheet underlay references an unknown melody note")
+            })?;
+            if !mapped_notes.insert(note_id.as_str()) || (index > 0 && tick < prior_note_tick) {
+                bail!("lead_sheet underlay notes must be unique and source ordered");
+            }
+            prior_note_tick = tick;
+        }
+    }
+    if mapped_notes.len() != part.notes.len() {
+        bail!("lead_sheet lyric underlay must map every melody note exactly once");
+    }
+    Ok(())
 }
 
 fn validate_source_binding(path: &Path, binding: &SourceBinding) -> Result<PathBuf> {

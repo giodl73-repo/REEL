@@ -13,7 +13,7 @@ fn copy_fixture(root: &Path) -> PathBuf {
         ("music-repair-intent", &["intent.yaml"][..]),
         (
             "music-model-corrected",
-            &["draft.yaml", "model.yaml", "analysis.yaml"][..],
+            &["draft.yaml", "model.yaml", "analysis.yaml", "lyrics.txt"][..],
         ),
         (
             "music-repair-foundation",

@@ -2,8 +2,8 @@ schema: reel.music-repair-intent.v0.1
 intent_id: synthetic-model-bound-repair
 model_draft:
   manifest: ../music-model-corrected/draft.yaml
-  manifest_sha256: fd6da576de452bf274d3346830a593564235ee891d9df21ff9aee6b02518a4a3
-  contract_sha256: e2ff3cdc5d49b996c00ecaf1dff550de6dd55de3c3d2386853997da5347d081b
+  manifest_sha256: ec3972c6e06103465e54b46201c8507087f9c3e9a6b7451a745cb79961c5b906
+  contract_sha256: 7a1acfab41b3c4c9b23016ad71a4ecbe54ef58dc32821219eaebc765cda3b246
   draft_id: synthetic-governed-model-draft
 repair:
   manifest: ../music-repair-foundation/repair.yaml

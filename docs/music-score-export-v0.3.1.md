@@ -17,7 +17,7 @@ reel music-score-export-check score-packet/receipt.json export-plan.json `
 
 `reel.music-score-export-plan.v0.1` binds the exact model bytes and canonical
 model contract. It fixes exact model-tick quantization and requests three
-artifacts:
+legacy artifacts:
 
 - `score.mid`, Standard MIDI File format 1 with a conductor track and one track
   per editable part;
@@ -26,6 +26,12 @@ artifacts:
   meter declarations, and rehearsal marks; and
 - `rehearsal-guide.wav`, mono 48 kHz signed 16-bit PCM generated from the first
   melody or vocal part, falling back to the first part.
+
+Beginning in CLI v0.3.16, a model that explicitly declares `lead_sheet` also
+requests `lead-sheet.svg`. The SVG is a deterministic printable view of the
+selected melody/vocal part with treble clef, form labels, harmony symbols, and
+exact authority-bound lyric underlay. Models without `lead_sheet` keep the
+original three-artifact packet and serialized receipt shape.
 
 The guide uses a deliberately plain, band-unlimited square wave with integer
 phase increments. It is useful for checking entry, duration, rough pitch, and
@@ -50,9 +56,12 @@ for:
 - lyric-layer ID, kind, language, and exact content hash.
 
 Changing an exported pitch, timing event, marker, lyric binding, file hash, or
-receipt causes verification to fail. Lyric text is not embedded: Slice C2
-preserves exact layer identities and hashes because the current corrected model
-does not yet define syllable-to-note underlay.
+receipt causes verification to fail. Lyric text remains hash-only unless the
+corrected model explicitly supplies a lead-sheet underlay. In that case each
+underlay item binds a source-ordered set of note IDs to a non-empty,
+UTF-8-aligned byte range in the selected lyric layer. The checker regenerates
+and byte-compares the SVG, so a changed note, harmony symbol, form label, or
+lyric syllable is rejected.
 
 ## Capability boundary
 
@@ -70,4 +79,5 @@ delivery, and publication authorization.
 
 The checked-in synthetic fixture contains no private BERTICA material. CLI and
 tamper tests prove atomic publication, deterministic guide bytes, independent
-MIDI and MusicXML note re-import, and rejection after an exported pitch changes.
+MIDI and MusicXML note re-import, optional lead-sheet regeneration, and
+rejection after an exported pitch or lyric syllable changes.

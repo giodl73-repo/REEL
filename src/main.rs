@@ -1018,6 +1018,49 @@ fn run_cli() -> Result<()> {
             let report = reel::music_render::check(&evidence, &edl, &repair, &candidate_pcm)?;
             print_report(&report, output)?;
         }
+        Command::MusicRepairMaterialize {
+            repair,
+            output_pcm,
+            receipt,
+            output,
+        } => {
+            let report = reel_music::repair_render::render(
+                &repair,
+                &output_pcm,
+                &receipt,
+                env!("CARGO_PKG_VERSION"),
+            )?;
+            print_report(&report, output)?;
+        }
+        Command::MusicRepairMaterializeCheck {
+            repair,
+            output_pcm,
+            receipt,
+            output,
+        } => {
+            let report = reel_music::repair_render::check(&repair, &output_pcm, &receipt)?;
+            print_report(&report, output)?;
+        }
+        Command::MusicExternalRepairValidate { request, output } => {
+            let report = reel_music::external_repair::validate_request(&request)?;
+            print_report(&report, output)?;
+        }
+        Command::MusicExternalRepairPlan {
+            request,
+            receipt,
+            output,
+        } => {
+            let report = reel_music::external_repair::write_plan(
+                &request,
+                &receipt,
+                env!("CARGO_PKG_VERSION"),
+            )?;
+            print_report(&report, output)?;
+        }
+        Command::MusicExternalRepairCandidateCheck { candidate, output } => {
+            let report = reel_music::external_repair::validate_candidate(&candidate)?;
+            print_report(&report, output)?;
+        }
         Command::MusicAnalysisValidate { analysis, output } => {
             let report = reel_music::analysis::validate(&analysis)?;
             print_report(&report, output)?;
@@ -2702,6 +2745,44 @@ enum Command {
         edl: PathBuf,
         repair: PathBuf,
         candidate_pcm: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Materialize deterministic repair operations to raw PCM with exact lock evidence.
+    MusicRepairMaterialize {
+        repair: PathBuf,
+        #[arg(long)]
+        output_pcm: PathBuf,
+        #[arg(long)]
+        receipt: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Recompute and verify a deterministic repair materialization and path-free receipt.
+    MusicRepairMaterializeCheck {
+        repair: PathBuf,
+        output_pcm: PathBuf,
+        receipt: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate a bounded local external re-sing or repaint request without executing it.
+    MusicExternalRepairValidate {
+        request: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Write a path-free plan receipt for a bounded external repair request.
+    MusicExternalRepairPlan {
+        request: PathBuf,
+        #[arg(long)]
+        receipt: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Independently check a returned external repair candidate and its lyric evidence.
+    MusicExternalRepairCandidateCheck {
+        candidate: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

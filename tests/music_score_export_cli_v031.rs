@@ -47,6 +47,7 @@ fn cli_exports_rechecks_and_detects_score_tampering() {
     let rendered_report = String::from_utf8_lossy(&rendered.stdout);
     assert!(rendered_report.contains("\"midi_round_trip\": true"));
     assert!(rendered_report.contains("\"musicxml_round_trip\": true"));
+    assert!(rendered_report.contains("\"lead_sheet_valid\": true"));
     assert!(rendered_report.contains("\"shareable\": false"));
 
     let receipt = packet.join("receipt.json");
@@ -64,6 +65,13 @@ fn cli_exports_rechecks_and_detects_score_tampering() {
         "{}",
         String::from_utf8_lossy(&checked.stderr)
     );
+    let lead_sheet_path = packet.join("lead-sheet.svg");
+    let lead_sheet = fs::read_to_string(&lead_sheet_path).unwrap();
+    assert!(lead_sheet.contains("data-clef=\"treble\""));
+    assert_eq!(lead_sheet.matches("data-note-id=").count(), 4);
+    for syllable in ["la", "le", "li", "lo"] {
+        assert!(lead_sheet.contains(&format!(">{syllable}</text>")));
+    }
 
     let musicxml_path = packet.join("score.musicxml");
     let musicxml = fs::read_to_string(&musicxml_path).unwrap();
@@ -83,4 +91,22 @@ fn cli_exports_rechecks_and_detects_score_tampering() {
     ]);
     assert!(!tampered.status.success());
     assert!(String::from_utf8_lossy(&tampered.stderr).contains("round-trip comparison"));
+
+    fs::write(&musicxml_path, musicxml).unwrap();
+    fs::write(
+        &lead_sheet_path,
+        lead_sheet.replace(">la</text>", ">xx</text>"),
+    )
+    .unwrap();
+    let tampered = run(&[
+        "music-score-export-check",
+        receipt.to_str().unwrap(),
+        plan.to_str().unwrap(),
+        model,
+        packet.to_str().unwrap(),
+        "--output",
+        "json",
+    ]);
+    assert!(!tampered.status.success());
+    assert!(String::from_utf8_lossy(&tampered.stderr).contains("lead-sheet SVG"));
 }

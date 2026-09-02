@@ -317,6 +317,37 @@ audio events, while `animatic-remux` stream-copies previously verified picture
 and replaces only its audio. See
 [`docs/selection-lock-and-audio-cache-v0.2.21.md`](docs/selection-lock-and-audio-cache-v0.2.21.md).
 
+CLI v0.3.16 adds an optional, deterministic printable SVG lead sheet to the
+existing score packet. The corrected model must explicitly bind a melody or
+vocal part, an exact lyric layer, and UTF-8 byte-range underlay for every melody
+note. The checker regenerates the page and rejects notation or lyric tampering;
+REEL does not infer lyrics, engraving choices, or performance approval. See
+[`docs/music-printable-lead-sheet-v0.3.16.md`](docs/music-printable-lead-sheet-v0.3.16.md).
+
+CLI v0.3.15 adds a bounded, engine-neutral external re-sing/repaint adapter
+contract. REEL validates a local-only, network-denied, no-download request and
+writes a path-free plan receipt, but never invokes the declared engine. Returned
+full-length candidates must preserve every sample outside the requested region,
+meet boundary/duration/loudness policy, and carry lyric evidence from an
+independent analyzer before becoming audition-ready. Failed generations remain
+explicit rejected candidates. See
+[`docs/music-external-repair-adapter-v0.3.15.md`](docs/music-external-repair-adapter-v0.3.15.md).
+
+CLI v0.3.14 adds a deterministic raw-PCM repair materializer for the complete
+v0.1 repair vocabulary: keep, cut, insert, replace, repeat, move, crossfade,
+preserve-tail, match-gain, hash-bound match-EQ, extend-bars, and lock. Its
+path-free receipt binds exact outside-region identity, resolved beat alignment,
+clipping, ambience/loudness, tail/phase correlation, and spectral seam evidence.
+The legacy cut-only FFmpeg EDL and hashes remain unchanged. See
+[`docs/music-repair-materialization-v0.3.14.md`](docs/music-repair-materialization-v0.3.14.md).
+
+CLI v0.3.13 executes the optional speech-keyed dynamic EQ declared by v0.3.12.
+The FFmpeg graph isolates the requested presence band on the declared target
+bus, keys its bounded attenuation from the declared detector bus, then applies
+the policy's broadband ducking. Non-target roles remain outside both paths.
+The existing cross-platform synthetic stem test now exercises this graph. See
+[`docs/speech-keyed-dynamic-eq-v0.3.13.md`](docs/speech-keyed-dynamic-eq-v0.3.13.md).
+
 CLI v0.3.12 adds dialogue-aware score mixing without changing legacy narration
 behavior. Events can use the `dialogue` role and deterministic local/beat-keyed
 gain automation. Ordered `audio_ducking` policies route declared detector roles
@@ -324,7 +355,7 @@ to declared target roles with a maximum reduction floor. Optional stem delivery
 writes post-duck/pre-master D, M, E and pre-master WAVs plus a mastered full mix,
 no-score, mono, and small-speaker review variants with path-free receipts and a
 sample-level recombination proof. Dynamic-EQ intent is validated and visible in
-dry-run plans, but portable dynamic-EQ rendering is intentionally gated. See
+dry-run plans. See
 [`docs/dialogue-score-mixing-v0.3.12.md`](docs/dialogue-score-mixing-v0.3.12.md).
 
 CLI v0.2.22 adds manifest-owned chapter score direction and a deterministic
