@@ -391,6 +391,12 @@ underlay, and decision-backed prosody exceptions. Validation does not translate,
 perform, or approve either wording or release. See
 [`docs/music-language-adaptation-v0.3.8.md`](docs/music-language-adaptation-v0.3.8.md).
 
+CLI v0.3.9 binds a target-language vocal candidate to that exact adaptation,
+then keeps performed-text audit, voice consent, creation provenance, lyric
+listening, bilingual comparison listening, selection/rejection, and release as
+separate gates. See
+[`docs/music-language-performance-v0.3.9.md`](docs/music-language-performance-v0.3.9.md).
+
 The main BERTICA-driven workflow is:
 
 ```powershell
