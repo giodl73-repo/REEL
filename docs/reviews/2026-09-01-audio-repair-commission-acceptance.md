@@ -63,8 +63,10 @@ cargo test --test music_score_export_cli_v031
 - Synthetic pass/fail cases cover speech margin, dialogue loudness, clipping,
   mono compatibility, small-speaker proxy, continuity, lyric evidence, and
   lead-sheet underlay.
-- CI runs the complete Rust suite on Linux and Windows and separately executes
-  the real FFmpeg dialogue/stem and music-repair paths on both systems.
+- CI runs the complete Rust suite, including the engine-neutral repair
+  materializer, on Linux and Windows. It separately executes the real FFmpeg
+  dialogue/stem path on both systems and the legacy WSL-oriented repair-render
+  path on Linux, always with synthetic media.
 
 ## Phasing and omissions
 

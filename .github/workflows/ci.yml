@@ -31,7 +31,8 @@ jobs:
       - run: cargo test --all-targets --all-features
       - name: Exercise synthetic dialogue/stem graph through FFmpeg
         run: cargo test --lib audio_preview::tests::real_dialogue_ducking_stems_recombine_and_recheck -- --ignored --exact
-      - name: Exercise synthetic music repair through FFmpeg and materializer
+      - name: Exercise synthetic music repair through FFmpeg and materializer on Linux
+        if: matrix.os == 'ubuntu-latest'
         run: cargo test --test music_repair_render_cli_v027 real_ffmpeg_cut_render_is_exact_and_rechecks_retained_evidence -- --ignored --exact
       - name: Validate untimed production fixture
         run: cargo run --quiet -- validate manifests/fixtures/two-speaker-untimed/planning.yaml --output json
