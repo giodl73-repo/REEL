@@ -1609,6 +1609,55 @@ fn run_cli() -> Result<()> {
             let report = reel::adapters::still_animatic::check_animatic(&artifact_manifest)?;
             print_report(&report, output)?;
         }
+        Command::SonicAssetsResolve {
+            catalog,
+            request,
+            resolution,
+            receipt,
+            output,
+        } => {
+            let catalog = reel::sonic_assets::load_catalog(&catalog)?;
+            let request = reel::sonic_assets::load_request(&request)?;
+            let (resolved, resolution_receipt) = reel::sonic_assets::resolve(&catalog, &request)?;
+            reel::sonic_assets::write_resolution_packet(
+                &resolved,
+                &resolution_receipt,
+                &resolution,
+                &receipt,
+            )?;
+            print_report(&resolution_receipt, output)?;
+        }
+        Command::SonicAssetsCheck {
+            catalog,
+            request,
+            resolution,
+            receipt,
+            output,
+        } => {
+            let report = reel::sonic_assets::check(catalog, request, resolution, receipt)?;
+            print_report(&report, output)?;
+        }
+        Command::SonicAssetsMaterializeManifest {
+            catalog,
+            request,
+            manifest,
+            resolution,
+            resolution_receipt,
+            output_manifest,
+            output_receipt,
+            output,
+        } => {
+            let report = reel::sonic_assets::materialize_manifest(
+                catalog,
+                request,
+                manifest,
+                resolution,
+                resolution_receipt,
+                output_manifest,
+                output_receipt,
+            )?;
+            print_report(&report, output)?;
+        }
         Command::AnimaticAudioRender {
             manifest,
             asset_root,
@@ -3145,6 +3194,40 @@ enum Command {
     /// Verify a rendered animatic, its inputs, streams, captions, and artifact lineage.
     AnimaticCheck {
         artifact_manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Resolve governed logical sonic assets into a frozen machine-local sidecar.
+    SonicAssetsResolve {
+        catalog: PathBuf,
+        request: PathBuf,
+        #[arg(long)]
+        resolution: PathBuf,
+        #[arg(long)]
+        receipt: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Re-resolve and verify a sonic resolution packet and every local source.
+    SonicAssetsCheck {
+        catalog: PathBuf,
+        request: PathBuf,
+        resolution: PathBuf,
+        receipt: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Bind a verified sonic resolution into ordinary manifest audio events.
+    SonicAssetsMaterializeManifest {
+        catalog: PathBuf,
+        request: PathBuf,
+        manifest: PathBuf,
+        resolution: PathBuf,
+        resolution_receipt: PathBuf,
+        #[arg(long)]
+        output_manifest: PathBuf,
+        #[arg(long)]
+        output_receipt: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
