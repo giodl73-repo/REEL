@@ -1068,6 +1068,13 @@ fn run_cli() -> Result<()> {
             let report = reel_music::language_performance::validate(&performance)?;
             print_report(&report, output)?;
         }
+        Command::MusicArrangementPlanCheck {
+            arrangement,
+            output,
+        } => {
+            let report = reel_music::arrangement_plan::validate(&arrangement)?;
+            print_report(&report, output)?;
+        }
         Command::MusicScoreExportPlan {
             model,
             output_path,
@@ -2752,6 +2759,12 @@ enum Command {
     /// Validate a target-language vocal take, performed text, consent, and bilingual comparison.
     MusicLanguagePerformanceCheck {
         performance: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate a complete score-driven limited-ensemble arrangement plan.
+    MusicArrangementPlanCheck {
+        arrangement: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
