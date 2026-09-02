@@ -35,6 +35,8 @@ edit rhythm, sound, and platform fit before renderer work starts.
   rubric evolves from actual attempts, not abstract taste.
 - Creating reusable video packages for other portfolio repos: product demos,
   game trailers, research explainers, data-story videos, and mobile/social cuts.
+- Compositing hash-pinned color/matte effect passes through the provider-neutral
+  [v0.3.19 effect-pass contract](docs/effect-pass-contract-v0.3.19.md).
 
 ## Non-goals
 

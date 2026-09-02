@@ -168,6 +168,8 @@ pub struct MixedMediaLineage {
     pub sprite_asset_occurrences: usize,
     #[serde(default)]
     pub sprite_unique_asset_inputs: usize,
+    #[serde(default)]
+    pub effect_passes: usize,
     pub audio_events: usize,
     pub beat_markers: usize,
     pub narration_ducking: bool,
@@ -179,12 +181,26 @@ enum ShotVisualPlan {
     Single {
         input_index: usize,
         camera: Vec<CameraRenderSegment>,
+        effects: Vec<EffectRenderPlan>,
     },
     Sprites {
         background_input_index: usize,
         segments: Vec<SpriteRenderSegment>,
         camera: Vec<CameraRenderSegment>,
     },
+}
+
+#[derive(Clone, Debug)]
+struct EffectRenderPlan {
+    color_input_index: usize,
+    matte_input_index: usize,
+    occlusion_input_index: Option<usize>,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    visible_start_seconds: f64,
+    visible_end_seconds: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -614,6 +630,38 @@ pub struct AnimaticCheckReport {
     pub render_capabilities: usize,
     pub render_environment_fingerprint: Option<String>,
     pub passed: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct EffectPassCheckReport {
+    pub schema: String,
+    pub artifact_manifest_sha256: String,
+    pub effect_passes: usize,
+    pub verified_effect_inputs: usize,
+    pub completed_composite_sha256: String,
+    pub passed: bool,
+}
+
+pub fn check_effect_passes(artifact_manifest: impl AsRef<Path>) -> Result<EffectPassCheckReport> {
+    let artifact_manifest = artifact_manifest.as_ref().canonicalize()?;
+    let checked = check_animatic(&artifact_manifest)?;
+    let report: AnimaticRenderReport = serde_json::from_slice(&fs::read(&artifact_manifest)?)?;
+    let verified_effect_inputs = report
+        .inputs
+        .iter()
+        .filter(|input| input.kind.starts_with("effect-"))
+        .count();
+    if report.mixed_media.effect_passes == 0 || verified_effect_inputs < 2 {
+        bail!("artifact contains no complete effect pass");
+    }
+    Ok(EffectPassCheckReport {
+        schema: "reel.effect-pass-check.v0.1".to_string(),
+        artifact_manifest_sha256: production::sha256_path(&artifact_manifest)?,
+        effect_passes: report.mixed_media.effect_passes,
+        verified_effect_inputs,
+        completed_composite_sha256: checked.output_sha256,
+        passed: true,
+    })
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1251,11 +1299,120 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                 let camera = shot.camera_track.as_ref().map_or_else(Vec::new, |track| {
                     camera_render_segments(&track.keyframes, track.timing_fps)
                 });
-                visual_plans.push(ShotVisualPlan::Single {
-                    input_index: ffmpeg_input_count,
-                    camera,
-                });
+                let input_index = ffmpeg_input_count;
                 ffmpeg_input_count += 1;
+                let mut effects = Vec::new();
+                let mut ordered_effects = shot.effect_passes.iter().collect::<Vec<_>>();
+                ordered_effects.sort_by(|left, right| {
+                    left.z_index
+                        .cmp(&right.z_index)
+                        .then_with(|| left.id.cmp(&right.id))
+                });
+                for effect in ordered_effects {
+                    if effect.timing_fps != options.fps {
+                        bail!(
+                            "effect pass {} frame rate differs from render frame rate",
+                            effect.id
+                        );
+                    }
+                    let mut resolve = |role: &str,
+                                       asset: &production::EffectAsset|
+                     -> Result<usize> {
+                        let candidate = if Path::new(&asset.path).is_absolute() {
+                            PathBuf::from(&asset.path)
+                        } else {
+                            asset_root.join(&asset.path)
+                        };
+                        let resolved = candidate.canonicalize().with_context(|| {
+                            format!(
+                                "missing effect pass {} {role}: {}",
+                                effect.id,
+                                candidate.display()
+                            )
+                        })?;
+                        if !Path::new(&asset.path).is_absolute()
+                            && !resolved.starts_with(&asset_root)
+                        {
+                            bail!("effect pass {} {role} escapes asset root", effect.id);
+                        }
+                        let actual = production::sha256_path(&resolved)?;
+                        if !actual.eq_ignore_ascii_case(&asset.sha256) {
+                            bail!("effect pass {} {role} hash mismatch", effect.id);
+                        }
+                        let probe: serde_json::Value =
+                            serde_json::from_str(&adapter.ffprobe_json(&resolved)?)?;
+                        let stream = probe["streams"]
+                            .as_array()
+                            .and_then(|streams| {
+                                streams
+                                    .iter()
+                                    .find(|stream| stream["codec_type"] == "video")
+                            })
+                            .ok_or_else(|| {
+                                anyhow!("effect pass {} {role} has no video stream", effect.id)
+                            })?;
+                        let rate = stream["avg_frame_rate"].as_str().unwrap_or("0/1");
+                        let mut parts = rate.split('/');
+                        let numerator = parts.next().unwrap_or("0").parse::<f64>().unwrap_or(0.0);
+                        let denominator = parts.next().unwrap_or("1").parse::<f64>().unwrap_or(1.0);
+                        if denominator == 0.0
+                            || (numerator / denominator - f64::from(effect.timing_fps)).abs()
+                                > 0.001
+                        {
+                            bail!("effect pass {} {role} frame rate mismatch", effect.id);
+                        }
+                        let seconds = probe["format"]["duration"]
+                            .as_str()
+                            .unwrap_or("0")
+                            .parse::<f64>()
+                            .unwrap_or(0.0);
+                        let expected_seconds =
+                            f64::from(effect.duration_frames) / f64::from(effect.timing_fps);
+                        let one_frame = 1.0 / f64::from(effect.timing_fps);
+                        if (seconds - expected_seconds).abs() > one_frame + 0.001 {
+                            bail!("effect pass {} {role} duration mismatch", effect.id);
+                        }
+                        inputs.push(AnimaticInput {
+                            kind: format!("effect-{role}"),
+                            id: format!("{}:{}", shot.id, effect.id),
+                            path: resolved.display().to_string(),
+                            sha256: actual,
+                        });
+                        args.extend(["-i".to_string(), adapter.path_argument(&resolved)?]);
+                        let result = ffmpeg_input_count;
+                        ffmpeg_input_count += 1;
+                        Ok(result)
+                    };
+                    let color_input_index = resolve("color", &effect.color)?;
+                    let matte_input_index = resolve("matte", &effect.matte)?;
+                    let occlusion_input_index = effect
+                        .occlusion_matte
+                        .as_ref()
+                        .map(|asset| resolve("occlusion-matte", asset))
+                        .transpose()?;
+                    effects.push(EffectRenderPlan {
+                        color_input_index,
+                        matte_input_index,
+                        occlusion_input_index,
+                        x: (effect.placement.x * f64::from(picture_width)).round() as u32,
+                        y: (effect.placement.y * f64::from(picture_height)).round() as u32,
+                        width: (effect.placement.width * f64::from(picture_width))
+                            .round()
+                            .max(1.0) as u32,
+                        height: (effect.placement.height * f64::from(picture_height))
+                            .round()
+                            .max(1.0) as u32,
+                        visible_start_seconds: f64::from(effect.visible_start_frame)
+                            / f64::from(effect.timing_fps),
+                        visible_end_seconds: f64::from(effect.visible_end_frame + 1)
+                            / f64::from(effect.timing_fps),
+                    });
+                }
+                visual_plans.push(ShotVisualPlan::Single {
+                    input_index,
+                    camera,
+                    effects,
+                });
             }
             MediaKind::Animation => {
                 let animation = shot
@@ -1320,6 +1477,7 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                 visual_plans.push(ShotVisualPlan::Single {
                     input_index: ffmpeg_input_count,
                     camera: Vec::new(),
+                    effects: Vec::new(),
                 });
                 ffmpeg_input_count += 1;
             }
@@ -1692,6 +1850,7 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
             ShotVisualPlan::Single {
                 input_index,
                 camera,
+                effects,
             } => {
                 let treatment = match shot.media_kind {
                     MediaKind::Still if !camera.is_empty() => still_camera_filter(
@@ -1734,11 +1893,48 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                             options.width, options.height, region.x, region.y
                         )
                     });
+                let base_label = if effects.is_empty() {
+                    format!("v{index}")
+                } else {
+                    format!("effect{index}_base")
+                };
                 filters.push(format!(
-                    "[{input_index}:v]{treatment}{picture_placement},framerate=fps={},setsar=1,settb=AVTB,trim=duration={:.3},setpts=PTS-STARTPTS[v{index}]",
+                    "[{input_index}:v]{treatment}{picture_placement},framerate=fps={},setsar=1,settb=AVTB,trim=duration={:.3},setpts=PTS-STARTPTS[{base_label}]",
                     options.fps,
                     duration + tail
                 ));
+                let mut previous = base_label;
+                for (effect_index, effect) in effects.iter().enumerate() {
+                    let color = format!("effect{index}_{effect_index}_color");
+                    let matte = format!("effect{index}_{effect_index}_matte");
+                    let alpha = format!("effect{index}_{effect_index}_alpha");
+                    let rgba = format!("effect{index}_{effect_index}_rgba");
+                    let output = if effect_index + 1 == effects.len() {
+                        format!("v{index}")
+                    } else {
+                        format!("effect{index}_{effect_index}_out")
+                    };
+                    filters.push(format!(
+                        "[{}:v]scale={}:{}:flags=lanczos,format=rgb24,setpts=PTS-STARTPTS[{color}]",
+                        effect.color_input_index, effect.width, effect.height
+                    ));
+                    filters.push(format!(
+                        "[{}:v]scale={}:{}:flags=lanczos,format=gray,setpts=PTS-STARTPTS[{matte}]",
+                        effect.matte_input_index, effect.width, effect.height
+                    ));
+                    if let Some(occlusion) = effect.occlusion_input_index {
+                        let occlusion_label = format!("effect{index}_{effect_index}_occlusion");
+                        filters.push(format!("[{occlusion}:v]scale={}:{}:flags=neighbor,format=gray,setpts=PTS-STARTPTS[{occlusion_label}]", effect.width, effect.height));
+                        filters.push(format!(
+                            "[{matte}][{occlusion_label}]blend=all_mode=multiply[{alpha}]"
+                        ));
+                    } else {
+                        filters.push(format!("[{matte}]null[{alpha}]"));
+                    }
+                    filters.push(format!("[{color}][{alpha}]alphamerge[{rgba}]"));
+                    filters.push(format!("[{previous}][{rgba}]overlay=x={}:y={}:format=auto:enable='gte(t,{:.9})*lt(t,{:.9})'[{output}]", effect.x, effect.y, effect.visible_start_seconds, effect.visible_end_seconds));
+                    previous = output;
+                }
             }
             ShotVisualPlan::Sprites {
                 background_input_index,
@@ -2207,6 +2403,12 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
                 .count(),
             sprite_asset_occurrences,
             sprite_unique_asset_inputs,
+            effect_passes: loaded
+                .manifest
+                .shots
+                .iter()
+                .map(|shot| shot.effect_passes.len())
+                .sum(),
             audio_events: loaded.manifest.audio_events.len(),
             beat_markers: loaded.manifest.beat_markers.len(),
             narration_ducking: loaded.manifest.narration_ducking.is_some(),
@@ -2932,6 +3134,12 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
             .map(|input| input.path.as_str())
             .collect::<std::collections::BTreeSet<_>>()
             .len(),
+        effect_passes: loaded
+            .manifest
+            .shots
+            .iter()
+            .map(|shot| shot.effect_passes.len())
+            .sum(),
         audio_events: loaded.manifest.audio_events.len(),
         beat_markers: loaded.manifest.beat_markers.len(),
         narration_ducking: loaded.manifest.narration_ducking.is_some(),
@@ -2949,6 +3157,11 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
             || report.mixed_media.audio_mastering != expected_mixed_media.audio_mastering)
     {
         bail!("mixed-media lineage does not match manifest");
+    }
+    if tool_version >= (0, 3, 19)
+        && report.mixed_media.effect_passes != expected_mixed_media.effect_passes
+    {
+        bail!("effect-pass lineage does not match manifest");
     }
     if tool_version >= (0, 2, 27)
         && report.mixed_media.sprite_camera_tracks != expected_mixed_media.sprite_camera_tracks
