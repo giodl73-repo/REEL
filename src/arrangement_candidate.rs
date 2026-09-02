@@ -313,6 +313,7 @@ fn validate_model_inheritance(
         || source_model.rhythm_cells != actual.rhythm_cells
         || source_model.hooks != actual.hooks
         || source_model.lyric_layers != actual.lyric_layers
+        || source_model.piano_vocal_score != actual.piano_vocal_score
         || source_model.expressive_timing != actual.expressive_timing
         || source_model.unknowns != actual.unknowns
     {

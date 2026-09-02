@@ -317,6 +317,16 @@ audio events, while `animatic-remux` stream-copies previously verified picture
 and replaces only its audio. See
 [`docs/selection-lock-and-audio-cache-v0.2.21.md`](docs/selection-lock-and-audio-cache-v0.2.21.md).
 
+CLI v0.3.17 adds an opt-in measured piano/vocal MusicXML packet and a
+deterministic recovered-versus-piano melody comparison. A corrected model can
+name separate vocal, piano right-hand, and piano left-hand parts plus a pickup;
+legacy score packets remain unchanged. The perspective report binds two exact
+models, applies explicit pitch/onset/duration tolerances, preserves one-sided
+notes, and rejects model, policy, report, or output tampering. It treats a
+generated piano reduction as a dependent interpretation, never independent
+proof or automatic approval. See
+[`docs/music-piano-vocal-perspective-v0.3.17.md`](docs/music-piano-vocal-perspective-v0.3.17.md).
+
 CLI v0.3.16 adds an optional, deterministic printable SVG lead sheet to the
 existing score packet. The corrected model must explicitly bind a melody or
 vocal part, an exact lyric layer, and UTF-8 byte-range underlay for every melody

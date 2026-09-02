@@ -48,6 +48,8 @@ pub struct MusicModel {
     pub lyric_layers: Vec<LyricLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lead_sheet: Option<LeadSheet>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub piano_vocal_score: Option<PianoVocalScore>,
     #[serde(default)]
     pub expressive_timing: Vec<ExpressiveTiming>,
     pub unknowns: Vec<String>,
@@ -209,6 +211,17 @@ pub struct LeadSheet {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct PianoVocalScore {
+    pub title: String,
+    pub vocal_part_id: String,
+    pub piano_right_hand_part_id: String,
+    pub piano_left_hand_part_id: String,
+    #[serde(default)]
+    pub pickup_ticks: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct LyricUnderlay {
     pub id: String,
     pub note_ids: Vec<String>,
@@ -331,6 +344,7 @@ fn validate_loaded(path: &Path, model: &MusicModel) -> Result<ValidationReport> 
     validate_hooks(model, &evidence, &element_ids, &mut human_corrected)?;
     validate_lyrics(path, model)?;
     validate_lead_sheet(path, model)?;
+    validate_piano_vocal_score(model)?;
     validate_expressive_timing(model, &evidence, &note_ids, &mut human_corrected)?;
     unique_nonempty("unknowns", &model.unknowns)?;
     validate_review(&model.review)?;
@@ -429,6 +443,60 @@ fn validate_lead_sheet(path: &Path, model: &MusicModel) -> Result<()> {
     }
     if mapped_notes.len() != part.notes.len() {
         bail!("lead_sheet lyric underlay must map every melody note exactly once");
+    }
+    Ok(())
+}
+
+fn validate_piano_vocal_score(model: &MusicModel) -> Result<()> {
+    let Some(score) = &model.piano_vocal_score else {
+        return Ok(());
+    };
+    nonempty("piano_vocal_score.title", &score.title)?;
+    let ids = [
+        score.vocal_part_id.as_str(),
+        score.piano_right_hand_part_id.as_str(),
+        score.piano_left_hand_part_id.as_str(),
+    ];
+    if ids.into_iter().collect::<BTreeSet<_>>().len() != 3 {
+        bail!("piano_vocal_score requires three distinct vocal, right-hand, and left-hand parts");
+    }
+    for (field, id) in [
+        ("vocal_part_id", &score.vocal_part_id),
+        ("piano_right_hand_part_id", &score.piano_right_hand_part_id),
+        ("piano_left_hand_part_id", &score.piano_left_hand_part_id),
+    ] {
+        if !model.parts.iter().any(|part| &part.id == id) {
+            bail!("piano_vocal_score.{field} is unknown");
+        }
+    }
+    let vocal = model
+        .parts
+        .iter()
+        .find(|part| part.id == score.vocal_part_id)
+        .expect("part existence validated");
+    if !matches!(vocal.role, PartRole::Melody | PartRole::Vocal) {
+        bail!("piano_vocal_score vocal part must have melody or vocal role");
+    }
+    let lead_sheet = model
+        .lead_sheet
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("piano_vocal_score requires lead_sheet lyric authority"))?;
+    if lead_sheet.melody_part_id != score.vocal_part_id {
+        bail!("piano_vocal_score vocal part must equal lead_sheet.melody_part_id");
+    }
+    let first_meter = &model.meter_map[0];
+    let numerator = u64::from(model.musical_timebase.pulses_per_quarter)
+        .checked_mul(4)
+        .and_then(|value| value.checked_mul(u64::from(first_meter.numerator)))
+        .ok_or_else(|| anyhow::anyhow!("piano_vocal_score first-measure duration overflow"))?;
+    if numerator % u64::from(first_meter.denominator) != 0 {
+        bail!("piano_vocal_score meter is not integral at the declared PPQ");
+    }
+    let full_measure_ticks = numerator / u64::from(first_meter.denominator);
+    if score.pickup_ticks >= full_measure_ticks || score.pickup_ticks >= model.duration_ticks {
+        bail!(
+            "piano_vocal_score pickup_ticks must be zero or shorter than the first full measure and model duration"
+        );
     }
     Ok(())
 }
