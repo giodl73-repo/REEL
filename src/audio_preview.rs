@@ -14,6 +14,7 @@ use crate::{
         ffmpeg::{FfmpegAdapter, RenderEnvironmentReport},
         still_animatic::{AnimaticInput, AnimaticRenderReport, check_animatic},
     },
+    audio_mix::{self, CompiledDuckingPolicy, ResolvedGainAutomation},
     production::{self, AudioRole},
 };
 
@@ -46,6 +47,16 @@ pub struct AudioPreviewReport {
     pub output_sha256: Option<String>,
     pub output_bytes: Option<u64>,
     pub output_duration_ms: Option<u64>,
+    #[serde(default)]
+    pub resolved_gain_automation: Vec<ResolvedGainAutomation>,
+    #[serde(default)]
+    pub ducking_policies: Vec<CompiledDuckingPolicy>,
+    #[serde(default = "default_true")]
+    pub dynamic_eq_render_supported: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -153,85 +164,13 @@ pub fn render_audio_preview(options: &AudioPreviewOptions) -> Result<AudioPrevie
         }
         args.extend(["-i".to_string(), adapter.path_argument(&resolved)?]);
     }
-    let mut filters = Vec::new();
-    let mut narration = Vec::new();
-    let mut background = Vec::new();
-    for (index, event) in loaded.manifest.audio_events.iter().enumerate() {
-        let duration = event
-            .duration_seconds
-            .unwrap_or(timeline_seconds - event.start_seconds);
-        let mut chain = format!(
-            "[{index}:a:0]atrim=start={:.3}:duration={duration:.3},asetpts=PTS-STARTPTS,volume={:.3}dB",
-            event.source_in_seconds, event.gain_db
+    let compiled = audio_mix::compile(&loaded.manifest, timeline_seconds, 0, false, 48_000, 2)?;
+    if !compiled.dynamic_eq_render_supported {
+        bail!(
+            "dynamic_eq is validated and compiled as policy, but portable rendering is not implemented"
         );
-        if event.fade_in_ms > 0 {
-            chain.push_str(&format!(
-                ",afade=t=in:st=0:d={:.3}",
-                event.fade_in_ms as f64 / 1000.0
-            ));
-        }
-        if event.fade_out_ms > 0 {
-            let fade = event.fade_out_ms as f64 / 1000.0;
-            chain.push_str(&format!(
-                ",afade=t=out:st={:.3}:d={fade:.3}",
-                (duration - fade).max(0.0)
-            ));
-        }
-        chain.push_str(&format!(
-            ",adelay={}:all=1[ae{index}]",
-            (event.start_seconds * 1000.0).round() as u64
-        ));
-        filters.push(chain);
-        if event.role == AudioRole::Narration {
-            narration.push(format!("ae{index}"));
-        } else {
-            background.push(format!("ae{index}"));
-        }
     }
-    let mixed = match (background.is_empty(), narration.is_empty()) {
-        (false, false) => {
-            mix_labels(&mut filters, &background, "background");
-            mix_labels(&mut filters, &narration, "narration");
-            if let Some(ducking) = &loaded.manifest.narration_ducking {
-                filters
-                    .push("[narration]asplit=2[narration_detector][narration_program]".to_string());
-                filters.push(format!(
-                    "[background][narration_detector]sidechaincompress=threshold={:.6}:ratio={:.3}:attack={}:release={}[ducked]",
-                    ducking.threshold, ducking.ratio, ducking.attack_ms, ducking.release_ms
-                ));
-                filters.push("[ducked][narration_program]amix=inputs=2:normalize=0:dropout_transition=0[mixedaudio]".to_string());
-            } else {
-                filters.push("[background][narration]amix=inputs=2:normalize=0:dropout_transition=0[mixedaudio]".to_string());
-            }
-            "mixedaudio"
-        }
-        (false, true) => {
-            mix_labels(&mut filters, &background, "mixedaudio");
-            "mixedaudio"
-        }
-        (true, false) => {
-            mix_labels(&mut filters, &narration, "mixedaudio");
-            "mixedaudio"
-        }
-        (true, true) => unreachable!(),
-    };
-    let mastering =
-        loaded
-            .manifest
-            .audio_mastering
-            .as_ref()
-            .map_or_else(String::new, |mastering| {
-                format!(
-                    ",loudnorm=I={:.3}:LRA={:.3}:TP={:.3},alimiter=limit={:.3}:level=false",
-                    mastering.integrated_lufs,
-                    mastering.loudness_range_lu,
-                    mastering.true_peak_dbfs,
-                    mastering.limiter
-                )
-            });
-    filters.push(format!(
-        "[{mixed}]aresample=async=1:first_pts=0,apad{mastering},atrim=duration={timeline_seconds:.3}[finala]"
-    ));
+    let filters = compiled.filters.clone();
     let filter_graph = filters.join(";");
     args.extend([
         "-filter_complex".to_string(),
@@ -309,7 +248,10 @@ pub fn render_audio_preview(options: &AudioPreviewOptions) -> Result<AudioPrevie
         "duration_ms": duration_ms,
         "audio_events": loaded.manifest.audio_events,
         "narration_ducking": loaded.manifest.narration_ducking,
+        "audio_ducking": loaded.manifest.audio_ducking,
         "audio_mastering": loaded.manifest.audio_mastering,
+        "resolved_gain_automation": &compiled.resolved_automation,
+        "compiled_ducking": &compiled.ducking,
     });
     let report = AudioPreviewReport {
         schema: AUDIO_PREVIEW_SCHEMA.to_string(),
@@ -331,6 +273,9 @@ pub fn render_audio_preview(options: &AudioPreviewOptions) -> Result<AudioPrevie
         output_sha256,
         output_bytes,
         output_duration_ms,
+        resolved_gain_automation: compiled.resolved_automation,
+        ducking_policies: compiled.ducking,
+        dynamic_eq_render_supported: compiled.dynamic_eq_render_supported,
     };
     let mut report_temp = Builder::new()
         .prefix(".reel-audio-artifacts-")
@@ -544,27 +489,13 @@ pub fn check_picture_remux(report_path: impl AsRef<Path>) -> Result<PictureRemux
     })
 }
 
-fn mix_labels(filters: &mut Vec<String>, labels: &[String], output: &str) {
-    let inputs = labels
-        .iter()
-        .map(|label| format!("[{label}]"))
-        .collect::<String>();
-    if labels.len() == 1 {
-        filters.push(format!("{inputs}anull[{output}]"));
-    } else {
-        filters.push(format!(
-            "{inputs}amix=inputs={}:normalize=0:dropout_transition=0[{output}]",
-            labels.len()
-        ));
-    }
-}
-
 fn audio_role_name(role: AudioRole) -> &'static str {
     match role {
         AudioRole::Music => "music",
         AudioRole::Ambience => "ambience",
         AudioRole::Effect => "effect",
         AudioRole::Narration => "narration",
+        AudioRole::Dialogue => "dialogue",
     }
 }
 
@@ -603,6 +534,7 @@ mod tests {
                 fade_in_ms: 100,
                 fade_out_ms: 200,
                 beat_marker_id: None,
+                gain_automation: vec![],
             },
             AudioEvent {
                 id: "voice".to_string(),
@@ -616,6 +548,7 @@ mod tests {
                 fade_in_ms: 0,
                 fade_out_ms: 0,
                 beat_marker_id: None,
+                gain_automation: vec![],
             },
         ];
         manifest.narration_ducking = Some(NarrationDucking {

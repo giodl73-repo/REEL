@@ -395,13 +395,32 @@ pub struct SpriteKeyframe {
     pub width: f64,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AudioRole {
     Music,
     Ambience,
     Effect,
     Narration,
+    Dialogue,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum GainCurve {
+    Hold,
+    Linear,
+    Smooth,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GainAutomationPoint {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_seconds: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beat_marker_id: Option<String>,
+    pub gain_db: f64,
+    pub curve: GainCurve,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -424,6 +443,8 @@ pub struct AudioEvent {
     pub fade_out_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub beat_marker_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gain_automation: Vec<GainAutomationPoint>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -574,6 +595,38 @@ pub struct NarrationDucking {
     pub attack_ms: u64,
     #[serde(default = "default_ducking_release_ms")]
     pub release_ms: u64,
+}
+
+fn default_ducking_max_reduction_db() -> f64 {
+    6.0
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DynamicEqPolicy {
+    pub frequency_hz: f64,
+    pub q: f64,
+    pub max_cut_db: f64,
+    pub attack_ms: u64,
+    pub release_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AudioDuckingPolicy {
+    pub id: String,
+    pub detector_roles: Vec<AudioRole>,
+    pub target_roles: Vec<AudioRole>,
+    #[serde(default = "default_ducking_threshold")]
+    pub threshold: f64,
+    #[serde(default = "default_ducking_ratio")]
+    pub ratio: f64,
+    #[serde(default = "default_ducking_max_reduction_db")]
+    pub max_reduction_db: f64,
+    #[serde(default = "default_ducking_attack_ms")]
+    pub attack_ms: u64,
+    #[serde(default = "default_ducking_release_ms")]
+    pub release_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dynamic_eq: Option<DynamicEqPolicy>,
 }
 
 fn default_master_lufs() -> f64 {
@@ -839,6 +892,8 @@ pub struct ProductionManifest {
     pub beat_markers: Vec<BeatMarker>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub narration_ducking: Option<NarrationDucking>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audio_ducking: Vec<AudioDuckingPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio_mastering: Option<AudioMastering>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -892,6 +947,7 @@ pub struct ProductionValidationReport {
     pub beat_markers: usize,
     pub score_cues: usize,
     pub narration_ducking: bool,
+    pub audio_ducking: usize,
     pub audio_mastering: bool,
     pub duration_ms: Option<u64>,
     pub timing_ready: bool,
@@ -1323,6 +1379,7 @@ pub fn validate(loaded: &LoadedProductionManifest) -> Result<ProductionValidatio
         beat_markers: manifest.beat_markers.len(),
         score_cues: manifest.score.as_ref().map_or(0, |score| score.cues.len()),
         narration_ducking: manifest.narration_ducking.is_some(),
+        audio_ducking: manifest.audio_ducking.len(),
         audio_mastering: manifest.audio_mastering.is_some(),
         duration_ms,
         timing_ready,
@@ -2260,7 +2317,7 @@ fn validate_mixed_media(manifest: &ProductionManifest, duration_ms: Option<u64>)
                 event.id
             );
         }
-        if let Some(event_duration) = event.duration_seconds {
+        let resolved_event_duration_ms = if let Some(event_duration) = event.duration_seconds {
             let event_duration_ms = required_ms(
                 Some(event_duration),
                 &format!("audio event {} duration", event.id),
@@ -2277,7 +2334,10 @@ fn validate_mixed_media(manifest: &ProductionManifest, duration_ms: Option<u64>)
             if event.fade_in_ms + event.fade_out_ms > event_duration_ms {
                 bail!("audio event {} fades exceed its duration", event.id);
             }
-        }
+            Some(event_duration_ms)
+        } else {
+            duration_ms.map(|duration| duration - start_ms)
+        };
         if let Some(marker_id) = &event.beat_marker_id {
             let marker_ms = marker_times.get(marker_id.as_str()).ok_or_else(|| {
                 anyhow!(
@@ -2293,6 +2353,61 @@ fn validate_mixed_media(manifest: &ProductionManifest, duration_ms: Option<u64>)
                     marker_id
                 );
             }
+        }
+        let mut previous_automation_ms = None;
+        for point in &event.gain_automation {
+            if !point.gain_db.is_finite()
+                || point.time_seconds.is_some() == point.beat_marker_id.is_some()
+            {
+                bail!(
+                    "audio event {} automation points require finite gain and exactly one time_seconds or beat_marker_id anchor",
+                    event.id
+                );
+            }
+            let local_ms = if let Some(seconds) = point.time_seconds {
+                if !seconds.is_finite() || seconds < 0.0 {
+                    bail!(
+                        "audio event {} automation time must be finite and non-negative",
+                        event.id
+                    );
+                }
+                seconds_to_ms(seconds)
+            } else {
+                let marker_id = point.beat_marker_id.as_deref().expect("one anchor");
+                let marker_ms = *marker_times.get(marker_id).ok_or_else(|| {
+                    anyhow!(
+                        "audio event {} automation references unknown beat marker {}",
+                        event.id,
+                        marker_id
+                    )
+                })?;
+                marker_ms.checked_sub(start_ms).ok_or_else(|| {
+                    anyhow!(
+                        "audio event {} automation marker {} precedes the event",
+                        event.id,
+                        marker_id
+                    )
+                })?
+            };
+            let event_duration_ms = resolved_event_duration_ms.ok_or_else(|| {
+                anyhow!(
+                    "audio event {} automation requires a timed event or timeline",
+                    event.id
+                )
+            })?;
+            if local_ms > event_duration_ms {
+                bail!(
+                    "audio event {} automation point is outside the event",
+                    event.id
+                );
+            }
+            if previous_automation_ms.is_some_and(|previous| local_ms <= previous) {
+                bail!(
+                    "audio event {} automation points must resolve to unique ascending times",
+                    event.id
+                );
+            }
+            previous_automation_ms = Some(local_ms);
         }
     }
 
@@ -2316,6 +2431,75 @@ fn validate_mixed_media(manifest: &ProductionManifest, duration_ms: Option<u64>)
                 .any(|event| event.role != AudioRole::Narration)
         {
             bail!("narration_ducking requires both narration and background audio events");
+        }
+    }
+    if manifest.narration_ducking.is_some() && !manifest.audio_ducking.is_empty() {
+        bail!("narration_ducking and audio_ducking cannot both be declared");
+    }
+    let present_roles = manifest
+        .audio_events
+        .iter()
+        .map(|event| event.role)
+        .collect::<BTreeSet<_>>();
+    let mut policy_ids = BTreeSet::new();
+    let mut targeted_roles = BTreeSet::new();
+    for policy in &manifest.audio_ducking {
+        require_nonempty("audio ducking policy id", &policy.id)?;
+        if !policy_ids.insert(policy.id.as_str()) {
+            bail!("audio_ducking policy ids must be unique");
+        }
+        let detectors = policy
+            .detector_roles
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
+        let targets = policy.target_roles.iter().copied().collect::<BTreeSet<_>>();
+        if detectors.is_empty()
+            || targets.is_empty()
+            || detectors.len() != policy.detector_roles.len()
+            || targets.len() != policy.target_roles.len()
+            || !detectors.is_disjoint(&targets)
+        {
+            bail!(
+                "audio_ducking {} requires unique, non-empty, disjoint detector_roles and target_roles",
+                policy.id
+            );
+        }
+        if !detectors.is_subset(&present_roles) || !targets.is_subset(&present_roles) {
+            bail!(
+                "audio_ducking {} references a role with no audio event",
+                policy.id
+            );
+        }
+        if targets.iter().any(|role| !targeted_roles.insert(*role)) {
+            bail!("audio_ducking target roles may appear in only one ordered policy");
+        }
+        if !policy.threshold.is_finite()
+            || !policy.ratio.is_finite()
+            || !policy.max_reduction_db.is_finite()
+            || !(0.000_001..=1.0).contains(&policy.threshold)
+            || !(1.0..=20.0).contains(&policy.ratio)
+            || !(0.1..=60.0).contains(&policy.max_reduction_db)
+            || !(1..=2_000).contains(&policy.attack_ms)
+            || !(1..=10_000).contains(&policy.release_ms)
+        {
+            bail!(
+                "audio_ducking {} has invalid threshold, ratio, max reduction, attack, or release",
+                policy.id
+            );
+        }
+        if let Some(eq) = &policy.dynamic_eq {
+            if !eq.frequency_hz.is_finite()
+                || !eq.q.is_finite()
+                || !eq.max_cut_db.is_finite()
+                || !(20.0..=20_000.0).contains(&eq.frequency_hz)
+                || !(0.1..=30.0).contains(&eq.q)
+                || !(0.1..=24.0).contains(&eq.max_cut_db)
+                || !(1..=2_000).contains(&eq.attack_ms)
+                || !(1..=10_000).contains(&eq.release_ms)
+            {
+                bail!("audio_ducking {} has invalid dynamic_eq values", policy.id);
+            }
         }
     }
     if let Some(mastering) = &manifest.audio_mastering {

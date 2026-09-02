@@ -14,6 +14,7 @@ use tempfile::tempdir;
 
 pub mod adapters;
 pub mod approval_attestation;
+pub mod audio_mix;
 pub mod audio_preview;
 pub mod audio_quality;
 pub mod c2pa_verification;
