@@ -709,16 +709,16 @@ fn stem_render_command_with_paths(
     let mut command = input_args.to_vec();
     command.extend(["-filter_complex".into(), compiled.filters.join(";")]);
     let mappings = [
-        (&stems.dialogue, "dialogue.pre-master.wav"),
-        (&stems.music, "music.pre-master.wav"),
-        (&stems.effects, "effects.pre-master.wav"),
-        (&stems.pre_master, "mix.pre-master.wav"),
-        (&compiled.final_label, "mix.mastered.wav"),
-        (&stems.no_score, "review.no-score.wav"),
-        (&stems.mono_review, "review.mono.wav"),
-        (&stems.small_speaker_review, "review.small-speaker.wav"),
+        (&stems.dialogue, "dialogue.pre-master.wav", channels),
+        (&stems.music, "music.pre-master.wav", channels),
+        (&stems.effects, "effects.pre-master.wav", channels),
+        (&stems.pre_master, "mix.pre-master.wav", channels),
+        (&compiled.final_label, "mix.mastered.wav", channels),
+        (&stems.no_score, "review.no-score.wav", channels),
+        (&stems.mono_review, "review.mono.wav", 1),
+        (&stems.small_speaker_review, "review.small-speaker.wav", 1),
     ];
-    for (label, filename) in mappings {
+    for (label, filename, output_channels) in mappings {
         command.extend([
             "-map".into(),
             format!("[{label}]"),
@@ -727,7 +727,9 @@ fn stem_render_command_with_paths(
             "-ar".into(),
             sample_rate_hz.to_string(),
             "-ac".into(),
-            channels.to_string(),
+            output_channels.to_string(),
+            "-t".into(),
+            format!("{timeline_seconds:.9}"),
             path_argument(&output_dir.join(filename))?,
         ]);
     }
