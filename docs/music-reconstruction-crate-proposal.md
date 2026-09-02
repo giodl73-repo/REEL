@@ -1,6 +1,6 @@
 # REEL music-reconstruction crate proposal
 
-Status: Slices A, B, C1-C8, and D1 adaptation planning implemented through REEL v0.3.8
+Status: Slices A, B, C1-C8, and D1-D2 adaptation/performance proof implemented through REEL v0.3.9
 Date: 2026-09-01
 Proposed CLI milestone: v0.2.26 foundation, followed by additive repair,
 language-adaptation, and arrangement slices
@@ -341,7 +341,10 @@ the root module implementation.
   inheritance, complete translation links, note underlay, and governed prosody
   exceptions. **Implemented as adaptation planning in D1/C9 v0.3.8.**
 - Bind a second-language vocal to the same accompaniment and model.
+  **Implemented as a governed performance candidate in D2/C10 v0.3.9.**
 - Produce a bilingual comparison receipt without asserting translation quality.
+  **Implemented in D2/C10 v0.3.9 with separate lyric/comparison listening,
+  consent, selection, and release boundaries.**
 
 ### Slice E — score-driven limited-ensemble arrangement
 

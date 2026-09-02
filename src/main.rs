@@ -1061,6 +1061,13 @@ fn run_cli() -> Result<()> {
             let report = reel_music::language_adaptation::validate(&adaptation)?;
             print_report(&report, output)?;
         }
+        Command::MusicLanguagePerformanceCheck {
+            performance,
+            output,
+        } => {
+            let report = reel_music::language_performance::validate(&performance)?;
+            print_report(&report, output)?;
+        }
         Command::MusicScoreExportPlan {
             model,
             output_path,
@@ -2739,6 +2746,12 @@ enum Command {
     /// Validate same-music target-language text, underlay, accompaniment, and prosody decisions.
     MusicLanguageAdaptationCheck {
         adaptation: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Validate a target-language vocal take, performed text, consent, and bilingual comparison.
+    MusicLanguagePerformanceCheck {
+        performance: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
