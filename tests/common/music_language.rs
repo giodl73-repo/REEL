@@ -35,6 +35,7 @@ pub fn authority(id: &str, digit: char, status: &str, with_decision: bool) -> Au
     }
 }
 
+#[allow(dead_code)]
 pub fn build_adaptation(root: &Path) -> PathBuf {
     fs::create_dir_all(root).unwrap();
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"));

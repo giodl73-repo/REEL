@@ -397,6 +397,12 @@ listening, bilingual comparison listening, selection/rejection, and release as
 separate gates. See
 [`docs/music-language-performance-v0.3.9.md`](docs/music-language-performance-v0.3.9.md).
 
+CLI v0.3.10 adds a complete score-driven limited-ensemble arrangement plan. It
+classifies every governed model target, maps every source part and non-omitted
+note, checks ranges and polyphony, and requires later score, audible comparison,
+recognition, and selection gates. See
+[`docs/music-arrangement-plan-v0.3.10.md`](docs/music-arrangement-plan-v0.3.10.md).
+
 The main BERTICA-driven workflow is:
 
 ```powershell

@@ -1,6 +1,6 @@
 # REEL music-reconstruction crate proposal
 
-Status: Slices A, B, C1-C8, and D1-D2 adaptation/performance proof implemented through REEL v0.3.9
+Status: Slices A, B, C1-C8, D1-D2, and E1 arrangement planning implemented through REEL v0.3.10
 Date: 2026-09-01
 Proposed CLI milestone: v0.2.26 foundation, followed by additive repair,
 language-adaptation, and arrangement slices
@@ -349,7 +349,9 @@ the root module implementation.
 ### Slice E — score-driven limited-ensemble arrangement
 
 - Map the synthetic model into a deliberately small ensemble.
-- Validate preserved/developed/replaced musical elements.
+  **Implemented as E1/C11 arrangement planning in v0.3.10.**
+- Validate preserved/developed/replaced/omitted musical elements, part coverage,
+  playable note mapping, and polyphony. **Implemented in E1/C11 v0.3.10.**
 - Render an audible comparison and record human listening as the recognition
   gate.
 
