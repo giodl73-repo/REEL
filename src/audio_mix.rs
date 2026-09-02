@@ -146,10 +146,10 @@ pub fn compile(
     }
 
     let policies = normalized_policies(manifest);
-    let dynamic_eq_render_supported = policies.iter().all(|(_, dynamic)| !*dynamic);
+    let dynamic_eq_render_supported = true;
     let compiled_policies = policies
         .iter()
-        .map(|(policy, dynamic)| CompiledDuckingPolicy {
+        .map(|(policy, _dynamic)| CompiledDuckingPolicy {
             id: policy.id.clone(),
             detector_roles: policy.detector_roles.clone(),
             target_roles: policy.target_roles.clone(),
@@ -162,7 +162,7 @@ pub fn compile(
             },
             attack_ms: policy.attack_ms,
             release_ms: policy.release_ms,
-            dynamic_eq_render_supported: !*dynamic,
+            dynamic_eq_render_supported: true,
             dynamic_eq: policy.dynamic_eq.clone(),
         })
         .collect::<Vec<_>>();
@@ -202,9 +202,6 @@ pub fn compile(
     let mut ducked_groups = Vec::new();
     let mut targeted = BTreeSet::new();
     for (policy_index, (policy, has_dynamic_eq)) in policies.iter().enumerate() {
-        if *has_dynamic_eq {
-            continue;
-        }
         let mut detector_labels = Vec::new();
         for role in &policy.detector_roles {
             let cursor = role_detector_cursor.entry(*role).or_default();
@@ -213,6 +210,14 @@ pub fn compile(
         }
         let detector = format!("duck_detector_{policy_index}");
         mix_labels(&mut filters, &detector_labels, &detector);
+        let (eq_detector, duck_detector) = if *has_dynamic_eq {
+            let eq = format!("dynamic_eq_detector_{policy_index}");
+            let duck = format!("duck_detector_program_{policy_index}");
+            filters.push(format!("[{detector}]asplit=2[{eq}][{duck}]"));
+            (Some(eq), duck)
+        } else {
+            (None, detector)
+        };
         let target_labels = policy
             .target_roles
             .iter()
@@ -220,19 +225,25 @@ pub fn compile(
             .collect::<Vec<_>>();
         let target = format!("duck_target_{policy_index}");
         mix_labels(&mut filters, &target_labels, &target);
+        let compressor_target =
+            if let (Some(eq), Some(detector)) = (&policy.dynamic_eq, eq_detector.as_deref()) {
+                compile_dynamic_eq(&mut filters, policy_index, &target, detector, policy, eq)
+            } else {
+                target
+            };
         let output = format!("ducked_{policy_index}");
         if policy.id == "legacy-narration-ducking" {
             filters.push(format!(
-                "[{target}][{detector}]sidechaincompress=threshold={:.6}:ratio={:.3}:attack={}:release={}[{output}]",
+                "[{compressor_target}][{duck_detector}]sidechaincompress=threshold={:.6}:ratio={:.3}:attack={}:release={}[{output}]",
                 policy.threshold, policy.ratio, policy.attack_ms, policy.release_ms
             ));
         } else {
             let floor = 10f64.powf(-policy.max_reduction_db / 20.0);
             filters.push(format!(
-                "[{target}]asplit=2[duck_dry_{policy_index}][duck_input_{policy_index}]"
+                "[{compressor_target}]asplit=2[duck_dry_{policy_index}][duck_input_{policy_index}]"
             ));
             filters.push(format!(
-                "[duck_input_{policy_index}][{detector}]sidechaincompress=threshold={:.6}:ratio={:.3}:attack={}:release={}[duck_compressed_{policy_index}]",
+                "[duck_input_{policy_index}][{duck_detector}]sidechaincompress=threshold={:.6}:ratio={:.3}:attack={}:release={}[duck_compressed_{policy_index}]",
                 policy.threshold, policy.ratio, policy.attack_ms, policy.release_ms
             ));
             filters.push(format!(
@@ -305,6 +316,56 @@ pub fn compile(
         ducking: compiled_policies,
         dynamic_eq_render_supported,
     })
+}
+
+fn compile_dynamic_eq(
+    filters: &mut Vec<String>,
+    policy_index: usize,
+    target: &str,
+    detector: &str,
+    policy: &AudioDuckingPolicy,
+    eq: &DynamicEqPolicy,
+) -> String {
+    let floor = 10f64.powf(-eq.max_cut_db / 20.0);
+    let program = format!("dynamic_eq_program_{policy_index}");
+    let band_source = format!("dynamic_eq_band_source_{policy_index}");
+    let band_compressor = format!("dynamic_eq_band_input_{policy_index}");
+    let band_floor_source = format!("dynamic_eq_band_floor_source_{policy_index}");
+    let band_reference = format!("dynamic_eq_band_reference_{policy_index}");
+    let band_compressed = format!("dynamic_eq_band_compressed_{policy_index}");
+    let band_wet = format!("dynamic_eq_band_wet_{policy_index}");
+    let band_floor = format!("dynamic_eq_band_floor_{policy_index}");
+    let band_controlled = format!("dynamic_eq_band_controlled_{policy_index}");
+    let band_inverse = format!("dynamic_eq_band_inverse_{policy_index}");
+    let band_delta = format!("dynamic_eq_band_delta_{policy_index}");
+    let output = format!("dynamic_eq_target_{policy_index}");
+    filters.push(format!("[{target}]asplit=2[{program}][{band_source}]"));
+    filters.push(format!(
+        "[{band_source}]bandpass=f={:.3}:width_type=q:width={:.3},asplit=3[{band_compressor}][{band_floor_source}][{band_reference}]",
+        eq.frequency_hz, eq.q
+    ));
+    filters.push(format!(
+        "[{band_compressor}][{detector}]sidechaincompress=threshold={:.6}:ratio={:.3}:attack={}:release={}[{band_compressed}]",
+        policy.threshold, policy.ratio, eq.attack_ms, eq.release_ms
+    ));
+    filters.push(format!(
+        "[{band_compressed}]volume={:.9}[{band_wet}]",
+        1.0 - floor
+    ));
+    filters.push(format!(
+        "[{band_floor_source}]volume={floor:.9}[{band_floor}]"
+    ));
+    filters.push(format!(
+        "[{band_wet}][{band_floor}]amix=inputs=2:normalize=0:dropout_transition=0[{band_controlled}]"
+    ));
+    filters.push(format!("[{band_reference}]volume=-1[{band_inverse}]"));
+    filters.push(format!(
+        "[{band_controlled}][{band_inverse}]amix=inputs=2:normalize=0:dropout_transition=0[{band_delta}]"
+    ));
+    filters.push(format!(
+        "[{program}][{band_delta}]amix=inputs=2:normalize=0:dropout_transition=0[{output}]"
+    ));
+    output
 }
 
 fn compile_legacy(
@@ -682,7 +743,7 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_eq_is_a_complete_engine_neutral_plan_but_not_render_claim() {
+    fn dynamic_eq_compiles_before_target_specific_ducking() {
         let mut manifest = manifest();
         manifest.audio_events = vec![
             event("dialogue", AudioRole::Dialogue),
@@ -706,10 +767,25 @@ mod tests {
             }),
         }];
         let compiled = compile(&manifest, 6.0, 0, false, 48_000, 2).unwrap();
-        assert!(!compiled.dynamic_eq_render_supported);
+        assert!(compiled.dynamic_eq_render_supported);
         let plan = compiled.ducking[0].dynamic_eq.as_ref().unwrap();
         assert_eq!(plan.frequency_hz, 2_500.0);
         assert_eq!(compiled.ducking[0].target_roles, vec![AudioRole::Music]);
+        assert!(compiled.ducking[0].dynamic_eq_render_supported);
+        let graph = compiled.filters.join(";");
+        assert!(
+            graph.contains(
+                "[duck_target_0]asplit=2[dynamic_eq_program_0][dynamic_eq_band_source_0]"
+            )
+        );
+        assert!(graph.contains("bandpass=f=2500.000:width_type=q:width=1.200"));
+        assert!(graph.contains(
+            "[dynamic_eq_band_input_0][dynamic_eq_detector_0]sidechaincompress=threshold=0.030000:ratio=3.000:attack=20:release=200"
+        ));
+        assert!(graph.contains("[dynamic_eq_target_0]asplit=2[duck_dry_0][duck_input_0]"));
+        assert!(graph.contains(
+            "[duck_input_0][duck_detector_program_0]sidechaincompress=threshold=0.030000:ratio=3.000:attack=25:release=350"
+        ));
     }
 
     #[test]
