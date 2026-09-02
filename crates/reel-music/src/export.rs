@@ -150,6 +150,14 @@ pub fn build(model_path: &Path) -> Result<ScoreExportPlan> {
             adapter_version: "0.1.0".into(),
         });
     }
+    if music.piano_vocal_score.is_some() {
+        artifacts.push(ArtifactRequest {
+            kind: "piano-vocal-musicxml".into(),
+            filename: "piano-vocal.musicxml".into(),
+            adapter: "reel-piano-vocal-musicxml".into(),
+            adapter_version: "0.1.0".into(),
+        });
+    }
     Ok(ScoreExportPlan {
         schema: SCHEMA.into(),
         export_id: format!("{}-score-export", music.model_id),

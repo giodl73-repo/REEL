@@ -51,6 +51,8 @@ pub struct RoundTripReceipt {
     pub rehearsal_guide: GuideComparison,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lead_sheet: Option<LeadSheetComparison>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub piano_vocal_score: Option<PianoVocalComparison>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -61,6 +63,19 @@ pub struct LeadSheetComparison {
     pub melody_notes: usize,
     pub harmony_symbols: usize,
     pub lyric_syllables: usize,
+    pub passed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PianoVocalComparison {
+    pub deterministic_musicxml_equal: bool,
+    pub measured: bool,
+    pub grand_staff: bool,
+    pub measures: usize,
+    pub vocal_notes: usize,
+    pub piano_right_hand_notes: usize,
+    pub piano_left_hand_notes: usize,
     pub passed: bool,
 }
 
@@ -98,6 +113,7 @@ pub struct ExportReport {
     pub musicxml_round_trip: bool,
     pub rehearsal_guide_valid: bool,
     pub lead_sheet_valid: Option<bool>,
+    pub piano_vocal_score_valid: Option<bool>,
     pub shareable: bool,
     pub verified: bool,
 }
@@ -149,6 +165,13 @@ pub fn render(plan_path: &Path, model_path: &Path, output_dir: &Path) -> Result<
         write_bytes(
             &temporary.path().join("lead-sheet.svg"),
             lead_sheet.as_bytes(),
+        )?;
+    }
+    if model.piano_vocal_score.is_some() {
+        let score = write_piano_vocal_musicxml(model_path, &model)?;
+        write_bytes(
+            &temporary.path().join("piano-vocal.musicxml"),
+            score.as_bytes(),
         )?;
     }
 
@@ -237,6 +260,40 @@ fn build_receipt(
     } else {
         None
     };
+    let piano_vocal_score = if let Some(score) = &model.piano_vocal_score {
+        let path = output_dir.join("piano-vocal.musicxml");
+        let actual = fs::read_to_string(&path)?;
+        let expected_xml = write_piano_vocal_musicxml(model_path, model)?;
+        let measures = measure_spans(model, score.pickup_ticks)?.len();
+        let part = |id: &str| {
+            model
+                .parts
+                .iter()
+                .find(|part| part.id == id)
+                .expect("validated piano-vocal part")
+        };
+        let comparison = PianoVocalComparison {
+            deterministic_musicxml_equal: actual == expected_xml,
+            measured: actual.contains("reel:layout=\"piano-vocal\"")
+                && actual.contains("<measure number=\"1\""),
+            grand_staff: actual.contains("<staves>2</staves>")
+                && actual.contains("<staff>1</staff>")
+                && actual.contains("<staff>2</staff>"),
+            measures,
+            vocal_notes: part(&score.vocal_part_id).notes.len(),
+            piano_right_hand_notes: part(&score.piano_right_hand_part_id).notes.len(),
+            piano_left_hand_notes: part(&score.piano_left_hand_part_id).notes.len(),
+            passed: actual == expected_xml
+                && actual.contains("reel:layout=\"piano-vocal\"")
+                && actual.contains("<staves>2</staves>"),
+        };
+        if !comparison.passed {
+            bail!("piano-vocal MusicXML validation failed");
+        }
+        Some(comparison)
+    } else {
+        None
+    };
     let mut expected_artifacts = vec![
         ("midi-smf", "score.mid"),
         ("musicxml-score-partwise", "score.musicxml"),
@@ -244,6 +301,9 @@ fn build_receipt(
     ];
     if lead_sheet.is_some() {
         expected_artifacts.push(("printable-lead-sheet-svg", "lead-sheet.svg"));
+    }
+    if piano_vocal_score.is_some() {
+        expected_artifacts.push(("piano-vocal-musicxml", "piano-vocal.musicxml"));
     }
     let mut artifacts = Vec::new();
     for (kind, filename) in expected_artifacts {
@@ -273,6 +333,9 @@ fn build_receipt(
     } else {
         limitations.push("lyric bindings preserve layer identities and hashes; no lead-sheet underlay was declared".into());
     }
+    if piano_vocal_score.is_some() {
+        limitations.push("piano-vocal MusicXML preserves declared notes in measured vocal and grand-staff layout; an external notation application and a human musician must review engraving, page turns, fingering, and playability".into());
+    }
     Ok(ExportReceipt {
         schema: RECEIPT_SCHEMA.into(),
         export_id: plan.export_id.clone(),
@@ -286,6 +349,7 @@ fn build_receipt(
             musicxml: xml_comparison,
             rehearsal_guide: guide,
             lead_sheet,
+            piano_vocal_score,
         },
         limitations,
         shareable: false,
@@ -307,6 +371,11 @@ fn report(output_dir: &Path, receipt: &ExportReceipt) -> Result<ExportReport> {
         lead_sheet_valid: receipt
             .round_trip
             .lead_sheet
+            .as_ref()
+            .map(|value| value.passed),
+        piano_vocal_score_valid: receipt
+            .round_trip
+            .piano_vocal_score
             .as_ref()
             .map(|value| value.passed),
         shareable: false,
@@ -912,6 +981,352 @@ fn bpm_string(microseconds_per_quarter: u32) -> String {
     let denominator = microseconds_per_quarter as u64;
     let scaled = (60_000_000u64 * 1_000_000 + denominator / 2) / denominator;
     format!("{}.{:06}", scaled / 1_000_000, scaled % 1_000_000)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MeasureSpan {
+    number: usize,
+    start: u64,
+    end: u64,
+    numerator: u8,
+    denominator: u8,
+    implicit: bool,
+}
+
+fn measure_spans(model: &MusicModel, pickup_ticks: u64) -> Result<Vec<MeasureSpan>> {
+    let ppq = u64::from(model.musical_timebase.pulses_per_quarter);
+    let mut measures = Vec::new();
+    let mut start = 0u64;
+    let mut number = 1usize;
+    let mut meter_index = 0usize;
+    while start < model.duration_ticks {
+        while meter_index + 1 < model.meter_map.len()
+            && model.meter_map[meter_index + 1].tick == start
+        {
+            meter_index += 1;
+        }
+        let meter = &model.meter_map[meter_index];
+        if meter.tick > start {
+            bail!("piano-vocal meter changes must occur at measure boundaries");
+        }
+        let numerator = ppq
+            .checked_mul(4)
+            .and_then(|value| value.checked_mul(u64::from(meter.numerator)))
+            .ok_or_else(|| anyhow!("piano-vocal measure duration overflow"))?;
+        if numerator % u64::from(meter.denominator) != 0 {
+            bail!("piano-vocal meter is not integral at the declared PPQ");
+        }
+        let full = numerator / u64::from(meter.denominator);
+        let requested = if number == 1 && pickup_ticks > 0 {
+            pickup_ticks
+        } else {
+            full
+        };
+        let end = start.saturating_add(requested).min(model.duration_ticks);
+        if let Some(next) = model.meter_map.get(meter_index + 1) {
+            if next.tick > start && next.tick < end {
+                bail!("piano-vocal meter changes must occur at measure boundaries");
+            }
+        }
+        measures.push(MeasureSpan {
+            number,
+            start,
+            end,
+            numerator: meter.numerator,
+            denominator: meter.denominator,
+            implicit: (number == 1 && pickup_ticks > 0) || end - start != full,
+        });
+        start = end;
+        number += 1;
+    }
+    Ok(measures)
+}
+
+fn write_piano_vocal_musicxml(model_path: &Path, model: &MusicModel) -> Result<String> {
+    let score = model
+        .piano_vocal_score
+        .as_ref()
+        .ok_or_else(|| anyhow!("music model does not declare a piano-vocal score"))?;
+    let part = |id: &str| {
+        model
+            .parts
+            .iter()
+            .find(|part| part.id == id)
+            .ok_or_else(|| anyhow!("validated piano-vocal part is missing"))
+    };
+    let vocal = part(&score.vocal_part_id)?;
+    let right = part(&score.piano_right_hand_part_id)?;
+    let left = part(&score.piano_left_hand_part_id)?;
+    let measures = measure_spans(model, score.pickup_ticks)?;
+    let lyrics = lead_sheet_lyrics(model_path, model)?;
+    let ppq = model.musical_timebase.pulses_per_quarter;
+    let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    xml.push_str(&format!(
+        "<score-partwise version=\"4.0\" xmlns:reel=\"https://github.com/giodl73-repo/REEL/ns/music-score/v0.1\" reel:layout=\"piano-vocal\" reel:duration-ticks=\"{}\">\n",
+        model.duration_ticks
+    ));
+    xml.push_str(&format!(
+        "  <work><work-title>{}</work-title></work>\n  <identification><encoding><software>REEL Piano/Vocal MusicXML adapter 0.1.0</software></encoding></identification>\n",
+        escape(&score.title)
+    ));
+    xml.push_str("  <part-list>\n");
+    xml.push_str(&format!("    <score-part id=\"PV1\" reel:part-id=\"{}\"><part-name>Voice</part-name></score-part>\n", escape(&vocal.id)));
+    xml.push_str("    <score-part id=\"PV2\" reel:part-id=\"piano-grand-staff\"><part-name>Piano</part-name></score-part>\n  </part-list>\n");
+    xml.push_str(&write_measured_part(
+        "PV1",
+        vocal,
+        None,
+        &measures,
+        model,
+        ppq,
+        Some(&lyrics),
+        true,
+    )?);
+    xml.push_str(&write_measured_part(
+        "PV2",
+        right,
+        Some(left),
+        &measures,
+        model,
+        ppq,
+        None,
+        false,
+    )?);
+    xml.push_str("</score-partwise>\n");
+    Ok(xml)
+}
+
+fn lead_sheet_lyrics(
+    model_path: &Path,
+    model: &MusicModel,
+) -> Result<BTreeMap<String, (String, String, bool)>> {
+    let mut output = BTreeMap::new();
+    let Some(sheet) = &model.lead_sheet else {
+        return Ok(output);
+    };
+    let Some(layer_id) = &sheet.lyric_layer_id else {
+        return Ok(output);
+    };
+    let layer = model
+        .lyric_layers
+        .iter()
+        .find(|layer| &layer.id == layer_id)
+        .ok_or_else(|| anyhow!("validated lyric layer is missing"))?;
+    let path = if layer.path.is_absolute() {
+        layer.path.clone()
+    } else {
+        model_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(&layer.path)
+    };
+    let text = fs::read_to_string(path)?;
+    for item in &sheet.underlay {
+        let syllable = text
+            [usize::try_from(item.text_start_byte)?..usize::try_from(item.text_end_byte)?]
+            .to_string();
+        let syllabic = serde_json::to_value(item.syllabic)?
+            .as_str()
+            .expect("syllabic serializes as string")
+            .to_string();
+        for (index, note_id) in item.note_ids.iter().enumerate() {
+            output.insert(
+                note_id.clone(),
+                (
+                    if index == 0 {
+                        syllable.clone()
+                    } else {
+                        String::new()
+                    },
+                    syllabic.clone(),
+                    index > 0,
+                ),
+            );
+        }
+    }
+    Ok(output)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_measured_part(
+    xml_id: &str,
+    first: &reel_music::model::Part,
+    second: Option<&reel_music::model::Part>,
+    measures: &[MeasureSpan],
+    model: &MusicModel,
+    ppq: u32,
+    lyrics: Option<&BTreeMap<String, (String, String, bool)>>,
+    vocal: bool,
+) -> Result<String> {
+    let mut xml = format!("  <part id=\"{xml_id}\">\n");
+    for measure in measures {
+        xml.push_str(&format!(
+            "    <measure number=\"{}\"{} reel:start-tick=\"{}\">\n",
+            measure.number,
+            if measure.implicit {
+                " implicit=\"yes\""
+            } else {
+                ""
+            },
+            measure.start
+        ));
+        xml.push_str(&format!(
+            "      <attributes reel:tick=\"{}\"><divisions>{}</divisions><time><beats>{}</beats><beat-type>{}</beat-type></time>{}</attributes>\n",
+            measure.start,
+            ppq,
+            measure.numerator,
+            measure.denominator,
+            if vocal {
+                "<clef><sign>G</sign><line>2</line></clef>"
+            } else {
+                "<staves>2</staves><clef number=\"1\"><sign>G</sign><line>2</line></clef><clef number=\"2\"><sign>F</sign><line>4</line></clef>"
+            }
+        ));
+        if vocal {
+            for tempo in model
+                .tempo_map
+                .iter()
+                .filter(|item| measure.start <= item.tick && item.tick < measure.end)
+            {
+                xml.push_str(&format!("      <direction reel:kind=\"tempo\" reel:tick=\"{}\" reel:microseconds-per-quarter=\"{}\"><offset>{}</offset><sound tempo=\"{}\"/></direction>\n", tempo.tick, tempo.microseconds_per_quarter, tempo.tick - measure.start, bpm_string(tempo.microseconds_per_quarter)));
+            }
+            for section in model
+                .form
+                .iter()
+                .filter(|item| measure.start <= item.range.start && item.range.start < measure.end)
+            {
+                xml.push_str(&format!("      <direction reel:kind=\"form\" reel:tick=\"{}\" reel:id=\"{}\"><direction-type><rehearsal>{}</rehearsal></direction-type><offset>{}</offset></direction>\n", section.range.start, escape(&section.id), escape(&section.label), section.range.start - measure.start));
+            }
+            for harmony in model
+                .harmony
+                .iter()
+                .filter(|item| measure.start <= item.range.start && item.range.start < measure.end)
+            {
+                xml.push_str(&format!("      <harmony reel:id=\"{}\" reel:tick=\"{}\"><kind text=\"{}\">other</kind><offset>{}</offset></harmony>\n", escape(&harmony.id), harmony.range.start, escape(&harmony.symbol), harmony.range.start - measure.start));
+            }
+        }
+        let mut streams = vec![(first, 1u8)];
+        if let Some(part) = second {
+            streams.push((part, 2u8));
+        }
+        let mut written_stream = false;
+        for (part, staff) in streams {
+            let mut voices = part
+                .notes
+                .iter()
+                .map(|note| note.voice)
+                .collect::<BTreeSet<_>>();
+            if voices.is_empty() {
+                voices.insert(1);
+            }
+            for voice in voices {
+                if written_stream {
+                    xml.push_str(&format!(
+                        "      <backup><duration>{}</duration></backup>\n",
+                        measure.end - measure.start
+                    ));
+                }
+                written_stream = true;
+                xml.push_str(&write_measure_voice(
+                    part, voice, staff, measure, ppq, lyrics,
+                )?);
+            }
+        }
+        xml.push_str("    </measure>\n");
+    }
+    xml.push_str("  </part>\n");
+    Ok(xml)
+}
+
+fn write_measure_voice(
+    part: &reel_music::model::Part,
+    voice: u8,
+    staff: u8,
+    measure: &MeasureSpan,
+    ppq: u32,
+    lyrics: Option<&BTreeMap<String, (String, String, bool)>>,
+) -> Result<String> {
+    let mut xml = String::new();
+    let mut cursor = measure.start;
+    for note in part.notes.iter().filter(|note| {
+        note.voice == voice
+            && note.start_tick < measure.end
+            && note.start_tick + note.duration_ticks > measure.start
+    }) {
+        let fragment_start = note.start_tick.max(measure.start);
+        let fragment_end = (note.start_tick + note.duration_ticks).min(measure.end);
+        if fragment_start > cursor {
+            xml.push_str(&write_rest(fragment_start - cursor, voice, staff, ppq));
+        }
+        let (step, alter, octave) = midi_pitch(note.midi_note);
+        let tie_stop = fragment_start > note.start_tick;
+        let tie_start = fragment_end < note.start_tick + note.duration_ticks;
+        xml.push_str(&format!("      <note reel:note-id=\"{}\" reel:start-tick=\"{}\" reel:source-start-tick=\"{}\" reel:source-duration-ticks=\"{}\" reel:velocity=\"{}\">", escape(&note.id), fragment_start, note.start_tick, note.duration_ticks, note.velocity));
+        xml.push_str(&format!("<pitch><step>{step}</step>{}<octave>{octave}</octave></pitch><duration>{}</duration><voice>{voice}</voice>", if alter == 0 { String::new() } else { format!("<alter>{alter}</alter>") }, fragment_end - fragment_start));
+        if let Some(kind) = note_type(fragment_end - fragment_start, ppq) {
+            xml.push_str(&format!("<type>{kind}</type>"));
+        }
+        if tie_stop {
+            xml.push_str("<tie type=\"stop\"/>");
+        }
+        if tie_start {
+            xml.push_str("<tie type=\"start\"/>");
+        }
+        xml.push_str(&format!("<staff>{staff}</staff>"));
+        if fragment_start == note.start_tick {
+            if let Some((text, syllabic, melisma)) = lyrics.and_then(|map| map.get(&note.id)) {
+                if !text.is_empty() {
+                    xml.push_str(&format!(
+                        "<lyric><syllabic>{}</syllabic><text>{}</text>{}</lyric>",
+                        escape(syllabic),
+                        escape(text),
+                        if *melisma { "<extend/>" } else { "" }
+                    ));
+                } else if *melisma {
+                    xml.push_str("<lyric><extend/></lyric>");
+                }
+            }
+        }
+        if tie_stop || tie_start {
+            xml.push_str("<notations>");
+            if tie_stop {
+                xml.push_str("<tied type=\"stop\"/>");
+            }
+            if tie_start {
+                xml.push_str("<tied type=\"start\"/>");
+            }
+            xml.push_str("</notations>");
+        }
+        xml.push_str("</note>\n");
+        cursor = fragment_end;
+    }
+    if cursor < measure.end {
+        xml.push_str(&write_rest(measure.end - cursor, voice, staff, ppq));
+    }
+    Ok(xml)
+}
+
+fn write_rest(duration: u64, voice: u8, staff: u8, ppq: u32) -> String {
+    let kind = note_type(duration, ppq)
+        .map(|value| format!("<type>{value}</type>"))
+        .unwrap_or_default();
+    format!(
+        "      <note><rest/><duration>{duration}</duration><voice>{voice}</voice>{kind}<staff>{staff}</staff></note>\n"
+    )
+}
+
+fn note_type(duration: u64, ppq: u32) -> Option<&'static str> {
+    let ppq = u64::from(ppq);
+    [
+        (ppq * 4, "whole"),
+        (ppq * 2, "half"),
+        (ppq, "quarter"),
+        (ppq / 2, "eighth"),
+        (ppq / 4, "16th"),
+        (ppq / 8, "32nd"),
+    ]
+    .into_iter()
+    .find_map(|(ticks, kind)| (ticks > 0 && duration == ticks).then_some(kind))
 }
 
 fn write_musicxml(model: &MusicModel) -> Result<String> {

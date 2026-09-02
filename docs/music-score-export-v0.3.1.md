@@ -33,6 +33,12 @@ selected melody/vocal part with treble clef, form labels, harmony symbols, and
 exact authority-bound lyric underlay. Models without `lead_sheet` keep the
 original three-artifact packet and serialized receipt shape.
 
+Beginning in CLI v0.3.17, a model that explicitly declares
+`piano_vocal_score` also requests `piano-vocal.musicxml`. This additive editable
+artifact uses measured vocal and two-staff piano layout while leaving the
+legacy `score.musicxml` adapter unchanged. See
+[`music-piano-vocal-perspective-v0.3.17.md`](music-piano-vocal-perspective-v0.3.17.md).
+
 The guide uses a deliberately plain, band-unlimited square wave with integer
 phase increments. It is useful for checking entry, duration, rough pitch, and
 tempo. It is not a proposed timbre, performance, mix, score, or master.

@@ -12,6 +12,7 @@ pub mod language_performance;
 pub mod model;
 pub mod model_draft;
 pub mod neutral;
+pub mod perspective;
 pub mod repair;
 pub mod repair_candidate;
 pub mod repair_intent;

@@ -1093,6 +1093,22 @@ fn run_cli() -> Result<()> {
             let report = reel_music::model_draft::validate(&draft)?;
             print_report(&report, output)?;
         }
+        Command::MusicPerspectiveCompare {
+            comparison,
+            output_path,
+            output,
+        } => {
+            let report = reel_music::perspective::write(&comparison, &output_path)?;
+            print_report(&report, output)?;
+        }
+        Command::MusicPerspectiveCheck {
+            comparison,
+            report,
+            output,
+        } => {
+            let report = reel_music::perspective::check(&comparison, &report)?;
+            print_report(&report, output)?;
+        }
         Command::MusicRepairIntentCheck { intent, output } => {
             let report = reel_music::repair_intent::validate(&intent)?;
             print_report(&report, output)?;
@@ -2827,6 +2843,21 @@ enum Command {
     /// Verify every analysis observation's explicit model, omission, or unknown disposition.
     MusicModelDraftCheck {
         draft: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Compare a recovered melody with a piano-reduction melody as two governed perspectives.
+    MusicPerspectiveCompare {
+        comparison: PathBuf,
+        #[arg(long)]
+        output_path: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Recompute and verify a bound recovered-versus-piano comparison report.
+    MusicPerspectiveCheck {
+        comparison: PathBuf,
+        report: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

@@ -341,6 +341,7 @@ fn fixture() -> Fixture {
                 underlay("syllable-4", "note-4", 9, 11),
             ],
         }),
+        piano_vocal_score: None,
         expressive_timing: vec![],
         unknowns: vec!["Dynamics and articulation remain unknown.".into()],
         review: ModelReview {
