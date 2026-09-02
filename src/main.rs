@@ -1609,6 +1609,13 @@ fn run_cli() -> Result<()> {
             let report = reel::adapters::still_animatic::check_animatic(&artifact_manifest)?;
             print_report(&report, output)?;
         }
+        Command::EffectPassCheck {
+            artifact_manifest,
+            output,
+        } => {
+            let report = reel::adapters::still_animatic::check_effect_passes(&artifact_manifest)?;
+            print_report(&report, output)?;
+        }
         Command::SonicAssetsResolve {
             catalog,
             request,
@@ -3193,6 +3200,12 @@ enum Command {
     },
     /// Verify a rendered animatic, its inputs, streams, captions, and artifact lineage.
     AnimaticCheck {
+        artifact_manifest: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Verify hash-pinned effect inputs and the completed clean composite lineage.
+    EffectPassCheck {
         artifact_manifest: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,

@@ -176,6 +176,8 @@ pub struct Shot {
     pub sprite_animation: Option<SpriteAnimation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub camera_track: Option<StillCameraTrack>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effect_passes: Vec<EffectPass>,
     #[serde(default)]
     pub source_in_seconds: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -210,6 +212,41 @@ pub struct Shot {
     pub captions: Value,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct EffectPass {
+    pub id: String,
+    pub color: EffectAsset,
+    pub matte: EffectAsset,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occlusion_matte: Option<EffectAsset>,
+    pub alpha_mode: String,
+    pub composite_operator: String,
+    pub color_space: String,
+    pub alpha_mode_detail: String,
+    pub timing_fps: u32,
+    pub duration_frames: u32,
+    pub placement: EffectPlacement,
+    pub visible_start_frame: u32,
+    pub visible_end_frame: u32,
+    #[serde(default)]
+    pub z_index: i32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct EffectAsset {
+    pub path: String,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct EffectPlacement {
+    pub space: String,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -1759,6 +1796,78 @@ fn validate_mixed_media(manifest: &ProductionManifest, duration_ms: Option<u64>)
         .collect::<Result<HashMap<_, _>>>()?;
 
     for shot in &manifest.shots {
+        unique(
+            "effect pass id",
+            shot.effect_passes.iter().map(|effect| effect.id.as_str()),
+        )?;
+        for effect in &shot.effect_passes {
+            require_nonempty("effect pass id", &effect.id)?;
+            for (role, asset) in [("color", &effect.color), ("matte", &effect.matte)] {
+                require_nonempty(&format!("effect pass {role} path"), &asset.path)?;
+                if !is_sha256(&asset.sha256) {
+                    bail!("effect pass {} {role} sha256 is invalid", effect.id);
+                }
+            }
+            if let Some(asset) = &effect.occlusion_matte {
+                require_nonempty("effect pass occlusion matte path", &asset.path)?;
+                if !is_sha256(&asset.sha256) {
+                    bail!(
+                        "effect pass {} occlusion matte sha256 is invalid",
+                        effect.id
+                    );
+                }
+            }
+            if effect.alpha_mode != "separate-matte"
+                || effect.composite_operator != "over"
+                || effect.color_space != "srgb"
+                || effect.alpha_mode_detail != "straight"
+            {
+                bail!(
+                    "effect pass {} uses an unsupported compositing contract",
+                    effect.id
+                );
+            }
+            if effect.timing_fps == 0
+                || effect.timing_fps > 60
+                || effect.duration_frames == 0
+                || effect.visible_start_frame > effect.visible_end_frame
+                || effect.visible_end_frame >= effect.duration_frames
+            {
+                bail!("effect pass {} has invalid timing or visibility", effect.id);
+            }
+            let expected_frames = shot
+                .duration_seconds
+                .map(|seconds| (seconds * f64::from(effect.timing_fps)).round() as u32);
+            if expected_frames.is_some_and(|frames| frames != effect.duration_frames) {
+                bail!(
+                    "effect pass {} duration differs from shot {}",
+                    effect.id,
+                    shot.id
+                );
+            }
+            if effect.placement.space != "normalized"
+                || !effect.placement.x.is_finite()
+                || !effect.placement.y.is_finite()
+                || !effect.placement.width.is_finite()
+                || !effect.placement.height.is_finite()
+                || effect.placement.x < 0.0
+                || effect.placement.y < 0.0
+                || effect.placement.width <= 0.0
+                || effect.placement.height <= 0.0
+                || effect.placement.x + effect.placement.width > 1.0
+                || effect.placement.y + effect.placement.height > 1.0
+            {
+                bail!("effect pass {} normalized placement is invalid", effect.id);
+            }
+        }
+        if !shot.effect_passes.is_empty()
+            && !matches!(shot.media_kind, MediaKind::Still | MediaKind::Video)
+        {
+            bail!(
+                "effect passes currently require a still or video shot: {}",
+                shot.id
+            );
+        }
         if shot.visual_fit == VisualFit::Contain {
             match shot.media_kind {
                 MediaKind::Still
@@ -3712,6 +3821,10 @@ pub fn sha256_bytes(bytes: &[u8]) -> String {
         hex.push_str(&format!("{byte:02x}"));
     }
     hex
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn unix_now() -> Result<u64> {
