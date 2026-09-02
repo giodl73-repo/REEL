@@ -113,8 +113,12 @@ Optional mixed-media shot fields are `media_kind` (defaults to `still`),
 with explicit frame holds), `sprite_animation` (a background plus keyframed
 pose tracks), and `beat_marker_id` (an exact named
 start-time anchor). Optional top-level `audio_events` support `music`,
-`ambience`, `effect`, and `narration` roles; `beat_markers` define reusable
-timeline anchors; and `narration_ducking` configures the narration sidechain.
+`ambience`, `effect`, `narration`, and `dialogue` roles; `beat_markers` define
+reusable timeline anchors; and `narration_ducking` configures the legacy
+narration sidechain. Event `gain_automation` points use exactly one local-time
+or beat-marker anchor. Ordered `audio_ducking` policies declare detector and
+target role buses, including a bounded maximum reduction. The two ducking
+forms are mutually exclusive so legacy behavior cannot change silently.
 Optional `audio_mastering` declares final integrated loudness, loudness range,
 true peak, and limiter policy after event mixing.
 

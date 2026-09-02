@@ -66,7 +66,7 @@ fn run_cli() -> Result<()> {
                 let report = reel::production::validate(&loaded)?;
                 match output {
                     OutputFormat::Text => println!(
-                        "manifest ok: {} version={} profile={} timing={} scenes={} shots={} stills={} videos={} animations={} sprite_animations={} audio_events={} beats={} score_cues={} ducking={} mastering={} speakers={} cues={} duration={} timing_ready={} generation_ready={} asset_ready={} preview_ready={} delivery_ready={} blockers={} gated={}",
+                        "manifest ok: {} version={} profile={} timing={} scenes={} shots={} stills={} videos={} animations={} sprite_animations={} audio_events={} beats={} score_cues={} legacy_ducking={} audio_ducking={} mastering={} speakers={} cues={} duration={} timing_ready={} generation_ready={} asset_ready={} preview_ready={} delivery_ready={} blockers={} gated={}",
                         report.manifest,
                         report.version,
                         report.profile,
@@ -81,6 +81,7 @@ fn run_cli() -> Result<()> {
                         report.beat_markers,
                         report.score_cues,
                         report.narration_ducking,
+                        report.audio_ducking,
                         report.audio_mastering,
                         report.speakers,
                         report.narration_cues,
@@ -1553,6 +1554,9 @@ fn run_cli() -> Result<()> {
             manifest,
             asset_root,
             output_path,
+            stems_dir,
+            sample_rate_hz,
+            channels,
             dry_run,
             output,
         } => {
@@ -1562,6 +1566,9 @@ fn run_cli() -> Result<()> {
                     asset_root,
                     output: output_path,
                     dry_run,
+                    stems_dir,
+                    sample_rate_hz,
+                    channels,
                 },
             )?;
             print_report(&report, output)?;
@@ -3036,6 +3043,13 @@ enum Command {
         asset_root: PathBuf,
         #[arg(long = "output")]
         output_path: PathBuf,
+        /// Also write path-free-receipted D/M/E and full-mix WAV deliverables.
+        #[arg(long)]
+        stems_dir: Option<PathBuf>,
+        #[arg(long, default_value_t = 48_000)]
+        sample_rate_hz: u32,
+        #[arg(long, default_value_t = 2)]
+        channels: u8,
         #[arg(long)]
         dry_run: bool,
         #[arg(long = "format", value_enum, default_value_t = OutputFormat::Text)]
