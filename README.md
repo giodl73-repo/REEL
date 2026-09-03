@@ -37,6 +37,8 @@ edit rhythm, sound, and platform fit before renderer work starts.
   game trailers, research explainers, data-story videos, and mobile/social cuts.
 - Compositing hash-pinned color/matte effect passes through the provider-neutral
   [v0.3.19 effect-pass contract](docs/effect-pass-contract-v0.3.19.md).
+- Rendering one exact clean/effect comparison through the
+  [v0.3.20 shot-scoped preview contract](docs/shot-scoped-effect-preview-v0.3.20.md).
 
 ## Non-goals
 

@@ -150,6 +150,19 @@ pub struct AnimaticRenderReport {
     pub output_sha256: Option<String>,
     pub output_bytes: Option<u64>,
     pub output_duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render_scope: Option<ShotRenderScope>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShotRenderScope {
+    pub schema: String,
+    pub shot_id: String,
+    pub variant: String,
+    pub source_start_ms: u64,
+    pub duration_ms: u64,
+    pub frames: u64,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -1050,7 +1063,81 @@ fn render_resource_estimate(
 }
 
 pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
-    let loaded = production::require_preview_ready(&options.manifest)?;
+    render_internal(options, None)
+}
+
+pub fn render_shot_preview(
+    options: &AnimaticRenderOptions,
+    shot_id: &str,
+    clean: bool,
+) -> Result<AnimaticRenderReport> {
+    render_internal(options, Some((shot_id, clean)))
+}
+
+fn scope_to_shot(
+    loaded: &mut production::LoadedProductionManifest,
+    shot_id: &str,
+    clean: bool,
+    fps: u32,
+) -> Result<ShotRenderScope> {
+    let matches = loaded
+        .manifest
+        .shots
+        .iter()
+        .filter(|shot| shot.id == shot_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    if matches.is_empty() {
+        bail!("shot-scoped preview found no shot with exact ID {shot_id}");
+    }
+    if matches.len() != 1 {
+        bail!("shot-scoped preview found ambiguous shot ID {shot_id}");
+    }
+    let mut shot = matches.into_iter().next().expect("one shot preflighted");
+    let source_start_ms = (shot.start_seconds.unwrap_or_default() * 1000.0).round() as u64;
+    let duration_ms = (shot.duration_seconds.unwrap_or_default() * 1000.0).round() as u64;
+    if clean {
+        shot.effect_passes.clear();
+    }
+    shot.start_seconds = Some(0.0);
+    let scene_id = shot.scene_id.clone();
+    loaded.manifest.shots = vec![shot];
+    loaded.manifest.scenes.retain(|scene| scene.id == scene_id);
+    loaded.manifest.audio_events.clear();
+    loaded.manifest.beat_markers.clear();
+    loaded.manifest.narration_ducking = None;
+    loaded.manifest.audio_ducking.clear();
+    loaded.manifest.audio_mastering = None;
+    Ok(ShotRenderScope {
+        schema: "reel.shot-render-scope.v0.1".to_string(),
+        shot_id: shot_id.to_string(),
+        variant: if clean { "clean" } else { "effect" }.to_string(),
+        source_start_ms,
+        duration_ms,
+        frames: (duration_ms as f64 * f64::from(fps) / 1000.0).round() as u64,
+    })
+}
+
+fn render_internal(
+    options: &AnimaticRenderOptions,
+    requested_scope: Option<(&str, bool)>,
+) -> Result<AnimaticRenderReport> {
+    if let Some((shot_id, _)) = requested_scope {
+        let unvalidated = production::load(&options.manifest)?;
+        let matches = unvalidated
+            .manifest
+            .shots
+            .iter()
+            .filter(|shot| shot.id == shot_id)
+            .count();
+        if matches == 0 {
+            bail!("shot-scoped preview found no shot with exact ID {shot_id}");
+        }
+        if matches != 1 {
+            bail!("shot-scoped preview found ambiguous shot ID {shot_id}");
+        }
+    }
+    let mut loaded = production::require_preview_ready(&options.manifest)?;
     if loaded.manifest.timing_status == TimingStatus::Untimed {
         bail!("timing not conformed: animatic rendering is gated");
     }
@@ -1059,6 +1146,12 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
     }
     if options.width % 2 != 0 || options.height % 2 != 0 {
         bail!("width and height must be even for yuv420p delivery");
+    }
+    let render_scope = requested_scope
+        .map(|(shot_id, clean)| scope_to_shot(&mut loaded, shot_id, clean, options.fps))
+        .transpose()?;
+    if render_scope.is_some() && options.captions.is_some() {
+        bail!("shot-scoped preview does not accept full-manifest captions");
     }
     let pixels = u64::from(options.width) * u64::from(options.height);
     if pixels > MAX_RENDER_PIXELS || options.fps > MAX_RENDER_FPS {
@@ -2421,6 +2514,7 @@ pub fn render(options: &AnimaticRenderOptions) -> Result<AnimaticRenderReport> {
         output_sha256,
         output_bytes,
         output_duration_ms,
+        render_scope,
     };
     let mut report_temp = Builder::new()
         .prefix(".reel-artifacts-")
@@ -3035,7 +3129,26 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
         .iter()
         .find(|input| input.kind == "manifest")
         .ok_or_else(|| anyhow!("artifact report has no manifest input"))?;
-    let loaded = production::require_preview_ready(&manifest_input.path)?;
+    let mut loaded = production::require_preview_ready(&manifest_input.path)?;
+    if let Some(scope) = &report.render_scope {
+        if scope.schema != "reel.shot-render-scope.v0.1"
+            || !matches!(scope.variant.as_str(), "effect" | "clean")
+        {
+            bail!("unsupported shot-render scope lineage");
+        }
+        let reconstructed = scope_to_shot(
+            &mut loaded,
+            &scope.shot_id,
+            scope.variant == "clean",
+            report.fps,
+        )?;
+        if reconstructed.source_start_ms != scope.source_start_ms
+            || reconstructed.duration_ms != scope.duration_ms
+            || reconstructed.frames != scope.frames
+        {
+            bail!("shot-render scope lineage does not match manifest timing");
+        }
+    }
     if loaded.manifest.work != report.work {
         bail!("artifact work does not match manifest");
     }

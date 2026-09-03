@@ -1455,6 +1455,8 @@ fn run_cli() -> Result<()> {
             motion_curve,
             encoding_preset,
             dry_run,
+            shot_id,
+            clean_output_path,
             output,
         } => {
             let effective_transition_seconds = match edit_mode {
@@ -1494,6 +1496,18 @@ fn run_cli() -> Result<()> {
             let requested_manifest = reel::production::load(&base_options.manifest)?.manifest;
             let requested = requested_manifest.quality_controls.ab_outputs;
             let has_manifest_audio = !requested_manifest.audio_events.is_empty();
+            if shot_id.is_none() && clean_output_path.is_some() {
+                anyhow::bail!("--clean-output requires --shot-id");
+            }
+            if shot_id.is_some()
+                && (!requested.is_empty()
+                    || narration_only_audio.is_some()
+                    || effects_music_audio.is_some())
+            {
+                anyhow::bail!(
+                    "shot-scoped preview cannot be combined with full-manifest A/B audio outputs"
+                );
+            }
             if has_manifest_audio && !requested.is_empty() {
                 anyhow::bail!(
                     "manifest audio_events cannot be combined with pre-mixed A/B audio outputs"
@@ -1513,7 +1527,24 @@ fn run_cli() -> Result<()> {
                     anyhow::bail!("manifest requests {label} A/B output; provide --{label}-audio");
                 }
             }
-            let mut reports = vec![reel::adapters::still_animatic::render(&base_options)?];
+            let mut reports = if let Some(shot_id) = shot_id.as_deref() {
+                vec![reel::adapters::still_animatic::render_shot_preview(
+                    &base_options,
+                    shot_id,
+                    false,
+                )?]
+            } else {
+                vec![reel::adapters::still_animatic::render(&base_options)?]
+            };
+            if let (Some(shot_id), Some(clean_output)) = (shot_id.as_deref(), clean_output_path) {
+                let mut clean_options = base_options.clone();
+                clean_options.output = clean_output;
+                reports.push(reel::adapters::still_animatic::render_shot_preview(
+                    &clean_options,
+                    shot_id,
+                    true,
+                )?);
+            }
             for (label, selected_audio) in [
                 ("narration-only", narration_only_audio),
                 ("effects-music", effects_music_audio),
@@ -3182,6 +3213,12 @@ enum Command {
         encoding_preset: reel::adapters::still_animatic::EncodingPreset,
         #[arg(long)]
         dry_run: bool,
+        /// Render only the one shot whose ID exactly matches this value.
+        #[arg(long)]
+        shot_id: Option<String>,
+        /// Also render the selected shot without effect passes to this path.
+        #[arg(long = "clean-output", requires = "shot_id")]
+        clean_output_path: Option<PathBuf>,
         #[arg(long = "format", value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
