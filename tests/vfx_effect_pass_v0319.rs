@@ -345,3 +345,200 @@ fn effect_pass_fails_closed_for_hash_duration_and_asset_root_errors() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("escapes asset root"));
     fs::remove_file(outside).unwrap();
 }
+
+fn scoped_fixture() -> (tempfile::TempDir, std::path::PathBuf, String) {
+    let (dir, manifest_path) = fixture();
+    let mut manifest: Value =
+        serde_yaml::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    let shots = manifest["shots"].as_sequence_mut().unwrap();
+    let mut selected = shots[0].clone();
+    shots[0]["effect_passes"] = Value::Sequence(Vec::new());
+    selected["id"] = Value::from("shot-effect-target");
+    selected["start_seconds"] = Value::from(2.0);
+    shots.push(selected);
+    manifest["scenes"].as_sequence_mut().unwrap()[0]["duration_seconds"] = Value::from(4.0);
+    manifest["platforms"].as_sequence_mut().unwrap()[0]["target_duration_seconds"] =
+        Value::from(4.0);
+    manifest["exports"].as_sequence_mut().unwrap()[0]["duration_seconds"] = Value::from(4.0);
+    fs::write(&manifest_path, serde_yaml::to_string(&manifest).unwrap()).unwrap();
+    (dir, manifest_path, "shot-effect-target".to_string())
+}
+
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "valid effect inputs require FFmpeg/ffprobe through WSL on Windows; exercised by Linux CI"
+)]
+fn shot_scoped_preview_selects_exactly_and_exposes_clean_effect_graphs() {
+    let (dir, manifest, shot_id) = scoped_fixture();
+    let effect = dir.path().join("selected-effect.mp4");
+    let clean = dir.path().join("selected-clean.mp4");
+    let result = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .arg("animatic-render")
+        .arg(&manifest)
+        .arg("--asset-root")
+        .arg(dir.path())
+        .arg("--silent")
+        .arg("--no-captions")
+        .arg("--shot-id")
+        .arg(&shot_id)
+        .arg("--clean-output")
+        .arg(&clean)
+        .arg("--output")
+        .arg(&effect)
+        .arg("--width")
+        .arg("320")
+        .arg("--height")
+        .arg("180")
+        .arg("--fps")
+        .arg("24")
+        .arg("--dry-run")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let effect_report = fs::read_to_string(effect.with_extension("artifacts.json")).unwrap();
+    let clean_report = fs::read_to_string(clean.with_extension("artifacts.json")).unwrap();
+    assert!(effect_report.contains("\"variant\": \"effect\""));
+    assert!(effect_report.contains("\"source_start_ms\": 2000"));
+    assert!(effect_report.contains("\"duration_ms\": 2000"));
+    assert!(effect_report.contains("\"frames\": 48"));
+    assert!(effect_report.contains("alphamerge"));
+    assert!(clean_report.contains("\"variant\": \"clean\""));
+    assert!(!clean_report.contains("alphamerge"));
+}
+
+#[test]
+fn shot_scoped_preview_rejects_missing_and_ambiguous_ids_before_asset_probe() {
+    let (dir, manifest, shot_id) = scoped_fixture();
+    let missing = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .arg("animatic-render")
+        .arg(&manifest)
+        .arg("--asset-root")
+        .arg(dir.path())
+        .arg("--silent")
+        .arg("--no-captions")
+        .arg("--shot-id")
+        .arg("shot-does-not-exist")
+        .arg("--output")
+        .arg(dir.path().join("missing.mp4"))
+        .arg("--dry-run")
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("found no shot with exact ID"));
+
+    let mut ambiguous: Value =
+        serde_yaml::from_str(&fs::read_to_string(&manifest).unwrap()).unwrap();
+    let duplicate = ambiguous["shots"].as_sequence().unwrap()[1].clone();
+    ambiguous["shots"]
+        .as_sequence_mut()
+        .unwrap()
+        .push(duplicate);
+    fs::write(&manifest, serde_yaml::to_string(&ambiguous).unwrap()).unwrap();
+    let ambiguous_result = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .arg("animatic-render")
+        .arg(&manifest)
+        .arg("--asset-root")
+        .arg(dir.path())
+        .arg("--silent")
+        .arg("--no-captions")
+        .arg("--shot-id")
+        .arg(&shot_id)
+        .arg("--output")
+        .arg(dir.path().join("ambiguous.mp4"))
+        .arg("--dry-run")
+        .output()
+        .unwrap();
+    assert!(!ambiguous_result.status.success());
+    assert!(String::from_utf8_lossy(&ambiguous_result.stderr).contains("ambiguous shot ID"));
+}
+
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "requires FFmpeg/ffprobe through WSL on Windows; exercised by Linux CI"
+)]
+fn shot_scoped_clean_and_effect_outputs_are_independently_verifiable() {
+    let (dir, manifest, shot_id) = scoped_fixture();
+    let effect = dir.path().join("selected-effect-real.mp4");
+    let clean = dir.path().join("selected-clean-real.mp4");
+    let result = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .arg("animatic-render")
+        .arg(&manifest)
+        .arg("--asset-root")
+        .arg(dir.path())
+        .arg("--silent")
+        .arg("--no-captions")
+        .arg("--disclosure")
+        .arg("")
+        .arg("--shot-id")
+        .arg(&shot_id)
+        .arg("--clean-output")
+        .arg(&clean)
+        .arg("--output")
+        .arg(&effect)
+        .arg("--width")
+        .arg("320")
+        .arg("--height")
+        .arg("180")
+        .arg("--fps")
+        .arg("24")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    for artifact in [
+        effect.with_extension("artifacts.json"),
+        clean.with_extension("artifacts.json"),
+    ] {
+        let check = Command::new(env!("CARGO_BIN_EXE_reel"))
+            .arg("animatic-check")
+            .arg(&artifact)
+            .arg("--output")
+            .arg("json")
+            .output()
+            .unwrap();
+        assert!(
+            check.status.success(),
+            "{}",
+            String::from_utf8_lossy(&check.stderr)
+        );
+    }
+    let effect_check = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .arg("effect-pass-check")
+        .arg(effect.with_extension("artifacts.json"))
+        .arg("--output")
+        .arg("json")
+        .output()
+        .unwrap();
+    assert!(effect_check.status.success());
+    let effect_report: serde_json::Value =
+        serde_json::from_slice(&fs::read(effect.with_extension("artifacts.json")).unwrap())
+            .unwrap();
+    let clean_report: serde_json::Value =
+        serde_json::from_slice(&fs::read(clean.with_extension("artifacts.json")).unwrap()).unwrap();
+    let base = |report: &serde_json::Value| {
+        report["inputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|input| input["kind"] == "still")
+            .unwrap()["sha256"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(base(&effect_report), base(&clean_report));
+    assert_eq!(effect_report["duration_ms"], clean_report["duration_ms"]);
+    assert_eq!(effect_report["render_scope"]["frames"], 48);
+    assert_eq!(clean_report["render_scope"]["frames"], 48);
+}
