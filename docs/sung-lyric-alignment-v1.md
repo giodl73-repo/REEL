@@ -12,7 +12,26 @@ human anchors; reports omissions; and rejects malformed hashes, clocks,
 non-monotonic evidence, unlinked lyric events, and lyric identity assigned to
 confirmed silence.
 
-This checkpoint is deliberately not a model runner or interactive editor.
-Adapters, phrase-bounded re-solve/undo, and the review UI remain later slices.
+Evidence adapters may now be imported as independently hash-pinned observation
+streams with explicit clock transforms. Observations augment stable performed
+event identities with phones, vowel nuclei, normalized tokens, candidates and
+per-source confidence; an observation outside the event's recording-time
+neighborhood fails closed.
+
+The core uses a deterministic beam dynamic program to recommend and rank three
+complete-song canonical paths. Its transition model favors canonical advance,
+permits sustained identity, omissions and bounded backward repeat loops, and
+uses later forward evidence to resynchronize. Score events provide written
+identity, not a globally trusted media clock: callers should collapse ties and
+provide phrase-bounded piecewise clock evidence when notation tempo, meter or
+performed timing diverge.
+
+An optional resolve scope supports interactive correction. The event before
+and after a partial scope must be immutable human anchors, assignments outside
+the scope are frozen, and only the bounded interior is globally re-solved.
+Corrections and undo history remain the responsibility of the host review UI;
+the solver consumes the resulting immutable anchor set.
+
+This checkpoint is deliberately not a model runner or browser editor.
 Machine output is always `machine-candidate-human-listening-required` and grants
 no lyric, score, creative, consent, or publication approval.
