@@ -18,6 +18,7 @@ pub mod arrangement_candidate;
 pub mod audio_mix;
 pub mod audio_preview;
 pub mod audio_quality;
+pub mod browser_composition;
 pub mod c2pa_verification;
 pub mod caption;
 pub mod caption_layout;
