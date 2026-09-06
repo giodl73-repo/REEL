@@ -91,6 +91,10 @@ pub struct ScoreEvent {
     pub voice: String,
     pub kind: String,
     #[serde(default)]
+    pub start_ms: Option<u64>,
+    #[serde(default)]
+    pub end_ms: Option<u64>,
+    #[serde(default)]
     pub canonical_indices: Vec<u32>,
 }
 
@@ -145,6 +149,7 @@ pub struct AlignmentDocument {
     pub clock: ClockTransform,
     pub recommended: Vec<AlignmentEvent>,
     pub ranked_recommendations: Vec<SongRecommendation>,
+    pub timing_segments: Vec<TimingSegment>,
     pub alternatives: Vec<Alternative>,
     pub coverage: Coverage,
     pub validation: Validation,
@@ -166,6 +171,21 @@ pub struct SongRecommendation {
     pub score_micros: i64,
     pub canonical_path: Vec<Option<u32>>,
     pub differs_at_evidence_ids: Vec<String>,
+    pub timing_segments: Vec<TimingSegment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TimingSegment {
+    pub segment: u32,
+    pub first_evidence_id: String,
+    pub last_evidence_id: String,
+    pub first_position: usize,
+    pub last_position: usize,
+    pub score_origin_ms: u64,
+    pub recording_origin_ms: u64,
+    pub cumulative_repeat_offset_ms: u64,
+    pub comparison_offset_ms: i64,
+    pub opened_by_repeat: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -178,6 +198,8 @@ pub struct AlignmentEvent {
     pub canonical_index: Option<u32>,
     pub canonical_line_id: Option<String>,
     pub score_event_id: Option<String>,
+    pub score_start_ms: Option<u64>,
+    pub recording_score_offset_ms: Option<i64>,
     pub printed: Option<String>,
     pub normalized: Option<String>,
     pub word: Option<String>,
@@ -214,6 +236,8 @@ pub struct Validation {
     pub every_event_classified: bool,
     pub all_lyric_events_linked: bool,
     pub hashes_valid: bool,
+    pub timing_checked_events: usize,
+    pub timing_within_500ms: bool,
 }
 
 pub fn align_file(input: &Path, output: &Path) -> Result<AlignmentDocument> {
@@ -246,9 +270,18 @@ pub fn align(request: &AlignmentRequest) -> Result<AlignmentDocument> {
     let mut recommended = Vec::new();
     let mut alternatives = Vec::new();
 
-    let (ranked_recommendations, selected) =
-        solve_ranked_paths(&evidence, &canonical, &anchors, request.resolve.as_ref());
-    for evidence in &evidence {
+    let (ranked_recommendations, selected) = solve_ranked_paths(
+        &evidence,
+        &canonical,
+        &score_by_canonical,
+        &anchors,
+        request.resolve.as_ref(),
+    );
+    let timing_segments = ranked_recommendations
+        .first()
+        .map(|r| r.timing_segments.clone())
+        .unwrap_or_default();
+    for (event_position, evidence) in evidence.iter().enumerate() {
         if evidence.class != "lyric" {
             recommended.push(non_lyric_event(evidence));
             continue;
@@ -322,6 +355,10 @@ pub fn align(request: &AlignmentRequest) -> Result<AlignmentDocument> {
             score_event_id: score_by_canonical
                 .get(&syllable.index)
                 .map(|s| s.id.clone()),
+            score_start_ms: score_by_canonical
+                .get(&syllable.index)
+                .and_then(|s| s.start_ms),
+            recording_score_offset_ms: event_timing_offset(event_position, &timing_segments),
             printed: Some(syllable.printed.clone()),
             normalized: Some(syllable.normalized.clone()),
             word: Some(syllable.word.clone()),
@@ -359,6 +396,23 @@ pub fn align(request: &AlignmentRequest) -> Result<AlignmentDocument> {
             .filter(|e| e.class == "lyric")
             .all(|e| e.canonical_index.is_some() && e.score_event_id.is_some()),
         hashes_valid: true,
+        timing_checked_events: recommended
+            .iter()
+            .filter(|event| {
+                event.score_start_ms.is_some() && event.recording_score_offset_ms.is_some()
+            })
+            .count(),
+        timing_within_500ms: recommended.iter().all(|event| {
+            match (event.score_start_ms, event.recording_score_offset_ms) {
+                (Some(score), Some(offset)) => {
+                    event
+                        .start_ms
+                        .abs_diff((score as i64 + offset).max(0) as u64)
+                        <= 500
+                }
+                _ => true,
+            }
+        }),
     };
     if !validation.all_lyric_events_linked {
         bail!("every lyric event must link canonical and score identity");
@@ -370,6 +424,7 @@ pub fn align(request: &AlignmentRequest) -> Result<AlignmentDocument> {
         clock: request.clock.clone(),
         recommended,
         ranked_recommendations,
+        timing_segments,
         alternatives,
         coverage,
         validation,
@@ -464,17 +519,31 @@ fn fuse_adapter_streams(request: &AlignmentRequest) -> Result<Vec<PerformedEvide
 struct BeamPath {
     score: i64,
     indices: Vec<Option<u32>>,
+    baseline_offset_ms: Option<i64>,
+    cumulative_repeat_offset_ms: u64,
+    active_repeat: Option<ActiveRepeat>,
+}
+
+#[derive(Clone)]
+struct ActiveRepeat {
+    return_index: u32,
+    recording_origin_ms: u64,
+    segment_offset_ms: i64,
 }
 
 fn solve_ranked_paths(
     evidence: &[PerformedEvidence],
     canonical: &BTreeMap<u32, &CanonicalSyllable>,
+    score_by_canonical: &BTreeMap<u32, &ScoreEvent>,
     anchors: &BTreeMap<&str, &HumanAnchor>,
     resolve: Option<&ResolveScope>,
 ) -> (Vec<SongRecommendation>, BTreeMap<String, Option<u32>>) {
     let mut beam = vec![BeamPath {
         score: 0,
         indices: Vec::new(),
+        baseline_offset_ms: None,
+        cumulative_repeat_offset_ms: 0,
+        active_repeat: None,
     }];
     let bounds = resolve.and_then(|scope| {
         Some((
@@ -513,6 +582,27 @@ fn solve_ranked_paths(
         for path in &beam {
             let prior = path.indices.iter().rev().flatten().next().copied();
             for choice in &choices {
+                let mut state = path.clone();
+                if let (Some(active), Some(index)) = (&state.active_repeat, *choice)
+                    && index > active.return_index
+                {
+                    state.cumulative_repeat_offset_ms = state
+                        .cumulative_repeat_offset_ms
+                        .saturating_add(event.start_ms.saturating_sub(active.recording_origin_ms));
+                    state.active_repeat = None;
+                }
+                if let (Some(prior_index), Some(index)) = (prior, *choice)
+                    && index < prior_index
+                    && state.active_repeat.is_none()
+                    && let Some(score_start) =
+                        score_by_canonical.get(&index).and_then(|s| s.start_ms)
+                {
+                    state.active_repeat = Some(ActiveRepeat {
+                        return_index: prior_index,
+                        recording_origin_ms: event.start_ms,
+                        segment_offset_ms: event.start_ms as i64 - score_start as i64,
+                    });
+                }
                 let local = choice
                     .and_then(|index| {
                         event
@@ -520,6 +610,23 @@ fn solve_ranked_paths(
                             .iter()
                             .find(|c| c.canonical_index == index)
                             .map(|c| score_candidate(event, canonical[&index], c) as i64)
+                    })
+                    .unwrap_or(0);
+                let timing = choice
+                    .and_then(|index| score_by_canonical.get(&index).and_then(|s| s.start_ms))
+                    .map(|score_start| {
+                        let observed_offset = event.start_ms as i64 - score_start as i64;
+                        let expected_offset = if let Some(active) = &state.active_repeat {
+                            active.segment_offset_ms
+                        } else if let Some(baseline) = state.baseline_offset_ms {
+                            baseline + state.cumulative_repeat_offset_ms as i64
+                        } else {
+                            state.baseline_offset_ms = Some(observed_offset);
+                            observed_offset
+                        };
+                        160_000i64.saturating_sub(
+                            observed_offset.abs_diff(expected_offset).min(800) as i64 * 200,
+                        )
                     })
                     .unwrap_or(0);
                 let transition = match (prior, *choice) {
@@ -533,11 +640,10 @@ fn solve_ranked_paths(
                     (Some(a), Some(b)) if b > a + 1 => -80_000 - ((b - a - 1) as i64 * 12_000),
                     _ => -700_000,
                 };
-                let mut indices = path.indices.clone();
-                indices.push(*choice);
+                state.indices.push(*choice);
                 next.push(BeamPath {
-                    score: path.score + local + transition,
-                    indices,
+                    score: path.score + local + transition + timing,
+                    ..state
                 });
             }
         }
@@ -550,6 +656,9 @@ fn solve_ranked_paths(
     let best = beam.first().cloned().unwrap_or(BeamPath {
         score: 0,
         indices: vec![],
+        baseline_offset_ms: None,
+        cumulative_repeat_offset_ms: 0,
+        active_repeat: None,
     });
     let ranked = beam
         .iter()
@@ -572,6 +681,7 @@ fn solve_ranked_paths(
                     }
                 })
                 .collect(),
+            timing_segments: build_timing_segments(&path.indices, evidence, score_by_canonical),
         })
         .collect();
     let selected = evidence
@@ -617,6 +727,141 @@ fn resolve_scope_result(
         first_position: first,
         last_position: last,
     }))
+}
+
+fn build_timing_segments(
+    indices: &[Option<u32>],
+    evidence: &[PerformedEvidence],
+    score_by_canonical: &BTreeMap<u32, &ScoreEvent>,
+) -> Vec<TimingSegment> {
+    let Some((first_position, first_index, first_score)) =
+        indices.iter().enumerate().find_map(|(position, index)| {
+            let index = (*index)?;
+            let score = score_by_canonical.get(&index)?.start_ms?;
+            Some((position, index, score))
+        })
+    else {
+        return vec![];
+    };
+    let mut segments = Vec::new();
+    let mut segment_start = first_position;
+    let mut segment_score_origin = first_score;
+    let mut segment_recording_origin = evidence[first_position].start_ms;
+    let mut segment_is_repeat = false;
+    let mut cumulative = 0u64;
+    let baseline_offset = segment_recording_origin as i64 - segment_score_origin as i64;
+    let mut active_repeat: Option<(u32, u64)> = None;
+    let mut prior = first_index;
+
+    for position in first_position + 1..indices.len() {
+        let Some(index) = indices[position] else {
+            continue;
+        };
+        let Some(score_start) = score_by_canonical.get(&index).and_then(|s| s.start_ms) else {
+            continue;
+        };
+        if let Some((return_index, repeat_origin)) = active_repeat
+            && index > return_index
+        {
+            push_timing_segment(
+                &mut segments,
+                evidence,
+                segment_start,
+                position - 1,
+                segment_score_origin,
+                segment_recording_origin,
+                cumulative,
+                if segment_is_repeat {
+                    segment_recording_origin as i64 - segment_score_origin as i64
+                } else {
+                    baseline_offset + cumulative as i64
+                },
+                segment_is_repeat,
+            );
+            cumulative = cumulative
+                .saturating_add(evidence[position].start_ms.saturating_sub(repeat_origin));
+            segment_start = position;
+            segment_score_origin = score_start;
+            segment_recording_origin = evidence[position].start_ms;
+            segment_is_repeat = false;
+            active_repeat = None;
+        }
+        if index < prior && active_repeat.is_none() {
+            push_timing_segment(
+                &mut segments,
+                evidence,
+                segment_start,
+                position - 1,
+                segment_score_origin,
+                segment_recording_origin,
+                cumulative,
+                if segment_is_repeat {
+                    segment_recording_origin as i64 - segment_score_origin as i64
+                } else {
+                    baseline_offset + cumulative as i64
+                },
+                segment_is_repeat,
+            );
+            active_repeat = Some((prior, evidence[position].start_ms));
+            segment_start = position;
+            segment_score_origin = score_start;
+            segment_recording_origin = evidence[position].start_ms;
+            segment_is_repeat = true;
+        }
+        prior = index;
+    }
+    push_timing_segment(
+        &mut segments,
+        evidence,
+        segment_start,
+        indices.len().saturating_sub(1),
+        segment_score_origin,
+        segment_recording_origin,
+        cumulative,
+        if segment_is_repeat {
+            segment_recording_origin as i64 - segment_score_origin as i64
+        } else {
+            baseline_offset + cumulative as i64
+        },
+        segment_is_repeat,
+    );
+    segments
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_timing_segment(
+    segments: &mut Vec<TimingSegment>,
+    evidence: &[PerformedEvidence],
+    first: usize,
+    last: usize,
+    score_origin_ms: u64,
+    recording_origin_ms: u64,
+    cumulative_repeat_offset_ms: u64,
+    comparison_offset_ms: i64,
+    opened_by_repeat: bool,
+) {
+    if first > last || first >= evidence.len() || last >= evidence.len() {
+        return;
+    }
+    segments.push(TimingSegment {
+        segment: segments.len() as u32 + 1,
+        first_evidence_id: evidence[first].id.clone(),
+        last_evidence_id: evidence[last].id.clone(),
+        first_position: first,
+        last_position: last,
+        score_origin_ms,
+        recording_origin_ms,
+        cumulative_repeat_offset_ms,
+        comparison_offset_ms,
+        opened_by_repeat,
+    });
+}
+
+fn event_timing_offset(position: usize, segments: &[TimingSegment]) -> Option<i64> {
+    segments
+        .iter()
+        .find(|segment| position >= segment.first_position && position <= segment.last_position)
+        .map(|segment| segment.comparison_offset_ms)
 }
 
 fn validate_request(request: &AlignmentRequest) -> Result<()> {
@@ -708,6 +953,8 @@ fn non_lyric_event(e: &PerformedEvidence) -> AlignmentEvent {
         canonical_index: None,
         canonical_line_id: None,
         score_event_id: None,
+        score_start_ms: None,
+        recording_score_offset_ms: None,
         printed: None,
         normalized: None,
         word: None,

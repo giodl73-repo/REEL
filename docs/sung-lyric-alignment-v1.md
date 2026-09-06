@@ -26,6 +26,14 @@ identity, not a globally trusted media clock: callers should collapse ties and
 provide phrase-bounded piecewise clock evidence when notation tempo, meter or
 performed timing diverge.
 
+Every supported backward repeat opens a new score-time segment. When the path
+returns beyond the completed canonical span, the repeat's recording elapsed
+time is added to a cumulative offset. All later recording-to-score timing
+scores use the baseline plus every completed repeat offset; a later repeat adds
+again rather than replacing the earlier correction. Ranked alternatives retain
+their own segment history. Anchor-bounded re-solves rebuild segment offsets
+inside the solved path while leaving assignments outside the scope frozen.
+
 An optional resolve scope supports interactive correction. The event before
 and after a partial scope must be immutable human anchors, assignments outside
 the scope are frozen, and only the bounded interior is globally re-solved.
