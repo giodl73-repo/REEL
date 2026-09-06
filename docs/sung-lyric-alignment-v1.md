@@ -34,6 +34,21 @@ again rather than replacing the earlier correction. Ranked alternatives retain
 their own segment history. Anchor-bounded re-solves rebuild segment offsets
 inside the solved path while leaving assignments outside the scope frozen.
 
+Evidence streams remain separate in the result. Acoustic activity establishes
+sound, independent ASR/CTC establishes heard token identity, forced-alignment
+phones may refine boundaries only inside an independently supported phrase,
+canonical syllables establish text identity, and score events establish written
+note identity. Evidence from these roles is never collapsed into a purported
+single observation or double-counted as independent support.
+
+The solver discovers immutable anchor islands from high-confidence, unique
+two- or three-word independent-ASR n-grams, including reliable opening and
+closing phrases. It seeds islands throughout the recording, retains repeated
+matches as distinct performed occurrences, and globally solves forward and
+backward gaps between islands. Non-unique canonical phrases are emitted as
+ambiguities instead of anchors. Transcript-forced phones and accompaniment
+activity cannot create an anchor.
+
 An optional resolve scope supports interactive correction. The event before
 and after a partial scope must be immutable human anchors, assignments outside
 the scope are frozen, and only the bounded interior is globally re-solved.

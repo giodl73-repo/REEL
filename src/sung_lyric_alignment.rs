@@ -32,6 +32,8 @@ pub struct AlignmentRequest {
 #[serde(deny_unknown_fields)]
 pub struct EvidenceStream {
     pub adapter: String,
+    #[serde(default)]
+    pub kind: Option<String>,
     pub stream_sha256: String,
     pub clock: ClockTransform,
     pub observations: Vec<AdapterObservation>,
@@ -150,11 +152,55 @@ pub struct AlignmentDocument {
     pub recommended: Vec<AlignmentEvent>,
     pub ranked_recommendations: Vec<SongRecommendation>,
     pub timing_segments: Vec<TimingSegment>,
+    pub evidence_streams: Vec<PreservedEvidenceStream>,
+    pub anchor_islands: Vec<AnchorIsland>,
+    pub ambiguous_ngrams: Vec<AmbiguousNgram>,
     pub alternatives: Vec<Alternative>,
     pub coverage: Coverage,
     pub validation: Validation,
     pub review_state: String,
     pub resolved_scope: Option<ResolveScopeResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PreservedEvidenceStream {
+    pub adapter: String,
+    pub kind: String,
+    pub stream_sha256: String,
+    pub observations: Vec<PreservedObservation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PreservedObservation {
+    pub observation_id: String,
+    pub evidence_id: String,
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub normalized: Option<String>,
+    pub phones: Vec<String>,
+    pub confidence_micros: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AnchorIsland {
+    pub occurrence: u32,
+    pub first_evidence_id: String,
+    pub last_evidence_id: String,
+    pub canonical_first: u32,
+    pub canonical_last: u32,
+    pub token_count: usize,
+    pub adapter: String,
+    pub confidence_micros: u32,
+    pub immutable: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AmbiguousNgram {
+    pub adapter: String,
+    pub first_evidence_id: String,
+    pub last_evidence_id: String,
+    pub normalized_tokens: Vec<String>,
+    pub canonical_match_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -253,7 +299,8 @@ pub fn align_file(input: &Path, output: &Path) -> Result<AlignmentDocument> {
 
 pub fn align(request: &AlignmentRequest) -> Result<AlignmentDocument> {
     validate_request(request)?;
-    let evidence = fuse_adapter_streams(request)?;
+    let evidence_streams = preserve_evidence_streams(request)?;
+    let evidence = request.evidence.clone();
     let canonical: BTreeMap<u32, &CanonicalSyllable> =
         request.canonical.iter().map(|s| (s.index, s)).collect();
     let score_by_canonical: BTreeMap<u32, &ScoreEvent> = request
@@ -266,6 +313,11 @@ pub fn align(request: &AlignmentRequest) -> Result<AlignmentDocument> {
         .iter()
         .map(|a| (a.evidence_id.as_str(), a))
         .collect();
+    let (anchor_islands, ambiguous_ngrams) = discover_anchor_islands(request, &canonical);
+    let island_locks: BTreeMap<String, u32> = anchor_islands
+        .iter()
+        .flat_map(|island| island_members(island, request, &canonical))
+        .collect();
     let mut occurrences = BTreeMap::<u32, u32>::new();
     let mut recommended = Vec::new();
     let mut alternatives = Vec::new();
@@ -275,6 +327,7 @@ pub fn align(request: &AlignmentRequest) -> Result<AlignmentDocument> {
         &canonical,
         &score_by_canonical,
         &anchors,
+        &island_locks,
         request.resolve.as_ref(),
     );
     let timing_segments = ranked_recommendations
@@ -425,6 +478,9 @@ pub fn align(request: &AlignmentRequest) -> Result<AlignmentDocument> {
         recommended,
         ranked_recommendations,
         timing_segments,
+        evidence_streams,
+        anchor_islands,
+        ambiguous_ngrams,
         alternatives,
         coverage,
         validation,
@@ -442,13 +498,25 @@ fn transform_ms(value: u64, clock: &ClockTransform) -> Result<u64> {
     Ok(transformed as u64)
 }
 
-fn fuse_adapter_streams(request: &AlignmentRequest) -> Result<Vec<PerformedEvidence>> {
-    let mut fused = request.evidence.clone();
-    let positions: BTreeMap<String, usize> = fused
-        .iter()
-        .enumerate()
-        .map(|(n, e)| (e.id.clone(), n))
-        .collect();
+fn stream_kind(stream: &EvidenceStream) -> String {
+    stream.kind.clone().unwrap_or_else(|| {
+        let adapter = stream.adapter.to_ascii_lowercase();
+        if adapter.contains("mfa") || adapter.contains("forced") {
+            "forced_alignment".into()
+        } else if adapter.contains("asr") || adapter.contains("whisper") || adapter.contains("ctc")
+        {
+            "independent_asr".into()
+        } else if adapter.contains("activity") || adapter.contains("waveform") {
+            "acoustic_activity".into()
+        } else {
+            "auxiliary".into()
+        }
+    })
+}
+
+fn preserve_evidence_streams(request: &AlignmentRequest) -> Result<Vec<PreservedEvidenceStream>> {
+    let evidence_ids: BTreeSet<&str> = request.evidence.iter().map(|e| e.id.as_str()).collect();
+    let mut preserved = Vec::new();
     for stream in &request.evidence_streams {
         if stream.stream_sha256.len() != 64
             || !stream.stream_sha256.bytes().all(|b| b.is_ascii_hexdigit())
@@ -459,12 +527,13 @@ fn fuse_adapter_streams(request: &AlignmentRequest) -> Result<Vec<PerformedEvide
             bail!("adapter stream {} has an invalid clock", stream.adapter);
         }
         for observation in &stream.observations {
-            let position = positions.get(&observation.evidence_id).with_context(|| {
-                format!(
+            if !evidence_ids.contains(observation.evidence_id.as_str()) {
+                bail!(
                     "adapter observation {} references unknown evidence {}",
-                    observation.observation_id, observation.evidence_id
-                )
-            })?;
+                    observation.observation_id,
+                    observation.evidence_id
+                );
+            }
             let start = transform_ms(observation.start_ms, &stream.clock)?;
             let end = transform_ms(observation.end_ms, &stream.clock)?;
             if end <= start {
@@ -473,7 +542,11 @@ fn fuse_adapter_streams(request: &AlignmentRequest) -> Result<Vec<PerformedEvide
                     observation.observation_id
                 );
             }
-            let event = &mut fused[*position];
+            let event = request
+                .evidence
+                .iter()
+                .find(|e| e.id == observation.evidence_id)
+                .unwrap();
             if end < event.start_ms.saturating_sub(500) || start > event.end_ms.saturating_add(500)
             {
                 bail!(
@@ -482,37 +555,154 @@ fn fuse_adapter_streams(request: &AlignmentRequest) -> Result<Vec<PerformedEvide
                     event.id
                 );
             }
-            if event.normalized.is_none() {
-                event.normalized = observation.normalized.clone();
-            }
-            for phone in &observation.phones {
-                if !event.phones.contains(phone) {
-                    event.phones.push(phone.clone());
-                }
-            }
-            if event.vowel_nucleus.is_none() {
-                event.vowel_nucleus = observation.vowel_nucleus.clone();
-            }
-            for candidate in &observation.candidates {
-                if let Some(existing) = event
-                    .candidates
-                    .iter_mut()
-                    .find(|c| c.canonical_index == candidate.canonical_index)
-                {
-                    existing.confidence_micros =
-                        existing.confidence_micros.max(candidate.confidence_micros);
-                } else {
-                    event.candidates.push(candidate.clone());
-                }
-            }
-            event.sources.push(EvidenceSource {
-                adapter: stream.adapter.clone(),
-                observation_id: observation.observation_id.clone(),
-                confidence_micros: observation.confidence_micros,
-            });
+        }
+        preserved.push(PreservedEvidenceStream {
+            adapter: stream.adapter.clone(),
+            kind: stream_kind(stream),
+            stream_sha256: stream.stream_sha256.clone(),
+            observations: stream
+                .observations
+                .iter()
+                .map(|o| PreservedObservation {
+                    observation_id: o.observation_id.clone(),
+                    evidence_id: o.evidence_id.clone(),
+                    start_ms: transform_ms(o.start_ms, &stream.clock).unwrap(),
+                    end_ms: transform_ms(o.end_ms, &stream.clock).unwrap(),
+                    normalized: o.normalized.clone(),
+                    phones: o.phones.clone(),
+                    confidence_micros: o.confidence_micros,
+                })
+                .collect(),
+        });
+    }
+    Ok(preserved)
+}
+
+fn canonical_words(canonical: &BTreeMap<u32, &CanonicalSyllable>) -> Vec<(String, u32)> {
+    let mut words = Vec::new();
+    for syllable in canonical.values() {
+        let token = syllable.word.to_ascii_lowercase();
+        if words.last().is_none_or(|(prior, _)| prior != &token) {
+            words.push((token, syllable.index));
         }
     }
-    Ok(fused)
+    words
+}
+
+fn discover_anchor_islands(
+    request: &AlignmentRequest,
+    canonical: &BTreeMap<u32, &CanonicalSyllable>,
+) -> (Vec<AnchorIsland>, Vec<AmbiguousNgram>) {
+    let words = canonical_words(canonical);
+    let mut islands = Vec::new();
+    let mut ambiguous = Vec::new();
+    let mut occurrences = BTreeMap::<(u32, u32), u32>::new();
+    for stream in request
+        .evidence_streams
+        .iter()
+        .filter(|s| stream_kind(s) == "independent_asr")
+    {
+        for size in [3usize, 2] {
+            for window in stream.observations.windows(size) {
+                if window
+                    .iter()
+                    .any(|o| o.confidence_micros < 850_000 || o.normalized.is_none())
+                {
+                    continue;
+                }
+                let tokens: Vec<String> = window
+                    .iter()
+                    .map(|o| o.normalized.as_ref().unwrap().to_ascii_lowercase())
+                    .collect();
+                let matches: Vec<_> = words
+                    .windows(size)
+                    .enumerate()
+                    .filter(|(_, w)| w.iter().map(|x| &x.0).eq(tokens.iter()))
+                    .map(|(n, _)| n)
+                    .collect();
+                if matches.len() != 1 {
+                    if matches.len() > 1 {
+                        ambiguous.push(AmbiguousNgram {
+                            adapter: stream.adapter.clone(),
+                            first_evidence_id: window[0].evidence_id.clone(),
+                            last_evidence_id: window[size - 1].evidence_id.clone(),
+                            normalized_tokens: tokens,
+                            canonical_match_count: matches.len(),
+                        });
+                    }
+                    continue;
+                }
+                if islands.iter().any(|i: &AnchorIsland| {
+                    i.adapter == stream.adapter
+                        && (i.first_evidence_id == window[0].evidence_id
+                            || i.last_evidence_id == window[size - 1].evidence_id)
+                }) {
+                    continue;
+                }
+                let start = matches[0];
+                let first = words[start].1;
+                let last = words[start + size - 1].1;
+                let occurrence = occurrences.entry((first, last)).or_insert(0);
+                *occurrence += 1;
+                islands.push(AnchorIsland {
+                    occurrence: *occurrence,
+                    first_evidence_id: window[0].evidence_id.clone(),
+                    last_evidence_id: window[size - 1].evidence_id.clone(),
+                    canonical_first: first,
+                    canonical_last: last,
+                    token_count: size,
+                    adapter: stream.adapter.clone(),
+                    confidence_micros: window
+                        .iter()
+                        .map(|o| o.confidence_micros)
+                        .min()
+                        .unwrap_or(0),
+                    immutable: true,
+                });
+            }
+        }
+    }
+    islands.sort_by_key(|i| {
+        request
+            .evidence
+            .iter()
+            .position(|e| e.id == i.first_evidence_id)
+            .unwrap_or(usize::MAX)
+    });
+    (islands, ambiguous)
+}
+
+fn island_members(
+    island: &AnchorIsland,
+    request: &AlignmentRequest,
+    canonical: &BTreeMap<u32, &CanonicalSyllable>,
+) -> Vec<(String, u32)> {
+    let Some(stream) = request
+        .evidence_streams
+        .iter()
+        .find(|s| s.adapter == island.adapter)
+    else {
+        return vec![];
+    };
+    let Some(first) = stream
+        .observations
+        .iter()
+        .position(|o| o.evidence_id == island.first_evidence_id)
+    else {
+        return vec![];
+    };
+    let words = canonical_words(canonical);
+    let Some(canonical_first) = words
+        .iter()
+        .position(|(_, index)| *index == island.canonical_first)
+    else {
+        return vec![];
+    };
+    stream.observations[first..first + island.token_count]
+        .iter()
+        .enumerate()
+        .map(|(n, o)| (o.evidence_id.clone(), words[canonical_first + n].1))
+        .collect()
 }
 
 #[derive(Clone)]
@@ -536,6 +726,7 @@ fn solve_ranked_paths(
     canonical: &BTreeMap<u32, &CanonicalSyllable>,
     score_by_canonical: &BTreeMap<u32, &ScoreEvent>,
     anchors: &BTreeMap<&str, &HumanAnchor>,
+    island_locks: &BTreeMap<String, u32>,
     resolve: Option<&ResolveScope>,
 ) -> (Vec<SongRecommendation>, BTreeMap<String, Option<u32>>) {
     let mut beam = vec![BeamPath {
@@ -560,6 +751,8 @@ fn solve_ranked_paths(
             vec![None]
         } else if let Some(anchor) = anchors.get(event.id.as_str()) {
             vec![Some(anchor.canonical_index)]
+        } else if let Some(index) = island_locks.get(&event.id) {
+            vec![Some(*index)]
         } else if bounds
             .is_some_and(|(first, last)| event_position < first || event_position > last)
         {
