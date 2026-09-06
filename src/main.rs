@@ -68,6 +68,14 @@ fn run_cli() -> Result<()> {
             let report = reel::sung_lyric_alignment::align_file(&request, &output_path)?;
             print_report(&report, output)?;
         }
+        Command::SingerSheetCleanup {
+            request,
+            output_path,
+            output,
+        } => {
+            let report = reel::singer_sheet_cleanup::cleanup_file(&request, &output_path)?;
+            print_report(&report, output)?;
+        }
         Command::Validate { manifest, output } => {
             if reel::production::is_production_manifest(&manifest)? {
                 let loaded = reel::production::load(&manifest)?;
@@ -2291,6 +2299,14 @@ struct AnimaticCaptionArgs {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Recommend readable singer notation while retaining the exact performance clock.
+    SingerSheetCleanup {
+        request: PathBuf,
+        #[arg(long)]
+        output_path: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
     /// Fuse provider-neutral sung-lyric evidence into a deterministic candidate alignment.
     SungLyricAlign {
         request: PathBuf,

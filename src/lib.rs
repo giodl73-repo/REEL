@@ -41,6 +41,7 @@ pub mod screen_demo;
 pub mod selection_lock;
 pub mod series;
 pub mod showrunner;
+pub mod singer_sheet_cleanup;
 pub mod song;
 pub mod sonic_assets;
 pub mod sprite_choreography;
