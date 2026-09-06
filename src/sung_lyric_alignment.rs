@@ -153,6 +153,7 @@ pub struct AlignmentDocument {
     pub recommended: Vec<AlignmentEvent>,
     pub ranked_recommendations: Vec<SongRecommendation>,
     pub timing_segments: Vec<TimingSegment>,
+    pub performed_count_inference: PerformedCountInference,
     pub evidence_streams: Vec<PreservedEvidenceStream>,
     pub anchor_islands: Vec<AnchorIsland>,
     pub ambiguous_ngrams: Vec<AmbiguousNgram>,
@@ -161,6 +162,21 @@ pub struct AlignmentDocument {
     pub validation: Validation,
     pub review_state: String,
     pub resolved_scope: Option<ResolveScopeResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PerformedCountInference {
+    pub canonical_minimum: usize,
+    pub supplied_lyric_events: usize,
+    pub independent_asr_syllable_capacity: usize,
+    pub score_lyric_capacity: usize,
+    pub phonetic_boundary_capacity: usize,
+    pub acoustic_activity_capacity: usize,
+    pub human_anchor_capacity: usize,
+    pub plausible_minimum: usize,
+    pub plausible_maximum: usize,
+    pub inferred_maximum: usize,
+    pub ambiguous: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -300,6 +316,7 @@ pub fn align_file(input: &Path, output: &Path) -> Result<AlignmentDocument> {
 
 pub fn align(request: &AlignmentRequest) -> Result<AlignmentDocument> {
     validate_request(request)?;
+    let performed_count_inference = infer_performed_count(request);
     let evidence_streams = preserve_evidence_streams(request)?;
     let mut evidence = request.evidence.clone();
     let canonical: BTreeMap<u32, &CanonicalSyllable> =
@@ -368,6 +385,21 @@ pub fn align(request: &AlignmentRequest) -> Result<AlignmentDocument> {
         });
         let selected_index = selected.get(evidence.id.as_str()).copied().flatten();
         if let Some(index) = selected_index {
+            if !candidates
+                .iter()
+                .any(|candidate| candidate.canonical_index == index)
+                && island_locks.get(&evidence.id) == Some(&index)
+            {
+                candidates.push(EvidenceCandidate {
+                    canonical_index: index,
+                    confidence_micros: evidence
+                        .sources
+                        .iter()
+                        .map(|source| source.confidence_micros)
+                        .max()
+                        .unwrap_or(0),
+                });
+            }
             candidates.sort_by_key(|c| {
                 (
                     c.canonical_index != index,
@@ -487,6 +519,7 @@ pub fn align(request: &AlignmentRequest) -> Result<AlignmentDocument> {
         recommended,
         ranked_recommendations,
         timing_segments,
+        performed_count_inference,
         evidence_streams,
         anchor_islands,
         ambiguous_ngrams,
@@ -496,6 +529,78 @@ pub fn align(request: &AlignmentRequest) -> Result<AlignmentDocument> {
         review_state: "machine-candidate-human-listening-required".into(),
         resolved_scope: resolve_scope_result(request, &evidence)?,
     })
+}
+
+fn infer_performed_count(request: &AlignmentRequest) -> PerformedCountInference {
+    let mut word_syllables = BTreeMap::<String, usize>::new();
+    for syllable in &request.canonical {
+        *word_syllables
+            .entry(syllable.word.to_ascii_lowercase())
+            .or_insert(0) += 1;
+    }
+    let independent_asr_syllable_capacity = request
+        .evidence_streams
+        .iter()
+        .filter(|stream| stream_kind(stream) == "independent_asr")
+        .map(|stream| {
+            stream
+                .observations
+                .iter()
+                .filter(|observation| observation.confidence_micros >= 850_000)
+                .filter_map(|observation| observation.normalized.as_ref())
+                .filter_map(|token| word_syllables.get(&token.to_ascii_lowercase()))
+                .sum::<usize>()
+        })
+        .max()
+        .unwrap_or(0);
+    let score_lyric_capacity = request
+        .score_events
+        .iter()
+        .map(|event| event.canonical_indices.len())
+        .sum();
+    let acoustic_activity_capacity = request
+        .evidence_streams
+        .iter()
+        .filter(|stream| stream_kind(stream) == "acoustic_activity")
+        .map(|stream| stream.observations.len())
+        .max()
+        .unwrap_or(0);
+    let phonetic_boundary_capacity = request
+        .evidence_streams
+        .iter()
+        .filter(|stream| stream_kind(stream) == "forced_alignment")
+        .map(|stream| stream.observations.len())
+        .max()
+        .unwrap_or(0);
+    let human_anchor_capacity = request.anchors.len();
+    let supplied_lyric_events = request
+        .evidence
+        .iter()
+        .filter(|event| event.class == "lyric")
+        .count();
+    let canonical_minimum = request.canonical.len();
+    let plausible_minimum = canonical_minimum
+        .max(supplied_lyric_events)
+        .max(independent_asr_syllable_capacity);
+    let plausible_maximum = plausible_minimum
+        .max(independent_asr_syllable_capacity)
+        .max(score_lyric_capacity)
+        .max(phonetic_boundary_capacity)
+        .max(acoustic_activity_capacity)
+        .max(human_anchor_capacity);
+    PerformedCountInference {
+        canonical_minimum,
+        supplied_lyric_events,
+        independent_asr_syllable_capacity,
+        score_lyric_capacity,
+        phonetic_boundary_capacity,
+        acoustic_activity_capacity,
+        human_anchor_capacity,
+        plausible_minimum,
+        plausible_maximum,
+        inferred_maximum: plausible_maximum,
+        ambiguous: plausible_minimum != plausible_maximum,
+    }
 }
 
 fn transform_ms(value: u64, clock: &ClockTransform) -> Result<u64> {
@@ -640,6 +745,52 @@ impl PerformedEvidence {
     }
 }
 
+#[derive(Clone)]
+struct IslandProposal {
+    observation_first: usize,
+    observation_last: usize,
+    canonical_word_first: usize,
+    token_count: usize,
+    confidence_micros: u32,
+}
+
+fn maximum_non_overlapping_proposals(mut proposals: Vec<IslandProposal>) -> Vec<IslandProposal> {
+    proposals.sort_by_key(|proposal| {
+        (
+            proposal.observation_last,
+            proposal.observation_first,
+            std::cmp::Reverse(proposal.token_count),
+            proposal.canonical_word_first,
+        )
+    });
+    let mut best: Vec<(u64, Vec<usize>)> = vec![(0, vec![]); proposals.len() + 1];
+    for index in 0..proposals.len() {
+        let compatible = (0..index)
+            .rev()
+            .find(|prior| proposals[*prior].observation_last < proposals[index].observation_first)
+            .map_or(0, |prior| prior + 1);
+        let weight =
+            proposals[index].confidence_micros as u64 * proposals[index].token_count as u64;
+        let mut include = best[compatible].clone();
+        include.0 += weight;
+        include.1.push(index);
+        let exclude = best[index].clone();
+        best[index + 1] = if include.0 > exclude.0
+            || (include.0 == exclude.0 && include.1.as_slice() < exclude.1.as_slice())
+        {
+            include
+        } else {
+            exclude
+        };
+    }
+    best.pop()
+        .unwrap_or_default()
+        .1
+        .into_iter()
+        .map(|index| proposals[index].clone())
+        .collect()
+}
+
 fn discover_anchor_islands(
     request: &AlignmentRequest,
     canonical: &BTreeMap<u32, &CanonicalSyllable>,
@@ -656,16 +807,9 @@ fn discover_anchor_islands(
         .iter()
         .filter(|s| stream_kind(s) == "independent_asr")
     {
-        let mut occurrence_cursor = 0usize;
-        let mut used_observations = BTreeSet::new();
+        let mut proposals = Vec::new();
         for size in [3usize, 2] {
-            for window in stream.observations.windows(size) {
-                if window
-                    .iter()
-                    .any(|observation| used_observations.contains(&observation.observation_id))
-                {
-                    continue;
-                }
+            for (observation_first, window) in stream.observations.windows(size).enumerate() {
                 if window
                     .iter()
                     .any(|o| o.confidence_micros < 850_000 || o.normalized.is_none())
@@ -694,94 +838,106 @@ fn discover_anchor_islands(
                     }
                     continue;
                 }
-                let start = matches[0];
-                let expected: Vec<u32> = words[start..start + size]
-                    .iter()
-                    .flat_map(|word| word.syllables.iter().copied())
-                    .collect();
-                let lyric: Vec<_> = evidence
-                    .iter()
-                    .filter(|event| event.class == "lyric")
-                    .collect();
-                if expected.len() > lyric.len() || occurrence_cursor + expected.len() > lyric.len()
-                {
-                    continue;
-                }
-                let Some(bound_start) =
-                    (occurrence_cursor..=lyric.len() - expected.len()).find(|position| {
-                        lyric[*position..*position + expected.len()]
-                            .iter()
-                            .zip(&expected)
-                            .all(|(event, index)| {
-                                event
-                                    .candidates
-                                    .iter()
-                                    .max_by_key(|candidate| candidate.confidence_micros)
-                                    .is_some_and(|candidate| candidate.canonical_index == *index)
-                            })
-                    })
-                else {
-                    continue;
-                };
-                let bound = &lyric[bound_start..bound_start + expected.len()];
-                let evidence_ids: Vec<_> = bound.iter().map(|event| event.id.clone()).collect();
-                if islands.iter().any(|i: &AnchorIsland| {
-                    i.adapter == stream.adapter && i.first_evidence_id == evidence_ids[0]
-                }) {
-                    continue;
-                }
-                occurrence_cursor = bound_start + expected.len();
-                used_observations.extend(
-                    window
-                        .iter()
-                        .map(|observation| observation.observation_id.clone()),
-                );
-                let first = words[start].first;
-                let last = words[start + size - 1].last;
-                let occurrence = occurrences.entry((first, last)).or_insert(0);
-                *occurrence += 1;
-                let mut event_offset = 0usize;
-                for (word, observation) in words[start..start + size].iter().zip(window) {
-                    let word_start = transform_ms(observation.start_ms, &stream.clock)?;
-                    let word_end = transform_ms(observation.end_ms, &stream.clock)?;
-                    let count = word.syllables.len() as u64;
-                    for (syllable_offset, canonical_index) in word.syllables.iter().enumerate() {
-                        let event = bound[event_offset];
-                        let syllable_offset = syllable_offset as u64;
-                        let start_ms =
-                            word_start + (word_end - word_start) * syllable_offset / count;
-                        let end_ms =
-                            word_start + (word_end - word_start) * (syllable_offset + 1) / count;
-                        locks.insert(event.id.clone(), *canonical_index);
-                        timing_overrides.push((
-                            event.id.clone(),
-                            start_ms,
-                            end_ms,
-                            EvidenceSource {
-                                adapter: stream.adapter.clone(),
-                                observation_id: observation.observation_id.clone(),
-                                confidence_micros: observation.confidence_micros,
-                            },
-                        ));
-                        event_offset += 1;
-                    }
-                }
-                islands.push(AnchorIsland {
-                    occurrence: *occurrence,
-                    first_evidence_id: evidence_ids[0].clone(),
-                    last_evidence_id: evidence_ids[size - 1].clone(),
-                    canonical_first: first,
-                    canonical_last: last,
+                proposals.push(IslandProposal {
+                    observation_first,
+                    observation_last: observation_first + size - 1,
+                    canonical_word_first: matches[0],
                     token_count: size,
-                    adapter: stream.adapter.clone(),
                     confidence_micros: window
                         .iter()
-                        .map(|o| o.confidence_micros)
+                        .map(|observation| observation.confidence_micros)
                         .min()
                         .unwrap_or(0),
-                    immutable: true,
                 });
             }
+        }
+        let lyric: Vec<_> = evidence
+            .iter()
+            .filter(|event| event.class == "lyric")
+            .collect();
+        let mut occurrence_cursor = 0usize;
+        for proposal in maximum_non_overlapping_proposals(proposals) {
+            let start = proposal.canonical_word_first;
+            let size = proposal.token_count;
+            let window =
+                &stream.observations[proposal.observation_first..=proposal.observation_last];
+            let expected: Vec<u32> = words[start..start + size]
+                .iter()
+                .flat_map(|word| word.syllables.iter().copied())
+                .collect();
+            if expected.len() > lyric.len() || occurrence_cursor + expected.len() > lyric.len() {
+                continue;
+            }
+            let asr_start = transform_ms(window[0].start_ms, &stream.clock)?;
+            let asr_end = transform_ms(window[size - 1].end_ms, &stream.clock)?;
+            let bound_start = (occurrence_cursor..=lyric.len() - expected.len())
+                .min_by_key(|position| {
+                    let identity_disagreements = lyric[*position..*position + expected.len()]
+                        .iter()
+                        .zip(&expected)
+                        .filter(|(event, index)| {
+                            event
+                                .candidates
+                                .iter()
+                                .max_by_key(|candidate| candidate.confidence_micros)
+                                .is_none_or(|candidate| candidate.canonical_index != **index)
+                        })
+                        .count() as u64;
+                    identity_disagreements * 10_000_000
+                        + lyric[*position].start_ms.abs_diff(asr_start)
+                        + lyric[*position + expected.len() - 1]
+                            .end_ms
+                            .abs_diff(asr_end)
+                })
+                .unwrap();
+            let bound = &lyric[bound_start..bound_start + expected.len()];
+            let evidence_ids: Vec<_> = bound.iter().map(|event| event.id.clone()).collect();
+            if islands.iter().any(|i: &AnchorIsland| {
+                i.adapter == stream.adapter && i.first_evidence_id == evidence_ids[0]
+            }) {
+                continue;
+            }
+            occurrence_cursor = bound_start + expected.len();
+            let first = words[start].first;
+            let last = words[start + size - 1].last;
+            let occurrence = occurrences.entry((first, last)).or_insert(0);
+            *occurrence += 1;
+            let mut event_offset = 0usize;
+            for (word, observation) in words[start..start + size].iter().zip(window) {
+                let word_start = transform_ms(observation.start_ms, &stream.clock)?;
+                let word_end = transform_ms(observation.end_ms, &stream.clock)?;
+                let count = word.syllables.len() as u64;
+                for (syllable_offset, canonical_index) in word.syllables.iter().enumerate() {
+                    let event = bound[event_offset];
+                    let syllable_offset = syllable_offset as u64;
+                    let start_ms = word_start + (word_end - word_start) * syllable_offset / count;
+                    let end_ms =
+                        word_start + (word_end - word_start) * (syllable_offset + 1) / count;
+                    locks.insert(event.id.clone(), *canonical_index);
+                    timing_overrides.push((
+                        event.id.clone(),
+                        start_ms,
+                        end_ms,
+                        EvidenceSource {
+                            adapter: stream.adapter.clone(),
+                            observation_id: observation.observation_id.clone(),
+                            confidence_micros: observation.confidence_micros,
+                        },
+                    ));
+                    event_offset += 1;
+                }
+            }
+            islands.push(AnchorIsland {
+                occurrence: *occurrence,
+                first_evidence_id: evidence_ids[0].clone(),
+                last_evidence_id: evidence_ids[expected.len() - 1].clone(),
+                canonical_first: first,
+                canonical_last: last,
+                token_count: size,
+                adapter: stream.adapter.clone(),
+                confidence_micros: proposal.confidence_micros,
+                immutable: true,
+            });
         }
     }
     islands.sort_by_key(|i| {

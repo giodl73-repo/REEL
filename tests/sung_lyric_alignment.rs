@@ -275,7 +275,7 @@ fn independent_asr_seeds_first_last_and_repeated_anchor_islands() {
     let repeated: Vec<_> = document
         .anchor_islands
         .iter()
-        .filter(|i| i.canonical_first == 1 && i.canonical_last == 3)
+        .filter(|i| i.canonical_first == 1 && i.canonical_last == 2)
         .map(|i| i.occurrence)
         .collect();
     assert_eq!(repeated, vec![1, 2]);
@@ -479,6 +479,79 @@ fn low_confidence_or_misspelled_asr_words_do_not_lock_syllables() {
     let document = align(&input).unwrap();
     assert!(document.anchor_islands.is_empty());
     assert_eq!(document.recommended[0].start_ms, 0);
+}
+
+#[test]
+fn independent_later_island_reanchors_stale_candidate_identities() {
+    let mut input = request(&[1, 2, 3, 3, 4, 5]);
+    for (position, syllable) in input.canonical.iter_mut().enumerate() {
+        syllable.word = format!("word-{}", position + 1);
+    }
+    for position in 3..6 {
+        input.evidence[position].candidates = vec![EvidenceCandidate {
+            canonical_index: position as u32,
+            confidence_micros: 990_000,
+        }];
+    }
+    let mut stream = word_stream(
+        "independent_asr",
+        "global-island-asr",
+        &[("word-4", 3), ("word-5", 4), ("word-6", 5)],
+    );
+    for observation in &mut stream.observations {
+        observation.evidence_id = None;
+    }
+    input.evidence_streams.push(stream);
+    let document = align(&input).unwrap();
+    assert_eq!(
+        document.recommended[3..6]
+            .iter()
+            .map(|event| event.canonical_index)
+            .collect::<Vec<_>>(),
+        vec![Some(4), Some(5), Some(6)]
+    );
+    assert_eq!(document.anchor_islands[0].first_evidence_id, "ev-3");
+    assert_eq!(document.anchor_islands[0].last_evidence_id, "ev-5");
+}
+
+#[test]
+fn performed_count_inference_reports_deterministic_ambiguity_bounds() {
+    let mut input = request(&[1, 2, 3]);
+    input.evidence_streams.push(word_stream(
+        "independent_asr",
+        "repeat-count-asr",
+        &[
+            ("w1", 0),
+            ("w2", 1),
+            ("w3", 2),
+            ("w1", 0),
+            ("w2", 1),
+            ("w3", 2),
+        ],
+    ));
+    input.evidence_streams.push(word_stream(
+        "acoustic_activity",
+        "activity-count",
+        &[
+            ("", 0),
+            ("", 0),
+            ("", 0),
+            ("", 0),
+            ("", 0),
+            ("", 0),
+            ("", 0),
+        ],
+    ));
+    let first = align(&input).unwrap();
+    let second = align(&input).unwrap();
+    assert_eq!(
+        first.performed_count_inference,
+        second.performed_count_inference
+    );
+    assert_eq!(first.performed_count_inference.plausible_minimum, 6);
+    assert_eq!(first.performed_count_inference.plausible_maximum, 7);
+    assert_eq!(first.performed_count_inference.inferred_maximum, 7);
+    assert!(first.performed_count_inference.ambiguous);
 }
 
 #[test]
