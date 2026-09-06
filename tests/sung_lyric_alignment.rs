@@ -343,6 +343,145 @@ fn unassociated_independent_asr_island_repairs_multi_second_stale_timing() {
 }
 
 #[test]
+fn asr_words_bind_full_unequal_syllable_spans_and_distribute_word_time() {
+    let mut input = request(&[1, 2, 3, 4, 5, 6, 6]);
+    input.canonical = [
+        (1, "Cantaré", "can"),
+        (2, "Cantaré", "ta"),
+        (3, "Cantaré", "ré"),
+        (4, "a", "a"),
+        (5, "la", "la"),
+        (6, "playa", "pla"),
+        (7, "playa", "ya"),
+    ]
+    .into_iter()
+    .map(|(index, word, syllable)| CanonicalSyllable {
+        index,
+        line_id: "line-1".into(),
+        word: word.into(),
+        printed: syllable.into(),
+        normalized: syllable.to_ascii_lowercase(),
+        phones: vec![format!("p{index}")],
+        vowel_nucleus: "a".into(),
+    })
+    .collect();
+    input.score_events = (1..=7)
+        .map(|index| ScoreEvent {
+            id: format!("note-{index}"),
+            order: index,
+            measure: "1".into(),
+            voice: "1".into(),
+            kind: "note".into(),
+            start_ms: None,
+            end_ms: None,
+            canonical_indices: vec![index],
+        })
+        .collect();
+    input.evidence = (1..=7)
+        .map(|index| PerformedEvidence {
+            id: format!("span-{index}"),
+            start_ms: index as u64 * 100,
+            end_ms: index as u64 * 100 + 90,
+            class: "lyric".into(),
+            normalized: None,
+            phones: vec![],
+            vowel_nucleus: None,
+            candidates: vec![EvidenceCandidate {
+                canonical_index: index,
+                confidence_micros: 900_000,
+            }],
+            sources: vec![EvidenceSource {
+                adapter: "candidate".into(),
+                observation_id: format!("candidate-{index}"),
+                confidence_micros: 900_000,
+            }],
+        })
+        .collect();
+    let mut stream = word_stream(
+        "independent_asr",
+        "word-span-asr",
+        &[("cantaré", 0), ("a", 0), ("la", 0)],
+    );
+    for observation in &mut stream.observations {
+        observation.evidence_id = None;
+    }
+    stream.observations[0].start_ms = 4_000;
+    stream.observations[0].end_ms = 4_900;
+    stream.observations[1].start_ms = 4_900;
+    stream.observations[1].end_ms = 5_000;
+    stream.observations[2].start_ms = 5_000;
+    stream.observations[2].end_ms = 5_100;
+    input.evidence_streams.push(stream);
+    let mut closing_stream = word_stream(
+        "independent_asr",
+        "closing-word-span-asr",
+        &[("a", 0), ("la", 0), ("playa", 0)],
+    );
+    for observation in &mut closing_stream.observations {
+        observation.evidence_id = None;
+    }
+    closing_stream.observations[0].start_ms = 4_900;
+    closing_stream.observations[0].end_ms = 5_000;
+    closing_stream.observations[1].start_ms = 5_000;
+    closing_stream.observations[1].end_ms = 5_100;
+    closing_stream.observations[2].start_ms = 5_100;
+    closing_stream.observations[2].end_ms = 5_700;
+    input.evidence_streams.push(closing_stream);
+
+    let first = align(&input).unwrap();
+    let second = align(&input).unwrap();
+    assert_eq!(first, second);
+    assert_eq!(first.anchor_islands[0].canonical_first, 1);
+    assert_eq!(first.anchor_islands[0].canonical_last, 5);
+    assert_eq!(
+        first.recommended[..5]
+            .iter()
+            .map(|event| (event.canonical_index, event.start_ms, event.end_ms))
+            .collect::<Vec<_>>(),
+        vec![
+            (Some(1), 4_000, 4_300),
+            (Some(2), 4_300, 4_600),
+            (Some(3), 4_600, 4_900),
+            (Some(4), 4_900, 5_000),
+            (Some(5), 5_000, 5_100),
+        ]
+    );
+    assert_eq!(first.anchor_islands[1].canonical_first, 4);
+    assert_eq!(first.anchor_islands[1].canonical_last, 7);
+    assert_eq!(
+        first.recommended[5..7]
+            .iter()
+            .map(|event| (event.canonical_index, event.start_ms, event.end_ms))
+            .collect::<Vec<_>>(),
+        vec![(Some(6), 5_100, 5_400), (Some(7), 5_400, 5_700)]
+    );
+    assert!(first.recommended[..5].iter().all(|event| {
+        event
+            .evidence
+            .iter()
+            .any(|source| source.adapter == "word-span-asr")
+    }));
+}
+
+#[test]
+fn low_confidence_or_misspelled_asr_words_do_not_lock_syllables() {
+    let mut input = request(&[1, 2, 3]);
+    input.canonical[0].word = "canta".into();
+    input.canonical[1].word = "sobre".into();
+    input.canonical[2].word = "mar".into();
+    let mut stream = word_stream(
+        "independent_asr",
+        "uncertain-asr",
+        &[("kanta", 0), ("sobre", 1), ("mar", 2)],
+    );
+    stream.observations[1].confidence_micros = 849_999;
+    input.evidence_streams.push(stream);
+    let document = align(&input).unwrap();
+    assert!(document.anchor_islands.is_empty());
+    assert_eq!(document.recommended[0].start_ms, 0);
+}
+
+#[test]
 fn bounded_resolve_requires_locked_neighbors_and_preserves_them() {
     let mut input = request(&[1, 2, 3, 4]);
     input.anchors = vec![

@@ -302,29 +302,6 @@ pub fn align(request: &AlignmentRequest) -> Result<AlignmentDocument> {
     validate_request(request)?;
     let evidence_streams = preserve_evidence_streams(request)?;
     let mut evidence = request.evidence.clone();
-    for stream in request
-        .evidence_streams
-        .iter()
-        .filter(|s| stream_kind(s) == "independent_asr")
-    {
-        let lyric_positions: Vec<usize> = evidence
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| e.class == "lyric")
-            .map(|(n, _)| n)
-            .collect();
-        for (n, observation) in stream
-            .observations
-            .iter()
-            .enumerate()
-            .filter(|(_, o)| o.evidence_id.is_none())
-        {
-            if let Some(position) = lyric_positions.get(n) {
-                evidence[*position].start_ms = transform_ms(observation.start_ms, &stream.clock)?;
-                evidence[*position].end_ms = transform_ms(observation.end_ms, &stream.clock)?;
-            }
-        }
-    }
     let canonical: BTreeMap<u32, &CanonicalSyllable> =
         request.canonical.iter().map(|s| (s.index, s)).collect();
     let score_by_canonical: BTreeMap<u32, &ScoreEvent> = request
@@ -337,11 +314,19 @@ pub fn align(request: &AlignmentRequest) -> Result<AlignmentDocument> {
         .iter()
         .map(|a| (a.evidence_id.as_str(), a))
         .collect();
-    let (anchor_islands, ambiguous_ngrams) = discover_anchor_islands(request, &canonical);
-    let island_locks: BTreeMap<String, u32> = anchor_islands
-        .iter()
-        .flat_map(|island| island_members(island, request, &canonical))
-        .collect();
+    let discovery = discover_anchor_islands(request, &canonical, &evidence)?;
+    for (evidence_id, start_ms, end_ms, source) in &discovery.timing_overrides {
+        if let Some(event) = evidence.iter_mut().find(|event| event.id == *evidence_id) {
+            event.start_ms = *start_ms;
+            event.end_ms = *end_ms;
+            if !event.evidence_source_matches(source) {
+                event.sources.push(source.clone());
+            }
+        }
+    }
+    let anchor_islands = discovery.islands;
+    let ambiguous_ngrams = discovery.ambiguous;
+    let island_locks = discovery.locks;
     let mut occurrences = BTreeMap::<u32, u32>::new();
     let mut recommended = Vec::new();
     let mut alternatives = Vec::new();
@@ -612,52 +597,75 @@ fn preserve_evidence_streams(request: &AlignmentRequest) -> Result<Vec<Preserved
     Ok(preserved)
 }
 
-fn canonical_words(canonical: &BTreeMap<u32, &CanonicalSyllable>) -> Vec<(String, u32)> {
+#[derive(Clone)]
+struct CanonicalWord {
+    token: String,
+    first: u32,
+    last: u32,
+    syllables: Vec<u32>,
+}
+
+fn canonical_words(canonical: &BTreeMap<u32, &CanonicalSyllable>) -> Vec<CanonicalWord> {
     let mut words = Vec::new();
     for syllable in canonical.values() {
         let token = syllable.word.to_ascii_lowercase();
-        if words.last().is_none_or(|(prior, _)| prior != &token) {
-            words.push((token, syllable.index));
+        if let Some(prior) = words
+            .last_mut()
+            .filter(|prior: &&mut CanonicalWord| prior.token == token)
+        {
+            prior.last = syllable.index;
+            prior.syllables.push(syllable.index);
+        } else {
+            words.push(CanonicalWord {
+                token,
+                first: syllable.index,
+                last: syllable.index,
+                syllables: vec![syllable.index],
+            });
         }
     }
     words
 }
 
-fn associated_evidence_id(
-    observation: &AdapterObservation,
-    stream: &EvidenceStream,
-    request: &AlignmentRequest,
-) -> Option<String> {
-    if let Some(id) = &observation.evidence_id {
-        return Some(id.clone());
+struct AnchorDiscovery {
+    islands: Vec<AnchorIsland>,
+    ambiguous: Vec<AmbiguousNgram>,
+    locks: BTreeMap<String, u32>,
+    timing_overrides: Vec<(String, u64, u64, EvidenceSource)>,
+}
+
+impl PerformedEvidence {
+    fn evidence_source_matches(&self, source: &EvidenceSource) -> bool {
+        self.sources.iter().any(|existing| existing == source)
     }
-    let position = stream
-        .observations
-        .iter()
-        .position(|o| o.observation_id == observation.observation_id)?;
-    request
-        .evidence
-        .iter()
-        .filter(|e| e.class == "lyric")
-        .nth(position)
-        .map(|e| e.id.clone())
 }
 
 fn discover_anchor_islands(
     request: &AlignmentRequest,
     canonical: &BTreeMap<u32, &CanonicalSyllable>,
-) -> (Vec<AnchorIsland>, Vec<AmbiguousNgram>) {
+    evidence: &[PerformedEvidence],
+) -> Result<AnchorDiscovery> {
     let words = canonical_words(canonical);
     let mut islands = Vec::new();
     let mut ambiguous = Vec::new();
+    let mut locks = BTreeMap::new();
+    let mut timing_overrides = Vec::new();
     let mut occurrences = BTreeMap::<(u32, u32), u32>::new();
     for stream in request
         .evidence_streams
         .iter()
         .filter(|s| stream_kind(s) == "independent_asr")
     {
+        let mut occurrence_cursor = 0usize;
+        let mut used_observations = BTreeSet::new();
         for size in [3usize, 2] {
             for window in stream.observations.windows(size) {
+                if window
+                    .iter()
+                    .any(|observation| used_observations.contains(&observation.observation_id))
+                {
+                    continue;
+                }
                 if window
                     .iter()
                     .any(|o| o.confidence_micros < 850_000 || o.normalized.is_none())
@@ -668,45 +676,96 @@ fn discover_anchor_islands(
                     .iter()
                     .map(|o| o.normalized.as_ref().unwrap().to_ascii_lowercase())
                     .collect();
-                let evidence_ids: Vec<String> = window
-                    .iter()
-                    .filter_map(|o| associated_evidence_id(o, stream, request))
-                    .collect();
-                if evidence_ids.len() != size
-                    || evidence_ids.windows(2).any(|pair| pair[0] == pair[1])
-                {
-                    continue;
-                }
                 let matches: Vec<_> = words
                     .windows(size)
                     .enumerate()
-                    .filter(|(_, w)| w.iter().map(|x| &x.0).eq(tokens.iter()))
+                    .filter(|(_, w)| w.iter().map(|x| &x.token).eq(tokens.iter()))
                     .map(|(n, _)| n)
                     .collect();
                 if matches.len() != 1 {
                     if matches.len() > 1 {
                         ambiguous.push(AmbiguousNgram {
                             adapter: stream.adapter.clone(),
-                            first_evidence_id: evidence_ids[0].clone(),
-                            last_evidence_id: evidence_ids[size - 1].clone(),
+                            first_evidence_id: window[0].observation_id.clone(),
+                            last_evidence_id: window[size - 1].observation_id.clone(),
                             normalized_tokens: tokens,
                             canonical_match_count: matches.len(),
                         });
                     }
                     continue;
                 }
+                let start = matches[0];
+                let expected: Vec<u32> = words[start..start + size]
+                    .iter()
+                    .flat_map(|word| word.syllables.iter().copied())
+                    .collect();
+                let lyric: Vec<_> = evidence
+                    .iter()
+                    .filter(|event| event.class == "lyric")
+                    .collect();
+                if expected.len() > lyric.len() || occurrence_cursor + expected.len() > lyric.len()
+                {
+                    continue;
+                }
+                let Some(bound_start) =
+                    (occurrence_cursor..=lyric.len() - expected.len()).find(|position| {
+                        lyric[*position..*position + expected.len()]
+                            .iter()
+                            .zip(&expected)
+                            .all(|(event, index)| {
+                                event
+                                    .candidates
+                                    .iter()
+                                    .max_by_key(|candidate| candidate.confidence_micros)
+                                    .is_some_and(|candidate| candidate.canonical_index == *index)
+                            })
+                    })
+                else {
+                    continue;
+                };
+                let bound = &lyric[bound_start..bound_start + expected.len()];
+                let evidence_ids: Vec<_> = bound.iter().map(|event| event.id.clone()).collect();
                 if islands.iter().any(|i: &AnchorIsland| {
-                    i.adapter == stream.adapter
-                        && (i.first_evidence_id == evidence_ids[0]
-                            || i.last_evidence_id == evidence_ids[size - 1])
+                    i.adapter == stream.adapter && i.first_evidence_id == evidence_ids[0]
                 }) {
                     continue;
                 }
-                let start = matches[0];
-                let first = words[start].1;
-                let last = words[start + size - 1].1;
+                occurrence_cursor = bound_start + expected.len();
+                used_observations.extend(
+                    window
+                        .iter()
+                        .map(|observation| observation.observation_id.clone()),
+                );
+                let first = words[start].first;
+                let last = words[start + size - 1].last;
                 let occurrence = occurrences.entry((first, last)).or_insert(0);
                 *occurrence += 1;
+                let mut event_offset = 0usize;
+                for (word, observation) in words[start..start + size].iter().zip(window) {
+                    let word_start = transform_ms(observation.start_ms, &stream.clock)?;
+                    let word_end = transform_ms(observation.end_ms, &stream.clock)?;
+                    let count = word.syllables.len() as u64;
+                    for (syllable_offset, canonical_index) in word.syllables.iter().enumerate() {
+                        let event = bound[event_offset];
+                        let syllable_offset = syllable_offset as u64;
+                        let start_ms =
+                            word_start + (word_end - word_start) * syllable_offset / count;
+                        let end_ms =
+                            word_start + (word_end - word_start) * (syllable_offset + 1) / count;
+                        locks.insert(event.id.clone(), *canonical_index);
+                        timing_overrides.push((
+                            event.id.clone(),
+                            start_ms,
+                            end_ms,
+                            EvidenceSource {
+                                adapter: stream.adapter.clone(),
+                                observation_id: observation.observation_id.clone(),
+                                confidence_micros: observation.confidence_micros,
+                            },
+                        ));
+                        event_offset += 1;
+                    }
+                }
                 islands.push(AnchorIsland {
                     occurrence: *occurrence,
                     first_evidence_id: evidence_ids[0].clone(),
@@ -732,49 +791,12 @@ fn discover_anchor_islands(
             .position(|e| e.id == i.first_evidence_id)
             .unwrap_or(usize::MAX)
     });
-    (islands, ambiguous)
-}
-
-fn island_members(
-    island: &AnchorIsland,
-    request: &AlignmentRequest,
-    canonical: &BTreeMap<u32, &CanonicalSyllable>,
-) -> Vec<(String, u32)> {
-    let Some(stream) = request
-        .evidence_streams
-        .iter()
-        .find(|s| s.adapter == island.adapter)
-    else {
-        return vec![];
-    };
-    let associated: Vec<_> = stream
-        .observations
-        .iter()
-        .map(|o| associated_evidence_id(o, stream, request))
-        .collect();
-    let Some(first) = associated
-        .iter()
-        .position(|id| id.as_deref() == Some(island.first_evidence_id.as_str()))
-    else {
-        return vec![];
-    };
-    let words = canonical_words(canonical);
-    let Some(canonical_first) = words
-        .iter()
-        .position(|(_, index)| *index == island.canonical_first)
-    else {
-        return vec![];
-    };
-    stream.observations[first..first + island.token_count]
-        .iter()
-        .enumerate()
-        .map(|(n, _)| {
-            (
-                associated[first + n].clone().unwrap(),
-                words[canonical_first + n].1,
-            )
-        })
-        .collect()
+    Ok(AnchorDiscovery {
+        islands,
+        ambiguous,
+        locks,
+        timing_overrides,
+    })
 }
 
 #[derive(Clone)]
