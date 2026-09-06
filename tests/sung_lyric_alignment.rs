@@ -154,12 +154,13 @@ fn bounded_resolve_recomputes_repeat_offsets_without_moving_locked_exterior() {
 }
 
 #[test]
-fn imports_phone_evidence_and_ranks_complete_song_paths() {
+fn preserves_forced_phone_evidence_without_claiming_independent_identity() {
     let mut input = request(&[1, 2, 3]);
     input.evidence[1].phones.clear();
     input.evidence[1].vowel_nucleus = None;
     input.evidence_streams.push(EvidenceStream {
         adapter: "synthetic-mfa-phones".into(),
+        kind: Some("forced_alignment".into()),
         stream_sha256: "c".repeat(64),
         clock: ClockTransform {
             offset_ms: 0,
@@ -188,12 +189,132 @@ fn imports_phone_evidence_and_ranks_complete_song_paths() {
     );
     assert!(document.ranked_recommendations.len() >= 2);
     assert!(
-        document.recommended[1]
+        !document.recommended[1]
             .evidence
             .iter()
             .any(|e| e.adapter == "synthetic-mfa-phones")
     );
+    assert_eq!(document.evidence_streams[0].kind, "forced_alignment");
+    assert_eq!(
+        document.evidence_streams[0].observations[0].phones,
+        vec!["p2"]
+    );
     assert_eq!(document.recommended[1].phones, vec!["p2"]);
+}
+
+fn word_stream(kind: &str, adapter: &str, words: &[(&str, usize)]) -> EvidenceStream {
+    EvidenceStream {
+        adapter: adapter.into(),
+        kind: Some(kind.into()),
+        stream_sha256: "d".repeat(64),
+        clock: ClockTransform {
+            offset_ms: 0,
+            rate_num: 1,
+            rate_den: 1,
+        },
+        observations: words
+            .iter()
+            .enumerate()
+            .map(|(n, (word, evidence))| AdapterObservation {
+                observation_id: format!("{adapter}-{n}"),
+                evidence_id: format!("ev-{evidence}"),
+                start_ms: *evidence as u64 * 100,
+                end_ms: *evidence as u64 * 100 + 90,
+                confidence_micros: 950_000,
+                normalized: Some((*word).into()),
+                phones: vec![],
+                vowel_nucleus: None,
+                candidates: vec![],
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn independent_asr_seeds_first_last_and_repeated_anchor_islands() {
+    let mut input = request(&[1, 2, 3, 4, 5]);
+    let repeated = input.evidence.clone();
+    for (n, mut event) in repeated.into_iter().enumerate() {
+        event.id = format!("ev-{}", n + 5);
+        event.start_ms += 500;
+        event.end_ms += 500;
+        input.evidence.push(event);
+    }
+    for (n, syllable) in input.canonical.iter_mut().enumerate() {
+        syllable.word = ["sol", "sobre", "mar", "canta", "hoy", "luz"][n].into();
+    }
+    input.evidence_streams.push(word_stream(
+        "independent_asr",
+        "local-asr",
+        &[
+            ("sol", 0),
+            ("sobre", 1),
+            ("mar", 2),
+            ("canta", 3),
+            ("hoy", 4),
+            ("sol", 5),
+            ("sobre", 6),
+            ("mar", 7),
+            ("canta", 8),
+            ("hoy", 9),
+        ],
+    ));
+    let document = align(&input).unwrap();
+    assert!(
+        document
+            .anchor_islands
+            .iter()
+            .any(|i| i.first_evidence_id == "ev-0")
+    );
+    assert!(
+        document
+            .anchor_islands
+            .iter()
+            .any(|i| i.last_evidence_id == "ev-9")
+    );
+    let repeated: Vec<_> = document
+        .anchor_islands
+        .iter()
+        .filter(|i| i.canonical_first == 1 && i.canonical_last == 3)
+        .map(|i| i.occurrence)
+        .collect();
+    assert_eq!(repeated, vec![1, 2]);
+    assert_eq!(document.evidence_streams[0].kind, "independent_asr");
+}
+
+#[test]
+fn forced_transcript_phones_and_activity_cannot_create_anchor_over_accompaniment() {
+    let mut input = request(&[1, 2, 3]);
+    input.evidence_streams.push(word_stream(
+        "forced_alignment",
+        "mfa-transcript-forced",
+        &[("w1", 0), ("w2", 1), ("w3", 2)],
+    ));
+    input.evidence_streams.push(word_stream(
+        "acoustic_activity",
+        "vocal-energy",
+        &[("w1", 0), ("w2", 1), ("w3", 2)],
+    ));
+    let document = align(&input).unwrap();
+    assert!(document.anchor_islands.is_empty());
+    assert_eq!(document.evidence_streams.len(), 2);
+}
+
+#[test]
+fn non_unique_asr_phrase_is_surfaced_as_ambiguous_not_anchored() {
+    let mut input = request(&[1, 2, 3, 4]);
+    input.canonical[0].word = "de".into();
+    input.canonical[1].word = "mar".into();
+    input.canonical[2].word = "de".into();
+    input.canonical[3].word = "mar".into();
+    input.evidence_streams.push(word_stream(
+        "independent_asr",
+        "local-asr",
+        &[("de", 0), ("mar", 1)],
+    ));
+    let document = align(&input).unwrap();
+    assert!(document.anchor_islands.is_empty());
+    assert_eq!(document.ambiguous_ngrams[0].canonical_match_count, 2);
 }
 
 #[test]
