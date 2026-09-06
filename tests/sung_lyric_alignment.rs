@@ -19,6 +19,8 @@ fn request(indices: &[u32]) -> AlignmentRequest {
             measure: "1".into(),
             voice: "1".into(),
             kind: "note".into(),
+            start_ms: None,
+            end_ms: None,
             canonical_indices: vec![index],
         })
         .collect();
@@ -66,6 +68,89 @@ fn request(indices: &[u32]) -> AlignmentRequest {
         anchors: vec![],
         resolve: None,
     }
+}
+
+#[test]
+fn repeat_timing_segments_accumulate_across_two_completed_loops() {
+    let mut input = request(&[1, 2, 3, 1, 2, 3, 4, 5, 4, 5, 6]);
+    for (position, score) in input.score_events.iter_mut().enumerate() {
+        score.start_ms = Some(position as u64 * 100);
+        score.end_ms = Some(position as u64 * 100 + 90);
+    }
+    let document = align(&input).unwrap();
+    let offsets: Vec<_> = document
+        .timing_segments
+        .iter()
+        .map(|segment| {
+            (
+                segment.opened_by_repeat,
+                segment.cumulative_repeat_offset_ms,
+            )
+        })
+        .collect();
+    assert_eq!(
+        offsets,
+        vec![
+            (false, 0),
+            (true, 0),
+            (false, 300),
+            (true, 300),
+            (false, 500)
+        ]
+    );
+    assert_eq!(
+        document
+            .timing_segments
+            .iter()
+            .map(|segment| segment.comparison_offset_ms)
+            .collect::<Vec<_>>(),
+        vec![0, 300, 300, 500, 500]
+    );
+    assert_eq!(document.recommended[6].recording_score_offset_ms, Some(300));
+    assert_eq!(
+        document.recommended[10].recording_score_offset_ms,
+        Some(500)
+    );
+    assert_eq!(
+        document.ranked_recommendations[0].timing_segments,
+        document.timing_segments
+    );
+    assert!(document.validation.timing_within_500ms);
+}
+
+#[test]
+fn bounded_resolve_recomputes_repeat_offsets_without_moving_locked_exterior() {
+    let mut input = request(&[1, 2, 3, 1, 2, 3, 4, 5, 4, 5, 6]);
+    for (position, score) in input.score_events.iter_mut().enumerate() {
+        score.start_ms = Some(position as u64 * 100);
+        score.end_ms = Some(position as u64 * 100 + 90);
+    }
+    input.anchors.push(HumanAnchor {
+        correction_id: "locked-left".into(),
+        evidence_id: "ev-0".into(),
+        canonical_index: 1,
+        reviewer: "owner".into(),
+        created_at: "2026-09-06T00:00:00Z".into(),
+    });
+    input.resolve = Some(ResolveScope {
+        first_evidence_id: "ev-1".into(),
+        last_evidence_id: "ev-10".into(),
+    });
+    let document = align(&input).unwrap();
+    assert!(document.recommended[0].locked_human);
+    assert_eq!(document.recommended[0].recording_score_offset_ms, Some(0));
+    assert_eq!(
+        document.recommended[10].recording_score_offset_ms,
+        Some(500)
+    );
+    assert_eq!(
+        document
+            .timing_segments
+            .last()
+            .unwrap()
+            .cumulative_repeat_offset_ms,
+        500
+    );
 }
 
 #[test]
