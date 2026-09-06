@@ -109,6 +109,12 @@ audio, and requires exact CFR output duration. `--clean-picture` suppresses
 captions, speaker badges, and the persistent disclosure overlay. See
 [`docs/frame-conformed-score-states-v0.3.21.md`](docs/frame-conformed-score-states-v0.3.21.md).
 
+CLI v0.3.22 adds offline browser compositions for deterministic HTML/SVG/CSS/JS
+score and presentation rendering. A single Chromium page receives an exact
+frame-indexed clock, captures every delivery frame, binds hash-pinned local
+assets and optional master audio, and records browser/frame lineage. See
+[`docs/deterministic-browser-compositions-v0.3.22.md`](docs/deterministic-browser-compositions-v0.3.22.md).
+
 CLI v0.2.46 adds owner-selected `cover` or `contain` visual fit while preserving
 `cover` as the default, and teaches motion review to honor limited-animation
 `hold_frames`. See
