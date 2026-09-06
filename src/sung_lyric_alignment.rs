@@ -43,7 +43,8 @@ pub struct EvidenceStream {
 #[serde(deny_unknown_fields)]
 pub struct AdapterObservation {
     pub observation_id: String,
-    pub evidence_id: String,
+    #[serde(default)]
+    pub evidence_id: Option<String>,
     pub start_ms: u64,
     pub end_ms: u64,
     pub confidence_micros: u32,
@@ -173,7 +174,7 @@ pub struct PreservedEvidenceStream {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PreservedObservation {
     pub observation_id: String,
-    pub evidence_id: String,
+    pub evidence_id: Option<String>,
     pub start_ms: u64,
     pub end_ms: u64,
     pub normalized: Option<String>,
@@ -300,7 +301,30 @@ pub fn align_file(input: &Path, output: &Path) -> Result<AlignmentDocument> {
 pub fn align(request: &AlignmentRequest) -> Result<AlignmentDocument> {
     validate_request(request)?;
     let evidence_streams = preserve_evidence_streams(request)?;
-    let evidence = request.evidence.clone();
+    let mut evidence = request.evidence.clone();
+    for stream in request
+        .evidence_streams
+        .iter()
+        .filter(|s| stream_kind(s) == "independent_asr")
+    {
+        let lyric_positions: Vec<usize> = evidence
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.class == "lyric")
+            .map(|(n, _)| n)
+            .collect();
+        for (n, observation) in stream
+            .observations
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| o.evidence_id.is_none())
+        {
+            if let Some(position) = lyric_positions.get(n) {
+                evidence[*position].start_ms = transform_ms(observation.start_ms, &stream.clock)?;
+                evidence[*position].end_ms = transform_ms(observation.end_ms, &stream.clock)?;
+            }
+        }
+    }
     let canonical: BTreeMap<u32, &CanonicalSyllable> =
         request.canonical.iter().map(|s| (s.index, s)).collect();
     let score_by_canonical: BTreeMap<u32, &ScoreEvent> = request
@@ -518,6 +542,7 @@ fn preserve_evidence_streams(request: &AlignmentRequest) -> Result<Vec<Preserved
     let evidence_ids: BTreeSet<&str> = request.evidence.iter().map(|e| e.id.as_str()).collect();
     let mut preserved = Vec::new();
     for stream in &request.evidence_streams {
+        let kind = stream_kind(stream);
         if stream.stream_sha256.len() != 64
             || !stream.stream_sha256.bytes().all(|b| b.is_ascii_hexdigit())
         {
@@ -527,11 +552,13 @@ fn preserve_evidence_streams(request: &AlignmentRequest) -> Result<Vec<Preserved
             bail!("adapter stream {} has an invalid clock", stream.adapter);
         }
         for observation in &stream.observations {
-            if !evidence_ids.contains(observation.evidence_id.as_str()) {
+            if let Some(evidence_id) = observation.evidence_id.as_deref()
+                && !evidence_ids.contains(evidence_id)
+            {
                 bail!(
                     "adapter observation {} references unknown evidence {}",
                     observation.observation_id,
-                    observation.evidence_id
+                    evidence_id
                 );
             }
             let start = transform_ms(observation.start_ms, &stream.clock)?;
@@ -542,23 +569,30 @@ fn preserve_evidence_streams(request: &AlignmentRequest) -> Result<Vec<Preserved
                     observation.observation_id
                 );
             }
-            let event = request
-                .evidence
-                .iter()
-                .find(|e| e.id == observation.evidence_id)
-                .unwrap();
-            if end < event.start_ms.saturating_sub(500) || start > event.end_ms.saturating_add(500)
-            {
-                bail!(
-                    "adapter observation {} does not support evidence {} in time",
-                    observation.observation_id,
-                    event.id
-                );
+            if kind != "independent_asr" {
+                let evidence_id = observation.evidence_id.as_deref().context(format!(
+                    "{} observation {} requires evidence_id",
+                    kind, observation.observation_id
+                ))?;
+                let event = request
+                    .evidence
+                    .iter()
+                    .find(|e| e.id == evidence_id)
+                    .unwrap();
+                if end < event.start_ms.saturating_sub(500)
+                    || start > event.end_ms.saturating_add(500)
+                {
+                    bail!(
+                        "adapter observation {} does not support evidence {} in time",
+                        observation.observation_id,
+                        event.id
+                    );
+                }
             }
         }
         preserved.push(PreservedEvidenceStream {
             adapter: stream.adapter.clone(),
-            kind: stream_kind(stream),
+            kind,
             stream_sha256: stream.stream_sha256.clone(),
             observations: stream
                 .observations
@@ -589,6 +623,26 @@ fn canonical_words(canonical: &BTreeMap<u32, &CanonicalSyllable>) -> Vec<(String
     words
 }
 
+fn associated_evidence_id(
+    observation: &AdapterObservation,
+    stream: &EvidenceStream,
+    request: &AlignmentRequest,
+) -> Option<String> {
+    if let Some(id) = &observation.evidence_id {
+        return Some(id.clone());
+    }
+    let position = stream
+        .observations
+        .iter()
+        .position(|o| o.observation_id == observation.observation_id)?;
+    request
+        .evidence
+        .iter()
+        .filter(|e| e.class == "lyric")
+        .nth(position)
+        .map(|e| e.id.clone())
+}
+
 fn discover_anchor_islands(
     request: &AlignmentRequest,
     canonical: &BTreeMap<u32, &CanonicalSyllable>,
@@ -614,6 +668,15 @@ fn discover_anchor_islands(
                     .iter()
                     .map(|o| o.normalized.as_ref().unwrap().to_ascii_lowercase())
                     .collect();
+                let evidence_ids: Vec<String> = window
+                    .iter()
+                    .filter_map(|o| associated_evidence_id(o, stream, request))
+                    .collect();
+                if evidence_ids.len() != size
+                    || evidence_ids.windows(2).any(|pair| pair[0] == pair[1])
+                {
+                    continue;
+                }
                 let matches: Vec<_> = words
                     .windows(size)
                     .enumerate()
@@ -624,8 +687,8 @@ fn discover_anchor_islands(
                     if matches.len() > 1 {
                         ambiguous.push(AmbiguousNgram {
                             adapter: stream.adapter.clone(),
-                            first_evidence_id: window[0].evidence_id.clone(),
-                            last_evidence_id: window[size - 1].evidence_id.clone(),
+                            first_evidence_id: evidence_ids[0].clone(),
+                            last_evidence_id: evidence_ids[size - 1].clone(),
                             normalized_tokens: tokens,
                             canonical_match_count: matches.len(),
                         });
@@ -634,8 +697,8 @@ fn discover_anchor_islands(
                 }
                 if islands.iter().any(|i: &AnchorIsland| {
                     i.adapter == stream.adapter
-                        && (i.first_evidence_id == window[0].evidence_id
-                            || i.last_evidence_id == window[size - 1].evidence_id)
+                        && (i.first_evidence_id == evidence_ids[0]
+                            || i.last_evidence_id == evidence_ids[size - 1])
                 }) {
                     continue;
                 }
@@ -646,8 +709,8 @@ fn discover_anchor_islands(
                 *occurrence += 1;
                 islands.push(AnchorIsland {
                     occurrence: *occurrence,
-                    first_evidence_id: window[0].evidence_id.clone(),
-                    last_evidence_id: window[size - 1].evidence_id.clone(),
+                    first_evidence_id: evidence_ids[0].clone(),
+                    last_evidence_id: evidence_ids[size - 1].clone(),
                     canonical_first: first,
                     canonical_last: last,
                     token_count: size,
@@ -684,10 +747,14 @@ fn island_members(
     else {
         return vec![];
     };
-    let Some(first) = stream
+    let associated: Vec<_> = stream
         .observations
         .iter()
-        .position(|o| o.evidence_id == island.first_evidence_id)
+        .map(|o| associated_evidence_id(o, stream, request))
+        .collect();
+    let Some(first) = associated
+        .iter()
+        .position(|id| id.as_deref() == Some(island.first_evidence_id.as_str()))
     else {
         return vec![];
     };
@@ -701,7 +768,12 @@ fn island_members(
     stream.observations[first..first + island.token_count]
         .iter()
         .enumerate()
-        .map(|(n, o)| (o.evidence_id.clone(), words[canonical_first + n].1))
+        .map(|(n, _)| {
+            (
+                associated[first + n].clone().unwrap(),
+                words[canonical_first + n].1,
+            )
+        })
         .collect()
 }
 

@@ -169,7 +169,7 @@ fn preserves_forced_phone_evidence_without_claiming_independent_identity() {
         },
         observations: vec![AdapterObservation {
             observation_id: "phone-2".into(),
-            evidence_id: "ev-1".into(),
+            evidence_id: Some("ev-1".into()),
             start_ms: 100,
             end_ms: 180,
             confidence_micros: 930_000,
@@ -217,7 +217,7 @@ fn word_stream(kind: &str, adapter: &str, words: &[(&str, usize)]) -> EvidenceSt
             .enumerate()
             .map(|(n, (word, evidence))| AdapterObservation {
                 observation_id: format!("{adapter}-{n}"),
-                evidence_id: format!("ev-{evidence}"),
+                evidence_id: Some(format!("ev-{evidence}")),
                 start_ms: *evidence as u64 * 100,
                 end_ms: *evidence as u64 * 100 + 90,
                 confidence_micros: 950_000,
@@ -315,6 +315,31 @@ fn non_unique_asr_phrase_is_surfaced_as_ambiguous_not_anchored() {
     let document = align(&input).unwrap();
     assert!(document.anchor_islands.is_empty());
     assert_eq!(document.ambiguous_ngrams[0].canonical_match_count, 2);
+}
+
+#[test]
+fn unassociated_independent_asr_island_repairs_multi_second_stale_timing() {
+    let mut input = request(&[1, 2, 3]);
+    input.canonical[0].word = "canta".into();
+    input.canonical[1].word = "sobre".into();
+    input.canonical[2].word = "mar".into();
+    let mut stream = word_stream(
+        "independent_asr",
+        "fresh-asr",
+        &[("canta", 0), ("sobre", 1), ("mar", 2)],
+    );
+    for (n, observation) in stream.observations.iter_mut().enumerate() {
+        observation.evidence_id = None;
+        observation.start_ms = 4_000 + n as u64 * 200;
+        observation.end_ms = observation.start_ms + 150;
+    }
+    input.evidence_streams.push(stream);
+    let document = align(&input).unwrap();
+    assert_eq!(document.recommended[0].start_ms, 4_000);
+    assert_eq!(document.recommended[2].start_ms, 4_400);
+    assert_eq!(document.anchor_islands.len(), 1);
+    assert_eq!(document.anchor_islands[0].canonical_first, 1);
+    assert_eq!(document.anchor_islands[0].canonical_last, 3);
 }
 
 #[test]
