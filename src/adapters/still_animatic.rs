@@ -61,6 +61,8 @@ pub enum EditMode {
     #[default]
     Cinematic,
     Montage,
+    /// Frame-conformed hard cuts for score, lyric, slide, and other discrete states.
+    ScoreState,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
@@ -110,6 +112,7 @@ pub struct AnimaticRenderOptions {
     pub height: u32,
     pub fps: u32,
     pub transition_seconds: f64,
+    pub edit_mode: EditMode,
     pub disclosure: String,
     pub motion_quality: MotionQuality,
     pub motion_curve: MotionCurve,
@@ -1147,6 +1150,45 @@ fn render_internal(
     if options.width % 2 != 0 || options.height % 2 != 0 {
         bail!("width and height must be even for yuv420p delivery");
     }
+    if options.edit_mode == EditMode::ScoreState {
+        let mut expected_start_frame = 0_u64;
+        for shot in &loaded.manifest.shots {
+            let start = shot
+                .start_seconds
+                .ok_or_else(|| anyhow!("score-state shot {} has no conformed start", shot.id))?;
+            let duration = shot
+                .duration_seconds
+                .ok_or_else(|| anyhow!("score-state shot {} has no conformed duration", shot.id))?;
+            let start_frames = start * f64::from(options.fps);
+            let duration_frames = duration * f64::from(options.fps);
+            if (start_frames - start_frames.round()).abs() > 0.000_001
+                || (duration_frames - duration_frames.round()).abs() > 0.000_001
+            {
+                bail!(
+                    "score-state shot {} boundaries are not aligned to the {} fps delivery grid",
+                    shot.id,
+                    options.fps
+                );
+            }
+            if start_frames.round() as u64 != expected_start_frame {
+                bail!(
+                    "score-state shot {} does not begin on the next contiguous delivery frame",
+                    shot.id
+                );
+            }
+            let shot_frames = duration_frames.round() as u64;
+            if shot_frames == 0 {
+                bail!("score-state shot {} must hold at least one frame", shot.id);
+            }
+            expected_start_frame += shot_frames;
+        }
+        if options.transition_seconds != 0.0 {
+            bail!("score-state rendering requires zero-second hard cuts");
+        }
+        if options.audio.is_some() && options.audio_check_report.is_none() {
+            bail!("score-state master audio requires --audio-check-report binding evidence");
+        }
+    }
     let render_scope = requested_scope
         .map(|(shot_id, clean)| scope_to_shot(&mut loaded, shot_id, clean, options.fps))
         .transpose()?;
@@ -1886,7 +1928,12 @@ fn render_internal(
                 .iter()
                 .map(|value| (value * 1000.0).round() as u64)
                 .sum::<u64>();
-            if report.audio.duration_ms.abs_diff(expected_duration_ms) > 50 {
+            let audio_duration_budget_ms = if options.edit_mode == EditMode::ScoreState {
+                (1000.0 / f64::from(options.fps)).ceil() as u64
+            } else {
+                50
+            };
+            if report.audio.duration_ms.abs_diff(expected_duration_ms) > audio_duration_budget_ms {
                 bail!("audio-check duration does not match the conformed timeline");
             }
             let report_sha256 = production::sha256_path(&report_path)?;
@@ -2236,12 +2283,25 @@ fn render_internal(
             2,
         )?;
         filters.extend(compiled.filters);
-        Some(format!("[{}]", compiled.final_label))
+        if options.edit_mode == EditMode::ScoreState {
+            filters.push(format!(
+                "[{}]apad,atrim=duration={timeline_seconds:.9}[score_state_audio]",
+                compiled.final_label
+            ));
+            Some("[score_state_audio]".to_string())
+        } else {
+            Some(format!("[{}]", compiled.final_label))
+        }
     } else if audio.is_some() {
-        Some(format!(
-            "{}:a:0",
-            ffmpeg_input_count + loaded.manifest.audio_events.len()
-        ))
+        let input = ffmpeg_input_count + loaded.manifest.audio_events.len();
+        if options.edit_mode == EditMode::ScoreState {
+            filters.push(format!(
+                "[{input}:a:0]apad,atrim=duration={timeline_seconds:.9}[score_state_audio]"
+            ));
+            Some("[score_state_audio]".to_string())
+        } else {
+            Some(format!("{input}:a:0"))
+        }
     } else {
         None
     };
@@ -2289,8 +2349,10 @@ fn render_internal(
             "aac".to_string(),
             "-b:a".to_string(),
             "128k".to_string(),
-            "-shortest".to_string(),
         ]);
+        if options.edit_mode != EditMode::ScoreState {
+            args.push("-shortest".to_string());
+        }
     }
     args.push(output_argument);
     let render_environment = if options.dry_run {
@@ -2357,11 +2419,17 @@ fn render_internal(
         // timestamp). Preserve the rendered candidate for deterministic
         // downstream trim/pad repair while still rejecting material drift.
         let quantization_budget_ms = frame_ms * 2;
-        if actual_ms.abs_diff(expected_duration_ms) > quantization_budget_ms {
+        let duration_budget_ms = if options.edit_mode == EditMode::ScoreState {
+            0
+        } else {
+            quantization_budget_ms
+        };
+        if actual_ms.abs_diff(expected_duration_ms) > duration_budget_ms {
             bail!(
-                "rendered duration {}ms differs from conformed timeline {}ms by more than two frames",
+                "rendered duration {}ms differs from conformed timeline {}ms beyond the selected edit-mode budget of {}ms",
                 actual_ms,
-                expected_duration_ms
+                expected_duration_ms,
+                duration_budget_ms
             );
         }
         let measured = (
@@ -2442,7 +2510,9 @@ fn render_internal(
         width: options.width,
         height: options.height,
         fps: options.fps,
-        edit_assembly: if options.transition_seconds == 0.0 {
+        edit_assembly: if options.edit_mode == EditMode::ScoreState {
+            "frame-conformed-hard-cut"
+        } else if options.transition_seconds == 0.0 {
             "hard-cut-concat"
         } else {
             "crossfade"
@@ -3547,7 +3617,12 @@ pub fn check_animatic(artifact_manifest: impl AsRef<Path>) -> Result<AnimaticChe
     }
     let duration_ms = (probe.format.duration.parse::<f64>()? * 1000.0).round() as u64;
     let frame_ms = (1000.0 / f64::from(report.fps)).ceil() as u64;
-    if duration_ms.abs_diff(report.duration_ms) > frame_ms {
+    let duration_budget_ms = if report.edit_assembly == "frame-conformed-hard-cut" {
+        0
+    } else {
+        frame_ms
+    };
+    if duration_ms.abs_diff(report.duration_ms) > duration_budget_ms {
         bail!("video duration differs from artifact report by more than one frame");
     }
     if report.output_duration_ms != Some(duration_ms) {
@@ -3931,6 +4006,80 @@ mod tests {
     }
 
     #[test]
+    fn score_state_conforms_304_short_shots_to_exact_delivery_frames() {
+        let temp = tempdir().unwrap();
+        let fixture_root = Path::new("manifests/fixtures/vertical-sound-off")
+            .canonicalize()
+            .unwrap();
+        let mut manifest = production::load(fixture_root.join("manifest.yaml"))
+            .unwrap()
+            .manifest;
+        let template = manifest.shots[0].clone();
+        manifest.shots = (0..304)
+            .map(|index| {
+                let mut shot = template.clone();
+                shot.id = format!("score-state-{index:03}");
+                shot.start_seconds = Some(f64::from(index) * 0.02);
+                shot.duration_seconds = Some(0.02);
+                shot.motion = "hold".to_string();
+                shot.narration_cue_ids.clear();
+                shot
+            })
+            .collect();
+        manifest.scenes[0].duration_seconds = Some(6.08);
+        manifest.platforms[0].target_duration_seconds = Some(6.08);
+        manifest.exports[0].duration_seconds = Some(6.08);
+        manifest.narration_cues.clear();
+        let manifest_path = temp.path().join("score-states.yaml");
+        fs::write(&manifest_path, serde_yaml::to_string(&manifest).unwrap()).unwrap();
+
+        let report = render(&AnimaticRenderOptions {
+            manifest: manifest_path,
+            asset_root: fixture_root,
+            audio: None,
+            audio_check_report: None,
+            silent: true,
+            captions: None,
+            caption_presentation: None,
+            caption_profile: CaptionProfile::YoutubeReview,
+            caption_picture_layout: CaptionPictureLayout::Overlay,
+            speaker_label_policy: SpeakerLabelPolicy::None,
+            speaker_reintroduce_after_ms: None,
+            caption_thresholds: CaptionThresholds::default(),
+            caption_policy_note: None,
+            output: temp.path().join("score-states.mp4"),
+            width: 1280,
+            height: 720,
+            fps: 50,
+            transition_seconds: 0.0,
+            edit_mode: EditMode::ScoreState,
+            disclosure: String::new(),
+            motion_quality: MotionQuality::Smooth,
+            motion_curve: MotionCurve::Linear,
+            encoding_preset: EncodingPreset::Medium,
+            dry_run: true,
+        })
+        .unwrap();
+
+        assert_eq!(report.duration_ms, 6_080);
+        assert_eq!(report.motion.shots.len(), 304);
+        assert!(report.motion.shots.iter().all(|shot| shot.frames == 1));
+        assert_eq!(report.edit_assembly, "frame-conformed-hard-cut");
+        assert!(
+            report
+                .command_arguments
+                .join(" ")
+                .contains("trim=end_frame=304")
+        );
+        assert!(
+            !report
+                .command_arguments
+                .iter()
+                .any(|arg| arg == "-shortest")
+        );
+    }
+
+    #[test]
     fn dry_run_compiles_mixed_media_audio_and_ducking_into_one_graph() {
         let temp = tempdir().unwrap();
         let fixture_root = Path::new("manifests/fixtures/vertical-sound-off")
@@ -4006,6 +4155,7 @@ mod tests {
             height: 720,
             fps: 24,
             transition_seconds: 0.0,
+            edit_mode: EditMode::Montage,
             disclosure: "FIXTURE".to_string(),
             motion_quality: MotionQuality::Smooth,
             motion_curve: MotionCurve::EaseInOut,
@@ -4075,6 +4225,7 @@ mod tests {
             height: 720,
             fps: 24,
             transition_seconds: 0.0,
+            edit_mode: EditMode::Montage,
             disclosure: "FIXTURE".to_string(),
             motion_quality: MotionQuality::Smooth,
             motion_curve: MotionCurve::EaseInOut,
@@ -4247,6 +4398,7 @@ mod tests {
             height: 720,
             fps: 24,
             transition_seconds: 0.0,
+            edit_mode: EditMode::Montage,
             disclosure: "FIXTURE".to_string(),
             motion_quality: MotionQuality::Smooth,
             motion_curve: MotionCurve::EaseInOut,
@@ -4704,6 +4856,7 @@ mod tests {
             height: 720,
             fps: 24,
             transition_seconds: 0.0,
+            edit_mode: EditMode::Montage,
             disclosure: "FIXTURE".to_string(),
             motion_quality: MotionQuality::Legacy,
             motion_curve: MotionCurve::EaseInOut,

@@ -102,6 +102,13 @@ source coverage, privacy-safe continuity references, derivative lineage, and
 long-still motion controls. See
 [`docs/production-manifest-v0.2.md`](docs/production-manifest-v0.2.md).
 
+CLI v0.3.21 adds a `score-state` edit mode for frame-conformed songbooks,
+scores, slides, and other discrete visual states. It validates every boundary
+on the delivery-frame grid, uses deterministic hard cuts, binds checked master
+audio, and requires exact CFR output duration. `--clean-picture` suppresses
+captions, speaker badges, and the persistent disclosure overlay. See
+[`docs/frame-conformed-score-states-v0.3.21.md`](docs/frame-conformed-score-states-v0.3.21.md).
+
 CLI v0.2.46 adds owner-selected `cover` or `contain` visual fit while preserving
 `cover` as the default, and teaches motion review to honor limited-animation
 `hold_frames`. See

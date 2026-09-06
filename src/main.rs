@@ -1459,6 +1459,7 @@ fn run_cli() -> Result<()> {
             effects_music_audio,
             captions,
             no_captions: _,
+            clean_picture,
             caption_options,
             output_path,
             width,
@@ -1477,7 +1478,8 @@ fn run_cli() -> Result<()> {
         } => {
             let effective_transition_seconds = match edit_mode {
                 reel::adapters::still_animatic::EditMode::Cinematic => transition_seconds,
-                reel::adapters::still_animatic::EditMode::Montage => 0.0,
+                reel::adapters::still_animatic::EditMode::Montage
+                | reel::adapters::still_animatic::EditMode::ScoreState => 0.0,
             };
             let base_options = reel::adapters::still_animatic::AnimaticRenderOptions {
                 manifest,
@@ -1485,7 +1487,7 @@ fn run_cli() -> Result<()> {
                 audio,
                 audio_check_report,
                 silent,
-                captions,
+                captions: if clean_picture { None } else { captions },
                 caption_presentation: caption_options.caption_presentation,
                 caption_profile: caption_options.caption_profile,
                 caption_picture_layout: caption_options.caption_picture_layout,
@@ -1503,7 +1505,12 @@ fn run_cli() -> Result<()> {
                 height,
                 fps,
                 transition_seconds: effective_transition_seconds,
-                disclosure,
+                edit_mode,
+                disclosure: if clean_picture {
+                    String::new()
+                } else {
+                    disclosure
+                },
                 motion_quality,
                 motion_curve,
                 encoding_preset,
@@ -3210,13 +3217,16 @@ enum Command {
         effects_music_audio: Option<PathBuf>,
         #[arg(
             long,
-            required_unless_present = "no_captions",
+            required_unless_present_any = ["no_captions", "clean_picture"],
             conflicts_with = "no_captions"
         )]
         captions: Option<PathBuf>,
         /// Render without burned-in captions or speaker badges.
         #[arg(long)]
         no_captions: bool,
+        /// Produce clean picture without captions, speaker badges, or disclosure overlay.
+        #[arg(long, conflicts_with = "captions")]
+        clean_picture: bool,
         #[command(flatten)]
         caption_options: Box<AnimaticCaptionArgs>,
         #[arg(long = "output")]
