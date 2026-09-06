@@ -62,8 +62,83 @@ fn request(indices: &[u32]) -> AlignmentRequest {
         canonical,
         score_events,
         evidence,
+        evidence_streams: vec![],
         anchors: vec![],
+        resolve: None,
     }
+}
+
+#[test]
+fn imports_phone_evidence_and_ranks_complete_song_paths() {
+    let mut input = request(&[1, 2, 3]);
+    input.evidence[1].phones.clear();
+    input.evidence[1].vowel_nucleus = None;
+    input.evidence_streams.push(EvidenceStream {
+        adapter: "synthetic-mfa-phones".into(),
+        stream_sha256: "c".repeat(64),
+        clock: ClockTransform {
+            offset_ms: 0,
+            rate_num: 1,
+            rate_den: 1,
+        },
+        observations: vec![AdapterObservation {
+            observation_id: "phone-2".into(),
+            evidence_id: "ev-1".into(),
+            start_ms: 100,
+            end_ms: 180,
+            confidence_micros: 930_000,
+            normalized: Some("s2".into()),
+            phones: vec!["p2".into()],
+            vowel_nucleus: Some("a".into()),
+            candidates: vec![EvidenceCandidate {
+                canonical_index: 2,
+                confidence_micros: 930_000,
+            }],
+        }],
+    });
+    let document = align(&input).unwrap();
+    assert_eq!(
+        document.ranked_recommendations[0].canonical_path,
+        vec![Some(1), Some(2), Some(3)]
+    );
+    assert!(document.ranked_recommendations.len() >= 2);
+    assert!(
+        document.recommended[1]
+            .evidence
+            .iter()
+            .any(|e| e.adapter == "synthetic-mfa-phones")
+    );
+    assert_eq!(document.recommended[1].phones, vec!["p2"]);
+}
+
+#[test]
+fn bounded_resolve_requires_locked_neighbors_and_preserves_them() {
+    let mut input = request(&[1, 2, 3, 4]);
+    input.anchors = vec![
+        HumanAnchor {
+            correction_id: "left".into(),
+            evidence_id: "ev-0".into(),
+            canonical_index: 1,
+            reviewer: "owner".into(),
+            created_at: "2026-09-06T00:00:00Z".into(),
+        },
+        HumanAnchor {
+            correction_id: "right".into(),
+            evidence_id: "ev-3".into(),
+            canonical_index: 4,
+            reviewer: "owner".into(),
+            created_at: "2026-09-06T00:00:00Z".into(),
+        },
+    ];
+    input.resolve = Some(ResolveScope {
+        first_evidence_id: "ev-1".into(),
+        last_evidence_id: "ev-2".into(),
+    });
+    let document = align(&input).unwrap();
+    let scope = document.resolved_scope.unwrap();
+    assert_eq!((scope.first_position, scope.last_position), (1, 2));
+    assert!(document.recommended[0].locked_human);
+    assert!(document.recommended[3].locked_human);
 }
 
 #[test]
