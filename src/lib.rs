@@ -46,6 +46,7 @@ pub mod sonic_assets;
 pub mod sprite_choreography;
 pub mod sprite_library;
 pub mod sprite_materializer;
+pub mod sung_lyric_alignment;
 pub mod voice_consistency;
 pub mod voice_performance;
 
