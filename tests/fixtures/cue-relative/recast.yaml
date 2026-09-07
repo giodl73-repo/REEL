@@ -1,0 +1,35 @@
+schema: reel.cue-relative-assembly.v0.1
+id: recast-after
+production_manifest: production.yaml
+sample_rate: 48000
+frame_rate: { numerator: 24, denominator: 1 }
+cues:
+  - { cue_id: cue-before, duration_samples: 48000 }
+  - cue_id: cue-recast
+    duration_samples: 144000
+    markers:
+      - { id: spill-word, kind: word, start_sample: 90000, end_sample: 102000 }
+  - { cue_id: cue-after, duration_samples: 48000 }
+attachments:
+  - id: cel-counter
+    target: { kind: cel, shot_id: shot-counter, cel_id: cel-counter-clean }
+    start: { kind: cue-start, cue_id: cue-before }
+    end: { kind: cue-end, cue_id: cue-recast }
+    end_boundary: next-cue
+  - id: spill-picture-effect
+    target: { kind: effect, shot_id: shot-counter, effect_pass_id: fx-spill }
+    start: { kind: marker, cue_id: cue-recast, marker_id: spill-word, edge: start }
+    start_boundary: spill
+  - id: spill-sonic
+    target: { kind: sonic, audio_event_id: sonic-spill }
+    start: { kind: marker, cue_id: cue-recast, marker_id: spill-word, edge: start }
+    start_boundary: spill
+  - id: visitor-caption
+    target: { kind: caption, cue_id: cue-recast, caption_id: cap-visitor }
+    start: { kind: cue-start, cue_id: cue-recast }
+    end: { kind: cue-end, cue_id: cue-recast }
+  - id: next-title
+    target: { kind: title, title_id: title-next }
+    start: { kind: cue-start, cue_id: cue-after }
+    start_boundary: next-cue
+    end: { kind: cue-progress, cue_id: cue-after, numerator: 1, denominator: 2 }

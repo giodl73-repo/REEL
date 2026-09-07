@@ -1,0 +1,31 @@
+manifest_version: reel.manifest.v0.2
+profile: animatic
+timing_status: conformed
+work: recast-fixture
+title: Sanitized cue-relative recast
+scenes:
+  - id: scene-cafe
+shots:
+  - id: shot-counter
+    scene_id: scene-cafe
+    effect_passes:
+      - id: fx-spill
+        color: { path: spill.mov, sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa }
+        matte: { path: spill-matte.mov, sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb }
+        alpha_mode: straight
+        composite_operator: over
+        color_space: rec709
+        alpha_mode_detail: straight-alpha
+        timing_fps: 24
+        duration_frames: 24
+        placement: { space: frame, x: 0.0, y: 0.0, width: 1.0, height: 1.0 }
+        visible_start_frame: 0
+        visible_end_frame: 23
+narration_cues:
+  - { id: cue-before, speaker_id: narrator }
+  - { id: cue-recast, speaker_id: visitor }
+  - { id: cue-after, speaker_id: narrator }
+audio_events:
+  - { id: sonic-spill, role: effect, source: spill.wav, start_seconds: 0.0 }
+beat_markers:
+  - { id: beat-spill, time_seconds: 0.0 }

@@ -377,6 +377,25 @@ fn run_cli() -> Result<()> {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
             }
         }
+        Command::CueRelativeCompile {
+            contract,
+            output_path,
+            output,
+        } => {
+            let report = reel::cue_relative::compile_file(&contract, &output_path)?;
+            match output {
+                OutputFormat::Text => println!(
+                    "{} | contract={} | cues={} | attachments={} | samples={} | boundaries={}",
+                    output_path.display(),
+                    report.contract_id,
+                    report.cues.len(),
+                    report.attachments.len(),
+                    report.duration_samples,
+                    report.shared_boundaries.len()
+                ),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+            }
+        }
         Command::ScreenDemoCaptureReceipt {
             input,
             output_path,
@@ -2435,6 +2454,14 @@ enum Command {
         exposure_sheet: PathBuf,
         #[arg(long)]
         output_path: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Compile semantic cue-relative anchors into deterministic sample/frame timing.
+    CueRelativeCompile {
+        contract: PathBuf,
+        #[arg(long)]
+        output_path: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },

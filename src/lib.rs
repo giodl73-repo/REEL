@@ -29,6 +29,7 @@ pub mod comparison;
 pub mod continuity;
 pub mod craft_plan;
 pub mod cue_import;
+pub mod cue_relative;
 pub mod exposure_sheet;
 pub mod music_render;
 pub mod music_score;
