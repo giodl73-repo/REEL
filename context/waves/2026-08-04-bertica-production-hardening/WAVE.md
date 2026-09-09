@@ -19,6 +19,16 @@ or creating a consumer runtime dependency on REEL internals.
 
 ## Invariants
 
+### 2026-09-09 compiled scene delivery
+
+Added the scene-delivery plan/render/check bridge from the cue-relative compiler
+to exact sample-addressed D/M/E and globally partitioned picture frames. The
+contract enforces composition limits and explicit missing/silent bus choices,
+retains FFV1/PCM masters, and separately encodes review media. The existing VFX,
+caption and changed-only tools retain ownership of their specialized operations.
+See `docs/scene-delivery-v0.1.md`, `docs/reviews/2026-09-09-scene-delivery.md`, and
+`docs/handoff/2026-09-09-scene-delivery.md` for adoption limits and evidence.
+
 - REEL never uploads or copies BERTICA private photographs, voice, manuscript
   text, or binary renders.
 - Transformations create derivatives and do not overwrite planning sources.
