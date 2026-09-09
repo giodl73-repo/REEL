@@ -133,6 +133,10 @@ directory is atomically renamed. Existing output directories are never replaced.
 `scene-review-check` revalidates source receipts, identical dialogue and retained
 output hashes. It does not claim browser inspection or human listening.
 
+Scene-review audio measurements use native PATH FFmpeg/ffprobe on every host,
+sharing the existing audio quality policy/parser without requiring WSL on Windows.
+The established audio-check adapter behavior remains unchanged.
+
 The existing general comparison composer remains the adapter for animatic
 receipts/slates. Scene review consumes native scene-delivery receipts without
 inventing fake animatic evidence and reuses the existing audio quality gate.

@@ -150,7 +150,7 @@ pub fn render(contract_path: &Path, root: &Path, output: &Path) -> Result<Receip
         }
         let narration = dir.join("D.wav");
         let mix = dir.join("mix.wav");
-        let quality = audio_quality::check(AudioCheckOptions {
+        let quality = audio_quality::check_native(AudioCheckOptions {
             audio: &mix,
             narration_stem: Some(&narration),
             effects_music_stem: Some(&em),

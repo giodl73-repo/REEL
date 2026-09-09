@@ -28,3 +28,8 @@ content, timestamps, boundary decisions, changed-dialogue rejection, overwrite
 refusal and output tampering. The same integration test is configured for Windows
 and Linux CI. Local formatting, Clippy, tests and role checks are recorded in the
 handoff once completed; remote CI is required before merge.
+
+Windows CI caught an integration dependency on the legacy WSL audio adapter.
+Scene review now uses a native audio-check entry point sharing the same policy
+and diagnostic parser; the existing adapter entry point remains unchanged.
+The native canary must pass on a Windows runner without WSL before merge.
