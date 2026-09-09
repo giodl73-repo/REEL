@@ -232,6 +232,37 @@ fn real_delivery_preserves_sample_offset_stems_frames_and_rejects_tamper() {
     fs::write(out.join("E.wav"), b"tampered").unwrap();
     assert!(scene_delivery::check(&job, t.path(), &out).is_err());
 
+    let mut video_job = fixture(t.path());
+    for i in 0..2 {
+        video_job["pictures"][i]["source"] = file(t.path(), "delivery/picture.mkv");
+        video_job["pictures"][i]["kind"] = json!("video");
+        video_job["pictures"][i]["source_start_frame"] = json!(i * 24);
+    }
+    write_json(&job, &video_job);
+    let video_out = t.path().join("video-delivery");
+    scene_delivery::render(&job, t.path(), &video_out).unwrap();
+    let video_pixels = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(video_out.join("picture.mkv"))
+        .args([
+            "-vf",
+            "select=eq(n\\,23)+eq(n\\,24)",
+            "-fps_mode",
+            "passthrough",
+            "-pix_fmt",
+            "rgb24",
+            "-f",
+            "rawvideo",
+            "-",
+        ])
+        .output()
+        .unwrap();
+    assert!(video_pixels.status.success());
+    assert_eq!(
+        pixels.stdout, video_pixels.stdout,
+        "a reused motion clip must not restart its action"
+    );
+
     let mut j = fixture(t.path());
     j["audio"][2]["gain_db"] = json!(20.0);
     write_json(&job, &j);

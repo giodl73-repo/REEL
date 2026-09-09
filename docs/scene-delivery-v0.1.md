@@ -70,8 +70,10 @@ perspective should be prepared in the existing sonic/audio tools before intake.
 
 Picture attachments must be shot/cel targets and cover the complete scene exactly
 once in supplied order. `kind: video` accepts an existing verified motion/VFX
-composition; it plays at its native speed from the beginning and must supply enough
-frames. Still inputs get no automatic zoom. An explicit crop changes framing;
+composition; it plays at native speed and must supply enough frames. Optional
+`source_start_frame` selects the starting frame on the delivery-rate source grid
+(after FPS conversion); it never time-scales motion or restarts a reused clip
+implicitly. Still inputs require a zero source offset. Still inputs get no automatic zoom. An explicit crop changes framing;
 matching adjacent source hashes and crops count as one unchanged composition even
 when attachment IDs change. Each picture needs an attention statement. Machine
 checks cannot establish that an almost identical crop is meaningful: human shot

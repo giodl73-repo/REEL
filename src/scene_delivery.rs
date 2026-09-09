@@ -65,6 +65,9 @@ pub struct Picture {
     pub attachment_id: String,
     pub source: FileRef,
     pub kind: PictureKind,
+    /// Offset after resampling the source to the declared delivery frame rate.
+    #[serde(default)]
+    pub source_start_frame: u64,
     pub attention: String,
     #[serde(default)]
     pub crop: Option<Crop>,
@@ -252,6 +255,9 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
             bail!("picture attention missing or coverage gap/overlap");
         }
         checked_file(asset_root, &p.source)?;
+        if p.kind == PictureKind::Still && p.source_start_frame != 0 {
+            bail!("still pictures cannot have a source frame offset");
+        }
         if let Some(c) = &p.crop {
             if c.width == 0 || c.height == 0 {
                 bail!("empty crop");
@@ -527,7 +533,11 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
             .as_ref()
             .map(|c| format!("crop={}:{}:{}:{},", c.width, c.height, c.x, c.y))
             .unwrap_or_default();
-        filters.push(format!("[{i}:v]{crop}scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},trim=end_frame={},setpts=PTS-STARTPTS[v{i}]",job.width,job.height,job.width,job.height,s.end_frame-s.start_frame));
+        let source_end = p
+            .source_start_frame
+            .checked_add(s.end_frame - s.start_frame)
+            .context("source frame offset overflow")?;
+        filters.push(format!("[{i}:v]{crop}scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},trim=start_frame={}:end_frame={source_end},setpts=PTS-STARTPTS[v{i}]",job.width,job.height,job.width,job.height,p.source_start_frame));
     }
     filters.push(format!(
         "{}concat=n={}:v=1:a=0[v]",
