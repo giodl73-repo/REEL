@@ -19,6 +19,15 @@ or creating a consumer runtime dependency on REEL internals.
 
 ## Invariants
 
+### 2026-09-09 episode consumption and comparative review
+
+Added exact decoded scene-to-episode picture/audio verification, D/M/E
+recombination, continuous timestamp checks, explicit external-layer dispositions
+and cut-boundary review findings. Intentional boundaries bind exact scene receipts.
+Added native scene A/B review with identical dialogue and three sound variants,
+reusing the existing audio-quality gate. See `docs/episode-delivery-v0.1.md` and
+the matching review/handoff for measured scope and remaining creative checks.
+
 ### 2026-09-09 compiled scene delivery
 
 Added the scene-delivery plan/render/check bridge from the cue-relative compiler

@@ -143,7 +143,7 @@ pub struct Plan {
     pub creative_authority: String,
 }
 
-fn checked_file(root: &Path, item: &FileRef) -> Result<PathBuf> {
+pub(crate) fn checked_file(root: &Path, item: &FileRef) -> Result<PathBuf> {
     if item.path.is_absolute()
         || item
             .path
@@ -391,7 +391,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
     Ok((job, plan))
 }
 
-fn ffmpeg(args: &[String]) -> Result<()> {
+pub(crate) fn ffmpeg(args: &[String]) -> Result<()> {
     let mut local_args = Vec::new();
     for argument in args {
         if argument == "-i" {
@@ -408,7 +408,7 @@ fn ffmpeg(args: &[String]) -> Result<()> {
     }
     Ok(())
 }
-fn probe(path: &Path) -> Result<serde_json::Value> {
+pub(crate) fn probe(path: &Path) -> Result<serde_json::Value> {
     let o = Command::new("ffprobe")
         .args([
             "-v",
@@ -430,7 +430,7 @@ fn arg(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-fn finish_pcm(float_path: &Path, output: &Path) -> Result<()> {
+pub(crate) fn finish_pcm(float_path: &Path, output: &Path) -> Result<()> {
     // Reject overload before PCM24 quantization can hide clipping. This is not
     // a loudness/true-peak or intelligibility approval; audio-quality still owns it.
     let result = Command::new("ffmpeg")

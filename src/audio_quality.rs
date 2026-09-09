@@ -153,11 +153,22 @@ pub struct AudioCheckOptions<'a> {
 }
 
 pub fn check(options: AudioCheckOptions<'_>) -> Result<AudioCheckReport> {
+    check_with(options, analyze_audio)
+}
+
+/// Use native PATH tools for native scene delivery, without requiring WSL on Windows.
+/// Quality policies and diagnostic parsing are shared with the existing adapter path.
+pub fn check_native(options: AudioCheckOptions<'_>) -> Result<AudioCheckReport> {
+    check_with(options, |path| analyze_audio_backend(path, true))
+}
+
+type AnalyzeAudio = fn(&Path) -> Result<(AudioFacts, Vec<SilenceRange>)>;
+fn check_with(options: AudioCheckOptions<'_>, analyze: AnalyzeAudio) -> Result<AudioCheckReport> {
     if options.narration_stem.is_some() != options.effects_music_stem.is_some() {
         bail!("provide both narration and effects/music stems or neither");
     }
     let policy = options.profile.policy();
-    let (audio, silence) = analyze_audio(options.audio)?;
+    let (audio, silence) = analyze(options.audio)?;
     let expected_duration_ms = match options.manifest {
         Some(path) => Some(
             production::require_timing_ready(path)?
@@ -171,8 +182,8 @@ pub fn check(options: AudioCheckOptions<'_>) -> Result<AudioCheckReport> {
     };
     let stem_margin = match (options.narration_stem, options.effects_music_stem) {
         (Some(narration), Some(effects)) => {
-            let narration = analyze_audio(narration)?.0;
-            let effects_music = analyze_audio(effects)?.0;
+            let narration = analyze(narration)?.0;
+            let effects_music = analyze(effects)?.0;
             let margin = narration.integrated_lufs - effects_music.integrated_lufs;
             Some(StemMarginReport {
                 narration,
@@ -244,18 +255,27 @@ pub fn write_report(path: &Path, report: &AudioCheckReport) -> Result<()> {
 }
 
 pub fn analyze_audio(path: &Path) -> Result<(AudioFacts, Vec<SilenceRange>)> {
+    analyze_audio_backend(path, false)
+}
+
+fn analyze_audio_backend(path: &Path, native: bool) -> Result<(AudioFacts, Vec<SilenceRange>)> {
     let path = path
         .canonicalize()
         .with_context(|| format!("failed to resolve audio {}", path.display()))?;
     let adapter = FfmpegAdapter;
-    let probe_text = adapter.run_ffprobe(
+    let media_path = if native {
+        path.to_string_lossy().into_owned()
+    } else {
+        adapter.path_argument(&path)?
+    };
+    let probe_text = run_audio_tool(&adapter, native, false,
         &[
             "-v".to_string(), "error".to_string(), "-select_streams".to_string(), "a:0".to_string(),
             "-show_entries".to_string(),
             "stream=codec_name,sample_fmt,bits_per_raw_sample,bits_per_sample,sample_rate,channels:format=duration".to_string(),
             "-of".to_string(), "json".to_string(),
         ],
-        &[adapter.path_argument(&path)?],
+        std::slice::from_ref(&media_path),
     )?;
     let probe: Probe =
         serde_json::from_str(&probe_text).context("ffprobe returned invalid audio JSON")?;
@@ -264,14 +284,17 @@ pub fn analyze_audio(path: &Path) -> Result<(AudioFacts, Vec<SilenceRange>)> {
     }
     let stream = &probe.streams[0];
     let duration_ms = (probe.format.duration.parse::<f64>()? * 1000.0).round() as u64;
-    let diagnostics = adapter.run_ffmpeg_diagnostics(
+    let diagnostics = run_audio_tool(
+        &adapter,
+        native,
+        true,
         &[
             "-hide_banner".to_string(),
             "-nostats".to_string(),
             "-i".to_string(),
         ],
         &[
-            adapter.path_argument(&path)?,
+            media_path,
             "-filter_complex".to_string(),
             "ebur128=peak=true,astats=metadata=0:reset=0,silencedetect=noise=-50dB:d=0.100"
                 .to_string(),
@@ -308,6 +331,40 @@ pub fn analyze_audio(path: &Path) -> Result<(AudioFacts, Vec<SilenceRange>)> {
         },
         silence,
     ))
+}
+
+fn run_audio_tool(
+    adapter: &FfmpegAdapter,
+    native: bool,
+    diagnostics: bool,
+    fixed: &[String],
+    runtime: &[String],
+) -> Result<String> {
+    if !native {
+        return if diagnostics {
+            adapter.run_ffmpeg_diagnostics(fixed, runtime)
+        } else {
+            adapter.run_ffprobe(fixed, runtime)
+        };
+    }
+    let tool = if diagnostics { "ffmpeg" } else { "ffprobe" };
+    let mut command = std::process::Command::new(tool);
+    command.args(["-protocol_whitelist", "file,pipe"]);
+    if diagnostics {
+        command.arg("-nostdin");
+    }
+    let output = command.args(fixed).args(runtime).output()?;
+    if !output.status.success() {
+        bail!(
+            "native {tool} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8(if diagnostics {
+        output.stderr
+    } else {
+        output.stdout
+    })?)
 }
 
 fn violations(

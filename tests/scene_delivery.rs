@@ -3,6 +3,163 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path, process::Command};
 
+#[test]
+#[ignore = "requires FFmpeg; synthetic episode and review integration"]
+fn real_episode_consumption_boundaries_and_controlled_review() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    for name in ["a", "b"] {
+        let dir = root.join(name);
+        fs::create_dir(&dir).unwrap();
+        let mut j = fixture(&dir);
+        let mut c: Value =
+            serde_json::from_slice(&fs::read(dir.join("contract.json")).unwrap()).unwrap();
+        c["id"] = json!(name);
+        write_json(&dir.join("contract.json"), &c);
+        j["id"] = json!(name);
+        j["contract"] = file(&dir, "contract.json");
+        if name == "b" {
+            fs::write(
+                dir.join("black.ppm"),
+                [b"P6\n2 2\n255\n".as_slice(), &[0, 0, 0].repeat(4)].concat(),
+            )
+            .unwrap();
+            j["pictures"][0]["source"] = file(&dir, "black.ppm");
+        }
+        write_json(&dir.join("job.json"), &j);
+        scene_delivery::render(&dir.join("job.json"), &dir, &dir.join("delivery")).unwrap();
+    }
+    let scene = |name: &str| json!({"id":name,"job":file(root,&format!("{name}/job.json")),"asset_root":name,"receipt":file(root,&format!("{name}/delivery/receipt.json"))});
+    let status = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(root.join("a/delivery/master.mkv"))
+        .arg("-i")
+        .arg(root.join("b/delivery/master.mkv"))
+        .args([
+            "-filter_complex",
+            "[0:v][1:v]concat=n=2:v=1:a=0[v];[0:a][1:a]concat=n=2:v=0:a=1[a]",
+            "-map",
+            "[v]",
+            "-map",
+            "[a]",
+            "-c:v",
+            "ffv1",
+            "-pix_fmt",
+            "yuv444p",
+            "-c:a",
+            "pcm_s24le",
+        ])
+        .arg(root.join("master.mkv"))
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let contract = root.join("episode.json");
+    let mut c = json!({"schema":"reel.episode-delivery.v0.1","id":"episode","scenes":[scene("a"),scene("b")],"master":file(root,"master.mkv"),"layers":[],"boundary_decisions":[]});
+    write_json(&contract, &c);
+    let report = reel::episode_delivery::check(&contract, root).unwrap();
+    assert!(report.content_verified);
+    assert!(!report.passed);
+    assert_eq!(report.scenes[1].start_frame, 48);
+    assert_eq!(report.scenes[1].start_sample, 96000);
+    assert!(
+        report
+            .boundary_findings
+            .iter()
+            .any(|f| f.code == "black-at-cut")
+    );
+    fs::write(
+        root.join("intent.txt"),
+        "Synthetic intentional black opening",
+    )
+    .unwrap();
+    c["boundary_decisions"] = json!(report.boundary_findings.iter().map(|f| json!({"left_scene":"a","right_scene":"b","code":f.code,"left_receipt_sha256":file(root,"a/delivery/receipt.json")["sha256"],"right_receipt_sha256":file(root,"b/delivery/receipt.json")["sha256"],"owner":"test-editor","reason":"Intentional synthetic black opening and contact signal","evidence":file(root,"intent.txt")})).collect::<Vec<_>>());
+    write_json(&contract, &c);
+    assert!(
+        reel::episode_delivery::check(&contract, root)
+            .unwrap()
+            .passed
+    );
+    c["scenes"] = json!([scene("b"), scene("a")]);
+    write_json(&contract, &c);
+    assert!(
+        reel::episode_delivery::check(&contract, root)
+            .unwrap_err()
+            .to_string()
+            .contains("does not consume")
+    );
+    c["scenes"] = json!([scene("a"), scene("b")]);
+    let status = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(root.join("master.mkv"))
+        .args(["-c:v", "copy", "-af", "volume=0", "-c:a", "pcm_s24le"])
+        .arg(root.join("muted.mkv"))
+        .status()
+        .unwrap();
+    assert!(status.success());
+    c["master"] = file(root, "muted.mkv");
+    write_json(&contract, &c);
+    assert!(
+        reel::episode_delivery::check(&contract, root)
+            .unwrap_err()
+            .to_string()
+            .contains("does not consume")
+    );
+    let review = root.join("review.json");
+    let status = Command::new("ffmpeg")
+        .args(["-v", "error", "-itsoffset", "0.25", "-i"])
+        .arg(root.join("master.mkv"))
+        .args(["-c", "copy", "-copyts"])
+        .arg(root.join("shifted.mkv"))
+        .status()
+        .unwrap();
+    assert!(status.success());
+    c["master"] = file(root, "shifted.mkv");
+    write_json(&contract, &c);
+    assert!(
+        reel::episode_delivery::check(&contract, root)
+            .unwrap_err()
+            .to_string()
+            .contains("timestamp gap/offset")
+    );
+    write_json(
+        &review,
+        &json!({"schema":"reel.scene-review.v0.1","baseline":scene("a"),"candidate":scene("b")}),
+    );
+    let out = root.join("comparison");
+    let r = reel::scene_review::render(&review, root, &out).unwrap();
+    assert_eq!(r.outputs.len(), 15);
+    assert!(out.join("a-dialogue.mp4").is_file());
+    assert!(out.join("b-no-score.mp4").is_file());
+    reel::scene_review::check(&review, root, &out).unwrap();
+    assert!(reel::scene_review::render(&review, root, &out).is_err());
+    fs::write(out.join("a-dialogue.mp4"), b"tampered").unwrap();
+    assert!(reel::scene_review::check(&review, root, &out).is_err());
+    // A resealed candidate with different dialogue must fail before review output.
+    wav(&root.join("b/a.wav"), 48001, 100000);
+    let mut j: Value = serde_json::from_slice(&fs::read(root.join("b/job.json")).unwrap()).unwrap();
+    j["audio"][0]["source"] = file(&root.join("b"), "a.wav");
+    write_json(&root.join("b/job.json"), &j);
+    scene_delivery::render(
+        &root.join("b/job.json"),
+        &root.join("b"),
+        &root.join("b/recast"),
+    )
+    .unwrap();
+    let mut changed = scene("b");
+    changed["receipt"] = file(root, "b/recast/receipt.json");
+    write_json(
+        &review,
+        &json!({"schema":"reel.scene-review.v0.1","baseline":scene("a"),"candidate":changed}),
+    );
+    assert!(
+        reel::scene_review::render(&review, root, &root.join("invalid-review"))
+            .unwrap_err()
+            .to_string()
+            .contains("identical decoded dialogue")
+    );
+    assert!(!root.join("invalid-review").exists());
+}
+
 fn write_json(path: &Path, v: &Value) {
     fs::write(path, serde_json::to_vec_pretty(v).unwrap()).unwrap();
 }

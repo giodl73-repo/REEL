@@ -377,6 +377,37 @@ fn run_cli() -> Result<()> {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
             }
         }
+        Command::EpisodeDeliveryCheck {
+            contract,
+            asset_root,
+            output_path,
+        } => {
+            let report = reel::episode_delivery::check(&contract, &asset_root)?;
+            let bytes = serde_json::to_vec_pretty(&report)?;
+            if let Some(path) = output_path {
+                std::fs::write(path, &bytes)?;
+            }
+            println!("{}", String::from_utf8(bytes)?);
+            if !report.passed {
+                anyhow::bail!("episode content verified; unresolved boundary findings need review");
+            }
+        }
+        Command::SceneReviewRender {
+            contract,
+            asset_root,
+            output_dir,
+        } => {
+            let report = reel::scene_review::render(&contract, &asset_root, &output_dir)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::SceneReviewCheck {
+            contract,
+            asset_root,
+            output_dir,
+        } => {
+            let report = reel::scene_review::check(&contract, &asset_root, &output_dir)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
         Command::SceneDeliveryPlan {
             job,
             asset_root,
@@ -2481,6 +2512,30 @@ enum Command {
         output_path: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
+    },
+    /// Verify exact ordered scene consumption and flag unresolved boundary findings.
+    EpisodeDeliveryCheck {
+        contract: PathBuf,
+        #[arg(long)]
+        asset_root: PathBuf,
+        #[arg(long)]
+        output_path: Option<PathBuf>,
+    },
+    /// Produce controlled A/B picture and dialogue/no-score/full-mix review variants.
+    SceneReviewRender {
+        contract: PathBuf,
+        #[arg(long)]
+        asset_root: PathBuf,
+        #[arg(long)]
+        output_dir: PathBuf,
+    },
+    /// Verify scene comparison sources, identical dialogue, and all retained outputs.
+    SceneReviewCheck {
+        contract: PathBuf,
+        #[arg(long)]
+        asset_root: PathBuf,
+        #[arg(long)]
+        output_dir: PathBuf,
     },
     /// Plan scene delivery directly from compiled semantic timing and verified inputs.
     SceneDeliveryPlan {
