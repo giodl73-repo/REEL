@@ -377,6 +377,31 @@ fn run_cli() -> Result<()> {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
             }
         }
+        Command::SceneDeliveryPlan {
+            job,
+            asset_root,
+            output_path,
+        } => {
+            let (_, report) = reel::scene_delivery::plan(&job, &asset_root)?;
+            std::fs::write(output_path, serde_json::to_vec_pretty(&report)?)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::SceneDeliveryRender {
+            job,
+            asset_root,
+            output_dir,
+        } => {
+            let report = reel::scene_delivery::render(&job, &asset_root, &output_dir)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::SceneDeliveryCheck {
+            job,
+            asset_root,
+            output_dir,
+        } => {
+            let report = reel::scene_delivery::check(&job, &asset_root, &output_dir)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
         Command::CueRelativeCompile {
             contract,
             output_path,
@@ -2456,6 +2481,30 @@ enum Command {
         output_path: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
+    },
+    /// Plan scene delivery directly from compiled semantic timing and verified inputs.
+    SceneDeliveryPlan {
+        job: PathBuf,
+        #[arg(long)]
+        asset_root: PathBuf,
+        #[arg(long)]
+        output_path: PathBuf,
+    },
+    /// Render a lossless scene master, D/M/E buses and one review encode atomically.
+    SceneDeliveryRender {
+        job: PathBuf,
+        #[arg(long)]
+        asset_root: PathBuf,
+        #[arg(long)]
+        output_dir: PathBuf,
+    },
+    /// Recompile and verify input/output hashes, decoded samples and frame geometry.
+    SceneDeliveryCheck {
+        job: PathBuf,
+        #[arg(long)]
+        asset_root: PathBuf,
+        #[arg(long)]
+        output_dir: PathBuf,
     },
     /// Compile semantic cue-relative anchors into deterministic sample/frame timing.
     CueRelativeCompile {

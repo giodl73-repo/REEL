@@ -39,6 +39,9 @@ edit rhythm, sound, and platform fit before renderer work starts.
   [v0.3.19 effect-pass contract](docs/effect-pass-contract-v0.3.19.md).
 - Rendering one exact clean/effect comparison through the
   [v0.3.20 shot-scoped preview contract](docs/shot-scoped-effect-preview-v0.3.20.md).
+- Rendering [compiled scene deliveries](docs/scene-delivery-v0.1.md) from native
+  cue timing with explicit D/M/E roles, composition limits, lossless masters,
+  separate review encodes and independently rechecked receipts.
 
 ## Non-goals
 
