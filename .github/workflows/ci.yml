@@ -31,6 +31,8 @@ jobs:
       - run: cargo test --all-targets --all-features
       - name: Verify compiled scene delivery samples, stems, frames and tamper rejection
         run: cargo test --test scene_delivery real_delivery_preserves_sample_offset_stems_frames_and_rejects_tamper -- --ignored --exact
+      - name: Verify episode consumption, boundaries and controlled scene comparisons
+        run: cargo test --test scene_delivery real_episode_consumption_boundaries_and_controlled_review -- --ignored --exact
       - name: Exercise synthetic dialogue/stem graph through FFmpeg
         run: cargo test --lib audio_preview::tests::real_dialogue_ducking_stems_recombine_and_recheck -- --ignored --exact
       - name: Exercise governed synthetic sonic resolution through D/M/E rendering on Linux
