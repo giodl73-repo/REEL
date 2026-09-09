@@ -392,9 +392,16 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
 }
 
 fn ffmpeg(args: &[String]) -> Result<()> {
+    let mut local_args = Vec::new();
+    for argument in args {
+        if argument == "-i" {
+            local_args.extend(["-protocol_whitelist".to_string(), "file,pipe".to_string()]);
+        }
+        local_args.push(argument.clone());
+    }
     let output = Command::new("ffmpeg")
         .args(["-hide_banner", "-v", "error", "-nostdin", "-n"])
-        .args(args)
+        .args(local_args)
         .output()?;
     if !output.status.success() {
         bail!("FFmpeg failed: {}", String::from_utf8_lossy(&output.stderr));
@@ -403,7 +410,15 @@ fn ffmpeg(args: &[String]) -> Result<()> {
 }
 fn probe(path: &Path) -> Result<serde_json::Value> {
     let o = Command::new("ffprobe")
-        .args(["-v", "error", "-show_streams", "-of", "json"])
+        .args([
+            "-v",
+            "error",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-show_streams",
+            "-of",
+            "json",
+        ])
         .arg(path)
         .output()?;
     if !o.status.success() {
@@ -419,7 +434,13 @@ fn finish_pcm(float_path: &Path, output: &Path) -> Result<()> {
     // Reject overload before PCM24 quantization can hide clipping. This is not
     // a loudness/true-peak or intelligibility approval; audio-quality still owns it.
     let result = Command::new("ffmpeg")
-        .args(["-hide_banner", "-nostdin", "-i"])
+        .args([
+            "-hide_banner",
+            "-nostdin",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-i",
+        ])
         .arg(float_path)
         .args(["-af", "astats=metadata=0:reset=0", "-f", "null", "-"])
         .output()?;
@@ -447,7 +468,14 @@ fn finish_pcm(float_path: &Path, output: &Path) -> Result<()> {
 }
 fn pcm_samples(path: &Path, sr: u32) -> Result<u64> {
     let mut child = Command::new("ffmpeg")
-        .args(["-v", "error", "-nostdin", "-i"])
+        .args([
+            "-v",
+            "error",
+            "-nostdin",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-i",
+        ])
         .arg(path)
         .args([
             "-map",
