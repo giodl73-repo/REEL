@@ -34,5 +34,5 @@ path = "src/bin/fake_c2patool.rs"
 required-features = ["test-fixtures"]
 
 [workspace]
-members = ["crates/reel-music"]
+members = ["crates/reel-music", "crates/reel-assembly"]
 resolver = "3"
