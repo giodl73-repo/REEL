@@ -198,6 +198,7 @@ pub fn closure(graph: &Graph, target: &str) -> Result<Closure> {
         .iter()
         .map(|event| (event.event_id.as_str(), event))
         .collect();
+    reject_cycles(target, &nodes)?;
     let mut pending = vec![target];
     let mut visited = BTreeSet::new();
     let mut selected = BTreeMap::new();
@@ -244,6 +245,29 @@ pub fn closure(graph: &Graph, target: &str) -> Result<Closure> {
         semantic_events,
         digest_sha256,
     })
+}
+
+fn reject_cycles(target: &str, nodes: &BTreeMap<&str, &Node>) -> Result<()> {
+    fn visit<'a>(
+        id: &'a str,
+        nodes: &BTreeMap<&'a str, &'a Node>,
+        visiting: &mut BTreeSet<&'a str>,
+        complete: &mut BTreeSet<&'a str>,
+    ) -> Result<()> {
+        if complete.contains(id) {
+            return Ok(());
+        }
+        if !visiting.insert(id) {
+            bail!("dependency cycle reaches {id}");
+        }
+        for input in &nodes[id].inputs {
+            visit(input, nodes, visiting, complete)?;
+        }
+        visiting.remove(id);
+        complete.insert(id);
+        Ok(())
+    }
+    visit(target, nodes, &mut BTreeSet::new(), &mut BTreeSet::new())
 }
 
 fn valid_slot(slot: &Slot) -> Result<()> {

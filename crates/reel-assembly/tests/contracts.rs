@@ -102,3 +102,33 @@ fn rejects_filename_authority_and_nonappend_revision_selection() {
     };
     assert!(closure(&graph, "target").is_err());
 }
+
+#[test]
+fn rejects_dependency_cycles_instead_of_silently_deduplicating_them() {
+    let graph = Graph {
+        schema: GRAPH_SCHEMA.into(),
+        lock: reference("lock", 'a'),
+        slots: vec![],
+        events: vec![],
+        nodes: vec![
+            Node {
+                id: "a".into(),
+                inputs: vec!["b".into()],
+                slots: vec![],
+                events: vec![],
+            },
+            Node {
+                id: "b".into(),
+                inputs: vec!["a".into()],
+                slots: vec![],
+                events: vec![],
+            },
+        ],
+    };
+    assert!(
+        closure(&graph, "a")
+            .unwrap_err()
+            .to_string()
+            .contains("dependency cycle")
+    );
+}
