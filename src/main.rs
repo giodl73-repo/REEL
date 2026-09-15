@@ -46,6 +46,21 @@ fn run_animatic_receipt_check(
     print_report(&report, output)
 }
 
+fn run_semantic_assembly_check(
+    graph_path: &PathBuf,
+    pointer_path: &PathBuf,
+    target: &str,
+    output_path: &PathBuf,
+) -> Result<()> {
+    let graph: reel_assembly::Graph = serde_json::from_slice(&std::fs::read(graph_path)?)?;
+    let pointer: reel_assembly::SelectedPointer =
+        serde_json::from_slice(&std::fs::read(pointer_path)?)?;
+    let report = reel_assembly::selected_closure(&pointer, &graph, target)?;
+    std::fs::write(output_path, serde_json::to_vec_pretty(&report)?)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
 fn main() -> Result<()> {
     std::thread::Builder::new()
         .name("reel-cli".to_string())
@@ -449,6 +464,12 @@ fn run_cli() -> Result<()> {
             let report = reel::semantic_delivery::render(&delivery, &asset_root, &output_dir)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
+        Command::SemanticAssemblyCheck {
+            graph,
+            pointer,
+            target,
+            output_path,
+        } => run_semantic_assembly_check(&graph, &pointer, &target, &output_path)?,
         Command::CueRelativeCompile {
             contract,
             output_path,
@@ -2590,6 +2611,17 @@ enum Command {
         asset_root: PathBuf,
         #[arg(long)]
         output_dir: PathBuf,
+    },
+    /// Resolve a REEL graph only through an explicit current pointer and write its closure.
+    SemanticAssemblyCheck {
+        #[arg(long)]
+        graph: PathBuf,
+        #[arg(long)]
+        pointer: PathBuf,
+        #[arg(long)]
+        target: String,
+        #[arg(long)]
+        output_path: PathBuf,
     },
     /// Compile semantic cue-relative anchors into deterministic sample/frame timing.
     CueRelativeCompile {
