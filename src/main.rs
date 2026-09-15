@@ -433,6 +433,22 @@ fn run_cli() -> Result<()> {
             let report = reel::scene_delivery::check(&job, &asset_root, &output_dir)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
+        Command::SemanticDeliveryPlan {
+            delivery,
+            output_path,
+        } => {
+            let report = reel::semantic_delivery::plan(&delivery)?;
+            std::fs::write(output_path, serde_json::to_vec_pretty(&report)?)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::SemanticDeliveryRender {
+            delivery,
+            asset_root,
+            output_dir,
+        } => {
+            let report = reel::semantic_delivery::render(&delivery, &asset_root, &output_dir)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
         Command::CueRelativeCompile {
             contract,
             output_path,
@@ -2556,6 +2572,20 @@ enum Command {
     /// Recompile and verify input/output hashes, decoded samples and frame geometry.
     SceneDeliveryCheck {
         job: PathBuf,
+        #[arg(long)]
+        asset_root: PathBuf,
+        #[arg(long)]
+        output_dir: PathBuf,
+    },
+    /// Resolve an immutable semantic graph closure and prove every scene job asset belongs to it.
+    SemanticDeliveryPlan {
+        delivery: PathBuf,
+        #[arg(long)]
+        output_path: PathBuf,
+    },
+    /// Render a selected semantic delivery only after REEL validates its closure and media bindings.
+    SemanticDeliveryRender {
+        delivery: PathBuf,
         #[arg(long)]
         asset_root: PathBuf,
         #[arg(long)]
