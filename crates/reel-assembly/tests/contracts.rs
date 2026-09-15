@@ -65,12 +65,21 @@ fn closure_is_hash_bound_and_follows_inputs_slots_and_events() {
                 events: vec![],
             },
         ],
+        presentation_targets: vec![PresentationTarget {
+            target_id: "episode-private-review".into(),
+            node: "episode".into(),
+            contract: reference("episode-presentation-v1", 'e'),
+        }],
     };
     let report = closure(&graph, "episode").unwrap();
     assert_eq!(report.node_ids, vec!["episode", "scene"]);
     assert_eq!(report.selected_assets[0].logical_id, "cel-current");
     assert_eq!(report.semantic_events[0].event_id, "event.cue");
     assert_eq!(report.digest_sha256.len(), 64);
+    let presentation = presentation_closure(&graph, "episode-private-review").unwrap();
+    assert_eq!(presentation.closure.target, "episode");
+    assert_eq!(presentation.contract.logical_id, "episode-presentation-v1");
+    assert_eq!(presentation.digest_sha256.len(), 64);
 }
 
 #[test]
@@ -99,6 +108,7 @@ fn rejects_filename_authority_and_nonappend_revision_selection() {
             slots: vec!["slot".into()],
             events: vec![],
         }],
+        presentation_targets: vec![],
     };
     assert!(closure(&graph, "target").is_err());
 }
@@ -124,6 +134,7 @@ fn rejects_dependency_cycles_instead_of_silently_deduplicating_them() {
                 events: vec![],
             },
         ],
+        presentation_targets: vec![],
     };
     assert!(
         closure(&graph, "a")
@@ -131,4 +142,31 @@ fn rejects_dependency_cycles_instead_of_silently_deduplicating_them() {
             .to_string()
             .contains("dependency cycle")
     );
+}
+
+#[test]
+fn presentation_target_must_bind_an_existing_node_and_changes_with_its_contract() {
+    let mut graph = Graph {
+        schema: GRAPH_SCHEMA.into(),
+        lock: reference("lock", 'a'),
+        slots: vec![],
+        events: vec![],
+        nodes: vec![Node {
+            id: "credits".into(),
+            inputs: vec![],
+            slots: vec![],
+            events: vec![],
+        }],
+        presentation_targets: vec![PresentationTarget {
+            target_id: "end-credits".into(),
+            node: "credits".into(),
+            contract: reference("credits-contract-v1", 'b'),
+        }],
+    };
+    let first = presentation_closure(&graph, "end-credits").unwrap();
+    graph.presentation_targets[0].contract = reference("credits-contract-v2", 'c');
+    let second = presentation_closure(&graph, "end-credits").unwrap();
+    assert_ne!(first.digest_sha256, second.digest_sha256);
+    graph.presentation_targets[0].node = "missing".into();
+    assert!(validate_graph(&graph).is_err());
 }

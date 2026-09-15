@@ -102,6 +102,21 @@ pub struct Node {
     pub events: Vec<String>,
 }
 
+/// A named, independently hash-bound presentation output.
+///
+/// This is intentionally generic: a project may use it for an opening, a
+/// chapter card, end credits, or a complete program without teaching REEL
+/// project-specific presentation names. `contract` identifies the immutable
+/// presentation specification and `node` identifies the dependency target
+/// which must be rendered to satisfy it.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PresentationTarget {
+    pub target_id: String,
+    pub node: String,
+    pub contract: ImmutableRef,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Graph {
@@ -111,6 +126,8 @@ pub struct Graph {
     #[serde(default)]
     pub events: Vec<SemanticEvent>,
     pub nodes: Vec<Node>,
+    #[serde(default)]
+    pub presentation_targets: Vec<PresentationTarget>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -119,6 +136,14 @@ pub struct Closure {
     pub node_ids: Vec<String>,
     pub selected_assets: Vec<Asset>,
     pub semantic_events: Vec<SemanticEvent>,
+    pub digest_sha256: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PresentationClosure {
+    pub target_id: String,
+    pub contract: ImmutableRef,
+    pub closure: Closure,
     pub digest_sha256: String,
 }
 
@@ -174,6 +199,21 @@ pub fn validate_graph(graph: &Graph) -> Result<()> {
                 bail!("node {} names unknown event {event}", node.id);
             }
         }
+    }
+    let mut presentation_ids = BTreeSet::new();
+    for target in &graph.presentation_targets {
+        if !presentation_ids.insert(target.target_id.as_str()) {
+            bail!("duplicate presentation target {}", target.target_id);
+        }
+        valid_id("presentation target", &target.target_id)?;
+        if !nodes.contains_key(target.node.as_str()) {
+            bail!(
+                "presentation target {} names unknown node {}",
+                target.target_id,
+                target.node
+            );
+        }
+        valid_ref(&target.contract)?;
     }
     Ok(())
 }
@@ -243,6 +283,29 @@ pub fn closure(graph: &Graph, target: &str) -> Result<Closure> {
         node_ids,
         selected_assets,
         semantic_events,
+        digest_sha256,
+    })
+}
+
+/// Resolves an explicit presentation output to its complete, hash-bound
+/// dependency closure. The outer digest binds the immutable presentation
+/// contract to the graph closure, preventing a caller from reusing a rendered
+/// closure under a changed card, credits, or episode contract.
+pub fn presentation_closure(graph: &Graph, target_id: &str) -> Result<PresentationClosure> {
+    validate_graph(graph)?;
+    let target = graph
+        .presentation_targets
+        .iter()
+        .find(|target| target.target_id == target_id)
+        .ok_or_else(|| anyhow::anyhow!("unknown presentation target {target_id}"))?;
+    let resolved = closure(graph, &target.node)?;
+    let material = serde_json::to_vec(&(target_id, &target.contract, &resolved.digest_sha256))?;
+    let digest = Sha256::digest(material);
+    let digest_sha256 = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    Ok(PresentationClosure {
+        target_id: target_id.into(),
+        contract: target.contract.clone(),
+        closure: resolved,
         digest_sha256,
     })
 }
