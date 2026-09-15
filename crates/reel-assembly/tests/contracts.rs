@@ -80,6 +80,18 @@ fn closure_is_hash_bound_and_follows_inputs_slots_and_events() {
     assert_eq!(presentation.closure.target, "episode");
     assert_eq!(presentation.contract.logical_id, "episode-presentation-v1");
     assert_eq!(presentation.digest_sha256.len(), 64);
+    let selected = selected_closure(
+        &SelectedPointer {
+            schema: POINTER_SCHEMA.into(),
+            logical_id: "s1e02-current-private".into(),
+            selected_lock: graph.lock.clone(),
+        },
+        &graph,
+        "episode",
+    )
+    .unwrap();
+    assert_eq!(selected.closure.digest_sha256, report.digest_sha256);
+    assert_eq!(selected.digest_sha256.len(), 64);
 }
 
 #[test]
@@ -169,4 +181,27 @@ fn presentation_target_must_bind_an_existing_node_and_changes_with_its_contract(
     assert_ne!(first.digest_sha256, second.digest_sha256);
     graph.presentation_targets[0].node = "missing".into();
     assert!(validate_graph(&graph).is_err());
+}
+
+#[test]
+fn selected_pointer_rejects_a_stale_or_differently_named_graph_lock() {
+    let graph = Graph {
+        schema: GRAPH_SCHEMA.into(),
+        lock: reference("episode-lock-v2", 'a'),
+        slots: vec![],
+        events: vec![],
+        nodes: vec![Node {
+            id: "episode".into(),
+            inputs: vec![],
+            slots: vec![],
+            events: vec![],
+        }],
+        presentation_targets: vec![],
+    };
+    let stale = SelectedPointer {
+        schema: POINTER_SCHEMA.into(),
+        logical_id: "episode-current".into(),
+        selected_lock: reference("episode-lock-v1", 'b'),
+    };
+    assert!(selected_closure(&stale, &graph, "episode").is_err());
 }

@@ -147,12 +147,37 @@ pub struct PresentationClosure {
     pub digest_sha256: String,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct SelectedClosure {
+    pub pointer: SelectedPointer,
+    pub closure: Closure,
+    pub digest_sha256: String,
+}
+
 pub fn validate_pointer(pointer: &SelectedPointer) -> Result<()> {
     if pointer.schema != POINTER_SCHEMA {
         bail!("unsupported pointer schema {}", pointer.schema);
     }
     valid_id("pointer", &pointer.logical_id)?;
     valid_ref(&pointer.selected_lock)
+}
+
+/// Verifies that a logical current-pointer actually selects this immutable
+/// graph. A filename such as `latest.json` is therefore never authority: the
+/// pointer and graph must agree on the full lock identity and hash.
+pub fn validate_selected_graph(pointer: &SelectedPointer, graph: &Graph) -> Result<()> {
+    validate_pointer(pointer)?;
+    validate_graph(graph)?;
+    if pointer.selected_lock.logical_id != graph.lock.logical_id
+        || pointer.selected_lock.sha256 != graph.lock.sha256
+    {
+        bail!(
+            "pointer {} does not select graph lock {}",
+            pointer.logical_id,
+            graph.lock.logical_id
+        );
+    }
+    Ok(())
 }
 
 pub fn validate_graph(graph: &Graph) -> Result<()> {
@@ -283,6 +308,26 @@ pub fn closure(graph: &Graph, target: &str) -> Result<Closure> {
         node_ids,
         selected_assets,
         semantic_events,
+        digest_sha256,
+    })
+}
+
+/// Resolves a graph only through an explicit selected pointer and binds that
+/// pointer identity into the receipt digest. Consumers can use this as the
+/// generic handoff boundary between an asset registry and assembly.
+pub fn selected_closure(
+    pointer: &SelectedPointer,
+    graph: &Graph,
+    target: &str,
+) -> Result<SelectedClosure> {
+    validate_selected_graph(pointer, graph)?;
+    let resolved = closure(graph, target)?;
+    let material = serde_json::to_vec(&(pointer, &resolved.digest_sha256))?;
+    let digest = Sha256::digest(material);
+    let digest_sha256 = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    Ok(SelectedClosure {
+        pointer: pointer.clone(),
+        closure: resolved,
         digest_sha256,
     })
 }
