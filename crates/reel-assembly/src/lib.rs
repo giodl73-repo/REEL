@@ -359,7 +359,10 @@ pub fn selected_closure(
 pub fn append_selected_revision(graph: &Graph, request: &SlotRevisionRequest) -> Result<Graph> {
     validate_graph(graph)?;
     if request.schema != REVISION_REQUEST_SCHEMA {
-        bail!("unsupported slot revision request schema {}", request.schema);
+        bail!(
+            "unsupported slot revision request schema {}",
+            request.schema
+        );
     }
     valid_id("slot revision request", &request.slot_id)?;
     valid_id("next graph lock", &request.next_lock_logical_id)?;

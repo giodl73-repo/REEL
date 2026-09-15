@@ -326,18 +326,35 @@ fn selected_revision_cannot_rewind_or_branch_from_the_current_asset() {
             disposition: Disposition::Selected,
             selected_revision_id: Some("r2".into()),
             revisions: vec![
-                Revision { revision_id: "r1".into(), supersedes: None, asset: asset("old", 'b') },
-                Revision { revision_id: "r2".into(), supersedes: Some("r1".into()), asset: asset("current", 'c') },
+                Revision {
+                    revision_id: "r1".into(),
+                    supersedes: None,
+                    asset: asset("old", 'b'),
+                },
+                Revision {
+                    revision_id: "r2".into(),
+                    supersedes: Some("r1".into()),
+                    asset: asset("current", 'c'),
+                },
             ],
         }],
         events: vec![],
-        nodes: vec![Node { id: "scene".into(), inputs: vec![], slots: vec!["picture".into()], events: vec![] }],
+        nodes: vec![Node {
+            id: "scene".into(),
+            inputs: vec![],
+            slots: vec!["picture".into()],
+            events: vec![],
+        }],
         presentation_targets: vec![],
     };
     let request = SlotRevisionRequest {
         schema: REVISION_REQUEST_SCHEMA.into(),
         slot_id: "picture".into(),
-        revision: Revision { revision_id: "r3".into(), supersedes: Some("r1".into()), asset: asset("stale-branch", 'd') },
+        revision: Revision {
+            revision_id: "r3".into(),
+            supersedes: Some("r1".into()),
+            asset: asset("stale-branch", 'd'),
+        },
         next_lock_logical_id: "lock-v3".into(),
     };
     assert!(append_selected_revision(&graph, &request).is_err());
