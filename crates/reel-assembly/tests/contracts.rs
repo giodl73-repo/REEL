@@ -268,3 +268,94 @@ fn selected_pointer_rejects_a_stale_or_differently_named_graph_lock() {
     };
     assert!(selected_closure(&stale, &graph, "episode").is_err());
 }
+
+#[test]
+fn selected_revision_is_append_only_and_advances_the_pointer_to_a_new_lock() {
+    let graph = Graph {
+        schema: GRAPH_SCHEMA.into(),
+        lock: reference("episode-lock-v1", 'a'),
+        slots: vec![Slot {
+            slot_id: "scene.picture".into(),
+            beat_id: "scene.beat".into(),
+            lane: Lane::Picture,
+            disposition: Disposition::Selected,
+            selected_revision_id: Some("r1".into()),
+            revisions: vec![Revision {
+                revision_id: "r1".into(),
+                supersedes: None,
+                asset: asset("cel-v1", 'b'),
+            }],
+        }],
+        events: vec![],
+        nodes: vec![Node {
+            id: "scene".into(),
+            inputs: vec![],
+            slots: vec!["scene.picture".into()],
+            events: vec![],
+        }],
+        presentation_targets: vec![],
+    };
+    let request = SlotRevisionRequest {
+        schema: REVISION_REQUEST_SCHEMA.into(),
+        slot_id: "scene.picture".into(),
+        revision: Revision {
+            revision_id: "r2".into(),
+            supersedes: Some("r1".into()),
+            asset: asset("cel-v2", 'c'),
+        },
+        next_lock_logical_id: "episode-lock-v2".into(),
+    };
+    let next = append_selected_revision(&graph, &request).unwrap();
+    assert_eq!(next.slots[0].revisions.len(), 2);
+    assert_eq!(next.slots[0].selected_revision_id.as_deref(), Some("r2"));
+    assert_ne!(next.lock.sha256, graph.lock.sha256);
+    let pointer = advance_pointer("episode-current", &next).unwrap();
+    assert!(selected_closure(&pointer, &next, "scene").is_ok());
+    assert!(selected_closure(&pointer, &graph, "scene").is_err());
+}
+
+#[test]
+fn selected_revision_cannot_rewind_or_branch_from_the_current_asset() {
+    let graph = Graph {
+        schema: GRAPH_SCHEMA.into(),
+        lock: reference("lock-v1", 'a'),
+        slots: vec![Slot {
+            slot_id: "picture".into(),
+            beat_id: "beat".into(),
+            lane: Lane::Picture,
+            disposition: Disposition::Selected,
+            selected_revision_id: Some("r2".into()),
+            revisions: vec![
+                Revision {
+                    revision_id: "r1".into(),
+                    supersedes: None,
+                    asset: asset("old", 'b'),
+                },
+                Revision {
+                    revision_id: "r2".into(),
+                    supersedes: Some("r1".into()),
+                    asset: asset("current", 'c'),
+                },
+            ],
+        }],
+        events: vec![],
+        nodes: vec![Node {
+            id: "scene".into(),
+            inputs: vec![],
+            slots: vec!["picture".into()],
+            events: vec![],
+        }],
+        presentation_targets: vec![],
+    };
+    let request = SlotRevisionRequest {
+        schema: REVISION_REQUEST_SCHEMA.into(),
+        slot_id: "picture".into(),
+        revision: Revision {
+            revision_id: "r3".into(),
+            supersedes: Some("r1".into()),
+            asset: asset("stale-branch", 'd'),
+        },
+        next_lock_logical_id: "lock-v3".into(),
+    };
+    assert!(append_selected_revision(&graph, &request).is_err());
+}

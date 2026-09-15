@@ -46,6 +46,45 @@ fn run_animatic_receipt_check(
     print_report(&report, output)
 }
 
+fn run_semantic_assembly_check(
+    graph_path: &PathBuf,
+    pointer_path: &PathBuf,
+    target: &str,
+    output_path: &PathBuf,
+) -> Result<()> {
+    let graph: reel_assembly::Graph = serde_json::from_slice(&std::fs::read(graph_path)?)?;
+    let pointer: reel_assembly::SelectedPointer =
+        serde_json::from_slice(&std::fs::read(pointer_path)?)?;
+    let report = reel_assembly::selected_closure(&pointer, &graph, target)?;
+    std::fs::write(output_path, serde_json::to_vec_pretty(&report)?)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn run_semantic_assembly_revise(
+    graph_path: &PathBuf,
+    pointer_path: &PathBuf,
+    request_path: &PathBuf,
+    output_graph: &PathBuf,
+    output_pointer: &PathBuf,
+) -> Result<()> {
+    if output_graph.exists() || output_pointer.exists() {
+        anyhow::bail!("semantic assembly revision outputs must be new immutable files");
+    }
+    let graph: reel_assembly::Graph = serde_json::from_slice(&std::fs::read(graph_path)?)?;
+    let pointer: reel_assembly::SelectedPointer =
+        serde_json::from_slice(&std::fs::read(pointer_path)?)?;
+    reel_assembly::validate_selected_graph(&pointer, &graph)?;
+    let request: reel_assembly::SlotRevisionRequest =
+        serde_json::from_slice(&std::fs::read(request_path)?)?;
+    let revised = reel_assembly::append_selected_revision(&graph, &request)?;
+    let next_pointer = reel_assembly::advance_pointer(&pointer.logical_id, &revised)?;
+    std::fs::write(output_graph, serde_json::to_vec_pretty(&revised)?)?;
+    std::fs::write(output_pointer, serde_json::to_vec_pretty(&next_pointer)?)?;
+    println!("{}", serde_json::to_string_pretty(&next_pointer)?);
+    Ok(())
+}
+
 fn main() -> Result<()> {
     std::thread::Builder::new()
         .name("reel-cli".to_string())
@@ -449,6 +488,25 @@ fn run_cli() -> Result<()> {
             let report = reel::semantic_delivery::render(&delivery, &asset_root, &output_dir)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
+        Command::SemanticAssemblyCheck {
+            graph,
+            pointer,
+            target,
+            output_path,
+        } => run_semantic_assembly_check(&graph, &pointer, &target, &output_path)?,
+        Command::SemanticAssemblyRevise {
+            graph,
+            pointer,
+            request,
+            output_graph,
+            output_pointer,
+        } => run_semantic_assembly_revise(
+            &graph,
+            &pointer,
+            &request,
+            &output_graph,
+            &output_pointer,
+        )?,
         Command::CueRelativeCompile {
             contract,
             output_path,
@@ -2590,6 +2648,30 @@ enum Command {
         asset_root: PathBuf,
         #[arg(long)]
         output_dir: PathBuf,
+    },
+    /// Resolve a REEL graph only through an explicit current pointer and write its closure.
+    SemanticAssemblyCheck {
+        #[arg(long)]
+        graph: PathBuf,
+        #[arg(long)]
+        pointer: PathBuf,
+        #[arg(long)]
+        target: String,
+        #[arg(long)]
+        output_path: PathBuf,
+    },
+    /// Append one selected cache-backed revision and advance the current pointer.
+    SemanticAssemblyRevise {
+        #[arg(long)]
+        graph: PathBuf,
+        #[arg(long)]
+        pointer: PathBuf,
+        #[arg(long)]
+        request: PathBuf,
+        #[arg(long)]
+        output_graph: PathBuf,
+        #[arg(long)]
+        output_pointer: PathBuf,
     },
     /// Compile semantic cue-relative anchors into deterministic sample/frame timing.
     CueRelativeCompile {
