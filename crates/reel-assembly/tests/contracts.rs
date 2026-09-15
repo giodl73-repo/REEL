@@ -126,6 +126,69 @@ fn rejects_filename_authority_and_nonappend_revision_selection() {
 }
 
 #[test]
+fn unselected_slot_is_valid_but_contributes_no_asset_to_a_closure() {
+    let graph = Graph {
+        schema: GRAPH_SCHEMA.into(),
+        lock: reference("episode-3-planning-lock", 'a'),
+        slots: vec![Slot {
+            slot_id: "s1e03.scene-001.picture.beat-001".into(),
+            beat_id: "s1e03.scene-001.beat-001".into(),
+            lane: Lane::Picture,
+            disposition: Disposition::Unselected,
+            selected_revision_id: None,
+            revisions: vec![],
+        }],
+        events: vec![],
+        nodes: vec![Node {
+            id: "s1e03.scene-001".into(),
+            inputs: vec![],
+            slots: vec!["s1e03.scene-001.picture.beat-001".into()],
+            events: vec![],
+        }],
+        presentation_targets: vec![],
+    };
+
+    let report = closure(&graph, "s1e03.scene-001").unwrap();
+    assert_eq!(report.node_ids, vec!["s1e03.scene-001"]);
+    assert!(report.selected_assets.is_empty());
+}
+
+#[test]
+fn unselected_slot_cannot_name_a_selected_revision() {
+    let graph = Graph {
+        schema: GRAPH_SCHEMA.into(),
+        lock: reference("planning-lock", 'a'),
+        slots: vec![Slot {
+            slot_id: "slot".into(),
+            beat_id: "beat".into(),
+            lane: Lane::Picture,
+            disposition: Disposition::Unselected,
+            selected_revision_id: Some("r1".into()),
+            revisions: vec![Revision {
+                revision_id: "r1".into(),
+                supersedes: None,
+                asset: asset("candidate", 'b'),
+            }],
+        }],
+        events: vec![],
+        nodes: vec![Node {
+            id: "target".into(),
+            inputs: vec![],
+            slots: vec!["slot".into()],
+            events: vec![],
+        }],
+        presentation_targets: vec![],
+    };
+
+    assert!(
+        validate_graph(&graph)
+            .unwrap_err()
+            .to_string()
+            .contains("cannot select a revision")
+    );
+}
+
+#[test]
 fn rejects_dependency_cycles_instead_of_silently_deduplicating_them() {
     let graph = Graph {
         schema: GRAPH_SCHEMA.into(),

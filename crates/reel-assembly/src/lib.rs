@@ -73,6 +73,12 @@ pub enum Lane {
 #[serde(rename_all = "kebab-case")]
 pub enum Disposition {
     Selected,
+    /// A declared production slot whose media has not been selected yet.
+    ///
+    /// Planning may reserve stable semantic slots before a project has
+    /// generated or chosen their assets.  Such a slot remains part of the
+    /// graph, but cannot contribute an asset to a render closure.
+    Unselected,
     ExplicitSilence,
     CleanPicture,
     Deprecated,
