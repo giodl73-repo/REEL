@@ -44,6 +44,7 @@ pub mod scene_delivery;
 pub mod scene_review;
 pub mod screen_demo;
 pub mod selection_lock;
+pub mod semantic_delivery;
 pub mod series;
 pub mod showrunner;
 pub mod singer_sheet_cleanup;
