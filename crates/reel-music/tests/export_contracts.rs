@@ -15,8 +15,11 @@ fn writes_and_revalidates_a_model_bound_export_plan() {
     let report = reel_music::export::write(&model_fixture(), &plan).unwrap();
     assert!(report.verified);
     assert!(!report.shareable);
-    assert_eq!(report.artifacts, 3);
-    assert_eq!(report.lyric_layers, 0);
+    // The corrected fixture includes both a canonical lyric layer and a
+    // lead-sheet declaration.  A model-bound export must carry those through
+    // as one lyric binding and the additional printable lead-sheet artifact.
+    assert_eq!(report.artifacts, 4);
+    assert_eq!(report.lyric_layers, 1);
     assert!(reel_music::export::validate(&plan, &model_fixture()).is_ok());
     assert!(reel_music::export::write(&model_fixture(), &plan).is_err());
 }
