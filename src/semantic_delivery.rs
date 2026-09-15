@@ -464,4 +464,74 @@ buses: {{ D: {{ state: present, reason: narration }}, M: {{ state: intentional-s
                 .contains("narration attachment")
         );
     }
+
+    #[test]
+    fn plan_fails_closed_when_a_selected_event_is_not_declared_by_the_job() {
+        let root = tempfile::tempdir().unwrap();
+        let graph = event_graph();
+        let picture = hash('b');
+        let narration = hash('c');
+        let job_path = root.path().join("scene.yaml");
+        fs::write(
+            &job_path,
+            format!(
+                r#"
+schema: reel.scene-delivery.v0.1
+id: scene
+contract: {{ path: contract.yaml, sha256: {picture}, bytes: 1 }}
+production_manifest_sha256: {picture}
+width: 1920
+height: 1080
+max_composition_samples: 480000
+pictures:
+  - attachment_id: picture
+    source: {{ path: cel.png, sha256: {picture}, bytes: 1 }}
+    kind: still
+    attention: beat
+audio:
+  - attachment_id: narration
+    source: {{ path: narration.wav, sha256: {narration}, bytes: 1 }}
+    bus: D
+    cue_id: cue.es.001
+buses: {{ D: {{ state: present, reason: narration }}, M: {{ state: intentional-silence, reason: none }}, E: {{ state: intentional-silence, reason: none }} }}
+"#
+            ),
+        )
+        .unwrap();
+        let job_bytes = fs::read(&job_path).unwrap();
+        let delivery_path = root.path().join("delivery.yaml");
+        let mut delivery = SemanticDelivery {
+            schema: SCHEMA.into(),
+            id: "semantic-scene".into(),
+            pointer: SelectedPointer {
+                schema: POINTER_SCHEMA.into(),
+                logical_id: "current".into(),
+                selected_lock: graph.lock.clone(),
+            },
+            graph,
+            target: "scene".into(),
+            scene_delivery_job: FileRef {
+                path: "scene.yaml".into(),
+                sha256: crate::sha256_file(&job_path).unwrap(),
+                bytes: job_bytes.len() as u64,
+            },
+            event_bindings: vec![EventDeliveryBinding {
+                event_id: "event.es.phrase-1".into(),
+                narration_attachment_id: "narration".into(),
+                picture_attachment_id: "picture".into(),
+                audio_attachment_ids: vec![],
+                external_layer_attachment_ids: vec![],
+            }],
+        };
+        fs::write(&delivery_path, serde_yaml::to_string(&delivery).unwrap()).unwrap();
+        plan(&delivery_path).unwrap();
+        delivery.event_bindings.clear();
+        fs::write(&delivery_path, serde_yaml::to_string(&delivery).unwrap()).unwrap();
+        assert!(
+            plan(&delivery_path)
+                .unwrap_err()
+                .to_string()
+                .contains("every selected semantic event")
+        );
+    }
 }
