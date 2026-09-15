@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 
 pub const GRAPH_SCHEMA: &str = "reel.semantic-assembly.v1";
 pub const POINTER_SCHEMA: &str = "reel.selected-pointer.v1";
+pub const REVISION_REQUEST_SCHEMA: &str = "reel.slot-revision-request.v1";
 pub const CACHE_PREFIX: &str = "cache://sha256/";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -44,6 +45,20 @@ pub struct Revision {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supersedes: Option<String>,
     pub asset: Asset,
+}
+
+/// A portable, append-only request to make one cache-backed asset current for
+/// one existing slot. The caller chooses the asset; REEL only protects the
+/// revision lineage and produces a new graph lock.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SlotRevisionRequest {
+    pub schema: String,
+    pub slot_id: String,
+    pub revision: Revision,
+    /// The logical identity of the new immutable graph lock. A stable pointer
+    /// will be advanced to this lock only after the revised graph validates.
+    pub next_lock_logical_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -335,6 +350,80 @@ pub fn selected_closure(
         pointer: pointer.clone(),
         closure: resolved,
         digest_sha256,
+    })
+}
+
+/// Appends and selects one revision without deleting the slot or its prior
+/// history. The selected revision must extend the currently selected revision
+/// when one exists, preventing a stale branch from silently becoming current.
+pub fn append_selected_revision(graph: &Graph, request: &SlotRevisionRequest) -> Result<Graph> {
+    validate_graph(graph)?;
+    if request.schema != REVISION_REQUEST_SCHEMA {
+        bail!("unsupported slot revision request schema {}", request.schema);
+    }
+    valid_id("slot revision request", &request.slot_id)?;
+    valid_id("next graph lock", &request.next_lock_logical_id)?;
+    valid_id("revision", &request.revision.revision_id)?;
+    valid_asset(&request.revision.asset)?;
+
+    let mut next = graph.clone();
+    let slot = next
+        .slots
+        .iter_mut()
+        .find(|slot| slot.slot_id == request.slot_id)
+        .ok_or_else(|| anyhow::anyhow!("unknown slot {}", request.slot_id))?;
+    if slot
+        .revisions
+        .iter()
+        .any(|item| item.revision_id == request.revision.revision_id)
+    {
+        bail!(
+            "slot {} already contains revision {}",
+            slot.slot_id,
+            request.revision.revision_id
+        );
+    }
+    if let Some(current) = &slot.selected_revision_id {
+        if request.revision.supersedes.as_deref() != Some(current) {
+            bail!(
+                "revision {} must supersede selected revision {} for slot {}",
+                request.revision.revision_id,
+                current,
+                slot.slot_id
+            );
+        }
+    } else if request.revision.supersedes.is_some() {
+        bail!(
+            "first selected revision for slot {} cannot supersede an absent selection",
+            slot.slot_id
+        );
+    }
+    slot.revisions.push(request.revision.clone());
+    slot.disposition = Disposition::Selected;
+    slot.selected_revision_id = Some(request.revision.revision_id.clone());
+    // The graph digest excludes its own hash by using a fixed valid sentinel.
+    // It therefore changes for every mutation without a hash recursion.
+    next.lock = ImmutableRef {
+        logical_id: request.next_lock_logical_id.clone(),
+        sha256: "0".repeat(64),
+    };
+    let material = serde_json::to_vec(&next)?;
+    next.lock.sha256 = Sha256::digest(material)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    validate_graph(&next)?;
+    Ok(next)
+}
+
+/// Advances a stable pointer to a graph that has already passed validation.
+pub fn advance_pointer(pointer_logical_id: &str, graph: &Graph) -> Result<SelectedPointer> {
+    validate_graph(graph)?;
+    valid_id("pointer", pointer_logical_id)?;
+    Ok(SelectedPointer {
+        schema: POINTER_SCHEMA.into(),
+        logical_id: pointer_logical_id.into(),
+        selected_lock: graph.lock.clone(),
     })
 }
 
