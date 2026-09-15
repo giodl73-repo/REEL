@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 pub const GRAPH_SCHEMA: &str = "reel.semantic-assembly.v1";
 pub const POINTER_SCHEMA: &str = "reel.selected-pointer.v1";
 pub const REVISION_REQUEST_SCHEMA: &str = "reel.slot-revision-request.v1";
+pub const REVISION_BATCH_REQUEST_SCHEMA: &str = "reel.slot-revision-batch-request.v1";
 pub const EVENT_BINDING_REQUEST_SCHEMA: &str = "reel.semantic-event-binding-request.v1";
 pub const CACHE_PREFIX: &str = "cache://sha256/";
 
@@ -59,6 +60,26 @@ pub struct SlotRevisionRequest {
     pub revision: Revision,
     /// The logical identity of the new immutable graph lock. A stable pointer
     /// will be advanced to this lock only after the revised graph validates.
+    pub next_lock_logical_id: String,
+}
+
+/// One selected revision within an atomic batch. The batch, rather than the
+/// row, owns the next graph lock so all selected lanes move together.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SlotRevisionSelection {
+    pub slot_id: String,
+    pub revision: Revision,
+}
+
+/// An all-or-nothing selection transaction. This is intentionally generic:
+/// projects may submit an episode, scene, language, or review batch, while
+/// REEL enforces each existing slot's append-only history.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SlotRevisionBatchRequest {
+    pub schema: String,
+    pub revisions: Vec<SlotRevisionSelection>,
     pub next_lock_logical_id: String,
 }
 
@@ -393,52 +414,79 @@ pub fn append_selected_revision(graph: &Graph, request: &SlotRevisionRequest) ->
     valid_id("revision", &request.revision.revision_id)?;
     valid_asset(&request.revision.asset)?;
 
-    let mut next = graph.clone();
-    let slot = next
-        .slots
-        .iter_mut()
-        .find(|slot| slot.slot_id == request.slot_id)
-        .ok_or_else(|| anyhow::anyhow!("unknown slot {}", request.slot_id))?;
-    if slot
-        .revisions
-        .iter()
-        .any(|item| item.revision_id == request.revision.revision_id)
-    {
-        bail!(
-            "slot {} already contains revision {}",
-            slot.slot_id,
-            request.revision.revision_id
-        );
+    append_selected_revisions(
+        graph,
+        &SlotRevisionBatchRequest {
+            schema: REVISION_BATCH_REQUEST_SCHEMA.into(),
+            revisions: vec![SlotRevisionSelection {
+                slot_id: request.slot_id.clone(),
+                revision: request.revision.clone(),
+            }],
+            next_lock_logical_id: request.next_lock_logical_id.clone(),
+        },
+    )
+}
+
+/// Atomically appends and selects a set of revisions. A failure leaves the
+/// input graph untouched; a duplicate slot, stale branch, or invalid media in
+/// any row rejects the whole transaction.
+pub fn append_selected_revisions(
+    graph: &Graph,
+    request: &SlotRevisionBatchRequest,
+) -> Result<Graph> {
+    validate_graph(graph)?;
+    if request.schema != REVISION_BATCH_REQUEST_SCHEMA {
+        bail!("unsupported slot revision batch schema {}", request.schema);
     }
-    if let Some(current) = &slot.selected_revision_id {
-        if request.revision.supersedes.as_deref() != Some(current) {
+    if request.revisions.is_empty() {
+        bail!("slot revision batch must contain at least one revision");
+    }
+    valid_id("next graph lock", &request.next_lock_logical_id)?;
+    let mut next = graph.clone();
+    let mut requested_slots = BTreeSet::new();
+    for selection in &request.revisions {
+        valid_id("slot revision selection", &selection.slot_id)?;
+        valid_id("revision", &selection.revision.revision_id)?;
+        valid_asset(&selection.revision.asset)?;
+        if !requested_slots.insert(selection.slot_id.as_str()) {
+            bail!("slot revision batch repeats slot {}", selection.slot_id);
+        }
+        let slot = next
+            .slots
+            .iter_mut()
+            .find(|slot| slot.slot_id == selection.slot_id)
+            .ok_or_else(|| anyhow::anyhow!("unknown slot {}", selection.slot_id))?;
+        if slot
+            .revisions
+            .iter()
+            .any(|item| item.revision_id == selection.revision.revision_id)
+        {
             bail!(
-                "revision {} must supersede selected revision {} for slot {}",
-                request.revision.revision_id,
-                current,
+                "slot {} already contains revision {}",
+                slot.slot_id,
+                selection.revision.revision_id
+            );
+        }
+        if let Some(current) = &slot.selected_revision_id {
+            if selection.revision.supersedes.as_deref() != Some(current) {
+                bail!(
+                    "revision {} must supersede selected revision {} for slot {}",
+                    selection.revision.revision_id,
+                    current,
+                    slot.slot_id
+                );
+            }
+        } else if selection.revision.supersedes.is_some() {
+            bail!(
+                "first selected revision for slot {} cannot supersede an absent selection",
                 slot.slot_id
             );
         }
-    } else if request.revision.supersedes.is_some() {
-        bail!(
-            "first selected revision for slot {} cannot supersede an absent selection",
-            slot.slot_id
-        );
+        slot.revisions.push(selection.revision.clone());
+        slot.disposition = Disposition::Selected;
+        slot.selected_revision_id = Some(selection.revision.revision_id.clone());
     }
-    slot.revisions.push(request.revision.clone());
-    slot.disposition = Disposition::Selected;
-    slot.selected_revision_id = Some(request.revision.revision_id.clone());
-    // The graph digest excludes its own hash by using a fixed valid sentinel.
-    // It therefore changes for every mutation without a hash recursion.
-    next.lock = ImmutableRef {
-        logical_id: request.next_lock_logical_id.clone(),
-        sha256: "0".repeat(64),
-    };
-    let material = serde_json::to_vec(&next)?;
-    next.lock.sha256 = Sha256::digest(material)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    next.lock = graph_digest_lock(&next, &request.next_lock_logical_id)?;
     validate_graph(&next)?;
     Ok(next)
 }

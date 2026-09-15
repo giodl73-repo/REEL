@@ -85,6 +85,30 @@ fn run_semantic_assembly_revise(
     Ok(())
 }
 
+fn run_semantic_assembly_revise_batch(
+    graph_path: &PathBuf,
+    pointer_path: &PathBuf,
+    request_path: &PathBuf,
+    output_graph: &PathBuf,
+    output_pointer: &PathBuf,
+) -> Result<()> {
+    if output_graph.exists() || output_pointer.exists() {
+        anyhow::bail!("semantic assembly revision outputs must be new immutable files");
+    }
+    let graph: reel_assembly::Graph = serde_json::from_slice(&std::fs::read(graph_path)?)?;
+    let pointer: reel_assembly::SelectedPointer =
+        serde_json::from_slice(&std::fs::read(pointer_path)?)?;
+    reel_assembly::validate_selected_graph(&pointer, &graph)?;
+    let request: reel_assembly::SlotRevisionBatchRequest =
+        serde_json::from_slice(&std::fs::read(request_path)?)?;
+    let revised = reel_assembly::append_selected_revisions(&graph, &request)?;
+    let next_pointer = reel_assembly::advance_pointer(&pointer.logical_id, &revised)?;
+    std::fs::write(output_graph, serde_json::to_vec_pretty(&revised)?)?;
+    std::fs::write(output_pointer, serde_json::to_vec_pretty(&next_pointer)?)?;
+    println!("{}", serde_json::to_string_pretty(&next_pointer)?);
+    Ok(())
+}
+
 fn run_semantic_assembly_bind_events(
     graph_path: &PathBuf,
     pointer_path: &PathBuf,
@@ -525,6 +549,19 @@ fn run_cli() -> Result<()> {
             output_graph,
             output_pointer,
         } => run_semantic_assembly_revise(
+            &graph,
+            &pointer,
+            &request,
+            &output_graph,
+            &output_pointer,
+        )?,
+        Command::SemanticAssemblyReviseBatch {
+            graph,
+            pointer,
+            request,
+            output_graph,
+            output_pointer,
+        } => run_semantic_assembly_revise_batch(
             &graph,
             &pointer,
             &request,
@@ -2699,6 +2736,19 @@ enum Command {
     },
     /// Append one selected cache-backed revision and advance the current pointer.
     SemanticAssemblyRevise {
+        #[arg(long)]
+        graph: PathBuf,
+        #[arg(long)]
+        pointer: PathBuf,
+        #[arg(long)]
+        request: PathBuf,
+        #[arg(long)]
+        output_graph: PathBuf,
+        #[arg(long)]
+        output_pointer: PathBuf,
+    },
+    /// Atomically append selected revisions for multiple slots and advance the current pointer.
+    SemanticAssemblyReviseBatch {
         #[arg(long)]
         graph: PathBuf,
         #[arg(long)]

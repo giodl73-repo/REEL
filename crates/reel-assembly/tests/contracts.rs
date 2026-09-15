@@ -361,6 +361,120 @@ fn selected_revision_cannot_rewind_or_branch_from_the_current_asset() {
 }
 
 #[test]
+fn batch_selection_advances_multiple_lanes_in_one_immutable_transaction() {
+    let graph = Graph {
+        schema: GRAPH_SCHEMA.into(),
+        lock: reference("lock-v1", 'a'),
+        slots: vec![
+            Slot {
+                slot_id: "cue.narration.es".into(),
+                beat_id: "cue".into(),
+                lane: Lane::Narration,
+                disposition: Disposition::Unselected,
+                selected_revision_id: None,
+                revisions: vec![],
+            },
+            Slot {
+                slot_id: "cue.picture".into(),
+                beat_id: "cue".into(),
+                lane: Lane::Picture,
+                disposition: Disposition::Unselected,
+                selected_revision_id: None,
+                revisions: vec![],
+            },
+        ],
+        events: vec![],
+        nodes: vec![Node {
+            id: "scene".into(),
+            inputs: vec![],
+            slots: vec!["cue.narration.es".into(), "cue.picture".into()],
+            events: vec![],
+        }],
+        presentation_targets: vec![],
+    };
+    let request = SlotRevisionBatchRequest {
+        schema: REVISION_BATCH_REQUEST_SCHEMA.into(),
+        next_lock_logical_id: "lock-v2".into(),
+        revisions: vec![
+            SlotRevisionSelection {
+                slot_id: "cue.narration.es".into(),
+                revision: Revision {
+                    revision_id: "r1".into(),
+                    supersedes: None,
+                    asset: asset("narration-es", 'b'),
+                },
+            },
+            SlotRevisionSelection {
+                slot_id: "cue.picture".into(),
+                revision: Revision {
+                    revision_id: "r1".into(),
+                    supersedes: None,
+                    asset: asset("picture", 'c'),
+                },
+            },
+        ],
+    };
+    let next = append_selected_revisions(&graph, &request).unwrap();
+    assert_eq!(
+        next.slots
+            .iter()
+            .filter(|slot| slot.disposition == Disposition::Selected)
+            .count(),
+        2
+    );
+    assert_ne!(next.lock.sha256, graph.lock.sha256);
+    assert_eq!(closure(&next, "scene").unwrap().selected_assets.len(), 2);
+}
+
+#[test]
+fn batch_selection_rejects_duplicate_slot_without_partial_selection() {
+    let graph = Graph {
+        schema: GRAPH_SCHEMA.into(),
+        lock: reference("lock", 'a'),
+        slots: vec![Slot {
+            slot_id: "slot".into(),
+            beat_id: "beat".into(),
+            lane: Lane::Picture,
+            disposition: Disposition::Unselected,
+            selected_revision_id: None,
+            revisions: vec![],
+        }],
+        events: vec![],
+        nodes: vec![Node {
+            id: "scene".into(),
+            inputs: vec![],
+            slots: vec!["slot".into()],
+            events: vec![],
+        }],
+        presentation_targets: vec![],
+    };
+    let request = SlotRevisionBatchRequest {
+        schema: REVISION_BATCH_REQUEST_SCHEMA.into(),
+        next_lock_logical_id: "next".into(),
+        revisions: vec![
+            SlotRevisionSelection {
+                slot_id: "slot".into(),
+                revision: Revision {
+                    revision_id: "r1".into(),
+                    supersedes: None,
+                    asset: asset("first", 'b'),
+                },
+            },
+            SlotRevisionSelection {
+                slot_id: "slot".into(),
+                revision: Revision {
+                    revision_id: "r2".into(),
+                    supersedes: None,
+                    asset: asset("second", 'c'),
+                },
+            },
+        ],
+    };
+    assert!(append_selected_revisions(&graph, &request).is_err());
+    assert_eq!(graph.slots[0].disposition, Disposition::Unselected);
+}
+
+#[test]
 fn semantic_events_bind_to_selected_language_local_narration_and_picture_slots() {
     let narration = asset("narration-es", 'b');
     let picture = asset("picture", 'c');
