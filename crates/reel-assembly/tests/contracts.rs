@@ -359,3 +359,141 @@ fn selected_revision_cannot_rewind_or_branch_from_the_current_asset() {
     };
     assert!(append_selected_revision(&graph, &request).is_err());
 }
+
+#[test]
+fn semantic_events_bind_to_selected_language_local_narration_and_picture_slots() {
+    let narration = asset("narration-es", 'b');
+    let picture = asset("picture", 'c');
+    let graph = Graph {
+        schema: GRAPH_SCHEMA.into(),
+        lock: reference("lock-v1", 'a'),
+        slots: vec![
+            Slot {
+                slot_id: "cue.narration.es".into(),
+                beat_id: "cue".into(),
+                lane: Lane::Narration,
+                disposition: Disposition::Selected,
+                selected_revision_id: Some("r1".into()),
+                revisions: vec![Revision {
+                    revision_id: "r1".into(),
+                    supersedes: None,
+                    asset: narration.clone(),
+                }],
+            },
+            Slot {
+                slot_id: "cue.picture".into(),
+                beat_id: "cue".into(),
+                lane: Lane::Picture,
+                disposition: Disposition::Selected,
+                selected_revision_id: Some("r1".into()),
+                revisions: vec![Revision {
+                    revision_id: "r1".into(),
+                    supersedes: None,
+                    asset: picture.clone(),
+                }],
+            },
+        ],
+        events: vec![],
+        nodes: vec![Node {
+            id: "scene".into(),
+            inputs: vec![],
+            slots: vec!["cue.narration.es".into(), "cue.picture".into()],
+            events: vec![],
+        }],
+        presentation_targets: vec![],
+    };
+    let event = SemanticEvent {
+        event_id: "cue.es.phrase-1".into(),
+        scene_id: "scene".into(),
+        language: "es".into(),
+        narration: ImmutableRef {
+            logical_id: narration.logical_id.clone(),
+            sha256: narration.sha256.clone(),
+        },
+        picture: ImmutableRef {
+            logical_id: picture.logical_id.clone(),
+            sha256: picture.sha256.clone(),
+        },
+        phrase_start_seconds: 0.0,
+        phrase_end_seconds: 1.25,
+    };
+    let request = EventBindingRequest {
+        schema: EVENT_BINDING_REQUEST_SCHEMA.into(),
+        next_lock_logical_id: "lock-v2".into(),
+        bindings: vec![SemanticEventBinding {
+            event,
+            node_id: "scene".into(),
+            narration_slot_id: "cue.narration.es".into(),
+            picture_slot_id: "cue.picture".into(),
+        }],
+    };
+    let next = append_semantic_events(&graph, &request).unwrap();
+    assert_ne!(next.lock.sha256, graph.lock.sha256);
+    assert_eq!(next.nodes[0].events, vec!["cue.es.phrase-1"]);
+    assert_eq!(closure(&next, "scene").unwrap().semantic_events.len(), 1);
+}
+
+#[test]
+fn semantic_events_reject_wrong_language_take_or_unselected_picture() {
+    let narration = asset("narration-es", 'b');
+    let picture = asset("picture", 'c');
+    let graph = Graph {
+        schema: GRAPH_SCHEMA.into(),
+        lock: reference("lock", 'a'),
+        slots: vec![
+            Slot {
+                slot_id: "narration".into(),
+                beat_id: "cue".into(),
+                lane: Lane::Narration,
+                disposition: Disposition::Selected,
+                selected_revision_id: Some("r1".into()),
+                revisions: vec![Revision {
+                    revision_id: "r1".into(),
+                    supersedes: None,
+                    asset: narration.clone(),
+                }],
+            },
+            Slot {
+                slot_id: "picture".into(),
+                beat_id: "cue".into(),
+                lane: Lane::Picture,
+                disposition: Disposition::Unselected,
+                selected_revision_id: None,
+                revisions: vec![],
+            },
+        ],
+        events: vec![],
+        nodes: vec![Node {
+            id: "scene".into(),
+            inputs: vec![],
+            slots: vec![],
+            events: vec![],
+        }],
+        presentation_targets: vec![],
+    };
+    let request = EventBindingRequest {
+        schema: EVENT_BINDING_REQUEST_SCHEMA.into(),
+        next_lock_logical_id: "next".into(),
+        bindings: vec![SemanticEventBinding {
+            event: SemanticEvent {
+                event_id: "event".into(),
+                scene_id: "scene".into(),
+                language: "en".into(),
+                narration: ImmutableRef {
+                    logical_id: narration.logical_id,
+                    sha256: narration.sha256,
+                },
+                picture: ImmutableRef {
+                    logical_id: picture.logical_id,
+                    sha256: picture.sha256,
+                },
+                phrase_start_seconds: 0.0,
+                phrase_end_seconds: 1.0,
+            },
+            node_id: "scene".into(),
+            narration_slot_id: "narration".into(),
+            picture_slot_id: "picture".into(),
+        }],
+    };
+    assert!(append_semantic_events(&graph, &request).is_err());
+}

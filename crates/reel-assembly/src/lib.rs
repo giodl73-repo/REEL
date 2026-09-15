@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 pub const GRAPH_SCHEMA: &str = "reel.semantic-assembly.v1";
 pub const POINTER_SCHEMA: &str = "reel.selected-pointer.v1";
 pub const REVISION_REQUEST_SCHEMA: &str = "reel.slot-revision-request.v1";
+pub const EVENT_BINDING_REQUEST_SCHEMA: &str = "reel.semantic-event-binding-request.v1";
 pub const CACHE_PREFIX: &str = "cache://sha256/";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -61,6 +62,28 @@ pub struct SlotRevisionRequest {
     pub next_lock_logical_id: String,
 }
 
+/// A portable request to bind phrase timing to already selected narration and
+/// picture slots. It cannot point at an unselected candidate or silently swap
+/// a language's performance: both references must equal the selected revisions
+/// in the named slots.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EventBindingRequest {
+    pub schema: String,
+    pub bindings: Vec<SemanticEventBinding>,
+    pub next_lock_logical_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SemanticEventBinding {
+    pub event: SemanticEvent,
+    /// The dependency node which consumes this phrase-level event.
+    pub node_id: String,
+    pub narration_slot_id: String,
+    pub picture_slot_id: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Slot {
@@ -77,6 +100,7 @@ pub struct Slot {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum Lane {
+    Narration,
     Picture,
     Score,
     Sonic,
@@ -427,6 +451,124 @@ pub fn advance_pointer(pointer_logical_id: &str, graph: &Graph) -> Result<Select
         schema: POINTER_SCHEMA.into(),
         logical_id: pointer_logical_id.into(),
         selected_lock: graph.lock.clone(),
+    })
+}
+
+/// Appends semantic timing bindings to an immutable graph. Phrase boundaries
+/// remain language-local, while visual selection is independently resolved
+/// through its current picture slot. This lets Spanish and English takes have
+/// different durations without changing the visual asset's lineage.
+pub fn append_semantic_events(graph: &Graph, request: &EventBindingRequest) -> Result<Graph> {
+    validate_graph(graph)?;
+    if request.schema != EVENT_BINDING_REQUEST_SCHEMA {
+        bail!(
+            "unsupported semantic event-binding request schema {}",
+            request.schema
+        );
+    }
+    if request.bindings.is_empty() {
+        bail!("semantic event-binding request must contain at least one binding");
+    }
+    valid_id("next graph lock", &request.next_lock_logical_id)?;
+    let mut next = graph.clone();
+    let known_events = next
+        .events
+        .iter()
+        .map(|event| event.event_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let slots = next
+        .slots
+        .iter()
+        .map(|slot| (slot.slot_id.as_str(), slot))
+        .collect::<BTreeMap<_, _>>();
+    let known_nodes = next
+        .nodes
+        .iter()
+        .map(|node| node.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut new_events = BTreeSet::new();
+    for binding in &request.bindings {
+        valid_event(&binding.event)?;
+        if !known_nodes.contains(binding.node_id.as_str()) {
+            bail!(
+                "semantic event {} names unknown node {}",
+                binding.event.event_id,
+                binding.node_id
+            );
+        }
+        if known_events.contains(binding.event.event_id.as_str())
+            || !new_events.insert(binding.event.event_id.as_str())
+        {
+            bail!("semantic event {} already exists", binding.event.event_id);
+        }
+        let narration = selected_slot_asset(&slots, &binding.narration_slot_id, Lane::Narration)?;
+        let picture = selected_slot_asset(&slots, &binding.picture_slot_id, Lane::Picture)?;
+        if narration.logical_id != binding.event.narration.logical_id
+            || narration.sha256 != binding.event.narration.sha256
+        {
+            bail!(
+                "semantic event {} narration does not match selected slot {}",
+                binding.event.event_id,
+                binding.narration_slot_id
+            );
+        }
+        if picture.logical_id != binding.event.picture.logical_id
+            || picture.sha256 != binding.event.picture.sha256
+        {
+            bail!(
+                "semantic event {} picture does not match selected slot {}",
+                binding.event.event_id,
+                binding.picture_slot_id
+            );
+        }
+    }
+    next.events
+        .extend(request.bindings.iter().map(|binding| binding.event.clone()));
+    for binding in &request.bindings {
+        next.nodes
+            .iter_mut()
+            .find(|node| node.id == binding.node_id)
+            .expect("checked node")
+            .events
+            .push(binding.event.event_id.clone());
+    }
+    next.lock = graph_digest_lock(&next, &request.next_lock_logical_id)?;
+    validate_graph(&next)?;
+    Ok(next)
+}
+
+fn selected_slot_asset<'a>(
+    slots: &BTreeMap<&str, &'a Slot>,
+    slot_id: &str,
+    lane: Lane,
+) -> Result<&'a Asset> {
+    let slot = slots
+        .get(slot_id)
+        .ok_or_else(|| anyhow::anyhow!("unknown slot {slot_id}"))?;
+    if slot.lane != lane || slot.disposition != Disposition::Selected {
+        bail!("slot {slot_id} is not a selected {lane:?} slot");
+    }
+    let revision = slot
+        .revisions
+        .iter()
+        .find(|item| Some(&item.revision_id) == slot.selected_revision_id.as_ref())
+        .ok_or_else(|| anyhow::anyhow!("selected slot {slot_id} has no selected revision"))?;
+    Ok(&revision.asset)
+}
+
+fn graph_digest_lock(graph: &Graph, logical_id: &str) -> Result<ImmutableRef> {
+    let mut canonical = graph.clone();
+    canonical.lock = ImmutableRef {
+        logical_id: logical_id.into(),
+        sha256: "0".repeat(64),
+    };
+    let sha256 = Sha256::digest(serde_json::to_vec(&canonical)?)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    Ok(ImmutableRef {
+        logical_id: logical_id.into(),
+        sha256,
     })
 }
 
