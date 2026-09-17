@@ -121,6 +121,10 @@ pub struct SemanticEventBinding {
     pub node_id: String,
     pub narration_slot_id: String,
     pub picture_slot_id: String,
+    /// Replaces one active event in this node while retaining its immutable
+    /// record in the graph history. Omit when adding a new phrase.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supersedes_event_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -609,6 +613,7 @@ pub fn append_semantic_events(graph: &Graph, request: &EventBindingRequest) -> R
         .map(|node| node.id.as_str())
         .collect::<BTreeSet<_>>();
     let mut new_events = BTreeSet::new();
+    let mut superseded_events = BTreeSet::new();
     for binding in &request.bindings {
         valid_event(&binding.event)?;
         if !known_nodes.contains(binding.node_id.as_str()) {
@@ -622,6 +627,38 @@ pub fn append_semantic_events(graph: &Graph, request: &EventBindingRequest) -> R
             || !new_events.insert(binding.event.event_id.as_str())
         {
             bail!("semantic event {} already exists", binding.event.event_id);
+        }
+        if let Some(old_id) = &binding.supersedes_event_id {
+            valid_id("superseded event", old_id)?;
+            if !superseded_events.insert(old_id.as_str()) {
+                bail!("semantic event {old_id} is superseded more than once");
+            }
+            let node = graph
+                .nodes
+                .iter()
+                .find(|node| node.id == binding.node_id)
+                .expect("checked node");
+            if !node.events.iter().any(|event_id| event_id == old_id) {
+                bail!(
+                    "semantic event {old_id} is not active in node {}",
+                    binding.node_id
+                );
+            }
+            let old = graph
+                .events
+                .iter()
+                .find(|event| &event.event_id == old_id)
+                .expect("validated graph");
+            if old.scene_id != binding.event.scene_id
+                || old.language != binding.event.language
+                || old.phrase_start_seconds != binding.event.phrase_start_seconds
+                || old.phrase_end_seconds != binding.event.phrase_end_seconds
+            {
+                bail!(
+                    "replacement event {} must preserve scene, language, and phrase interval of {old_id}",
+                    binding.event.event_id
+                );
+            }
         }
         let narration = selected_slot_asset(&slots, &binding.narration_slot_id, Lane::Narration)?;
         let picture = selected_slot_asset(&slots, &binding.picture_slot_id, Lane::Picture)?;
@@ -647,12 +684,21 @@ pub fn append_semantic_events(graph: &Graph, request: &EventBindingRequest) -> R
     next.events
         .extend(request.bindings.iter().map(|binding| binding.event.clone()));
     for binding in &request.bindings {
-        next.nodes
+        let node = next
+            .nodes
             .iter_mut()
             .find(|node| node.id == binding.node_id)
-            .expect("checked node")
-            .events
-            .push(binding.event.event_id.clone());
+            .expect("checked node");
+        if let Some(old_id) = &binding.supersedes_event_id {
+            let position = node
+                .events
+                .iter()
+                .position(|event_id| event_id == old_id)
+                .expect("checked active event");
+            node.events[position] = binding.event.event_id.clone();
+        } else {
+            node.events.push(binding.event.event_id.clone());
+        }
     }
     next.lock = graph_digest_lock(&next, &request.next_lock_logical_id)?;
     validate_graph(&next)?;

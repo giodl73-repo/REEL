@@ -662,6 +662,7 @@ fn semantic_events_bind_to_selected_language_local_narration_and_picture_slots()
             node_id: "scene".into(),
             narration_slot_id: "cue.narration.es".into(),
             picture_slot_id: "cue.picture".into(),
+            supersedes_event_id: None,
         }],
     };
     let next = append_semantic_events(&graph, &request).unwrap();
@@ -730,7 +731,102 @@ fn semantic_events_reject_wrong_language_take_or_unselected_picture() {
             node_id: "scene".into(),
             narration_slot_id: "narration".into(),
             picture_slot_id: "picture".into(),
+            supersedes_event_id: None,
         }],
     };
     assert!(append_semantic_events(&graph, &request).is_err());
+}
+
+#[test]
+fn semantic_event_supersession_preserves_history_and_replaces_active_binding() {
+    let narration = asset("narration-es", 'b');
+    let picture_old = asset("picture-old", 'c');
+    let picture_new = asset("picture-new", 'd');
+    let graph = Graph {
+        schema: GRAPH_SCHEMA.into(),
+        lock: reference("lock", 'a'),
+        slots: vec![
+            Slot {
+                slot_id: "cue.narration.es".into(),
+                beat_id: "cue".into(),
+                lane: Lane::Narration,
+                disposition: Disposition::Selected,
+                selected_revision_id: Some("n1".into()),
+                revisions: vec![Revision {
+                    revision_id: "n1".into(),
+                    supersedes: None,
+                    asset: narration.clone(),
+                }],
+            },
+            Slot {
+                slot_id: "cue.picture".into(),
+                beat_id: "cue".into(),
+                lane: Lane::Picture,
+                disposition: Disposition::Selected,
+                selected_revision_id: Some("p2".into()),
+                revisions: vec![
+                    Revision {
+                        revision_id: "p1".into(),
+                        supersedes: None,
+                        asset: picture_old.clone(),
+                    },
+                    Revision {
+                        revision_id: "p2".into(),
+                        supersedes: Some("p1".into()),
+                        asset: picture_new.clone(),
+                    },
+                ],
+            },
+        ],
+        events: vec![SemanticEvent {
+            event_id: "event-old".into(),
+            scene_id: "scene".into(),
+            language: "es".into(),
+            narration: reference("narration-es", 'b'),
+            picture: reference("picture-old", 'c'),
+            phrase_start_seconds: 1.0,
+            phrase_end_seconds: 3.0,
+        }],
+        nodes: vec![Node {
+            id: "scene".into(),
+            inputs: vec![],
+            slots: vec!["cue.narration.es".into(), "cue.picture".into()],
+            events: vec!["event-old".into()],
+        }],
+        presentation_targets: vec![],
+    };
+    let replacement = SemanticEventBinding {
+        event: SemanticEvent {
+            event_id: "event-new".into(),
+            scene_id: "scene".into(),
+            language: "es".into(),
+            narration: reference("narration-es", 'b'),
+            picture: reference("picture-new", 'd'),
+            phrase_start_seconds: 1.0,
+            phrase_end_seconds: 3.0,
+        },
+        node_id: "scene".into(),
+        narration_slot_id: "cue.narration.es".into(),
+        picture_slot_id: "cue.picture".into(),
+        supersedes_event_id: Some("event-old".into()),
+    };
+    let request = EventBindingRequest {
+        schema: EVENT_BINDING_REQUEST_SCHEMA.into(),
+        bindings: vec![replacement.clone()],
+        next_lock_logical_id: "next".into(),
+    };
+    let next = append_semantic_events(&graph, &request).unwrap();
+    assert_eq!(next.events.len(), 2);
+    assert_eq!(next.nodes[0].events, vec!["event-new"]);
+    assert_eq!(closure(&next, "scene").unwrap().semantic_events.len(), 1);
+    assert!(
+        append_semantic_events(
+            &next,
+            &EventBindingRequest {
+                next_lock_logical_id: "again".into(),
+                ..request
+            }
+        )
+        .is_err()
+    );
 }
