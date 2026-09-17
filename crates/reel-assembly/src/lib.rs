@@ -14,6 +14,7 @@ pub const GRAPH_SCHEMA: &str = "reel.semantic-assembly.v1";
 pub const POINTER_SCHEMA: &str = "reel.selected-pointer.v1";
 pub const REVISION_REQUEST_SCHEMA: &str = "reel.slot-revision-request.v1";
 pub const REVISION_BATCH_REQUEST_SCHEMA: &str = "reel.slot-revision-batch-request.v1";
+pub const SLOT_EXTENSION_REQUEST_SCHEMA: &str = "reel.slot-extension-request.v1";
 pub const EVENT_BINDING_REQUEST_SCHEMA: &str = "reel.semantic-event-binding-request.v1";
 pub const CACHE_PREFIX: &str = "cache://sha256/";
 
@@ -81,6 +82,23 @@ pub struct SlotRevisionBatchRequest {
     pub schema: String,
     pub revisions: Vec<SlotRevisionSelection>,
     pub next_lock_logical_id: String,
+}
+
+/// Adds unselected production slots to existing nodes without replacing the
+/// planning import or discarding any selected revision or event history.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SlotExtensionRequest {
+    pub schema: String,
+    pub additions: Vec<SlotAddition>,
+    pub next_lock_logical_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SlotAddition {
+    pub node_id: String,
+    pub slot: Slot,
 }
 
 /// A portable request to bind phrase timing to already selected narration and
@@ -486,6 +504,62 @@ pub fn append_selected_revisions(
         slot.disposition = Disposition::Selected;
         slot.selected_revision_id = Some(selection.revision.revision_id.clone());
     }
+    next.lock = graph_digest_lock(&next, &request.next_lock_logical_id)?;
+    validate_graph(&next)?;
+    Ok(next)
+}
+
+/// Atomically adds fresh, unselected slots to existing nodes. Media selection
+/// remains a separate append-only revision batch after this graph validates.
+pub fn extend_slots(graph: &Graph, request: &SlotExtensionRequest) -> Result<Graph> {
+    validate_graph(graph)?;
+    if request.schema != SLOT_EXTENSION_REQUEST_SCHEMA {
+        bail!(
+            "unsupported slot extension request schema {}",
+            request.schema
+        );
+    }
+    if request.additions.is_empty() {
+        bail!("slot extension must contain at least one addition");
+    }
+    valid_id("next graph lock", &request.next_lock_logical_id)?;
+    let mut next = graph.clone();
+    let mut known_slots = next
+        .slots
+        .iter()
+        .map(|slot| slot.slot_id.as_str())
+        .collect::<BTreeSet<_>>();
+    for addition in &request.additions {
+        valid_id("node", &addition.node_id)?;
+        valid_slot(&addition.slot)?;
+        if addition.slot.disposition != Disposition::Unselected
+            || addition.slot.selected_revision_id.is_some()
+            || !addition.slot.revisions.is_empty()
+        {
+            bail!(
+                "new slot {} must be unselected and have no revisions",
+                addition.slot.slot_id
+            );
+        }
+        if !known_slots.insert(addition.slot.slot_id.as_str()) {
+            bail!(
+                "slot extension repeats existing or new slot {}",
+                addition.slot.slot_id
+            );
+        }
+        let node = next
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == addition.node_id)
+            .ok_or_else(|| anyhow::anyhow!("unknown node {}", addition.node_id))?;
+        node.slots.push(addition.slot.slot_id.clone());
+    }
+    next.slots.extend(
+        request
+            .additions
+            .iter()
+            .map(|addition| addition.slot.clone()),
+    );
     next.lock = graph_digest_lock(&next, &request.next_lock_logical_id)?;
     validate_graph(&next)?;
     Ok(next)

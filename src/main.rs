@@ -109,6 +109,30 @@ fn run_semantic_assembly_revise_batch(
     Ok(())
 }
 
+fn run_semantic_assembly_extend_slots(
+    graph_path: &PathBuf,
+    pointer_path: &PathBuf,
+    request_path: &PathBuf,
+    output_graph: &PathBuf,
+    output_pointer: &PathBuf,
+) -> Result<()> {
+    if output_graph.exists() || output_pointer.exists() {
+        anyhow::bail!("semantic slot extension outputs must be new immutable files");
+    }
+    let graph: reel_assembly::Graph = serde_json::from_slice(&std::fs::read(graph_path)?)?;
+    let pointer: reel_assembly::SelectedPointer =
+        serde_json::from_slice(&std::fs::read(pointer_path)?)?;
+    reel_assembly::validate_selected_graph(&pointer, &graph)?;
+    let request: reel_assembly::SlotExtensionRequest =
+        serde_json::from_slice(&std::fs::read(request_path)?)?;
+    let extended = reel_assembly::extend_slots(&graph, &request)?;
+    let next_pointer = reel_assembly::advance_pointer(&pointer.logical_id, &extended)?;
+    std::fs::write(output_graph, serde_json::to_vec_pretty(&extended)?)?;
+    std::fs::write(output_pointer, serde_json::to_vec_pretty(&next_pointer)?)?;
+    println!("{}", serde_json::to_string_pretty(&next_pointer)?);
+    Ok(())
+}
+
 fn run_semantic_assembly_bind_events(
     graph_path: &PathBuf,
     pointer_path: &PathBuf,
@@ -562,6 +586,19 @@ fn run_cli() -> Result<()> {
             output_graph,
             output_pointer,
         } => run_semantic_assembly_revise_batch(
+            &graph,
+            &pointer,
+            &request,
+            &output_graph,
+            &output_pointer,
+        )?,
+        Command::SemanticAssemblyExtendSlots {
+            graph,
+            pointer,
+            request,
+            output_graph,
+            output_pointer,
+        } => run_semantic_assembly_extend_slots(
             &graph,
             &pointer,
             &request,
@@ -2749,6 +2786,19 @@ enum Command {
     },
     /// Atomically append selected revisions for multiple slots and advance the current pointer.
     SemanticAssemblyReviseBatch {
+        #[arg(long)]
+        graph: PathBuf,
+        #[arg(long)]
+        pointer: PathBuf,
+        #[arg(long)]
+        request: PathBuf,
+        #[arg(long)]
+        output_graph: PathBuf,
+        #[arg(long)]
+        output_pointer: PathBuf,
+    },
+    /// Atomically add unselected slots to existing nodes and advance the current pointer.
+    SemanticAssemblyExtendSlots {
         #[arg(long)]
         graph: PathBuf,
         #[arg(long)]
