@@ -475,6 +475,129 @@ fn batch_selection_rejects_duplicate_slot_without_partial_selection() {
 }
 
 #[test]
+fn slot_extension_preserves_existing_selection_and_allows_later_sonic_revision() {
+    let graph = Graph {
+        schema: GRAPH_SCHEMA.into(),
+        lock: reference("lock-v1", 'a'),
+        slots: vec![Slot {
+            slot_id: "scene.picture".into(),
+            beat_id: "beat".into(),
+            lane: Lane::Picture,
+            disposition: Disposition::Selected,
+            selected_revision_id: Some("picture-r1".into()),
+            revisions: vec![Revision {
+                revision_id: "picture-r1".into(),
+                supersedes: None,
+                asset: asset("picture", 'b'),
+            }],
+        }],
+        events: vec![],
+        nodes: vec![Node {
+            id: "scene".into(),
+            inputs: vec![],
+            slots: vec!["scene.picture".into()],
+            events: vec![],
+        }],
+        presentation_targets: vec![],
+    };
+    let addition = SlotAddition {
+        node_id: "scene".into(),
+        slot: Slot {
+            slot_id: "scene.sonic.car-arrival".into(),
+            beat_id: "beat".into(),
+            lane: Lane::Sonic,
+            disposition: Disposition::Unselected,
+            selected_revision_id: None,
+            revisions: vec![],
+        },
+    };
+    let request = SlotExtensionRequest {
+        schema: SLOT_EXTENSION_REQUEST_SCHEMA.into(),
+        additions: vec![addition.clone()],
+        next_lock_logical_id: "lock-v2".into(),
+    };
+    let extended = extend_slots(&graph, &request).unwrap();
+    assert_eq!(graph.slots.len(), 1);
+    assert_eq!(extended.slots.len(), 2);
+    assert_eq!(
+        extended.slots[0].selected_revision_id.as_deref(),
+        Some("picture-r1")
+    );
+    assert_ne!(extended.lock.sha256, graph.lock.sha256);
+    assert_eq!(
+        closure(&extended, "scene").unwrap().selected_assets.len(),
+        1
+    );
+    let selected = append_selected_revisions(
+        &extended,
+        &SlotRevisionBatchRequest {
+            schema: REVISION_BATCH_REQUEST_SCHEMA.into(),
+            revisions: vec![SlotRevisionSelection {
+                slot_id: addition.slot.slot_id,
+                revision: Revision {
+                    revision_id: "sonic-r1".into(),
+                    supersedes: None,
+                    asset: asset("car-arrival", 'c'),
+                },
+            }],
+            next_lock_logical_id: "lock-v3".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        closure(&selected, "scene").unwrap().selected_assets.len(),
+        2
+    );
+}
+
+#[test]
+fn slot_extension_rejects_duplicate_or_preselected_slots() {
+    let graph = Graph {
+        schema: GRAPH_SCHEMA.into(),
+        lock: reference("lock-v1", 'a'),
+        slots: vec![],
+        events: vec![],
+        nodes: vec![Node {
+            id: "scene".into(),
+            inputs: vec![],
+            slots: vec![],
+            events: vec![],
+        }],
+        presentation_targets: vec![],
+    };
+    let fresh = Slot {
+        slot_id: "scene.sonic".into(),
+        beat_id: "beat".into(),
+        lane: Lane::Sonic,
+        disposition: Disposition::Unselected,
+        selected_revision_id: None,
+        revisions: vec![],
+    };
+    let mut request = SlotExtensionRequest {
+        schema: SLOT_EXTENSION_REQUEST_SCHEMA.into(),
+        additions: vec![
+            SlotAddition {
+                node_id: "scene".into(),
+                slot: fresh.clone(),
+            },
+            SlotAddition {
+                node_id: "scene".into(),
+                slot: fresh.clone(),
+            },
+        ],
+        next_lock_logical_id: "lock-v2".into(),
+    };
+    assert!(extend_slots(&graph, &request).is_err());
+    assert!(graph.slots.is_empty());
+    request.additions.pop();
+    request.additions[0].slot.disposition = Disposition::Selected;
+    assert!(extend_slots(&graph, &request).is_err());
+    request.additions[0].slot = fresh;
+    request.additions[0].node_id = "unknown".into();
+    assert!(extend_slots(&graph, &request).is_err());
+}
+
+#[test]
 fn semantic_events_bind_to_selected_language_local_narration_and_picture_slots() {
     let narration = asset("narration-es", 'b');
     let picture = asset("picture", 'c');
