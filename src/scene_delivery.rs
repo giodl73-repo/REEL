@@ -295,7 +295,11 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         bail!("declare exactly D, M and E bus policies");
     }
     let mut audio = Vec::new();
-    let mut dialogue = BTreeSet::new();
+    // A normal D cue is one complete native take.  A declared handoff may use
+    // two distinct takes to cover one cue (for example, dialogue into a
+    // preserved narrator tail); those spans must remain contiguous/overlapped
+    // and collectively cover the cue without replaying the same source.
+    let mut dialogue = BTreeMap::<String, (u64, u64, String)>::new();
     for event in &job.audio {
         let a = take(&event.attachment_id)?;
         if !matches!(a.target, Target::Audio { .. } | Target::Sonic { .. }) {
@@ -323,17 +327,48 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                 .iter()
                 .find(|c| c.cue_id == id)
                 .context("D cue is unknown")?;
-            if !dialogue.insert(id.to_string())
-                || c.start_sample != a.start_sample
-                || c.end_sample != a.end_sample
-                || event.source_start_sample != 0
-            {
-                bail!("D event must consume one complete native cue exactly once");
+            if let Some((covered_end, parts, first_source)) = dialogue.get_mut(id) {
+                if a.start_sample > *covered_end
+                    || a.end_sample <= *covered_end
+                    || event.source.sha256 == *first_source
+                {
+                    bail!("D handoff must extend one cue with a distinct source");
+                }
+                *covered_end = a.end_sample;
+                *parts += 1;
+            } else {
+                if c.start_sample != a.start_sample || event.source_start_sample != 0 {
+                    bail!("D event must begin with a complete native cue start");
+                }
+                dialogue.insert(
+                    id.to_string(),
+                    (a.end_sample, 1, event.source.sha256.clone()),
+                );
             }
         } else if event.cue_id.is_some() {
             bail!("only D events declare cue_id");
         }
         audio.push(span(a)?);
+    }
+    for (id, (covered_end, parts, _)) in &dialogue {
+        let cue = compiled
+            .cues
+            .iter()
+            .find(|cue| &cue.cue_id == id)
+            .expect("validated D cue");
+        if *covered_end != cue.end_sample {
+            bail!("D event does not cover its cue through the native end");
+        }
+        if *parts == 1 {
+            let event = job
+                .audio
+                .iter()
+                .find(|event| event.bus == "D" && event.cue_id.as_deref() == Some(id))
+                .expect("validated D event");
+            if event.source_start_sample != 0 {
+                bail!("one-part D event must consume one complete native cue");
+            }
+        }
     }
     for (bus, policy) in &job.buses {
         if !nonempty(&policy.reason) || policy.state == BusState::Held {
