@@ -649,13 +649,9 @@ pub fn append_semantic_events(graph: &Graph, request: &EventBindingRequest) -> R
                 .iter()
                 .find(|event| &event.event_id == old_id)
                 .expect("validated graph");
-            if old.scene_id != binding.event.scene_id
-                || old.language != binding.event.language
-                || old.phrase_start_seconds != binding.event.phrase_start_seconds
-                || old.phrase_end_seconds != binding.event.phrase_end_seconds
-            {
+            if old.scene_id != binding.event.scene_id || old.language != binding.event.language {
                 bail!(
-                    "replacement event {} must preserve scene, language, and phrase interval of {old_id}",
+                    "replacement event {} must preserve scene and language of {old_id}",
                     binding.event.event_id
                 );
             }

@@ -618,7 +618,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                 .source_start_sample
                 .checked_add(n)
                 .is_none_or(|end| end > samples)
-                || (bus == "D" && samples != n)
+                || (bus == "D" && event.source_start_sample == 0 && samples != n)
             {
                 bail!("native audio duration mismatch or insufficient source samples");
             }
