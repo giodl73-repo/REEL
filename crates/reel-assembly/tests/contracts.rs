@@ -598,6 +598,61 @@ fn slot_extension_rejects_duplicate_or_preselected_slots() {
 }
 
 #[test]
+fn deprecation_retires_only_untouched_unselected_slots() {
+    let graph = Graph {
+        schema: GRAPH_SCHEMA.into(),
+        lock: reference("lock-v1", 'a'),
+        slots: vec![
+            Slot {
+                slot_id: "scene.old-picture".into(),
+                beat_id: "beat".into(),
+                lane: Lane::Picture,
+                disposition: Disposition::Unselected,
+                selected_revision_id: None,
+                revisions: vec![],
+            },
+            Slot {
+                slot_id: "scene.current-picture".into(),
+                beat_id: "beat".into(),
+                lane: Lane::Picture,
+                disposition: Disposition::Selected,
+                selected_revision_id: Some("current-r1".into()),
+                revisions: vec![Revision {
+                    revision_id: "current-r1".into(),
+                    supersedes: None,
+                    asset: asset("current", 'c'),
+                }],
+            },
+        ],
+        events: vec![],
+        nodes: vec![Node {
+            id: "scene".into(),
+            inputs: vec![],
+            slots: vec!["scene.old-picture".into(), "scene.current-picture".into()],
+            events: vec![],
+        }],
+        presentation_targets: vec![],
+    };
+    let request = SlotDeprecationBatchRequest {
+        schema: SLOT_DEPRECATION_BATCH_REQUEST_SCHEMA.into(),
+        slot_ids: vec!["scene.old-picture".into()],
+        next_lock_logical_id: "lock-v2".into(),
+    };
+    let revised = deprecate_unselected_slots(&graph, &request).unwrap();
+    assert_eq!(graph.slots[0].disposition, Disposition::Unselected);
+    assert_eq!(revised.slots[0].disposition, Disposition::Deprecated);
+    assert_ne!(revised.lock.sha256, graph.lock.sha256);
+    assert_eq!(closure(&revised, "scene").unwrap().selected_assets.len(), 1);
+    let mut invalid = request;
+    invalid.slot_ids = vec!["scene.old-picture".into(), "scene.old-picture".into()];
+    assert!(deprecate_unselected_slots(&graph, &invalid).is_err());
+    invalid.slot_ids = vec!["scene.current-picture".into()];
+    assert!(deprecate_unselected_slots(&graph, &invalid).is_err());
+    invalid.slot_ids = vec!["scene.missing".into()];
+    assert!(deprecate_unselected_slots(&graph, &invalid).is_err());
+}
+
+#[test]
 fn semantic_events_bind_to_selected_language_local_narration_and_picture_slots() {
     let narration = asset("narration-es", 'b');
     let picture = asset("picture", 'c');
