@@ -15,6 +15,7 @@ pub const POINTER_SCHEMA: &str = "reel.selected-pointer.v1";
 pub const REVISION_REQUEST_SCHEMA: &str = "reel.slot-revision-request.v1";
 pub const REVISION_BATCH_REQUEST_SCHEMA: &str = "reel.slot-revision-batch-request.v1";
 pub const SLOT_EXTENSION_REQUEST_SCHEMA: &str = "reel.slot-extension-request.v1";
+pub const SLOT_DEPRECATION_BATCH_REQUEST_SCHEMA: &str = "reel.slot-deprecation-batch-request.v1";
 pub const EVENT_BINDING_REQUEST_SCHEMA: &str = "reel.semantic-event-binding-request.v1";
 pub const CACHE_PREFIX: &str = "cache://sha256/";
 
@@ -99,6 +100,16 @@ pub struct SlotExtensionRequest {
 pub struct SlotAddition {
     pub node_id: String,
     pub slot: Slot,
+}
+
+/// Retires obsolete, never-selected planning slots without discarding their
+/// identities or rewriting any selected revision or semantic event.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SlotDeprecationBatchRequest {
+    pub schema: String,
+    pub slot_ids: Vec<String>,
+    pub next_lock_logical_id: String,
 }
 
 /// A portable request to bind phrase timing to already selected narration and
@@ -564,6 +575,47 @@ pub fn extend_slots(graph: &Graph, request: &SlotExtensionRequest) -> Result<Gra
             .iter()
             .map(|addition| addition.slot.clone()),
     );
+    next.lock = graph_digest_lock(&next, &request.next_lock_logical_id)?;
+    validate_graph(&next)?;
+    Ok(next)
+}
+
+/// Atomically deprecates unselected planning slots superseded by newer slots.
+pub fn deprecate_unselected_slots(
+    graph: &Graph,
+    request: &SlotDeprecationBatchRequest,
+) -> Result<Graph> {
+    validate_graph(graph)?;
+    if request.schema != SLOT_DEPRECATION_BATCH_REQUEST_SCHEMA {
+        bail!(
+            "unsupported slot deprecation request schema {}",
+            request.schema
+        );
+    }
+    if request.slot_ids.is_empty() {
+        bail!("slot deprecation must name at least one slot");
+    }
+    valid_id("next graph lock", &request.next_lock_logical_id)?;
+    let mut next = graph.clone();
+    let mut seen = BTreeSet::new();
+    for slot_id in &request.slot_ids {
+        valid_id("slot", slot_id)?;
+        if !seen.insert(slot_id.as_str()) {
+            bail!("slot deprecation repeats slot {slot_id}");
+        }
+        let slot = next
+            .slots
+            .iter_mut()
+            .find(|slot| &slot.slot_id == slot_id)
+            .ok_or_else(|| anyhow::anyhow!("unknown slot {slot_id}"))?;
+        if slot.disposition != Disposition::Unselected
+            || slot.selected_revision_id.is_some()
+            || !slot.revisions.is_empty()
+        {
+            bail!("slot {slot_id} is not an untouched unselected slot");
+        }
+        slot.disposition = Disposition::Deprecated;
+    }
     next.lock = graph_digest_lock(&next, &request.next_lock_logical_id)?;
     validate_graph(&next)?;
     Ok(next)
