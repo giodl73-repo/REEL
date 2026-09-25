@@ -1,0 +1,13 @@
+{
+  "schema": "reel.scene-asset-bindings.v1",
+  "scope_id": "season-1",
+  "assets": {
+    "opening.selected": {
+      "logical_id": "opening-1",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "bytes": 100,
+      "cache_uri": "cache://sha256/1111111111111111111111111111111111111111111111111111111111111111",
+      "selection_state": "selected-private-production"
+    }
+  }
+}

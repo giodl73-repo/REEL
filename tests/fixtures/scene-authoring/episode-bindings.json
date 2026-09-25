@@ -1,0 +1,13 @@
+{
+  "schema": "reel.scene-asset-bindings.v1",
+  "scope_id": "episode-1",
+  "assets": {
+    "score.poem.intimate": {
+      "logical_id": "score-1",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "bytes": 200,
+      "cache_uri": "cache://sha256/2222222222222222222222222222222222222222222222222222222222222222",
+      "selection_state": "selected-private-production"
+    }
+  }
+}

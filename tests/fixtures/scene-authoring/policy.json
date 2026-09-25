@@ -1,0 +1,1 @@
+{"schema":"reel.scene-policy.v1","policy_id":"narrative-tv","target_composition_seconds_min":5.0,"target_composition_seconds_max":10.0,"hard_unchanged_composition_seconds_max":10.0,"semantic_cuts_required":true}
