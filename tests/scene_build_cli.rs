@@ -211,3 +211,52 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
     assert_eq!(receipt["language"], "es");
     assert_eq!(receipt["publication"], "not-authorized");
 }
+
+#[test]
+fn changed_only_graph_plans_each_scene_language_independently() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    fs::write(root.join("es-resolved.json"), b"es-fingerprint").unwrap();
+    fs::write(root.join("en-resolved.json"), b"en-fingerprint").unwrap();
+    fs::write(root.join("es-delivery.json"), b"es-delivery").unwrap();
+    fs::write(root.join("en-delivery.json"), b"en-delivery").unwrap();
+    write_json(
+        &root.join("index.json"),
+        &serde_json::json!({
+            "schema":"reel.scene-build-index.v1","graph_id":"episode-one",
+            "jobs":[
+                {"node_id":"scene-001-es","resolved_language":"es-resolved.json","semantic_delivery":"es-delivery.json"},
+                {"node_id":"scene-001-en","resolved_language":"en-resolved.json","semantic_delivery":"en-delivery.json"}
+            ]
+        }),
+    );
+    let graph = root.join("graph.json");
+    let result = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
+        .arg("emit-changed-only-graph")
+        .arg(root.join("index.json"))
+        .arg("--output")
+        .arg(&graph)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    write_json(
+        &root.join("state.json"),
+        &serde_json::json!({
+            "schema":"reel.changed-only-state.v0.1","graph_id":"episode-one","nodes":[]
+        }),
+    );
+    reel::changed_only::write_changed_only_plan(
+        &graph,
+        &root.join("state.json"),
+        &root.join("plan.json"),
+    )
+    .unwrap();
+    let plan: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("plan.json")).unwrap()).unwrap();
+    assert_eq!(plan["summary"]["rebuild_count"], 2);
+    assert_eq!(plan["summary"]["blocked_dependency_count"], 0);
+}

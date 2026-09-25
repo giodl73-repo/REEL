@@ -31,6 +31,22 @@ struct BuildManifest {
     semantic_delivery: String,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BuildIndex {
+    schema: String,
+    graph_id: String,
+    jobs: Vec<IndexedJob>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IndexedJob {
+    node_id: String,
+    resolved_language: String,
+    semantic_delivery: String,
+}
+
 #[derive(Serialize)]
 struct BuildReceipt {
     schema: String,
@@ -72,6 +88,49 @@ fn hash(bytes: &[u8]) -> String {
         .collect()
 }
 
+fn local_file(id: &str, path: &Path) -> Result<serde_json::Value> {
+    let path = path.canonicalize()?;
+    let bytes = fs::read(&path)?;
+    Ok(serde_json::json!({"file_id":id,"path":path,"sha256":hash(&bytes),"bytes":bytes.len()}))
+}
+
+fn emit_changed_only_graph(index_path: &str, output_path: &str) -> Result<()> {
+    let index_file = Path::new(index_path).canonicalize()?;
+    let index: BuildIndex = read(&index_file)?;
+    if index.schema != "reel.scene-build-index.v1"
+        || index.graph_id.is_empty()
+        || index.jobs.is_empty()
+    {
+        bail!("invalid scene build index");
+    }
+    let base = index_file.parent().context("build index has no parent")?;
+    let recipe = local_file("reel-scene-build", &env::current_exe()?)?;
+    let mut names = BTreeSet::new();
+    let mut nodes = Vec::new();
+    for job in index.jobs {
+        if !names.insert(job.node_id.clone()) {
+            bail!("duplicate scene build node");
+        }
+        let resolved = local_file("resolved-language", &base.join(&job.resolved_language))?;
+        let delivery = local_file("semantic-delivery", &base.join(&job.semantic_delivery))?;
+        nodes.push(
+            serde_json::json!({"node_id":job.node_id,"operation_kind":"scene-delivery",
+            "recipe":recipe,"inputs":[resolved,delivery],"dependencies":[],
+            "expected_outputs":["scene-master","scene-build-receipt"]}),
+        );
+    }
+    let graph = serde_json::json!({"schema":"reel.changed-only-graph.v0.1",
+        "graph_id":index.graph_id,"nodes":nodes});
+    use std::io::Write;
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output_path)?
+        .write_all(&serde_json::to_vec_pretty(&graph)?)?;
+    println!("{} independent scene build nodes", names.len());
+    Ok(())
+}
+
 fn scene_inputs(
     root: &Path,
     manifest: &BuildManifest,
@@ -99,6 +158,11 @@ fn scene_inputs(
 
 fn run() -> Result<()> {
     let args: Vec<String> = env::args().collect();
+    if let [_, command, index, flag, output] = args.as_slice() {
+        if command == "emit-changed-only-graph" && flag == "--output" {
+            return emit_changed_only_graph(index, output);
+        }
+    }
     let [
         _,
         command,
@@ -111,7 +175,7 @@ fn run() -> Result<()> {
     ] = args.as_slice()
     else {
         bail!(
-            "usage: reel-scene-build build <project-root> <build.json> --asset-root <cache-root> --output-dir <new-dir>"
+            "usage: reel-scene-build build <project-root> <build.json> --asset-root <cache-root> --output-dir <new-dir>\n       reel-scene-build emit-changed-only-graph <index.json> --output <new-graph.json>"
         );
     };
     if command != "build" || flag_root != "--asset-root" || flag_output != "--output-dir" {

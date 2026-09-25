@@ -86,6 +86,39 @@ fn run() -> Result<()> {
         [
             _,
             command,
+            catalog,
+            episode,
+            scene,
+            policy,
+            season,
+            episode_bindings,
+            scene_bindings,
+            language,
+            flag,
+            output,
+        ] if command == "resolve-language" && flag == "--output" => {
+            let resolved = resolve_scene(
+                &read::<TemplateCatalog>(catalog)?,
+                &read::<Episode>(episode)?,
+                &read::<Scene>(scene)?,
+                &read::<ScenePolicy>(policy)?,
+                &read::<ScopedBindings>(season)?,
+                &read::<ScopedBindings>(episode_bindings)?,
+                &read::<ScopedBindings>(scene_bindings)?,
+            )?;
+            let fingerprint = resolved
+                .language_fingerprints
+                .get(language)
+                .ok_or_else(|| anyhow::anyhow!("unknown language {language}"))?;
+            let scoped = serde_json::json!({"schema":"reel.resolved-scene-language.v1",
+                "scene_id":resolved.scene_id,"language":language,
+                "fingerprint_sha256":fingerprint});
+            write_new(output, &serde_json::to_vec_pretty(&scoped)?)?;
+            println!("{} {} {}", resolved.scene_id, language, fingerprint);
+        }
+        [
+            _,
+            command,
             graph,
             pointer,
             scene_path,
@@ -178,7 +211,7 @@ fn run() -> Result<()> {
             println!("{} visible composition runs checked", runs.len());
         }
         _ => bail!(
-            "usage: reel-scene-authoring resolve <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> --output <new.json>\n       reel-scene-authoring resolve-episode-presentation <catalog.json> <episode.json> <season-bindings.json> <episode-bindings.json> --output <new.json>\n       reel-scene-authoring compile-events <graph.json> <pointer.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <next-lock-id> --output <new.json>\n       reel-scene-authoring audit-picture <policy.json> <rendered-spans.json> <sample-rate> --output <new.json>"
+            "usage: reel-scene-authoring resolve <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> --output <new.json>\n       reel-scene-authoring resolve-language <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <language> --output <new.json>\n       reel-scene-authoring resolve-episode-presentation <catalog.json> <episode.json> <season-bindings.json> <episode-bindings.json> --output <new.json>\n       reel-scene-authoring compile-events <graph.json> <pointer.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <next-lock-id> --output <new.json>\n       reel-scene-authoring audit-picture <policy.json> <rendered-spans.json> <sample-rate> --output <new.json>"
         ),
     }
     Ok(())

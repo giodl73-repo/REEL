@@ -45,10 +45,12 @@ ducking and listening checks belong to subsequent delivery contracts.
 
 ```text
 reel-scene-authoring resolve <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> --output <new.json>
+reel-scene-authoring resolve-language <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <language> --output <new.json>
 reel-scene-authoring resolve-episode-presentation <catalog.json> <episode.json> <season-bindings.json> <episode-bindings.json> --output <new.json>
 reel-scene-authoring compile-events <graph.json> <pointer.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <next-lock-id> --output <new.json>
 reel-scene-authoring audit-picture <policy.json> <rendered-spans.json> <sample-rate> --output <new.json>
 reel-scene-build build <project-root> <build.json> --asset-root <hydrated-cache-root> --output-dir <new-dir>
+reel-scene-build emit-changed-only-graph <index.json> --output <new-graph.json>
 ```
 
 `resolve` returns both whole-scene and language-local fingerprints. A Spanish
@@ -91,6 +93,16 @@ hashes:
   "semantic_delivery": "authoring/scene-002/es/semantic-delivery.json"
 }
 ```
+
+For multiple scenes, `resolve-language` writes one small file per scene and
+language. A `reel.scene-build-index.v1` lists each node ID, its resolved-language
+file and its selected semantic-delivery file. `emit-changed-only-graph` measures
+those files plus the exact build executable and emits REEL's existing
+`reel.changed-only-graph.v0.1`. Run `reel changed-only-plan` with that graph and
+the prior state; record successful scene outputs through REEL's existing
+result-receipt and state-advance commands. There are no implicit dependencies
+between scene-language nodes. Episode presentation and final conform will be
+additional nodes once their executors are implemented.
 
 ## Current execution boundary
 
