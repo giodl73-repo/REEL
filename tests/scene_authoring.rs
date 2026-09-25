@@ -232,3 +232,22 @@ fn unknown_score_role_is_rejected() {
         .is_err()
     );
 }
+
+#[test]
+fn historical_evidence_cannot_be_resolved_as_a_selected_scene() {
+    let (catalog, episode, mut scene, policy, season, episode_bindings, scene_bindings) = subject();
+    scene.authoring_state = "imported-evidence".into();
+    scene.languages.clear();
+    assert!(
+        resolve_scene(
+            &catalog,
+            &episode,
+            &scene,
+            &policy,
+            &season,
+            &episode_bindings,
+            &scene_bindings
+        )
+        .is_err()
+    );
+}

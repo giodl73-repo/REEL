@@ -2,6 +2,8 @@
   "schema":"reel.scene-authoring.v1",
   "scene_id":"scene-poem",
   "episode_id":"episode-1",
+  "authoring_state":"ready-for-private-build",
+  "legacy_evidence":[],
   "source_scope_ids":["source-block-1"],
   "source_evidence_sha256":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
   "languages":{

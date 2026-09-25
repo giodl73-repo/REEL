@@ -21,6 +21,10 @@ canonical line-to-cue mapping or chapter number/title. Font, panel geometry,
 color, fixed presentation duration and layout belong to the template definition.
 The selected asset binding belongs to its scope, never to the template layout.
 Poem line highlighting follows language-local measured cue/phrase events.
+Historical backports use `authoring_state: imported-evidence` and keep exact
+legacy references. The resolver rejects them until a producer has completed
+the authoring fields and explicitly advanced the state to
+`ready-for-private-build`; importing a prior render never does that by itself.
 
 An episode score palette maps a scene role to a theme, its source poem, an
 arrangement ID and an episode asset binding. Scene events refer to the role or

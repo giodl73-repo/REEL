@@ -148,6 +148,9 @@ pub struct Scene {
     pub schema: String,
     pub scene_id: String,
     pub episode_id: String,
+    pub authoring_state: String,
+    #[serde(default)]
+    pub legacy_evidence: Vec<LegacyEvidence>,
     pub source_scope_ids: Vec<String>,
     pub source_evidence_sha256: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -159,6 +162,16 @@ pub struct Scene {
     pub continuity_tags: Vec<String>,
     #[serde(default)]
     pub holds: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LegacyEvidence {
+    pub path: String,
+    pub sha256: String,
+    pub status: String,
+    #[serde(default)]
+    pub event_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -410,6 +423,13 @@ pub fn resolve_scene(
     if scene.episode_id != episode.episode_id || !episode.scene_ids.contains(&scene.scene_id) {
         bail!("scene is outside episode scope");
     }
+    if scene.authoring_state != "ready-for-private-build" {
+        bail!(
+            "scene {} authoring state is {}; complete the source and selected binding migration first",
+            scene.scene_id,
+            scene.authoring_state
+        );
+    }
     validate_policy(policy)?;
     let effective_policy_id = scene
         .scene_policy_override_id
@@ -603,6 +623,8 @@ mod tests {
             schema: SCENE_SCHEMA.into(),
             scene_id: "montage".into(),
             episode_id: "e1".into(),
+            authoring_state: "ready-for-private-build".into(),
+            legacy_evidence: vec![],
             source_scope_ids: vec!["b1".into()],
             source_evidence_sha256: "a".repeat(64),
             scene_policy_override_id: Some("montage".into()),
