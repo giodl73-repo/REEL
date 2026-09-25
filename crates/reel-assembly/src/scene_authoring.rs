@@ -93,6 +93,7 @@ pub struct Episode {
     pub schema: String,
     pub episode_id: String,
     pub season_id: String,
+    pub authoring_state: String,
     pub master_template_id: String,
     pub scene_policy_id: String,
     pub presentation: Vec<PresentationUse>,
@@ -295,6 +296,13 @@ pub fn resolve_episode_presentation(
     {
         bail!("unsupported authoring schema");
     }
+    if episode.authoring_state != "ready-for-private-build" {
+        bail!(
+            "episode {} authoring state is {}",
+            episode.episode_id,
+            episode.authoring_state
+        );
+    }
     let master = catalog
         .templates
         .iter()
@@ -419,6 +427,13 @@ pub fn resolve_scene(
             .any(|s| s.schema != BINDINGS_SCHEMA)
     {
         bail!("unsupported authoring schema");
+    }
+    if episode.authoring_state != "ready-for-private-build" {
+        bail!(
+            "episode {} authoring state is {}",
+            episode.episode_id,
+            episode.authoring_state
+        );
     }
     if scene.episode_id != episode.episode_id || !episode.scene_ids.contains(&scene.scene_id) {
         bail!("scene is outside episode scope");
@@ -613,6 +628,7 @@ mod tests {
             schema: EPISODE_SCHEMA.into(),
             episode_id: "e1".into(),
             season_id: "s1".into(),
+            authoring_state: "ready-for-private-build".into(),
             master_template_id: "master".into(),
             scene_policy_id: "default".into(),
             presentation: vec![],

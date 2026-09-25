@@ -2,6 +2,7 @@
   "schema":"reel.episode-authoring.v1",
   "episode_id":"episode-1",
   "season_id":"season-1",
+  "authoring_state":"ready-for-private-build",
   "master_template_id":"episode-master-v1",
   "scene_policy_id":"narrative-tv",
   "presentation":[
