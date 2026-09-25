@@ -48,6 +48,7 @@ reel-scene-authoring resolve <catalog.json> <episode.json> <scene.json> <policy.
 reel-scene-authoring resolve-episode-presentation <catalog.json> <episode.json> <season-bindings.json> <episode-bindings.json> --output <new.json>
 reel-scene-authoring compile-events <graph.json> <pointer.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <next-lock-id> --output <new.json>
 reel-scene-authoring audit-picture <policy.json> <rendered-spans.json> <sample-rate> --output <new.json>
+reel-scene-build build <project-root> <build.json> --asset-root <hydrated-cache-root> --output-dir <new-dir>
 ```
 
 `resolve` returns both whole-scene and language-local fingerprints. A Spanish
@@ -63,6 +64,33 @@ derives native event spans, and emits a request for the existing
 `reel semantic-assembly-bind-events` command. REEL checks the request against
 the selected graph and rejects stale take or picture slots. A correction names
 `supersedes_event_id` in the scene event and receives a new immutable lock.
+The independent scene build command reads one `reel.scene-build.v1` manifest
+that points to the catalog, episode, scene, policy, scoped bindings and selected
+semantic-delivery contract. It resolves the requested language fingerprint,
+checks exact active event IDs, calls REEL plan/render/check, groups adjacent
+identical asset/crop spans, and writes a private build receipt. It refuses a
+scene with template presentation until a real editable layer render is bound.
+The technical grouping does not prove that different asset hashes look
+visually distinct; frame inspection remains a separate review step.
+
+The build manifest contains repository-root relative paths and no copied asset
+hashes:
+
+```json
+{
+  "schema": "reel.scene-build.v1",
+  "scene_id": "scene-002",
+  "language": "es",
+  "catalog": "authoring/template-catalog.json",
+  "episode": "authoring/episode.json",
+  "scene": "authoring/scene-002/scene.json",
+  "policy": "authoring/policy-narrative.json",
+  "season_bindings": "authoring/season-bindings.json",
+  "episode_bindings": "authoring/episode-bindings.json",
+  "scene_bindings": "authoring/scene-002/bindings.json",
+  "semantic_delivery": "authoring/scene-002/es/semantic-delivery.json"
+}
+```
 
 ## Current execution boundary
 
