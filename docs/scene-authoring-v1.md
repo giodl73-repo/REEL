@@ -42,6 +42,7 @@ ducking and listening checks belong to subsequent delivery contracts.
 ```text
 reel-scene-authoring resolve <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> --output <new.json>
 reel-scene-authoring resolve-episode-presentation <catalog.json> <episode.json> <season-bindings.json> <episode-bindings.json> --output <new.json>
+reel-scene-authoring compile-events <graph.json> <pointer.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <next-lock-id> --output <new.json>
 reel-scene-authoring audit-picture <policy.json> <rendered-spans.json> <sample-rate> --output <new.json>
 ```
 
@@ -52,12 +53,18 @@ Adjacent events with the same visible composition are grouped for the policy
 maximum. Preferred cadence produces a hint; exceeding the hard maximum fails.
 A montage may name an explicit different policy. These fingerprints can become
 direct inputs to REEL's existing `changed-only-plan` graph.
+`compile-events` reads a cue-ID-to-relative-file-path JSON map, verifies every
+alignment file's SHA-256 and byte count against its selected scoped binding,
+derives native event spans, and emits a request for the existing
+`reel semantic-assembly-bind-events` command. REEL checks the request against
+the selected graph and rejects stale take or picture slots. A correction names
+`supersedes_event_id` in the scene event and receives a new immutable lock.
 
 ## Current execution boundary
 
-V1 resolution checks contract identity and scope; it does **not** verify that
-the cache contains each declared byte, derive phrase clocks, select a REEL
-graph revision, render templates, execute changed-only actions, conform an
+V1 resolution checks contract identity and scope; event compilation verifies
+the supplied local alignment files but does **not** hydrate every selected
+asset, select a REEL graph revision, render templates, execute changed-only actions, conform an
 episode, or infer creative approval. A selected `cache://sha256/` binding must
 still pass the consumer's hydration and authority checks. The existing REEL
 semantic assembly and scene delivery commands remain the render path until a

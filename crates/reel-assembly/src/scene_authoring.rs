@@ -4,6 +4,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::{
+    EVENT_BINDING_REQUEST_SCHEMA, EventBindingRequest, Graph, ImmutableRef, SelectedPointer,
+    SemanticEvent, SemanticEventBinding, append_semantic_events, validate_selected_graph,
+};
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -122,6 +126,8 @@ pub struct Event {
     pub semantic_trigger_id: String,
     pub picture_slot_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supersedes_event_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub picture_binding: Option<String>,
     pub score: ScoreUse,
     #[serde(default)]
@@ -231,6 +237,91 @@ pub fn compile_native_event_spans(
         bail!("semantic event references an unknown cue");
     }
     Ok(output)
+}
+
+/// Compile measured native marker spans into REEL's append-only selected-graph
+/// request. The caller must verify alignment file bytes against its selected
+/// binding before deserializing them; this function checks take and graph IDs.
+pub fn compile_selected_event_request(
+    graph: &Graph,
+    pointer: &SelectedPointer,
+    scene: &Scene,
+    language_id: &str,
+    scopes: &[&ScopedBindings],
+    alignments: &BTreeMap<String, NativeAlignment>,
+    next_lock_logical_id: &str,
+) -> Result<EventBindingRequest> {
+    validate_selected_graph(pointer, graph)?;
+    if scene.authoring_state != "ready-for-private-build" {
+        bail!("scene is not ready for private build");
+    }
+    let language = scene
+        .languages
+        .get(language_id)
+        .ok_or_else(|| anyhow::anyhow!("missing {language_id} scene lane"))?;
+    let spans = compile_native_event_spans(language_id, language, alignments)?;
+    let cues = language
+        .cues
+        .iter()
+        .map(|cue| (cue.cue_id.as_str(), cue))
+        .collect::<BTreeMap<_, _>>();
+    let events = language
+        .events
+        .iter()
+        .map(|event| (event.event_id.as_str(), event))
+        .collect::<BTreeMap<_, _>>();
+    let mut bindings = Vec::new();
+    for span in spans {
+        let cue = cues[span.cue_id.as_str()];
+        let event = events[span.event_id.as_str()];
+        let take = binding(
+            cue.take_binding
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("selected take missing"))?,
+            scopes,
+        )?;
+        let picture = binding(
+            event
+                .picture_binding
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("selected picture missing"))?,
+            scopes,
+        )?;
+        if alignments[&cue.cue_id].selected_take_sha256 != take.sha256 {
+            bail!(
+                "native alignment uses a different selected take for {}",
+                cue.cue_id
+            );
+        }
+        bindings.push(SemanticEventBinding {
+            event: SemanticEvent {
+                event_id: event.event_id.clone(),
+                scene_id: scene.scene_id.clone(),
+                language: language_id.into(),
+                narration: ImmutableRef {
+                    logical_id: take.logical_id.clone(),
+                    sha256: take.sha256.clone(),
+                },
+                picture: ImmutableRef {
+                    logical_id: picture.logical_id.clone(),
+                    sha256: picture.sha256.clone(),
+                },
+                phrase_start_seconds: span.start_sample as f64 / span.sample_rate as f64,
+                phrase_end_seconds: span.end_sample as f64 / span.sample_rate as f64,
+            },
+            node_id: scene.scene_id.clone(),
+            narration_slot_id: cue.narration_slot_id.clone(),
+            picture_slot_id: event.picture_slot_id.clone(),
+            supersedes_event_id: event.supersedes_event_id.clone(),
+        });
+    }
+    let request = EventBindingRequest {
+        schema: EVENT_BINDING_REQUEST_SCHEMA.into(),
+        bindings,
+        next_lock_logical_id: next_lock_logical_id.into(),
+    };
+    append_semantic_events(graph, &request)?;
+    Ok(request)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

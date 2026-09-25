@@ -1,6 +1,7 @@
 use reel_assembly::scene_authoring::{
     Episode, NATIVE_ALIGNMENT_SCHEMA, NativeAlignment, Scene, ScenePolicy, ScopedBindings,
-    TemplateCatalog, compile_native_event_spans, resolve_episode_presentation, resolve_scene,
+    TemplateCatalog, compile_native_event_spans, compile_selected_event_request,
+    resolve_episode_presentation, resolve_scene,
 };
 use serde::de::DeserializeOwned;
 
@@ -294,6 +295,95 @@ fn native_clock_rejects_unmeasured_semantic_entrance() {
             "es",
             lane,
             &std::collections::BTreeMap::from([(alignment.cue_id.clone(), alignment)])
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn native_markers_bind_only_to_selected_reel_slots() {
+    use reel_assembly::{
+        Asset, Disposition, GRAPH_SCHEMA, Graph, ImmutableRef, Lane, Node, POINTER_SCHEMA,
+        Revision, SelectedPointer, Slot,
+    };
+    let (_, _, scene, _, season, episode_bindings, scene_bindings) = subject();
+    let make_slot = |slot_id: &str, lane: Lane, key: &str| {
+        let selected = &scene_bindings.assets[key];
+        Slot {
+            slot_id: slot_id.into(),
+            beat_id: "beat-1".into(),
+            lane,
+            disposition: Disposition::Selected,
+            selected_revision_id: Some("r1".into()),
+            revisions: vec![Revision {
+                revision_id: "r1".into(),
+                supersedes: None,
+                asset: Asset {
+                    logical_id: selected.logical_id.clone(),
+                    cache_uri: selected.cache_uri.clone(),
+                    sha256: selected.sha256.clone(),
+                },
+            }],
+        }
+    };
+    let lock = ImmutableRef {
+        logical_id: "lock-1".into(),
+        sha256: "a".repeat(64),
+    };
+    let graph = Graph {
+        schema: GRAPH_SCHEMA.into(),
+        lock: lock.clone(),
+        slots: vec![
+            make_slot("es-narration-slot", Lane::Narration, "es.take"),
+            make_slot("es-picture-slot", Lane::Picture, "picture.first-line"),
+        ],
+        events: vec![],
+        nodes: vec![Node {
+            id: "scene-poem".into(),
+            inputs: vec![],
+            slots: vec!["es-narration-slot".into(), "es-picture-slot".into()],
+            events: vec![],
+        }],
+        presentation_targets: vec![],
+    };
+    let pointer = SelectedPointer {
+        schema: POINTER_SCHEMA.into(),
+        logical_id: "current".into(),
+        selected_lock: lock,
+    };
+    let lane = &scene.languages["es"];
+    let alignment = NativeAlignment {
+        schema: NATIVE_ALIGNMENT_SCHEMA.into(),
+        language: "es".into(),
+        cue_id: lane.cues[0].cue_id.clone(),
+        selected_take_sha256: scene_bindings.assets["es.take"].sha256.clone(),
+        sample_rate: 24_000,
+        cue_end_sample: 240_000,
+        semantic_markers: std::collections::BTreeMap::from([("first-line".into(), 0)]),
+    };
+    let alignments = std::collections::BTreeMap::from([(alignment.cue_id.clone(), alignment)]);
+    let request = compile_selected_event_request(
+        &graph,
+        &pointer,
+        &scene,
+        "es",
+        &[&scene_bindings, &episode_bindings, &season],
+        &alignments,
+        "lock-2",
+    )
+    .unwrap();
+    assert_eq!(request.bindings[0].event.phrase_end_seconds, 10.0);
+    let mut stale = graph.clone();
+    stale.slots[0].revisions[0].asset.sha256 = "f".repeat(64);
+    assert!(
+        compile_selected_event_request(
+            &stale,
+            &pointer,
+            &scene,
+            "es",
+            &[&scene_bindings, &episode_bindings, &season],
+            &alignments,
+            "lock-2"
         )
         .is_err()
     );
