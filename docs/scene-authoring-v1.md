@@ -21,6 +21,11 @@ canonical line-to-cue mapping or chapter number/title. Font, panel geometry,
 color, fixed presentation duration and layout belong to the template definition.
 The selected asset binding belongs to its scope, never to the template layout.
 Poem line highlighting follows language-local measured cue/phrase events.
+Ready cues name their selected narration slot and take/alignment bindings;
+ready events name a selected picture slot and binding. The Rust
+`compile_native_event_spans` function converts measured semantic markers to
+sample-exact, gapless event spans independently for each language and rejects
+unmeasured or out-of-order entrances. It does not author an arbitrary time cut.
 Historical backports use `authoring_state: imported-evidence` and keep exact
 legacy references. The resolver rejects them until a producer has completed
 the authoring fields and explicitly advanced the state to

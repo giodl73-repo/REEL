@@ -107,6 +107,7 @@ pub struct Cue {
     pub cue_id: String,
     pub source_id: String,
     pub exact_text_sha256: String,
+    pub narration_slot_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub take_binding: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -119,6 +120,7 @@ pub struct Event {
     pub event_id: String,
     pub cue_id: String,
     pub semantic_trigger_id: String,
+    pub picture_slot_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub picture_binding: Option<String>,
     pub score: ScoreUse,
@@ -141,6 +143,94 @@ pub enum ScoreUse {
 pub struct Language {
     pub cues: Vec<Cue>,
     pub events: Vec<Event>,
+}
+
+pub const NATIVE_ALIGNMENT_SCHEMA: &str = "reel.scene-native-alignment.v1";
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeAlignment {
+    pub schema: String,
+    pub language: String,
+    pub cue_id: String,
+    pub selected_take_sha256: String,
+    pub sample_rate: u32,
+    pub cue_end_sample: u64,
+    pub semantic_markers: BTreeMap<String, u64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NativeEventSpan {
+    pub event_id: String,
+    pub cue_id: String,
+    pub start_sample: u64,
+    pub end_sample: u64,
+    pub sample_rate: u32,
+}
+
+/// Turns exact semantic markers measured on a selected native take into
+/// contiguous event spans. Scene authoring never supplies event seconds.
+pub fn compile_native_event_spans(
+    language_id: &str,
+    language: &Language,
+    alignments: &BTreeMap<String, NativeAlignment>,
+) -> Result<Vec<NativeEventSpan>> {
+    if language.cues.is_empty() || language.events.is_empty() {
+        bail!("native lane is empty");
+    }
+    let mut output = Vec::new();
+    for cue in &language.cues {
+        let alignment = alignments
+            .get(&cue.cue_id)
+            .ok_or_else(|| anyhow::anyhow!("missing native alignment for {}", cue.cue_id))?;
+        if alignment.schema != NATIVE_ALIGNMENT_SCHEMA
+            || alignment.language != language_id
+            || alignment.cue_id != cue.cue_id
+            || !sha(&alignment.selected_take_sha256)
+            || alignment.sample_rate == 0
+            || alignment.cue_end_sample == 0
+        {
+            bail!("invalid native alignment for {}", cue.cue_id);
+        }
+        let events = language
+            .events
+            .iter()
+            .filter(|event| event.cue_id == cue.cue_id)
+            .collect::<Vec<_>>();
+        if events.is_empty() {
+            bail!("cue {} has no semantic events", cue.cue_id);
+        }
+        let mut starts = Vec::new();
+        for event in &events {
+            let start = *alignment
+                .semantic_markers
+                .get(&event.semantic_trigger_id)
+                .ok_or_else(|| anyhow::anyhow!("missing marker {}", event.semantic_trigger_id))?;
+            if start >= alignment.cue_end_sample {
+                bail!("marker outside native cue");
+            }
+            starts.push(start);
+        }
+        if starts[0] != 0 || starts.windows(2).any(|pair| pair[0] >= pair[1]) {
+            bail!("semantic markers must cover the cue in source order from sample zero");
+        }
+        for (index, event) in events.iter().enumerate() {
+            output.push(NativeEventSpan {
+                event_id: event.event_id.clone(),
+                cue_id: cue.cue_id.clone(),
+                start_sample: starts[index],
+                end_sample: starts
+                    .get(index + 1)
+                    .copied()
+                    .unwrap_or(alignment.cue_end_sample),
+                sample_rate: alignment.sample_rate,
+            });
+        }
+    }
+    if output.len() != language.events.len() {
+        bail!("semantic event references an unknown cue");
+    }
+    Ok(output)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -497,9 +587,13 @@ pub fn resolve_scene(
         for cue in &language.cues {
             if !cues.insert(cue.cue_id.as_str())
                 || cue.source_id.is_empty()
+                || cue.narration_slot_id.is_empty()
                 || !sha(&cue.exact_text_sha256)
             {
                 bail!("invalid {language_id} cue");
+            }
+            if cue.take_binding.is_none() || cue.phrase_alignment_binding.is_none() {
+                bail!("ready {language_id} cue lacks selected take or native alignment");
             }
             for key in [&cue.take_binding, &cue.phrase_alignment_binding]
                 .into_iter()
@@ -515,8 +609,12 @@ pub fn resolve_scene(
             if !events.insert(event.event_id.as_str())
                 || !cues.contains(event.cue_id.as_str())
                 || event.semantic_trigger_id.is_empty()
+                || event.picture_slot_id.is_empty()
             {
                 bail!("invalid {language_id} event");
+            }
+            if event.picture_binding.is_none() {
+                bail!("ready {language_id} event lacks selected picture");
             }
             if let ScoreUse::Role { role } = &event.score {
                 let key = score_roles

@@ -1,6 +1,6 @@
 use reel_assembly::scene_authoring::{
-    Episode, Scene, ScenePolicy, ScopedBindings, TemplateCatalog, resolve_episode_presentation,
-    resolve_scene,
+    Episode, NATIVE_ALIGNMENT_SCHEMA, NativeAlignment, Scene, ScenePolicy, ScopedBindings,
+    TemplateCatalog, compile_native_event_spans, resolve_episode_presentation, resolve_scene,
 };
 use serde::de::DeserializeOwned;
 
@@ -247,6 +247,53 @@ fn historical_evidence_cannot_be_resolved_as_a_selected_scene() {
             &season,
             &episode_bindings,
             &scene_bindings
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn semantic_markers_compile_on_each_native_language_clock() {
+    let (_, _, scene, _, _, _, _) = subject();
+    for (language_id, end_sample) in [("es", 240_000), ("en", 168_000)] {
+        let lane = &scene.languages[language_id];
+        let alignment = NativeAlignment {
+            schema: NATIVE_ALIGNMENT_SCHEMA.into(),
+            language: language_id.into(),
+            cue_id: lane.cues[0].cue_id.clone(),
+            selected_take_sha256: "a".repeat(64),
+            sample_rate: 24_000,
+            cue_end_sample: end_sample,
+            semantic_markers: std::collections::BTreeMap::from([("first-line".into(), 0)]),
+        };
+        let spans = compile_native_event_spans(
+            language_id,
+            lane,
+            &std::collections::BTreeMap::from([(alignment.cue_id.clone(), alignment)]),
+        )
+        .unwrap();
+        assert_eq!(spans[0].end_sample, end_sample);
+    }
+}
+
+#[test]
+fn native_clock_rejects_unmeasured_semantic_entrance() {
+    let (_, _, scene, _, _, _, _) = subject();
+    let lane = &scene.languages["es"];
+    let alignment = NativeAlignment {
+        schema: NATIVE_ALIGNMENT_SCHEMA.into(),
+        language: "es".into(),
+        cue_id: lane.cues[0].cue_id.clone(),
+        selected_take_sha256: "a".repeat(64),
+        sample_rate: 24_000,
+        cue_end_sample: 240_000,
+        semantic_markers: Default::default(),
+    };
+    assert!(
+        compile_native_event_spans(
+            "es",
+            lane,
+            &std::collections::BTreeMap::from([(alignment.cue_id.clone(), alignment)])
         )
         .is_err()
     );
