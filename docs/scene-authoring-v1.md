@@ -20,6 +20,10 @@ The scene invocation says `template_id`, role and content such as poem ID,
 canonical line-to-cue mapping or chapter number/title. Font, panel geometry,
 color, fixed presentation duration and layout belong to the template definition.
 The selected asset binding belongs to its scope, never to the template layout.
+The canonical source document hash and a shared episode graph snapshot belong
+in their owner registers. A scene names `source_authority_id`, source scope IDs
+and, during migration, a shared evidence ID plus its own event IDs. It does
+not copy a whole-episode graph hash into every scene file.
 Poem line highlighting follows language-local measured cue/phrase events.
 Ready cues name their selected narration slot and take/alignment bindings;
 ready events name a selected picture slot and binding. The Rust

@@ -5,7 +5,7 @@
   "authoring_state":"ready-for-private-build",
   "legacy_evidence":[],
   "source_scope_ids":["source-block-1"],
-  "source_evidence_sha256":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "source_authority_id":"source-1",
   "languages":{
     "es":{"cues":[{"cue_id":"es-1","source_id":"source-block-1","exact_text_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","narration_slot_id":"es-narration-slot","take_binding":"es.take","phrase_alignment_binding":"es.alignment"}],"events":[{"event_id":"es-event-1","cue_id":"es-1","semantic_trigger_id":"first-line","picture_slot_id":"es-picture-slot","picture_binding":"picture.first-line","score":{"disposition":"role","role":"poem.intimate"},"sonic_bindings":[],"vfx_bindings":[]}]},
     "en":{"cues":[{"cue_id":"en-1","source_id":"source-block-1","exact_text_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","narration_slot_id":"en-narration-slot","take_binding":"en.take","phrase_alignment_binding":"en.alignment"}],"events":[{"event_id":"en-event-1","cue_id":"en-1","semantic_trigger_id":"first-line","picture_slot_id":"en-picture-slot","picture_binding":"picture.first-line","score":{"disposition":"role","role":"poem.intimate"},"sonic_bindings":[],"vfx_bindings":[]}]}

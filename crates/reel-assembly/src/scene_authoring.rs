@@ -334,7 +334,7 @@ pub struct Scene {
     #[serde(default)]
     pub legacy_evidence: Vec<LegacyEvidence>,
     pub source_scope_ids: Vec<String>,
-    pub source_evidence_sha256: String,
+    pub source_authority_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scene_policy_override_id: Option<String>,
     pub languages: BTreeMap<String, Language>,
@@ -349,8 +349,11 @@ pub struct Scene {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LegacyEvidence {
-    pub path: String,
-    pub sha256: String,
+    pub evidence_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
     pub status: String,
     #[serde(default)]
     pub event_ids: Vec<String>,
@@ -634,7 +637,7 @@ pub fn resolve_scene(
     if effective_policy_id != policy.policy_id {
         bail!("effective scene policy does not match");
     }
-    if scene.source_scope_ids.is_empty() || !sha(&scene.source_evidence_sha256) {
+    if scene.source_scope_ids.is_empty() || scene.source_authority_id.is_empty() {
         bail!("scene lacks source evidence");
     }
     let scopes = [scene_bindings, episode_bindings, season];
@@ -731,7 +734,7 @@ pub fn resolve_scene(
             digest(&(
                 &scene.scene_id,
                 &scene.source_scope_ids,
-                &scene.source_evidence_sha256,
+                &scene.source_authority_id,
                 &scene.presentation,
                 &scene.continuity_tags,
                 &language,
@@ -831,7 +834,7 @@ mod tests {
             authoring_state: "ready-for-private-build".into(),
             legacy_evidence: vec![],
             source_scope_ids: vec!["b1".into()],
-            source_evidence_sha256: "a".repeat(64),
+            source_authority_id: "source-1".into(),
             scene_policy_override_id: Some("montage".into()),
             languages: BTreeMap::new(),
             presentation: None,
