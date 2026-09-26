@@ -711,6 +711,7 @@ fn semantic_events_bind_to_selected_language_local_narration_and_picture_slots()
     };
     let request = EventBindingRequest {
         schema: EVENT_BINDING_REQUEST_SCHEMA.into(),
+        retirements: vec![],
         next_lock_logical_id: "lock-v2".into(),
         bindings: vec![SemanticEventBinding {
             event,
@@ -766,6 +767,7 @@ fn semantic_events_reject_wrong_language_take_or_unselected_picture() {
     };
     let request = EventBindingRequest {
         schema: EVENT_BINDING_REQUEST_SCHEMA.into(),
+        retirements: vec![],
         next_lock_logical_id: "next".into(),
         bindings: vec![SemanticEventBinding {
             event: SemanticEvent {
@@ -833,20 +835,31 @@ fn semantic_event_supersession_preserves_history_and_replaces_active_binding() {
                 ],
             },
         ],
-        events: vec![SemanticEvent {
-            event_id: "event-old".into(),
-            scene_id: "scene".into(),
-            language: "es".into(),
-            narration: reference("narration-es", 'b'),
-            picture: reference("picture-old", 'c'),
-            phrase_start_seconds: 1.0,
-            phrase_end_seconds: 3.0,
-        }],
+        events: vec![
+            SemanticEvent {
+                event_id: "event-old".into(),
+                scene_id: "scene".into(),
+                language: "es".into(),
+                narration: reference("narration-es", 'b'),
+                picture: reference("picture-old", 'c'),
+                phrase_start_seconds: 1.0,
+                phrase_end_seconds: 3.0,
+            },
+            SemanticEvent {
+                event_id: "event-extra".into(),
+                scene_id: "scene".into(),
+                language: "es".into(),
+                narration: reference("narration-es", 'b'),
+                picture: reference("picture-old", 'c'),
+                phrase_start_seconds: 3.0,
+                phrase_end_seconds: 4.0,
+            },
+        ],
         nodes: vec![Node {
             id: "scene".into(),
             inputs: vec![],
             slots: vec!["cue.narration.es".into(), "cue.picture".into()],
-            events: vec!["event-old".into()],
+            events: vec!["event-old".into(), "event-extra".into()],
         }],
         presentation_targets: vec![],
     };
@@ -868,12 +881,36 @@ fn semantic_event_supersession_preserves_history_and_replaces_active_binding() {
     let request = EventBindingRequest {
         schema: EVENT_BINDING_REQUEST_SCHEMA.into(),
         bindings: vec![replacement.clone()],
+        retirements: vec![reel_assembly::SemanticEventRetirement {
+            node_id: "scene".into(),
+            event_id: "event-extra".into(),
+        }],
         next_lock_logical_id: "next".into(),
     };
     let next = append_semantic_events(&graph, &request).unwrap();
-    assert_eq!(next.events.len(), 2);
+    assert_eq!(next.events.len(), 3);
     assert_eq!(next.nodes[0].events, vec!["event-new"]);
     assert_eq!(closure(&next, "scene").unwrap().semantic_events.len(), 1);
+    let mut double_action = request.clone();
+    double_action.retirements[0].event_id = "event-old".into();
+    assert!(append_semantic_events(&graph, &double_action).is_err());
+    let mut wrong_scene = graph.clone();
+    wrong_scene.events[1].scene_id = "another-scene".into();
+    assert!(append_semantic_events(&wrong_scene, &request).is_err());
+    let mut wrong_language = graph.clone();
+    wrong_language.events[1].language = "en".into();
+    assert!(append_semantic_events(&wrong_language, &request).is_err());
+    let mut wrong_binding_scene = request.clone();
+    wrong_binding_scene.bindings[0].event.scene_id = "another-scene".into();
+    assert!(append_semantic_events(&graph, &wrong_binding_scene).is_err());
+    let mut shared_event = graph.clone();
+    shared_event.nodes.push(Node {
+        id: "other-node".into(),
+        inputs: vec![],
+        slots: vec![],
+        events: vec!["event-extra".into()],
+    });
+    assert!(append_semantic_events(&shared_event, &request).is_err());
     assert!(
         append_semantic_events(
             &next,

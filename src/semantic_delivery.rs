@@ -46,6 +46,9 @@ pub struct EventDeliveryBinding {
     pub event_id: String,
     pub narration_attachment_id: String,
     pub picture_attachment_id: String,
+    /// Additional selected picture cuts motivated by this semantic event.
+    #[serde(default)]
+    pub additional_picture_attachment_ids: Vec<String>,
     /// Optional M/E audio attachments whose timing is motivated by this event.
     #[serde(default)]
     pub audio_attachment_ids: Vec<String>,
@@ -112,6 +115,14 @@ fn validate_job_media(selection: &SelectedClosure, job: &Job) -> Result<()> {
                 "external layer {} is not selected by semantic closure",
                 layer.attachment_id
             );
+        }
+        if let Some(font) = &layer.font {
+            if !allowed.contains(&font.sha256) {
+                bail!(
+                    "external layer {} font is not selected by semantic closure",
+                    layer.attachment_id
+                );
+            }
         }
     }
     Ok(())
@@ -208,6 +219,19 @@ fn validate_event_bindings(
             );
         }
         bound_pictures.insert(binding.picture_attachment_id.as_str());
+        let mut referenced_pictures = BTreeSet::from([binding.picture_attachment_id.as_str()]);
+        for attachment_id in &binding.additional_picture_attachment_ids {
+            if !referenced_pictures.insert(attachment_id.as_str())
+                || !pictures.contains_key(attachment_id.as_str())
+            {
+                bail!(
+                    "semantic event {} has invalid additional picture attachment {}",
+                    binding.event_id,
+                    attachment_id
+                );
+            }
+            bound_pictures.insert(attachment_id.as_str());
+        }
         bound_audio.insert(binding.narration_attachment_id.as_str());
         let mut referenced_audio = BTreeSet::new();
         for attachment_id in &binding.audio_attachment_ids {
@@ -486,6 +510,7 @@ buses: {{ D: {{ state: present, reason: narration }}, M: {{ state: intentional-s
             event_id: "event.es.phrase-1".into(),
             narration_attachment_id: "narration".into(),
             picture_attachment_id: "picture".into(),
+            additional_picture_attachment_ids: vec![],
             audio_attachment_ids: vec![],
             external_layer_attachment_ids: vec![],
         };
@@ -507,6 +532,81 @@ buses: {{ D: {{ state: present, reason: narration }}, M: {{ state: intentional-s
             Some("es"),
         )
         .unwrap();
+        let mut extra_picture = job.clone();
+        let mut unused = extra_picture.pictures[0].clone();
+        unused.attachment_id = "retired-picture".into();
+        extra_picture.pictures.push(unused);
+        assert!(
+            validate_event_bindings(
+                &selection,
+                &extra_picture,
+                std::slice::from_ref(&binding),
+                None,
+                Some("es")
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("attachment without a scoped event binding")
+        );
+        let mut with_cut = binding.clone();
+        with_cut.additional_picture_attachment_ids = vec!["retired-picture".into()];
+        validate_event_bindings(
+            &selection,
+            &extra_picture,
+            &[with_cut.clone()],
+            None,
+            Some("es"),
+        )
+        .unwrap();
+        with_cut
+            .additional_picture_attachment_ids
+            .push("retired-picture".into());
+        assert!(
+            validate_event_bindings(&selection, &extra_picture, &[with_cut], None, Some("es"))
+                .unwrap_err()
+                .to_string()
+                .contains("invalid additional picture attachment")
+        );
+        let mut extra_audio = job.clone();
+        let mut unused = extra_audio.audio[0].clone();
+        unused.attachment_id = "retired-narration".into();
+        extra_audio.audio.push(unused);
+        assert!(
+            validate_event_bindings(
+                &selection,
+                &extra_audio,
+                std::slice::from_ref(&binding),
+                None,
+                Some("es")
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("attachment without a scoped event binding")
+        );
+        let mut extra_layer = job.clone();
+        extra_layer
+            .external_layers
+            .push(crate::scene_delivery::ExternalLayer {
+                attachment_id: "retired-effect".into(),
+                reason: "unbound regression".into(),
+                evidence: job.contract.clone(),
+                render_mode: Default::default(),
+                font: None,
+                render_source: None,
+                derivation_receipt: None,
+            });
+        assert!(
+            validate_event_bindings(
+                &selection,
+                &extra_layer,
+                std::slice::from_ref(&binding),
+                None,
+                Some("es")
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("attachment without a scoped event binding")
+        );
         assert!(
             validate_event_bindings(
                 &selection,
@@ -581,6 +681,7 @@ buses: {{ D: {{ state: present, reason: narration }}, M: {{ state: intentional-s
             event_id: "event.es.phrase-1".into(),
             narration_attachment_id: "narration".into(),
             picture_attachment_id: "picture".into(),
+            additional_picture_attachment_ids: vec![],
             audio_attachment_ids: vec![],
             external_layer_attachment_ids: vec![],
         };
@@ -612,6 +713,86 @@ buses: {{ D: {{ state: present, reason: narration }}, M: {{ state: intentional-s
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn one_external_effect_can_bind_two_selected_picture_events() {
+        let mut graph = event_graph();
+        let mut next_picture = graph.slots[0].clone();
+        next_picture.slot_id = "picture-next".into();
+        next_picture.revisions[0].asset.logical_id = "next-cel".into();
+        next_picture.revisions[0].asset.sha256 = hash('d');
+        next_picture.revisions[0].asset.cache_uri = format!("cache://sha256/{}", hash('d'));
+        graph.slots.push(next_picture);
+        graph.nodes[0].slots.push("picture-next".into());
+        let mut next_event = graph.events[0].clone();
+        next_event.event_id = "event.es.phrase-2".into();
+        next_event.picture.logical_id = "next-cel".into();
+        next_event.picture.sha256 = hash('d');
+        next_event.phrase_start_seconds = 2.0;
+        next_event.phrase_end_seconds = 3.0;
+        graph.events.push(next_event);
+        graph.nodes[0].events.push("event.es.phrase-2".into());
+        let selection = selected_closure(
+            &SelectedPointer {
+                schema: POINTER_SCHEMA.into(),
+                logical_id: "current".into(),
+                selected_lock: graph.lock.clone(),
+            },
+            &graph,
+            "scene",
+        )
+        .unwrap();
+        let job: Job = serde_yaml::from_str(&format!(
+            r#"
+schema: reel.scene-delivery.v0.1
+id: scene
+contract: {{ path: contract.yaml, sha256: {picture}, bytes: 1 }}
+production_manifest_sha256: {picture}
+width: 1920
+height: 1080
+max_composition_samples: 480000
+pictures:
+  - attachment_id: first-cel
+    source: {{ path: first.png, sha256: {picture}, bytes: 1 }}
+    kind: still
+    attention: first beat
+  - attachment_id: next-cel
+    source: {{ path: next.png, sha256: {next}, bytes: 1 }}
+    kind: still
+    attention: next beat
+audio:
+  - attachment_id: narration
+    source: {{ path: narration.wav, sha256: {narration}, bytes: 1 }}
+    bus: D
+    cue_id: cue.es.001
+external_layers:
+  - attachment_id: weather
+    reason: one continuous storm across the cut
+    evidence: {{ path: weather.mkv, sha256: {effect}, bytes: 1 }}
+    render_mode: timed-video-overlay
+buses: {{ D: {{ state: present, reason: narration }}, M: {{ state: intentional-silence, reason: none }}, E: {{ state: intentional-silence, reason: none }} }}
+"#,
+            picture = hash('b'),
+            next = hash('d'),
+            narration = hash('c'),
+            effect = hash('e'),
+        ))
+        .unwrap();
+        let first = EventDeliveryBinding {
+            event_id: "event.es.phrase-1".into(),
+            narration_attachment_id: "narration".into(),
+            picture_attachment_id: "first-cel".into(),
+            additional_picture_attachment_ids: vec![],
+            audio_attachment_ids: vec![],
+            external_layer_attachment_ids: vec!["weather".into()],
+        };
+        let second = EventDeliveryBinding {
+            event_id: "event.es.phrase-2".into(),
+            picture_attachment_id: "next-cel".into(),
+            ..first.clone()
+        };
+        validate_event_bindings(&selection, &job, &[first, second], None, Some("es")).unwrap();
     }
 
     #[test]
@@ -670,6 +851,7 @@ buses: {{ D: {{ state: present, reason: narration }}, M: {{ state: intentional-s
                 event_id: "event.es.phrase-1".into(),
                 narration_attachment_id: "narration".into(),
                 picture_attachment_id: "picture".into(),
+                additional_picture_attachment_ids: vec![],
                 audio_attachment_ids: vec![],
                 external_layer_attachment_ids: vec![],
             }],

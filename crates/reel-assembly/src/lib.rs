@@ -18,6 +18,8 @@ pub const SLOT_EXTENSION_REQUEST_SCHEMA: &str = "reel.slot-extension-request.v1"
 pub const SLOT_DEPRECATION_BATCH_REQUEST_SCHEMA: &str = "reel.slot-deprecation-batch-request.v1";
 pub const EVENT_BINDING_REQUEST_SCHEMA: &str = "reel.semantic-event-binding-request.v1";
 pub const CACHE_PREFIX: &str = "cache://sha256/";
+pub mod scene_authoring;
+pub mod template_presentation;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -121,7 +123,16 @@ pub struct SlotDeprecationBatchRequest {
 pub struct EventBindingRequest {
     pub schema: String,
     pub bindings: Vec<SemanticEventBinding>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retirements: Vec<SemanticEventRetirement>,
     pub next_lock_logical_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SemanticEventRetirement {
+    pub node_id: String,
+    pub event_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -666,8 +677,52 @@ pub fn append_semantic_events(graph: &Graph, request: &EventBindingRequest) -> R
         .collect::<BTreeSet<_>>();
     let mut new_events = BTreeSet::new();
     let mut superseded_events = BTreeSet::new();
+    let mut retired_events = BTreeSet::new();
+    let request_lanes = request
+        .bindings
+        .iter()
+        .map(|binding| (binding.node_id.as_str(), binding.event.language.as_str()))
+        .collect::<BTreeSet<_>>();
+    for retirement in &request.retirements {
+        valid_id("retired event", &retirement.event_id)?;
+        let node = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == retirement.node_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!("retirement names unknown node {}", retirement.node_id)
+            })?;
+        let event = graph
+            .events
+            .iter()
+            .find(|event| event.event_id == retirement.event_id)
+            .ok_or_else(|| anyhow::anyhow!("retired event {} is unknown", retirement.event_id))?;
+        if event.scene_id != retirement.node_id
+            || !request_lanes.contains(&(retirement.node_id.as_str(), event.language.as_str()))
+            || !node.events.iter().any(|id| id == &retirement.event_id)
+            || graph
+                .nodes
+                .iter()
+                .filter(|candidate| candidate.events.contains(&retirement.event_id))
+                .count()
+                != 1
+            || !retired_events.insert(retirement.event_id.as_str())
+        {
+            bail!(
+                "retired event {} is outside the request scene/language or not uniquely active",
+                retirement.event_id
+            );
+        }
+    }
     for binding in &request.bindings {
         valid_event(&binding.event)?;
+        if binding.event.scene_id != binding.node_id {
+            bail!(
+                "semantic event {} scene differs from node {}",
+                binding.event.event_id,
+                binding.node_id
+            );
+        }
         if !known_nodes.contains(binding.node_id.as_str()) {
             bail!(
                 "semantic event {} names unknown node {}",
@@ -682,6 +737,9 @@ pub fn append_semantic_events(graph: &Graph, request: &EventBindingRequest) -> R
         }
         if let Some(old_id) = &binding.supersedes_event_id {
             valid_id("superseded event", old_id)?;
+            if retired_events.contains(old_id.as_str()) {
+                bail!("semantic event {old_id} cannot be both retired and superseded");
+            }
             if !superseded_events.insert(old_id.as_str()) {
                 bail!("semantic event {old_id} is superseded more than once");
             }
@@ -747,6 +805,14 @@ pub fn append_semantic_events(graph: &Graph, request: &EventBindingRequest) -> R
         } else {
             node.events.push(binding.event.event_id.clone());
         }
+    }
+    for retirement in &request.retirements {
+        let node = next
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == retirement.node_id)
+            .expect("checked retirement node");
+        node.events.retain(|id| id != &retirement.event_id);
     }
     next.lock = graph_digest_lock(&next, &request.next_lock_logical_id)?;
     validate_graph(&next)?;

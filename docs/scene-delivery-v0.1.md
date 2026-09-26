@@ -79,6 +79,26 @@ when attachment IDs change. Each picture needs an attention statement. Machine
 checks cannot establish that an almost identical crop is meaningful: human shot
 review remains required.
 
+An explicit still-picture `motion` may use `zoompan` or `centered-zoompan` with
+selected scale/crop geometry, `zoom_step`, and `zoom_max`. The centered form keeps
+the zoom window centered in both axes; motion restarts at the selected picture
+attachment boundary. The job binds the source still and motion parameters, so a
+change to either changes the plan hash. Neither form changes the selected picture
+or narration timing.
+When adjacent semantic attachments continue the same still and motion, give their
+picture entries the same `motion_group_id`. REEL verifies identical source and
+motion, then renders one continuous motion span across the attachments. The
+separate attachment IDs and timing remain available for edits and scene closure.
+
+`post_compose_camera` applies a selected centered zoom to the fully composed
+scene picture after any external picture layer and before audio muxing. Its
+`evidence` is a hash-bound recipe file; `zoom_step`, `zoom_max`, and ordered
+half-open frame `windows` are explicit job data. Each window restarts at zoom 1.
+REEL validates window bounds and preserves the composed pre-camera picture in
+`pre-camera-picture.mkv` for separate inspection. Use this when the recorded
+camera operated over composed picture; still-level motion remains available
+for edits whose camera belonged to one source still.
+
 An over-limit composition needs
 `stillness_exception: {reason: ..., decision: ...}`. These fields reference a
 consumer decision; REEL does not grant or authenticate that creative approval.
@@ -90,23 +110,55 @@ to receive a frame fails rather than silently disappearing. This partition diffe
 from the compiler's overlapping floor/ceiling interval *coverage* representation;
 the sample timing remains unchanged and the delivery plan exposes both boundaries.
 
+For a recorded edit whose encoded cuts used local frame rounding, each picture
+may declare `delivery_frame_count: <positive integer>`. If one picture declares
+it, every picture must. The plan then allocates those frame counts in picture
+order while retaining the exact compiled sample spans for narration and audio.
+The resulting video frame count can differ slightly from the frame count
+implied by the scene's sample duration; the receipt records both. Consumers
+must pin the source edit or rendered film that justifies these counts and
+compare encoded cut boundaries before claiming picture parity. Omitting the
+field retains the global sample-grid partition above.
+
 ## Existing effects, captions, titles and camera tools
 
-This path does not invent a second effect renderer or caption engine. Render
-existing governed camera/VFX work through the established REEL adapters, bind the
-result as a `video` picture, and preserve its source receipt. For any compiled
-beat/camera/effect/title/caption attachment owned by another layer, list an
-`external_layers` item with `attachment_id`, `reason` and exact evidence FileRef.
-The reason must say whether it is baked into a named clean motion input, delivered
-as a separate track, or excluded from this particular audition. Primary picture
-and audio attachments cannot be omitted this way.
+For any compiled beat/camera/effect/title/caption attachment owned by another
+layer, list an `external_layers` item with `attachment_id`, `reason` and exact
+evidence FileRef. `evidence-only` records a held external delivery. `ass-overlay`
+renders one full-scene editable ASS layer. `timed-video-overlay` renders one
+hash-bound alpha video on an effect attachment for its exact compiled frame
+span. The video must have the scene's width and height and enough decoded
+frames for that span. A timed effect becomes visible on the first display frame
+at or after its semantic start sample. The compiled end partition preserves the
+source effect's final-frame behavior. Source frame timestamps are normalized to the scene frame
+grid in decoded order; a span with no delivery frame is rejected. If the
+selected evidence is a recipe or descriptor, keep it in `evidence` and bind the
+conformed video in `render_source` with a hash-bound `derivation_receipt`. That
+receipt must name the selected evidence, output, recipe and every component
+input. REEL checks the declared source and component bytes before rendering;
+the scene job consumes the resulting video. Primary picture and audio
+attachments cannot be omitted this way.
 
-**External-layer intake verifies evidence bytes, not that the effect/title/caption
-was actually rendered.** The receipt lists these attachments explicitly; consumers
-must validate those layers with the existing effect/animatic/caption checks and
-verify their inclusion in the final conform. A clean-picture master must consume
-clean assets; disclosures, review labels and captions belong in separate delivery
-layers. Do not feed a flattened review overlay back as clean picture.
+The derivation receipt schema is `reel.timed-overlay-derivation.v1` with
+`selected_evidence`, `output` and `inputs` as exact FileRefs plus a
+`recipe` object. The selected semantic VFX binding still matches `evidence`;
+the derived video and every recipe input enter the changed-only build graph.
+With explicit picture frame allocations, the effect still follows the absolute
+scene sample clock. If a selected effect ends at the native scene end while the
+recorded picture is exactly one frame shorter, the visible effect clips at the
+last delivered frame and retains its native end sample in the plan. A larger
+overrun is rejected. A source cut boundary and an effect boundary may differ
+by a frame when a recorded edit rounded its picture cuts.
+
+For a rendered layer, the receipt retains both `clean-picture.mkv` and the
+selected ASS or alpha-video source. The checker verifies exact source bytes,
+samples active frames and requires a visible change somewhere in that span,
+and compares the clean frames immediately outside it. This checks selected
+scene compositing at those frames, not the
+creative selection or derivation of the effect source. A clean-picture master
+must consume clean assets; disclosures, review labels and captions belong in
+separate delivery layers. Do not feed a flattened review overlay back as clean
+picture.
 
 ## Outputs and checks
 

@@ -1,0 +1,41 @@
+{
+  "schema": "reel.scene-asset-bindings.v1",
+  "scope_id": "scene-poem",
+  "assets": {
+    "es.take": {
+      "logical_id": "es-take-1",
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "bytes": 300,
+      "cache_uri": "cache://sha256/3333333333333333333333333333333333333333333333333333333333333333",
+      "selection_state": "selected-private-production"
+    },
+    "es.alignment": {
+      "logical_id": "es-alignment-1",
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "bytes": 400,
+      "cache_uri": "cache://sha256/4444444444444444444444444444444444444444444444444444444444444444",
+      "selection_state": "selected-private-production"
+    },
+    "en.take": {
+      "logical_id": "en-take-1",
+      "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "bytes": 500,
+      "cache_uri": "cache://sha256/5555555555555555555555555555555555555555555555555555555555555555",
+      "selection_state": "selected-private-production"
+    },
+    "en.alignment": {
+      "logical_id": "en-alignment-1",
+      "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "bytes": 600,
+      "cache_uri": "cache://sha256/6666666666666666666666666666666666666666666666666666666666666666",
+      "selection_state": "selected-private-production"
+    },
+    "picture.first-line": {
+      "logical_id": "picture-1",
+      "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+      "bytes": 700,
+      "cache_uri": "cache://sha256/7777777777777777777777777777777777777777777777777777777777777777",
+      "selection_state": "selected-private-production"
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "schema": "reel.scene-template-catalog.v1",
+  "templates": [
+    {"template_id":"episode-master-v1","kind":"episode-master","definition_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","required_content_keys":[]},
+    {"template_id":"opening-v1","kind":"series-opening","definition_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","required_content_keys":["opening_id"]},
+    {"template_id":"poem-v1","kind":"opening-poem","definition_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","required_content_keys":["poem_id","line_cue_ids"]},
+    {"template_id":"chapter-v1","kind":"chapter-title","definition_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","required_content_keys":["chapter_number","title"]},
+    {"template_id":"credits-v1","kind":"end-credits","definition_sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","required_content_keys":["billing_id"]}
+  ]
+}

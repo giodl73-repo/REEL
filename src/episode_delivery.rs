@@ -11,6 +11,17 @@ use std::{
     process::{Command, Stdio},
 };
 
+fn ffmpeg_command() -> Command {
+    #[allow(unused_mut)] // Windows adds CREATE_NO_WINDOW to this command.
+    let mut command = Command::new("ffmpeg");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    command
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Scene {
@@ -143,7 +154,7 @@ pub(crate) fn load_scene(
 /// Hash each segment in one bounded-memory decode. Exact byte counts reject
 /// extra/short media; no timestamp seek, rate conversion or frame interpolation.
 pub(crate) fn decode_segments(path: &Path, video: bool, lengths: &[u64]) -> Result<Vec<String>> {
-    let mut cmd = Command::new("ffmpeg");
+    let mut cmd = ffmpeg_command();
     cmd.args([
         "-v",
         "error",
@@ -213,10 +224,10 @@ pub(crate) fn decode_segments(path: &Path, video: bool, lengths: &[u64]) -> Resu
     })
 }
 
-fn edge_audio(path: &Path, samples: u64, sr: u32, end: bool) -> Result<Vec<f32>> {
+pub(crate) fn edge_audio(path: &Path, samples: u64, sr: u32, end: bool) -> Result<Vec<f32>> {
     let window = u64::from((sr / 10).max(1)).min(samples);
     let start = if end { samples - window } else { 0 };
-    let o = Command::new("ffmpeg")
+    let o = ffmpeg_command()
         .args([
             "-v",
             "error",
@@ -247,8 +258,8 @@ fn edge_audio(path: &Path, samples: u64, sr: u32, end: bool) -> Result<Vec<f32>>
         .collect())
 }
 
-fn black_edge(path: &Path, frame: u64, width: u32, height: u32) -> Result<bool> {
-    let o = Command::new("ffmpeg")
+pub(crate) fn black_edge(path: &Path, frame: u64, width: u32, height: u32) -> Result<bool> {
+    let o = ffmpeg_command()
         .args([
             "-v",
             "error",
@@ -380,8 +391,19 @@ fn boundary_findings(
     .collect()
 }
 
-fn verify_timestamps(path: &Path, sr: u32, numerator: u64, denominator: u64) -> Result<()> {
-    let o = Command::new("ffprobe")
+pub(crate) fn verify_timestamps(
+    path: &Path,
+    sr: u32,
+    numerator: u64,
+    denominator: u64,
+) -> Result<()> {
+    let mut command = Command::new("ffprobe");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let o = command
         .args([
             "-v",
             "error",

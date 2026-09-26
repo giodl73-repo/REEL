@@ -11,7 +11,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileRef {
     pub path: PathBuf,
@@ -35,6 +35,25 @@ pub struct Job {
     /// Exact render attachments intentionally owned by another delivery layer.
     #[serde(default)]
     pub external_layers: Vec<ExternalLayer>,
+    /// Camera applied to the composed scene picture after selected overlays.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_compose_camera: Option<PostComposeCamera>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PostComposeCamera {
+    pub evidence: FileRef,
+    pub zoom_step: f64,
+    pub zoom_max: f64,
+    pub windows: Vec<CameraWindow>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CameraWindow {
+    pub start_frame: u64,
+    pub end_frame: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -43,6 +62,35 @@ pub struct ExternalLayer {
     pub attachment_id: String,
     pub reason: String,
     pub evidence: FileRef,
+    #[serde(default)]
+    pub render_mode: ExternalLayerRenderMode,
+    #[serde(default)]
+    pub font: Option<FileRef>,
+    /// A video conformed from selected evidence; the derivation receipt binds
+    /// the source recipe and every component input to these delivered bytes.
+    #[serde(default)]
+    pub render_source: Option<FileRef>,
+    #[serde(default)]
+    pub derivation_receipt: Option<FileRef>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TimedOverlayDerivation {
+    pub schema: String,
+    pub selected_evidence: FileRef,
+    pub output: FileRef,
+    pub inputs: Vec<FileRef>,
+    pub recipe: serde_json::Value,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExternalLayerRenderMode {
+    #[default]
+    EvidenceOnly,
+    AssOverlay,
+    TimedVideoOverlay,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -72,6 +120,15 @@ pub struct Picture {
     #[serde(default)]
     pub crop: Option<Crop>,
     #[serde(default)]
+    pub motion: Option<PictureMotion>,
+    /// Adjacent identical stills with this ID render one continuous motion run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motion_group_id: Option<String>,
+    /// Optional exact delivery-frame allocation for recorded cut replay.
+    /// If any picture supplies this, every picture in the job must supply it.
+    #[serde(default)]
+    pub delivery_frame_count: Option<u64>,
+    #[serde(default)]
     pub stillness_exception: Option<Exception>,
 }
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -87,6 +144,26 @@ pub struct Crop {
     pub y: u32,
     pub width: u32,
     pub height: u32,
+}
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum PictureMotion {
+    Zoompan {
+        scale_width: u32,
+        scale_height: u32,
+        crop_width: u32,
+        crop_height: u32,
+        zoom_step: f64,
+        zoom_max: f64,
+    },
+    CenteredZoompan {
+        scale_width: u32,
+        scale_height: u32,
+        crop_width: u32,
+        crop_height: u32,
+        zoom_step: f64,
+        zoom_max: f64,
+    },
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -139,6 +216,10 @@ pub struct Plan {
     pub pictures: Vec<Span>,
     pub audio: Vec<Span>,
     pub external_layers: Vec<String>,
+    #[serde(default)]
+    pub external_layer_spans: Vec<Span>,
+    #[serde(default)]
+    pub rendered_external_layers: Vec<String>,
     pub buses: BTreeMap<String, BusPolicy>,
     pub creative_authority: String,
 }
@@ -177,6 +258,30 @@ pub(crate) fn checked_file(root: &Path, item: &FileRef) -> Result<PathBuf> {
         bail!("file hash/byte mismatch: {}", item.path.display());
     }
     Ok(path)
+}
+
+fn timed_overlay_source<'a>(root: &Path, layer: &'a ExternalLayer) -> Result<&'a FileRef> {
+    match (&layer.render_source, &layer.derivation_receipt) {
+        (None, None) => Ok(&layer.evidence),
+        (Some(source), Some(receipt_ref)) => {
+            checked_file(root, source)?;
+            let receipt_path = checked_file(root, receipt_ref)?;
+            let receipt: TimedOverlayDerivation = serde_json::from_slice(&fs::read(receipt_path)?)?;
+            if receipt.schema != "reel.timed-overlay-derivation.v1"
+                || receipt.selected_evidence != layer.evidence
+                || receipt.output != *source
+                || receipt.inputs.is_empty()
+                || !receipt.recipe.is_object()
+            {
+                bail!("timed overlay derivation does not bind selected evidence and source");
+            }
+            for input in &receipt.inputs {
+                checked_file(root, input)?;
+            }
+            Ok(source)
+        }
+        _ => bail!("timed overlay source and derivation receipt must be paired"),
+    }
 }
 
 fn nonempty(s: &str) -> bool {
@@ -243,9 +348,44 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         })
     };
     let mut pictures = Vec::new();
+    let explicit_picture_frames = job
+        .pictures
+        .iter()
+        .any(|picture| picture.delivery_frame_count.is_some());
+    if explicit_picture_frames
+        && job
+            .pictures
+            .iter()
+            .any(|picture| picture.delivery_frame_count.is_none())
+    {
+        bail!("declare delivery_frame_count for every picture or none");
+    }
+    let mut picture_frame_cursor = 0_u64;
     let mut prior: Option<&Picture> = None;
     let mut unchanged_start = 0;
     let mut cursor = 0;
+    let mut motion_group_last = BTreeMap::<String, usize>::new();
+    for (index, picture) in job.pictures.iter().enumerate() {
+        if let Some(group) = &picture.motion_group_id {
+            if group.trim().is_empty()
+                || picture.kind != PictureKind::Still
+                || picture.motion.is_none()
+                || picture.crop.is_some()
+            {
+                bail!("motion group requires a named moving still without crop");
+            }
+            if let Some(previous_index) = motion_group_last.insert(group.clone(), index) {
+                let previous = &job.pictures[previous_index];
+                if previous_index + 1 != index
+                    || previous.source != picture.source
+                    || previous.motion != picture.motion
+                    || previous.source_start_frame != picture.source_start_frame
+                {
+                    bail!("motion group must be adjacent with identical picture and motion");
+                }
+            }
+        }
+    }
     for p in &job.pictures {
         let a = take(&p.attachment_id)?;
         if !matches!(a.target, Target::Shot { .. } | Target::Cel { .. }) {
@@ -263,7 +403,43 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                 bail!("empty crop");
             }
         }
-        if prior.is_none_or(|old| old.source.sha256 != p.source.sha256 || old.crop != p.crop) {
+        if let Some(
+            PictureMotion::Zoompan {
+                scale_width,
+                scale_height,
+                crop_width,
+                crop_height,
+                zoom_step,
+                zoom_max,
+            }
+            | PictureMotion::CenteredZoompan {
+                scale_width,
+                scale_height,
+                crop_width,
+                crop_height,
+                zoom_step,
+                zoom_max,
+            },
+        ) = &p.motion
+        {
+            if p.kind != PictureKind::Still
+                || p.crop.is_some()
+                || *scale_width < job.width
+                || *scale_height < job.height
+                || *crop_width != job.width
+                || *crop_height != job.height
+                || !zoom_step.is_finite()
+                || *zoom_step <= 0.0
+                || !zoom_max.is_finite()
+                || *zoom_max < 1.0
+                || *zoom_max > 4.0
+            {
+                bail!("invalid still-picture zoompan motion");
+            }
+        }
+        if prior.is_none_or(|old| {
+            old.source.sha256 != p.source.sha256 || old.crop != p.crop || old.motion != p.motion
+        }) {
             unchanged_start = a.start_sample;
         }
         if a.end_sample - unchanged_start > job.max_composition_samples
@@ -274,7 +450,23 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         {
             bail!("unchanged composition exceeds limit: {}", p.attachment_id);
         }
-        let s = span(a)?;
+        let mut s = span(a)?;
+        if explicit_picture_frames {
+            let count = p
+                .delivery_frame_count
+                .context("missing delivery frame count")?;
+            if count == 0 {
+                bail!(
+                    "picture delivery frame count must be positive: {}",
+                    p.attachment_id
+                );
+            }
+            s.start_frame = picture_frame_cursor;
+            s.end_frame = picture_frame_cursor
+                .checked_add(count)
+                .context("picture delivery frame count overflow")?;
+            picture_frame_cursor = s.end_frame;
+        }
         if s.end_frame <= s.start_frame {
             bail!("composition has no delivery frame: {}", p.attachment_id);
         }
@@ -383,8 +575,11 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         bail!("D bus must cover every native cue");
     }
     let mut external_layers = Vec::new();
+    let mut external_layer_spans = Vec::new();
+    let mut rendered_external_layers = Vec::new();
     for layer in &job.external_layers {
         let a = take(&layer.attachment_id)?;
+        let mut layer_span = span(a)?;
         if !matches!(
             a.target,
             Target::Beat { .. }
@@ -397,7 +592,97 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
             bail!("invalid external layer; primary picture/audio cannot be omitted");
         }
         checked_file(asset_root, &layer.evidence)?;
+        if let Some(font) = &layer.font {
+            checked_file(asset_root, font)?;
+        }
+        match layer.render_mode {
+            ExternalLayerRenderMode::AssOverlay => {
+                if layer.evidence.path.extension().and_then(|ext| ext.to_str()) != Some("ass")
+                    || a.start_sample != 0
+                    || a.end_sample != compiled.duration_samples
+                    || layer.render_source.is_some()
+                    || layer.derivation_receipt.is_some()
+                {
+                    bail!("ASS overlay must be a full-scene .ass attachment");
+                }
+                rendered_external_layers.push(layer.attachment_id.clone());
+            }
+            ExternalLayerRenderMode::TimedVideoOverlay => {
+                if !matches!(a.target, Target::Effect { .. }) || layer.font.is_some() {
+                    bail!("timed video overlay requires an effect attachment without a font");
+                }
+                // Display a frame while its start tick is inside the semantic
+                // interval. A fractional end therefore includes its last frame.
+                layer_span.start_frame = frame(a.start_sample, true)?;
+                layer_span.end_frame = frame(a.end_sample, true)?;
+                let delivery_frames = if explicit_picture_frames {
+                    picture_frame_cursor
+                } else {
+                    frame(compiled.duration_samples, true)?
+                };
+                if explicit_picture_frames {
+                    if let Some(picture) = pictures.iter().find(|picture| {
+                        picture.start_sample == a.start_sample
+                            && picture.start_frame > layer_span.start_frame
+                            && picture.start_frame - layer_span.start_frame <= 1
+                    }) {
+                        layer_span.start_frame = picture.start_frame;
+                    }
+                }
+                if explicit_picture_frames
+                    && a.end_sample == compiled.duration_samples
+                    && layer_span.end_frame > delivery_frames
+                    && layer_span.end_frame - delivery_frames <= 1
+                {
+                    layer_span.end_frame = delivery_frames;
+                }
+                if layer_span.start_frame >= layer_span.end_frame
+                    || layer_span.end_frame > delivery_frames
+                {
+                    bail!("timed overlay needs a positive span inside delivered picture frames");
+                }
+                let source = checked_file(asset_root, timed_overlay_source(asset_root, layer)?)?;
+                let info = probe(&source)?;
+                let video = info["streams"]
+                    .as_array()
+                    .and_then(|streams| streams.iter().find(|s| s["codec_type"] == "video"))
+                    .context("timed overlay has no video stream")?;
+                let pixel_format = video["pix_fmt"].as_str().unwrap_or_default();
+                if !pixel_format.contains('a')
+                    || video["width"].as_u64() != Some(u64::from(job.width))
+                    || video["height"].as_u64() != Some(u64::from(job.height))
+                {
+                    bail!("timed overlay needs exact scene geometry and an alpha pixel format");
+                }
+                let rate = video["avg_frame_rate"]
+                    .as_str()
+                    .and_then(|rate| rate.split_once('/'))
+                    .and_then(|(num, den)| {
+                        Some((num.parse::<u64>().ok()?, den.parse::<u64>().ok()?))
+                    })
+                    .filter(|(_, den)| *den > 0)
+                    .context("timed overlay frame rate unavailable")?;
+                if u128::from(rate.0) * u128::from(compiled.frame_rate.denominator)
+                    != u128::from(compiled.frame_rate.numerator) * u128::from(rate.1)
+                {
+                    bail!("timed overlay frame rate differs from scene delivery rate");
+                }
+                rendered_external_layers.push(layer.attachment_id.clone());
+            }
+            ExternalLayerRenderMode::EvidenceOnly => {
+                if layer.font.is_some()
+                    || layer.render_source.is_some()
+                    || layer.derivation_receipt.is_some()
+                {
+                    bail!("evidence-only layer cannot bind render sources or fonts");
+                }
+            }
+        }
         external_layers.push(layer.attachment_id.clone());
+        external_layer_spans.push(layer_span);
+    }
+    if rendered_external_layers.len() > 1 {
+        bail!("this scene-delivery version renders one external picture layer");
     }
     if used.len() != attached.len() {
         bail!("unconsumed compiled attachments; declare external layers explicitly");
@@ -416,13 +701,41 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         fps_numerator: compiled.frame_rate.numerator,
         fps_denominator: compiled.frame_rate.denominator,
         duration_samples: compiled.duration_samples,
-        frame_count: frame(compiled.duration_samples, true)?,
+        frame_count: if explicit_picture_frames {
+            picture_frame_cursor
+        } else {
+            frame(compiled.duration_samples, true)?
+        },
         pictures,
         audio,
         external_layers,
+        external_layer_spans,
+        rendered_external_layers,
         buses: job.buses.clone(),
         creative_authority: "not-granted; external layers are not certified as rendered".into(),
     };
+    if let Some(camera) = &job.post_compose_camera {
+        checked_file(asset_root, &camera.evidence)?;
+        if !camera.zoom_step.is_finite()
+            || camera.zoom_step <= 0.0
+            || !camera.zoom_max.is_finite()
+            || !(1.0..=4.0).contains(&camera.zoom_max)
+            || camera.zoom_max == 1.0
+            || camera.windows.is_empty()
+        {
+            bail!("invalid post-composition camera");
+        }
+        let mut prior_end = 0;
+        for window in &camera.windows {
+            if window.start_frame < prior_end
+                || window.start_frame >= window.end_frame
+                || window.end_frame > plan.frame_count
+            {
+                bail!("post-composition camera windows overlap or exceed scene picture");
+            }
+            prior_end = window.end_frame;
+        }
+    }
     Ok((job, plan))
 }
 
@@ -463,6 +776,196 @@ pub(crate) fn probe(path: &Path) -> Result<serde_json::Value> {
 }
 fn arg(path: &Path) -> String {
     path.to_string_lossy().into_owned()
+}
+
+fn render_ass_overlay(root: &Path, fps: &str, font_bound: bool) -> Result<()> {
+    let filter = if font_bound {
+        "ass=presentation.ass:fontsdir=fonts"
+    } else {
+        "ass=presentation.ass"
+    };
+    let output = Command::new("ffmpeg")
+        .current_dir(root)
+        .args([
+            "-hide_banner",
+            "-v",
+            "error",
+            "-nostdin",
+            "-n",
+            "-i",
+            "clean-picture.mkv",
+        ])
+        .args([
+            "-vf",
+            filter,
+            "-an",
+            "-c:v",
+            "ffv1",
+            "-pix_fmt",
+            "yuv444p",
+            "-r",
+            fps,
+            "picture.mkv",
+        ])
+        .output()?;
+    if !output.status.success() {
+        bail!(
+            "ASS layer render failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
+fn render_timed_video_overlay(root: &Path, plan: &Plan, span: &Span) -> Result<()> {
+    let count = span.end_frame - span.start_frame;
+    let graph = format!(
+        "[1:v]setpts=N*{}/{}/TB,trim=start_frame=0:end_frame={count},setpts=PTS-STARTPTS+{}/{}/TB[effect];[0:v][effect]overlay=eof_action=pass:repeatlast=0:shortest=0:format=auto[v]",
+        plan.fps_denominator,
+        plan.fps_numerator,
+        span.start_frame * plan.fps_denominator,
+        plan.fps_numerator
+    );
+    let output = Command::new("ffmpeg")
+        .current_dir(root)
+        .args(["-hide_banner", "-v", "error", "-nostdin", "-n"])
+        .args(["-i", "clean-picture.mkv", "-i", "selected-overlay.mkv"])
+        .args([
+            "-filter_complex",
+            &graph,
+            "-map",
+            "[v]",
+            "-an",
+            "-c:v",
+            "ffv1",
+        ])
+        .args([
+            "-pix_fmt",
+            "yuv444p",
+            "-frames:v",
+            &plan.frame_count.to_string(),
+        ])
+        .args(["picture.mkv"])
+        .output()?;
+    if !output.status.success() {
+        bail!(
+            "timed overlay render failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
+fn render_post_compose_camera(root: &Path, plan: &Plan, camera: &PostComposeCamera) -> Result<()> {
+    let before = root.join("pre-camera-picture.mkv");
+    fs::rename(root.join("picture.mkv"), &before)?;
+    let mut zoom = "1".to_string();
+    for window in camera.windows.iter().rev() {
+        zoom = format!(
+            "if(between(on,{},{}),min({},1+{}*(on-{})),{})",
+            window.start_frame,
+            window.end_frame - 1,
+            camera.zoom_max,
+            camera.zoom_step,
+            window.start_frame,
+            zoom
+        );
+    }
+    let fps = format!("{}/{}", plan.fps_numerator, plan.fps_denominator);
+    // Geometry comes from the decoded composed picture, not a source still.
+    let picture = probe(&before)?;
+    let stream = picture["streams"]
+        .as_array()
+        .and_then(|streams| {
+            streams
+                .iter()
+                .find(|stream| stream["codec_type"] == "video")
+        })
+        .context("composed picture has no video stream")?;
+    let width = stream["width"]
+        .as_u64()
+        .context("composed picture width unavailable")?;
+    let height = stream["height"]
+        .as_u64()
+        .context("composed picture height unavailable")?;
+    let filter = format!(
+        "zoompan=z='{zoom}':x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s={width}x{height}:fps={fps},format=yuv444p"
+    );
+    ffmpeg(&[
+        "-i".into(),
+        arg(&before),
+        "-vf".into(),
+        filter,
+        "-frames:v".into(),
+        plan.frame_count.to_string(),
+        "-an".into(),
+        "-c:v".into(),
+        "ffv1".into(),
+        arg(&root.join("picture.mkv")),
+    ])?;
+    Ok(())
+}
+
+fn decoded_video_frames(path: &Path) -> Result<u64> {
+    let output = Command::new("ffprobe")
+        .args(["-v", "error", "-count_frames", "-select_streams", "v:0"])
+        .args([
+            "-show_entries",
+            "stream=nb_read_frames",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+        ])
+        .arg(path)
+        .output()?;
+    if !output.status.success() {
+        bail!("could not count timed overlay frames");
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .context("timed overlay frame count unavailable")
+}
+
+fn rgb_frame_at_index(path: &Path, plan: &Plan, index: u64) -> Result<Vec<u8>> {
+    let seconds = index as f64 * plan.fps_denominator as f64 / plan.fps_numerator as f64;
+    let output = Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-v",
+            "error",
+            "-nostdin",
+            "-ss",
+            &format!("{seconds:.9}"),
+            "-i",
+        ])
+        .arg(path)
+        .args(["-frames:v", "1", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"])
+        .output()?;
+    if !output.status.success() || output.stdout.is_empty() {
+        bail!("could not decode presentation frame {index}");
+    }
+    Ok(output.stdout)
+}
+
+fn rgb_frame_at_midpoint(path: &Path, plan: &Plan) -> Result<Vec<u8>> {
+    let seconds = plan.duration_samples as f64 / plan.sample_rate as f64 / 2.0;
+    let output = Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-v",
+            "error",
+            "-nostdin",
+            "-ss",
+            &format!("{seconds:.6}"),
+            "-i",
+        ])
+        .arg(path)
+        .args(["-frames:v", "1", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"])
+        .output()?;
+    if !output.status.success() || output.stdout.is_empty() {
+        bail!("could not decode presentation midpoint frame");
+    }
+    Ok(output.stdout)
 }
 
 pub(crate) fn finish_pcm(float_path: &Path, output: &Path) -> Result<()> {
@@ -571,9 +1074,30 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         .tempdir_in(parent)?;
     let root = stage.path();
     let fps = format!("{}/{}", plan.fps_numerator, plan.fps_denominator);
+    let overlay = job
+        .external_layers
+        .iter()
+        .find(|layer| layer.render_mode != ExternalLayerRenderMode::EvidenceOnly);
     let mut inputs = Vec::new();
     let mut filters = Vec::new();
-    for (i, (p, s)) in job.pictures.iter().zip(&plan.pictures).enumerate() {
+    let mut groups = Vec::new();
+    let mut start = 0;
+    while start < job.pictures.len() {
+        let mut end = start + 1;
+        if let Some(group) = &job.pictures[start].motion_group_id {
+            while end < job.pictures.len()
+                && job.pictures[end].motion_group_id.as_ref() == Some(group)
+            {
+                end += 1;
+            }
+        }
+        groups.push((start, end));
+        start = end;
+    }
+    for (i, &(start, end)) in groups.iter().enumerate() {
+        let p = &job.pictures[start];
+        let s = &plan.pictures[start];
+        let group_frames = plan.pictures[end - 1].end_frame - s.start_frame;
         let path = checked_file(asset_root, &p.source)?;
         let info = probe(&path)?;
         let stream = info["streams"]
@@ -598,16 +1122,44 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
             .unwrap_or_default();
         let source_end = p
             .source_start_frame
-            .checked_add(s.end_frame - s.start_frame)
+            .checked_add(group_frames)
             .context("source frame offset overflow")?;
-        filters.push(format!("[{i}:v]{crop}scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},trim=start_frame={}:end_frame={source_end},setpts=PTS-STARTPTS[v{i}]",job.width,job.height,job.width,job.height,p.source_start_frame));
+        let visual = match &p.motion {
+            Some(PictureMotion::Zoompan {
+                scale_width,
+                scale_height,
+                crop_width,
+                crop_height,
+                zoom_step,
+                zoom_max,
+            }) => format!(
+                "scale={scale_width}:{scale_height}:force_original_aspect_ratio=increase,crop={crop_width}:{crop_height},zoompan=z='min(zoom+{zoom_step},{zoom_max})':d={}:s={}x{}:fps={fps},",
+                group_frames, job.width, job.height
+            ),
+            Some(PictureMotion::CenteredZoompan {
+                scale_width,
+                scale_height,
+                crop_width,
+                crop_height,
+                zoom_step,
+                zoom_max,
+            }) => format!(
+                "scale={scale_width}:{scale_height}:force_original_aspect_ratio=increase,crop={crop_width}:{crop_height},zoompan=z='min(zoom+{zoom_step},{zoom_max})':x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2':d={}:s={}x{}:fps={fps},",
+                group_frames, job.width, job.height
+            ),
+            None => format!(
+                "{crop}scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,",
+                job.width, job.height, job.width, job.height
+            ),
+        };
+        filters.push(format!("[{i}:v]{visual}setsar=1,fps={fps},trim=start_frame={}:end_frame={source_end},setpts=PTS-STARTPTS[v{i}]",p.source_start_frame));
     }
     filters.push(format!(
         "{}concat=n={}:v=1:a=0[v]",
-        (0..job.pictures.len())
+        (0..groups.len())
             .map(|i| format!("[v{i}]"))
             .collect::<String>(),
-        job.pictures.len()
+        groups.len()
     ));
     inputs.extend([
         "-filter_complex".into(),
@@ -621,9 +1173,52 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         "yuv444p".into(),
         "-r".into(),
         fps.clone(),
-        arg(&root.join("picture.mkv")),
+        arg(&root.join(if overlay.is_some() {
+            "clean-picture.mkv"
+        } else {
+            "picture.mkv"
+        })),
     ]);
     ffmpeg(&inputs)?;
+    if let Some(layer) = overlay {
+        match layer.render_mode {
+            ExternalLayerRenderMode::AssOverlay => {
+                fs::copy(
+                    checked_file(asset_root, &layer.evidence)?,
+                    root.join("presentation.ass"),
+                )?;
+                if let Some(font) = &layer.font {
+                    fs::create_dir(root.join("fonts"))?;
+                    let name = font
+                        .path
+                        .file_name()
+                        .context("selected font has no file name")?;
+                    fs::copy(
+                        checked_file(asset_root, font)?,
+                        root.join("fonts").join(name),
+                    )?;
+                }
+                render_ass_overlay(root, &fps, layer.font.is_some())?;
+            }
+            ExternalLayerRenderMode::TimedVideoOverlay => {
+                let span = plan
+                    .external_layer_spans
+                    .iter()
+                    .find(|span| span.attachment_id == layer.attachment_id)
+                    .context("timed overlay span missing")?;
+                let source = checked_file(asset_root, timed_overlay_source(asset_root, layer)?)?;
+                if decoded_video_frames(&source)? < span.end_frame - span.start_frame {
+                    bail!("timed overlay lacks frames for its selected span");
+                }
+                fs::copy(source, root.join("selected-overlay.mkv"))?;
+                render_timed_video_overlay(root, &plan, span)?;
+            }
+            ExternalLayerRenderMode::EvidenceOnly => unreachable!(),
+        }
+    }
+    if let Some(camera) = &job.post_compose_camera {
+        render_post_compose_camera(root, &plan, camera)?;
+    }
     for bus in ["D", "M", "E"] {
         let mut inputs = Vec::new();
         let mut filters = Vec::new();
@@ -768,7 +1363,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         "+faststart".into(),
         arg(&root.join("review.mp4")),
     ])?;
-    let names = [
+    let mut names = vec![
         "picture.mkv",
         "D.wav",
         "M.wav",
@@ -777,6 +1372,17 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         "master.mkv",
         "review.mp4",
     ];
+    if let Some(overlay) = overlay {
+        names.push("clean-picture.mkv");
+        names.push(match overlay.render_mode {
+            ExternalLayerRenderMode::AssOverlay => "presentation.ass",
+            ExternalLayerRenderMode::TimedVideoOverlay => "selected-overlay.mkv",
+            ExternalLayerRenderMode::EvidenceOnly => unreachable!(),
+        });
+    }
+    if job.post_compose_camera.is_some() {
+        names.push("pre-camera-picture.mkv");
+    }
     let mut outputs = BTreeMap::new();
     for name in names {
         let p = root.join(name);
@@ -784,6 +1390,22 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
             name.into(),
             FileRef {
                 path: name.into(),
+                sha256: crate::sha256_file(&p)?,
+                bytes: fs::metadata(p)?.len(),
+            },
+        );
+    }
+    if let Some(layer) = overlay.and_then(|layer| layer.font.as_ref()) {
+        let name = layer
+            .path
+            .file_name()
+            .context("selected font has no file name")?;
+        let relative = Path::new("fonts").join(name);
+        let p = root.join(&relative);
+        outputs.insert(
+            relative.to_string_lossy().replace('\\', "/"),
+            FileRef {
+                path: relative,
                 sha256: crate::sha256_file(&p)?,
                 bytes: fs::metadata(p)?.len(),
             },
@@ -824,7 +1446,7 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
     {
         bail!("receipt does not match current compiled scene");
     }
-    let expected = BTreeSet::from([
+    let mut expected = BTreeSet::from([
         "picture.mkv",
         "D.wav",
         "M.wav",
@@ -833,6 +1455,30 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
         "master.mkv",
         "review.mp4",
     ]);
+    let overlay = job
+        .external_layers
+        .iter()
+        .find(|layer| layer.render_mode != ExternalLayerRenderMode::EvidenceOnly);
+    if let Some(overlay) = overlay {
+        expected.insert("clean-picture.mkv");
+        expected.insert(match overlay.render_mode {
+            ExternalLayerRenderMode::AssOverlay => "presentation.ass",
+            ExternalLayerRenderMode::TimedVideoOverlay => "selected-overlay.mkv",
+            ExternalLayerRenderMode::EvidenceOnly => unreachable!(),
+        });
+    }
+    if job.post_compose_camera.is_some() {
+        expected.insert("pre-camera-picture.mkv");
+    }
+    let font_name = overlay.and_then(|layer| layer.font.as_ref()).map(|font| {
+        format!(
+            "fonts/{}",
+            font.path.file_name().unwrap_or_default().to_string_lossy()
+        )
+    });
+    if let Some(name) = font_name.as_deref() {
+        expected.insert(name);
+    }
     if receipt
         .outputs
         .keys()
@@ -847,6 +1493,94 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
             bail!("output name mismatch");
         }
         checked_file(output, item)?;
+    }
+    if let Some(camera) = &job.post_compose_camera {
+        let before = output.join("pre-camera-picture.mkv");
+        let after = output.join("picture.mkv");
+        if decoded_video_frames(&before)? != plan.frame_count
+            || decoded_video_frames(&after)? != plan.frame_count
+        {
+            bail!("post-composition camera changed scene frame count");
+        }
+        let window = &camera.windows[0];
+        let active_frame = window.end_frame - 1;
+        if active_frame > window.start_frame
+            && rgb_frame_at_index(&before, &plan, active_frame)?
+                == rgb_frame_at_index(&after, &plan, active_frame)?
+        {
+            bail!("post-composition camera made no visible change");
+        }
+    }
+    if let Some(layer) = overlay {
+        let layered_picture = output.join(if job.post_compose_camera.is_some() {
+            "pre-camera-picture.mkv"
+        } else {
+            "picture.mkv"
+        });
+        match layer.render_mode {
+            ExternalLayerRenderMode::AssOverlay => {
+                if receipt.outputs["presentation.ass"].sha256 != layer.evidence.sha256 {
+                    bail!("rendered presentation source differs from selected ASS layer");
+                }
+                if let (Some(font), Some(name)) = (&layer.font, font_name.as_deref()) {
+                    if receipt.outputs[name].sha256 != font.sha256 {
+                        bail!("rendered presentation font differs from selected font");
+                    }
+                }
+                let clean = rgb_frame_at_midpoint(&output.join("clean-picture.mkv"), &plan)?;
+                let rendered = rgb_frame_at_midpoint(&layered_picture, &plan)?;
+                if clean.len() != rendered.len() || clean == rendered {
+                    bail!("selected ASS layer made no visible change at scene midpoint");
+                }
+            }
+            ExternalLayerRenderMode::TimedVideoOverlay => {
+                if receipt.outputs["selected-overlay.mkv"].sha256
+                    != timed_overlay_source(asset_root, layer)?.sha256
+                {
+                    bail!("rendered timed-overlay source differs from selected evidence");
+                }
+                let span = plan
+                    .external_layer_spans
+                    .iter()
+                    .find(|span| span.attachment_id == layer.attachment_id)
+                    .context("timed overlay span missing")?;
+                let active_frames = span.end_frame - span.start_frame;
+                let mut visible = false;
+                for frame in [
+                    span.start_frame,
+                    span.start_frame + active_frames / 4,
+                    span.start_frame + active_frames / 2,
+                    span.start_frame + active_frames * 3 / 4,
+                    span.end_frame - 1,
+                ] {
+                    let clean =
+                        rgb_frame_at_index(&output.join("clean-picture.mkv"), &plan, frame)?;
+                    let rendered = rgb_frame_at_index(&layered_picture, &plan, frame)?;
+                    if clean.len() != rendered.len() {
+                        bail!("timed overlay changed picture dimensions at frame {frame}");
+                    }
+                    visible |= clean != rendered;
+                }
+                if !visible {
+                    bail!("timed overlay made no visible change in its selected span");
+                }
+                for frame in [
+                    span.start_frame.checked_sub(1),
+                    (span.end_frame < plan.frame_count).then_some(span.end_frame),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    let clean =
+                        rgb_frame_at_index(&output.join("clean-picture.mkv"), &plan, frame)?;
+                    let rendered = rgb_frame_at_index(&layered_picture, &plan, frame)?;
+                    if clean != rendered {
+                        bail!("timed overlay changed clean picture outside its selected span");
+                    }
+                }
+            }
+            ExternalLayerRenderMode::EvidenceOnly => unreachable!(),
+        }
     }
     for name in ["D.wav", "M.wav", "E.wav", "mix.wav", "master.mkv"] {
         let info = probe(&output.join(name))?;

@@ -1,0 +1,14 @@
+{
+  "schema":"reel.episode-authoring.v1",
+  "episode_id":"episode-1",
+  "season_id":"season-1",
+  "authoring_state":"ready-for-private-build",
+  "master_template_id":"episode-master-v1",
+  "scene_policy_id":"narrative-tv",
+  "presentation":[
+    {"role":"series-opening","template_id":"opening-v1","content":{"opening_id":"season-one"},"asset_binding":"opening.selected"},
+    {"role":"end-credits","template_id":"credits-v1","content":{"billing_id":"episode-one"}}
+  ],
+  "score_palette":[{"role":"poem.intimate","theme_id":"song-recollections","source_poem_id":"poem-recollections","arrangement_id":"guitar","asset_binding":"score.poem.intimate"}],
+  "scene_ids":["scene-poem"]
+}

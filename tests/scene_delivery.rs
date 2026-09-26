@@ -220,6 +220,239 @@ fn fixture(root: &Path) -> Value {
     write_json(&root.join("job.json"), &j);
     j
 }
+
+#[test]
+fn selected_ass_layer_changes_rendered_pixels_and_is_checked() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let mut job = fixture(root);
+    let mut contract: Value =
+        serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
+    contract["attachments"].as_array_mut().unwrap().push(json!({
+        "id":"editable-title", "target":{"kind":"title","title_id":"example"},
+        "start":{"kind":"cue-start","cue_id":"a","offset_samples":0},
+        "end":{"kind":"cue-end","cue_id":"b","offset_samples":0}
+    }));
+    write_json(&root.join("contract.json"), &contract);
+    fs::write(root.join("panel.ass"), "[Script Info]\nScriptType: v4.00+\nPlayResX: 64\nPlayResY: 64\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Arial,30,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,1,0,5,0,0,0,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:02.00,Default,,0,0,0,,TEST\n").unwrap();
+    job["contract"] = file(root, "contract.json");
+    job["external_layers"] = json!([{
+        "attachment_id":"editable-title", "reason":"Selected editable title",
+        "evidence":file(root,"panel.ass"), "render_mode":"ass-overlay"
+    }]);
+    write_json(&root.join("job.json"), &job);
+    let output = root.join("rendered");
+    let receipt = scene_delivery::render(&root.join("job.json"), root, &output).unwrap();
+    assert_eq!(
+        receipt.plan.rendered_external_layers,
+        vec!["editable-title"]
+    );
+    assert!(output.join("clean-picture.mkv").exists());
+    assert!(output.join("presentation.ass").exists());
+    scene_delivery::check(&root.join("job.json"), root, &output).unwrap();
+    fs::write(output.join("presentation.ass"), b"tampered").unwrap();
+    assert!(scene_delivery::check(&root.join("job.json"), root, &output).is_err());
+}
+
+#[test]
+fn timed_alpha_effect_changes_only_its_selected_frames() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let mut job = fixture(root);
+    let mut production: Value =
+        serde_json::from_slice(&fs::read(root.join("production.json")).unwrap()).unwrap();
+    production["shots"][0]["effect_passes"] = json!([{
+        "id":"glow", "color":{"path":"red.ppm","sha256":file(root,"red.ppm")["sha256"]},
+        "matte":{"path":"blue.ppm","sha256":file(root,"blue.ppm")["sha256"]},
+        "alpha_mode":"separate-matte", "composite_operator":"over", "color_space":"srgb",
+        "alpha_mode_detail":"straight", "timing_fps":24, "duration_frames":48,
+        "placement":{"space":"normalized","x":0,"y":0,"width":1,"height":1},
+        "visible_start_frame":12, "visible_end_frame":36
+    }]);
+    write_json(&root.join("production.json"), &production);
+    job["production_manifest_sha256"] = file(root, "production.json")["sha256"].clone();
+    let mut contract: Value =
+        serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
+    contract["attachments"].as_array_mut().unwrap().push(json!({
+        "id":"timed-effect", "target":{"kind":"effect","shot_id":"shot","effect_pass_id":"glow"},
+        "start":{"kind":"cue-start","cue_id":"a","offset_samples":24000},
+        "end":{"kind":"cue-start","cue_id":"b","offset_samples":24000}
+    }));
+    write_json(&root.join("contract.json"), &contract);
+    let effect = root.join("effect.mkv");
+    let status = Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-v",
+            "error",
+            "-nostdin",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=lime@0.75:s=64x64:r=24:d=1.1,format=yuva444p",
+            "-c:v",
+            "ffv1",
+            "-pix_fmt",
+            "yuva444p",
+            "-frames:v",
+            "25",
+            "-y",
+        ])
+        .arg(&effect)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    job["contract"] = file(root, "contract.json");
+    job["external_layers"] = json!([{
+        "attachment_id":"timed-effect", "reason":"Selected effect span",
+        "evidence":file(root,"effect.mkv"), "render_mode":"timed-video-overlay"
+    }]);
+    write_json(&root.join("job.json"), &job);
+    let selected_effect = job["external_layers"][0]["evidence"].clone();
+    job["external_layers"][0]["evidence"] = file(root, "red.ppm");
+    write_json(&root.join("job.json"), &job);
+    assert!(scene_delivery::plan(&root.join("job.json"), root).is_err());
+    job["external_layers"][0]["evidence"] = selected_effect;
+    write_json(&root.join("job.json"), &job);
+    let selected_contract = contract.clone();
+    contract["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap()["start"] = json!({"kind":"cue-start","cue_id":"a","offset_samples":24001});
+    contract["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap()["end"] = json!({"kind":"cue-start","cue_id":"a","offset_samples":24002});
+    write_json(&root.join("contract.json"), &contract);
+    job["contract"] = file(root, "contract.json");
+    write_json(&root.join("job.json"), &job);
+    assert!(
+        scene_delivery::plan(&root.join("job.json"), root)
+            .unwrap_err()
+            .to_string()
+            .contains("positive span")
+    );
+    write_json(&root.join("contract.json"), &selected_contract);
+    job["contract"] = file(root, "contract.json");
+    write_json(&root.join("job.json"), &job);
+    contract = selected_contract.clone();
+    contract["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap()["end"] = json!({"kind":"cue-end","cue_id":"b"});
+    write_json(&root.join("contract.json"), &contract);
+    job["contract"] = file(root, "contract.json");
+    job["pictures"][0]["delivery_frame_count"] = json!(24);
+    job["pictures"][1]["delivery_frame_count"] = json!(23);
+    write_json(&root.join("job.json"), &job);
+    let (_, clipped_plan) = scene_delivery::plan(&root.join("job.json"), root).unwrap();
+    assert_eq!(clipped_plan.external_layer_spans[0].end_sample, 96000);
+    assert_eq!(clipped_plan.external_layer_spans[0].end_frame, 47);
+    contract = selected_contract.clone();
+    let effect_attachment = contract["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap();
+    effect_attachment["start"] = json!({"kind":"cue-start","cue_id":"b"});
+    effect_attachment["end"] = json!({"kind":"cue-start","cue_id":"b","offset_samples":24000});
+    write_json(&root.join("contract.json"), &contract);
+    job["contract"] = file(root, "contract.json");
+    job["pictures"][0]["delivery_frame_count"] = json!(26);
+    job["pictures"][1]["delivery_frame_count"] = json!(22);
+    write_json(&root.join("job.json"), &job);
+    let (_, clipped_start) = scene_delivery::plan(&root.join("job.json"), root).unwrap();
+    assert_eq!(clipped_start.external_layer_spans[0].start_sample, 48001);
+    assert_eq!(clipped_start.external_layer_spans[0].start_frame, 26);
+    contract["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap()["start"] = json!({"kind":"cue-start","cue_id":"b","offset_samples":1});
+    write_json(&root.join("contract.json"), &contract);
+    job["contract"] = file(root, "contract.json");
+    job["pictures"][0]["delivery_frame_count"] = json!(24);
+    job["pictures"][1]["delivery_frame_count"] = json!(24);
+    write_json(&root.join("job.json"), &job);
+    let (_, fractional_start) = scene_delivery::plan(&root.join("job.json"), root).unwrap();
+    assert_eq!(fractional_start.external_layer_spans[0].start_sample, 48002);
+    assert_eq!(fractional_start.external_layer_spans[0].start_frame, 25);
+    contract["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap()["start"] = json!({"kind":"cue-start","cue_id":"a","offset_samples":24000});
+    contract["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap()["end"] = json!({"kind":"cue-start","cue_id":"b"});
+    write_json(&root.join("contract.json"), &contract);
+    job["contract"] = file(root, "contract.json");
+    job["pictures"][0]["delivery_frame_count"] = json!(25);
+    job["pictures"][1]["delivery_frame_count"] = json!(23);
+    write_json(&root.join("job.json"), &job);
+    let (_, fractional_end) = scene_delivery::plan(&root.join("job.json"), root).unwrap();
+    assert_eq!(fractional_end.external_layer_spans[0].end_sample, 48001);
+    assert_eq!(fractional_end.external_layer_spans[0].end_frame, 25);
+    write_json(&root.join("contract.json"), &selected_contract);
+    job["contract"] = file(root, "contract.json");
+    job["pictures"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("delivery_frame_count");
+    job["pictures"][1]
+        .as_object_mut()
+        .unwrap()
+        .remove("delivery_frame_count");
+    write_json(&root.join("job.json"), &job);
+    let output = root.join("rendered");
+    let receipt = scene_delivery::render(&root.join("job.json"), root, &output).unwrap();
+    assert_eq!(receipt.plan.rendered_external_layers, vec!["timed-effect"]);
+    assert_eq!(receipt.plan.external_layer_spans[0].start_frame, 12);
+    assert_eq!(receipt.plan.external_layer_spans[0].end_frame, 37);
+    // One effect begins on the red cel and stays active after the blue-cel cut.
+    assert!(receipt.plan.external_layer_spans[0].start_frame < receipt.plan.pictures[0].end_frame);
+    assert!(receipt.plan.external_layer_spans[0].end_frame > receipt.plan.pictures[1].start_frame);
+    scene_delivery::check(&root.join("job.json"), root, &output).unwrap();
+    fs::write(output.join("selected-overlay.mkv"), b"tampered").unwrap();
+    assert!(scene_delivery::check(&root.join("job.json"), root, &output).is_err());
+
+    write_json(
+        &root.join("selected-effect.json"),
+        &json!({"kind":"source-effect"}),
+    );
+    let derivation = json!({
+        "schema":"reel.timed-overlay-derivation.v1",
+        "selected_evidence":file(root,"selected-effect.json"),
+        "output":file(root,"effect.mkv"),
+        "inputs":[file(root,"red.ppm")],
+        "recipe":{"kind":"synthetic-alpha-plate","frames":25}
+    });
+    write_json(&root.join("derivation.json"), &derivation);
+    job["external_layers"][0]["evidence"] = file(root, "selected-effect.json");
+    job["external_layers"][0]["render_source"] = file(root, "effect.mkv");
+    job["external_layers"][0]["derivation_receipt"] = file(root, "derivation.json");
+    write_json(&root.join("job.json"), &job);
+    let derived_output = root.join("rendered-derived");
+    scene_delivery::render(&root.join("job.json"), root, &derived_output).unwrap();
+    scene_delivery::check(&root.join("job.json"), root, &derived_output).unwrap();
+    let mut bad_recipe = derivation.clone();
+    bad_recipe["recipe"] = json!("not a recipe object");
+    write_json(&root.join("derivation.json"), &bad_recipe);
+    job["external_layers"][0]["derivation_receipt"] = file(root, "derivation.json");
+    write_json(&root.join("job.json"), &job);
+    assert!(scene_delivery::plan(&root.join("job.json"), root).is_err());
+    let mut bad = derivation;
+    bad["output"]["sha256"] = json!("0".repeat(64));
+    write_json(&root.join("derivation.json"), &bad);
+    job["external_layers"][0]["derivation_receipt"] = file(root, "derivation.json");
+    write_json(&root.join("job.json"), &job);
+    assert!(scene_delivery::plan(&root.join("job.json"), root).is_err());
+}
 #[test]
 fn plan_uses_compiled_samples_and_one_global_frame_partition() {
     let t = tempfile::tempdir().unwrap();
@@ -230,6 +463,33 @@ fn plan_uses_compiled_samples_and_one_global_frame_partition() {
     assert_eq!(p.pictures[0].end_sample, 48001);
     assert_eq!(p.pictures[0].end_frame, p.pictures[1].start_frame);
     assert_eq!(p.audio[2].start_sample, 123);
+}
+#[test]
+fn recorded_picture_frame_counts_preserve_selected_cut_boundary() {
+    let t = tempfile::tempdir().unwrap();
+    let mut job = fixture(t.path());
+    job["pictures"][0]["delivery_frame_count"] = json!(25);
+    job["pictures"][1]["delivery_frame_count"] = json!(23);
+    write_json(&t.path().join("job.json"), &job);
+    let (_, plan) = scene_delivery::plan(&t.path().join("job.json"), t.path()).unwrap();
+    assert_eq!(plan.duration_samples, 96000);
+    assert_eq!(plan.frame_count, 48);
+    assert_eq!(plan.pictures[0].end_sample, 48001);
+    assert_eq!(plan.pictures[0].end_frame, 25);
+    assert_eq!(plan.pictures[1].start_frame, 25);
+    assert_eq!(plan.pictures[1].end_frame, 48);
+
+    job["pictures"][1]
+        .as_object_mut()
+        .unwrap()
+        .remove("delivery_frame_count");
+    write_json(&t.path().join("job.json"), &job);
+    assert!(
+        scene_delivery::plan(&t.path().join("job.json"), t.path())
+            .unwrap_err()
+            .to_string()
+            .contains("every picture")
+    );
 }
 #[test]
 fn rejects_missing_bus_audio_and_held_mix() {
@@ -270,6 +530,92 @@ fn rejects_fake_composition_changes_and_requires_specific_stillness_exception() 
         json!({"reason":"Protected afterimage","decision":"consumer-decision-123"});
     write_json(&t.path().join("job.json"), &j);
     scene_delivery::plan(&t.path().join("job.json"), t.path()).unwrap();
+}
+#[test]
+fn selected_still_motion_is_scoped_and_validated() {
+    let t = tempfile::tempdir().unwrap();
+    let mut j = fixture(t.path());
+    let motion = json!({
+        "kind":"zoompan", "scale_width":128, "scale_height":128,
+        "crop_width":64, "crop_height":64,
+        "zoom_step":0.0001, "zoom_max":1.015
+    });
+    j["pictures"][0]["motion"] = motion.clone();
+    write_json(&t.path().join("job.json"), &j);
+    scene_delivery::plan(&t.path().join("job.json"), t.path()).unwrap();
+    j["pictures"][0]["motion"]["kind"] = json!("centered-zoompan");
+    write_json(&t.path().join("job.json"), &j);
+    scene_delivery::plan(&t.path().join("job.json"), t.path()).unwrap();
+    j["pictures"][0]["crop"] = json!({"x":0,"y":0,"width":64,"height":64});
+    write_json(&t.path().join("job.json"), &j);
+    assert!(scene_delivery::plan(&t.path().join("job.json"), t.path()).is_err());
+    j["pictures"][0].as_object_mut().unwrap().remove("crop");
+    j["pictures"][0]["motion"]["zoom_step"] = json!(0);
+    write_json(&t.path().join("job.json"), &j);
+    assert!(scene_delivery::plan(&t.path().join("job.json"), t.path()).is_err());
+}
+
+#[test]
+fn post_compose_camera_is_scoped_to_selected_frames_and_checked() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let mut job = fixture(root);
+    let mut picture = b"P6\n64 64\n255\n".to_vec();
+    for y in 0..64 {
+        for x in 0..64 {
+            picture.extend(if (x / 8 + y / 8) % 2 == 0 {
+                [255, 40, 20]
+            } else {
+                [20, 40, 255]
+            });
+        }
+    }
+    fs::write(root.join("pattern.ppm"), picture).unwrap();
+    fs::write(root.join("camera.json"), b"selected camera evidence").unwrap();
+    job["pictures"][0]["source"] = file(root, "pattern.ppm");
+    job["post_compose_camera"] = json!({
+        "evidence":file(root,"camera.json"),
+        "zoom_step":0.02,"zoom_max":1.5,
+        "windows":[{"start_frame":0,"end_frame":24}]
+    });
+    write_json(&root.join("job.json"), &job);
+    scene_delivery::plan(&root.join("job.json"), root).unwrap();
+    let out = root.join("camera-render");
+    scene_delivery::render(&root.join("job.json"), root, &out).unwrap();
+    scene_delivery::check(&root.join("job.json"), root, &out).unwrap();
+    assert!(out.join("pre-camera-picture.mkv").exists());
+    job["post_compose_camera"]["windows"][0]["end_frame"] = json!(49);
+    write_json(&root.join("job.json"), &job);
+    assert!(scene_delivery::plan(&root.join("job.json"), root).is_err());
+}
+#[test]
+fn continuous_motion_group_requires_the_same_adjacent_still() {
+    let t = tempfile::tempdir().unwrap();
+    let mut j = fixture(t.path());
+    let motion = json!({
+        "kind":"centered-zoompan", "scale_width":128, "scale_height":128,
+        "crop_width":64, "crop_height":64,
+        "zoom_step":0.0001, "zoom_max":1.015
+    });
+    j["pictures"][0]["motion"] = motion.clone();
+    j["pictures"][1]["motion"] = motion;
+    j["pictures"][1]["source"] = j["pictures"][0]["source"].clone();
+    j["pictures"][0]["motion_group_id"] = json!("continuous-drift");
+    j["pictures"][1]["motion_group_id"] = json!("continuous-drift");
+    j["max_composition_samples"] = json!(100000);
+    write_json(&t.path().join("job.json"), &j);
+    scene_delivery::plan(&t.path().join("job.json"), t.path()).unwrap();
+    let output = t.path().join("grouped-render");
+    scene_delivery::render(&t.path().join("job.json"), t.path(), &output).unwrap();
+    scene_delivery::check(&t.path().join("job.json"), t.path(), &output).unwrap();
+    j["pictures"][1]["source"] = file(t.path(), "blue.ppm");
+    write_json(&t.path().join("job.json"), &j);
+    assert!(
+        scene_delivery::plan(&t.path().join("job.json"), t.path())
+            .unwrap_err()
+            .to_string()
+            .contains("motion group")
+    );
 }
 #[test]
 fn rejects_wrong_bytes_and_unknown_or_duplicate_consumption() {
