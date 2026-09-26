@@ -53,12 +53,10 @@ fn selected_existing_opening_becomes_verified_lossless_presentation_master() {
             "-pix_fmt",
             "yuv420p",
             "-c:a",
-            "aac",
-            "-b:a",
-            "128k",
+            "pcm_s24le",
             "-shortest",
         ])
-        .arg(root.join("opening.mp4"))
+        .arg(root.join("opening.mkv"))
         .status()
         .unwrap();
     assert!(status.success());
@@ -80,7 +78,7 @@ fn selected_existing_opening_becomes_verified_lossless_presentation_master() {
             }]
         }),
     );
-    let selected = reference(root, "opening.mp4");
+    let selected = reference(root, "opening.mkv");
     let hash = selected["sha256"].as_str().unwrap();
     let asset = json!({
         "logical_id":"selected-opening","sha256":hash,"bytes":selected["bytes"],
