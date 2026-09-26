@@ -154,6 +154,18 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
         } else {
             receipt["role"] = id.into();
             receipt["template_id"] = template.unwrap().into();
+            receipt["template_definition_sha256"] = match id {
+                "series-opening" => "b".repeat(64),
+                "chapter-title" => "d".repeat(64),
+                "end-credits" => "c".repeat(64),
+                _ => unreachable!(),
+            }
+            .into();
+            receipt["episode_id"] = "episode".into();
+            receipt["frames"] = 24.into();
+            receipt["samples"] = 48000.into();
+            receipt["timestamps_verified"] = true.into();
+            receipt["technical_validation_state"] = "rendered-and-checked".into();
         }
         write(&root.join(receipt_name), &receipt);
     }

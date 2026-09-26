@@ -17,7 +17,16 @@ Episode presentation segments name their role (such as `series-opening`,
 `chapter-title`, or `end-credits`). Each segment binds a selected master and
 its source receipt. Scene receipts must be `reel.scene-build-receipt.v1`;
 presentation receipts must be `reel.presentation-master-receipt.v1` and agree
-with the selected scoped master binding.
+with the selected scoped master binding and template definition. The conform
+requires their decoded frame/sample counts, verified timestamps, and a declared
+technical validation route. `reel-presentation-adopt` supplies one route for a
+selected existing master; newly rendered presentation can use another checked
+route. A `decoded-source-equivalent` presentation segment must also bind its
+exact `adoption_manifest`. Conform reruns that selected adoption in a temporary
+directory, compares its receipt fields and fully decoded content with the
+selected master, and records `upstream_presentation_verified`. This recheck is
+deliberately expensive for long, high-resolution segments; a higher build graph
+may reuse an exact prior verification result.
 
 A scene segment may also supply `delivery_job` (an exact authoring-root file
 reference) and `delivery_receipt` (an exact media-root file reference beside the

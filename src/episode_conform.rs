@@ -1,7 +1,7 @@
 //! Hash-bound, language-local lossless episode conform from selected scene and
 //! presentation masters. Source selection belongs to the authoring bindings.
 
-use crate::{episode_delivery, scene_delivery};
+use crate::{episode_delivery, presentation_adopt, scene_delivery};
 use anyhow::{Context, Result, bail};
 use reel_assembly::scene_authoring::{
     Episode, ScopedBindings, TemplateCatalog, resolve_episode_presentation,
@@ -52,6 +52,9 @@ pub struct Segment {
     /// Receipt beside the hydrated scene-delivery output files.
     #[serde(default)]
     pub delivery_receipt: Option<scene_delivery::FileRef>,
+    /// Exact source-adoption manifest for an inherited presentation master.
+    #[serde(default)]
+    pub adoption_manifest: Option<scene_delivery::FileRef>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -81,6 +84,7 @@ pub struct SegmentReceipt {
     pub selected_master_bytes: u64,
     pub source_receipt_sha256: String,
     pub upstream_delivery_verified: bool,
+    pub upstream_presentation_verified: bool,
     pub input_sample_rate: u32,
     pub output_sample_rate: u32,
     pub input_frames: u64,
@@ -112,17 +116,18 @@ pub struct Receipt {
     pub boundary_review_state: String,
     pub external_layer_review_state: String,
     pub upstream_delivery_recheck_state: String,
+    pub upstream_presentation_recheck_state: String,
     pub creative_review_state: String,
     pub segments: Vec<SegmentReceipt>,
     pub publication: String,
 }
 
 #[derive(Clone)]
-struct MediaFacts {
-    width: u64,
-    height: u64,
-    fps: String,
-    sample_rate: u32,
+pub(crate) struct MediaFacts {
+    pub width: u64,
+    pub height: u64,
+    pub fps: String,
+    pub sample_rate: u32,
 }
 
 fn sha(bytes: &[u8]) -> String {
@@ -141,7 +146,7 @@ fn fps_parts(fps: &str) -> Result<(u64, u64)> {
     Ok((numerator, denominator))
 }
 
-fn file_sha(path: &Path) -> Result<String> {
+pub(crate) fn file_sha(path: &Path) -> Result<String> {
     let mut file = fs::File::open(path)?;
     let mut digest = Sha256::new();
     let mut buffer = [0u8; 65536];
@@ -159,7 +164,7 @@ fn file_sha(path: &Path) -> Result<String> {
         .collect())
 }
 
-fn command(name: &str) -> Command {
+pub(crate) fn command(name: &str) -> Command {
     let mut cmd = Command::new(name);
     #[cfg(windows)]
     {
@@ -169,7 +174,7 @@ fn command(name: &str) -> Command {
     cmd
 }
 
-fn probe(path: &Path) -> Result<MediaFacts> {
+pub(crate) fn probe(path: &Path) -> Result<MediaFacts> {
     let output = command("ffprobe")
         .args(["-v", "error", "-show_streams", "-of", "json"])
         .arg(path)
@@ -221,7 +226,7 @@ fn probe(path: &Path) -> Result<MediaFacts> {
     })
 }
 
-fn decoded_digest(path: &Path, video: bool) -> Result<(String, u64)> {
+pub(crate) fn decoded_digest(path: &Path, video: bool) -> Result<(String, u64)> {
     let mut cmd = command("ffmpeg");
     cmd.args(["-v", "error", "-nostdin", "-i"]).arg(path);
     if video {
@@ -399,11 +404,44 @@ pub fn build(
     let mut observed_roles: Vec<String> = Vec::new();
     let mut sources = Vec::new();
     let mut upstream_verified = Vec::new();
+    let mut presentation_verified = Vec::new();
+    let mut presentation_counts = Vec::new();
     for segment in &manifest.segments {
         let master = scene_delivery::checked_file(asset_root, &segment.master)?;
         let receipt_path = scene_delivery::checked_file(asset_root, &segment.source_receipt)?;
-        let receipt: serde_json::Value = serde_json::from_slice(&fs::read(receipt_path)?)?;
+        let receipt: serde_json::Value = serde_json::from_slice(&fs::read(&receipt_path)?)?;
         selected_receipt(segment, &manifest.language, &receipt)?;
+        let presentation_rechecked = match (segment.kind, &segment.adoption_manifest) {
+            (SegmentKind::Scene, None) => false,
+            (SegmentKind::Scene, Some(_)) => {
+                bail!("scene cannot supply a presentation adoption manifest")
+            }
+            (SegmentKind::EpisodePresentation, Some(adoption)) => {
+                if receipt["technical_validation_state"] != "decoded-source-equivalent" {
+                    bail!("adoption manifest requires decoded-source-equivalent receipt");
+                }
+                let adoption_path = scene_delivery::checked_file(input_root, adoption)?;
+                let stage_parent = output
+                    .parent()
+                    .filter(|path| !path.as_os_str().is_empty())
+                    .unwrap_or(Path::new("."));
+                presentation_adopt::check(
+                    &adoption_path,
+                    input_root,
+                    asset_root,
+                    &master,
+                    &receipt_path,
+                    stage_parent,
+                )?;
+                true
+            }
+            (SegmentKind::EpisodePresentation, None) => {
+                if receipt["technical_validation_state"] == "decoded-source-equivalent" {
+                    bail!("adopted presentation needs its source manifest recheck");
+                }
+                false
+            }
+        };
         let rechecked = match (
             segment.kind,
             &segment.delivery_job,
@@ -453,6 +491,7 @@ pub fn build(
         };
         match segment.kind {
             SegmentKind::Scene => {
+                presentation_counts.push(None);
                 seen_scenes.push(segment.id.clone());
                 let role = segment.role.as_deref().unwrap_or("chapter-scenes");
                 if role != "chapter-scenes" || observed_roles.last().is_none_or(|last| last != role)
@@ -461,6 +500,24 @@ pub fn build(
                 }
             }
             SegmentKind::EpisodePresentation => {
+                let input_frames = receipt["frames"]
+                    .as_u64()
+                    .context("presentation receipt lacks decoded frame count")?;
+                let input_samples = receipt["samples"]
+                    .as_u64()
+                    .context("presentation receipt lacks decoded sample count")?;
+                if input_frames == 0
+                    || input_samples == 0
+                    || receipt["episode_id"] != manifest.episode_id
+                    || receipt["timestamps_verified"] != true
+                    || !matches!(
+                        receipt["technical_validation_state"].as_str(),
+                        Some("decoded-source-equivalent" | "rendered-and-checked")
+                    )
+                {
+                    bail!("presentation source receipt lacks selected technical validation");
+                }
+                presentation_counts.push(Some((input_frames, input_samples)));
                 observed_roles.push(segment.id.clone());
                 if !seen_roles.insert(segment.id.clone()) {
                     bail!("duplicate presentation role");
@@ -484,10 +541,18 @@ pub fn build(
                 if receipt["template_id"] != invocation.template_id {
                     bail!("presentation template mismatch");
                 }
+                let template_sha = presentation
+                    .template_definitions
+                    .get(&invocation.template_id)
+                    .context("selected presentation template definition missing")?;
+                if receipt["template_definition_sha256"] != *template_sha {
+                    bail!("presentation receipt differs from selected template definition");
+                }
             }
         }
         sources.push(master);
         upstream_verified.push(rechecked);
+        presentation_verified.push(presentation_rechecked);
     }
     if seen_scenes != *expected_scenes {
         bail!("episode scene order or coverage mismatch");
@@ -591,6 +656,11 @@ pub fn build(
             }
             (source_picture_bytes / frame_bytes, input_samples)
         };
+        if let Some((expected_frames, expected_samples)) = presentation_counts[index] {
+            if input_frames != expected_frames || input_samples != expected_samples {
+                bail!("presentation decoded media differs from its source receipt");
+            }
+        }
         records.push(SegmentReceipt {
             kind: if segment.kind == SegmentKind::Scene {
                 "scene"
@@ -603,6 +673,7 @@ pub fn build(
             selected_master_bytes: segment.master.bytes,
             source_receipt_sha256: segment.source_receipt.sha256.clone(),
             upstream_delivery_verified: upstream_verified[index],
+            upstream_presentation_verified: presentation_verified[index],
             input_sample_rate: facts.sample_rate,
             output_sample_rate: selected_facts.sample_rate,
             input_frames,
@@ -757,6 +828,15 @@ pub fn build(
             "verified-for-all-scene-segments".into()
         } else {
             "open; some scene segments lack selected delivery job and receipt recheck".into()
+        },
+        upstream_presentation_recheck_state: if manifest.segments.iter().enumerate().all(
+            |(i, segment)| {
+                segment.kind != SegmentKind::EpisodePresentation || presentation_verified[i]
+            },
+        ) {
+            "verified-for-all-presentation-segments".into()
+        } else {
+            "open; some presentation segments lack an independent upstream recheck".into()
         },
         creative_review_state: "open; no principal approval inferred".into(),
         segments: records,
