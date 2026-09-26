@@ -210,6 +210,178 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
     assert_eq!(receipt["scene_id"], "scene");
     assert_eq!(receipt["language"], "es");
     assert_eq!(receipt["publication"], "not-authorized");
+
+    // Promote the same synthetic scene to a selected poem-panel production.
+    // The compiler owns layout and native line timing; the scene names source
+    // text, a font, and selected ASS/receipt bindings only.
+    let font_path = [
+        "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/ARIAL.TTF",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    .into_iter()
+    .map(std::path::Path::new)
+    .find(|path| path.is_file());
+    let Some(font_path) = font_path else { return };
+    fs::copy(font_path, root.join("font.ttf")).unwrap();
+    let font_family = if cfg!(windows) {
+        "Arial"
+    } else {
+        "DejaVu Sans"
+    };
+    let mut contract: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
+    contract["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "id":"title","target":{"kind":"title","title_id":"poem"},
+            "start":{"kind":"cue-start","cue_id":"cue"},
+            "end":{"kind":"cue-end","cue_id":"cue"}
+        }));
+    write_json(&root.join("contract.json"), &contract);
+    let definition = serde_json::json!({
+        "schema":"reel.editable-text-template.v1","template_id":"poem-test","kind":"opening-poem",
+        "canvas_width":64,"canvas_height":64,"font_name":font_family,"title_size":14,"body_size":12,
+        "title_x":34,"title_y":4,"body_x":34,"body_y":24,"line_spacing":14,
+        "future_rgb":[120,127,133],"active_rgb":[216,227,232],"completed_rgb":[255,255,255],
+        "panel":{"x":32,"width":32,"background_rgb":[20,18,16],"divider_rgb":[211,178,107],"divider_alpha":185},
+        "fixed_duration_seconds":null
+    });
+    write_json(&root.join("definition.json"), &definition);
+    let mut catalog: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("catalog.json")).unwrap()).unwrap();
+    catalog["templates"] = serde_json::json!([{"template_id":"poem-test","kind":"opening-poem","definition_sha256":reference(root,"definition.json")["sha256"],"required_content_keys":["poem_id","line_cue_ids","titles","lines_by_language","source_text_bindings"]}]);
+    write_json(&root.join("catalog.json"), &catalog);
+    let source = serde_json::json!({
+        "schema":"reel.presentation-source-text.v1","source_authority_id":"source",
+        "source_document_sha256":"b".repeat(64),"source_scope_ids":["beat"],
+        "language":"es","text_state":"canonical-original","title":"P","chapter_number":null,
+        "lines":[{"text":"A","cue_id":"cue","stanza_break_before":false}]
+    });
+    write_json(&root.join("source.json"), &source);
+    let alignment = serde_json::json!({
+        "schema":"reel.scene-native-alignment.v1","language":"es","cue_id":"cue",
+        "selected_take_sha256":voice_sha,"sample_rate":48000,"cue_end_sample":48000,
+        "semantic_markers":{"first":0}
+    });
+    write_json(&root.join("alignment.json"), &alignment);
+    write_json(
+        &root.join("alignment-paths.json"),
+        &serde_json::json!({"cue":"alignment.json"}),
+    );
+    let mut scene: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("scene.json")).unwrap()).unwrap();
+    scene["presentation"] = serde_json::json!({
+        "role":"opening-poem","template_id":"poem-test","asset_binding":"font",
+        "content":{"poem_id":"synthetic-poem","line_cue_ids":{"es":["cue"]},
+            "titles":{"es":"P"},"lines_by_language":{"es":[{"text":"A","cue_id":"cue","semantic_trigger_id":"first"}]},
+            "source_text_bindings":{"es":"source-text"},"ass_layer_bindings":{"es":"ass-layer"},
+            "template_receipt_bindings":{"es":"template-receipt"}}
+    });
+    write_json(&root.join("scene.json"), &scene);
+    let mut bindings: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("scene-bindings.json")).unwrap()).unwrap();
+    bindings["assets"]["alignment"] = asset("alignment", &reference(root, "alignment.json"));
+    bindings["assets"]["source-text"] = asset("source-text", &reference(root, "source.json"));
+    bindings["assets"]["font"] = asset("font", &reference(root, "font.ttf"));
+    write_json(&root.join("scene-bindings.json"), &bindings);
+    write_json(
+        &root.join("season-bindings.json"),
+        &serde_json::json!({"schema":"reel.scene-asset-bindings.v1","scope_id":"season","assets":{}}),
+    );
+    write_json(
+        &root.join("episode-bindings.json"),
+        &serde_json::json!({"schema":"reel.scene-asset-bindings.v1","scope_id":"ep","assets":{}}),
+    );
+    let compiled = Command::new(env!("CARGO_BIN_EXE_reel-scene-template"))
+        .arg("compile")
+        .arg(root.join("catalog.json"))
+        .arg(root.join("definition.json"))
+        .arg(root.join("scene.json"))
+        .arg("es")
+        .arg(root.join("season-bindings.json"))
+        .arg(root.join("episode-bindings.json"))
+        .arg(root.join("scene-bindings.json"))
+        .arg(root.join("alignment-paths.json"))
+        .arg(root.join("source.json"))
+        .arg("--output-ass")
+        .arg(root.join("poem.ass"))
+        .arg("--receipt")
+        .arg(root.join("template-receipt.json"))
+        .output()
+        .unwrap();
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    bindings["assets"]["ass-layer"] = asset("ass-layer", &reference(root, "poem.ass"));
+    bindings["assets"]["template-receipt"] = asset(
+        "template-receipt",
+        &reference(root, "template-receipt.json"),
+    );
+    write_json(&root.join("scene-bindings.json"), &bindings);
+    let mut job: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("job.json")).unwrap()).unwrap();
+    job["contract"] = reference(root, "contract.json");
+    job["external_layers"] = serde_json::json!([{
+        "attachment_id":"title","reason":"Selected editable poem panel","evidence":reference(root,"poem.ass"),
+        "render_mode":"ass-overlay","font":reference(root,"font.ttf")
+    }]);
+    write_json(&root.join("job.json"), &job);
+    let mut semantic: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("semantic.json")).unwrap()).unwrap();
+    for (slot_id, logical_id, file_name) in [
+        ("ass-slot", "ass-layer", "poem.ass"),
+        ("font-slot", "font", "font.ttf"),
+    ] {
+        let hash = reference(root, file_name)["sha256"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        semantic["graph"]["slots"].as_array_mut().unwrap().push(serde_json::json!({
+            "slot_id":slot_id,"beat_id":"beat","lane":"presentation","disposition":"selected",
+            "selected_revision_id":"r1","revisions":[{"revision_id":"r1","asset":{"logical_id":logical_id,"cache_uri":format!("cache://sha256/{hash}"),"sha256":hash}}]
+        }));
+        semantic["graph"]["nodes"][0]["slots"]
+            .as_array_mut()
+            .unwrap()
+            .push(slot_id.into());
+    }
+    semantic["scene_delivery_job"] = reference(root, "job.json");
+    semantic["event_bindings"][0]["external_layer_attachment_ids"] = serde_json::json!(["title"]);
+    write_json(&root.join("semantic.json"), &semantic);
+    let mut build: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("build.json")).unwrap()).unwrap();
+    build["template_receipt"] = "template-receipt.json".into();
+    write_json(&root.join("build.json"), &build);
+    let template_output = root.join("template-output");
+    let built = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
+        .arg("build")
+        .arg(root)
+        .arg("build.json")
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output-dir")
+        .arg(&template_output)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(
+        &fs::read(template_output.join("scene-authoring-build-receipt.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        receipt["template_ass_sha256"],
+        reference(root, "poem.ass")["sha256"]
+    );
+    assert_eq!(receipt["source_text_state"], "canonical-original");
+    assert!(template_output.join("clean-picture.mkv").exists());
 }
 
 #[test]

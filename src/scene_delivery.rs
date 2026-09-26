@@ -43,6 +43,18 @@ pub struct ExternalLayer {
     pub attachment_id: String,
     pub reason: String,
     pub evidence: FileRef,
+    #[serde(default)]
+    pub render_mode: ExternalLayerRenderMode,
+    #[serde(default)]
+    pub font: Option<FileRef>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExternalLayerRenderMode {
+    #[default]
+    EvidenceOnly,
+    AssOverlay,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -139,6 +151,8 @@ pub struct Plan {
     pub pictures: Vec<Span>,
     pub audio: Vec<Span>,
     pub external_layers: Vec<String>,
+    #[serde(default)]
+    pub rendered_external_layers: Vec<String>,
     pub buses: BTreeMap<String, BusPolicy>,
     pub creative_authority: String,
 }
@@ -383,6 +397,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         bail!("D bus must cover every native cue");
     }
     let mut external_layers = Vec::new();
+    let mut rendered_external_layers = Vec::new();
     for layer in &job.external_layers {
         let a = take(&layer.attachment_id)?;
         if !matches!(
@@ -397,7 +412,24 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
             bail!("invalid external layer; primary picture/audio cannot be omitted");
         }
         checked_file(asset_root, &layer.evidence)?;
+        if let Some(font) = &layer.font {
+            checked_file(asset_root, font)?;
+        }
+        if layer.render_mode == ExternalLayerRenderMode::AssOverlay {
+            if layer.evidence.path.extension().and_then(|ext| ext.to_str()) != Some("ass")
+                || a.start_sample != 0
+                || a.end_sample != compiled.duration_samples
+            {
+                bail!("ASS overlay must be a full-scene .ass attachment");
+            }
+            rendered_external_layers.push(layer.attachment_id.clone());
+        } else if layer.font.is_some() {
+            bail!("font binding is only valid for an ASS overlay");
+        }
         external_layers.push(layer.attachment_id.clone());
+    }
+    if rendered_external_layers.len() > 1 {
+        bail!("this scene-delivery version renders one editable ASS layer");
     }
     if used.len() != attached.len() {
         bail!("unconsumed compiled attachments; declare external layers explicitly");
@@ -420,6 +452,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         pictures,
         audio,
         external_layers,
+        rendered_external_layers,
         buses: job.buses.clone(),
         creative_authority: "not-granted; external layers are not certified as rendered".into(),
     };
@@ -463,6 +496,66 @@ pub(crate) fn probe(path: &Path) -> Result<serde_json::Value> {
 }
 fn arg(path: &Path) -> String {
     path.to_string_lossy().into_owned()
+}
+
+fn render_ass_overlay(root: &Path, fps: &str, font_bound: bool) -> Result<()> {
+    let filter = if font_bound {
+        "ass=presentation.ass:fontsdir=fonts"
+    } else {
+        "ass=presentation.ass"
+    };
+    let output = Command::new("ffmpeg")
+        .current_dir(root)
+        .args([
+            "-hide_banner",
+            "-v",
+            "error",
+            "-nostdin",
+            "-n",
+            "-i",
+            "clean-picture.mkv",
+        ])
+        .args([
+            "-vf",
+            filter,
+            "-an",
+            "-c:v",
+            "ffv1",
+            "-pix_fmt",
+            "yuv444p",
+            "-r",
+            fps,
+            "picture.mkv",
+        ])
+        .output()?;
+    if !output.status.success() {
+        bail!(
+            "ASS layer render failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
+fn rgb_frame_at_midpoint(path: &Path, plan: &Plan) -> Result<Vec<u8>> {
+    let seconds = plan.duration_samples as f64 / plan.sample_rate as f64 / 2.0;
+    let output = Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-v",
+            "error",
+            "-nostdin",
+            "-ss",
+            &format!("{seconds:.6}"),
+            "-i",
+        ])
+        .arg(path)
+        .args(["-frames:v", "1", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"])
+        .output()?;
+    if !output.status.success() || output.stdout.is_empty() {
+        bail!("could not decode presentation midpoint frame");
+    }
+    Ok(output.stdout)
 }
 
 pub(crate) fn finish_pcm(float_path: &Path, output: &Path) -> Result<()> {
@@ -571,6 +664,10 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         .tempdir_in(parent)?;
     let root = stage.path();
     let fps = format!("{}/{}", plan.fps_numerator, plan.fps_denominator);
+    let overlay = job
+        .external_layers
+        .iter()
+        .find(|layer| layer.render_mode == ExternalLayerRenderMode::AssOverlay);
     let mut inputs = Vec::new();
     let mut filters = Vec::new();
     for (i, (p, s)) in job.pictures.iter().zip(&plan.pictures).enumerate() {
@@ -621,9 +718,31 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         "yuv444p".into(),
         "-r".into(),
         fps.clone(),
-        arg(&root.join("picture.mkv")),
+        arg(&root.join(if overlay.is_some() {
+            "clean-picture.mkv"
+        } else {
+            "picture.mkv"
+        })),
     ]);
     ffmpeg(&inputs)?;
+    if let Some(layer) = overlay {
+        fs::copy(
+            checked_file(asset_root, &layer.evidence)?,
+            root.join("presentation.ass"),
+        )?;
+        if let Some(font) = &layer.font {
+            fs::create_dir(root.join("fonts"))?;
+            let name = font
+                .path
+                .file_name()
+                .context("selected font has no file name")?;
+            fs::copy(
+                checked_file(asset_root, font)?,
+                root.join("fonts").join(name),
+            )?;
+        }
+        render_ass_overlay(root, &fps, layer.font.is_some())?;
+    }
     for bus in ["D", "M", "E"] {
         let mut inputs = Vec::new();
         let mut filters = Vec::new();
@@ -768,7 +887,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         "+faststart".into(),
         arg(&root.join("review.mp4")),
     ])?;
-    let names = [
+    let mut names = vec![
         "picture.mkv",
         "D.wav",
         "M.wav",
@@ -777,6 +896,9 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         "master.mkv",
         "review.mp4",
     ];
+    if overlay.is_some() {
+        names.extend(["clean-picture.mkv", "presentation.ass"]);
+    }
     let mut outputs = BTreeMap::new();
     for name in names {
         let p = root.join(name);
@@ -784,6 +906,22 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
             name.into(),
             FileRef {
                 path: name.into(),
+                sha256: crate::sha256_file(&p)?,
+                bytes: fs::metadata(p)?.len(),
+            },
+        );
+    }
+    if let Some(layer) = overlay.and_then(|layer| layer.font.as_ref()) {
+        let name = layer
+            .path
+            .file_name()
+            .context("selected font has no file name")?;
+        let relative = Path::new("fonts").join(name);
+        let p = root.join(&relative);
+        outputs.insert(
+            relative.to_string_lossy().replace('\\', "/"),
+            FileRef {
+                path: relative,
                 sha256: crate::sha256_file(&p)?,
                 bytes: fs::metadata(p)?.len(),
             },
@@ -824,7 +962,7 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
     {
         bail!("receipt does not match current compiled scene");
     }
-    let expected = BTreeSet::from([
+    let mut expected = BTreeSet::from([
         "picture.mkv",
         "D.wav",
         "M.wav",
@@ -833,6 +971,22 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
         "master.mkv",
         "review.mp4",
     ]);
+    let overlay = job
+        .external_layers
+        .iter()
+        .find(|layer| layer.render_mode == ExternalLayerRenderMode::AssOverlay);
+    if overlay.is_some() {
+        expected.extend(["clean-picture.mkv", "presentation.ass"]);
+    }
+    let font_name = overlay.and_then(|layer| layer.font.as_ref()).map(|font| {
+        format!(
+            "fonts/{}",
+            font.path.file_name().unwrap_or_default().to_string_lossy()
+        )
+    });
+    if let Some(name) = font_name.as_deref() {
+        expected.insert(name);
+    }
     if receipt
         .outputs
         .keys()
@@ -847,6 +1001,21 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
             bail!("output name mismatch");
         }
         checked_file(output, item)?;
+    }
+    if let Some(layer) = overlay {
+        if receipt.outputs["presentation.ass"].sha256 != layer.evidence.sha256 {
+            bail!("rendered presentation source differs from selected ASS layer");
+        }
+        if let (Some(font), Some(name)) = (&layer.font, font_name.as_deref()) {
+            if receipt.outputs[name].sha256 != font.sha256 {
+                bail!("rendered presentation font differs from selected font");
+            }
+        }
+        let clean = rgb_frame_at_midpoint(&output.join("clean-picture.mkv"), &plan)?;
+        let rendered = rgb_frame_at_midpoint(&output.join("picture.mkv"), &plan)?;
+        if clean.len() != rendered.len() || clean == rendered {
+            bail!("selected ASS layer made no visible change at scene midpoint");
+        }
     }
     for name in ["D.wav", "M.wav", "E.wav", "mix.wav", "master.mkv"] {
         let info = probe(&output.join(name))?;

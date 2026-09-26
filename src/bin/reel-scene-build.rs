@@ -1,6 +1,5 @@
-//! One executable boundary for a selected, ordinary scene language. A scene
-//! with template presentation is held until a real template renderer supplies
-//! its separately editable layer.
+//! One executable boundary for a selected scene language, including a
+//! hash-bound editable ASS presentation layer when its template is selected.
 
 use anyhow::{Context, Result, bail};
 use reel_assembly::scene_authoring::{
@@ -29,6 +28,8 @@ struct BuildManifest {
     episode_bindings: String,
     scene_bindings: String,
     semantic_delivery: String,
+    #[serde(default)]
+    template_receipt: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -55,6 +56,10 @@ struct BuildReceipt {
     authoring_fingerprint_sha256: String,
     selected_semantic_plan_sha256: String,
     scene_delivery_receipt_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    template_ass_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_text_state: Option<String>,
     same_asset_composition_runs: usize,
     visual_inspection_state: String,
     publication: String,
@@ -156,6 +161,114 @@ fn scene_inputs(
     ))
 }
 
+fn content_binding<'a>(
+    content: &'a serde_json::Value,
+    map_name: &str,
+    language: &str,
+) -> Result<&'a str> {
+    content
+        .get(map_name)
+        .and_then(|items| items.get(language))
+        .and_then(|item| item.as_str())
+        .with_context(|| format!("template presentation requires {map_name} for {language}"))
+}
+
+fn receipt_string<'a>(receipt: &'a serde_json::Value, key: &str) -> Result<&'a str> {
+    receipt
+        .get(key)
+        .and_then(|value| value.as_str())
+        .with_context(|| format!("template receipt lacks {key}"))
+}
+
+fn validate_template_layer(
+    root: &Path,
+    manifest: &BuildManifest,
+    scene: &Scene,
+    resolved: &reel_assembly::scene_authoring::ResolvedScene,
+    job: &reel::scene_delivery::Job,
+    plan: &reel::scene_delivery::Plan,
+) -> Result<Option<(String, String)>> {
+    let overlays = job
+        .external_layers
+        .iter()
+        .filter(|layer| {
+            layer.render_mode == reel::scene_delivery::ExternalLayerRenderMode::AssOverlay
+        })
+        .collect::<Vec<_>>();
+    let Some(presentation) = &scene.presentation else {
+        if manifest.template_receipt.is_some() || !overlays.is_empty() {
+            bail!("ordinary scene cannot silently consume a template layer");
+        }
+        return Ok(None);
+    };
+    let path = checked(
+        root,
+        manifest
+            .template_receipt
+            .as_deref()
+            .context("template presentation requires a selected compile receipt")?,
+    )?;
+    let bytes = fs::read(&path)?;
+    let receipt: serde_json::Value = serde_json::from_slice(&bytes)?;
+    if receipt_string(&receipt, "schema")? != "reel.editable-layer-compile-receipt.v1"
+        || receipt_string(&receipt, "scene_id")? != scene.scene_id
+        || receipt_string(&receipt, "language")? != manifest.language
+        || receipt_string(&receipt, "template_id")? != presentation.template_id
+        || receipt_string(&receipt, "template_definition_sha256")?
+            != resolved.template_definitions[&presentation.template_id]
+        || receipt
+            .get("duration_samples")
+            .and_then(|value| value.as_u64())
+            != Some(plan.duration_samples)
+        || receipt.get("sample_rate").and_then(|value| value.as_u64())
+            != Some(plan.sample_rate as u64)
+    {
+        bail!("template compile receipt differs from selected scene and native clock");
+    }
+    let content = &presentation.content;
+    let receipt_key = content_binding(content, "template_receipt_bindings", &manifest.language)?;
+    let source_key = content_binding(content, "source_text_bindings", &manifest.language)?;
+    let ass_key = content_binding(content, "ass_layer_bindings", &manifest.language)?;
+    let selected = &resolved.selected_inputs;
+    let receipt_asset = selected
+        .get(receipt_key)
+        .context("selected template receipt binding missing")?;
+    let source_asset = selected
+        .get(source_key)
+        .context("selected source-text binding missing")?;
+    let ass_asset = selected
+        .get(ass_key)
+        .context("selected ASS binding missing")?;
+    if receipt_asset.sha256 != hash(&bytes)
+        || receipt_asset.bytes != bytes.len() as u64
+        || receipt_string(&receipt, "source_text_sha256")? != source_asset.sha256
+        || receipt_string(&receipt, "ass_sha256")? != ass_asset.sha256
+        || overlays.len() != 1
+        || overlays[0].evidence.sha256 != ass_asset.sha256
+        || overlays[0].evidence.bytes != ass_asset.bytes
+    {
+        bail!("template layer, source, or receipt differs from selected scoped bytes");
+    }
+    let font_key = presentation
+        .asset_binding
+        .as_deref()
+        .context("template presentation requires a selected font binding")?;
+    let font = selected
+        .get(font_key)
+        .context("selected template font missing")?;
+    if overlays[0]
+        .font
+        .as_ref()
+        .is_none_or(|item| item.sha256 != font.sha256 || item.bytes != font.bytes)
+    {
+        bail!("rendered template font differs from selected scoped binding");
+    }
+    Ok(Some((
+        ass_asset.sha256.clone(),
+        receipt_string(&receipt, "source_text_state")?.to_owned(),
+    )))
+}
+
 fn run() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     if let [_, command, index, flag, output] = args.as_slice() {
@@ -206,10 +319,8 @@ fn run() -> Result<()> {
         .language_fingerprints
         .get(&manifest.language)
         .context("requested language not present in scene")?;
-    if scene.presentation.is_some() {
-        bail!(
-            "scene template presentation requires a selected generic layer render before this build"
-        );
+    if scene.presentation.is_some() && manifest.template_receipt.is_none() {
+        bail!("scene template presentation requires a selected compile receipt");
     }
     let semantic_plan = reel::semantic_delivery::plan(&delivery_path)?;
     if semantic_plan.selection.closure.target != scene.scene_id {
@@ -232,16 +343,19 @@ fn run() -> Result<()> {
         bail!("selected REEL event set differs from scene authoring");
     }
     let semantic_bytes = fs::read(&delivery_path)?;
-    let output = Path::new(output_dir);
-    let rendered = reel::semantic_delivery::render(&delivery_path, Path::new(asset_root), output)?;
     let semantic: reel::semantic_delivery::SemanticDelivery =
         serde_yaml::from_slice(&semantic_bytes)?;
     let job_path = delivery_path
         .parent()
         .unwrap_or(Path::new("."))
         .join(&semantic.scene_delivery_job.path);
-    let checked_receipt = reel::scene_delivery::check(&job_path, Path::new(asset_root), output)?;
     let job: reel::scene_delivery::Job = serde_yaml::from_slice(&fs::read(&job_path)?)?;
+    let (_, delivery_plan) = reel::scene_delivery::plan(&job_path, Path::new(asset_root))?;
+    let template =
+        validate_template_layer(&root, &manifest, &scene, &resolved, &job, &delivery_plan)?;
+    let output = Path::new(output_dir);
+    let rendered = reel::semantic_delivery::render(&delivery_path, Path::new(asset_root), output)?;
+    let checked_receipt = reel::scene_delivery::check(&job_path, Path::new(asset_root), output)?;
     if checked_receipt.plan.pictures.len() != job.pictures.len() {
         bail!("rendered picture plan differs from selected job");
     }
@@ -265,6 +379,8 @@ fn run() -> Result<()> {
         authoring_fingerprint_sha256: language_fingerprint.clone(),
         selected_semantic_plan_sha256: hash(&serde_json::to_vec(&semantic_plan)?),
         scene_delivery_receipt_sha256: hash(&serde_json::to_vec(&checked_receipt)?),
+        template_ass_sha256: template.as_ref().map(|item| item.0.clone()),
+        source_text_state: template.as_ref().map(|item| item.1.clone()),
         same_asset_composition_runs: runs.len(),
         visual_inspection_state:
             "open; source-and-crop grouping does not prove visible distinctness".into(),

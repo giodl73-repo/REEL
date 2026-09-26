@@ -674,6 +674,27 @@ pub fn resolve_scene(
     let mut language_fingerprints = BTreeMap::new();
     for (language_id, language) in &scene.languages {
         let mut language_inputs = BTreeMap::new();
+        if let Some(use_) = &scene.presentation {
+            if let Some(key) = &use_.asset_binding {
+                language_inputs.insert(key.clone(), binding(key, &scopes)?.clone());
+            }
+            for map_name in [
+                "source_text_bindings",
+                "ass_layer_bindings",
+                "template_receipt_bindings",
+            ] {
+                if let Some(key) = use_
+                    .content
+                    .get(map_name)
+                    .and_then(|items| items.get(language_id))
+                    .and_then(|item| item.as_str())
+                {
+                    let asset = binding(key, &scopes)?.clone();
+                    selected_inputs.insert(key.to_string(), asset.clone());
+                    language_inputs.insert(key.to_string(), asset);
+                }
+            }
+        }
         if language.cues.is_empty() || language.events.is_empty() {
             bail!("empty {language_id} lane");
         }

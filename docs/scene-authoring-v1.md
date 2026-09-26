@@ -51,6 +51,7 @@ reel-scene-authoring compile-events <graph.json> <pointer.json> <scene.json> <la
 reel-scene-authoring audit-picture <policy.json> <rendered-spans.json> <sample-rate> --output <new.json>
 reel-scene-build build <project-root> <build.json> --asset-root <hydrated-cache-root> --output-dir <new-dir>
 reel-scene-build emit-changed-only-graph <index.json> --output <new-graph.json>
+reel-scene-template compile <catalog.json> <definition.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <source-text.json> --output-ass <new.ass> --receipt <new.json>
 ```
 
 `resolve` returns both whole-scene and language-local fingerprints. A Spanish
@@ -70,10 +71,30 @@ The independent scene build command reads one `reel.scene-build.v1` manifest
 that points to the catalog, episode, scene, policy, scoped bindings and selected
 semantic-delivery contract. It resolves the requested language fingerprint,
 checks exact active event IDs, calls REEL plan/render/check, groups adjacent
-identical asset/crop spans, and writes a private build receipt. It refuses a
-scene with template presentation until a real editable layer render is bound.
+identical asset/crop spans, and writes a private build receipt. Template scenes
+must bind the exact compiled ASS layer, source text, compile receipt, and font.
+The build validates those bindings before rendering.
 The technical grouping does not prove that different asset hashes look
 visually distinct; frame inspection remains a separate review step.
+
+`reel-scene-template compile` verifies the exact template definition against
+its catalog hash, every selected language-local native alignment against
+the scoped asset binding and selected take, and a selected source-text file
+against its language-local scoped binding. The selected source-text file must
+agree exactly with the scene content on title, chapter number, poem lines,
+cue scope, and stanza breaks; its receipt preserves the text review state.
+This check binds the invocation to its selected source authority, while actual
+human review of that authority remains a separate decision. Scene content
+provides language-local text and cue/semantic-marker IDs; the template owns
+canvas, panel, font, colors, and chapter duration.
+The resulting editable ASS layer shows the complete poem from its first frame,
+advances read-state colors at measured native line entrances, and keeps a
+chapter card for its template-defined duration. Its receipt records the exact
+template and ASS hashes. REEL scene delivery composites the selected ASS layer
+into the picture while retaining the clean picture separately. Its technical
+check verifies that the selected overlay changes decoded pixels at the scene
+midpoint; editorial inspection must still check text legibility and each
+transition.
 
 The build manifest contains repository-root relative paths and no copied asset
 hashes:
@@ -90,7 +111,8 @@ hashes:
   "season_bindings": "authoring/season-bindings.json",
   "episode_bindings": "authoring/episode-bindings.json",
   "scene_bindings": "authoring/scene-002/bindings.json",
-  "semantic_delivery": "authoring/scene-002/es/semantic-delivery.json"
+  "semantic_delivery": "authoring/scene-002/es/semantic-delivery.json",
+  "template_receipt": "authoring/scene-002/es/template-receipt.json"
 }
 ```
 
@@ -106,11 +128,11 @@ additional nodes once their executors are implemented.
 
 ## Current execution boundary
 
-V1 resolution checks contract identity and scope; event compilation verifies
-the supplied local alignment files but does **not** hydrate every selected
-asset, select a REEL graph revision, render templates, execute changed-only actions, conform an
-episode, or infer creative approval. A selected `cache://sha256/` binding must
-still pass the consumer's hydration and authority checks. The existing REEL
-semantic assembly and scene delivery commands remain the render path until a
-generic executor connects these contracts to them. The episode checker consumes
-an existing master; REEL currently has no episode renderer.
+V1 resolution checks contract identity and scope; event and template compilation
+verify supplied local alignment and source files. The scene build renders a
+selected semantic graph and optional ASS presentation layer, but it does not
+hydrate every selected asset, select a REEL graph revision, execute changed-only
+actions, conform an episode, or infer creative approval. A selected
+`cache://sha256/` binding must still pass the consumer's hydration and authority
+checks. The episode checker consumes an existing master; REEL currently has no
+episode renderer.

@@ -220,6 +220,39 @@ fn fixture(root: &Path) -> Value {
     write_json(&root.join("job.json"), &j);
     j
 }
+
+#[test]
+fn selected_ass_layer_changes_rendered_pixels_and_is_checked() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let mut job = fixture(root);
+    let mut contract: Value =
+        serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
+    contract["attachments"].as_array_mut().unwrap().push(json!({
+        "id":"editable-title", "target":{"kind":"title","title_id":"example"},
+        "start":{"kind":"cue-start","cue_id":"a","offset_samples":0},
+        "end":{"kind":"cue-end","cue_id":"b","offset_samples":0}
+    }));
+    write_json(&root.join("contract.json"), &contract);
+    fs::write(root.join("panel.ass"), "[Script Info]\nScriptType: v4.00+\nPlayResX: 64\nPlayResY: 64\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Arial,30,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,1,0,5,0,0,0,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:02.00,Default,,0,0,0,,TEST\n").unwrap();
+    job["contract"] = file(root, "contract.json");
+    job["external_layers"] = json!([{
+        "attachment_id":"editable-title", "reason":"Selected editable title",
+        "evidence":file(root,"panel.ass"), "render_mode":"ass-overlay"
+    }]);
+    write_json(&root.join("job.json"), &job);
+    let output = root.join("rendered");
+    let receipt = scene_delivery::render(&root.join("job.json"), root, &output).unwrap();
+    assert_eq!(
+        receipt.plan.rendered_external_layers,
+        vec!["editable-title"]
+    );
+    assert!(output.join("clean-picture.mkv").exists());
+    assert!(output.join("presentation.ass").exists());
+    scene_delivery::check(&root.join("job.json"), root, &output).unwrap();
+    fs::write(output.join("presentation.ass"), b"tampered").unwrap();
+    assert!(scene_delivery::check(&root.join("job.json"), root, &output).is_err());
+}
 #[test]
 fn plan_uses_compiled_samples_and_one_global_frame_partition() {
     let t = tempfile::tempdir().unwrap();

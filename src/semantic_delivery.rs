@@ -105,6 +105,14 @@ fn validate_job_media(selection: &SelectedClosure, job: &Job) -> Result<()> {
                 layer.attachment_id
             );
         }
+        if let Some(font) = &layer.font {
+            if !allowed.contains(&font.sha256) {
+                bail!(
+                    "external layer {} font is not selected by semantic closure",
+                    layer.attachment_id
+                );
+            }
+        }
     }
     Ok(())
 }

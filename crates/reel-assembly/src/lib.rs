@@ -19,6 +19,7 @@ pub const SLOT_DEPRECATION_BATCH_REQUEST_SCHEMA: &str = "reel.slot-deprecation-b
 pub const EVENT_BINDING_REQUEST_SCHEMA: &str = "reel.semantic-event-binding-request.v1";
 pub const CACHE_PREFIX: &str = "cache://sha256/";
 pub mod scene_authoring;
+pub mod template_presentation;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
