@@ -382,6 +382,86 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
     );
     assert_eq!(receipt["source_text_state"], "canonical-original");
     assert!(template_output.join("clean-picture.mkv").exists());
+
+    fs::write(
+        root.join("resolved.json"),
+        b"selected scene-language fingerprint",
+    )
+    .unwrap();
+    write_json(
+        &root.join("index.json"),
+        &serde_json::json!({
+            "schema":"reel.scene-build-index.v1","graph_id":"synthetic-episode",
+            "project_root":".","jobs":[{"node_id":"scene-es","build_manifest":"build.json",
+                "resolved_language":"resolved.json","semantic_delivery":"semantic.json"}]
+        }),
+    );
+    write_json(
+        &root.join("state-empty.json"),
+        &serde_json::json!({
+            "schema":"reel.changed-only-state.v0.1","graph_id":"synthetic-episode","nodes":[]
+        }),
+    );
+    let run_one = root.join("run-one");
+    let first = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
+        .arg("execute-changed-only")
+        .arg(root.join("index.json"))
+        .arg(root.join("state-empty.json"))
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output-root")
+        .arg(&run_one)
+        .output()
+        .unwrap();
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert!(run_one.join("scene-es/master.mkv").exists());
+    assert!(run_one.join("result-receipt-000.json").exists());
+    let run_two = root.join("run-two");
+    let second = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
+        .arg("execute-changed-only")
+        .arg(root.join("index.json"))
+        .arg(run_one.join("final-state.json"))
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output-root")
+        .arg(&run_two)
+        .output()
+        .unwrap();
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&second.stdout).contains("rebuilt 0 scene languages; reused 1")
+    );
+    assert!(!run_two.join("scene-es").exists());
+    let mut changed_policy: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("policy.json")).unwrap()).unwrap();
+    changed_policy["target_composition_seconds_min"] = serde_json::json!(0.6);
+    write_json(&root.join("policy.json"), &changed_policy);
+    let run_three = root.join("run-three");
+    let third = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
+        .arg("execute-changed-only")
+        .arg(root.join("index.json"))
+        .arg(run_one.join("final-state.json"))
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output-root")
+        .arg(&run_three)
+        .output()
+        .unwrap();
+    assert!(
+        third.status.success(),
+        "{}",
+        String::from_utf8_lossy(&third.stderr)
+    );
+    assert!(String::from_utf8_lossy(&third.stdout).contains("rebuilt 1 scene languages; reused 0"));
+    assert!(run_three.join("scene-es/master.mkv").exists());
 }
 
 #[test]
@@ -390,15 +470,55 @@ fn changed_only_graph_plans_each_scene_language_independently() {
     let root = temp.path();
     fs::write(root.join("es-resolved.json"), b"es-fingerprint").unwrap();
     fs::write(root.join("en-resolved.json"), b"en-fingerprint").unwrap();
-    fs::write(root.join("es-delivery.json"), b"es-delivery").unwrap();
-    fs::write(root.join("en-delivery.json"), b"en-delivery").unwrap();
+    fs::write(
+        root.join("es-delivery.json"),
+        b"scene_delivery_job:\n  path: es-job.yaml\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("en-delivery.json"),
+        b"scene_delivery_job:\n  path: en-job.yaml\n",
+    )
+    .unwrap();
+    for name in [
+        "catalog",
+        "episode",
+        "scene",
+        "policy",
+        "season",
+        "episode-bindings",
+        "scene-bindings",
+    ] {
+        fs::write(root.join(format!("{name}.json")), name).unwrap();
+    }
+    for language in ["es", "en"] {
+        write_json(
+            &root.join(format!("{language}-job.yaml")),
+            &serde_json::json!({
+                "schema":"reel.scene-delivery.v0.1","id":language,
+                "contract":reference(root,"catalog.json"),"production_manifest_sha256":"a".repeat(64),
+                "width":64,"height":64,"max_composition_samples":480000,
+                "pictures":[],"audio":[],"buses":{}
+            }),
+        );
+        write_json(
+            &root.join(format!("{language}-build.json")),
+            &serde_json::json!({
+                "schema":"reel.scene-build.v1","scene_id":"scene-001","language":language,
+                "catalog":"catalog.json","episode":"episode.json","scene":"scene.json",
+                "policy":"policy.json","season_bindings":"season.json",
+                "episode_bindings":"episode-bindings.json","scene_bindings":"scene-bindings.json",
+                "semantic_delivery":format!("{language}-delivery.json")
+            }),
+        );
+    }
     write_json(
         &root.join("index.json"),
         &serde_json::json!({
-            "schema":"reel.scene-build-index.v1","graph_id":"episode-one",
+            "schema":"reel.scene-build-index.v1","graph_id":"episode-one","project_root":".",
             "jobs":[
-                {"node_id":"scene-001-es","resolved_language":"es-resolved.json","semantic_delivery":"es-delivery.json"},
-                {"node_id":"scene-001-en","resolved_language":"en-resolved.json","semantic_delivery":"en-delivery.json"}
+                {"node_id":"scene-001-es","build_manifest":"es-build.json","resolved_language":"es-resolved.json","semantic_delivery":"es-delivery.json"},
+                {"node_id":"scene-001-en","build_manifest":"en-build.json","resolved_language":"en-resolved.json","semantic_delivery":"en-delivery.json"}
             ]
         }),
     );
@@ -406,6 +526,8 @@ fn changed_only_graph_plans_each_scene_language_independently() {
     let result = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
         .arg("emit-changed-only-graph")
         .arg(root.join("index.json"))
+        .arg("--asset-root")
+        .arg(root)
         .arg("--output")
         .arg(&graph)
         .output()
@@ -431,4 +553,28 @@ fn changed_only_graph_plans_each_scene_language_independently() {
         serde_json::from_slice(&fs::read(root.join("plan.json")).unwrap()).unwrap();
     assert_eq!(plan["summary"]["rebuild_count"], 2);
     assert_eq!(plan["summary"]["blocked_dependency_count"], 0);
+    let graph_before = fs::read(&graph).unwrap();
+    let mut changed_job: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("en-job.yaml")).unwrap()).unwrap();
+    changed_job["id"] = "en-changed".into();
+    write_json(&root.join("en-job.yaml"), &changed_job);
+    let graph_after = root.join("graph-after.json");
+    let rebuilt = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
+        .arg("emit-changed-only-graph")
+        .arg(root.join("index.json"))
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output")
+        .arg(&graph_after)
+        .output()
+        .unwrap();
+    assert!(
+        rebuilt.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rebuilt.stderr)
+    );
+    let before: serde_json::Value = serde_json::from_slice(&graph_before).unwrap();
+    let after: serde_json::Value = serde_json::from_slice(&fs::read(graph_after).unwrap()).unwrap();
+    assert_eq!(before["nodes"][0]["inputs"], after["nodes"][0]["inputs"]);
+    assert_ne!(before["nodes"][1]["inputs"], after["nodes"][1]["inputs"]);
 }

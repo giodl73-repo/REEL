@@ -9,7 +9,7 @@ use reel_assembly::scene_authoring::{
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     env, fs,
     path::{Component, Path, PathBuf},
 };
@@ -37,6 +37,7 @@ struct BuildManifest {
 struct BuildIndex {
     schema: String,
     graph_id: String,
+    project_root: String,
     jobs: Vec<IndexedJob>,
 }
 
@@ -44,6 +45,7 @@ struct BuildIndex {
 #[serde(deny_unknown_fields)]
 struct IndexedJob {
     node_id: String,
+    build_manifest: String,
     resolved_language: String,
     semantic_delivery: String,
 }
@@ -99,7 +101,23 @@ fn local_file(id: &str, path: &Path) -> Result<serde_json::Value> {
     Ok(serde_json::json!({"file_id":id,"path":path,"sha256":hash(&bytes),"bytes":bytes.len()}))
 }
 
-fn emit_changed_only_graph(index_path: &str, output_path: &str) -> Result<()> {
+fn bound_asset(
+    id: &str,
+    asset_root: &Path,
+    item: &reel::scene_delivery::FileRef,
+) -> Result<serde_json::Value> {
+    let path = checked(
+        asset_root,
+        item.path.to_str().context("non-UTF8 selected asset path")?,
+    )?;
+    let measured = local_file(id, &path)?;
+    if measured["sha256"] != item.sha256 || measured["bytes"] != item.bytes {
+        bail!("selected asset differs from its SHA-256/byte binding: {id}");
+    }
+    Ok(measured)
+}
+
+fn emit_changed_only_graph(index_path: &str, asset_root: &Path, output_path: &str) -> Result<()> {
     let index_file = Path::new(index_path).canonicalize()?;
     let index: BuildIndex = read(&index_file)?;
     if index.schema != "reel.scene-build-index.v1"
@@ -109,6 +127,10 @@ fn emit_changed_only_graph(index_path: &str, output_path: &str) -> Result<()> {
         bail!("invalid scene build index");
     }
     let base = index_file.parent().context("build index has no parent")?;
+    let root = base.join(&index.project_root).canonicalize()?;
+    if !root.is_dir() {
+        bail!("scene build index project root is not a directory");
+    }
     let recipe = local_file("reel-scene-build", &env::current_exe()?)?;
     let mut names = BTreeSet::new();
     let mut nodes = Vec::new();
@@ -116,11 +138,77 @@ fn emit_changed_only_graph(index_path: &str, output_path: &str) -> Result<()> {
         if !names.insert(job.node_id.clone()) {
             bail!("duplicate scene build node");
         }
+        let manifest_path = checked(&root, &job.build_manifest)?;
+        let manifest: BuildManifest = read(&manifest_path)?;
+        if manifest.schema != "reel.scene-build.v1" || manifest.language.is_empty() {
+            bail!("invalid indexed scene build manifest");
+        }
+        let delivery_path = checked(&root, &manifest.semantic_delivery)?;
+        let indexed_delivery = base.join(&job.semantic_delivery).canonicalize()?;
+        if delivery_path != indexed_delivery {
+            bail!("indexed semantic delivery differs from scene build manifest");
+        }
+        let semantic: serde_yaml::Value = serde_yaml::from_slice(&fs::read(&delivery_path)?)?;
+        let job_relative = semantic
+            .get("scene_delivery_job")
+            .and_then(|value| value.get("path"))
+            .and_then(|value| value.as_str())
+            .context("indexed semantic delivery lacks scene delivery job path")?;
+        let semantic_base = delivery_path
+            .parent()
+            .context("semantic delivery has no parent")?;
+        let selected_job = checked(semantic_base, job_relative)?;
+        let scene_job: reel::scene_delivery::Job =
+            serde_yaml::from_slice(&fs::read(&selected_job)?)?;
         let resolved = local_file("resolved-language", &base.join(&job.resolved_language))?;
-        let delivery = local_file("semantic-delivery", &base.join(&job.semantic_delivery))?;
+        let mut inputs = vec![
+            local_file("build-manifest", &manifest_path)?,
+            resolved,
+            local_file("semantic-delivery", &delivery_path)?,
+            local_file("scene-delivery-job", &selected_job)?,
+        ];
+        for (id, relative) in [
+            ("catalog", &manifest.catalog),
+            ("episode", &manifest.episode),
+            ("scene", &manifest.scene),
+            ("policy", &manifest.policy),
+            ("season-bindings", &manifest.season_bindings),
+            ("episode-bindings", &manifest.episode_bindings),
+            ("scene-bindings", &manifest.scene_bindings),
+        ] {
+            inputs.push(local_file(id, &checked(&root, relative)?)?);
+        }
+        if let Some(receipt) = &manifest.template_receipt {
+            inputs.push(local_file("template-receipt", &checked(&root, receipt)?)?);
+        }
+        inputs.push(bound_asset("contract", asset_root, &scene_job.contract)?);
+        for (number, picture) in scene_job.pictures.iter().enumerate() {
+            inputs.push(bound_asset(
+                &format!("picture-{number:03}"),
+                asset_root,
+                &picture.source,
+            )?);
+        }
+        for (number, audio) in scene_job.audio.iter().enumerate() {
+            inputs.push(bound_asset(
+                &format!("audio-{number:03}"),
+                asset_root,
+                &audio.source,
+            )?);
+        }
+        for (number, layer) in scene_job.external_layers.iter().enumerate() {
+            inputs.push(bound_asset(
+                &format!("external-{number:03}"),
+                asset_root,
+                &layer.evidence,
+            )?);
+            if let Some(font) = &layer.font {
+                inputs.push(bound_asset(&format!("font-{number:03}"), asset_root, font)?);
+            }
+        }
         nodes.push(
             serde_json::json!({"node_id":job.node_id,"operation_kind":"scene-delivery",
-            "recipe":recipe,"inputs":[resolved,delivery],"dependencies":[],
+            "recipe":recipe,"inputs":inputs,"dependencies":[],
             "expected_outputs":["scene-master","scene-build-receipt"]}),
         );
     }
@@ -133,6 +221,100 @@ fn emit_changed_only_graph(index_path: &str, output_path: &str) -> Result<()> {
         .open(output_path)?
         .write_all(&serde_json::to_vec_pretty(&graph)?)?;
     println!("{} independent scene build nodes", names.len());
+    Ok(())
+}
+
+fn execute_changed_only(
+    index_path: &str,
+    prior_state_path: &str,
+    asset_root: &str,
+    output_root: &str,
+) -> Result<()> {
+    let index_file = Path::new(index_path).canonicalize()?;
+    let index: BuildIndex = read(&index_file)?;
+    let base = index_file.parent().context("build index has no parent")?;
+    let project_root = base.join(&index.project_root).canonicalize()?;
+    let mut jobs = BTreeMap::new();
+    for job in index.jobs {
+        if jobs
+            .insert(job.node_id.clone(), job.build_manifest)
+            .is_some()
+        {
+            bail!("duplicate scene build node");
+        }
+    }
+    let output = Path::new(output_root);
+    fs::create_dir(output).context("changed-only run output must be new")?;
+    let graph = output.join("graph.json");
+    emit_changed_only_graph(
+        index_path,
+        Path::new(asset_root),
+        graph.to_str().context("non-UTF8 graph path")?,
+    )?;
+    let mut state = Path::new(prior_state_path).canonicalize()?;
+    let mut rebuilt = 0usize;
+    let mut reused = 0usize;
+    for (ordinal, (node_id, manifest)) in jobs.iter().enumerate() {
+        let plan_path = output.join(format!("plan-{ordinal:03}.json"));
+        reel::changed_only::write_changed_only_plan(&graph, &state, &plan_path)?;
+        let plan: serde_json::Value = read(&plan_path)?;
+        let node = plan["nodes"]
+            .as_array()
+            .and_then(|nodes| nodes.iter().find(|node| node["node_id"] == *node_id))
+            .with_context(|| format!("changed-only plan omits indexed node {node_id}"))?;
+        match node["status"].as_str() {
+            Some("exact-byte-reuse") => {
+                reused += 1;
+                continue;
+            }
+            Some("rebuild") => {}
+            other => bail!("scene node {node_id} cannot execute from status {other:?}"),
+        }
+        let action_key = node["action_key"]
+            .as_str()
+            .context("rebuild plan lacks action key")?;
+        let scene_output = output.join(node_id);
+        build_scene(
+            project_root.to_str().context("non-UTF8 project root")?,
+            manifest,
+            asset_root,
+            scene_output.to_str().context("non-UTF8 scene output")?,
+        )?;
+        let result_path = output.join(format!("result-{ordinal:03}.json"));
+        let scene_receipt = scene_output.join("scene-authoring-build-receipt.json");
+        let result = serde_json::json!({
+            "schema":"reel.changed-only-result-input.v0.1",
+            "graph_id":plan["graph_id"],"node_id":node_id,"action_key":action_key,
+            "owner_result_id_sha256":hash(&fs::read(&scene_receipt)?),
+            "outcome":"completed",
+            "outputs":[
+                {"file_id":"scene-master","path":scene_output.join("master.mkv")},
+                {"file_id":"scene-build-receipt","path":scene_receipt}
+            ]
+        });
+        fs::write(&result_path, serde_json::to_vec_pretty(&result)?)?;
+        let receipt_path = output.join(format!("result-receipt-{ordinal:03}.json"));
+        reel::changed_only::write_changed_only_result_receipt(
+            &graph,
+            &state,
+            &plan_path,
+            &result_path,
+            &receipt_path,
+        )?;
+        let next_state = output.join(format!("state-{ordinal:03}.json"));
+        reel::changed_only::advance_changed_only_state(
+            &graph,
+            &state,
+            &plan_path,
+            &result_path,
+            &receipt_path,
+            &next_state,
+        )?;
+        state = next_state;
+        rebuilt += 1;
+    }
+    fs::copy(state, output.join("final-state.json"))?;
+    println!("rebuilt {rebuilt} scene languages; reused {reused}");
     Ok(())
 }
 
@@ -269,33 +451,12 @@ fn validate_template_layer(
     )))
 }
 
-fn run() -> Result<()> {
-    let args: Vec<String> = env::args().collect();
-    if let [_, command, index, flag, output] = args.as_slice() {
-        if command == "emit-changed-only-graph" && flag == "--output" {
-            return emit_changed_only_graph(index, output);
-        }
-    }
-    let [
-        _,
-        command,
-        project_root,
-        manifest_path,
-        flag_root,
-        asset_root,
-        flag_output,
-        output_dir,
-    ] = args.as_slice()
-    else {
-        bail!(
-            "usage: reel-scene-build build <project-root> <build.json> --asset-root <cache-root> --output-dir <new-dir>\n       reel-scene-build emit-changed-only-graph <index.json> --output <new-graph.json>"
-        );
-    };
-    if command != "build" || flag_root != "--asset-root" || flag_output != "--output-dir" {
-        bail!(
-            "usage: reel-scene-build build <project-root> <build.json> --asset-root <cache-root> --output-dir <new-dir>"
-        );
-    }
+fn build_scene(
+    project_root: &str,
+    manifest_path: &str,
+    asset_root: &str,
+    output_dir: &str,
+) -> Result<()> {
     let root = Path::new(project_root).canonicalize()?;
     let manifest: BuildManifest = read(&checked(&root, manifest_path)?)?;
     if manifest.schema != "reel.scene-build.v1" || manifest.language.is_empty() {
@@ -402,6 +563,51 @@ fn run() -> Result<()> {
         receipt.scene_id, receipt.language, receipt.authoring_fingerprint_sha256
     );
     Ok(())
+}
+
+fn run() -> Result<()> {
+    let args: Vec<String> = env::args().collect();
+    if let [
+        _,
+        command,
+        index,
+        root_flag,
+        asset_root,
+        output_flag,
+        output,
+    ] = args.as_slice()
+    {
+        if command == "emit-changed-only-graph"
+            && root_flag == "--asset-root"
+            && output_flag == "--output"
+        {
+            return emit_changed_only_graph(index, Path::new(asset_root), output);
+        }
+    }
+    if let [
+        _,
+        command,
+        index,
+        state,
+        root_flag,
+        asset_root,
+        output_flag,
+        output_root,
+    ] = args.as_slice()
+    {
+        if command == "execute-changed-only"
+            && root_flag == "--asset-root"
+            && output_flag == "--output-root"
+        {
+            return execute_changed_only(index, state, asset_root, output_root);
+        }
+        if command == "build" && root_flag == "--asset-root" && output_flag == "--output-dir" {
+            return build_scene(index, state, asset_root, output_root);
+        }
+    }
+    bail!(
+        "usage: reel-scene-build build <project-root> <build.json> --asset-root <cache-root> --output-dir <new-dir>\n       reel-scene-build emit-changed-only-graph <index.json> --asset-root <cache-root> --output <new-graph.json>\n       reel-scene-build execute-changed-only <index.json> <prior-state.json> --asset-root <cache-root> --output-root <new-run-dir>"
+    )
 }
 
 fn main() {
