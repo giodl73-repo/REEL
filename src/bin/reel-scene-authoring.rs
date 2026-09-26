@@ -1,12 +1,12 @@
 use anyhow::{Context, Result, bail};
+use reel::scene_authoring_inputs::read_verified_alignments;
 use reel_assembly::scene_authoring::{
-    Episode, NativeAlignment, RenderedSpan, Scene, ScenePolicy, ScopedBindings, TemplateCatalog,
+    Episode, RenderedSpan, Scene, ScenePolicy, ScopedBindings, TemplateCatalog,
     audit_rendered_compositions, compile_selected_event_request, resolve_episode_presentation,
     resolve_scene,
 };
 use serde::de::DeserializeOwned;
-use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, env, fs, path::Path};
+use std::{env, fs, path::Path};
 
 fn read<T: DeserializeOwned>(path: &str) -> Result<T> {
     serde_json::from_slice(&fs::read(path).with_context(|| path.to_owned())?)
@@ -21,63 +21,6 @@ fn write_new(path: &str, bytes: &[u8]) -> Result<()> {
         .open(path)?;
     file.write_all(bytes)?;
     Ok(())
-}
-
-fn read_verified_alignments(
-    scene: &Scene,
-    language_id: &str,
-    manifest_path: &str,
-    scopes: &[&ScopedBindings],
-) -> Result<BTreeMap<String, NativeAlignment>> {
-    let paths: BTreeMap<String, String> = read(manifest_path)?;
-    let lane = scene
-        .languages
-        .get(language_id)
-        .context("scene language missing")?;
-    if paths.len() != lane.cues.len() {
-        bail!("alignment path set does not match cue set");
-    }
-    let base = Path::new(manifest_path)
-        .parent()
-        .context("alignment manifest has no directory")?;
-    let mut verified = BTreeMap::new();
-    for cue in &lane.cues {
-        let relative = paths
-            .get(&cue.cue_id)
-            .context("cue alignment path missing")?;
-        let path = Path::new(relative);
-        if path.is_absolute()
-            || path
-                .components()
-                .any(|part| !matches!(part, std::path::Component::Normal(_)))
-        {
-            bail!("alignment paths must be local relative names");
-        }
-        let bytes = fs::read(base.join(path))?;
-        let actual_sha = Sha256::digest(&bytes)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-        let key = cue
-            .phrase_alignment_binding
-            .as_deref()
-            .context("cue lacks alignment binding")?;
-        let matches = scopes
-            .iter()
-            .filter_map(|scope| scope.assets.get(key))
-            .collect::<Vec<_>>();
-        if matches.len() != 1
-            || matches[0].sha256 != actual_sha
-            || matches[0].bytes != bytes.len() as u64
-        {
-            bail!(
-                "alignment {} differs from selected scoped bytes",
-                cue.cue_id
-            );
-        }
-        verified.insert(cue.cue_id.clone(), serde_json::from_slice(&bytes)?);
-    }
-    Ok(verified)
 }
 
 fn run() -> Result<()> {
@@ -136,8 +79,12 @@ fn run() -> Result<()> {
             let episode: ScopedBindings = read(episode_path)?;
             let scene_bindings: ScopedBindings = read(scene_bindings_path)?;
             let scopes = [&scene_bindings, &episode, &season];
-            let alignments =
-                read_verified_alignments(&scene, language_id, alignment_manifest, &scopes)?;
+            let alignments = read_verified_alignments(
+                &scene,
+                language_id,
+                Path::new(alignment_manifest),
+                &scopes,
+            )?;
             let request = compile_selected_event_request(
                 &read::<reel_assembly::Graph>(graph)?,
                 &read::<reel_assembly::SelectedPointer>(pointer)?,

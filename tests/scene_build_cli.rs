@@ -62,7 +62,7 @@ fn one_command_build_refuses_unrendered_poem_template() {
         "catalog":"catalog.json", "episode":"episode.json", "scene":"scene.json",
         "policy":"policy.json", "season_bindings":"season-bindings.json",
         "episode_bindings":"episode-bindings.json", "scene_bindings":"scene-bindings.json",
-        "semantic_delivery":"semantic-delivery.json"
+        "alignment_paths":"alignment-paths.json", "semantic_delivery":"semantic-delivery.json"
     });
     fs::write(
         root.path().join("build.json"),
@@ -122,6 +122,18 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
     );
     let picture = reference(root, "red.ppm");
     let voice = reference(root, "voice.wav");
+    write_json(
+        &root.join("alignment.json"),
+        &serde_json::json!({
+            "schema":"reel.scene-native-alignment.v1","language":"es","cue_id":"cue",
+            "selected_take_sha256":voice["sha256"],"sample_rate":48000,
+            "cue_end_sample":48000,"semantic_markers":{"first":0}
+        }),
+    );
+    write_json(
+        &root.join("alignment-paths.json"),
+        &serde_json::json!({"cue":"alignment.json"}),
+    );
     write_json(
         &root.join("job.json"),
         &serde_json::json!({
@@ -187,11 +199,11 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
     let asset = |logical: &str, reference: &serde_json::Value| serde_json::json!({"logical_id":logical,"sha256":reference["sha256"],"bytes":reference["bytes"],"cache_uri":format!("cache://sha256/{}",reference["sha256"].as_str().unwrap()),"selection_state":"selected-private-production"});
     write_json(
         &root.join("scene-bindings.json"),
-        &serde_json::json!({"schema":"reel.scene-asset-bindings.v1","scope_id":"scene","assets":{"voice":asset("voice",&voice),"red":asset("red",&picture),"alignment":{"logical_id":"alignment","sha256":"c".repeat(64),"bytes":1,"cache_uri":format!("cache://sha256/{}","c".repeat(64)),"selection_state":"selected-private-production"}}}),
+        &serde_json::json!({"schema":"reel.scene-asset-bindings.v1","scope_id":"scene","assets":{"voice":asset("voice",&voice),"red":asset("red",&picture),"alignment":asset("alignment",&reference(root,"alignment.json"))}}),
     );
     write_json(
         &root.join("build.json"),
-        &serde_json::json!({"schema":"reel.scene-build.v1","scene_id":"scene","language":"es","catalog":"catalog.json","episode":"episode.json","scene":"scene.json","policy":"policy.json","season_bindings":"season-bindings.json","episode_bindings":"episode-bindings.json","scene_bindings":"scene-bindings.json","semantic_delivery":"semantic.json"}),
+        &serde_json::json!({"schema":"reel.scene-build.v1","scene_id":"scene","language":"es","catalog":"catalog.json","episode":"episode.json","scene":"scene.json","policy":"policy.json","season_bindings":"season-bindings.json","episode_bindings":"episode-bindings.json","scene_bindings":"scene-bindings.json","alignment_paths":"alignment-paths.json","semantic_delivery":"semantic.json"}),
     );
     let output_dir = root.join("output");
     let result = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
@@ -216,6 +228,77 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
     assert_eq!(receipt["scene_id"], "scene");
     assert_eq!(receipt["language"], "es");
     assert_eq!(receipt["publication"], "not-authorized");
+
+    // Changing a selected alignment and rebinding its exact new bytes cannot
+    // leave the old graph phrase clock accepted by the scene build.
+    let original_alignment = fs::read(root.join("alignment.json")).unwrap();
+    let original_bindings = fs::read(root.join("scene-bindings.json")).unwrap();
+    let mut alignment: serde_json::Value = serde_json::from_slice(&original_alignment).unwrap();
+    alignment["cue_end_sample"] = 40000.into();
+    write_json(&root.join("alignment.json"), &alignment);
+    let mut bindings: serde_json::Value = serde_json::from_slice(&original_bindings).unwrap();
+    bindings["assets"]["alignment"] = asset("alignment", &reference(root, "alignment.json"));
+    write_json(&root.join("scene-bindings.json"), &bindings);
+    let stale_clock = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
+        .arg("build")
+        .arg(root)
+        .arg("build.json")
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output-dir")
+        .arg(root.join("stale-clock-output"))
+        .output()
+        .unwrap();
+    assert!(!stale_clock.status.success());
+    assert!(
+        String::from_utf8_lossy(&stale_clock.stderr)
+            .contains("phrase clock differs from selected alignment")
+    );
+    fs::write(root.join("alignment.json"), original_alignment).unwrap();
+    fs::write(root.join("scene-bindings.json"), original_bindings).unwrap();
+
+    // The scene author can select a score role, but delivery must actually
+    // bind the selected score on M for that event.
+    let original_scene = fs::read(root.join("scene.json")).unwrap();
+    let original_episode = fs::read(root.join("episode.json")).unwrap();
+    let original_episode_bindings = fs::read(root.join("episode-bindings.json")).unwrap();
+    let mut scene_with_score: serde_json::Value = serde_json::from_slice(&original_scene).unwrap();
+    scene_with_score["languages"]["es"]["events"][0]["score"] =
+        serde_json::json!({"disposition":"role","role":"poem-main"});
+    write_json(&root.join("scene.json"), &scene_with_score);
+    let mut episode_with_score: serde_json::Value =
+        serde_json::from_slice(&original_episode).unwrap();
+    episode_with_score["score_palette"] = serde_json::json!([{
+        "role":"poem-main","theme_id":"poem","source_poem_id":"poem",
+        "arrangement_id":"arrangement","asset_binding":"score"
+    }]);
+    write_json(&root.join("episode.json"), &episode_with_score);
+    let mut score_bindings: serde_json::Value =
+        serde_json::from_slice(&original_episode_bindings).unwrap();
+    score_bindings["assets"]["score"] = asset("score", &voice);
+    write_json(&root.join("episode-bindings.json"), &score_bindings);
+    let omitted_score = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
+        .arg("build")
+        .arg(root)
+        .arg("build.json")
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output-dir")
+        .arg(root.join("omitted-score-output"))
+        .output()
+        .unwrap();
+    assert!(!omitted_score.status.success());
+    assert!(
+        String::from_utf8_lossy(&omitted_score.stderr)
+            .contains("M/E attachments differ from authored score or Sonic")
+    );
+    fs::write(root.join("scene.json"), original_scene).unwrap();
+    fs::write(root.join("episode.json"), original_episode).unwrap();
+    fs::write(
+        root.join("episode-bindings.json"),
+        original_episode_bindings,
+    )
+    .unwrap();
 
     // Conform the selected scene through the same generic episode boundary.
     // This reopens and independently checks every upstream scene-delivery
@@ -453,11 +536,28 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
     assert_eq!(receipt["source_text_state"], "canonical-original");
     assert!(template_output.join("clean-picture.mkv").exists());
 
-    fs::write(
-        root.join("resolved.json"),
-        b"selected scene-language fingerprint",
-    )
-    .unwrap();
+    let resolved = Command::new(env!("CARGO_BIN_EXE_reel-scene-authoring"))
+        .arg("resolve-language")
+        .args([
+            "catalog.json",
+            "episode.json",
+            "scene.json",
+            "policy.json",
+            "season-bindings.json",
+            "episode-bindings.json",
+            "scene-bindings.json",
+            "es",
+            "--output",
+        ])
+        .arg(root.join("resolved.json"))
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(
+        resolved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resolved.stderr)
+    );
     write_json(
         &root.join("index.json"),
         &serde_json::json!({
@@ -514,6 +614,29 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
         serde_json::from_slice(&fs::read(root.join("policy.json")).unwrap()).unwrap();
     changed_policy["target_composition_seconds_min"] = serde_json::json!(0.6);
     write_json(&root.join("policy.json"), &changed_policy);
+    fs::remove_file(root.join("resolved.json")).unwrap();
+    let refreshed = Command::new(env!("CARGO_BIN_EXE_reel-scene-authoring"))
+        .arg("resolve-language")
+        .args([
+            "catalog.json",
+            "episode.json",
+            "scene.json",
+            "policy.json",
+            "season-bindings.json",
+            "episode-bindings.json",
+            "scene-bindings.json",
+            "es",
+            "--output",
+        ])
+        .arg(root.join("resolved.json"))
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(
+        refreshed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&refreshed.stderr)
+    );
     let run_three = root.join("run-three");
     let third = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
         .arg("execute-changed-only")
@@ -578,8 +701,7 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
 fn changed_only_graph_plans_each_scene_language_independently() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
-    fs::write(root.join("es-resolved.json"), b"es-fingerprint").unwrap();
-    fs::write(root.join("en-resolved.json"), b"en-fingerprint").unwrap();
+    write_json(&root.join("alignment-paths.json"), &serde_json::json!({}));
     fs::write(
         root.join("es-delivery.json"),
         b"scene_delivery_job:\n  path: es-job.yaml\n",
@@ -590,18 +712,48 @@ fn changed_only_graph_plans_each_scene_language_independently() {
         b"scene_delivery_job:\n  path: en-job.yaml\n",
     )
     .unwrap();
-    for name in [
-        "catalog",
-        "episode",
-        "scene",
-        "policy",
-        "season",
-        "episode-bindings",
-        "scene-bindings",
+    let fixture = format!(
+        "{}/tests/fixtures/scene-authoring",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    for (source, destination) in [
+        ("catalog", "catalog"),
+        ("episode", "episode"),
+        ("scene", "scene"),
+        ("policy", "policy"),
+        ("season-bindings", "season"),
+        ("episode-bindings", "episode-bindings"),
+        ("scene-bindings", "scene-bindings"),
     ] {
-        fs::write(root.join(format!("{name}.json")), name).unwrap();
+        fs::copy(
+            format!("{fixture}/{source}.json"),
+            root.join(format!("{destination}.json")),
+        )
+        .unwrap();
     }
     for language in ["es", "en"] {
+        let resolved = Command::new(env!("CARGO_BIN_EXE_reel-scene-authoring"))
+            .arg("resolve-language")
+            .args([
+                "catalog.json",
+                "episode.json",
+                "scene.json",
+                "policy.json",
+                "season.json",
+                "episode-bindings.json",
+                "scene-bindings.json",
+                language,
+                "--output",
+            ])
+            .arg(root.join(format!("{language}-resolved.json")))
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(
+            resolved.status.success(),
+            "{}",
+            String::from_utf8_lossy(&resolved.stderr)
+        );
         write_json(
             &root.join(format!("{language}-job.yaml")),
             &serde_json::json!({
@@ -614,11 +766,11 @@ fn changed_only_graph_plans_each_scene_language_independently() {
         write_json(
             &root.join(format!("{language}-build.json")),
             &serde_json::json!({
-                "schema":"reel.scene-build.v1","scene_id":"scene-001","language":language,
+                "schema":"reel.scene-build.v1","scene_id":"scene-poem","language":language,
                 "catalog":"catalog.json","episode":"episode.json","scene":"scene.json",
                 "policy":"policy.json","season_bindings":"season.json",
                 "episode_bindings":"episode-bindings.json","scene_bindings":"scene-bindings.json",
-                "semantic_delivery":format!("{language}-delivery.json")
+                "alignment_paths":"alignment-paths.json", "semantic_delivery":format!("{language}-delivery.json")
             }),
         );
     }
@@ -687,4 +839,32 @@ fn changed_only_graph_plans_each_scene_language_independently() {
     let after: serde_json::Value = serde_json::from_slice(&fs::read(graph_after).unwrap()).unwrap();
     assert_eq!(before["nodes"][0]["inputs"], after["nodes"][0]["inputs"]);
     assert_ne!(before["nodes"][1]["inputs"], after["nodes"][1]["inputs"]);
+
+    // A season opening rebind belongs to episode presentation; it does not
+    // change either scene-language action key.
+    let mut season: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("season.json")).unwrap()).unwrap();
+    season["assets"]["opening.selected"]["sha256"] = "f".repeat(64).into();
+    season["assets"]["opening.selected"]["cache_uri"] =
+        format!("cache://sha256/{}", "f".repeat(64)).into();
+    write_json(&root.join("season.json"), &season);
+    let unrelated_graph = root.join("graph-unrelated.json");
+    let unrelated = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
+        .arg("emit-changed-only-graph")
+        .arg(root.join("index.json"))
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output")
+        .arg(&unrelated_graph)
+        .output()
+        .unwrap();
+    assert!(
+        unrelated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&unrelated.stderr)
+    );
+    let stable: serde_json::Value =
+        serde_json::from_slice(&fs::read(unrelated_graph).unwrap()).unwrap();
+    assert_eq!(after["nodes"][0]["inputs"], stable["nodes"][0]["inputs"]);
+    assert_eq!(after["nodes"][1]["inputs"], stable["nodes"][1]["inputs"]);
 }

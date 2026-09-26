@@ -152,6 +152,8 @@ pub struct Plan {
     pub audio: Vec<Span>,
     pub external_layers: Vec<String>,
     #[serde(default)]
+    pub external_layer_spans: Vec<Span>,
+    #[serde(default)]
     pub rendered_external_layers: Vec<String>,
     pub buses: BTreeMap<String, BusPolicy>,
     pub creative_authority: String,
@@ -397,6 +399,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         bail!("D bus must cover every native cue");
     }
     let mut external_layers = Vec::new();
+    let mut external_layer_spans = Vec::new();
     let mut rendered_external_layers = Vec::new();
     for layer in &job.external_layers {
         let a = take(&layer.attachment_id)?;
@@ -427,6 +430,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
             bail!("font binding is only valid for an ASS overlay");
         }
         external_layers.push(layer.attachment_id.clone());
+        external_layer_spans.push(span(a)?);
     }
     if rendered_external_layers.len() > 1 {
         bail!("this scene-delivery version renders one editable ASS layer");
@@ -452,6 +456,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         pictures,
         audio,
         external_layers,
+        external_layer_spans,
         rendered_external_layers,
         buses: job.buses.clone(),
         creative_authority: "not-granted; external layers are not certified as rendered".into(),

@@ -2,9 +2,10 @@
 //! hash-bound editable ASS presentation layer when its template is selected.
 
 use anyhow::{Context, Result, bail};
+use reel::scene_authoring_inputs::read_verified_alignments;
 use reel_assembly::scene_authoring::{
-    Episode, RenderedSpan, Scene, ScenePolicy, ScopedBindings, TemplateCatalog,
-    audit_rendered_compositions, resolve_scene,
+    Episode, RenderedSpan, Scene, ScenePolicy, ScopedBindings, ScoreUse, TemplateCatalog,
+    audit_rendered_compositions, compile_native_event_spans, resolve_scene,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -27,6 +28,7 @@ struct BuildManifest {
     season_bindings: String,
     episode_bindings: String,
     scene_bindings: String,
+    alignment_paths: String,
     semantic_delivery: String,
     #[serde(default)]
     template_receipt: Option<String>,
@@ -165,23 +167,54 @@ fn emit_changed_only_graph(index_path: &str, asset_root: &Path, output_path: &st
         let selected_job = checked(semantic_base, job_relative)?;
         let scene_job: reel::scene_delivery::Job =
             serde_yaml::from_slice(&fs::read(&selected_job)?)?;
-        let resolved = local_file("resolved-language", &base.join(&job.resolved_language))?;
+        let (catalog, episode, scene, policy, season, episode_bindings, scene_bindings, _) =
+            scene_inputs(&root, &manifest)?;
+        let current = resolve_scene(
+            &catalog,
+            &episode,
+            &scene,
+            &policy,
+            &season,
+            &episode_bindings,
+            &scene_bindings,
+        )?;
+        let expected_fingerprint = current
+            .language_fingerprints
+            .get(&manifest.language)
+            .context("indexed scene language missing")?;
+        let resolved_path = base.join(&job.resolved_language);
+        let resolved_data: serde_json::Value = read(&resolved_path)?;
+        if resolved_data["schema"] != "reel.resolved-scene-language.v1"
+            || resolved_data["scene_id"] != manifest.scene_id
+            || resolved_data["language"] != manifest.language
+            || resolved_data["fingerprint_sha256"] != *expected_fingerprint
+        {
+            bail!("indexed resolved language is stale for selected scene inputs");
+        }
+        let resolved = local_file("resolved-language", &resolved_path)?;
         let mut inputs = vec![
             local_file("build-manifest", &manifest_path)?,
             resolved,
             local_file("semantic-delivery", &delivery_path)?,
             local_file("scene-delivery-job", &selected_job)?,
         ];
-        for (id, relative) in [
-            ("catalog", &manifest.catalog),
-            ("episode", &manifest.episode),
-            ("scene", &manifest.scene),
-            ("policy", &manifest.policy),
-            ("season-bindings", &manifest.season_bindings),
-            ("episode-bindings", &manifest.episode_bindings),
-            ("scene-bindings", &manifest.scene_bindings),
-        ] {
-            inputs.push(local_file(id, &checked(&root, relative)?)?);
+        // The verified language fingerprint already projects only consumed
+        // authoring, policy, template and scoped asset selections. Hashing the
+        // full shared files here would invalidate unrelated scene languages.
+        inputs.push(local_file(
+            "alignment-paths",
+            &checked(&root, &manifest.alignment_paths)?,
+        )?);
+        let alignment_manifest = checked(&root, &manifest.alignment_paths)?;
+        let alignment_paths: BTreeMap<String, String> = read(&alignment_manifest)?;
+        let alignment_base = alignment_manifest
+            .parent()
+            .context("alignment manifest has no parent")?;
+        for (cue_id, relative) in alignment_paths {
+            inputs.push(local_file(
+                &format!("alignment-{cue_id}"),
+                &checked(alignment_base, &relative)?,
+            )?);
         }
         if let Some(receipt) = &manifest.template_receipt {
             inputs.push(local_file("template-receipt", &checked(&root, receipt)?)?);
@@ -517,12 +550,35 @@ fn build_scene(
         .join(&semantic.scene_delivery_job.path);
     let job: reel::scene_delivery::Job = serde_yaml::from_slice(&fs::read(&job_path)?)?;
     let (_, delivery_plan) = reel::scene_delivery::plan(&job_path, Path::new(asset_root))?;
+    let alignments = read_verified_alignments(
+        &scene,
+        &manifest.language,
+        &checked(&root, &manifest.alignment_paths)?,
+        &[&scene_bindings, &episode_bindings, &season],
+    )?;
+    let native_spans = compile_native_event_spans(
+        &manifest.language,
+        &scene.languages[&manifest.language],
+        &alignments,
+    )?;
+    validate_authored_semantic_assets(
+        &scene,
+        &episode,
+        &resolved,
+        &semantic,
+        &semantic_plan.selection,
+        &job,
+        &manifest.language,
+        &alignments,
+    )?;
     validate_semantic_timeline(
         &semantic,
         &semantic_plan.selection,
         &job,
         &delivery_plan,
         &manifest.language,
+        &native_spans,
+        &alignments,
     )?;
     let template =
         validate_template_layer(&root, &manifest, &scene, &resolved, &job, &delivery_plan)?;
@@ -585,12 +641,151 @@ fn build_scene(
     Ok(())
 }
 
+fn validate_authored_semantic_assets(
+    scene: &Scene,
+    episode: &Episode,
+    resolved: &reel_assembly::scene_authoring::ResolvedScene,
+    semantic: &reel::semantic_delivery::SemanticDelivery,
+    selection: &reel_assembly::SelectedClosure,
+    job: &reel::scene_delivery::Job,
+    language: &str,
+    alignments: &BTreeMap<String, reel_assembly::scene_authoring::NativeAlignment>,
+) -> Result<()> {
+    let lane = &scene.languages[language];
+    let selected_hash = |key: &str| -> Result<String> {
+        Ok(resolved
+            .selected_inputs
+            .get(key)
+            .with_context(|| format!("selected asset binding {key} missing"))?
+            .sha256
+            .clone())
+    };
+    for cue in &lane.cues {
+        let key = cue
+            .take_binding
+            .as_deref()
+            .context("ready cue lacks take binding")?;
+        if selected_hash(key)? != alignments[&cue.cue_id].selected_take_sha256 {
+            bail!(
+                "cue {} selected take differs from native alignment",
+                cue.cue_id
+            );
+        }
+    }
+    for authored in &lane.events {
+        let graph = selection
+            .closure
+            .semantic_events
+            .iter()
+            .find(|event| event.event_id == authored.event_id)
+            .with_context(|| {
+                format!(
+                    "authored event {} absent from selected graph",
+                    authored.event_id
+                )
+            })?;
+        if graph.picture.sha256
+            != selected_hash(
+                authored
+                    .picture_binding
+                    .as_deref()
+                    .context("ready event lacks picture binding")?,
+            )?
+        {
+            bail!(
+                "event {} graph picture differs from authored selection",
+                authored.event_id
+            );
+        }
+        let binding = semantic
+            .event_bindings
+            .iter()
+            .find(|binding| binding.event_id == authored.event_id)
+            .with_context(|| format!("event {} lacks delivery binding", authored.event_id))?;
+        let mut actual_music = Vec::new();
+        let mut actual_sonic = Vec::new();
+        for id in &binding.audio_attachment_ids {
+            let item = job
+                .audio
+                .iter()
+                .find(|item| item.attachment_id == *id)
+                .with_context(|| format!("audio attachment {id} missing"))?;
+            match item.bus.as_str() {
+                "M" => actual_music.push(item.source.sha256.clone()),
+                "E" => actual_sonic.push(item.source.sha256.clone()),
+                _ => bail!("event {} optional audio must use M or E", authored.event_id),
+            }
+        }
+        let mut expected_music = match &authored.score {
+            ScoreUse::Role { role } => {
+                let palette = episode
+                    .score_palette
+                    .iter()
+                    .find(|item| item.role == *role)
+                    .with_context(|| format!("unknown score role {role}"))?;
+                vec![selected_hash(&palette.asset_binding)?]
+            }
+            ScoreUse::Silence => Vec::new(),
+            ScoreUse::Held => bail!("event {} score choice remains held", authored.event_id),
+        };
+        let mut expected_sonic = authored
+            .sonic_bindings
+            .iter()
+            .map(|key| selected_hash(key))
+            .collect::<Result<Vec<_>>>()?;
+        actual_music.sort();
+        actual_sonic.sort();
+        expected_music.sort();
+        expected_sonic.sort();
+        if actual_music != expected_music || actual_sonic != expected_sonic {
+            bail!(
+                "event {} M/E attachments differ from authored score or Sonic",
+                authored.event_id
+            );
+        }
+        let mut actual_vfx = binding
+            .external_layer_attachment_ids
+            .iter()
+            .map(|id| {
+                let item = job
+                    .external_layers
+                    .iter()
+                    .find(|item| item.attachment_id == *id)
+                    .with_context(|| format!("external attachment {id} missing"))?;
+                if item.render_mode == reel::scene_delivery::ExternalLayerRenderMode::AssOverlay {
+                    return Ok(None);
+                }
+                Ok(Some(item.evidence.sha256.clone()))
+            })
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        let mut expected_vfx = authored
+            .vfx_bindings
+            .iter()
+            .map(|key| selected_hash(key))
+            .collect::<Result<Vec<_>>>()?;
+        actual_vfx.sort();
+        expected_vfx.sort();
+        if actual_vfx != expected_vfx {
+            bail!(
+                "event {} external attachments differ from authored VFX",
+                authored.event_id
+            );
+        }
+    }
+    Ok(())
+}
+
 fn validate_semantic_timeline(
     semantic: &reel::semantic_delivery::SemanticDelivery,
     selection: &reel_assembly::SelectedClosure,
     job: &reel::scene_delivery::Job,
     plan: &reel::scene_delivery::Plan,
     language: &str,
+    native_spans: &[reel_assembly::scene_authoring::NativeEventSpan],
+    alignments: &BTreeMap<String, reel_assembly::scene_authoring::NativeAlignment>,
 ) -> Result<()> {
     fn spans<'a>(
         id: &str,
@@ -604,6 +799,21 @@ fn validate_semantic_timeline(
         .iter()
         .filter(|event| event.language == language && event.scene_id == semantic.target)
     {
+        let native = native_spans
+            .iter()
+            .find(|span| span.event_id == event.event_id)
+            .with_context(|| format!("missing selected native alignment for {}", event.event_id))?;
+        let alignment = alignments
+            .get(&native.cue_id)
+            .with_context(|| format!("missing native cue alignment for {}", event.event_id))?;
+        if native.sample_rate != plan.sample_rate
+            || event.narration.sha256 != alignment.selected_take_sha256
+        {
+            bail!(
+                "semantic event {} differs from selected native take or sample rate",
+                event.event_id
+            );
+        }
         let binding = semantic
             .event_bindings
             .iter()
@@ -618,6 +828,12 @@ fn validate_semantic_timeline(
             .iter()
             .find(|item| item.attachment_id == binding.narration_attachment_id)
             .with_context(|| format!("missing narration job for {}", event.event_id))?;
+        if narration_job.cue_id.as_deref() != Some(native.cue_id.as_str()) {
+            bail!(
+                "semantic event {} narration attachment uses another cue",
+                event.event_id
+            );
+        }
         if !event.phrase_start_seconds.is_finite()
             || !event.phrase_end_seconds.is_finite()
             || event.phrase_start_seconds < 0.0
@@ -632,6 +848,14 @@ fn validate_semantic_timeline(
             }
             Ok(value.round() as u64)
         };
+        if sample(event.phrase_start_seconds)? != native.start_sample
+            || sample(event.phrase_end_seconds)? != native.end_sample
+        {
+            bail!(
+                "semantic event {} phrase clock differs from selected alignment",
+                event.event_id
+            );
+        }
         let start = narration
             .start_sample
             .checked_add(sample(event.phrase_start_seconds)?)
@@ -671,6 +895,16 @@ fn validate_semantic_timeline(
             if item.bus == "D" || span.start_sample >= end || span.end_sample <= start {
                 bail!(
                     "semantic event {} M/E audio misses native phrase span: {id}",
+                    event.event_id
+                );
+            }
+        }
+        for id in &binding.external_layer_attachment_ids {
+            let span = spans(id, &plan.external_layer_spans)
+                .with_context(|| format!("missing external layer span {id}"))?;
+            if span.start_sample >= end || span.end_sample <= start {
+                bail!(
+                    "semantic event {} external layer misses native phrase span: {id}",
                     event.event_id
                 );
             }

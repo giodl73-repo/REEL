@@ -70,17 +70,20 @@ derives native event spans, and emits a request for the existing
 the selected graph and rejects stale take or picture slots. A correction names
 `supersedes_event_id` in the scene event and receives a new immutable lock.
 The independent scene build command reads one `reel.scene-build.v1` manifest
-that points to the catalog, episode, scene, policy, scoped bindings and selected
-semantic-delivery contract. It resolves the requested language fingerprint,
+that points to the catalog, episode, scene, policy, scoped bindings, selected
+native-alignment path map and semantic-delivery contract. It verifies the
+selected alignment bytes, recompiles the native event spans, and requires the
+selected graph phrase clocks to match their exact samples. It resolves the requested language fingerprint,
 checks exact active event IDs, calls REEL plan/render/check, groups adjacent
 identical asset/crop spans, and writes a private build receipt. Template scenes
 must bind the exact compiled ASS layer, source text, compile receipt, and font.
 The build validates those bindings before rendering.
-For each selected language-local semantic event, the build also projects its
-native phrase seconds through the selected D attachment into scene samples.
-Its selected picture must cover that entire phrase, and each declared M/E
-attachment must overlap it. A shifted attachment with unchanged media hashes
-fails this check.
+For each selected language-local semantic event, the build projects its native
+phrase samples through the selected D attachment onto the scene clock. Its
+selected picture must cover that entire phrase; declared M/E and external
+attachments must overlap it. The exact delivered M/E and VFX assets must agree
+with the authored score role, Sonic and VFX bindings. A shifted or omitted
+attachment with unchanged media hashes fails this check.
 The technical grouping does not prove that different asset hashes look
 visually distinct; frame inspection remains a separate review step.
 
@@ -118,6 +121,7 @@ hashes:
   "season_bindings": "authoring/season-bindings.json",
   "episode_bindings": "authoring/episode-bindings.json",
   "scene_bindings": "authoring/scene-002/bindings.json",
+  "alignment_paths": "authoring/scene-002/es/alignment-paths.json",
   "semantic_delivery": "authoring/scene-002/es/semantic-delivery.json",
   "template_receipt": "authoring/scene-002/es/template-receipt.json"
 }
@@ -126,8 +130,11 @@ hashes:
 For multiple scenes, `resolve-language` writes one small file per scene and
 language. A `reel.scene-build-index.v1` lists its project root and each node's
 build manifest, resolved-language file and selected semantic-delivery file.
-`emit-changed-only-graph` measures those files, the direct contract/binding
-files, selected scene job, hydrated job media, and the exact build executable.
+`emit-changed-only-graph` recomputes the current language fingerprint and
+rejects a stale indexed resolver file. It measures that fingerprint file,
+selected alignment files, selected scene job, hydrated job media and the exact
+build executable. Unrelated opening or shared binding edits leave scene node
+inputs unchanged.
 `execute-changed-only` uses REEL's planner for each independent scene-language
 node, runs only `rebuild` nodes through the same checked scene builder, writes
 REEL result receipts, and advances immutable state snapshots. An unchanged
@@ -148,5 +155,5 @@ scene-language nodes. A selected
 `cache://sha256/` binding must still pass the consumer's hydration and authority
 checks. Generic episode conform builds a selected lossless master; presentation
 segment creation and whole-episode creative review remain separate.
-The phrase-placement check does not yet verify external layer intervals or
-rederive graph phrase times from the selected alignment during a scene build.
+Evidence-only external layers still require a rendered VFX implementation or
+an explicit review disposition before they can establish visible VFX delivery.
