@@ -102,6 +102,9 @@ pub struct Picture {
     pub crop: Option<Crop>,
     #[serde(default)]
     pub motion: Option<PictureMotion>,
+    /// Adjacent identical stills with this ID render one continuous motion run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motion_group_id: Option<String>,
     /// Optional exact delivery-frame allocation for recorded cut replay.
     /// If any picture supplies this, every picture in the job must supply it.
     #[serde(default)]
@@ -342,6 +345,28 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
     let mut prior: Option<&Picture> = None;
     let mut unchanged_start = 0;
     let mut cursor = 0;
+    let mut motion_group_last = BTreeMap::<String, usize>::new();
+    for (index, picture) in job.pictures.iter().enumerate() {
+        if let Some(group) = &picture.motion_group_id {
+            if group.trim().is_empty()
+                || picture.kind != PictureKind::Still
+                || picture.motion.is_none()
+                || picture.crop.is_some()
+            {
+                bail!("motion group requires a named moving still without crop");
+            }
+            if let Some(previous_index) = motion_group_last.insert(group.clone(), index) {
+                let previous = &job.pictures[previous_index];
+                if previous_index + 1 != index
+                    || previous.source != picture.source
+                    || previous.motion != picture.motion
+                    || previous.source_start_frame != picture.source_start_frame
+                {
+                    bail!("motion group must be adjacent with identical picture and motion");
+                }
+            }
+        }
+    }
     for p in &job.pictures {
         let a = take(&p.attachment_id)?;
         if !matches!(a.target, Target::Shot { .. } | Target::Cel { .. }) {
@@ -964,7 +989,24 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         .find(|layer| layer.render_mode != ExternalLayerRenderMode::EvidenceOnly);
     let mut inputs = Vec::new();
     let mut filters = Vec::new();
-    for (i, (p, s)) in job.pictures.iter().zip(&plan.pictures).enumerate() {
+    let mut groups = Vec::new();
+    let mut start = 0;
+    while start < job.pictures.len() {
+        let mut end = start + 1;
+        if let Some(group) = &job.pictures[start].motion_group_id {
+            while end < job.pictures.len()
+                && job.pictures[end].motion_group_id.as_ref() == Some(group)
+            {
+                end += 1;
+            }
+        }
+        groups.push((start, end));
+        start = end;
+    }
+    for (i, &(start, end)) in groups.iter().enumerate() {
+        let p = &job.pictures[start];
+        let s = &plan.pictures[start];
+        let group_frames = plan.pictures[end - 1].end_frame - s.start_frame;
         let path = checked_file(asset_root, &p.source)?;
         let info = probe(&path)?;
         let stream = info["streams"]
@@ -989,7 +1031,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
             .unwrap_or_default();
         let source_end = p
             .source_start_frame
-            .checked_add(s.end_frame - s.start_frame)
+            .checked_add(group_frames)
             .context("source frame offset overflow")?;
         let visual = match &p.motion {
             Some(PictureMotion::Zoompan {
@@ -1001,9 +1043,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                 zoom_max,
             }) => format!(
                 "scale={scale_width}:{scale_height}:force_original_aspect_ratio=increase,crop={crop_width}:{crop_height},zoompan=z='min(zoom+{zoom_step},{zoom_max})':d={}:s={}x{}:fps={fps},",
-                s.end_frame - s.start_frame,
-                job.width,
-                job.height
+                group_frames, job.width, job.height
             ),
             Some(PictureMotion::CenteredZoompan {
                 scale_width,
@@ -1014,9 +1054,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                 zoom_max,
             }) => format!(
                 "scale={scale_width}:{scale_height}:force_original_aspect_ratio=increase,crop={crop_width}:{crop_height},zoompan=z='min(zoom+{zoom_step},{zoom_max})':x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2':d={}:s={}x{}:fps={fps},",
-                s.end_frame - s.start_frame,
-                job.width,
-                job.height
+                group_frames, job.width, job.height
             ),
             None => format!(
                 "{crop}scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,",
@@ -1027,10 +1065,10 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
     }
     filters.push(format!(
         "{}concat=n={}:v=1:a=0[v]",
-        (0..job.pictures.len())
+        (0..groups.len())
             .map(|i| format!("[v{i}]"))
             .collect::<String>(),
-        job.pictures.len()
+        groups.len()
     ));
     inputs.extend([
         "-filter_complex".into(),

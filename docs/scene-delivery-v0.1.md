@@ -85,6 +85,10 @@ the zoom window centered in both axes; motion restarts at the selected picture
 attachment boundary. The job binds the source still and motion parameters, so a
 change to either changes the plan hash. Neither form changes the selected picture
 or narration timing.
+When adjacent semantic attachments continue the same still and motion, give their
+picture entries the same `motion_group_id`. REEL verifies identical source and
+motion, then renders one continuous motion span across the attachments. The
+separate attachment IDs and timing remain available for edits and scene closure.
 
 An over-limit composition needs
 `stillness_exception: {reason: ..., decision: ...}`. These fields reference a

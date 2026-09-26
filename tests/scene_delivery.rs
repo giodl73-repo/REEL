@@ -552,6 +552,35 @@ fn selected_still_motion_is_scoped_and_validated() {
     assert!(scene_delivery::plan(&t.path().join("job.json"), t.path()).is_err());
 }
 #[test]
+fn continuous_motion_group_requires_the_same_adjacent_still() {
+    let t = tempfile::tempdir().unwrap();
+    let mut j = fixture(t.path());
+    let motion = json!({
+        "kind":"centered-zoompan", "scale_width":128, "scale_height":128,
+        "crop_width":64, "crop_height":64,
+        "zoom_step":0.0001, "zoom_max":1.015
+    });
+    j["pictures"][0]["motion"] = motion.clone();
+    j["pictures"][1]["motion"] = motion;
+    j["pictures"][1]["source"] = j["pictures"][0]["source"].clone();
+    j["pictures"][0]["motion_group_id"] = json!("continuous-drift");
+    j["pictures"][1]["motion_group_id"] = json!("continuous-drift");
+    j["max_composition_samples"] = json!(100000);
+    write_json(&t.path().join("job.json"), &j);
+    scene_delivery::plan(&t.path().join("job.json"), t.path()).unwrap();
+    let output = t.path().join("grouped-render");
+    scene_delivery::render(&t.path().join("job.json"), t.path(), &output).unwrap();
+    scene_delivery::check(&t.path().join("job.json"), t.path(), &output).unwrap();
+    j["pictures"][1]["source"] = file(t.path(), "blue.ppm");
+    write_json(&t.path().join("job.json"), &j);
+    assert!(
+        scene_delivery::plan(&t.path().join("job.json"), t.path())
+            .unwrap_err()
+            .to_string()
+            .contains("motion group")
+    );
+}
+#[test]
 fn rejects_wrong_bytes_and_unknown_or_duplicate_consumption() {
     let t = tempfile::tempdir().unwrap();
     let mut j = fixture(t.path());
