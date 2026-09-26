@@ -551,6 +551,40 @@ fn selected_still_motion_is_scoped_and_validated() {
     write_json(&t.path().join("job.json"), &j);
     assert!(scene_delivery::plan(&t.path().join("job.json"), t.path()).is_err());
 }
+
+#[test]
+fn post_compose_camera_is_scoped_to_selected_frames_and_checked() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let mut job = fixture(root);
+    let mut picture = b"P6\n64 64\n255\n".to_vec();
+    for y in 0..64 {
+        for x in 0..64 {
+            picture.extend(if (x / 8 + y / 8) % 2 == 0 {
+                [255, 40, 20]
+            } else {
+                [20, 40, 255]
+            });
+        }
+    }
+    fs::write(root.join("pattern.ppm"), picture).unwrap();
+    fs::write(root.join("camera.json"), b"selected camera evidence").unwrap();
+    job["pictures"][0]["source"] = file(root, "pattern.ppm");
+    job["post_compose_camera"] = json!({
+        "evidence":file(root,"camera.json"),
+        "zoom_step":0.02,"zoom_max":1.5,
+        "windows":[{"start_frame":0,"end_frame":24}]
+    });
+    write_json(&root.join("job.json"), &job);
+    scene_delivery::plan(&root.join("job.json"), root).unwrap();
+    let out = root.join("camera-render");
+    scene_delivery::render(&root.join("job.json"), root, &out).unwrap();
+    scene_delivery::check(&root.join("job.json"), root, &out).unwrap();
+    assert!(out.join("pre-camera-picture.mkv").exists());
+    job["post_compose_camera"]["windows"][0]["end_frame"] = json!(49);
+    write_json(&root.join("job.json"), &job);
+    assert!(scene_delivery::plan(&root.join("job.json"), root).is_err());
+}
 #[test]
 fn continuous_motion_group_requires_the_same_adjacent_still() {
     let t = tempfile::tempdir().unwrap();

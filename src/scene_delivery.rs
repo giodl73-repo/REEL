@@ -35,6 +35,25 @@ pub struct Job {
     /// Exact render attachments intentionally owned by another delivery layer.
     #[serde(default)]
     pub external_layers: Vec<ExternalLayer>,
+    /// Camera applied to the composed scene picture after selected overlays.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_compose_camera: Option<PostComposeCamera>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PostComposeCamera {
+    pub evidence: FileRef,
+    pub zoom_step: f64,
+    pub zoom_max: f64,
+    pub windows: Vec<CameraWindow>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CameraWindow {
+    pub start_frame: u64,
+    pub end_frame: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -695,6 +714,28 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         buses: job.buses.clone(),
         creative_authority: "not-granted; external layers are not certified as rendered".into(),
     };
+    if let Some(camera) = &job.post_compose_camera {
+        checked_file(asset_root, &camera.evidence)?;
+        if !camera.zoom_step.is_finite()
+            || camera.zoom_step <= 0.0
+            || !camera.zoom_max.is_finite()
+            || !(1.0..=4.0).contains(&camera.zoom_max)
+            || camera.zoom_max == 1.0
+            || camera.windows.is_empty()
+        {
+            bail!("invalid post-composition camera");
+        }
+        let mut prior_end = 0;
+        for window in &camera.windows {
+            if window.start_frame < prior_end
+                || window.start_frame >= window.end_frame
+                || window.end_frame > plan.frame_count
+            {
+                bail!("post-composition camera windows overlap or exceed scene picture");
+            }
+            prior_end = window.end_frame;
+        }
+    }
     Ok((job, plan))
 }
 
@@ -812,6 +853,56 @@ fn render_timed_video_overlay(root: &Path, plan: &Plan, span: &Span) -> Result<(
             String::from_utf8_lossy(&output.stderr)
         );
     }
+    Ok(())
+}
+
+fn render_post_compose_camera(root: &Path, plan: &Plan, camera: &PostComposeCamera) -> Result<()> {
+    let before = root.join("pre-camera-picture.mkv");
+    fs::rename(root.join("picture.mkv"), &before)?;
+    let mut zoom = "1".to_string();
+    for window in camera.windows.iter().rev() {
+        zoom = format!(
+            "if(between(on,{},{}),min({},1+{}*(on-{})),{})",
+            window.start_frame,
+            window.end_frame - 1,
+            camera.zoom_max,
+            camera.zoom_step,
+            window.start_frame,
+            zoom
+        );
+    }
+    let fps = format!("{}/{}", plan.fps_numerator, plan.fps_denominator);
+    // Geometry comes from the decoded composed picture, not a source still.
+    let picture = probe(&before)?;
+    let stream = picture["streams"]
+        .as_array()
+        .and_then(|streams| {
+            streams
+                .iter()
+                .find(|stream| stream["codec_type"] == "video")
+        })
+        .context("composed picture has no video stream")?;
+    let width = stream["width"]
+        .as_u64()
+        .context("composed picture width unavailable")?;
+    let height = stream["height"]
+        .as_u64()
+        .context("composed picture height unavailable")?;
+    let filter = format!(
+        "zoompan=z='{zoom}':x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s={width}x{height}:fps={fps},format=yuv444p"
+    );
+    ffmpeg(&[
+        "-i".into(),
+        arg(&before),
+        "-vf".into(),
+        filter,
+        "-frames:v".into(),
+        plan.frame_count.to_string(),
+        "-an".into(),
+        "-c:v".into(),
+        "ffv1".into(),
+        arg(&root.join("picture.mkv")),
+    ])?;
     Ok(())
 }
 
@@ -1125,6 +1216,9 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
             ExternalLayerRenderMode::EvidenceOnly => unreachable!(),
         }
     }
+    if let Some(camera) = &job.post_compose_camera {
+        render_post_compose_camera(root, &plan, camera)?;
+    }
     for bus in ["D", "M", "E"] {
         let mut inputs = Vec::new();
         let mut filters = Vec::new();
@@ -1286,6 +1380,9 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
             ExternalLayerRenderMode::EvidenceOnly => unreachable!(),
         });
     }
+    if job.post_compose_camera.is_some() {
+        names.push("pre-camera-picture.mkv");
+    }
     let mut outputs = BTreeMap::new();
     for name in names {
         let p = root.join(name);
@@ -1370,6 +1467,9 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
             ExternalLayerRenderMode::EvidenceOnly => unreachable!(),
         });
     }
+    if job.post_compose_camera.is_some() {
+        expected.insert("pre-camera-picture.mkv");
+    }
     let font_name = overlay.and_then(|layer| layer.font.as_ref()).map(|font| {
         format!(
             "fonts/{}",
@@ -1394,7 +1494,29 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
         }
         checked_file(output, item)?;
     }
+    if let Some(camera) = &job.post_compose_camera {
+        let before = output.join("pre-camera-picture.mkv");
+        let after = output.join("picture.mkv");
+        if decoded_video_frames(&before)? != plan.frame_count
+            || decoded_video_frames(&after)? != plan.frame_count
+        {
+            bail!("post-composition camera changed scene frame count");
+        }
+        let window = &camera.windows[0];
+        let active_frame = window.end_frame - 1;
+        if active_frame > window.start_frame
+            && rgb_frame_at_index(&before, &plan, active_frame)?
+                == rgb_frame_at_index(&after, &plan, active_frame)?
+        {
+            bail!("post-composition camera made no visible change");
+        }
+    }
     if let Some(layer) = overlay {
+        let layered_picture = output.join(if job.post_compose_camera.is_some() {
+            "pre-camera-picture.mkv"
+        } else {
+            "picture.mkv"
+        });
         match layer.render_mode {
             ExternalLayerRenderMode::AssOverlay => {
                 if receipt.outputs["presentation.ass"].sha256 != layer.evidence.sha256 {
@@ -1406,7 +1528,7 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
                     }
                 }
                 let clean = rgb_frame_at_midpoint(&output.join("clean-picture.mkv"), &plan)?;
-                let rendered = rgb_frame_at_midpoint(&output.join("picture.mkv"), &plan)?;
+                let rendered = rgb_frame_at_midpoint(&layered_picture, &plan)?;
                 if clean.len() != rendered.len() || clean == rendered {
                     bail!("selected ASS layer made no visible change at scene midpoint");
                 }
@@ -1433,7 +1555,7 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
                 ] {
                     let clean =
                         rgb_frame_at_index(&output.join("clean-picture.mkv"), &plan, frame)?;
-                    let rendered = rgb_frame_at_index(&output.join("picture.mkv"), &plan, frame)?;
+                    let rendered = rgb_frame_at_index(&layered_picture, &plan, frame)?;
                     if clean.len() != rendered.len() {
                         bail!("timed overlay changed picture dimensions at frame {frame}");
                     }
@@ -1451,7 +1573,7 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
                 {
                     let clean =
                         rgb_frame_at_index(&output.join("clean-picture.mkv"), &plan, frame)?;
-                    let rendered = rgb_frame_at_index(&output.join("picture.mkv"), &plan, frame)?;
+                    let rendered = rgb_frame_at_index(&layered_picture, &plan, frame)?;
                     if clean != rendered {
                         bail!("timed overlay changed clean picture outside its selected span");
                     }

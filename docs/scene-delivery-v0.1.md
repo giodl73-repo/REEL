@@ -90,6 +90,15 @@ picture entries the same `motion_group_id`. REEL verifies identical source and
 motion, then renders one continuous motion span across the attachments. The
 separate attachment IDs and timing remain available for edits and scene closure.
 
+`post_compose_camera` applies a selected centered zoom to the fully composed
+scene picture after any external picture layer and before audio muxing. Its
+`evidence` is a hash-bound recipe file; `zoom_step`, `zoom_max`, and ordered
+half-open frame `windows` are explicit job data. Each window restarts at zoom 1.
+REEL validates window bounds and preserves the composed pre-camera picture in
+`pre-camera-picture.mkv` for separate inspection. Use this when the recorded
+camera operated over composed picture; still-level motion remains available
+for edits whose camera belonged to one source still.
+
 An over-limit composition needs
 `stillness_exception: {reason: ..., decision: ...}`. These fields reference a
 consumer decision; REEL does not grant or authenticate that creative approval.
