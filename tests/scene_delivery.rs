@@ -267,7 +267,7 @@ fn timed_alpha_effect_changes_only_its_selected_frames() {
         "alpha_mode":"separate-matte", "composite_operator":"over", "color_space":"srgb",
         "alpha_mode_detail":"straight", "timing_fps":24, "duration_frames":48,
         "placement":{"space":"normalized","x":0,"y":0,"width":1,"height":1},
-        "visible_start_frame":12, "visible_end_frame":35
+        "visible_start_frame":12, "visible_end_frame":36
     }]);
     write_json(&root.join("production.json"), &production);
     job["production_manifest_sha256"] = file(root, "production.json")["sha256"].clone();
@@ -289,13 +289,13 @@ fn timed_alpha_effect_changes_only_its_selected_frames() {
             "-f",
             "lavfi",
             "-i",
-            "color=c=lime@0.75:s=64x64:r=24:d=1,format=yuva444p",
+            "color=c=lime@0.75:s=64x64:r=24:d=1.1,format=yuva444p",
             "-c:v",
             "ffv1",
             "-pix_fmt",
             "yuva444p",
             "-frames:v",
-            "24",
+            "25",
             "-y",
         ])
         .arg(&effect)
@@ -319,7 +319,12 @@ fn timed_alpha_effect_changes_only_its_selected_frames() {
         .as_array_mut()
         .unwrap()
         .last_mut()
-        .unwrap()["end"] = json!({"kind":"cue-start","cue_id":"a","offset_samples":24001});
+        .unwrap()["start"] = json!({"kind":"cue-start","cue_id":"a","offset_samples":24001});
+    contract["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap()["end"] = json!({"kind":"cue-start","cue_id":"a","offset_samples":24002});
     write_json(&root.join("contract.json"), &contract);
     job["contract"] = file(root, "contract.json");
     write_json(&root.join("job.json"), &job);
@@ -375,6 +380,24 @@ fn timed_alpha_effect_changes_only_its_selected_frames() {
     let (_, fractional_start) = scene_delivery::plan(&root.join("job.json"), root).unwrap();
     assert_eq!(fractional_start.external_layer_spans[0].start_sample, 48002);
     assert_eq!(fractional_start.external_layer_spans[0].start_frame, 25);
+    contract["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap()["start"] = json!({"kind":"cue-start","cue_id":"a","offset_samples":24000});
+    contract["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap()["end"] = json!({"kind":"cue-start","cue_id":"b"});
+    write_json(&root.join("contract.json"), &contract);
+    job["contract"] = file(root, "contract.json");
+    job["pictures"][0]["delivery_frame_count"] = json!(25);
+    job["pictures"][1]["delivery_frame_count"] = json!(23);
+    write_json(&root.join("job.json"), &job);
+    let (_, fractional_end) = scene_delivery::plan(&root.join("job.json"), root).unwrap();
+    assert_eq!(fractional_end.external_layer_spans[0].end_sample, 48001);
+    assert_eq!(fractional_end.external_layer_spans[0].end_frame, 25);
     write_json(&root.join("contract.json"), &selected_contract);
     job["contract"] = file(root, "contract.json");
     job["pictures"][0]
@@ -390,7 +413,7 @@ fn timed_alpha_effect_changes_only_its_selected_frames() {
     let receipt = scene_delivery::render(&root.join("job.json"), root, &output).unwrap();
     assert_eq!(receipt.plan.rendered_external_layers, vec!["timed-effect"]);
     assert_eq!(receipt.plan.external_layer_spans[0].start_frame, 12);
-    assert_eq!(receipt.plan.external_layer_spans[0].end_frame, 36);
+    assert_eq!(receipt.plan.external_layer_spans[0].end_frame, 37);
     scene_delivery::check(&root.join("job.json"), root, &output).unwrap();
     fs::write(output.join("selected-overlay.mkv"), b"tampered").unwrap();
     assert!(scene_delivery::check(&root.join("job.json"), root, &output).is_err());
@@ -404,7 +427,7 @@ fn timed_alpha_effect_changes_only_its_selected_frames() {
         "selected_evidence":file(root,"selected-effect.json"),
         "output":file(root,"effect.mkv"),
         "inputs":[file(root,"red.ppm")],
-        "recipe":{"kind":"synthetic-alpha-plate","frames":24}
+        "recipe":{"kind":"synthetic-alpha-plate","frames":25}
     });
     write_json(&root.join("derivation.json"), &derivation);
     job["external_layers"][0]["evidence"] = file(root, "selected-effect.json");

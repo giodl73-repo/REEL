@@ -549,10 +549,10 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                 if !matches!(a.target, Target::Effect { .. }) || layer.font.is_some() {
                     bail!("timed video overlay requires an effect attachment without a font");
                 }
-                // Overlay frames become visible on the first display tick at or
-                // after the semantic start sample. The compiled end partition
-                // retains the recorded effect source's final-frame behavior.
+                // Display a frame while its start tick is inside the semantic
+                // interval. A fractional end therefore includes its last frame.
                 layer_span.start_frame = frame(a.start_sample, true)?;
+                layer_span.end_frame = frame(a.end_sample, true)?;
                 let delivery_frames = if explicit_picture_frames {
                     picture_frame_cursor
                 } else {
