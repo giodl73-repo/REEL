@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
+    io::Read,
     path::{Component, Path, PathBuf},
 };
 
@@ -41,6 +42,14 @@ struct BuildIndex {
     graph_id: String,
     project_root: String,
     jobs: Vec<IndexedJob>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EpisodeBuildManifest {
+    schema: String,
+    scene_build_index: String,
+    conform_template: String,
 }
 
 #[derive(Deserialize)]
@@ -102,6 +111,29 @@ fn hash(bytes: &[u8]) -> String {
         .collect()
 }
 
+fn hash_file(path: &Path) -> Result<(String, u64)> {
+    let mut input = fs::File::open(path)?;
+    let mut digest = Sha256::new();
+    let mut bytes = 0u64;
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = input.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+        bytes += read as u64;
+    }
+    Ok((
+        digest
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+        bytes,
+    ))
+}
+
 fn local_file(id: &str, path: &Path) -> Result<serde_json::Value> {
     let path = path.canonicalize()?;
     let bytes = fs::read(&path)?;
@@ -151,7 +183,7 @@ fn emit_changed_only_graph(index_path: &str, asset_root: &Path, output_path: &st
             bail!("invalid indexed scene build manifest");
         }
         let delivery_path = checked(&root, &manifest.semantic_delivery)?;
-        let indexed_delivery = base.join(&job.semantic_delivery).canonicalize()?;
+        let indexed_delivery = checked(base, &job.semantic_delivery)?;
         if delivery_path != indexed_delivery {
             bail!("indexed semantic delivery differs from scene build manifest");
         }
@@ -182,7 +214,7 @@ fn emit_changed_only_graph(index_path: &str, asset_root: &Path, output_path: &st
             .language_fingerprints
             .get(&manifest.language)
             .context("indexed scene language missing")?;
-        let resolved_path = base.join(&job.resolved_language);
+        let resolved_path = checked(base, &job.resolved_language)?;
         let resolved_data: serde_json::Value = read(&resolved_path)?;
         if resolved_data["schema"] != "reel.resolved-scene-language.v1"
             || resolved_data["scene_id"] != manifest.scene_id
@@ -247,7 +279,7 @@ fn emit_changed_only_graph(index_path: &str, asset_root: &Path, output_path: &st
         nodes.push(
             serde_json::json!({"node_id":job.node_id,"operation_kind":"scene-delivery",
             "recipe":recipe,"inputs":inputs,"dependencies":[],
-            "expected_outputs":["scene-master","scene-build-receipt"]}),
+            "expected_outputs":["scene-master","scene-build-receipt","scene-delivery-receipt"]}),
         );
     }
     let graph = serde_json::json!({"schema":"reel.changed-only-graph.v0.1",
@@ -327,7 +359,8 @@ fn execute_changed_only(
             "outcome":"completed",
             "outputs":[
                 {"file_id":"scene-master","path":scene_output.join("master.mkv")},
-                {"file_id":"scene-build-receipt","path":scene_receipt}
+                {"file_id":"scene-build-receipt","path":scene_receipt},
+                {"file_id":"scene-delivery-receipt","path":scene_output.join("receipt.json")}
             ]
         });
         fs::write(&result_path, serde_json::to_vec_pretty(&result)?)?;
@@ -353,6 +386,162 @@ fn execute_changed_only(
     }
     fs::copy(state, output.join("final-state.json"))?;
     println!("rebuilt {rebuilt} scene languages; reused {reused}");
+    Ok(())
+}
+
+fn episode_output_ref(asset_root: &Path, entry: &serde_json::Value) -> Result<serde_json::Value> {
+    let path = entry["path"]
+        .as_str()
+        .context("scene state output path missing")?;
+    let absolute = Path::new(path).canonicalize()?;
+    let root = asset_root.canonicalize()?;
+    let relative = absolute
+        .strip_prefix(&root)
+        .context("scene output is outside asset root")?;
+    let (digest, bytes) = hash_file(&absolute)?;
+    if entry["sha256"] != digest || entry["bytes"] != bytes {
+        bail!(
+            "scene state output changed since verification: {}",
+            absolute.display()
+        );
+    }
+    Ok(serde_json::json!({
+        "path":relative.to_string_lossy().replace('\\', "/"),
+        "sha256":digest,"bytes":bytes
+    }))
+}
+
+fn execute_episode(
+    project_root: &str,
+    episode_manifest: &str,
+    prior_state: &str,
+    asset_root: &str,
+    output_root: &str,
+) -> Result<()> {
+    let root = Path::new(project_root).canonicalize()?;
+    let asset_root = Path::new(asset_root).canonicalize()?;
+    let manifest_path = checked(&root, episode_manifest)?;
+    let specification: EpisodeBuildManifest = read(&manifest_path)?;
+    if specification.schema != "reel.episode-build.v1" {
+        bail!("unsupported episode build schema");
+    }
+    let index_path = checked(&root, &specification.scene_build_index)?;
+    let index: BuildIndex = read(&index_path)?;
+    let indexed_root = index_path
+        .parent()
+        .context("scene index has no parent")?
+        .join(&index.project_root)
+        .canonicalize()?;
+    if indexed_root != root {
+        bail!("episode scene index project root differs from selected project root");
+    }
+    let mut conform: serde_json::Value = read(&checked(&root, &specification.conform_template)?)?;
+    if conform["schema"] != "reel.episode-conform.v1" {
+        bail!("episode build conform template has wrong schema");
+    }
+    let language = conform["language"]
+        .as_str()
+        .context("conform language missing")?
+        .to_owned();
+    let segments = conform["segments"]
+        .as_array()
+        .context("conform segments missing")?;
+    if segments.is_empty() {
+        bail!("episode build has no conform segments");
+    }
+    let segment_count = segments.len();
+    let indexed = index
+        .jobs
+        .iter()
+        .map(|job| (job.node_id.as_str(), job))
+        .collect::<BTreeMap<_, _>>();
+    for segment in segments {
+        if segment["kind"] != "scene" {
+            continue;
+        }
+        let node_id = segment["scene_node_id"]
+            .as_str()
+            .context("scene conform template needs scene_node_id")?;
+        let job = indexed
+            .get(node_id)
+            .with_context(|| format!("scene node {node_id} not indexed"))?;
+        let indexed_manifest: BuildManifest = read(&checked(&root, &job.build_manifest)?)?;
+        if segment["id"] != indexed_manifest.scene_id || language != indexed_manifest.language {
+            bail!("conform scene {node_id} differs from indexed scene/language");
+        }
+        if segment["delivery_job"].is_null() {
+            bail!("conform scene {node_id} needs exact delivery_job reference");
+        }
+        for field in ["master", "source_receipt", "delivery_receipt"] {
+            if segment.get(field).is_some() {
+                bail!("conform scene {node_id} must derive {field} from verified scene state");
+            }
+        }
+    }
+    let output = Path::new(output_root);
+    let parent = output
+        .parent()
+        .context("episode output has no parent")?
+        .canonicalize()?;
+    if !parent.starts_with(&asset_root) || output.exists() {
+        bail!("episode output must be a new directory within the asset root");
+    }
+    fs::create_dir(output)?;
+    let scene_run = output.join("scenes");
+    execute_changed_only(
+        index_path.to_str().context("non-UTF8 scene index")?,
+        prior_state,
+        asset_root.to_str().context("non-UTF8 asset root")?,
+        scene_run.to_str().context("non-UTF8 scene output")?,
+    )?;
+    let state: serde_json::Value = read(&scene_run.join("final-state.json"))?;
+    if state["graph_id"] != index.graph_id {
+        bail!("scene state graph differs from index");
+    }
+    for segment in conform["segments"]
+        .as_array_mut()
+        .context("conform segments missing")?
+    {
+        if segment["kind"] != "scene" {
+            continue;
+        }
+        let node_id = segment["scene_node_id"]
+            .as_str()
+            .context("scene_node_id missing")?
+            .to_owned();
+        let node = state["nodes"]
+            .as_array()
+            .context("scene state nodes missing")?
+            .iter()
+            .find(|node| node["node_id"] == node_id)
+            .with_context(|| format!("scene node {node_id} absent from final state"))?;
+        let outputs = node["outputs"]
+            .as_array()
+            .context("scene state outputs missing")?;
+        for (file_id, field) in [
+            ("scene-master", "master"),
+            ("scene-build-receipt", "source_receipt"),
+            ("scene-delivery-receipt", "delivery_receipt"),
+        ] {
+            let item = outputs
+                .iter()
+                .find(|item| item["file_id"] == file_id)
+                .with_context(|| format!("scene node {node_id} lacks {file_id}"))?;
+            segment[field] = episode_output_ref(&asset_root, item)?;
+        }
+        segment
+            .as_object_mut()
+            .context("scene segment is not object")?
+            .remove("scene_node_id");
+    }
+    let conform_path = output.join("conform.json");
+    fs::write(&conform_path, serde_json::to_vec_pretty(&conform)?)?;
+    let receipt =
+        reel::episode_conform::build(&conform_path, &root, &asset_root, &output.join("episode"))?;
+    println!(
+        "{} {} built from {} ordered segments",
+        receipt.episode_id, receipt.language, segment_count
+    );
     Ok(())
 }
 
@@ -918,6 +1107,31 @@ fn run() -> Result<()> {
     if let [
         _,
         command,
+        project_root,
+        episode_manifest,
+        state,
+        asset_flag,
+        asset_root,
+        output_flag,
+        output_root,
+    ] = args.as_slice()
+    {
+        if command == "execute-episode"
+            && asset_flag == "--asset-root"
+            && output_flag == "--output-root"
+        {
+            return execute_episode(
+                project_root,
+                episode_manifest,
+                state,
+                asset_root,
+                output_root,
+            );
+        }
+    }
+    if let [
+        _,
+        command,
         index,
         root_flag,
         asset_root,
@@ -954,7 +1168,7 @@ fn run() -> Result<()> {
         }
     }
     bail!(
-        "usage: reel-scene-build build <project-root> <build.json> --asset-root <cache-root> --output-dir <new-dir>\n       reel-scene-build emit-changed-only-graph <index.json> --asset-root <cache-root> --output <new-graph.json>\n       reel-scene-build execute-changed-only <index.json> <prior-state.json> --asset-root <cache-root> --output-root <new-run-dir>"
+        "usage: reel-scene-build build <project-root> <build.json> --asset-root <cache-root> --output-dir <new-dir>\n       reel-scene-build emit-changed-only-graph <index.json> --asset-root <cache-root> --output <new-graph.json>\n       reel-scene-build execute-changed-only <index.json> <prior-state.json> --asset-root <cache-root> --output-root <new-run-dir>\n       reel-scene-build execute-episode <project-root> <episode-build.json> <prior-state.json> --asset-root <hydrated-root> --output-root <new-dir-within-hydrated-root>"
     )
 }
 

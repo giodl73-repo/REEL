@@ -7,6 +7,14 @@ selected scene and presentation masters:
 reel-episode-conform build <manifest.json> --input-root <authoring-root> --asset-root <hydrated-media-root> --output-dir <new-dir>
 ```
 
+`reel-scene-build execute-episode` can drive the same conform after its
+changed-only scene run. Its episode-build manifest names a scene index and an
+ordered conform template; scene segments name a `scene_node_id` and exact
+delivery job, and the executor fills master and receipt hashes from the
+verified final scene state. This supports both fresh scene builds and exact
+prior-output reuse in one command. Selected presentation masters remain
+explicitly hash-bound in the conform template.
+
 The manifest schema is `reel.episode-conform.v1`. It names the episode and
 language (`es` or `en`), output sample rate, selected catalog, exact generic
 master-order definition, optional source master template, episode authoring,

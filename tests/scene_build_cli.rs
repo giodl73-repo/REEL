@@ -347,6 +347,152 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
         conform_receipt["segments"][0]["upstream_delivery_verified"],
         true
     );
+    let episode_resolved = Command::new(env!("CARGO_BIN_EXE_reel-scene-authoring"))
+        .arg("resolve-language")
+        .args([
+            "catalog.json",
+            "episode.json",
+            "scene.json",
+            "policy.json",
+            "season-bindings.json",
+            "episode-bindings.json",
+            "scene-bindings.json",
+            "es",
+            "--output",
+        ])
+        .arg(root.join("episode-resolved.json"))
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(
+        episode_resolved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&episode_resolved.stderr)
+    );
+    write_json(
+        &root.join("episode-index.json"),
+        &serde_json::json!({
+            "schema":"reel.scene-build-index.v1","graph_id":"episode-execution-test",
+            "project_root":".","jobs":[{"node_id":"scene-es","build_manifest":"build.json",
+                "resolved_language":"episode-resolved.json","semantic_delivery":"semantic.json"}]
+        }),
+    );
+    write_json(
+        &root.join("episode-state-empty.json"),
+        &serde_json::json!({
+            "schema":"reel.changed-only-state.v0.1","graph_id":"episode-execution-test","nodes":[]
+        }),
+    );
+    let episode_scene_run = root.join("episode-scene-run");
+    let scene_result = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
+        .arg("execute-changed-only")
+        .arg(root.join("episode-index.json"))
+        .arg(root.join("episode-state-empty.json"))
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output-root")
+        .arg(&episode_scene_run)
+        .output()
+        .unwrap();
+    assert!(
+        scene_result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&scene_result.stderr)
+    );
+    let mut conform_template: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("conform.json")).unwrap()).unwrap();
+    let scene_segment = &mut conform_template["segments"][0];
+    for field in ["master", "source_receipt", "delivery_receipt"] {
+        scene_segment.as_object_mut().unwrap().remove(field);
+    }
+    scene_segment["scene_node_id"] = serde_json::json!("scene-es");
+    write_json(&root.join("conform-template.json"), &conform_template);
+    write_json(
+        &root.join("episode-build.json"),
+        &serde_json::json!({
+            "schema":"reel.episode-build.v1", "scene_build_index":"episode-index.json",
+            "conform_template":"conform-template.json"
+        }),
+    );
+    let mut stale_template = conform_template.clone();
+    stale_template["segments"][0]["master"] = reference(root, "output/master.mkv");
+    write_json(&root.join("stale-conform-template.json"), &stale_template);
+    write_json(
+        &root.join("stale-episode-build.json"),
+        &serde_json::json!({
+            "schema":"reel.episode-build.v1", "scene_build_index":"episode-index.json",
+            "conform_template":"stale-conform-template.json"
+        }),
+    );
+    let rejected_episode = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
+        .arg("execute-episode")
+        .arg(root)
+        .arg("stale-episode-build.json")
+        .arg(episode_scene_run.join("final-state.json"))
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output-root")
+        .arg(root.join("rejected-episode-run"))
+        .output()
+        .unwrap();
+    assert!(!rejected_episode.status.success());
+    assert!(!root.join("rejected-episode-run").exists());
+    let episode_run = root.join("episode-run");
+    let episode_result = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
+        .arg("execute-episode")
+        .arg(root)
+        .arg("episode-build.json")
+        .arg(episode_scene_run.join("final-state.json"))
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output-root")
+        .arg(&episode_run)
+        .output()
+        .unwrap();
+    assert!(
+        episode_result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&episode_result.stderr)
+    );
+    assert!(episode_run.join("episode/master.mkv").exists());
+    assert!(!episode_run.join("scenes/scene-es").exists());
+    let episode_receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(episode_run.join("episode/receipt.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        episode_receipt["upstream_delivery_recheck_state"],
+        "verified-for-all-scene-segments"
+    );
+    let fresh_episode_run = root.join("episode-run-fresh");
+    let fresh = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
+        .arg("execute-episode")
+        .arg(root)
+        .arg("episode-build.json")
+        .arg(root.join("episode-state-empty.json"))
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output-root")
+        .arg(&fresh_episode_run)
+        .output()
+        .unwrap();
+    assert!(
+        fresh.status.success(),
+        "{}",
+        String::from_utf8_lossy(&fresh.stderr)
+    );
+    assert!(
+        fresh_episode_run
+            .join("scenes/scene-es/master.mkv")
+            .exists()
+    );
+    assert!(fresh_episode_run.join("episode/master.mkv").exists());
+    let fresh_receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(fresh_episode_run.join("episode/receipt.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        fresh_receipt["upstream_delivery_recheck_state"],
+        "verified-for-all-scene-segments"
+    );
     let dialogue_bytes = fs::read(root.join("output/D.wav")).unwrap();
     fs::write(root.join("output/D.wav"), b"tampered dialogue stem").unwrap();
     let rejected_conform = Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
@@ -799,6 +945,22 @@ fn changed_only_graph_plans_each_scene_language_independently() {
         "{}",
         String::from_utf8_lossy(&result.stderr)
     );
+    let mut escaped_index: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("index.json")).unwrap()).unwrap();
+    escaped_index["jobs"][0]["resolved_language"] =
+        serde_json::json!(root.join("es-resolved.json").to_string_lossy());
+    write_json(&root.join("escaped-index.json"), &escaped_index);
+    let escaped = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
+        .arg("emit-changed-only-graph")
+        .arg(root.join("escaped-index.json"))
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output")
+        .arg(root.join("escaped-graph.json"))
+        .output()
+        .unwrap();
+    assert!(!escaped.status.success());
+    assert!(!root.join("escaped-graph.json").exists());
     write_json(
         &root.join("state.json"),
         &serde_json::json!({

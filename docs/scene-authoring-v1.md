@@ -52,6 +52,7 @@ reel-scene-authoring audit-picture <policy.json> <rendered-spans.json> <sample-r
 reel-scene-build build <project-root> <build.json> --asset-root <hydrated-cache-root> --output-dir <new-dir>
 reel-scene-build emit-changed-only-graph <index.json> --asset-root <hydrated-cache-root> --output <new-graph.json>
 reel-scene-build execute-changed-only <index.json> <prior-state.json> --asset-root <hydrated-cache-root> --output-root <new-run-dir>
+reel-scene-build execute-episode <project-root> <episode-build.json> <prior-state.json> --asset-root <hydrated-root> --output-root <new-dir-within-hydrated-root>
 reel-scene-template compile <catalog.json> <definition.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <source-text.json> --output-ass <new.ass> --receipt <new.json>
 reel-episode-conform build <manifest.json> --input-root <authoring-root> --asset-root <hydrated-media-root> --output-dir <new-dir>
 ```
@@ -139,10 +140,19 @@ inputs unchanged.
 node, runs only `rebuild` nodes through the same checked scene builder, writes
 REEL result receipts, and advances immutable state snapshots. An unchanged
 node is reused only after REEL verifies its prior output bytes. The run uses a
-new output directory and leaves prior state intact. Episode presentation
-rendering remains a separate node. Generic episode conform is available as
-[`reel-episode-conform`](episode-conform-v1.md), but is not yet scheduled by
-the changed-only scene runner.
+new output directory and leaves prior state intact. `execute-episode` runs the
+scene nodes, fills exact scene master, build-receipt and delivery-receipt hashes
+from the verified final state, then calls generic episode conform. Its
+`reel.episode-build.v1` file names a scene build index and a conform template
+relative to the project root. The conform template is a normal
+`reel.episode-conform.v1` document except each scene segment names
+`scene_node_id` and the exact `delivery_job` instead of precomputed `master`,
+`source_receipt` and `delivery_receipt` references. Presentation segments keep
+their selected hash-bound references. The output directory must be new and
+inside the hydrated asset root so rebuilt and reused scene outputs can be
+named by root-relative hash references. The generated conform and final scene
+state are retained with the lossless episode master. Presentation rendering
+and creative approval remain separate gates.
 
 ## Current execution boundary
 
@@ -150,8 +160,8 @@ V1 resolution checks contract identity and scope; event and template compilation
 verify supplied local alignment and source files. The scene build renders a
 selected semantic graph and optional ASS presentation layer, but it does not
 hydrate every selected asset, select a REEL graph revision, or infer creative
-approval. Changed-only execution covers only ready
-scene-language nodes. A selected
+approval. Changed-only execution covers ready scene-language nodes and can
+conform them with selected presentation masters. A selected
 `cache://sha256/` binding must still pass the consumer's hydration and authority
 checks. Generic episode conform builds a selected lossless master; presentation
 segment creation and whole-episode creative review remain separate.
