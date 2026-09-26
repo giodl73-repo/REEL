@@ -38,6 +38,9 @@ pub struct EventDeliveryBinding {
     pub event_id: String,
     pub narration_attachment_id: String,
     pub picture_attachment_id: String,
+    /// Additional selected picture cuts motivated by this semantic event.
+    #[serde(default)]
+    pub additional_picture_attachment_ids: Vec<String>,
     /// Optional M/E audio attachments whose timing is motivated by this event.
     #[serde(default)]
     pub audio_attachment_ids: Vec<String>,
@@ -195,6 +198,19 @@ fn validate_event_bindings(
             );
         }
         bound_pictures.insert(binding.picture_attachment_id.as_str());
+        let mut referenced_pictures = BTreeSet::from([binding.picture_attachment_id.as_str()]);
+        for attachment_id in &binding.additional_picture_attachment_ids {
+            if !referenced_pictures.insert(attachment_id.as_str())
+                || !pictures.contains_key(attachment_id.as_str())
+            {
+                bail!(
+                    "semantic event {} has invalid additional picture attachment {}",
+                    binding.event_id,
+                    attachment_id
+                );
+            }
+            bound_pictures.insert(attachment_id.as_str());
+        }
         bound_audio.insert(binding.narration_attachment_id.as_str());
         let mut referenced_audio = BTreeSet::new();
         for attachment_id in &binding.audio_attachment_ids {
@@ -466,6 +482,7 @@ buses: {{ D: {{ state: present, reason: narration }}, M: {{ state: intentional-s
             event_id: "event.es.phrase-1".into(),
             narration_attachment_id: "narration".into(),
             picture_attachment_id: "picture".into(),
+            additional_picture_attachment_ids: vec![],
             audio_attachment_ids: vec![],
             external_layer_attachment_ids: vec![],
         };
@@ -479,6 +496,18 @@ buses: {{ D: {{ state: present, reason: narration }}, M: {{ state: intentional-s
                 .unwrap_err()
                 .to_string()
                 .contains("not bound to a selected semantic event")
+        );
+        let mut with_cut = binding.clone();
+        with_cut.additional_picture_attachment_ids = vec!["retired-picture".into()];
+        validate_event_bindings(&selection, &extra_picture, &[with_cut.clone()]).unwrap();
+        with_cut
+            .additional_picture_attachment_ids
+            .push("retired-picture".into());
+        assert!(
+            validate_event_bindings(&selection, &extra_picture, &[with_cut])
+                .unwrap_err()
+                .to_string()
+                .contains("invalid additional picture attachment")
         );
         let mut extra_audio = job.clone();
         let mut unused = extra_audio.audio[0].clone();
@@ -576,6 +605,7 @@ buses: {{ D: {{ state: present, reason: narration }}, M: {{ state: intentional-s
                 event_id: "event.es.phrase-1".into(),
                 narration_attachment_id: "narration".into(),
                 picture_attachment_id: "picture".into(),
+                additional_picture_attachment_ids: vec![],
                 audio_attachment_ids: vec![],
                 external_layer_attachment_ids: vec![],
             }],
