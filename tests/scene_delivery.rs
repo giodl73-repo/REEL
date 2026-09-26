@@ -253,6 +253,94 @@ fn selected_ass_layer_changes_rendered_pixels_and_is_checked() {
     fs::write(output.join("presentation.ass"), b"tampered").unwrap();
     assert!(scene_delivery::check(&root.join("job.json"), root, &output).is_err());
 }
+
+#[test]
+fn timed_alpha_effect_changes_only_its_selected_frames() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let mut job = fixture(root);
+    let mut production: Value =
+        serde_json::from_slice(&fs::read(root.join("production.json")).unwrap()).unwrap();
+    production["shots"][0]["effect_passes"] = json!([{
+        "id":"glow", "color":{"path":"red.ppm","sha256":file(root,"red.ppm")["sha256"]},
+        "matte":{"path":"blue.ppm","sha256":file(root,"blue.ppm")["sha256"]},
+        "alpha_mode":"separate-matte", "composite_operator":"over", "color_space":"srgb",
+        "alpha_mode_detail":"straight", "timing_fps":24, "duration_frames":48,
+        "placement":{"space":"normalized","x":0,"y":0,"width":1,"height":1},
+        "visible_start_frame":12, "visible_end_frame":35
+    }]);
+    write_json(&root.join("production.json"), &production);
+    job["production_manifest_sha256"] = file(root, "production.json")["sha256"].clone();
+    let mut contract: Value =
+        serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
+    contract["attachments"].as_array_mut().unwrap().push(json!({
+        "id":"timed-effect", "target":{"kind":"effect","shot_id":"shot","effect_pass_id":"glow"},
+        "start":{"kind":"cue-start","cue_id":"a","offset_samples":24000},
+        "end":{"kind":"cue-start","cue_id":"b","offset_samples":24000}
+    }));
+    write_json(&root.join("contract.json"), &contract);
+    let effect = root.join("effect.mkv");
+    let status = Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-v",
+            "error",
+            "-nostdin",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=lime@0.75:s=64x64:r=24:d=1,format=yuva444p",
+            "-c:v",
+            "ffv1",
+            "-pix_fmt",
+            "yuva444p",
+            "-frames:v",
+            "24",
+            "-y",
+        ])
+        .arg(&effect)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    job["contract"] = file(root, "contract.json");
+    job["external_layers"] = json!([{
+        "attachment_id":"timed-effect", "reason":"Selected effect span",
+        "evidence":file(root,"effect.mkv"), "render_mode":"timed-video-overlay"
+    }]);
+    write_json(&root.join("job.json"), &job);
+    let selected_effect = job["external_layers"][0]["evidence"].clone();
+    job["external_layers"][0]["evidence"] = file(root, "red.ppm");
+    write_json(&root.join("job.json"), &job);
+    assert!(scene_delivery::plan(&root.join("job.json"), root).is_err());
+    job["external_layers"][0]["evidence"] = selected_effect;
+    write_json(&root.join("job.json"), &job);
+    let selected_contract = contract.clone();
+    contract["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap()["end"] = json!({"kind":"cue-start","cue_id":"a","offset_samples":24001});
+    write_json(&root.join("contract.json"), &contract);
+    job["contract"] = file(root, "contract.json");
+    write_json(&root.join("job.json"), &job);
+    assert!(
+        scene_delivery::plan(&root.join("job.json"), root)
+            .unwrap_err()
+            .to_string()
+            .contains("positive span")
+    );
+    write_json(&root.join("contract.json"), &selected_contract);
+    job["contract"] = file(root, "contract.json");
+    write_json(&root.join("job.json"), &job);
+    let output = root.join("rendered");
+    let receipt = scene_delivery::render(&root.join("job.json"), root, &output).unwrap();
+    assert_eq!(receipt.plan.rendered_external_layers, vec!["timed-effect"]);
+    assert_eq!(receipt.plan.external_layer_spans[0].start_frame, 12);
+    assert_eq!(receipt.plan.external_layer_spans[0].end_frame, 36);
+    scene_delivery::check(&root.join("job.json"), root, &output).unwrap();
+    fs::write(output.join("selected-overlay.mkv"), b"tampered").unwrap();
+    assert!(scene_delivery::check(&root.join("job.json"), root, &output).is_err());
+}
 #[test]
 fn plan_uses_compiled_samples_and_one_global_frame_partition() {
     let t = tempfile::tempdir().unwrap();

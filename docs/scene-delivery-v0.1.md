@@ -102,21 +102,31 @@ field retains the global sample-grid partition above.
 
 ## Existing effects, captions, titles and camera tools
 
-This path does not invent a second effect renderer or caption engine. Render
-existing governed camera/VFX work through the established REEL adapters, bind the
-result as a `video` picture, and preserve its source receipt. For any compiled
-beat/camera/effect/title/caption attachment owned by another layer, list an
-`external_layers` item with `attachment_id`, `reason` and exact evidence FileRef.
-The reason must say whether it is baked into a named clean motion input, delivered
-as a separate track, or excluded from this particular audition. Primary picture
+For any compiled beat/camera/effect/title/caption attachment owned by another
+layer, list an `external_layers` item with `attachment_id`, `reason` and exact
+evidence FileRef. `evidence-only` records a held external delivery. `ass-overlay`
+renders one full-scene editable ASS layer. `timed-video-overlay` renders one
+hash-bound alpha video on an effect attachment for its exact compiled frame
+span. The video must have the scene's width and height and enough decoded
+frames for that span. Source frame timestamps are normalized to the scene frame
+grid in decoded order; a span with no delivery frame is rejected. Keep the
+source effect recipe and its own receipt beside
+the selected video; the scene job consumes the resulting bytes. Primary picture
 and audio attachments cannot be omitted this way.
+With explicit picture frame allocations, the effect still follows the absolute
+scene sample clock; planning rejects an effect that would extend past the
+delivered picture frame count. A source cut boundary and an effect boundary
+may therefore differ by a frame when a recorded edit rounded its picture cuts.
 
-**External-layer intake verifies evidence bytes, not that the effect/title/caption
-was actually rendered.** The receipt lists these attachments explicitly; consumers
-must validate those layers with the existing effect/animatic/caption checks and
-verify their inclusion in the final conform. A clean-picture master must consume
-clean assets; disclosures, review labels and captions belong in separate delivery
-layers. Do not feed a flattened review overlay back as clean picture.
+For a rendered layer, the receipt retains both `clean-picture.mkv` and the
+selected ASS or alpha-video source. The checker verifies exact source bytes,
+samples visible change at the start, middle and end of an active timed effect,
+and compares the clean frames immediately outside it. This checks selected
+scene compositing at those frames, not the
+creative selection or derivation of the effect source. A clean-picture master
+must consume clean assets; disclosures, review labels and captions belong in
+separate delivery layers. Do not feed a flattened review overlay back as clean
+picture.
 
 ## Outputs and checks
 
