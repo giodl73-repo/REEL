@@ -137,6 +137,9 @@ into the picture while retaining the clean picture separately. Its technical
 check verifies that the selected overlay changes decoded pixels at the scene
 midpoint; editorial inspection must still check text legibility and each
 transition.
+An optional poet byline is source-checked against the language-local selected
+presentation text and rendered as editable ASS text. Its position, size and
+color belong to the template definition; its wording belongs to scene content.
 
 The build manifest contains repository-root relative paths and no copied asset
 hashes:

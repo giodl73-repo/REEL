@@ -415,12 +415,8 @@ fn timed_alpha_effect_changes_only_its_selected_frames() {
     assert_eq!(receipt.plan.external_layer_spans[0].start_frame, 12);
     assert_eq!(receipt.plan.external_layer_spans[0].end_frame, 37);
     // One effect begins on the red cel and stays active after the blue-cel cut.
-    assert!(
-        receipt.plan.external_layer_spans[0].start_frame < receipt.plan.pictures[0].end_frame
-    );
-    assert!(
-        receipt.plan.external_layer_spans[0].end_frame > receipt.plan.pictures[1].start_frame
-    );
+    assert!(receipt.plan.external_layer_spans[0].start_frame < receipt.plan.pictures[0].end_frame);
+    assert!(receipt.plan.external_layer_spans[0].end_frame > receipt.plan.pictures[1].start_frame);
     scene_delivery::check(&root.join("job.json"), root, &output).unwrap();
     fs::write(output.join("selected-overlay.mkv"), b"tampered").unwrap();
     assert!(scene_delivery::check(&root.join("job.json"), root, &output).is_err());

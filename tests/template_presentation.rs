@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use reel_assembly::scene_authoring::{NATIVE_ALIGNMENT_SCHEMA, NativeAlignment};
 use reel_assembly::template_presentation::{
-    ChapterLineStyle, ChapterStyle, EditableTextInvocation, EditableTextTemplate,
+    BylineStyle, ChapterLineStyle, ChapterStyle, EditableTextInvocation, EditableTextTemplate,
     INVOCATION_SCHEMA, Panel, PoemLine, PresentationSourceText, SOURCE_TEXT_SCHEMA, SourceLine,
     TEMPLATE_SCHEMA, compile_layer, verify_source_text,
 };
@@ -48,6 +48,7 @@ fn template(kind: &str) -> EditableTextTemplate {
             divider_rgb: [211, 178, 107],
             divider_alpha: 185,
         }),
+        byline: None,
         fixed_duration_seconds: (kind == "chapter-title").then_some(4),
         chapter: (kind == "chapter-title").then_some(ChapterStyle {
             number: chapter_line(54, 110, 88),
@@ -64,6 +65,7 @@ fn poem() -> EditableTextInvocation {
         template_id: "test-master".into(),
         language: "es".into(),
         title: "Recuerdos".into(),
+        byline: None,
         lines: vec![
             PoemLine {
                 text: "Primera línea".into(),
@@ -143,12 +145,67 @@ fn complete_poem_is_visible_from_zero_and_highlights_native_markers() {
 }
 
 #[test]
+fn selected_poet_byline_is_source_checked_and_editable_from_first_frame() {
+    let mut invocation = poem();
+    invocation.byline = Some("por Andrés Alarcón García".into());
+    let mut master = template("opening-poem");
+    master.byline = Some(BylineStyle {
+        x: 880,
+        y: 660,
+        font_size: 21,
+        rgb: [255, 255, 255],
+    });
+    let layer = compile_layer(&master, &invocation, &["a".into(), "b".into()], &clocks()).unwrap();
+    assert!(layer.ass.contains("por Andrés Alarcón García"));
+    assert!(layer.ass.contains("\\pos(880,660)\\fs21"));
+    let source = PresentationSourceText {
+        schema: SOURCE_TEXT_SCHEMA.into(),
+        source_authority_id: "manuscript".into(),
+        source_document_sha256: "a".repeat(64),
+        source_scope_ids: vec!["source-block-1".into()],
+        language: "es".into(),
+        text_state: "canonical-original".into(),
+        title: invocation.title.clone(),
+        byline: invocation.byline.clone(),
+        chapter_number: None,
+        lines: invocation
+            .lines
+            .iter()
+            .map(|line| SourceLine {
+                text: line.text.clone(),
+                cue_id: line.cue_id.clone(),
+                stanza_break_before: line.stanza_break_before,
+            })
+            .collect(),
+    };
+    verify_source_text(
+        &invocation,
+        &source,
+        "manuscript",
+        &["source-block-1".into()],
+    )
+    .unwrap();
+    let mut changed = source;
+    changed.byline = Some("otro poeta".into());
+    assert!(
+        verify_source_text(
+            &invocation,
+            &changed,
+            "manuscript",
+            &["source-block-1".into()]
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn chapter_duration_comes_from_template() {
     let invocation = EditableTextInvocation {
         schema: INVOCATION_SCHEMA.into(),
         template_id: "test-master".into(),
         language: "es".into(),
         title: "Lo que el viento nos dejó".into(),
+        byline: None,
         lines: vec![],
         chapter_number: Some("7".into()),
     };
@@ -224,6 +281,7 @@ fn selected_source_must_match_every_poem_line_and_stanza() {
         language: "es".into(),
         text_state: "canonical-original".into(),
         title: invocation.title.clone(),
+        byline: None,
         chapter_number: None,
         lines: invocation
             .lines

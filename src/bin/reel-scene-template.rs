@@ -230,6 +230,11 @@ fn run() -> Result<()> {
         template_id: use_.template_id.clone(),
         language: language.clone(),
         title: title.into(),
+        byline: content
+            .get("bylines")
+            .and_then(|value| value.get(language))
+            .and_then(|value| value.as_str())
+            .map(str::to_owned),
         lines,
         chapter_number: content
             .get("chapter_number")

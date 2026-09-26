@@ -36,6 +36,7 @@ fn compiles_selected_poem_from_scene_content_and_rejects_changed_definition() {
         "title_x":880, "title_y":32, "body_x":880, "body_y":94,
         "line_spacing":42, "future_rgb":[120,127,133],
         "active_rgb":[216,227,232], "completed_rgb":[255,255,255],
+        "byline":{"x":880,"y":660,"font_size":21,"rgb":[255,255,255]},
         "panel":{"x":853,"width":427,"background_rgb":[20,18,16],"divider_rgb":[211,178,107],"divider_alpha":185},
         "fixed_duration_seconds":null
     });
@@ -43,6 +44,8 @@ fn compiles_selected_poem_from_scene_content_and_rejects_changed_definition() {
     fs::write(dir.join("definition.json"), &definition_bytes).unwrap();
     catalog["templates"][2]["definition_sha256"] = sha(&definition_bytes).into();
     scene["presentation"]["content"]["titles"] = json!({"es":"Recuerdos","en":"Memories"});
+    scene["presentation"]["content"]["bylines"] =
+        json!({"es":"por Andrés Alarcón García","en":"by Andrés Alarcón García"});
     scene["presentation"]["content"]["lines_by_language"] = json!({
         "es":[{"text":"Línea original","cue_id":"es-1","semantic_trigger_id":"first-line"}],
         "en":[{"text":"Draft line","cue_id":"en-1","semantic_trigger_id":"first-line"}]
@@ -55,7 +58,7 @@ fn compiles_selected_poem_from_scene_content_and_rejects_changed_definition() {
         "source_document_sha256":"a".repeat(64),
         "source_scope_ids":["source-block-1"],
         "language":"es", "text_state":"canonical-original",
-        "title":"Recuerdos", "chapter_number":null,
+        "title":"Recuerdos", "byline":"por Andrés Alarcón García", "chapter_number":null,
         "lines":[{"text":"Línea original","cue_id":"es-1","stanza_break_before":false}]
     });
     let source_bytes = serde_json::to_vec_pretty(&source_text).unwrap();
@@ -119,6 +122,7 @@ fn compiles_selected_poem_from_scene_content_and_rejects_changed_definition() {
     );
     let ass = fs::read_to_string(dir.join("poem.ass")).unwrap();
     assert!(ass.contains("Línea original"));
+    assert!(ass.contains("por Andrés Alarcón García"));
     assert!(ass.contains("0:00:01.00"));
     let receipt: Value =
         serde_json::from_slice(&fs::read(dir.join("receipt.json")).unwrap()).unwrap();

@@ -22,6 +22,8 @@ pub struct PresentationSourceText {
     pub language: String,
     pub text_state: String,
     pub title: String,
+    #[serde(default)]
+    pub byline: Option<String>,
     pub chapter_number: Option<String>,
     pub lines: Vec<SourceLine>,
 }
@@ -54,9 +56,20 @@ pub struct EditableTextTemplate {
     pub active_rgb: [u8; 3],
     pub completed_rgb: [u8; 3],
     pub panel: Option<Panel>,
+    #[serde(default)]
+    pub byline: Option<BylineStyle>,
     pub fixed_duration_seconds: Option<u32>,
     #[serde(default)]
     pub chapter: Option<ChapterStyle>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BylineStyle {
+    pub x: u32,
+    pub y: u32,
+    pub font_size: u32,
+    pub rgb: [u8; 3],
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -101,6 +114,8 @@ pub struct EditableTextInvocation {
     pub template_id: String,
     pub language: String,
     pub title: String,
+    #[serde(default)]
+    pub byline: Option<String>,
     #[serde(default)]
     pub lines: Vec<PoemLine>,
     #[serde(default)]
@@ -149,6 +164,7 @@ pub fn verify_source_text(
         )
         || source.source_scope_ids != source_scope_ids
         || source.title != invocation.title
+        || source.byline != invocation.byline
         || source.chapter_number != invocation.chapter_number
         || source.lines.len() != invocation.lines.len()
     {
@@ -261,6 +277,9 @@ pub fn compile_layer(
         color(template.completed_rgb)
     );
     if template.kind == "chapter-title" {
+        if invocation.byline.is_some() || template.byline.is_some() {
+            bail!("chapter card cannot carry a poem byline");
+        }
         if !invocation.lines.is_empty() || !ordered_cues.is_empty() || !alignments.is_empty() {
             bail!("chapter card cannot carry poem lines or native cue clocks");
         }
@@ -325,6 +344,9 @@ pub fn compile_layer(
         || ordered_cues.is_empty()
     {
         bail!("poem requires native cues and source lines, with no fixed duration");
+    }
+    if invocation.byline.is_some() != template.byline.is_some() {
+        bail!("poem byline content and template style must agree");
     }
     let panel = template
         .panel
@@ -442,6 +464,29 @@ pub fn compile_layer(
             escape(&invocation.title)?
         ),
     ));
+    if let (Some(byline), Some(style)) = (&invocation.byline, &template.byline) {
+        if style.font_size == 0
+            || style.x < panel.x
+            || style.x >= template.canvas_width
+            || style.y >= template.canvas_height
+        {
+            bail!("poem byline style does not fit canvas");
+        }
+        ass.push_str(&event(
+            0,
+            cursor,
+            rate,
+            "Text",
+            &format!(
+                "{{\\pos({},{})\\fs{}\\1c{}}}{}",
+                style.x,
+                style.y,
+                style.font_size,
+                color(style.rgb),
+                escape(byline)?
+            ),
+        ));
+    }
     for boundary in 0..invocation.lines.len() {
         let start = entrances[boundary];
         let end = entrances.get(boundary + 1).copied().unwrap_or(cursor);
