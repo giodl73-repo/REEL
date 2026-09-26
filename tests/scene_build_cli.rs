@@ -155,8 +155,14 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
         }),
     );
     write_json(
+        &root.join("master-template.json"),
+        &serde_json::json!({"schema":"reel.episode-master-template.v1","template_id":"master","ordered_roles":["chapter-scenes"],"optional_roles":[]}),
+    );
+    write_json(
         &root.join("catalog.json"),
-        &serde_json::json!({"schema":"reel.scene-template-catalog.v1","templates":[]}),
+        &serde_json::json!({"schema":"reel.scene-template-catalog.v1","templates":[
+            {"template_id":"master","kind":"episode-master","definition_sha256":reference(root,"master-template.json")["sha256"],"required_content_keys":[]}
+        ]}),
     );
     write_json(
         &root.join("episode.json"),
@@ -210,6 +216,70 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
     assert_eq!(receipt["scene_id"], "scene");
     assert_eq!(receipt["language"], "es");
     assert_eq!(receipt["publication"], "not-authorized");
+
+    // Conform the selected scene through the same generic episode boundary.
+    // This reopens and independently checks every upstream scene-delivery
+    // output against its selected job, rather than trusting only receipt text.
+    let scene_segment = serde_json::json!({
+        "kind":"scene","id":"scene","master":reference(root,"output/master.mkv"),
+        "source_receipt":reference(root,"output/scene-authoring-build-receipt.json"),
+        "delivery_job":reference(root,"job.json"),
+        "delivery_receipt":reference(root,"output/receipt.json")
+    });
+    write_json(
+        &root.join("conform.json"),
+        &serde_json::json!({
+            "schema":"reel.episode-conform.v1","episode_id":"ep","language":"es",
+            "output_sample_rate":48000,"catalog":reference(root,"catalog.json"),
+            "master_template_definition":reference(root,"master-template.json"),
+            "episode":reference(root,"episode.json"),
+            "season_bindings":reference(root,"season-bindings.json"),
+            "episode_bindings":reference(root,"episode-bindings.json"),
+            "segments":[scene_segment]
+        }),
+    );
+    let conform = Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
+        .arg("build")
+        .arg(root.join("conform.json"))
+        .arg("--input-root")
+        .arg(root)
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output-dir")
+        .arg(root.join("conformed"))
+        .output()
+        .unwrap();
+    assert!(
+        conform.status.success(),
+        "{}",
+        String::from_utf8_lossy(&conform.stderr)
+    );
+    let conform_receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("conformed/receipt.json")).unwrap()).unwrap();
+    assert_eq!(
+        conform_receipt["upstream_delivery_recheck_state"],
+        "verified-for-all-scene-segments"
+    );
+    assert_eq!(
+        conform_receipt["segments"][0]["upstream_delivery_verified"],
+        true
+    );
+    let dialogue_bytes = fs::read(root.join("output/D.wav")).unwrap();
+    fs::write(root.join("output/D.wav"), b"tampered dialogue stem").unwrap();
+    let rejected_conform = Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
+        .arg("build")
+        .arg(root.join("conform.json"))
+        .arg("--input-root")
+        .arg(root)
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output-dir")
+        .arg(root.join("rejected-conform"))
+        .output()
+        .unwrap();
+    assert!(!rejected_conform.status.success());
+    assert!(!root.join("rejected-conform").exists());
+    fs::write(root.join("output/D.wav"), dialogue_bytes).unwrap();
 
     // Promote the same synthetic scene to a selected poem-panel production.
     // The compiler owns layout and native line timing; the scene names source

@@ -19,6 +19,16 @@ its source receipt. Scene receipts must be `reel.scene-build-receipt.v1`;
 presentation receipts must be `reel.presentation-master-receipt.v1` and agree
 with the selected scoped master binding.
 
+A scene segment may also supply `delivery_job` (an exact authoring-root file
+reference) and `delivery_receipt` (an exact media-root file reference beside the
+hydrated scene outputs). They must be supplied together. The selected scene
+master must be that delivery directory's `master.mkv`; the scene-build receipt
+must bind the selected delivery job and receipt hashes. The conform then runs REEL's
+independent `scene_delivery::check` against the selected job, all delivery
+outputs and current assets. Each segment records `upstream_delivery_verified`.
+The episode receipt says `verified-for-all-scene-segments` only when every scene
+passed this recheck; otherwise it leaves that gate open.
+
 The generic master-order definition has schema `reel.episode-master-template.v1`,
 `template_id`, `ordered_roles`, and optional `optional_roles`. `chapter-scenes`
 is the one required scene-sequence marker. An optional
@@ -45,6 +55,8 @@ The receipt reports basic audio-step and black-at-cut findings for each adjacent
 segment. These remain review findings; music-tail, ambience perspective,
 external VFX/caption provenance, all text transitions, whole-movie viewing,
 listening, principal approval and publication are separate gates. The conform
-checks source receipt identity and master bytes but does not independently
-rebuild every upstream scene or presentation receipt. Real episode promotion
-must retain those upstream checks and asset-authority evidence.
+checks source receipt identity and master bytes. With selected scene jobs and
+delivery receipts it rechecks their complete REEL scene-delivery outputs. It
+does not rerun the authoring compiler, independently rebuild presentation
+masters, or prove asset-authority or human approval. Real episode promotion
+must retain those upstream gates.

@@ -45,6 +45,13 @@ pub struct Segment {
     pub role: Option<String>,
     pub master: scene_delivery::FileRef,
     pub source_receipt: scene_delivery::FileRef,
+    /// Selected scene-delivery job in the authoring tree. Supplying this and
+    /// `delivery_receipt` rechecks the upstream render before conform.
+    #[serde(default)]
+    pub delivery_job: Option<scene_delivery::FileRef>,
+    /// Receipt beside the hydrated scene-delivery output files.
+    #[serde(default)]
+    pub delivery_receipt: Option<scene_delivery::FileRef>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,6 +80,7 @@ pub struct SegmentReceipt {
     pub selected_master_sha256: String,
     pub selected_master_bytes: u64,
     pub source_receipt_sha256: String,
+    pub upstream_delivery_verified: bool,
     pub input_sample_rate: u32,
     pub output_sample_rate: u32,
     pub input_frames: u64,
@@ -390,11 +398,59 @@ pub fn build(
     let mut seen_roles = BTreeSet::new();
     let mut observed_roles: Vec<String> = Vec::new();
     let mut sources = Vec::new();
+    let mut upstream_verified = Vec::new();
     for segment in &manifest.segments {
         let master = scene_delivery::checked_file(asset_root, &segment.master)?;
         let receipt_path = scene_delivery::checked_file(asset_root, &segment.source_receipt)?;
         let receipt: serde_json::Value = serde_json::from_slice(&fs::read(receipt_path)?)?;
         selected_receipt(segment, &manifest.language, &receipt)?;
+        let rechecked = match (
+            segment.kind,
+            &segment.delivery_job,
+            &segment.delivery_receipt,
+        ) {
+            (SegmentKind::Scene, Some(job_ref), Some(delivery_ref)) => {
+                let job_path = scene_delivery::checked_file(input_root, job_ref)?;
+                let delivery_path = scene_delivery::checked_file(asset_root, delivery_ref)?;
+                if delivery_path
+                    .file_name()
+                    .is_none_or(|name| name != "receipt.json")
+                {
+                    bail!("scene delivery receipt must be named receipt.json");
+                }
+                let delivery_root = delivery_path
+                    .parent()
+                    .context("scene delivery receipt has no parent")?;
+                if master != delivery_root.join("master.mkv") {
+                    bail!("selected scene master is outside rechecked delivery directory");
+                }
+                if receipt["scene_delivery_receipt_sha256"] != delivery_ref.sha256 {
+                    bail!("scene build receipt differs from selected delivery receipt");
+                }
+                if receipt["selected_delivery_job_sha256"] != job_ref.sha256 {
+                    bail!("scene build receipt differs from selected delivery job");
+                }
+                let checked = scene_delivery::check(&job_path, asset_root, delivery_root)?;
+                let checked_master = checked
+                    .outputs
+                    .get("master.mkv")
+                    .context("rechecked scene delivery lacks master")?;
+                if checked_master.sha256 != segment.master.sha256
+                    || checked_master.bytes != segment.master.bytes
+                {
+                    bail!("rechecked scene delivery differs from selected master");
+                }
+                true
+            }
+            (SegmentKind::Scene, None, None) => false,
+            (SegmentKind::Scene, _, _) => {
+                bail!("scene delivery recheck requires both job and receipt")
+            }
+            (SegmentKind::EpisodePresentation, None, None) => false,
+            (SegmentKind::EpisodePresentation, _, _) => {
+                bail!("episode presentation cannot supply a scene delivery recheck")
+            }
+        };
         match segment.kind {
             SegmentKind::Scene => {
                 seen_scenes.push(segment.id.clone());
@@ -431,6 +487,7 @@ pub fn build(
             }
         }
         sources.push(master);
+        upstream_verified.push(rechecked);
     }
     if seen_scenes != *expected_scenes {
         bail!("episode scene order or coverage mismatch");
@@ -545,6 +602,7 @@ pub fn build(
             selected_master_sha256: segment.master.sha256.clone(),
             selected_master_bytes: segment.master.bytes,
             source_receipt_sha256: segment.source_receipt.sha256.clone(),
+            upstream_delivery_verified: upstream_verified[index],
             input_sample_rate: facts.sample_rate,
             output_sample_rate: selected_facts.sample_rate,
             input_frames,
@@ -690,9 +748,16 @@ pub fn build(
         boundary_review_state: "open; inspect and disposition adjacent cuts".into(),
         external_layer_review_state: "open; source delivery layers need independent evidence"
             .into(),
-        upstream_delivery_recheck_state:
-            "open; conform checks source receipt identity/bytes but does not rerun scene delivery"
-                .into(),
+        upstream_delivery_recheck_state: if manifest
+            .segments
+            .iter()
+            .enumerate()
+            .all(|(i, segment)| segment.kind != SegmentKind::Scene || upstream_verified[i])
+        {
+            "verified-for-all-scene-segments".into()
+        } else {
+            "open; some scene segments lack selected delivery job and receipt recheck".into()
+        },
         creative_review_state: "open; no principal approval inferred".into(),
         segments: records,
         publication: "not-authorized".into(),
