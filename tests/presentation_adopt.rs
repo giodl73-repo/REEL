@@ -16,6 +16,7 @@ fn reference(root: &Path, name: &str) -> Value {
 }
 
 fn ffmpeg() -> Command {
+    #[allow(unused_mut)] // Windows adds CREATE_NO_WINDOW to this command.
     let mut command = Command::new("ffmpeg");
     #[cfg(windows)]
     {

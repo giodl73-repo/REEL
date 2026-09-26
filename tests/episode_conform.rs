@@ -15,6 +15,7 @@ fn reference(root: &Path, name: &str) -> serde_json::Value {
 }
 
 fn ffmpeg() -> Command {
+    #[allow(unused_mut)] // Windows adds CREATE_NO_WINDOW to this command.
     let mut cmd = Command::new("ffmpeg");
     #[cfg(windows)]
     {
