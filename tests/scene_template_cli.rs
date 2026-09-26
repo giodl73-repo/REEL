@@ -129,6 +129,36 @@ fn compiles_selected_poem_from_scene_content_and_rejects_changed_definition() {
         serde_json::from_slice(&fs::read(dir.join("receipt.json")).unwrap()).unwrap();
     assert_eq!(receipt["ass_sha256"], sha(ass.as_bytes()));
     assert_eq!(receipt["source_text_state"], "canonical-original");
+    scene["schema"] = json!("reel.scene-authoring.v2");
+    scene.as_object_mut().unwrap().remove("source_scope_ids");
+    scene["canonical_cue_ids"] = json!(["source-block-1"]);
+    scene["shared_events"] = json!([{"semantic_id":"poem-image","canonical_cue_id":"source-block-1","picture_binding":"picture.first-line","score":{"disposition":"role","role":"poem.intimate"},"sonic_bindings":[],"vfx_bindings":[]}]);
+    scene["language_event_bindings"] = json!({"es":[{"semantic_id":"poem-image","event_id":"es-event-1","cue_id":"es-1","semantic_trigger_id":"first-line","picture_slot_id":"es-picture-slot"}],"en":[{"semantic_id":"poem-image","event_id":"en-event-1","cue_id":"en-1","semantic_trigger_id":"first-line","picture_slot_id":"en-picture-slot"}]});
+    scene["languages"]["es"]
+        .as_object_mut()
+        .unwrap()
+        .remove("events");
+    scene["languages"]["en"]
+        .as_object_mut()
+        .unwrap()
+        .remove("events");
+    scene["presentation"]["content"]
+        .as_object_mut()
+        .unwrap()
+        .remove("line_cue_ids");
+    catalog["templates"][2]["required_content_keys"] = json!(["poem_id", "lines_by_language"]);
+    write(&dir.join("scene.json"), &scene);
+    write(&dir.join("catalog.json"), &catalog);
+    let v2 = run("poem-v2.ass", "receipt-v2.json");
+    assert!(
+        v2.status.success(),
+        "{}",
+        String::from_utf8_lossy(&v2.stderr)
+    );
+    assert_eq!(
+        fs::read(dir.join("poem.ass")).unwrap(),
+        fs::read(dir.join("poem-v2.ass")).unwrap()
+    );
     let mut wrong_season = fixture("season-bindings");
     wrong_season["scope_id"] = "another-season".into();
     write(&dir.join("season.json"), &wrong_season);

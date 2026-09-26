@@ -299,7 +299,10 @@ fn run() -> Result<()> {
         .get("line_cue_ids")
         .and_then(|v| v.get(language))
         .and_then(|v| v.as_array());
-    if definition.kind == "opening-poem" && line_cue_ids.is_none() {
+    if definition.kind == "opening-poem"
+        && scene.schema != SCENE_SCHEMA_V2
+        && line_cue_ids.is_none()
+    {
         bail!("poem needs a language-local line-to-cue map");
     }
     if let Some(list) = line_cue_ids {
@@ -315,16 +318,19 @@ fn run() -> Result<()> {
         if declared != actual {
             bail!("line-to-cue map differs from source lines");
         }
-        let covered = actual
+    }
+    if definition.kind == "opening-poem" {
+        let covered = invocation
+            .lines
             .iter()
-            .copied()
+            .map(|line| line.cue_id.as_str())
             .collect::<std::collections::BTreeSet<_>>();
         let selected = ordered_cues
             .iter()
             .map(String::as_str)
             .collect::<std::collections::BTreeSet<_>>();
-        if covered != selected {
-            bail!("poem display does not cover every selected native cue");
+        if covered != selected || covered.len() != invocation.lines.len() {
+            bail!("poem display does not cover every selected native cue exactly once");
         }
     }
     let compiled = compile_layer(&definition, &invocation, &ordered_cues, &native)?;

@@ -55,6 +55,10 @@ name multiple `source_cue_ids` when translation combines source cues.
 `language_event_bindings.<lang>` maps a shared `semantic_id` to the local cue,
 trigger marker and selected graph event/picture slot. An explicit picture
 binding override is available for a language-specific picture selection.
+For V2 poem content, each `lines_by_language` line carries its cue ID;
+`line_cue_ids` is unnecessary. The template compiler checks that the lines
+cover every selected native poem cue exactly once. V1 continues to require
+its explicit line map.
 The V2 materializer rejects duplicate language editorial events, missing
 source-cue coverage, or a local trigger bound to the wrong shared source cue.
 It then feeds the existing native compiler and build checks. V1 remains

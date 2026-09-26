@@ -867,7 +867,9 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
         .unwrap();
     assert!(!shifted.status.success());
     assert!(
-        String::from_utf8_lossy(&shifted.stderr).contains("not bound to a selected semantic event")
+        String::from_utf8_lossy(&shifted.stderr).contains("misses native phrase span"),
+        "{}",
+        String::from_utf8_lossy(&shifted.stderr)
     );
 }
 
