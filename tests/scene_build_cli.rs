@@ -532,6 +532,46 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
     );
     assert!(String::from_utf8_lossy(&third.stdout).contains("rebuilt 1 scene languages; reused 0"));
     assert!(run_three.join("scene-es/master.mkv").exists());
+
+    // The selected cel bytes remain identical, but its bound attachment now
+    // ends halfway through the selected native phrase. Hash checks alone pass.
+    let mut contract: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
+    contract["attachments"][0]["end"] =
+        serde_json::json!({"kind":"cue-progress","cue_id":"cue","numerator":1,"denominator":2});
+    contract["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "id":"p-tail","target":{"kind":"cel","shot_id":"shot","cel_id":"red"},
+            "start":{"kind":"cue-progress","cue_id":"cue","numerator":1,"denominator":2},
+            "end":{"kind":"cue-end","cue_id":"cue"}
+        }));
+    write_json(&root.join("contract.json"), &contract);
+    let mut job: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("job.json")).unwrap()).unwrap();
+    job["contract"] = reference(root, "contract.json");
+    let selected_picture = job["pictures"][0]["source"].clone();
+    job["pictures"].as_array_mut().unwrap().push(serde_json::json!({
+        "attachment_id":"p-tail","source":selected_picture,"kind":"still","attention":"source beat"
+    }));
+    write_json(&root.join("job.json"), &job);
+    let mut semantic: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("semantic.json")).unwrap()).unwrap();
+    semantic["scene_delivery_job"] = reference(root, "job.json");
+    write_json(&root.join("semantic.json"), &semantic);
+    let shifted = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
+        .arg("build")
+        .arg(root)
+        .arg("build.json")
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output-dir")
+        .arg(root.join("shifted-output"))
+        .output()
+        .unwrap();
+    assert!(!shifted.status.success());
+    assert!(String::from_utf8_lossy(&shifted.stderr).contains("misses native phrase span"));
 }
 
 #[test]

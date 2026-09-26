@@ -517,6 +517,13 @@ fn build_scene(
         .join(&semantic.scene_delivery_job.path);
     let job: reel::scene_delivery::Job = serde_yaml::from_slice(&fs::read(&job_path)?)?;
     let (_, delivery_plan) = reel::scene_delivery::plan(&job_path, Path::new(asset_root))?;
+    validate_semantic_timeline(
+        &semantic,
+        &semantic_plan.selection,
+        &job,
+        &delivery_plan,
+        &manifest.language,
+    )?;
     let template =
         validate_template_layer(&root, &manifest, &scene, &resolved, &job, &delivery_plan)?;
     let output = Path::new(output_dir);
@@ -575,6 +582,100 @@ fn build_scene(
         "{} {} {}",
         receipt.scene_id, receipt.language, receipt.authoring_fingerprint_sha256
     );
+    Ok(())
+}
+
+fn validate_semantic_timeline(
+    semantic: &reel::semantic_delivery::SemanticDelivery,
+    selection: &reel_assembly::SelectedClosure,
+    job: &reel::scene_delivery::Job,
+    plan: &reel::scene_delivery::Plan,
+    language: &str,
+) -> Result<()> {
+    fn spans<'a>(
+        id: &str,
+        items: &'a [reel::scene_delivery::Span],
+    ) -> Option<&'a reel::scene_delivery::Span> {
+        items.iter().find(|span| span.attachment_id == id)
+    }
+    for event in selection
+        .closure
+        .semantic_events
+        .iter()
+        .filter(|event| event.language == language && event.scene_id == semantic.target)
+    {
+        let binding = semantic
+            .event_bindings
+            .iter()
+            .find(|binding| binding.event_id == event.event_id)
+            .with_context(|| format!("missing timeline binding for {}", event.event_id))?;
+        let narration = spans(&binding.narration_attachment_id, &plan.audio)
+            .with_context(|| format!("missing narration span for {}", event.event_id))?;
+        let picture = spans(&binding.picture_attachment_id, &plan.pictures)
+            .with_context(|| format!("missing picture span for {}", event.event_id))?;
+        let narration_job = job
+            .audio
+            .iter()
+            .find(|item| item.attachment_id == binding.narration_attachment_id)
+            .with_context(|| format!("missing narration job for {}", event.event_id))?;
+        if !event.phrase_start_seconds.is_finite()
+            || !event.phrase_end_seconds.is_finite()
+            || event.phrase_start_seconds < 0.0
+            || event.phrase_end_seconds <= event.phrase_start_seconds
+        {
+            bail!("invalid native phrase clock for {}", event.event_id);
+        }
+        let sample = |seconds: f64| -> Result<u64> {
+            let value = seconds * f64::from(plan.sample_rate);
+            if value > u64::MAX as f64 {
+                bail!("native phrase clock overflows for {}", event.event_id);
+            }
+            Ok(value.round() as u64)
+        };
+        let start = narration
+            .start_sample
+            .checked_add(sample(event.phrase_start_seconds)?)
+            .and_then(|value| value.checked_sub(narration_job.source_start_sample))
+            .with_context(|| {
+                format!(
+                    "native phrase start outside narration for {}",
+                    event.event_id
+                )
+            })?;
+        let end = narration
+            .start_sample
+            .checked_add(sample(event.phrase_end_seconds)?)
+            .and_then(|value| value.checked_sub(narration_job.source_start_sample))
+            .with_context(|| {
+                format!("native phrase end outside narration for {}", event.event_id)
+            })?;
+        if start < narration.start_sample
+            || end > narration.end_sample
+            || start >= end
+            || start < picture.start_sample
+            || end > picture.end_sample
+        {
+            bail!(
+                "semantic event {} picture or narration misses native phrase span",
+                event.event_id
+            );
+        }
+        for id in &binding.audio_attachment_ids {
+            let item = job
+                .audio
+                .iter()
+                .find(|item| item.attachment_id == *id)
+                .with_context(|| format!("missing optional audio job {id}"))?;
+            let span = spans(id, &plan.audio)
+                .with_context(|| format!("missing optional audio span {id}"))?;
+            if item.bus == "D" || span.start_sample >= end || span.end_sample <= start {
+                bail!(
+                    "semantic event {} M/E audio misses native phrase span: {id}",
+                    event.event_id
+                );
+            }
+        }
+    }
     Ok(())
 }
 

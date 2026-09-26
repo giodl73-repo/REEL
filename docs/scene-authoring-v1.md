@@ -76,6 +76,11 @@ checks exact active event IDs, calls REEL plan/render/check, groups adjacent
 identical asset/crop spans, and writes a private build receipt. Template scenes
 must bind the exact compiled ASS layer, source text, compile receipt, and font.
 The build validates those bindings before rendering.
+For each selected language-local semantic event, the build also projects its
+native phrase seconds through the selected D attachment into scene samples.
+Its selected picture must cover that entire phrase, and each declared M/E
+attachment must overlap it. A shifted attachment with unchanged media hashes
+fails this check.
 The technical grouping does not prove that different asset hashes look
 visually distinct; frame inspection remains a separate review step.
 
@@ -143,3 +148,5 @@ scene-language nodes. A selected
 `cache://sha256/` binding must still pass the consumer's hydration and authority
 checks. Generic episode conform builds a selected lossless master; presentation
 segment creation and whole-episode creative review remain separate.
+The phrase-placement check does not yet verify external layer intervals or
+rederive graph phrase times from the selected alignment during a scene build.
