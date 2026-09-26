@@ -549,11 +549,24 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                 if !matches!(a.target, Target::Effect { .. }) || layer.font.is_some() {
                     bail!("timed video overlay requires an effect attachment without a font");
                 }
+                // Overlay frames become visible on the first display tick at or
+                // after the semantic start sample. The compiled end partition
+                // retains the recorded effect source's final-frame behavior.
+                layer_span.start_frame = frame(a.start_sample, true)?;
                 let delivery_frames = if explicit_picture_frames {
                     picture_frame_cursor
                 } else {
                     frame(compiled.duration_samples, true)?
                 };
+                if explicit_picture_frames {
+                    if let Some(picture) = pictures.iter().find(|picture| {
+                        picture.start_sample == a.start_sample
+                            && picture.start_frame > layer_span.start_frame
+                            && picture.start_frame - layer_span.start_frame <= 1
+                    }) {
+                        layer_span.start_frame = picture.start_frame;
+                    }
+                }
                 if explicit_picture_frames
                     && a.end_sample == compiled.duration_samples
                     && layer_span.end_frame > delivery_frames
@@ -1340,17 +1353,25 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
                     .iter()
                     .find(|span| span.attachment_id == layer.attachment_id)
                     .context("timed overlay span missing")?;
+                let active_frames = span.end_frame - span.start_frame;
+                let mut visible = false;
                 for frame in [
                     span.start_frame,
-                    (span.start_frame + span.end_frame - 1) / 2,
+                    span.start_frame + active_frames / 4,
+                    span.start_frame + active_frames / 2,
+                    span.start_frame + active_frames * 3 / 4,
                     span.end_frame - 1,
                 ] {
                     let clean =
                         rgb_frame_at_index(&output.join("clean-picture.mkv"), &plan, frame)?;
                     let rendered = rgb_frame_at_index(&output.join("picture.mkv"), &plan, frame)?;
-                    if clean.len() != rendered.len() || clean == rendered {
-                        bail!("timed overlay made no visible change at active frame {frame}");
+                    if clean.len() != rendered.len() {
+                        bail!("timed overlay changed picture dimensions at frame {frame}");
                     }
+                    visible |= clean != rendered;
+                }
+                if !visible {
+                    bail!("timed overlay made no visible change in its selected span");
                 }
                 for frame in [
                     span.start_frame.checked_sub(1),

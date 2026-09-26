@@ -108,7 +108,9 @@ evidence FileRef. `evidence-only` records a held external delivery. `ass-overlay
 renders one full-scene editable ASS layer. `timed-video-overlay` renders one
 hash-bound alpha video on an effect attachment for its exact compiled frame
 span. The video must have the scene's width and height and enough decoded
-frames for that span. Source frame timestamps are normalized to the scene frame
+frames for that span. A timed effect becomes visible on the first display frame
+at or after its semantic start sample. The compiled end partition preserves the
+source effect's final-frame behavior. Source frame timestamps are normalized to the scene frame
 grid in decoded order; a span with no delivery frame is rejected. If the
 selected evidence is a recipe or descriptor, keep it in `evidence` and bind the
 conformed video in `render_source` with a hash-bound `derivation_receipt`. That
@@ -118,7 +120,7 @@ the scene job consumes the resulting video. Primary picture and audio
 attachments cannot be omitted this way.
 
 The derivation receipt schema is `reel.timed-overlay-derivation.v1` with
-`selected_evidence`, `output` and `inputs` as exact FileRefs plus a non-null
+`selected_evidence`, `output` and `inputs` as exact FileRefs plus a
 `recipe` object. The selected semantic VFX binding still matches `evidence`;
 the derived video and every recipe input enter the changed-only build graph.
 With explicit picture frame allocations, the effect still follows the absolute
@@ -130,7 +132,7 @@ by a frame when a recorded edit rounded its picture cuts.
 
 For a rendered layer, the receipt retains both `clean-picture.mkv` and the
 selected ASS or alpha-video source. The checker verifies exact source bytes,
-samples visible change at the start, middle and end of an active timed effect,
+samples active frames and requires a visible change somewhere in that span,
 and compares the clean frames immediately outside it. This checks selected
 scene compositing at those frames, not the
 creative selection or derivation of the effect source. A clean-picture master

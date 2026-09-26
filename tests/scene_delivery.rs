@@ -346,6 +346,35 @@ fn timed_alpha_effect_changes_only_its_selected_frames() {
     let (_, clipped_plan) = scene_delivery::plan(&root.join("job.json"), root).unwrap();
     assert_eq!(clipped_plan.external_layer_spans[0].end_sample, 96000);
     assert_eq!(clipped_plan.external_layer_spans[0].end_frame, 47);
+    contract = selected_contract.clone();
+    let effect_attachment = contract["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap();
+    effect_attachment["start"] = json!({"kind":"cue-start","cue_id":"b"});
+    effect_attachment["end"] = json!({"kind":"cue-start","cue_id":"b","offset_samples":24000});
+    write_json(&root.join("contract.json"), &contract);
+    job["contract"] = file(root, "contract.json");
+    job["pictures"][0]["delivery_frame_count"] = json!(26);
+    job["pictures"][1]["delivery_frame_count"] = json!(22);
+    write_json(&root.join("job.json"), &job);
+    let (_, clipped_start) = scene_delivery::plan(&root.join("job.json"), root).unwrap();
+    assert_eq!(clipped_start.external_layer_spans[0].start_sample, 48001);
+    assert_eq!(clipped_start.external_layer_spans[0].start_frame, 26);
+    contract["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap()["start"] = json!({"kind":"cue-start","cue_id":"b","offset_samples":1});
+    write_json(&root.join("contract.json"), &contract);
+    job["contract"] = file(root, "contract.json");
+    job["pictures"][0]["delivery_frame_count"] = json!(24);
+    job["pictures"][1]["delivery_frame_count"] = json!(24);
+    write_json(&root.join("job.json"), &job);
+    let (_, fractional_start) = scene_delivery::plan(&root.join("job.json"), root).unwrap();
+    assert_eq!(fractional_start.external_layer_spans[0].start_sample, 48002);
+    assert_eq!(fractional_start.external_layer_spans[0].start_frame, 25);
     write_json(&root.join("contract.json"), &selected_contract);
     job["contract"] = file(root, "contract.json");
     job["pictures"][0]
