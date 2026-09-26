@@ -582,7 +582,10 @@ pub struct Scene {
     pub authoring_state: String,
     #[serde(default)]
     pub legacy_evidence: Vec<LegacyEvidence>,
+    #[serde(default)]
     pub source_scope_ids: Vec<String>,
+    #[serde(default)]
+    pub legacy_source_scope_ids: Vec<String>,
     #[serde(default)]
     pub canonical_cue_ids: Vec<String>,
     #[serde(default)]
@@ -624,6 +627,11 @@ pub fn materialize_scene(scene: &Scene) -> Result<Scene> {
         bail!("V2 scene needs one ordered, unique canonical cue spine");
     }
     let mut output = scene.clone();
+    if output.source_scope_ids.is_empty() {
+        output.source_scope_ids = output.canonical_cue_ids.clone();
+    } else if output.source_scope_ids != output.canonical_cue_ids {
+        bail!("V2 spoken source scope differs from canonical cue spine");
+    }
     if scene.authoring_state != "ready-for-private-build" {
         return Ok(output);
     }
@@ -1293,6 +1301,7 @@ mod tests {
             authoring_state: "ready-for-private-build".into(),
             legacy_evidence: vec![],
             source_scope_ids: vec!["b1".into()],
+            legacy_source_scope_ids: vec![],
             canonical_cue_ids: vec![],
             presentation_source_scope_ids: vec![],
             source_authority_id: "source-1".into(),

@@ -4,7 +4,7 @@
 use anyhow::{Context, Result, bail};
 use reel_assembly::scene_authoring::{
     AssetRef, BINDINGS_SCHEMA, CATALOG_SCHEMA, EPISODE_SCHEMA, Episode, NativeAlignment,
-    SCENE_SCHEMA, SCENE_SCHEMA_V2, Scene, ScopedBindings, TemplateCatalog,
+    SCENE_SCHEMA, SCENE_SCHEMA_V2, Scene, ScopedBindings, TemplateCatalog, materialize_scene,
 };
 use reel_assembly::template_presentation::{
     EditableTextInvocation, EditableTextTemplate, INVOCATION_SCHEMA, PoemLine,
@@ -151,7 +151,7 @@ fn run() -> Result<()> {
     }
     let catalog: TemplateCatalog = read(catalog_path)?;
     let episode_authoring: Episode = read(episode_authoring_path)?;
-    let scene: Scene = read(scene_path)?;
+    let scene = materialize_scene(&read::<Scene>(scene_path)?)?;
     if catalog.schema != CATALOG_SCHEMA
         || episode_authoring.schema != EPISODE_SCHEMA
         || !["ready-for-private-build", "scene-build-context"]

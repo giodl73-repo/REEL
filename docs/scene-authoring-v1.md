@@ -44,7 +44,12 @@ the authoring fields and explicitly advanced the state to
 `ready-for-private-build`; importing a prior render never does that by itself.
 For new authoring use `reel.scene-authoring.v2`: `canonical_cue_ids` gives one
 ordered source cue spine, and `shared_events` owns each picture, score role or
-silence, Sonic and VFX binding once. `languages.<lang>.cues` holds the local
+silence, Sonic and VFX binding once.
+`source_scope_ids` is derived from that spine in V2 and need not be repeated.
+`legacy_source_scope_ids` may preserve graph beat names on imported evidence;
+it does not drive the ready scene. Presentation title and credit blocks belong
+in `presentation_source_scope_ids` when they are outside the spoken scene.
+`languages.<lang>.cues` holds the local
 text hash, narration slot, take and alignment for each realization; a cue may
 name multiple `source_cue_ids` when translation combines source cues.
 `language_event_bindings.<lang>` maps a shared `semantic_id` to the local cue,

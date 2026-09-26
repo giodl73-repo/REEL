@@ -40,6 +40,7 @@ fn v2_owns_effects_once_and_compiles_language_local_triggers() {
         subject();
     scene.schema = SCENE_SCHEMA_V2.into();
     scene.canonical_cue_ids = vec!["source-block-1".into()];
+    scene.source_scope_ids.clear();
     scene.shared_events = vec![SharedEvent {
         semantic_id: "poem-image".into(),
         canonical_cue_id: "source-block-1".into(),
