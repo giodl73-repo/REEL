@@ -84,6 +84,8 @@ pub struct Picture {
     #[serde(default)]
     pub crop: Option<Crop>,
     #[serde(default)]
+    pub motion: Option<PictureMotion>,
+    #[serde(default)]
     pub stillness_exception: Option<Exception>,
 }
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -99,6 +101,18 @@ pub struct Crop {
     pub y: u32,
     pub width: u32,
     pub height: u32,
+}
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum PictureMotion {
+    Zoompan {
+        scale_width: u32,
+        scale_height: u32,
+        crop_width: u32,
+        crop_height: u32,
+        zoom_step: f64,
+        zoom_max: f64,
+    },
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -279,7 +293,33 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                 bail!("empty crop");
             }
         }
-        if prior.is_none_or(|old| old.source.sha256 != p.source.sha256 || old.crop != p.crop) {
+        if let Some(PictureMotion::Zoompan {
+            scale_width,
+            scale_height,
+            crop_width,
+            crop_height,
+            zoom_step,
+            zoom_max,
+        }) = &p.motion
+        {
+            if p.kind != PictureKind::Still
+                || p.crop.is_some()
+                || *scale_width < job.width
+                || *scale_height < job.height
+                || *crop_width != job.width
+                || *crop_height != job.height
+                || !zoom_step.is_finite()
+                || *zoom_step <= 0.0
+                || !zoom_max.is_finite()
+                || *zoom_max < 1.0
+                || *zoom_max > 4.0
+            {
+                bail!("invalid still-picture zoompan motion");
+            }
+        }
+        if prior.is_none_or(|old| {
+            old.source.sha256 != p.source.sha256 || old.crop != p.crop || old.motion != p.motion
+        }) {
             unchanged_start = a.start_sample;
         }
         if a.end_sample - unchanged_start > job.max_composition_samples
@@ -702,7 +742,26 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
             .source_start_frame
             .checked_add(s.end_frame - s.start_frame)
             .context("source frame offset overflow")?;
-        filters.push(format!("[{i}:v]{crop}scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},trim=start_frame={}:end_frame={source_end},setpts=PTS-STARTPTS[v{i}]",job.width,job.height,job.width,job.height,p.source_start_frame));
+        let visual = match &p.motion {
+            Some(PictureMotion::Zoompan {
+                scale_width,
+                scale_height,
+                crop_width,
+                crop_height,
+                zoom_step,
+                zoom_max,
+            }) => format!(
+                "scale={scale_width}:{scale_height}:force_original_aspect_ratio=increase,crop={crop_width}:{crop_height},zoompan=z='min(zoom+{zoom_step},{zoom_max})':d={}:s={}x{}:fps={fps},",
+                s.end_frame - s.start_frame,
+                job.width,
+                job.height
+            ),
+            None => format!(
+                "{crop}scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,",
+                job.width, job.height, job.width, job.height
+            ),
+        };
+        filters.push(format!("[{i}:v]{visual}setsar=1,fps={fps},trim=start_frame={}:end_frame={source_end},setpts=PTS-STARTPTS[v{i}]",p.source_start_frame));
     }
     filters.push(format!(
         "{}concat=n={}:v=1:a=0[v]",

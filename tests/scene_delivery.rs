@@ -305,6 +305,26 @@ fn rejects_fake_composition_changes_and_requires_specific_stillness_exception() 
     scene_delivery::plan(&t.path().join("job.json"), t.path()).unwrap();
 }
 #[test]
+fn selected_still_motion_is_scoped_and_validated() {
+    let t = tempfile::tempdir().unwrap();
+    let mut j = fixture(t.path());
+    let motion = json!({
+        "kind":"zoompan", "scale_width":128, "scale_height":128,
+        "crop_width":64, "crop_height":64,
+        "zoom_step":0.0001, "zoom_max":1.015
+    });
+    j["pictures"][0]["motion"] = motion.clone();
+    write_json(&t.path().join("job.json"), &j);
+    scene_delivery::plan(&t.path().join("job.json"), t.path()).unwrap();
+    j["pictures"][0]["crop"] = json!({"x":0,"y":0,"width":64,"height":64});
+    write_json(&t.path().join("job.json"), &j);
+    assert!(scene_delivery::plan(&t.path().join("job.json"), t.path()).is_err());
+    j["pictures"][0].as_object_mut().unwrap().remove("crop");
+    j["pictures"][0]["motion"]["zoom_step"] = json!(0);
+    write_json(&t.path().join("job.json"), &j);
+    assert!(scene_delivery::plan(&t.path().join("job.json"), t.path()).is_err());
+}
+#[test]
 fn rejects_wrong_bytes_and_unknown_or_duplicate_consumption() {
     let t = tempfile::tempdir().unwrap();
     let mut j = fixture(t.path());
