@@ -540,6 +540,9 @@ fn selected_still_motion_is_scoped_and_validated() {
     j["pictures"][0]["motion"] = motion.clone();
     write_json(&t.path().join("job.json"), &j);
     scene_delivery::plan(&t.path().join("job.json"), t.path()).unwrap();
+    j["pictures"][0]["motion"]["kind"] = json!("centered-zoompan");
+    write_json(&t.path().join("job.json"), &j);
+    scene_delivery::plan(&t.path().join("job.json"), t.path()).unwrap();
     j["pictures"][0]["crop"] = json!({"x":0,"y":0,"width":64,"height":64});
     write_json(&t.path().join("job.json"), &j);
     assert!(scene_delivery::plan(&t.path().join("job.json"), t.path()).is_err());

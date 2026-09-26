@@ -79,6 +79,13 @@ when attachment IDs change. Each picture needs an attention statement. Machine
 checks cannot establish that an almost identical crop is meaningful: human shot
 review remains required.
 
+An explicit still-picture `motion` may use `zoompan` or `centered-zoompan` with
+selected scale/crop geometry, `zoom_step`, and `zoom_max`. The centered form keeps
+the zoom window centered in both axes; motion restarts at the selected picture
+attachment boundary. The job binds the source still and motion parameters, so a
+change to either changes the plan hash. Neither form changes the selected picture
+or narration timing.
+
 An over-limit composition needs
 `stillness_exception: {reason: ..., decision: ...}`. These fields reference a
 consumer decision; REEL does not grant or authenticate that creative approval.

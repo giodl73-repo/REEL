@@ -134,6 +134,14 @@ pub enum PictureMotion {
         zoom_step: f64,
         zoom_max: f64,
     },
+    CenteredZoompan {
+        scale_width: u32,
+        scale_height: u32,
+        crop_width: u32,
+        crop_height: u32,
+        zoom_step: f64,
+        zoom_max: f64,
+    },
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -351,14 +359,24 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                 bail!("empty crop");
             }
         }
-        if let Some(PictureMotion::Zoompan {
-            scale_width,
-            scale_height,
-            crop_width,
-            crop_height,
-            zoom_step,
-            zoom_max,
-        }) = &p.motion
+        if let Some(
+            PictureMotion::Zoompan {
+                scale_width,
+                scale_height,
+                crop_width,
+                crop_height,
+                zoom_step,
+                zoom_max,
+            }
+            | PictureMotion::CenteredZoompan {
+                scale_width,
+                scale_height,
+                crop_width,
+                crop_height,
+                zoom_step,
+                zoom_max,
+            },
+        ) = &p.motion
         {
             if p.kind != PictureKind::Still
                 || p.crop.is_some()
@@ -983,6 +1001,19 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                 zoom_max,
             }) => format!(
                 "scale={scale_width}:{scale_height}:force_original_aspect_ratio=increase,crop={crop_width}:{crop_height},zoompan=z='min(zoom+{zoom_step},{zoom_max})':d={}:s={}x{}:fps={fps},",
+                s.end_frame - s.start_frame,
+                job.width,
+                job.height
+            ),
+            Some(PictureMotion::CenteredZoompan {
+                scale_width,
+                scale_height,
+                crop_width,
+                crop_height,
+                zoom_step,
+                zoom_max,
+            }) => format!(
+                "scale={scale_width}:{scale_height}:force_original_aspect_ratio=increase,crop={crop_width}:{crop_height},zoompan=z='min(zoom+{zoom_step},{zoom_max})':x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2':d={}:s={}x{}:fps={fps},",
                 s.end_frame - s.start_frame,
                 job.width,
                 job.height
