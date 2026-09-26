@@ -1,11 +1,12 @@
 use anyhow::{Context, Result, bail};
 use reel::scene_authoring_inputs::read_verified_alignments;
 use reel_assembly::scene_authoring::{
-    Episode, RenderedSpan, Scene, ScenePolicy, ScopedBindings, TemplateCatalog,
-    audit_rendered_compositions, compile_selected_event_request, resolve_episode_presentation,
-    resolve_scene,
+    Episode, RenderedSpan, Scene, ScenePolicy, ScopedBindings, TemplateCatalog, TriggerTextSpec,
+    WordTimingEvidence, audit_rendered_compositions, compile_selected_event_request,
+    resolve_episode_presentation, resolve_scene, resolve_text_triggers,
 };
 use serde::de::DeserializeOwned;
+use sha2::{Digest, Sha256};
 use std::{env, fs, path::Path};
 
 fn read<T: DeserializeOwned>(path: &str) -> Result<T> {
@@ -26,6 +27,52 @@ fn write_new(path: &str, bytes: &[u8]) -> Result<()> {
 fn run() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     match args.as_slice() {
+        [
+            _,
+            command,
+            evidence_path,
+            spec_path,
+            alignment_flag,
+            alignment_path,
+            receipt_flag,
+            receipt_path,
+        ] if command == "resolve-trigger-text"
+            && alignment_flag == "--alignment"
+            && receipt_flag == "--receipt" =>
+        {
+            if Path::new(alignment_path).exists() || Path::new(receipt_path).exists() {
+                bail!("trigger outputs must be new");
+            }
+            let evidence_bytes = fs::read(evidence_path)?;
+            let spec_bytes = fs::read(spec_path)?;
+            let evidence: WordTimingEvidence = serde_json::from_slice(&evidence_bytes)?;
+            let spec: TriggerTextSpec = serde_json::from_slice(&spec_bytes)?;
+            let alignment = resolve_text_triggers(&evidence, &spec)?;
+            let alignment_bytes = serde_json::to_vec_pretty(&alignment)?;
+            let digest = |bytes: &[u8]| {
+                Sha256::digest(bytes)
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            };
+            write_new(alignment_path, &alignment_bytes)?;
+            let receipt = serde_json::json!({
+                "schema":"reel.scene-trigger-resolution-receipt.v1",
+                "language":alignment.language,"cue_id":alignment.cue_id,
+                "selected_take_sha256":alignment.selected_take_sha256,
+                "word_evidence_sha256":digest(&evidence_bytes),
+                "trigger_spec_sha256":digest(&spec_bytes),
+                "native_alignment_sha256":digest(&alignment_bytes),
+                "state":"word-evidence-resolved; listening-and-review-held",
+                "publication":"not-authorized"
+            });
+            write_new(receipt_path, &serde_json::to_vec_pretty(&receipt)?)?;
+            println!(
+                "{} {} semantic markers",
+                alignment.cue_id,
+                alignment.semantic_markers.len()
+            );
+        }
         [
             _,
             command,
@@ -158,7 +205,7 @@ fn run() -> Result<()> {
             println!("{} visible composition runs checked", runs.len());
         }
         _ => bail!(
-            "usage: reel-scene-authoring resolve <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> --output <new.json>\n       reel-scene-authoring resolve-language <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <language> --output <new.json>\n       reel-scene-authoring resolve-episode-presentation <catalog.json> <episode.json> <season-bindings.json> <episode-bindings.json> --output <new.json>\n       reel-scene-authoring compile-events <graph.json> <pointer.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <next-lock-id> --output <new.json>\n       reel-scene-authoring audit-picture <policy.json> <rendered-spans.json> <sample-rate> --output <new.json>"
+            "usage: reel-scene-authoring resolve <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> --output <new.json>\n       reel-scene-authoring resolve-language <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <language> --output <new.json>\n       reel-scene-authoring resolve-episode-presentation <catalog.json> <episode.json> <season-bindings.json> <episode-bindings.json> --output <new.json>\n       reel-scene-authoring resolve-trigger-text <word-evidence.json> <trigger-spec.json> --alignment <new.json> --receipt <new.json>\n       reel-scene-authoring compile-events <graph.json> <pointer.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <next-lock-id> --output <new.json>\n       reel-scene-authoring audit-picture <policy.json> <rendered-spans.json> <sample-rate> --output <new.json>"
         ),
     }
     Ok(())

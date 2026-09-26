@@ -165,6 +165,179 @@ pub struct NativeAlignment {
     pub semantic_markers: BTreeMap<String, u64>,
 }
 
+pub const WORD_TIMING_SCHEMA: &str = "reel.scene-word-timing-evidence.v1";
+pub const TRIGGER_TEXT_SCHEMA: &str = "reel.scene-trigger-text.v1";
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WordTimingEvidence {
+    pub schema: String,
+    pub language: String,
+    pub cue_id: String,
+    pub selected_take_sha256: String,
+    pub sample_rate: u32,
+    pub cue_end_sample: u64,
+    pub words: Vec<TimedWord>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TimedWord {
+    pub word: String,
+    pub start_sample: u64,
+    pub end_sample: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TriggerTextSpec {
+    pub schema: String,
+    pub language: String,
+    pub cue_id: String,
+    pub selected_take_sha256: String,
+    pub spoken_text: String,
+    pub spoken_text_sha256: String,
+    pub markers: Vec<TextMarker>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TextMarker {
+    pub id: String,
+    /// None names cue start; other markers name exact spoken phrase entrances.
+    #[serde(default)]
+    pub phrase: Option<String>,
+    /// Explicit one-based occurrence when a phrase repeats.
+    #[serde(default)]
+    pub occurrence: Option<usize>,
+}
+
+fn tokens(value: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut token = String::new();
+    for c in value.chars().flat_map(char::to_lowercase) {
+        if c.is_alphanumeric() {
+            token.push(c);
+        } else if !token.is_empty() {
+            result.push(std::mem::take(&mut token));
+        }
+    }
+    if !token.is_empty() {
+        result.push(token);
+    }
+    result
+}
+
+fn occurrences(haystack: &[String], needle: &[String]) -> Vec<usize> {
+    if needle.is_empty() || needle.len() > haystack.len() {
+        return Vec::new();
+    }
+    haystack
+        .windows(needle.len())
+        .enumerate()
+        .filter_map(|(index, window)| (window == needle).then_some(index))
+        .collect()
+}
+
+/// Resolve source-authored phrase entrances against exact selected-take word
+/// evidence. The resulting sample clocks remain evidence until listened.
+pub fn resolve_text_triggers(
+    evidence: &WordTimingEvidence,
+    spec: &TriggerTextSpec,
+) -> Result<NativeAlignment> {
+    if evidence.schema != WORD_TIMING_SCHEMA
+        || spec.schema != TRIGGER_TEXT_SCHEMA
+        || evidence.language != spec.language
+        || evidence.cue_id != spec.cue_id
+        || evidence.selected_take_sha256 != spec.selected_take_sha256
+        || !sha(&evidence.selected_take_sha256)
+        || evidence.sample_rate == 0
+        || evidence.cue_end_sample == 0
+        || evidence.words.is_empty()
+        || spec.markers.is_empty()
+    {
+        bail!("word evidence and trigger spec identity differ or are empty");
+    }
+    let text_sha = Sha256::digest(spec.spoken_text.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    if text_sha != spec.spoken_text_sha256 {
+        bail!("spoken text hash mismatch");
+    }
+    let canonical = tokens(&spec.spoken_text);
+    if canonical.is_empty() {
+        bail!("spoken text has no words");
+    }
+    let mut words = Vec::<(String, u64)>::new();
+    let mut prior_start = None;
+    for item in &evidence.words {
+        if item.end_sample <= item.start_sample
+            || item.end_sample > evidence.cue_end_sample
+            || prior_start.is_some_and(|start| item.start_sample < start)
+        {
+            bail!("word timing is invalid or out of order");
+        }
+        let normalized = tokens(&item.word);
+        if normalized.is_empty() {
+            bail!("word evidence has an empty token");
+        }
+        for token in normalized {
+            words.push((token, item.start_sample));
+        }
+        prior_start = Some(item.start_sample);
+    }
+    let measured = words
+        .iter()
+        .map(|(token, _)| token.clone())
+        .collect::<Vec<_>>();
+    let mut markers = BTreeMap::new();
+    let mut previous = None;
+    for (ordinal, marker) in spec.markers.iter().enumerate() {
+        if marker.id.trim().is_empty()
+            || marker.occurrence == Some(0)
+            || markers.contains_key(&marker.id)
+        {
+            bail!("trigger ID or occurrence invalid");
+        }
+        let sample = match marker.phrase.as_deref() {
+            None if ordinal == 0 && marker.occurrence.is_none() => 0,
+            None => bail!("only first marker may name cue start"),
+            Some(phrase) if ordinal > 0 => {
+                let phrase_tokens = tokens(phrase);
+                let in_source = occurrences(&canonical, &phrase_tokens);
+                let in_take = occurrences(&measured, &phrase_tokens);
+                let occurrence = marker.occurrence.unwrap_or(1);
+                if in_source.len() != in_take.len()
+                    || occurrence > in_source.len()
+                    || (in_source.len() > 1 && marker.occurrence.is_none())
+                {
+                    bail!(
+                        "trigger phrase is missing or ambiguous between source and take: {}",
+                        marker.id
+                    );
+                }
+                words[in_take[occurrence - 1]].1
+            }
+            Some(_) => bail!("first marker must name cue start"),
+        };
+        if sample >= evidence.cue_end_sample || previous.is_some_and(|start| sample <= start) {
+            bail!("trigger samples are not strictly ordered inside selected take");
+        }
+        markers.insert(marker.id.clone(), sample);
+        previous = Some(sample);
+    }
+    Ok(NativeAlignment {
+        schema: NATIVE_ALIGNMENT_SCHEMA.into(),
+        language: evidence.language.clone(),
+        cue_id: evidence.cue_id.clone(),
+        selected_take_sha256: evidence.selected_take_sha256.clone(),
+        sample_rate: evidence.sample_rate,
+        cue_end_sample: evidence.cue_end_sample,
+        semantic_markers: markers,
+    })
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct NativeEventSpan {
     pub event_id: String,

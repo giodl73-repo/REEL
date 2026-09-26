@@ -47,6 +47,7 @@ ducking and listening checks belong to subsequent delivery contracts.
 reel-scene-authoring resolve <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> --output <new.json>
 reel-scene-authoring resolve-language <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <language> --output <new.json>
 reel-scene-authoring resolve-episode-presentation <catalog.json> <episode.json> <season-bindings.json> <episode-bindings.json> --output <new.json>
+reel-scene-authoring resolve-trigger-text <word-evidence.json> <trigger-spec.json> --alignment <new.json> --receipt <new.json>
 reel-scene-authoring compile-events <graph.json> <pointer.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <next-lock-id> --output <new.json>
 reel-scene-authoring audit-picture <policy.json> <rendered-spans.json> <sample-rate> --output <new.json>
 reel-scene-build build <project-root> <build.json> --asset-root <hydrated-cache-root> --output-dir <new-dir>
@@ -60,6 +61,14 @@ reel-episode-conform build <manifest.json> --input-root <authoring-root> --asset
 `resolve` returns both whole-scene and language-local fingerprints. A Spanish
 take rebind changes the Spanish fingerprint only. A season opening rebind
 changes episode presentation without marking every narrative scene stale.
+`resolve-trigger-text` turns an author-named spoken phrase into a sample-exact
+native marker using word evidence from the selected take. The trigger file
+contains the exact cue text, its SHA-256, selected take SHA-256, and ordered
+phrase names; it contains no cut seconds. Repeated phrases require an explicit
+one-based occurrence. The command checks cue, language, take, text hash, phrase
+occurrences and word clocks, then writes a native alignment and an input-hash
+receipt. Machine word evidence and the resulting markers remain listening and
+review holds until their entrances are checked against the actual recording.
 Adjacent events with the same visible composition are grouped for the policy
 maximum. Preferred cadence produces a hint; exceeding the hard maximum fails.
 A montage may name an explicit different policy. These fingerprints can become
