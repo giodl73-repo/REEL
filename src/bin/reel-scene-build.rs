@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 use reel::scene_authoring_inputs::read_verified_alignments;
 use reel_assembly::scene_authoring::{
     Episode, RenderedSpan, Scene, ScenePolicy, ScopedBindings, ScoreUse, TemplateCatalog,
-    audit_rendered_compositions, compile_native_event_spans, resolve_scene,
+    audit_rendered_compositions, compile_native_event_spans, materialize_scene, resolve_scene,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -726,6 +726,7 @@ fn build_scene(
         &episode_bindings,
         &scene_bindings,
     )?;
+    let scene = materialize_scene(&scene)?;
     let language_fingerprint = resolved
         .language_fingerprints
         .get(&manifest.language)

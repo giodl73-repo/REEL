@@ -42,6 +42,18 @@ Historical backports use `authoring_state: imported-evidence` and keep exact
 legacy references. The resolver rejects them until a producer has completed
 the authoring fields and explicitly advanced the state to
 `ready-for-private-build`; importing a prior render never does that by itself.
+For new authoring use `reel.scene-authoring.v2`: `canonical_cue_ids` gives one
+ordered source cue spine, and `shared_events` owns each picture, score role or
+silence, Sonic and VFX binding once. `languages.<lang>.cues` holds the local
+text hash, narration slot, take and alignment for each realization; a cue may
+name multiple `source_cue_ids` when translation combines source cues.
+`language_event_bindings.<lang>` maps a shared `semantic_id` to the local cue,
+trigger marker and selected graph event/picture slot. An explicit picture
+binding override is available for a language-specific picture selection.
+The V2 materializer rejects duplicate language editorial events, missing
+source-cue coverage, or a local trigger bound to the wrong shared source cue.
+It then feeds the existing native compiler and build checks. V1 remains
+readable for historical evidence and existing consumers.
 An episode may use `authoring_state: scene-build-context` while individual
 scenes are being backported. This supplies its scene IDs, policy and score
 roles for an independently ready scene without claiming that episode

@@ -16,6 +16,7 @@ use sha2::{Digest, Sha256};
 pub const CATALOG_SCHEMA: &str = "reel.scene-template-catalog.v1";
 pub const EPISODE_SCHEMA: &str = "reel.episode-authoring.v1";
 pub const SCENE_SCHEMA: &str = "reel.scene-authoring.v1";
+pub const SCENE_SCHEMA_V2: &str = "reel.scene-authoring.v2";
 pub const BINDINGS_SCHEMA: &str = "reel.scene-asset-bindings.v1";
 pub const POLICY_SCHEMA: &str = "reel.scene-policy.v1";
 
@@ -111,6 +112,8 @@ pub struct Episode {
 pub struct Cue {
     pub cue_id: String,
     pub source_id: String,
+    #[serde(default)]
+    pub source_cue_ids: Vec<String>,
     pub exact_text_sha256: String,
     pub narration_slot_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -149,7 +152,35 @@ pub enum ScoreUse {
 #[serde(deny_unknown_fields)]
 pub struct Language {
     pub cues: Vec<Cue>,
+    #[serde(default)]
     pub events: Vec<Event>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SharedEvent {
+    pub semantic_id: String,
+    pub canonical_cue_id: String,
+    pub picture_binding: String,
+    pub score: ScoreUse,
+    #[serde(default)]
+    pub sonic_bindings: Vec<String>,
+    #[serde(default)]
+    pub vfx_bindings: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LanguageEventBinding {
+    pub semantic_id: String,
+    pub event_id: String,
+    pub cue_id: String,
+    pub semantic_trigger_id: String,
+    pub picture_slot_id: String,
+    #[serde(default)]
+    pub picture_binding_override: Option<String>,
+    #[serde(default)]
+    pub supersedes_event_id: Option<String>,
 }
 
 pub const NATIVE_ALIGNMENT_SCHEMA: &str = "reel.scene-native-alignment.v1";
@@ -426,9 +457,11 @@ pub fn compile_selected_event_request(
     alignments: &BTreeMap<String, NativeAlignment>,
     next_lock_logical_id: &str,
 ) -> Result<EventBindingRequest> {
+    let materialized = materialize_scene(scene)?;
+    let scene = &materialized;
     validate_selected_graph(pointer, graph)?;
     if episode.schema != EPISODE_SCHEMA
-        || scene.schema != SCENE_SCHEMA
+        || !matches!(scene.schema.as_str(), SCENE_SCHEMA | SCENE_SCHEMA_V2)
         || !["ready-for-private-build", "scene-build-context"]
             .contains(&episode.authoring_state.as_str())
         || scene.episode_id != episode.episode_id
@@ -551,17 +584,146 @@ pub struct Scene {
     pub legacy_evidence: Vec<LegacyEvidence>,
     pub source_scope_ids: Vec<String>,
     #[serde(default)]
+    pub canonical_cue_ids: Vec<String>,
+    #[serde(default)]
     pub presentation_source_scope_ids: Vec<String>,
     pub source_authority_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scene_policy_override_id: Option<String>,
     pub languages: BTreeMap<String, Language>,
+    #[serde(default)]
+    pub shared_events: Vec<SharedEvent>,
+    #[serde(default)]
+    pub language_event_bindings: BTreeMap<String, Vec<LanguageEventBinding>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub presentation: Option<PresentationUse>,
     #[serde(default)]
     pub continuity_tags: Vec<String>,
     #[serde(default)]
     pub holds: Vec<String>,
+}
+
+/// V2 owns cue order and editorial layer intent once. Language bindings only
+/// choose the local cue, native trigger and selected graph picture slot.
+pub fn materialize_scene(scene: &Scene) -> Result<Scene> {
+    if scene.schema == SCENE_SCHEMA {
+        return Ok(scene.clone());
+    }
+    if scene.schema != SCENE_SCHEMA_V2 {
+        bail!("unsupported scene authoring schema");
+    }
+    let canonical = scene
+        .canonical_cue_ids
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if canonical.is_empty()
+        || canonical.len() != scene.canonical_cue_ids.len()
+        || scene.canonical_cue_ids.iter().any(|id| id.is_empty())
+    {
+        bail!("V2 scene needs one ordered, unique canonical cue spine");
+    }
+    let mut output = scene.clone();
+    if scene.authoring_state != "ready-for-private-build" {
+        return Ok(output);
+    }
+    if scene.shared_events.is_empty()
+        || scene.languages.is_empty()
+        || scene.language_event_bindings.len() != scene.languages.len()
+    {
+        bail!("ready V2 scene needs shared events and every language binding");
+    }
+    let shared = scene
+        .shared_events
+        .iter()
+        .map(|event| (event.semantic_id.as_str(), event))
+        .collect::<BTreeMap<_, _>>();
+    if shared.len() != scene.shared_events.len()
+        || scene.shared_events.iter().any(|event| {
+            event.semantic_id.is_empty()
+                || event.picture_binding.is_empty()
+                || !canonical.contains(&event.canonical_cue_id)
+        })
+    {
+        bail!("shared V2 semantic events are duplicated or outside cue scope");
+    }
+    for (language_id, lane) in &mut output.languages {
+        if !lane.events.is_empty() {
+            bail!("V2 language {language_id} duplicates shared editorial events");
+        }
+        let mut cue_ids = BTreeSet::new();
+        let mut covered = BTreeSet::new();
+        for cue in &lane.cues {
+            if cue.cue_id.is_empty() || !cue_ids.insert(cue.cue_id.as_str()) {
+                bail!("V2 language {language_id} has duplicate cue realizations");
+            }
+            let mapped = if cue.source_cue_ids.is_empty() {
+                vec![cue.source_id.as_str()]
+            } else {
+                cue.source_cue_ids.iter().map(String::as_str).collect()
+            };
+            for source_id in mapped {
+                if !canonical.contains(&source_id.to_owned()) {
+                    bail!("V2 language {language_id} maps outside canonical cue scope");
+                }
+                covered.insert(source_id.to_owned());
+            }
+        }
+        if covered != canonical {
+            bail!("V2 language {language_id} does not cover the canonical cue spine");
+        }
+        let bindings = scene
+            .language_event_bindings
+            .get(language_id)
+            .ok_or_else(|| anyhow::anyhow!("V2 language {language_id} has no event bindings"))?;
+        let mut bound = BTreeSet::new();
+        let mut event_ids = BTreeSet::new();
+        for binding in bindings {
+            let event = shared
+                .get(binding.semantic_id.as_str())
+                .ok_or_else(|| anyhow::anyhow!("unknown shared semantic event"))?;
+            let cue = lane
+                .cues
+                .iter()
+                .find(|cue| cue.cue_id == binding.cue_id)
+                .ok_or_else(|| anyhow::anyhow!("language event references unknown cue"))?;
+            let mapped = if cue.source_cue_ids.is_empty() {
+                vec![cue.source_id.as_str()]
+            } else {
+                cue.source_cue_ids.iter().map(String::as_str).collect()
+            };
+            if !mapped.contains(&event.canonical_cue_id.as_str())
+                || binding.event_id.is_empty()
+                || binding.semantic_trigger_id.is_empty()
+                || binding.picture_slot_id.is_empty()
+                || !bound.insert(binding.semantic_id.as_str())
+                || !event_ids.insert(binding.event_id.as_str())
+            {
+                bail!("V2 language event binding is duplicate or mis-scoped");
+            }
+            lane.events.push(Event {
+                event_id: binding.event_id.clone(),
+                cue_id: binding.cue_id.clone(),
+                semantic_trigger_id: binding.semantic_trigger_id.clone(),
+                picture_slot_id: binding.picture_slot_id.clone(),
+                supersedes_event_id: binding.supersedes_event_id.clone(),
+                picture_binding: Some(
+                    binding
+                        .picture_binding_override
+                        .as_deref()
+                        .unwrap_or(&event.picture_binding)
+                        .to_owned(),
+                ),
+                score: event.score.clone(),
+                sonic_bindings: event.sonic_bindings.clone(),
+                vfx_bindings: event.vfx_bindings.clone(),
+            });
+        }
+        if bound.len() != shared.len() {
+            bail!("V2 language {language_id} omits a shared semantic event");
+        }
+    }
+    Ok(output)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -856,9 +1018,11 @@ pub fn resolve_scene(
     episode_bindings: &ScopedBindings,
     scene_bindings: &ScopedBindings,
 ) -> Result<ResolvedScene> {
+    let materialized = materialize_scene(scene)?;
+    let scene = &materialized;
     if catalog.schema != CATALOG_SCHEMA
         || episode.schema != EPISODE_SCHEMA
-        || scene.schema != SCENE_SCHEMA
+        || !matches!(scene.schema.as_str(), SCENE_SCHEMA | SCENE_SCHEMA_V2)
         || [season, episode_bindings, scene_bindings]
             .iter()
             .any(|s| s.schema != BINDINGS_SCHEMA)
@@ -1026,6 +1190,7 @@ pub fn resolve_scene(
                 &scene.episode_id,
                 &scene.scene_id,
                 &scene.source_scope_ids,
+                &scene.canonical_cue_ids,
                 &scene.presentation_source_scope_ids,
                 &scene.source_authority_id,
                 language_presentation(&scene.presentation, language_id),
@@ -1128,10 +1293,13 @@ mod tests {
             authoring_state: "ready-for-private-build".into(),
             legacy_evidence: vec![],
             source_scope_ids: vec!["b1".into()],
+            canonical_cue_ids: vec![],
             presentation_source_scope_ids: vec![],
             source_authority_id: "source-1".into(),
             scene_policy_override_id: Some("montage".into()),
             languages: BTreeMap::new(),
+            shared_events: vec![],
+            language_event_bindings: BTreeMap::new(),
             presentation: None,
             continuity_tags: vec![],
             holds: vec![],

@@ -4,7 +4,7 @@
 use anyhow::{Context, Result, bail};
 use reel_assembly::scene_authoring::{
     AssetRef, BINDINGS_SCHEMA, CATALOG_SCHEMA, EPISODE_SCHEMA, Episode, NativeAlignment,
-    SCENE_SCHEMA, Scene, ScopedBindings, TemplateCatalog,
+    SCENE_SCHEMA, SCENE_SCHEMA_V2, Scene, ScopedBindings, TemplateCatalog,
 };
 use reel_assembly::template_presentation::{
     EditableTextInvocation, EditableTextTemplate, INVOCATION_SCHEMA, PoemLine,
@@ -156,7 +156,7 @@ fn run() -> Result<()> {
         || episode_authoring.schema != EPISODE_SCHEMA
         || !["ready-for-private-build", "scene-build-context"]
             .contains(&episode_authoring.authoring_state.as_str())
-        || scene.schema != SCENE_SCHEMA
+        || !matches!(scene.schema.as_str(), SCENE_SCHEMA | SCENE_SCHEMA_V2)
         || scene.authoring_state != "ready-for-private-build"
         || scene.episode_id != episode_authoring.episode_id
         || !episode_authoring.scene_ids.contains(&scene.scene_id)

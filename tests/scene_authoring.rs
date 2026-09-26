@@ -1,6 +1,7 @@
 use reel_assembly::scene_authoring::{
-    Episode, NATIVE_ALIGNMENT_SCHEMA, NativeAlignment, Scene, ScenePolicy, ScopedBindings,
-    TemplateCatalog, compile_native_event_spans, compile_selected_event_request,
+    Episode, LanguageEventBinding, NATIVE_ALIGNMENT_SCHEMA, NativeAlignment, SCENE_SCHEMA_V2,
+    Scene, ScenePolicy, ScopedBindings, ScoreUse, SharedEvent, TemplateCatalog,
+    compile_native_event_spans, compile_selected_event_request, materialize_scene,
     resolve_episode_presentation, resolve_scene,
 };
 use serde::de::DeserializeOwned;
@@ -31,6 +32,96 @@ fn subject() -> (
         fixture("episode-bindings"),
         fixture("scene-bindings"),
     )
+}
+
+#[test]
+fn v2_owns_effects_once_and_compiles_language_local_triggers() {
+    let (catalog, episode, mut scene, policy, season, episode_bindings, mut scene_bindings) =
+        subject();
+    scene.schema = SCENE_SCHEMA_V2.into();
+    scene.canonical_cue_ids = vec!["source-block-1".into()];
+    scene.shared_events = vec![SharedEvent {
+        semantic_id: "poem-image".into(),
+        canonical_cue_id: "source-block-1".into(),
+        picture_binding: "picture.first-line".into(),
+        score: ScoreUse::Role {
+            role: "poem.intimate".into(),
+        },
+        sonic_bindings: vec!["sonic.wind".into()],
+        vfx_bindings: vec!["vfx.dust".into()],
+    }];
+    for (language, lane) in &mut scene.languages {
+        let old = lane.events.remove(0);
+        scene.language_event_bindings.insert(
+            language.clone(),
+            vec![LanguageEventBinding {
+                semantic_id: "poem-image".into(),
+                event_id: old.event_id,
+                cue_id: old.cue_id,
+                semantic_trigger_id: format!("{language}-native-line"),
+                picture_slot_id: old.picture_slot_id,
+                picture_binding_override: None,
+                supersedes_event_id: None,
+            }],
+        );
+    }
+    for (key, digit) in [("sonic.wind", '8'), ("vfx.dust", '9')] {
+        let mut asset = scene_bindings.assets["picture.first-line"].clone();
+        asset.logical_id = key.into();
+        asset.sha256 = digit.to_string().repeat(64);
+        asset.cache_uri = format!("cache://sha256/{}", asset.sha256);
+        scene_bindings.assets.insert(key.into(), asset);
+    }
+    let resolved = resolve_scene(
+        &catalog,
+        &episode,
+        &scene,
+        &policy,
+        &season,
+        &episode_bindings,
+        &scene_bindings,
+    )
+    .unwrap();
+    assert!(resolved.selected_inputs.contains_key("sonic.wind"));
+    assert!(resolved.selected_inputs.contains_key("vfx.dust"));
+    let native = materialize_scene(&scene).unwrap();
+    for (language, lane) in &native.languages {
+        assert_eq!(lane.events.len(), 1);
+        assert_eq!(lane.events[0].sonic_bindings, vec!["sonic.wind"]);
+        assert_eq!(lane.events[0].vfx_bindings, vec!["vfx.dust"]);
+        let cue_id = lane.cues[0].cue_id.clone();
+        let span = compile_native_event_spans(
+            language,
+            lane,
+            &std::collections::BTreeMap::from([(
+                cue_id.clone(),
+                NativeAlignment {
+                    schema: NATIVE_ALIGNMENT_SCHEMA.into(),
+                    language: language.clone(),
+                    cue_id,
+                    selected_take_sha256: if language == "es" {
+                        "3".repeat(64)
+                    } else {
+                        "5".repeat(64)
+                    },
+                    sample_rate: 24_000,
+                    cue_end_sample: if language == "es" { 48_000 } else { 72_000 },
+                    semantic_markers: std::collections::BTreeMap::from([(
+                        format!("{language}-native-line"),
+                        0,
+                    )]),
+                },
+            )]),
+        )
+        .unwrap();
+        assert_eq!(
+            span[0].end_sample,
+            if language == "es" { 48_000 } else { 72_000 }
+        );
+    }
+    let mut duplicate = scene;
+    duplicate.languages.get_mut("es").unwrap().events = native.languages["es"].events.clone();
+    assert!(materialize_scene(&duplicate).is_err());
 }
 
 #[test]
