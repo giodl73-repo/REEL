@@ -21,6 +21,14 @@ pub struct SemanticDelivery {
     pub pointer: SelectedPointer,
     pub graph: Graph,
     pub target: String,
+    /// Render only selected phrase events for this scene within the target
+    /// closure. This permits an episode target to supply selected shared media.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scene_id: Option<String>,
+    /// Render only the selected phrase events for this language within the
+    /// target closure. Omission preserves the original whole-closure contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
     /// A hash-bound cue-relative REEL scene-delivery job. Its media sources
     /// must be selected by this graph closure or named in its semantic events.
     pub scene_delivery_job: FileRef,
@@ -124,13 +132,26 @@ fn validate_event_bindings(
     selection: &SelectedClosure,
     job: &Job,
     bindings: &[EventDeliveryBinding],
+    scene_id: Option<&str>,
+    language: Option<&str>,
 ) -> Result<()> {
+    if scene_id.is_some_and(|value| !nonempty(value)) {
+        bail!("semantic delivery scene_id must be nonempty");
+    }
+    if language.is_some_and(|value| !nonempty(value)) {
+        bail!("semantic delivery language must be nonempty");
+    }
     let events = selection
         .closure
         .semantic_events
         .iter()
+        .filter(|event| scene_id.is_none_or(|value| event.scene_id == value))
+        .filter(|event| language.is_none_or(|value| event.language == value))
         .map(|event| (event.event_id.as_str(), event))
         .collect::<std::collections::BTreeMap<_, _>>();
+    if (scene_id.is_some() || language.is_some()) && events.is_empty() {
+        bail!("semantic delivery scope has no selected events in target closure");
+    }
     let pictures = job
         .pictures
         .iter()
@@ -242,11 +263,12 @@ fn validate_event_bindings(
     if bound.len() != events.len() || events.keys().any(|event_id| !bound.contains(event_id)) {
         bail!("every selected semantic event must have exactly one delivery binding");
     }
-    if pictures.keys().any(|id| !bound_pictures.contains(id))
-        || audio.keys().any(|id| !bound_audio.contains(id))
-        || layers.keys().any(|id| !bound_layers.contains(id))
+    if (scene_id.is_some() || language.is_some())
+        && (pictures.keys().any(|id| !bound_pictures.contains(id))
+            || audio.keys().any(|id| !bound_audio.contains(id))
+            || layers.keys().any(|id| !bound_layers.contains(id)))
     {
-        bail!("scene job contains an attachment not bound to a selected semantic event");
+        bail!("language-scoped delivery has an attachment without a scoped event binding");
     }
     Ok(())
 }
@@ -262,7 +284,13 @@ pub fn plan(path: &Path) -> Result<Plan> {
     let selection = selected_closure(&semantic.pointer, &semantic.graph, &semantic.target)?;
     let job = checked_job(path, &semantic.scene_delivery_job)?;
     validate_job_media(&selection, &job)?;
-    validate_event_bindings(&selection, &job, &semantic.event_bindings)?;
+    validate_event_bindings(
+        &selection,
+        &job,
+        &semantic.event_bindings,
+        semantic.scene_id.as_deref(),
+        semantic.language.as_deref(),
+    )?;
     Ok(Plan {
         schema: "reel.semantic-delivery-plan.v1".into(),
         id: semantic.id,
@@ -486,25 +514,55 @@ buses: {{ D: {{ state: present, reason: narration }}, M: {{ state: intentional-s
             audio_attachment_ids: vec![],
             external_layer_attachment_ids: vec![],
         };
-        validate_event_bindings(&selection, &job, std::slice::from_ref(&binding)).unwrap();
+        validate_event_bindings(&selection, &job, std::slice::from_ref(&binding), None, None)
+            .unwrap();
+        validate_event_bindings(
+            &selection,
+            &job,
+            std::slice::from_ref(&binding),
+            None,
+            Some("es"),
+        )
+        .unwrap();
+        validate_event_bindings(
+            &selection,
+            &job,
+            std::slice::from_ref(&binding),
+            Some("scene"),
+            Some("es"),
+        )
+        .unwrap();
         let mut extra_picture = job.clone();
         let mut unused = extra_picture.pictures[0].clone();
         unused.attachment_id = "retired-picture".into();
         extra_picture.pictures.push(unused);
         assert!(
-            validate_event_bindings(&selection, &extra_picture, std::slice::from_ref(&binding))
-                .unwrap_err()
-                .to_string()
-                .contains("not bound to a selected semantic event")
+            validate_event_bindings(
+                &selection,
+                &extra_picture,
+                std::slice::from_ref(&binding),
+                None,
+                Some("es")
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("attachment without a scoped event binding")
         );
         let mut with_cut = binding.clone();
         with_cut.additional_picture_attachment_ids = vec!["retired-picture".into()];
-        validate_event_bindings(&selection, &extra_picture, &[with_cut.clone()]).unwrap();
+        validate_event_bindings(
+            &selection,
+            &extra_picture,
+            &[with_cut.clone()],
+            None,
+            Some("es"),
+        )
+        .unwrap();
         with_cut
             .additional_picture_attachment_ids
             .push("retired-picture".into());
         assert!(
-            validate_event_bindings(&selection, &extra_picture, &[with_cut])
+            validate_event_bindings(&selection, &extra_picture, &[with_cut], None, Some("es"))
                 .unwrap_err()
                 .to_string()
                 .contains("invalid additional picture attachment")
@@ -514,10 +572,16 @@ buses: {{ D: {{ state: present, reason: narration }}, M: {{ state: intentional-s
         unused.attachment_id = "retired-narration".into();
         extra_audio.audio.push(unused);
         assert!(
-            validate_event_bindings(&selection, &extra_audio, std::slice::from_ref(&binding))
-                .unwrap_err()
-                .to_string()
-                .contains("not bound to a selected semantic event")
+            validate_event_bindings(
+                &selection,
+                &extra_audio,
+                std::slice::from_ref(&binding),
+                None,
+                Some("es")
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("attachment without a scoped event binding")
         );
         let mut extra_layer = job.clone();
         extra_layer
@@ -532,13 +596,57 @@ buses: {{ D: {{ state: present, reason: narration }}, M: {{ state: intentional-s
                 derivation_receipt: None,
             });
         assert!(
-            validate_event_bindings(&selection, &extra_layer, std::slice::from_ref(&binding))
-                .unwrap_err()
-                .to_string()
-                .contains("not bound to a selected semantic event")
+            validate_event_bindings(
+                &selection,
+                &extra_layer,
+                std::slice::from_ref(&binding),
+                None,
+                Some("es")
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("attachment without a scoped event binding")
         );
         assert!(
-            validate_event_bindings(&selection, &job, &[])
+            validate_event_bindings(
+                &selection,
+                &job,
+                std::slice::from_ref(&binding),
+                Some("other-scene"),
+                Some("es"),
+            )
+            .is_err()
+        );
+        assert!(
+            validate_event_bindings(
+                &selection,
+                &job,
+                std::slice::from_ref(&binding),
+                None,
+                Some("en")
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("no selected events")
+        );
+        let mut unbound_job = job.clone();
+        let mut extra = unbound_job.pictures[0].clone();
+        extra.attachment_id = "unbound-picture".into();
+        unbound_job.pictures.push(extra);
+        assert!(
+            validate_event_bindings(
+                &selection,
+                &unbound_job,
+                std::slice::from_ref(&binding),
+                None,
+                Some("es"),
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("attachment without a scoped event binding")
+        );
+        assert!(
+            validate_event_bindings(&selection, &job, &[], None, None)
                 .unwrap_err()
                 .to_string()
                 .contains("every selected semantic event")
@@ -546,10 +654,64 @@ buses: {{ D: {{ state: present, reason: narration }}, M: {{ state: intentional-s
         let mut wrong = binding;
         wrong.narration_attachment_id = "picture".into();
         assert!(
-            validate_event_bindings(&selection, &job, &[wrong])
+            validate_event_bindings(&selection, &job, &[wrong], None, None)
                 .unwrap_err()
                 .to_string()
                 .contains("narration attachment")
+        );
+        let mut bilingual_graph = graph;
+        let mut english_event = bilingual_graph.events[0].clone();
+        english_event.event_id = "event.en.phrase-1".into();
+        english_event.language = "en".into();
+        bilingual_graph.nodes[0]
+            .events
+            .push(english_event.event_id.clone());
+        bilingual_graph.events.push(english_event);
+        let bilingual_selection = selected_closure(
+            &SelectedPointer {
+                schema: POINTER_SCHEMA.into(),
+                logical_id: "current".into(),
+                selected_lock: bilingual_graph.lock.clone(),
+            },
+            &bilingual_graph,
+            "scene",
+        )
+        .unwrap();
+        let spanish_binding = EventDeliveryBinding {
+            event_id: "event.es.phrase-1".into(),
+            narration_attachment_id: "narration".into(),
+            picture_attachment_id: "picture".into(),
+            additional_picture_attachment_ids: vec![],
+            audio_attachment_ids: vec![],
+            external_layer_attachment_ids: vec![],
+        };
+        validate_event_bindings(
+            &bilingual_selection,
+            &job,
+            std::slice::from_ref(&spanish_binding),
+            None,
+            Some("es"),
+        )
+        .unwrap();
+        assert!(
+            validate_event_bindings(
+                &bilingual_selection,
+                &job,
+                std::slice::from_ref(&spanish_binding),
+                None,
+                None,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_event_bindings(
+                &bilingual_selection,
+                &job,
+                std::slice::from_ref(&spanish_binding),
+                None,
+                Some("en"),
+            )
+            .is_err()
         );
     }
 
@@ -630,7 +792,7 @@ buses: {{ D: {{ state: present, reason: narration }}, M: {{ state: intentional-s
             picture_attachment_id: "next-cel".into(),
             ..first.clone()
         };
-        validate_event_bindings(&selection, &job, &[first, second]).unwrap();
+        validate_event_bindings(&selection, &job, &[first, second], None, Some("es")).unwrap();
     }
 
     #[test]
@@ -678,6 +840,8 @@ buses: {{ D: {{ state: present, reason: narration }}, M: {{ state: intentional-s
             },
             graph,
             target: "scene".into(),
+            scene_id: None,
+            language: None,
             scene_delivery_job: FileRef {
                 path: "scene.yaml".into(),
                 sha256: crate::sha256_file(&job_path).unwrap(),
