@@ -811,7 +811,9 @@ pub fn resolve_scene(
     {
         bail!("unsupported authoring schema");
     }
-    if episode.authoring_state != "ready-for-private-build" {
+    if episode.authoring_state != "ready-for-private-build"
+        && episode.authoring_state != "scene-build-context"
+    {
         bail!(
             "episode {} authoring state is {}",
             episode.episode_id,
@@ -873,6 +875,7 @@ pub fn resolve_scene(
     let mut language_fingerprints = BTreeMap::new();
     for (language_id, language) in &scene.languages {
         let mut language_inputs = BTreeMap::new();
+        let mut used_scores = BTreeMap::<String, &ScoreBinding>::new();
         if let Some(use_) = &scene.presentation {
             if let Some(key) = &use_.asset_binding {
                 language_inputs.insert(key.clone(), binding(key, &scopes)?.clone());
@@ -934,6 +937,12 @@ pub fn resolve_scene(
                 let key = score_roles
                     .get(role)
                     .ok_or_else(|| anyhow::anyhow!("unknown score role {role}"))?;
+                let selected_role = episode
+                    .score_palette
+                    .iter()
+                    .find(|item| item.role == *role)
+                    .expect("validated score role");
+                used_scores.insert(role.clone(), selected_role);
                 let asset = binding(key, &scopes)?.clone();
                 selected_inputs.insert(key.clone(), asset.clone());
                 language_inputs.insert(key.clone(), asset);
@@ -952,6 +961,9 @@ pub fn resolve_scene(
         language_fingerprints.insert(
             language_id.clone(),
             digest(&(
+                &episode.episode_id,
+                &episode.season_id,
+                &scene.episode_id,
                 &scene.scene_id,
                 &scene.source_scope_ids,
                 &scene.source_authority_id,
@@ -959,6 +971,7 @@ pub fn resolve_scene(
                 &scene.continuity_tags,
                 &language,
                 &language_inputs,
+                &used_scores,
                 &template_definitions,
                 &policy,
             ))?,

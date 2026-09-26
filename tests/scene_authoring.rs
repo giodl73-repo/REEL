@@ -254,6 +254,79 @@ fn historical_evidence_cannot_be_resolved_as_a_selected_scene() {
 }
 
 #[test]
+fn one_ready_scene_builds_inside_an_unfinished_episode_context() {
+    let (catalog, mut episode, scene, policy, season, episode_bindings, scene_bindings) = subject();
+    episode.authoring_state = "scene-build-context".into();
+    resolve_scene(
+        &catalog,
+        &episode,
+        &scene,
+        &policy,
+        &season,
+        &episode_bindings,
+        &scene_bindings,
+    )
+    .expect("ready scene resolves independently of incomplete episode presentation");
+    assert!(resolve_episode_presentation(&catalog, &episode, &season, &episode_bindings).is_err());
+    episode.authoring_state = "imported-evidence".into();
+    assert!(
+        resolve_scene(
+            &catalog,
+            &episode,
+            &scene,
+            &policy,
+            &season,
+            &episode_bindings,
+            &scene_bindings,
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn scene_fingerprint_tracks_scope_and_consumed_score_provenance() {
+    let (catalog, mut episode, scene, policy, season, episode_bindings, scene_bindings) = subject();
+    let baseline = resolve_scene(
+        &catalog,
+        &episode,
+        &scene,
+        &policy,
+        &season,
+        &episode_bindings,
+        &scene_bindings,
+    )
+    .unwrap();
+    episode.season_id = "another-season".into();
+    let moved = resolve_scene(
+        &catalog,
+        &episode,
+        &scene,
+        &policy,
+        &season,
+        &episode_bindings,
+        &scene_bindings,
+    )
+    .unwrap();
+    assert_ne!(baseline.language_fingerprints, moved.language_fingerprints);
+    episode.season_id = "season-1".into();
+    episode.score_palette[0].source_poem_id = "another-poem".into();
+    let rescored = resolve_scene(
+        &catalog,
+        &episode,
+        &scene,
+        &policy,
+        &season,
+        &episode_bindings,
+        &scene_bindings,
+    )
+    .unwrap();
+    assert_ne!(
+        baseline.language_fingerprints,
+        rescored.language_fingerprints
+    );
+}
+
+#[test]
 fn semantic_markers_compile_on_each_native_language_clock() {
     let (_, _, scene, _, _, _, _) = subject();
     for (language_id, end_sample) in [("es", 240_000), ("en", 168_000)] {

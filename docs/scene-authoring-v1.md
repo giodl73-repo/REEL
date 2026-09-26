@@ -34,6 +34,11 @@ Historical backports use `authoring_state: imported-evidence` and keep exact
 legacy references. The resolver rejects them until a producer has completed
 the authoring fields and explicitly advanced the state to
 `ready-for-private-build`; importing a prior render never does that by itself.
+An episode may use `authoring_state: scene-build-context` while individual
+scenes are being backported. This supplies its scene IDs, policy and score
+roles for an independently ready scene without claiming that episode
+presentation or conform is ready. Episode presentation resolution still
+requires `ready-for-private-build`.
 
 An episode score palette maps a scene role to a theme, its source poem, an
 arrangement ID and an episode asset binding. Scene events refer to the role or
@@ -61,6 +66,9 @@ reel-episode-conform build <manifest.json> --input-root <authoring-root> --asset
 `resolve` returns both whole-scene and language-local fingerprints. A Spanish
 take rebind changes the Spanish fingerprint only. A season opening rebind
 changes episode presentation without marking every narrative scene stale.
+Scene language fingerprints include episode/season identity and the metadata
+of score roles actually used by that lane, so a poem-theme or arrangement
+rebind cannot silently reuse an old scene receipt with unchanged media bytes.
 `resolve-trigger-text` turns an author-named spoken phrase into a sample-exact
 native marker using word evidence from the selected take. The trigger file
 contains the exact cue text, its SHA-256, selected take SHA-256, and ordered
