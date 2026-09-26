@@ -11,7 +11,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileRef {
     pub path: PathBuf,
@@ -47,6 +47,22 @@ pub struct ExternalLayer {
     pub render_mode: ExternalLayerRenderMode,
     #[serde(default)]
     pub font: Option<FileRef>,
+    /// A video conformed from selected evidence; the derivation receipt binds
+    /// the source recipe and every component input to these delivered bytes.
+    #[serde(default)]
+    pub render_source: Option<FileRef>,
+    #[serde(default)]
+    pub derivation_receipt: Option<FileRef>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TimedOverlayDerivation {
+    pub schema: String,
+    pub selected_evidence: FileRef,
+    pub output: FileRef,
+    pub inputs: Vec<FileRef>,
+    pub recipe: serde_json::Value,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
@@ -212,6 +228,30 @@ pub(crate) fn checked_file(root: &Path, item: &FileRef) -> Result<PathBuf> {
         bail!("file hash/byte mismatch: {}", item.path.display());
     }
     Ok(path)
+}
+
+fn timed_overlay_source<'a>(root: &Path, layer: &'a ExternalLayer) -> Result<&'a FileRef> {
+    match (&layer.render_source, &layer.derivation_receipt) {
+        (None, None) => Ok(&layer.evidence),
+        (Some(source), Some(receipt_ref)) => {
+            checked_file(root, source)?;
+            let receipt_path = checked_file(root, receipt_ref)?;
+            let receipt: TimedOverlayDerivation = serde_json::from_slice(&fs::read(receipt_path)?)?;
+            if receipt.schema != "reel.timed-overlay-derivation.v1"
+                || receipt.selected_evidence != layer.evidence
+                || receipt.output != *source
+                || receipt.inputs.is_empty()
+                || !receipt.recipe.is_object()
+            {
+                bail!("timed overlay derivation does not bind selected evidence and source");
+            }
+            for input in &receipt.inputs {
+                checked_file(root, input)?;
+            }
+            Ok(source)
+        }
+        _ => bail!("timed overlay source and derivation receipt must be paired"),
+    }
 }
 
 fn nonempty(s: &str) -> bool {
@@ -477,6 +517,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
     let mut rendered_external_layers = Vec::new();
     for layer in &job.external_layers {
         let a = take(&layer.attachment_id)?;
+        let mut layer_span = span(a)?;
         if !matches!(
             a.target,
             Target::Beat { .. }
@@ -497,6 +538,8 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                 if layer.evidence.path.extension().and_then(|ext| ext.to_str()) != Some("ass")
                     || a.start_sample != 0
                     || a.end_sample != compiled.duration_samples
+                    || layer.render_source.is_some()
+                    || layer.derivation_receipt.is_some()
                 {
                     bail!("ASS overlay must be a full-scene .ass attachment");
                 }
@@ -506,18 +549,24 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                 if !matches!(a.target, Target::Effect { .. }) || layer.font.is_some() {
                     bail!("timed video overlay requires an effect attachment without a font");
                 }
-                let layer_span = span(a)?;
                 let delivery_frames = if explicit_picture_frames {
                     picture_frame_cursor
                 } else {
                     frame(compiled.duration_samples, true)?
                 };
+                if explicit_picture_frames
+                    && a.end_sample == compiled.duration_samples
+                    && layer_span.end_frame > delivery_frames
+                    && layer_span.end_frame - delivery_frames <= 1
+                {
+                    layer_span.end_frame = delivery_frames;
+                }
                 if layer_span.start_frame >= layer_span.end_frame
                     || layer_span.end_frame > delivery_frames
                 {
                     bail!("timed overlay needs a positive span inside delivered picture frames");
                 }
-                let source = checked_file(asset_root, &layer.evidence)?;
+                let source = checked_file(asset_root, timed_overlay_source(asset_root, layer)?)?;
                 let info = probe(&source)?;
                 let video = info["streams"]
                     .as_array()
@@ -546,13 +595,16 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                 rendered_external_layers.push(layer.attachment_id.clone());
             }
             ExternalLayerRenderMode::EvidenceOnly => {
-                if layer.font.is_some() {
-                    bail!("font binding is only valid for an ASS overlay");
+                if layer.font.is_some()
+                    || layer.render_source.is_some()
+                    || layer.derivation_receipt.is_some()
+                {
+                    bail!("evidence-only layer cannot bind render sources or fonts");
                 }
             }
         }
         external_layers.push(layer.attachment_id.clone());
-        external_layer_spans.push(span(a)?);
+        external_layer_spans.push(layer_span);
     }
     if rendered_external_layers.len() > 1 {
         bail!("this scene-delivery version renders one external picture layer");
@@ -981,7 +1033,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                     .iter()
                     .find(|span| span.attachment_id == layer.attachment_id)
                     .context("timed overlay span missing")?;
-                let source = checked_file(asset_root, &layer.evidence)?;
+                let source = checked_file(asset_root, timed_overlay_source(asset_root, layer)?)?;
                 if decoded_video_frames(&source)? < span.end_frame - span.start_frame {
                     bail!("timed overlay lacks frames for its selected span");
                 }
@@ -1278,7 +1330,9 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
                 }
             }
             ExternalLayerRenderMode::TimedVideoOverlay => {
-                if receipt.outputs["selected-overlay.mkv"].sha256 != layer.evidence.sha256 {
+                if receipt.outputs["selected-overlay.mkv"].sha256
+                    != timed_overlay_source(asset_root, layer)?.sha256
+                {
                     bail!("rendered timed-overlay source differs from selected evidence");
                 }
                 let span = plan

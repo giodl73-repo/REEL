@@ -275,6 +275,29 @@ fn emit_changed_only_graph(index_path: &str, asset_root: &Path, output_path: &st
             if let Some(font) = &layer.font {
                 inputs.push(bound_asset(&format!("font-{number:03}"), asset_root, font)?);
             }
+            if let Some(source) = &layer.render_source {
+                inputs.push(bound_asset(
+                    &format!("external-render-source-{number:03}"),
+                    asset_root,
+                    source,
+                )?);
+            }
+            if let Some(receipt) = &layer.derivation_receipt {
+                inputs.push(bound_asset(
+                    &format!("external-derivation-{number:03}"),
+                    asset_root,
+                    receipt,
+                )?);
+                let derivation: reel::scene_delivery::TimedOverlayDerivation =
+                    read(&asset_root.join(&receipt.path))?;
+                for (input_number, input) in derivation.inputs.iter().enumerate() {
+                    inputs.push(bound_asset(
+                        &format!("external-component-{number:03}-{input_number:03}"),
+                        asset_root,
+                        input,
+                    )?);
+                }
+            }
         }
         nodes.push(
             serde_json::json!({"node_id":job.node_id,"operation_kind":"scene-delivery",

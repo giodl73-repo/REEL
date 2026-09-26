@@ -109,14 +109,24 @@ renders one full-scene editable ASS layer. `timed-video-overlay` renders one
 hash-bound alpha video on an effect attachment for its exact compiled frame
 span. The video must have the scene's width and height and enough decoded
 frames for that span. Source frame timestamps are normalized to the scene frame
-grid in decoded order; a span with no delivery frame is rejected. Keep the
-source effect recipe and its own receipt beside
-the selected video; the scene job consumes the resulting bytes. Primary picture
-and audio attachments cannot be omitted this way.
+grid in decoded order; a span with no delivery frame is rejected. If the
+selected evidence is a recipe or descriptor, keep it in `evidence` and bind the
+conformed video in `render_source` with a hash-bound `derivation_receipt`. That
+receipt must name the selected evidence, output, recipe and every component
+input. REEL checks the declared source and component bytes before rendering;
+the scene job consumes the resulting video. Primary picture and audio
+attachments cannot be omitted this way.
+
+The derivation receipt schema is `reel.timed-overlay-derivation.v1` with
+`selected_evidence`, `output` and `inputs` as exact FileRefs plus a non-null
+`recipe` object. The selected semantic VFX binding still matches `evidence`;
+the derived video and every recipe input enter the changed-only build graph.
 With explicit picture frame allocations, the effect still follows the absolute
-scene sample clock; planning rejects an effect that would extend past the
-delivered picture frame count. A source cut boundary and an effect boundary
-may therefore differ by a frame when a recorded edit rounded its picture cuts.
+scene sample clock. If a selected effect ends at the native scene end while the
+recorded picture is exactly one frame shorter, the visible effect clips at the
+last delivered frame and retains its native end sample in the plan. A larger
+overrun is rejected. A source cut boundary and an effect boundary may differ
+by a frame when a recorded edit rounded its picture cuts.
 
 For a rendered layer, the receipt retains both `clean-picture.mkv` and the
 selected ASS or alpha-video source. The checker verifies exact source bytes,

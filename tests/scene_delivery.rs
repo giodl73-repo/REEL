@@ -332,6 +332,31 @@ fn timed_alpha_effect_changes_only_its_selected_frames() {
     write_json(&root.join("contract.json"), &selected_contract);
     job["contract"] = file(root, "contract.json");
     write_json(&root.join("job.json"), &job);
+    contract = selected_contract.clone();
+    contract["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap()["end"] = json!({"kind":"cue-end","cue_id":"b"});
+    write_json(&root.join("contract.json"), &contract);
+    job["contract"] = file(root, "contract.json");
+    job["pictures"][0]["delivery_frame_count"] = json!(24);
+    job["pictures"][1]["delivery_frame_count"] = json!(23);
+    write_json(&root.join("job.json"), &job);
+    let (_, clipped_plan) = scene_delivery::plan(&root.join("job.json"), root).unwrap();
+    assert_eq!(clipped_plan.external_layer_spans[0].end_sample, 96000);
+    assert_eq!(clipped_plan.external_layer_spans[0].end_frame, 47);
+    write_json(&root.join("contract.json"), &selected_contract);
+    job["contract"] = file(root, "contract.json");
+    job["pictures"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("delivery_frame_count");
+    job["pictures"][1]
+        .as_object_mut()
+        .unwrap()
+        .remove("delivery_frame_count");
+    write_json(&root.join("job.json"), &job);
     let output = root.join("rendered");
     let receipt = scene_delivery::render(&root.join("job.json"), root, &output).unwrap();
     assert_eq!(receipt.plan.rendered_external_layers, vec!["timed-effect"]);
@@ -340,6 +365,38 @@ fn timed_alpha_effect_changes_only_its_selected_frames() {
     scene_delivery::check(&root.join("job.json"), root, &output).unwrap();
     fs::write(output.join("selected-overlay.mkv"), b"tampered").unwrap();
     assert!(scene_delivery::check(&root.join("job.json"), root, &output).is_err());
+
+    write_json(
+        &root.join("selected-effect.json"),
+        &json!({"kind":"source-effect"}),
+    );
+    let derivation = json!({
+        "schema":"reel.timed-overlay-derivation.v1",
+        "selected_evidence":file(root,"selected-effect.json"),
+        "output":file(root,"effect.mkv"),
+        "inputs":[file(root,"red.ppm")],
+        "recipe":{"kind":"synthetic-alpha-plate","frames":24}
+    });
+    write_json(&root.join("derivation.json"), &derivation);
+    job["external_layers"][0]["evidence"] = file(root, "selected-effect.json");
+    job["external_layers"][0]["render_source"] = file(root, "effect.mkv");
+    job["external_layers"][0]["derivation_receipt"] = file(root, "derivation.json");
+    write_json(&root.join("job.json"), &job);
+    let derived_output = root.join("rendered-derived");
+    scene_delivery::render(&root.join("job.json"), root, &derived_output).unwrap();
+    scene_delivery::check(&root.join("job.json"), root, &derived_output).unwrap();
+    let mut bad_recipe = derivation.clone();
+    bad_recipe["recipe"] = json!("not a recipe object");
+    write_json(&root.join("derivation.json"), &bad_recipe);
+    job["external_layers"][0]["derivation_receipt"] = file(root, "derivation.json");
+    write_json(&root.join("job.json"), &job);
+    assert!(scene_delivery::plan(&root.join("job.json"), root).is_err());
+    let mut bad = derivation;
+    bad["output"]["sha256"] = json!("0".repeat(64));
+    write_json(&root.join("derivation.json"), &bad);
+    job["external_layers"][0]["derivation_receipt"] = file(root, "derivation.json");
+    write_json(&root.join("job.json"), &job);
+    assert!(scene_delivery::plan(&root.join("job.json"), root).is_err());
 }
 #[test]
 fn plan_uses_compiled_samples_and_one_global_frame_partition() {
