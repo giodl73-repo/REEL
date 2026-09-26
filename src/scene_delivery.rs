@@ -1372,9 +1372,9 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         "master.mkv",
         "review.mp4",
     ];
-    if overlay.is_some() {
+    if let Some(overlay) = overlay {
         names.push("clean-picture.mkv");
-        names.push(match overlay.expect("checked above").render_mode {
+        names.push(match overlay.render_mode {
             ExternalLayerRenderMode::AssOverlay => "presentation.ass",
             ExternalLayerRenderMode::TimedVideoOverlay => "selected-overlay.mkv",
             ExternalLayerRenderMode::EvidenceOnly => unreachable!(),
@@ -1459,9 +1459,9 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
         .external_layers
         .iter()
         .find(|layer| layer.render_mode != ExternalLayerRenderMode::EvidenceOnly);
-    if overlay.is_some() {
+    if let Some(overlay) = overlay {
         expected.insert("clean-picture.mkv");
-        expected.insert(match overlay.expect("checked above").render_mode {
+        expected.insert(match overlay.render_mode {
             ExternalLayerRenderMode::AssOverlay => "presentation.ass",
             ExternalLayerRenderMode::TimedVideoOverlay => "selected-overlay.mkv",
             ExternalLayerRenderMode::EvidenceOnly => unreachable!(),

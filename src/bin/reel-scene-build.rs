@@ -568,6 +568,7 @@ fn execute_episode(
     Ok(())
 }
 
+#[allow(clippy::type_complexity)]
 fn scene_inputs(
     root: &Path,
     manifest: &BuildManifest,
@@ -854,6 +855,7 @@ fn build_scene(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_authored_semantic_assets(
     scene: &Scene,
     episode: &Episode,
@@ -991,6 +993,7 @@ fn validate_authored_semantic_assets(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn native_picture_interval(
     event_id: &str,
     narration_start: u64,

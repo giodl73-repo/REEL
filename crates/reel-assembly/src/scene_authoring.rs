@@ -447,6 +447,7 @@ pub fn compile_native_event_spans(
 /// Compile measured native marker spans into REEL's append-only selected-graph
 /// request. The caller must verify alignment file bytes against its selected
 /// binding before deserializing them; this function checks take and graph IDs.
+#[allow(clippy::too_many_arguments)]
 pub fn compile_selected_event_request(
     graph: &Graph,
     pointer: &SelectedPointer,
@@ -671,7 +672,7 @@ pub fn materialize_scene(scene: &Scene) -> Result<Scene> {
                 cue.source_cue_ids.iter().map(String::as_str).collect()
             };
             for source_id in mapped {
-                if !canonical.contains(&source_id.to_owned()) {
+                if !canonical.contains(source_id) {
                     bail!("V2 language {language_id} maps outside canonical cue scope");
                 }
                 covered.insert(source_id.to_owned());
