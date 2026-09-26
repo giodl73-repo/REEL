@@ -165,6 +165,7 @@ pub(crate) fn file_sha(path: &Path) -> Result<String> {
 }
 
 pub(crate) fn command(name: &str) -> Command {
+    #[allow(unused_mut)] // Windows adds CREATE_NO_WINDOW to this command.
     let mut cmd = Command::new(name);
     #[cfg(windows)]
     {
