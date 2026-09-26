@@ -28,6 +28,7 @@ fn compiles_selected_poem_from_scene_content_and_rejects_changed_definition() {
     let dir = root.path();
     let mut catalog = fixture("catalog");
     let mut scene = fixture("scene");
+    scene["presentation_source_scope_ids"] = json!(["poem-title", "poet-credit"]);
     let mut scene_bindings = fixture("scene-bindings");
     let definition = json!({
         "schema":"reel.editable-text-template.v1", "template_id":"poem-v1",
@@ -56,7 +57,7 @@ fn compiles_selected_poem_from_scene_content_and_rejects_changed_definition() {
         "schema":"reel.presentation-source-text.v1",
         "source_authority_id":"source-1",
         "source_document_sha256":"a".repeat(64),
-        "source_scope_ids":["source-block-1"],
+        "source_scope_ids":["source-block-1","poem-title","poet-credit"],
         "language":"es", "text_state":"canonical-original",
         "title":"Recuerdos", "byline":"por Andrés Alarcón García", "chapter_number":null,
         "lines":[{"text":"Línea original","cue_id":"es-1","stanza_break_before":false}]

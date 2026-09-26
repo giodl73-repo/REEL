@@ -34,6 +34,41 @@ fn subject() -> (
 }
 
 #[test]
+fn presentation_source_scope_change_invalidates_both_language_lanes() {
+    let (catalog, episode, mut scene, policy, season, episode_bindings, scene_bindings) = subject();
+    scene.presentation_source_scope_ids = vec!["poem-title".into(), "poet-credit".into()];
+    let first = resolve_scene(
+        &catalog,
+        &episode,
+        &scene,
+        &policy,
+        &season,
+        &episode_bindings,
+        &scene_bindings,
+    )
+    .unwrap();
+    scene.presentation_source_scope_ids[1] = "revised-poet-credit".into();
+    let second = resolve_scene(
+        &catalog,
+        &episode,
+        &scene,
+        &policy,
+        &season,
+        &episode_bindings,
+        &scene_bindings,
+    )
+    .unwrap();
+    assert_ne!(
+        first.language_fingerprints["es"],
+        second.language_fingerprints["es"]
+    );
+    assert_ne!(
+        first.language_fingerprints["en"],
+        second.language_fingerprints["en"]
+    );
+}
+
+#[test]
 fn one_language_take_rebind_only_invalidates_its_lane() {
     let (catalog, episode, scene, policy, season, episode_bindings, mut scene_bindings) = subject();
     let first = resolve_scene(

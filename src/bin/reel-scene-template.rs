@@ -267,11 +267,18 @@ fn run() -> Result<()> {
         bail!("source-text file differs from selected scoped binding");
     }
     let source_text: PresentationSourceText = serde_json::from_slice(&source_bytes)?;
+    let mut presentation_scope = scene.source_scope_ids.clone();
+    for source_id in &scene.presentation_source_scope_ids {
+        if source_id.is_empty() || presentation_scope.contains(source_id) {
+            bail!("presentation source scope is empty or duplicates a spoken source ID");
+        }
+        presentation_scope.push(source_id.clone());
+    }
     verify_source_text(
         &invocation,
         &source_text,
         &scene.source_authority_id,
-        &scene.source_scope_ids,
+        &presentation_scope,
     )?;
     let lane = scene
         .languages

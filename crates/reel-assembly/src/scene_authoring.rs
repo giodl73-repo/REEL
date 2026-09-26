@@ -550,6 +550,8 @@ pub struct Scene {
     #[serde(default)]
     pub legacy_evidence: Vec<LegacyEvidence>,
     pub source_scope_ids: Vec<String>,
+    #[serde(default)]
+    pub presentation_source_scope_ids: Vec<String>,
     pub source_authority_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scene_policy_override_id: Option<String>,
@@ -1024,6 +1026,7 @@ pub fn resolve_scene(
                 &scene.episode_id,
                 &scene.scene_id,
                 &scene.source_scope_ids,
+                &scene.presentation_source_scope_ids,
                 &scene.source_authority_id,
                 language_presentation(&scene.presentation, language_id),
                 &scene.continuity_tags,
@@ -1125,6 +1128,7 @@ mod tests {
             authoring_state: "ready-for-private-build".into(),
             legacy_evidence: vec![],
             source_scope_ids: vec!["b1".into()],
+            presentation_source_scope_ids: vec![],
             source_authority_id: "source-1".into(),
             scene_policy_override_id: Some("montage".into()),
             languages: BTreeMap::new(),
