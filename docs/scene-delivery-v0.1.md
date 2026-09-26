@@ -90,6 +90,16 @@ to receive a frame fails rather than silently disappearing. This partition diffe
 from the compiler's overlapping floor/ceiling interval *coverage* representation;
 the sample timing remains unchanged and the delivery plan exposes both boundaries.
 
+For a recorded edit whose encoded cuts used local frame rounding, each picture
+may declare `delivery_frame_count: <positive integer>`. If one picture declares
+it, every picture must. The plan then allocates those frame counts in picture
+order while retaining the exact compiled sample spans for narration and audio.
+The resulting video frame count can differ slightly from the frame count
+implied by the scene's sample duration; the receipt records both. Consumers
+must pin the source edit or rendered film that justifies these counts and
+compare encoded cut boundaries before claiming picture parity. Omitting the
+field retains the global sample-grid partition above.
+
 ## Existing effects, captions, titles and camera tools
 
 This path does not invent a second effect renderer or caption engine. Render
