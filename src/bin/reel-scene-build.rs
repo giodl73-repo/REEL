@@ -58,10 +58,14 @@ struct BuildReceipt {
     authoring_fingerprint_sha256: String,
     selected_semantic_plan_sha256: String,
     scene_delivery_receipt_sha256: String,
+    master_sha256: String,
+    master_bytes: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     template_ass_sha256: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     source_text_state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    presentation_role: Option<String>,
     same_asset_composition_runs: usize,
     visual_inspection_state: String,
     publication: String,
@@ -533,15 +537,22 @@ fn build_scene(
         .collect::<Vec<_>>();
     let runs =
         audit_rendered_compositions(&policy, checked_receipt.plan.sample_rate, &picture_spans)?;
+    let master = checked_receipt
+        .outputs
+        .get("master.mkv")
+        .context("scene delivery receipt lacks master.mkv")?;
     let receipt = BuildReceipt {
         schema: "reel.scene-build-receipt.v1".into(),
         scene_id: scene.scene_id,
         language: manifest.language,
         authoring_fingerprint_sha256: language_fingerprint.clone(),
         selected_semantic_plan_sha256: hash(&serde_json::to_vec(&semantic_plan)?),
-        scene_delivery_receipt_sha256: hash(&serde_json::to_vec(&checked_receipt)?),
+        scene_delivery_receipt_sha256: hash(&fs::read(output.join("receipt.json"))?),
+        master_sha256: master.sha256.clone(),
+        master_bytes: master.bytes,
         template_ass_sha256: template.as_ref().map(|item| item.0.clone()),
         source_text_state: template.as_ref().map(|item| item.1.clone()),
+        presentation_role: scene.presentation.as_ref().map(|item| item.role.clone()),
         same_asset_composition_runs: runs.len(),
         visual_inspection_state:
             "open; source-and-crop grouping does not prove visible distinctness".into(),

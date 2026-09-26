@@ -53,6 +53,7 @@ reel-scene-build build <project-root> <build.json> --asset-root <hydrated-cache-
 reel-scene-build emit-changed-only-graph <index.json> --asset-root <hydrated-cache-root> --output <new-graph.json>
 reel-scene-build execute-changed-only <index.json> <prior-state.json> --asset-root <hydrated-cache-root> --output-root <new-run-dir>
 reel-scene-template compile <catalog.json> <definition.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <source-text.json> --output-ass <new.ass> --receipt <new.json>
+reel-episode-conform build <manifest.json> --input-root <authoring-root> --asset-root <hydrated-media-root> --output-dir <new-dir>
 ```
 
 `resolve` returns both whole-scene and language-local fingerprints. A Spanish
@@ -126,17 +127,19 @@ files, selected scene job, hydrated job media, and the exact build executable.
 node, runs only `rebuild` nodes through the same checked scene builder, writes
 REEL result receipts, and advances immutable state snapshots. An unchanged
 node is reused only after REEL verifies its prior output bytes. The run uses a
-new output directory and leaves prior state intact. Episode presentation and
-final conform will be additional nodes once their executors are implemented.
+new output directory and leaves prior state intact. Episode presentation
+rendering remains a separate node. Generic episode conform is available as
+[`reel-episode-conform`](episode-conform-v1.md), but is not yet scheduled by
+the changed-only scene runner.
 
 ## Current execution boundary
 
 V1 resolution checks contract identity and scope; event and template compilation
 verify supplied local alignment and source files. The scene build renders a
 selected semantic graph and optional ASS presentation layer, but it does not
-hydrate every selected asset, select a REEL graph revision, conform an episode,
-or infer creative approval. Changed-only execution covers only ready
+hydrate every selected asset, select a REEL graph revision, or infer creative
+approval. Changed-only execution covers only ready
 scene-language nodes. A selected
 `cache://sha256/` binding must still pass the consumer's hydration and authority
-checks. The episode checker consumes an existing master; REEL currently has no
-episode renderer.
+checks. Generic episode conform builds a selected lossless master; presentation
+segment creation and whole-episode creative review remain separate.
