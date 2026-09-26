@@ -23,6 +23,13 @@ scope cannot be rebound by passing the wrong binding file.
 The scene invocation says `template_id`, role and content such as poem ID,
 canonical line-to-cue mapping or chapter number/title. Font, panel geometry,
 color, fixed presentation duration and layout belong to the template definition.
+Templates may declare `soundtrack_requirement: selected-episode-score`. Such a
+poem invocation must name `content.score_role`; the episode palette must map
+that role to the same `poem_id` and a selected scoped soundtrack asset; each
+language must bind at least one semantic event to that role. The generic scene
+build then checks the delivered M attachment against those events. Dry
+`scene-delivery` previews remain possible but cannot pass the ready template
+compiler or scene resolver without the selected soundtrack.
 The selected asset binding belongs to its scope, never to the template layout.
 The canonical source document hash and a shared episode graph snapshot belong
 in their owner registers. A scene names `source_authority_id`, source scope IDs
