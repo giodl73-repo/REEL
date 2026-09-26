@@ -570,9 +570,15 @@ pub struct LegacyEvidence {
     pub path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
     pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_state: Option<String>,
     #[serde(default)]
     pub event_ids: Vec<String>,
+    #[serde(default)]
+    pub cue_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
