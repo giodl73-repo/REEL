@@ -144,6 +144,9 @@ fn validate_event_bindings(
         .map(|layer| (layer.attachment_id.as_str(), layer))
         .collect::<std::collections::BTreeMap<_, _>>();
     let mut bound = BTreeSet::new();
+    let mut bound_pictures = BTreeSet::new();
+    let mut bound_audio = BTreeSet::new();
+    let mut bound_layers = BTreeSet::new();
     for binding in bindings {
         if !nonempty(&binding.event_id)
             || !nonempty(&binding.narration_attachment_id)
@@ -191,6 +194,8 @@ fn validate_event_bindings(
                 binding.event_id
             );
         }
+        bound_pictures.insert(binding.picture_attachment_id.as_str());
+        bound_audio.insert(binding.narration_attachment_id.as_str());
         let mut referenced_audio = BTreeSet::new();
         for attachment_id in &binding.audio_attachment_ids {
             if !referenced_audio.insert(attachment_id.as_str())
@@ -202,6 +207,7 @@ fn validate_event_bindings(
                     attachment_id
                 );
             }
+            bound_audio.insert(attachment_id.as_str());
         }
         let mut referenced_layers = BTreeSet::new();
         for attachment_id in &binding.external_layer_attachment_ids {
@@ -214,10 +220,17 @@ fn validate_event_bindings(
                     attachment_id
                 );
             }
+            bound_layers.insert(attachment_id.as_str());
         }
     }
     if bound.len() != events.len() || events.keys().any(|event_id| !bound.contains(event_id)) {
         bail!("every selected semantic event must have exactly one delivery binding");
+    }
+    if pictures.keys().any(|id| !bound_pictures.contains(id))
+        || audio.keys().any(|id| !bound_audio.contains(id))
+        || layers.keys().any(|id| !bound_layers.contains(id))
+    {
+        bail!("scene job contains an attachment not bound to a selected semantic event");
     }
     Ok(())
 }
@@ -457,6 +470,42 @@ buses: {{ D: {{ state: present, reason: narration }}, M: {{ state: intentional-s
             external_layer_attachment_ids: vec![],
         };
         validate_event_bindings(&selection, &job, std::slice::from_ref(&binding)).unwrap();
+        let mut extra_picture = job.clone();
+        let mut unused = extra_picture.pictures[0].clone();
+        unused.attachment_id = "retired-picture".into();
+        extra_picture.pictures.push(unused);
+        assert!(
+            validate_event_bindings(&selection, &extra_picture, std::slice::from_ref(&binding))
+                .unwrap_err()
+                .to_string()
+                .contains("not bound to a selected semantic event")
+        );
+        let mut extra_audio = job.clone();
+        let mut unused = extra_audio.audio[0].clone();
+        unused.attachment_id = "retired-narration".into();
+        extra_audio.audio.push(unused);
+        assert!(
+            validate_event_bindings(&selection, &extra_audio, std::slice::from_ref(&binding))
+                .unwrap_err()
+                .to_string()
+                .contains("not bound to a selected semantic event")
+        );
+        let mut extra_layer = job.clone();
+        extra_layer
+            .external_layers
+            .push(crate::scene_delivery::ExternalLayer {
+                attachment_id: "retired-effect".into(),
+                reason: "unbound regression".into(),
+                evidence: job.contract.clone(),
+                render_mode: Default::default(),
+                font: None,
+            });
+        assert!(
+            validate_event_bindings(&selection, &extra_layer, std::slice::from_ref(&binding))
+                .unwrap_err()
+                .to_string()
+                .contains("not bound to a selected semantic event")
+        );
         assert!(
             validate_event_bindings(&selection, &job, &[])
                 .unwrap_err()

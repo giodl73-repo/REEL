@@ -79,6 +79,10 @@ derives native event spans, and emits a request for the existing
 `reel semantic-assembly-bind-events` command. REEL checks the request against
 the selected graph and rejects stale take or picture slots. A correction names
 `supersedes_event_id` in the scene event and receives a new immutable lock.
+When the corrected lane has fewer events, the request retires unmatched active
+events from that scene and language. Their immutable records remain in graph
+history while the new node closure contains only the authored phrase set.
+REEL rejects an event named for both retirement and supersession.
 The independent scene build command reads one `reel.scene-build.v1` manifest
 that points to the catalog, episode, scene, policy, scoped bindings, selected
 native-alignment path map and semantic-delivery contract. It verifies the
@@ -94,6 +98,10 @@ selected picture must cover that entire phrase; declared M/E and external
 attachments must overlap it. The exact delivered M/E and VFX assets must agree
 with the authored score role, Sonic and VFX bindings. A shifted or omitted
 attachment with unchanged media hashes fails this check.
+Every scene job picture, audio and external-layer attachment must be named by
+an active semantic event. A retired cut cannot leave an extra selected cel
+playing between authored phrases merely because its historical slot remains
+in the graph closure.
 The technical grouping does not prove that different asset hashes look
 visually distinct; frame inspection remains a separate review step.
 

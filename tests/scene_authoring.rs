@@ -373,6 +373,46 @@ fn native_markers_bind_only_to_selected_reel_slots() {
     )
     .unwrap();
     assert_eq!(request.bindings[0].event.phrase_end_seconds, 10.0);
+    let mut prior = graph.clone();
+    prior.events = ["old-a", "old-b"]
+        .into_iter()
+        .enumerate()
+        .map(|(index, id)| reel_assembly::SemanticEvent {
+            event_id: id.into(),
+            scene_id: scene.scene_id.clone(),
+            language: "es".into(),
+            narration: ImmutableRef {
+                logical_id: scene_bindings.assets["es.take"].logical_id.clone(),
+                sha256: scene_bindings.assets["es.take"].sha256.clone(),
+            },
+            picture: ImmutableRef {
+                logical_id: scene_bindings.assets["picture.first-line"]
+                    .logical_id
+                    .clone(),
+                sha256: scene_bindings.assets["picture.first-line"].sha256.clone(),
+            },
+            phrase_start_seconds: index as f64 * 5.0,
+            phrase_end_seconds: (index + 1) as f64 * 5.0,
+        })
+        .collect();
+    prior.nodes[0].events = vec!["old-a".into(), "old-b".into()];
+    let replacement = compile_selected_event_request(
+        &prior,
+        &pointer,
+        &scene,
+        "es",
+        &[&scene_bindings, &episode_bindings, &season],
+        &alignments,
+        "lock-3",
+    )
+    .unwrap();
+    assert_eq!(replacement.retirements.len(), 2);
+    let selected = reel_assembly::append_semantic_events(&prior, &replacement).unwrap();
+    assert_eq!(
+        selected.nodes[0].events,
+        vec![lane.events[0].event_id.as_str()]
+    );
+    assert_eq!(selected.events.len(), 3);
     let mut stale = graph.clone();
     stale.slots[0].revisions[0].asset.sha256 = "f".repeat(64);
     assert!(

@@ -802,8 +802,8 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
     assert!(String::from_utf8_lossy(&third.stdout).contains("rebuilt 1 scene languages; reused 0"));
     assert!(run_three.join("scene-es/master.mkv").exists());
 
-    // The selected cel bytes remain identical, but its bound attachment now
-    // ends halfway through the selected native phrase. Hash checks alone pass.
+    // The selected cel bytes remain identical, but a second picture attachment
+    // is introduced without an authored semantic event. Hash checks alone pass.
     let mut contract: serde_json::Value =
         serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
     contract["attachments"][0]["end"] =
@@ -840,7 +840,9 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
         .output()
         .unwrap();
     assert!(!shifted.status.success());
-    assert!(String::from_utf8_lossy(&shifted.stderr).contains("misses native phrase span"));
+    assert!(
+        String::from_utf8_lossy(&shifted.stderr).contains("not bound to a selected semantic event")
+    );
 }
 
 #[test]

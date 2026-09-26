@@ -6,7 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     EVENT_BINDING_REQUEST_SCHEMA, EventBindingRequest, Graph, ImmutableRef, SelectedPointer,
-    SemanticEvent, SemanticEventBinding, append_semantic_events, validate_selected_graph,
+    SemanticEvent, SemanticEventBinding, SemanticEventRetirement, append_semantic_events,
+    validate_selected_graph,
 };
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
@@ -488,9 +489,34 @@ pub fn compile_selected_event_request(
             supersedes_event_id: event.supersedes_event_id.clone(),
         });
     }
+    let replaced = bindings
+        .iter()
+        .filter_map(|binding| binding.supersedes_event_id.as_deref())
+        .collect::<BTreeSet<_>>();
+    let retirements = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == scene.scene_id)
+        .ok_or_else(|| anyhow::anyhow!("selected graph scene node missing"))?
+        .events
+        .iter()
+        .filter_map(|event_id| {
+            let event = graph
+                .events
+                .iter()
+                .find(|event| &event.event_id == event_id)?;
+            (event.language == language_id && !replaced.contains(event_id.as_str())).then(|| {
+                SemanticEventRetirement {
+                    node_id: scene.scene_id.clone(),
+                    event_id: event_id.clone(),
+                }
+            })
+        })
+        .collect();
     let request = EventBindingRequest {
         schema: EVENT_BINDING_REQUEST_SCHEMA.into(),
         bindings,
+        retirements,
         next_lock_logical_id: next_lock_logical_id.into(),
     };
     append_semantic_events(graph, &request)?;

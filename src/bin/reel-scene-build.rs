@@ -967,6 +967,35 @@ fn validate_authored_semantic_assets(
     Ok(())
 }
 
+fn native_picture_interval(
+    event_id: &str,
+    narration_start: u64,
+    narration_end: u64,
+    narration_source_start: u64,
+    picture_start: u64,
+    picture_end: u64,
+    phrase_start: u64,
+    phrase_end: u64,
+) -> Result<(u64, u64)> {
+    let start = narration_start
+        .checked_add(phrase_start)
+        .and_then(|value| value.checked_sub(narration_source_start))
+        .with_context(|| format!("native phrase start outside narration for {event_id}"))?;
+    let end = narration_start
+        .checked_add(phrase_end)
+        .and_then(|value| value.checked_sub(narration_source_start))
+        .with_context(|| format!("native phrase end outside narration for {event_id}"))?;
+    if start < narration_start
+        || end > narration_end
+        || start >= end
+        || start < picture_start
+        || end > picture_end
+    {
+        bail!("semantic event {event_id} picture or narration misses native phrase span");
+    }
+    Ok((start, end))
+}
+
 fn validate_semantic_timeline(
     semantic: &reel::semantic_delivery::SemanticDelivery,
     selection: &reel_assembly::SelectedClosure,
@@ -1045,34 +1074,16 @@ fn validate_semantic_timeline(
                 event.event_id
             );
         }
-        let start = narration
-            .start_sample
-            .checked_add(sample(event.phrase_start_seconds)?)
-            .and_then(|value| value.checked_sub(narration_job.source_start_sample))
-            .with_context(|| {
-                format!(
-                    "native phrase start outside narration for {}",
-                    event.event_id
-                )
-            })?;
-        let end = narration
-            .start_sample
-            .checked_add(sample(event.phrase_end_seconds)?)
-            .and_then(|value| value.checked_sub(narration_job.source_start_sample))
-            .with_context(|| {
-                format!("native phrase end outside narration for {}", event.event_id)
-            })?;
-        if start < narration.start_sample
-            || end > narration.end_sample
-            || start >= end
-            || start < picture.start_sample
-            || end > picture.end_sample
-        {
-            bail!(
-                "semantic event {} picture or narration misses native phrase span",
-                event.event_id
-            );
-        }
+        let (start, end) = native_picture_interval(
+            &event.event_id,
+            narration.start_sample,
+            narration.end_sample,
+            narration_job.source_start_sample,
+            picture.start_sample,
+            picture.end_sample,
+            sample(event.phrase_start_seconds)?,
+            sample(event.phrase_end_seconds)?,
+        )?;
         for id in &binding.audio_attachment_ids {
             let item = job
                 .audio
@@ -1176,5 +1187,25 @@ fn main() {
     if let Err(error) = run() {
         eprintln!("{error:#}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::native_picture_interval;
+
+    #[test]
+    fn exact_native_phrase_must_fit_the_bound_picture() {
+        assert_eq!(
+            native_picture_interval("phrase", 100, 340, 20, 80, 340, 20, 260).unwrap(),
+            (100, 340)
+        );
+        assert!(
+            native_picture_interval("phrase", 100, 340, 20, 80, 220, 20, 260)
+                .unwrap_err()
+                .to_string()
+                .contains("misses native phrase span")
+        );
+        assert!(native_picture_interval("phrase", 100, 340, 120, 80, 340, 20, 260).is_err());
     }
 }
