@@ -192,10 +192,14 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
         &root.join("policy.json"),
         &serde_json::json!({"schema":"reel.scene-policy.v1","policy_id":"narrative","target_composition_seconds_min":0.5,"target_composition_seconds_max":10.0,"hard_unchanged_composition_seconds_max":10.0,"semantic_cuts_required":true}),
     );
-    let empty =
-        serde_json::json!({"schema":"reel.scene-asset-bindings.v1","scope_id":"empty","assets":{}});
-    write_json(&root.join("season-bindings.json"), &empty);
-    write_json(&root.join("episode-bindings.json"), &empty);
+    write_json(
+        &root.join("season-bindings.json"),
+        &serde_json::json!({"schema":"reel.scene-asset-bindings.v1","scope_id":"season","assets":{}}),
+    );
+    write_json(
+        &root.join("episode-bindings.json"),
+        &serde_json::json!({"schema":"reel.scene-asset-bindings.v1","scope_id":"ep","assets":{}}),
+    );
     let asset = |logical: &str, reference: &serde_json::Value| serde_json::json!({"logical_id":logical,"sha256":reference["sha256"],"bytes":reference["bytes"],"cache_uri":format!("cache://sha256/{}",reference["sha256"].as_str().unwrap()),"selection_state":"selected-private-production"});
     write_json(
         &root.join("scene-bindings.json"),
@@ -256,6 +260,27 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
     );
     fs::write(root.join("alignment.json"), original_alignment).unwrap();
     fs::write(root.join("scene-bindings.json"), original_bindings).unwrap();
+    let selected_bindings = fs::read(root.join("scene-bindings.json")).unwrap();
+    for (field, value) in [
+        ("selection_state", "held"),
+        ("cache_uri", "cache://sha256/invalid"),
+    ] {
+        let mut invalid: serde_json::Value = serde_json::from_slice(&selected_bindings).unwrap();
+        invalid["assets"]["alignment"][field] = value.into();
+        write_json(&root.join("scene-bindings.json"), &invalid);
+        let rejected = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
+            .arg("build")
+            .arg(root)
+            .arg("build.json")
+            .arg("--asset-root")
+            .arg(root)
+            .arg("--output-dir")
+            .arg(root.join(format!("invalid-alignment-{field}")))
+            .output()
+            .unwrap();
+        assert!(!rejected.status.success(), "{field} accepted");
+    }
+    fs::write(root.join("scene-bindings.json"), selected_bindings).unwrap();
 
     // The scene author can select a score role, but delivery must actually
     // bind the selected score on M for that event.
@@ -597,6 +622,7 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
         .arg("compile")
         .arg(root.join("catalog.json"))
         .arg(root.join("definition.json"))
+        .arg(root.join("episode.json"))
         .arg(root.join("scene.json"))
         .arg("es")
         .arg(root.join("season-bindings.json"))

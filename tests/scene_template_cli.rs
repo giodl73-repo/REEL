@@ -78,9 +78,13 @@ fn compiles_selected_poem_from_scene_content_and_rejects_changed_definition() {
     alignment_binding["bytes"] = (alignment_bytes.len() as u64).into();
     alignment_binding["cache_uri"] = format!("cache://sha256/{}", sha(&alignment_bytes)).into();
     write(&dir.join("catalog.json"), &catalog);
+    write(&dir.join("episode-authoring.json"), &fixture("episode"));
     write(&dir.join("scene.json"), &scene);
     write(&dir.join("season.json"), &fixture("season-bindings"));
-    write(&dir.join("episode.json"), &fixture("episode-bindings"));
+    write(
+        &dir.join("episode-bindings.json"),
+        &fixture("episode-bindings"),
+    );
     write(&dir.join("bindings.json"), &scene_bindings);
     write(
         &dir.join("paths.json"),
@@ -92,10 +96,11 @@ fn compiles_selected_poem_from_scene_content_and_rejects_changed_definition() {
             .arg("compile")
             .arg(dir.join("catalog.json"))
             .arg(dir.join("definition.json"))
+            .arg(dir.join("episode-authoring.json"))
             .arg(dir.join("scene.json"))
             .arg("es")
             .arg(dir.join("season.json"))
-            .arg(dir.join("episode.json"))
+            .arg(dir.join("episode-bindings.json"))
             .arg(dir.join("bindings.json"))
             .arg(dir.join("paths.json"))
             .arg(dir.join("source-text.json"))
@@ -119,6 +124,12 @@ fn compiles_selected_poem_from_scene_content_and_rejects_changed_definition() {
         serde_json::from_slice(&fs::read(dir.join("receipt.json")).unwrap()).unwrap();
     assert_eq!(receipt["ass_sha256"], sha(ass.as_bytes()));
     assert_eq!(receipt["source_text_state"], "canonical-original");
+    let mut wrong_season = fixture("season-bindings");
+    wrong_season["scope_id"] = "another-season".into();
+    write(&dir.join("season.json"), &wrong_season);
+    let rejected = run("wrong-season.ass", "wrong-season-receipt.json");
+    assert!(!rejected.status.success());
+    write(&dir.join("season.json"), &fixture("season-bindings"));
     fs::write(dir.join("definition.json"), b"{}").unwrap();
     let stale = run("stale.ass", "stale-receipt.json");
     assert!(!stale.status.success());

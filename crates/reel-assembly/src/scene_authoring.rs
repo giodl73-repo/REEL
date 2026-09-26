@@ -419,6 +419,7 @@ pub fn compile_native_event_spans(
 pub fn compile_selected_event_request(
     graph: &Graph,
     pointer: &SelectedPointer,
+    episode: &Episode,
     scene: &Scene,
     language_id: &str,
     scopes: &[&ScopedBindings],
@@ -426,6 +427,22 @@ pub fn compile_selected_event_request(
     next_lock_logical_id: &str,
 ) -> Result<EventBindingRequest> {
     validate_selected_graph(pointer, graph)?;
+    if episode.schema != EPISODE_SCHEMA
+        || scene.schema != SCENE_SCHEMA
+        || !["ready-for-private-build", "scene-build-context"]
+            .contains(&episode.authoring_state.as_str())
+        || scene.episode_id != episode.episode_id
+        || !episode.scene_ids.contains(&scene.scene_id)
+        || scopes.len() != 3
+        || scopes[0].schema != BINDINGS_SCHEMA
+        || scopes[0].scope_id != scene.scene_id
+        || scopes[1].schema != BINDINGS_SCHEMA
+        || scopes[1].scope_id != episode.episode_id
+        || scopes[2].schema != BINDINGS_SCHEMA
+        || scopes[2].scope_id != episode.season_id
+    {
+        bail!("event compiler inputs are outside scene, episode or season scope");
+    }
     if scene.authoring_state != "ready-for-private-build" {
         bail!("scene is not ready for private build");
     }
@@ -679,6 +696,9 @@ pub fn resolve_episode_presentation(
     {
         bail!("unsupported authoring schema");
     }
+    if season.scope_id != episode.season_id || episode_bindings.scope_id != episode.episode_id {
+        bail!("presentation bindings are outside season or episode scope");
+    }
     if episode.authoring_state != "ready-for-private-build" {
         bail!(
             "episode {} authoring state is {}",
@@ -717,6 +737,7 @@ pub fn resolve_episode_presentation(
     }
     let fingerprint_sha256 = digest(&(
         &episode.episode_id,
+        &episode.season_id,
         &episode.presentation,
         &selected_inputs,
         &template_definitions,
@@ -791,6 +812,31 @@ fn use_template<'a>(use_: &PresentationUse, catalog: &'a TemplateCatalog) -> Res
     Ok(template)
 }
 
+fn language_presentation(
+    use_: &Option<PresentationUse>,
+    language_id: &str,
+) -> Option<PresentationUse> {
+    let mut selected = use_.clone()?;
+    if let Some(content) = selected.content.as_object_mut() {
+        for key in [
+            "source_text_bindings",
+            "ass_layer_bindings",
+            "template_receipt_bindings",
+            "line_cue_ids",
+            "titles",
+            "lines_by_language",
+        ] {
+            if let Some(map) = content
+                .get_mut(key)
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                map.retain(|language, _| language == language_id);
+            }
+        }
+    }
+    Some(selected)
+}
+
 /// Resolve one scene without changing any source file or choosing an asset.
 /// Episode and season bindings may be replaced independently of scene data.
 pub fn resolve_scene(
@@ -810,6 +856,12 @@ pub fn resolve_scene(
             .any(|s| s.schema != BINDINGS_SCHEMA)
     {
         bail!("unsupported authoring schema");
+    }
+    if season.scope_id != episode.season_id
+        || episode_bindings.scope_id != episode.episode_id
+        || scene_bindings.scope_id != scene.scene_id
+    {
+        bail!("scene bindings are outside season, episode or scene scope");
     }
     if episode.authoring_state != "ready-for-private-build"
         && episode.authoring_state != "scene-build-context"
@@ -967,7 +1019,7 @@ pub fn resolve_scene(
                 &scene.scene_id,
                 &scene.source_scope_ids,
                 &scene.source_authority_id,
-                &scene.presentation,
+                language_presentation(&scene.presentation, language_id),
                 &scene.continuity_tags,
                 &language,
                 &language_inputs,

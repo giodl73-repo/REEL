@@ -16,6 +16,10 @@ their exact selected inputs and audits the rendered picture clock.
 | Scene bindings | Selected language takes, phrase alignments, pictures, Sonic and VFX with cache hashes and byte counts | Only consuming scene language lanes |
 | Scene policy | Preferred cadence, hard unchanged-composition maximum and semantic-cut requirement | Scenes naming that policy |
 
+The resolver and event compiler require each binding file's `scope_id` to
+match its owning season, episode or scene ID. A valid asset hash from another
+scope cannot be rebound by passing the wrong binding file.
+
 The scene invocation says `template_id`, role and content such as poem ID,
 canonical line-to-cue mapping or chapter number/title. Font, panel geometry,
 color, fixed presentation duration and layout belong to the template definition.
@@ -53,13 +57,13 @@ reel-scene-authoring resolve <catalog.json> <episode.json> <scene.json> <policy.
 reel-scene-authoring resolve-language <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <language> --output <new.json>
 reel-scene-authoring resolve-episode-presentation <catalog.json> <episode.json> <season-bindings.json> <episode-bindings.json> --output <new.json>
 reel-scene-authoring resolve-trigger-text <word-evidence.json> <trigger-spec.json> --alignment <new.json> --receipt <new.json>
-reel-scene-authoring compile-events <graph.json> <pointer.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <next-lock-id> --output <new.json>
+reel-scene-authoring compile-events <graph.json> <pointer.json> <episode.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <next-lock-id> --output <new.json>
 reel-scene-authoring audit-picture <policy.json> <rendered-spans.json> <sample-rate> --output <new.json>
 reel-scene-build build <project-root> <build.json> --asset-root <hydrated-cache-root> --output-dir <new-dir>
 reel-scene-build emit-changed-only-graph <index.json> --asset-root <hydrated-cache-root> --output <new-graph.json>
 reel-scene-build execute-changed-only <index.json> <prior-state.json> --asset-root <hydrated-cache-root> --output-root <new-run-dir>
 reel-scene-build execute-episode <project-root> <episode-build.json> <prior-state.json> --asset-root <hydrated-root> --output-root <new-dir-within-hydrated-root>
-reel-scene-template compile <catalog.json> <definition.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <source-text.json> --output-ass <new.ass> --receipt <new.json>
+reel-scene-template compile <catalog.json> <definition.json> <episode.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <source-text.json> --output-ass <new.ass> --receipt <new.json>
 reel-episode-conform build <manifest.json> --input-root <authoring-root> --asset-root <hydrated-media-root> --output-dir <new-dir>
 ```
 
@@ -69,6 +73,8 @@ changes episode presentation without marking every narrative scene stale.
 Scene language fingerprints include episode/season identity and the metadata
 of score roles actually used by that lane, so a poem-theme or arrangement
 rebind cannot silently reuse an old scene receipt with unchanged media bytes.
+Language-local poem line maps and selected presentation layer bindings affect
+only their own lane; the episode presentation fingerprint includes season scope.
 `resolve-trigger-text` turns an author-named spoken phrase into a sample-exact
 native marker using word evidence from the selected take. The trigger file
 contains the exact cue text, its SHA-256, selected take SHA-256, and ordered

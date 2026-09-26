@@ -55,6 +55,14 @@ pub fn read_verified_alignments(
         if matches.len() != 1
             || matches[0].sha256 != actual_sha
             || matches[0].bytes != bytes.len() as u64
+            || matches[0].logical_id.is_empty()
+            || matches[0].cache_uri != format!("cache://sha256/{actual_sha}")
+            || ![
+                "selected-private-production",
+                "principal-approved",
+                "release-cleared",
+            ]
+            .contains(&matches[0].selection_state.as_str())
         {
             bail!(
                 "alignment {} differs from selected scoped bytes",

@@ -149,6 +149,60 @@ fn season_opening_rebind_only_invalidates_episode_presentation() {
 }
 
 #[test]
+fn english_poem_line_map_change_only_invalidates_english_scene_lane() {
+    let (catalog, episode, mut scene, policy, season, episode_bindings, scene_bindings) = subject();
+    scene.presentation.as_mut().unwrap().content["titles"] =
+        serde_json::json!({"es":"Recuerdos","en":"Memories"});
+    scene.presentation.as_mut().unwrap().content["lines_by_language"] =
+        serde_json::json!({"es":[{"text":"Línea"}],"en":[{"text":"Line"}]});
+    let first = resolve_scene(
+        &catalog,
+        &episode,
+        &scene,
+        &policy,
+        &season,
+        &episode_bindings,
+        &scene_bindings,
+    )
+    .unwrap();
+    scene.presentation.as_mut().unwrap().content["line_cue_ids"]["en"] =
+        serde_json::json!(["en-1", "en-2"]);
+    scene.presentation.as_mut().unwrap().content["titles"]["en"] = "New title".into();
+    scene.presentation.as_mut().unwrap().content["lines_by_language"]["en"] =
+        serde_json::json!([{"text":"New line"}]);
+    let second = resolve_scene(
+        &catalog,
+        &episode,
+        &scene,
+        &policy,
+        &season,
+        &episode_bindings,
+        &scene_bindings,
+    )
+    .unwrap();
+    assert_eq!(
+        first.language_fingerprints["es"],
+        second.language_fingerprints["es"]
+    );
+    assert_ne!(
+        first.language_fingerprints["en"],
+        second.language_fingerprints["en"]
+    );
+}
+
+#[test]
+fn moving_episode_season_changes_presentation_fingerprint() {
+    let (catalog, mut episode, _, _, mut season, episode_bindings, _) = subject();
+    let first =
+        resolve_episode_presentation(&catalog, &episode, &season, &episode_bindings).unwrap();
+    episode.season_id = "another-season".into();
+    season.scope_id = episode.season_id.clone();
+    let second =
+        resolve_episode_presentation(&catalog, &episode, &season, &episode_bindings).unwrap();
+    assert_ne!(first.fingerprint_sha256, second.fingerprint_sha256);
+}
+
+#[test]
 fn template_layout_is_owned_by_template_and_only_its_users_rebuild() {
     let (mut catalog, episode, scene, policy, season, episode_bindings, scene_bindings) = subject();
     let first = resolve_scene(
@@ -284,8 +338,58 @@ fn one_ready_scene_builds_inside_an_unfinished_episode_context() {
 }
 
 #[test]
+fn selected_bindings_must_match_their_owning_scopes() {
+    let (catalog, episode, scene, policy, mut season, mut episode_bindings, mut scene_bindings) =
+        subject();
+    season.scope_id = "another-season".into();
+    assert!(
+        resolve_scene(
+            &catalog,
+            &episode,
+            &scene,
+            &policy,
+            &season,
+            &episode_bindings,
+            &scene_bindings
+        )
+        .is_err()
+    );
+    assert!(resolve_episode_presentation(&catalog, &episode, &season, &episode_bindings).is_err());
+    season.scope_id = episode.season_id.clone();
+    episode_bindings.scope_id = "another-episode".into();
+    assert!(
+        resolve_scene(
+            &catalog,
+            &episode,
+            &scene,
+            &policy,
+            &season,
+            &episode_bindings,
+            &scene_bindings
+        )
+        .is_err()
+    );
+    assert!(resolve_episode_presentation(&catalog, &episode, &season, &episode_bindings).is_err());
+    episode_bindings.scope_id = episode.episode_id.clone();
+    scene_bindings.scope_id = "another-scene".into();
+    assert!(
+        resolve_scene(
+            &catalog,
+            &episode,
+            &scene,
+            &policy,
+            &season,
+            &episode_bindings,
+            &scene_bindings
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn scene_fingerprint_tracks_scope_and_consumed_score_provenance() {
-    let (catalog, mut episode, scene, policy, season, episode_bindings, scene_bindings) = subject();
+    let (catalog, mut episode, scene, policy, mut season, episode_bindings, scene_bindings) =
+        subject();
     let baseline = resolve_scene(
         &catalog,
         &episode,
@@ -297,6 +401,7 @@ fn scene_fingerprint_tracks_scope_and_consumed_score_provenance() {
     )
     .unwrap();
     episode.season_id = "another-season".into();
+    season.scope_id = episode.season_id.clone();
     let moved = resolve_scene(
         &catalog,
         &episode,
@@ -309,6 +414,7 @@ fn scene_fingerprint_tracks_scope_and_consumed_score_provenance() {
     .unwrap();
     assert_ne!(baseline.language_fingerprints, moved.language_fingerprints);
     episode.season_id = "season-1".into();
+    season.scope_id = episode.season_id.clone();
     episode.score_palette[0].source_poem_id = "another-poem".into();
     let rescored = resolve_scene(
         &catalog,
@@ -379,7 +485,7 @@ fn native_markers_bind_only_to_selected_reel_slots() {
         Asset, Disposition, GRAPH_SCHEMA, Graph, ImmutableRef, Lane, Node, POINTER_SCHEMA,
         Revision, SelectedPointer, Slot,
     };
-    let (_, _, scene, _, season, episode_bindings, scene_bindings) = subject();
+    let (_, episode, scene, _, season, episode_bindings, scene_bindings) = subject();
     let make_slot = |slot_id: &str, lane: Lane, key: &str| {
         let selected = &scene_bindings.assets[key];
         Slot {
@@ -438,6 +544,7 @@ fn native_markers_bind_only_to_selected_reel_slots() {
     let request = compile_selected_event_request(
         &graph,
         &pointer,
+        &episode,
         &scene,
         "es",
         &[&scene_bindings, &episode_bindings, &season],
@@ -446,6 +553,21 @@ fn native_markers_bind_only_to_selected_reel_slots() {
     )
     .unwrap();
     assert_eq!(request.bindings[0].event.phrase_end_seconds, 10.0);
+    let mut wrong_season = season.clone();
+    wrong_season.scope_id = "other-season".into();
+    assert!(
+        compile_selected_event_request(
+            &graph,
+            &pointer,
+            &episode,
+            &scene,
+            "es",
+            &[&scene_bindings, &episode_bindings, &wrong_season],
+            &alignments,
+            "lock-2",
+        )
+        .is_err()
+    );
     let mut prior = graph.clone();
     prior.events = ["old-a", "old-b"]
         .into_iter()
@@ -472,6 +594,7 @@ fn native_markers_bind_only_to_selected_reel_slots() {
     let replacement = compile_selected_event_request(
         &prior,
         &pointer,
+        &episode,
         &scene,
         "es",
         &[&scene_bindings, &episode_bindings, &season],
@@ -492,6 +615,7 @@ fn native_markers_bind_only_to_selected_reel_slots() {
         compile_selected_event_request(
             &stale,
             &pointer,
+            &episode,
             &scene,
             "es",
             &[&scene_bindings, &episode_bindings, &season],

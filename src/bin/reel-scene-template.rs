@@ -3,8 +3,8 @@
 
 use anyhow::{Context, Result, bail};
 use reel_assembly::scene_authoring::{
-    AssetRef, BINDINGS_SCHEMA, CATALOG_SCHEMA, NativeAlignment, SCENE_SCHEMA, Scene,
-    ScopedBindings, TemplateCatalog,
+    AssetRef, BINDINGS_SCHEMA, CATALOG_SCHEMA, EPISODE_SCHEMA, Episode, NativeAlignment,
+    SCENE_SCHEMA, Scene, ScopedBindings, TemplateCatalog,
 };
 use reel_assembly::template_presentation::{
     EditableTextInvocation, EditableTextTemplate, INVOCATION_SCHEMA, PoemLine,
@@ -128,6 +128,7 @@ fn run() -> Result<()> {
         command,
         catalog_path,
         definition_path,
+        episode_authoring_path,
         scene_path,
         language,
         season_path,
@@ -142,17 +143,23 @@ fn run() -> Result<()> {
     ] = args.as_slice()
     else {
         bail!(
-            "usage: reel-scene-template compile <catalog.json> <definition.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <source-text.json> --output-ass <new.ass> --receipt <new.json>"
+            "usage: reel-scene-template compile <catalog.json> <definition.json> <episode.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <source-text.json> --output-ass <new.ass> --receipt <new.json>"
         );
     };
     if command != "compile" || flag_ass != "--output-ass" || flag_receipt != "--receipt" {
         bail!("expected compile --output-ass <new.ass> --receipt <new.json>");
     }
     let catalog: TemplateCatalog = read(catalog_path)?;
+    let episode_authoring: Episode = read(episode_authoring_path)?;
     let scene: Scene = read(scene_path)?;
     if catalog.schema != CATALOG_SCHEMA
+        || episode_authoring.schema != EPISODE_SCHEMA
+        || !["ready-for-private-build", "scene-build-context"]
+            .contains(&episode_authoring.authoring_state.as_str())
         || scene.schema != SCENE_SCHEMA
         || scene.authoring_state != "ready-for-private-build"
+        || scene.episode_id != episode_authoring.episode_id
+        || !episode_authoring.scene_ids.contains(&scene.scene_id)
     {
         bail!("scene is not ready for private build");
     }
@@ -235,10 +242,9 @@ fn run() -> Result<()> {
     if [&season, &episode, &scene_bindings]
         .iter()
         .any(|scope| scope.schema != BINDINGS_SCHEMA || scope.scope_id.is_empty())
-        || episode.scope_id != scene.episode_id
+        || episode.scope_id != episode_authoring.episode_id
         || scene_bindings.scope_id != scene.scene_id
-        || season.scope_id == episode.scope_id
-        || season.scope_id == scene_bindings.scope_id
+        || season.scope_id != episode_authoring.season_id
     {
         bail!("asset binding files have wrong schema or scope identity");
     }
