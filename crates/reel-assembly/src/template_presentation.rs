@@ -42,6 +42,8 @@ pub struct EditableTextTemplate {
     pub schema: String,
     pub template_id: String,
     pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub soundtrack_requirement: Option<String>,
     pub canvas_width: u32,
     pub canvas_height: u32,
     pub font_name: String,

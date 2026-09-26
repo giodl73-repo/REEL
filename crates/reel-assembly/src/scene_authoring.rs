@@ -64,6 +64,8 @@ pub struct Template {
     pub kind: String,
     pub definition_sha256: String,
     pub required_content_keys: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub soundtrack_requirement: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -983,6 +985,15 @@ fn use_template<'a>(use_: &PresentationUse, catalog: &'a TemplateCatalog) -> Res
             bail!("template {} missing content {key}", template.template_id);
         }
     }
+    if !matches!(
+        template.soundtrack_requirement.as_deref(),
+        None | Some("selected-episode-score")
+    ) {
+        bail!(
+            "template {} has an unknown soundtrack requirement",
+            template.template_id
+        );
+    }
     if content.keys().any(|key| {
         ["layout", "font", "geometry", "pixels", "duration_seconds"].contains(&key.as_str())
     }) {
@@ -1078,6 +1089,30 @@ pub fn resolve_scene(
     let mut selected_inputs = BTreeMap::new();
     let mut template_definitions = BTreeMap::new();
     let mut score_roles = BTreeMap::new();
+    let required_soundtrack = if let Some(use_) = &scene.presentation {
+        let template = use_template(use_, catalog)?;
+        if template.soundtrack_requirement.as_deref() == Some("selected-episode-score") {
+            let role = use_
+                .content
+                .get("score_role")
+                .and_then(|value| value.as_str())
+                .filter(|role| !role.trim().is_empty())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("template {} requires score_role", template.template_id)
+                })?;
+            let poem = use_
+                .content
+                .get("poem_id")
+                .and_then(|value| value.as_str())
+                .filter(|poem| !poem.trim().is_empty())
+                .ok_or_else(|| anyhow::anyhow!("soundtrack-required template needs poem_id"))?;
+            Some((role.to_owned(), poem.to_owned()))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     for use_ in scene.presentation.iter() {
         let selected = use_template(use_, catalog)?;
         if !sha(&selected.definition_sha256) {
@@ -1101,6 +1136,15 @@ pub fn resolve_scene(
             bail!("invalid episode score palette");
         }
         score_roles.insert(score.role.clone(), score.asset_binding.clone());
+    }
+    if let Some((role, poem)) = &required_soundtrack {
+        if !episode
+            .score_palette
+            .iter()
+            .any(|score| score.role == *role && score.source_poem_id == *poem)
+        {
+            bail!("required soundtrack role {role} lacks a poem-matched episode score");
+        }
     }
     if scene.languages.is_empty() {
         bail!("scene has no language lanes");
@@ -1189,6 +1233,11 @@ pub fn resolve_scene(
                 let asset = binding(key, &scopes)?.clone();
                 selected_inputs.insert(key.clone(), asset.clone());
                 language_inputs.insert(key.clone(), asset);
+            }
+        }
+        if let Some((role, _)) = &required_soundtrack {
+            if !used_scores.contains_key(role) {
+                bail!("{language_id} has no event bound to required soundtrack role {role}");
             }
         }
         language_fingerprints.insert(

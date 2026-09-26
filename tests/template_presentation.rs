@@ -28,6 +28,7 @@ fn template(kind: &str) -> EditableTextTemplate {
         schema: TEMPLATE_SCHEMA.into(),
         template_id: "test-master".into(),
         kind: kind.into(),
+        soundtrack_requirement: None,
         canvas_width: 1280,
         canvas_height: 720,
         font_name: "Monotype Corsiva".into(),

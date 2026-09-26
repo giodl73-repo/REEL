@@ -35,6 +35,71 @@ fn subject() -> (
 }
 
 #[test]
+fn soundtrack_required_poem_rejects_missing_role_wrong_poem_and_silent_lane() {
+    let (mut catalog, mut episode, mut scene, policy, season, episode_bindings, scene_bindings) =
+        subject();
+    catalog
+        .templates
+        .iter_mut()
+        .find(|item| item.template_id == "poem-v1")
+        .unwrap()
+        .soundtrack_requirement = Some("selected-episode-score".into());
+    let content = scene
+        .presentation
+        .as_mut()
+        .unwrap()
+        .content
+        .as_object_mut()
+        .unwrap();
+    content.insert("score_role".into(), "poem.intimate".into());
+    let resolve = |episode: &Episode, scene: &Scene| {
+        resolve_scene(
+            &catalog,
+            episode,
+            scene,
+            &policy,
+            &season,
+            &episode_bindings,
+            &scene_bindings,
+        )
+    };
+    assert!(resolve(&episode, &scene).is_ok());
+
+    scene
+        .presentation
+        .as_mut()
+        .unwrap()
+        .content
+        .as_object_mut()
+        .unwrap()
+        .remove("score_role");
+    assert!(
+        resolve(&episode, &scene)
+            .unwrap_err()
+            .to_string()
+            .contains("score_role")
+    );
+    scene.presentation.as_mut().unwrap().content["score_role"] = "poem.intimate".into();
+
+    episode.score_palette[0].source_poem_id = "different-poem".into();
+    assert!(
+        resolve(&episode, &scene)
+            .unwrap_err()
+            .to_string()
+            .contains("poem-matched")
+    );
+    episode.score_palette[0].source_poem_id = "poem-recollections".into();
+
+    scene.languages.get_mut("en").unwrap().events[0].score = ScoreUse::Held;
+    assert!(
+        resolve(&episode, &scene)
+            .unwrap_err()
+            .to_string()
+            .contains("required soundtrack role")
+    );
+}
+
+#[test]
 fn v2_owns_effects_once_and_compiles_language_local_triggers() {
     let (catalog, episode, mut scene, policy, season, episode_bindings, mut scene_bindings) =
         subject();

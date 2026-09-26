@@ -121,6 +121,33 @@ fn compiles_selected_poem_from_scene_content_and_rejects_changed_definition() {
         "{}",
         String::from_utf8_lossy(&good.stderr)
     );
+    let mut scored_definition = definition.clone();
+    scored_definition["soundtrack_requirement"] = json!("selected-episode-score");
+    write(&dir.join("definition.json"), &scored_definition);
+    catalog["templates"][2]["definition_sha256"] =
+        sha(&fs::read(dir.join("definition.json")).unwrap()).into();
+    catalog["templates"][2]["soundtrack_requirement"] = json!("selected-episode-score");
+    write(&dir.join("catalog.json"), &catalog);
+    let missing_score = run("missing-score.ass", "missing-score-receipt.json");
+    assert!(!missing_score.status.success());
+    assert!(String::from_utf8_lossy(&missing_score.stderr).contains("score_role"));
+    scene["presentation"]["content"]["score_role"] = json!("poem.intimate");
+    write(&dir.join("scene.json"), &scene);
+    let scored = run("scored.ass", "scored-receipt.json");
+    assert!(
+        scored.status.success(),
+        "{}",
+        String::from_utf8_lossy(&scored.stderr)
+    );
+    let mut unselected_score = fixture("episode-bindings");
+    unselected_score["assets"]["score.poem.intimate"]["selection_state"] = json!("candidate");
+    write(&dir.join("episode-bindings.json"), &unselected_score);
+    let rejected_score = run("unselected-score.ass", "unselected-score-receipt.json");
+    assert!(!rejected_score.status.success());
+    write(
+        &dir.join("episode-bindings.json"),
+        &fixture("episode-bindings"),
+    );
     let ass = fs::read_to_string(dir.join("poem.ass")).unwrap();
     assert!(ass.contains("Línea original"));
     assert!(ass.contains("por Andrés Alarcón García"));

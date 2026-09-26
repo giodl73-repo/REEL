@@ -183,6 +183,7 @@ fn run() -> Result<()> {
     let definition: EditableTextTemplate = serde_json::from_slice(&definition_bytes)?;
     if definition.template_id != template_entry.template_id
         || definition.kind != template_entry.kind
+        || definition.soundtrack_requirement != template_entry.soundtrack_requirement
     {
         bail!("template definition identity mismatch");
     }
@@ -254,6 +255,33 @@ fn run() -> Result<()> {
         bail!("asset binding files have wrong schema or scope identity");
     }
     let scopes = [&scene_bindings, &episode, &season];
+    if let Some(requirement) = &definition.soundtrack_requirement {
+        if requirement != "selected-episode-score" {
+            bail!("unknown template soundtrack requirement");
+        }
+        let role = content
+            .get("score_role")
+            .and_then(|value| value.as_str())
+            .filter(|role| !role.trim().is_empty())
+            .context("soundtrack-required template needs score_role")?;
+        let poem = content
+            .get("poem_id")
+            .and_then(|value| value.as_str())
+            .filter(|poem| !poem.trim().is_empty())
+            .context("soundtrack-required template needs poem_id")?;
+        let score = episode_authoring
+            .score_palette
+            .iter()
+            .find(|score| score.role == role && score.source_poem_id == poem)
+            .context("required soundtrack lacks a poem-matched episode score")?;
+        selected(&score.asset_binding, &scopes)?;
+        for (lane_id, lane) in &scene.languages {
+            if !lane.events.iter().any(|event| matches!(&event.score,
+                reel_assembly::scene_authoring::ScoreUse::Role { role: event_role } if event_role == role)) {
+                bail!("{lane_id} has no event bound to required soundtrack role {role}");
+            }
+        }
+    }
     let source_key = content
         .get("source_text_bindings")
         .and_then(|value| value.get(language))
