@@ -265,6 +265,33 @@ fn plan_uses_compiled_samples_and_one_global_frame_partition() {
     assert_eq!(p.audio[2].start_sample, 123);
 }
 #[test]
+fn recorded_picture_frame_counts_preserve_selected_cut_boundary() {
+    let t = tempfile::tempdir().unwrap();
+    let mut job = fixture(t.path());
+    job["pictures"][0]["delivery_frame_count"] = json!(25);
+    job["pictures"][1]["delivery_frame_count"] = json!(23);
+    write_json(&t.path().join("job.json"), &job);
+    let (_, plan) = scene_delivery::plan(&t.path().join("job.json"), t.path()).unwrap();
+    assert_eq!(plan.duration_samples, 96000);
+    assert_eq!(plan.frame_count, 48);
+    assert_eq!(plan.pictures[0].end_sample, 48001);
+    assert_eq!(plan.pictures[0].end_frame, 25);
+    assert_eq!(plan.pictures[1].start_frame, 25);
+    assert_eq!(plan.pictures[1].end_frame, 48);
+
+    job["pictures"][1]
+        .as_object_mut()
+        .unwrap()
+        .remove("delivery_frame_count");
+    write_json(&t.path().join("job.json"), &job);
+    assert!(
+        scene_delivery::plan(&t.path().join("job.json"), t.path())
+            .unwrap_err()
+            .to_string()
+            .contains("every picture")
+    );
+}
+#[test]
 fn rejects_missing_bus_audio_and_held_mix() {
     let t = tempfile::tempdir().unwrap();
     let mut j = fixture(t.path());

@@ -85,6 +85,10 @@ pub struct Picture {
     pub crop: Option<Crop>,
     #[serde(default)]
     pub motion: Option<PictureMotion>,
+    /// Optional exact delivery-frame allocation for recorded cut replay.
+    /// If any picture supplies this, every picture in the job must supply it.
+    #[serde(default)]
+    pub delivery_frame_count: Option<u64>,
     #[serde(default)]
     pub stillness_exception: Option<Exception>,
 }
@@ -273,6 +277,19 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         })
     };
     let mut pictures = Vec::new();
+    let explicit_picture_frames = job
+        .pictures
+        .iter()
+        .any(|picture| picture.delivery_frame_count.is_some());
+    if explicit_picture_frames
+        && job
+            .pictures
+            .iter()
+            .any(|picture| picture.delivery_frame_count.is_none())
+    {
+        bail!("declare delivery_frame_count for every picture or none");
+    }
+    let mut picture_frame_cursor = 0_u64;
     let mut prior: Option<&Picture> = None;
     let mut unchanged_start = 0;
     let mut cursor = 0;
@@ -330,7 +347,23 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         {
             bail!("unchanged composition exceeds limit: {}", p.attachment_id);
         }
-        let s = span(a)?;
+        let mut s = span(a)?;
+        if explicit_picture_frames {
+            let count = p
+                .delivery_frame_count
+                .context("missing delivery frame count")?;
+            if count == 0 {
+                bail!(
+                    "picture delivery frame count must be positive: {}",
+                    p.attachment_id
+                );
+            }
+            s.start_frame = picture_frame_cursor;
+            s.end_frame = picture_frame_cursor
+                .checked_add(count)
+                .context("picture delivery frame count overflow")?;
+            picture_frame_cursor = s.end_frame;
+        }
         if s.end_frame <= s.start_frame {
             bail!("composition has no delivery frame: {}", p.attachment_id);
         }
@@ -492,7 +525,11 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         fps_numerator: compiled.frame_rate.numerator,
         fps_denominator: compiled.frame_rate.denominator,
         duration_samples: compiled.duration_samples,
-        frame_count: frame(compiled.duration_samples, true)?,
+        frame_count: if explicit_picture_frames {
+            picture_frame_cursor
+        } else {
+            frame(compiled.duration_samples, true)?
+        },
         pictures,
         audio,
         external_layers,
