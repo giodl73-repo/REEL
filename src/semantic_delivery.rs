@@ -528,6 +528,8 @@ buses: {{ D: {{ state: present, reason: narration }}, M: {{ state: intentional-s
                 evidence: job.contract.clone(),
                 render_mode: Default::default(),
                 font: None,
+                render_source: None,
+                derivation_receipt: None,
             });
         assert!(
             validate_event_bindings(&selection, &extra_layer, std::slice::from_ref(&binding))
@@ -549,6 +551,86 @@ buses: {{ D: {{ state: present, reason: narration }}, M: {{ state: intentional-s
                 .to_string()
                 .contains("narration attachment")
         );
+    }
+
+    #[test]
+    fn one_external_effect_can_bind_two_selected_picture_events() {
+        let mut graph = event_graph();
+        let mut next_picture = graph.slots[0].clone();
+        next_picture.slot_id = "picture-next".into();
+        next_picture.revisions[0].asset.logical_id = "next-cel".into();
+        next_picture.revisions[0].asset.sha256 = hash('d');
+        next_picture.revisions[0].asset.cache_uri = format!("cache://sha256/{}", hash('d'));
+        graph.slots.push(next_picture);
+        graph.nodes[0].slots.push("picture-next".into());
+        let mut next_event = graph.events[0].clone();
+        next_event.event_id = "event.es.phrase-2".into();
+        next_event.picture.logical_id = "next-cel".into();
+        next_event.picture.sha256 = hash('d');
+        next_event.phrase_start_seconds = 2.0;
+        next_event.phrase_end_seconds = 3.0;
+        graph.events.push(next_event);
+        graph.nodes[0].events.push("event.es.phrase-2".into());
+        let selection = selected_closure(
+            &SelectedPointer {
+                schema: POINTER_SCHEMA.into(),
+                logical_id: "current".into(),
+                selected_lock: graph.lock.clone(),
+            },
+            &graph,
+            "scene",
+        )
+        .unwrap();
+        let job: Job = serde_yaml::from_str(&format!(
+            r#"
+schema: reel.scene-delivery.v0.1
+id: scene
+contract: {{ path: contract.yaml, sha256: {picture}, bytes: 1 }}
+production_manifest_sha256: {picture}
+width: 1920
+height: 1080
+max_composition_samples: 480000
+pictures:
+  - attachment_id: first-cel
+    source: {{ path: first.png, sha256: {picture}, bytes: 1 }}
+    kind: still
+    attention: first beat
+  - attachment_id: next-cel
+    source: {{ path: next.png, sha256: {next}, bytes: 1 }}
+    kind: still
+    attention: next beat
+audio:
+  - attachment_id: narration
+    source: {{ path: narration.wav, sha256: {narration}, bytes: 1 }}
+    bus: D
+    cue_id: cue.es.001
+external_layers:
+  - attachment_id: weather
+    reason: one continuous storm across the cut
+    evidence: {{ path: weather.mkv, sha256: {effect}, bytes: 1 }}
+    render_mode: timed-video-overlay
+buses: {{ D: {{ state: present, reason: narration }}, M: {{ state: intentional-silence, reason: none }}, E: {{ state: intentional-silence, reason: none }} }}
+"#,
+            picture = hash('b'),
+            next = hash('d'),
+            narration = hash('c'),
+            effect = hash('e'),
+        ))
+        .unwrap();
+        let first = EventDeliveryBinding {
+            event_id: "event.es.phrase-1".into(),
+            narration_attachment_id: "narration".into(),
+            picture_attachment_id: "first-cel".into(),
+            additional_picture_attachment_ids: vec![],
+            audio_attachment_ids: vec![],
+            external_layer_attachment_ids: vec!["weather".into()],
+        };
+        let second = EventDeliveryBinding {
+            event_id: "event.es.phrase-2".into(),
+            picture_attachment_id: "next-cel".into(),
+            ..first.clone()
+        };
+        validate_event_bindings(&selection, &job, &[first, second]).unwrap();
     }
 
     #[test]
