@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use reel::scene_authoring_inputs::read_verified_alignments;
+use reel::scene_delivery_compile::{CompileManifest, compile_to_dir};
 use reel_assembly::scene_authoring::{
     CacheObjectRef, Episode, RenderedSpan, Scene, ScenePolicy, ScopedBindings, TemplateCatalog,
     TriggerTextSpec, WhisperCppWordImport, WordTimingEvidence, audit_rendered_compositions,
@@ -58,6 +59,16 @@ fn verify_cache_object(root: &Path, object: &CacheObjectRef) -> Result<()> {
 fn run() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     match args.as_slice() {
+        [_, command, project_root, manifest_path] if command == "compile-delivery" => {
+            let manifest: CompileManifest = read(manifest_path)?;
+            let receipt = compile_to_dir(Path::new(project_root), &manifest)?;
+            println!(
+                "{} {} {} semantic events compiled",
+                receipt["scene_id"].as_str().unwrap_or("scene"),
+                receipt["language"].as_str().unwrap_or("language"),
+                receipt["semantic_event_count"].as_u64().unwrap_or(0)
+            );
+        }
         [
             _,
             command,
@@ -286,7 +297,7 @@ fn run() -> Result<()> {
             println!("{} visible composition runs checked", runs.len());
         }
         _ => bail!(
-            "usage: reel-scene-authoring resolve <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> --output <new.json>\n       reel-scene-authoring resolve-language <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <language> --output <new.json>\n       reel-scene-authoring resolve-episode-presentation <catalog.json> <episode.json> <season-bindings.json> <episode-bindings.json> --output <new.json>\n       reel-scene-authoring import-whispercpp-words <import-spec.json> <asset-root> --output <word-evidence.json> --receipt <new.json>\n       reel-scene-authoring resolve-trigger-text <word-evidence.json> <trigger-spec.json> --alignment <new.json> --receipt <new.json>\n       reel-scene-authoring compile-events <graph.json> <pointer.json> <episode.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <next-lock-id> --output <new.json>\n       reel-scene-authoring audit-picture <policy.json> <rendered-spans.json> <sample-rate> --output <new.json>"
+            "usage: reel-scene-authoring compile-delivery <project-root> <compile-manifest.json>\n       reel-scene-authoring resolve <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> --output <new.json>\n       reel-scene-authoring resolve-language <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <language> --output <new.json>\n       reel-scene-authoring resolve-episode-presentation <catalog.json> <episode.json> <season-bindings.json> <episode-bindings.json> --output <new.json>\n       reel-scene-authoring import-whispercpp-words <import-spec.json> <asset-root> --output <word-evidence.json> --receipt <new.json>\n       reel-scene-authoring resolve-trigger-text <word-evidence.json> <trigger-spec.json> --alignment <new.json> --receipt <new.json>\n       reel-scene-authoring compile-events <graph.json> <pointer.json> <episode.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <next-lock-id> --output <new.json>\n       reel-scene-authoring audit-picture <policy.json> <rendered-spans.json> <sample-rate> --output <new.json>"
         ),
     }
     Ok(())
