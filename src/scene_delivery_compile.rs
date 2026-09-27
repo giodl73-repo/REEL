@@ -489,8 +489,22 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         used_roles.insert(role.to_owned());
     }
     let mut selected_sonic = false;
-    for (event, binding) in events.iter().zip(event_bindings.iter_mut()) {
+    for (index, event) in events.iter().enumerate() {
+        if event.sonic_bindings.iter().collect::<BTreeSet<_>>().len() != event.sonic_bindings.len()
+        {
+            bail!(
+                "duplicate Sonic key on semantic event {}",
+                event.semantic_id
+            );
+        }
         for (position, key) in event.sonic_bindings.iter().enumerate() {
+            if index > 0 && events[index - 1].sonic_bindings.contains(key) {
+                continue;
+            }
+            let mut run_end = index + 1;
+            while run_end < events.len() && events[run_end].sonic_bindings.contains(key) {
+                run_end += 1;
+            }
             let sonic = asset(key, &scopes)?;
             let attachment = format!("e-{}-{}", event.semantic_id, position + 1);
             audio.push(json!({
@@ -510,17 +524,29 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
                 "id": attachment,
                 "target": {"kind":"sonic","audio_event_id":attachment},
                 "start": anchor(event.start, &cues)?,
-                "end": anchor(event.end, &cues)?
+                "end": anchor(events[run_end - 1].end, &cues)?
             }));
-            binding["audio_attachment_ids"]
-                .as_array_mut()
-                .context("semantic event audio binding is not an array")?
-                .push(json!(attachment));
+            for binding in &mut event_bindings[index..run_end] {
+                binding["audio_attachment_ids"]
+                    .as_array_mut()
+                    .context("semantic event audio binding is not an array")?
+                    .push(json!(attachment));
+            }
             selected_sonic = true;
         }
     }
-    for (event, binding) in events.iter().zip(event_bindings.iter_mut()) {
+    for (index, event) in events.iter().enumerate() {
+        if event.vfx_bindings.iter().collect::<BTreeSet<_>>().len() != event.vfx_bindings.len() {
+            bail!("duplicate VFX key on semantic event {}", event.semantic_id);
+        }
         for (position, key) in event.vfx_bindings.iter().enumerate() {
+            if index > 0 && events[index - 1].vfx_bindings.contains(key) {
+                continue;
+            }
+            let mut run_end = index + 1;
+            while run_end < events.len() && events[run_end].vfx_bindings.contains(key) {
+                run_end += 1;
+            }
             let overlay = asset(key, &scopes)?;
             let attachment = format!("fx-{}-{}", event.semantic_id, position + 1);
             let shot_id = format!("shot-{}", event.semantic_id);
@@ -532,7 +558,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
                     "overlay_id": attachment
                 },
                 "start": anchor(event.start, &cues)?,
-                "end": anchor(event.end, &cues)?
+                "end": anchor(events[run_end - 1].end, &cues)?
             }));
             external_layers.push(json!({
                 "attachment_id": attachment,
@@ -540,10 +566,12 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
                 "evidence": media_ref(overlay),
                 "render_mode": "timed-video-overlay"
             }));
-            binding["external_layer_attachment_ids"]
-                .as_array_mut()
-                .context("semantic event external layer binding is not an array")?
-                .push(json!(attachment));
+            for binding in &mut event_bindings[index..run_end] {
+                binding["external_layer_attachment_ids"]
+                    .as_array_mut()
+                    .context("semantic event external layer binding is not an array")?
+                    .push(json!(attachment));
+            }
         }
     }
     let production = json!({

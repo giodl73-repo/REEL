@@ -255,6 +255,6 @@ Sonic keys compile to separate E-bus attachments with the delivery profile's
 scene sample rate and cover the language-local event duration. VFX keys compile
 to timed alpha video overlays on the event's selected shot. The overlay must
 match scene geometry and supply enough decoded frames for that language-local
-span. These layers leave the reusable cel clean. A VFX key currently spans one
-semantic event. Prepare one continuous picture composition upstream when an
-effect must cross event boundaries without restarting.
+span. These layers leave the reusable cel clean. Repeating the same key on
+adjacent semantic events compiles one continuous sound or overlay across their
+cel cuts. The selected source must cover the whole contiguous run.
