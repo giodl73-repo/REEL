@@ -54,6 +54,12 @@ pub struct DeliveryProfile {
     pub score_gain_db: f64,
     pub score_fade_in_samples: u64,
     pub score_fade_out_samples: u64,
+    #[serde(default = "default_sonic_gain_db")]
+    pub sonic_gain_db: f64,
+}
+
+fn default_sonic_gain_db() -> f64 {
+    -18.0
 }
 
 #[derive(Clone)]
@@ -71,6 +77,8 @@ struct EventSpan {
     end: u64,
     picture: AssetRef,
     score_role: Option<String>,
+    sonic_bindings: Vec<String>,
+    vfx_bindings: Vec<String>,
 }
 
 fn hash(bytes: &[u8]) -> String {
@@ -233,6 +241,8 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         || profile.frame_rate_denominator == 0
         || profile.max_composition_samples == 0
         || !profile.score_gain_db.is_finite()
+        || !profile.sonic_gain_db.is_finite()
+        || profile.sonic_gain_db.abs() > 60.0
     {
         bail!("invalid scene delivery profile");
     }
@@ -269,9 +279,6 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     for (event, span) in lane.events.iter().zip(native.iter()) {
         if event.event_id != span.event_id || event.cue_id != span.cue_id {
             bail!("materialized scene and native events differ");
-        }
-        if !event.sonic_bindings.is_empty() || !event.vfx_bindings.is_empty() {
-            bail!("selected Sonic or VFX needs its own delivery compiler binding");
         }
         let clock = cues
             .iter()
@@ -331,6 +338,8 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
             end,
             picture: picture.clone(),
             score_role: score_role(&event.score)?,
+            sonic_bindings: event.sonic_bindings.clone(),
+            vfx_bindings: event.vfx_bindings.clone(),
         });
     }
     if events.first().is_none_or(|event| event.start != 0)
@@ -373,6 +382,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     }
     let mut audio = Vec::new();
     let mut audio_events = Vec::new();
+    let mut external_layers = Vec::new();
     let mut narration_cues = Vec::new();
     let mut contract_cues = Vec::new();
     for (cue, clock) in lane.cues.iter().zip(cues.iter()) {
@@ -478,6 +488,64 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         }
         used_roles.insert(role.to_owned());
     }
+    let mut selected_sonic = false;
+    for (event, binding) in events.iter().zip(event_bindings.iter_mut()) {
+        for (position, key) in event.sonic_bindings.iter().enumerate() {
+            let sonic = asset(key, &scopes)?;
+            let attachment = format!("e-{}-{}", event.semantic_id, position + 1);
+            audio.push(json!({
+                "attachment_id": attachment,
+                "source": media_ref(sonic),
+                "bus": "E",
+                "source_start_sample": 0,
+                "gain_db": profile.sonic_gain_db
+            }));
+            audio_events.push(json!({
+                "id": attachment,
+                "role": "effect",
+                "source": format!("objects/sha256/{}/{}", &sonic.sha256[..2], sonic.sha256),
+                "start_seconds": 0
+            }));
+            attachments.push(json!({
+                "id": attachment,
+                "target": {"kind":"sonic","audio_event_id":attachment},
+                "start": anchor(event.start, &cues)?,
+                "end": anchor(event.end, &cues)?
+            }));
+            binding["audio_attachment_ids"]
+                .as_array_mut()
+                .context("semantic event audio binding is not an array")?
+                .push(json!(attachment));
+            selected_sonic = true;
+        }
+    }
+    for (event, binding) in events.iter().zip(event_bindings.iter_mut()) {
+        for (position, key) in event.vfx_bindings.iter().enumerate() {
+            let overlay = asset(key, &scopes)?;
+            let attachment = format!("fx-{}-{}", event.semantic_id, position + 1);
+            let shot_id = format!("shot-{}", event.semantic_id);
+            attachments.push(json!({
+                "id": attachment,
+                "target": {
+                    "kind": "overlay",
+                    "shot_id": shot_id,
+                    "overlay_id": attachment
+                },
+                "start": anchor(event.start, &cues)?,
+                "end": anchor(event.end, &cues)?
+            }));
+            external_layers.push(json!({
+                "attachment_id": attachment,
+                "reason": format!("Selected semantic VFX for {}", event.semantic_id),
+                "evidence": media_ref(overlay),
+                "render_mode": "timed-video-overlay"
+            }));
+            binding["external_layer_attachment_ids"]
+                .as_array_mut()
+                .context("semantic event external layer binding is not an array")?
+                .push(json!(attachment));
+        }
+    }
     let production = json!({
         "manifest_version":"reel.manifest.v0.2",
         "profile":"animatic",
@@ -526,11 +594,13 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         "max_composition_samples":profile.max_composition_samples,
         "pictures":pictures,
         "audio":audio,
+        "external_layers":external_layers,
         "buses":{
             "D":{"state":"present","reason":"Cache-verified language-local native candidate takes"},
             "M":{"state":if used_roles.is_empty(){"intentional-silence"}else{"present"},
                  "reason":"Episode score palette selected for source-motivated semantic runs"},
-            "E":{"state":"intentional-silence","reason":"No selected Sonic binding in this scene"}
+            "E":{"state":if selected_sonic{"present"}else{"intentional-silence"},
+                 "reason":if selected_sonic{"Selected semantic Sonic assets"}else{"No selected Sonic binding in this scene"}}
         }
     });
     let (job_sha, job_bytes) = write_new(&dir, "job.json", &job)?;

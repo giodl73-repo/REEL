@@ -585,6 +585,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
             Target::Beat { .. }
                 | Target::Camera { .. }
                 | Target::Effect { .. }
+                | Target::Overlay { .. }
                 | Target::Caption { .. }
                 | Target::Title { .. }
         ) || !nonempty(&layer.reason)
@@ -608,8 +609,12 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                 rendered_external_layers.push(layer.attachment_id.clone());
             }
             ExternalLayerRenderMode::TimedVideoOverlay => {
-                if !matches!(a.target, Target::Effect { .. }) || layer.font.is_some() {
-                    bail!("timed video overlay requires an effect attachment without a font");
+                if !matches!(a.target, Target::Effect { .. } | Target::Overlay { .. })
+                    || layer.font.is_some()
+                {
+                    bail!(
+                        "timed video overlay requires an effect or overlay attachment without a font"
+                    );
                 }
                 // Display a frame while its start tick is inside the semantic
                 // interval. A fractional end therefore includes its last frame.

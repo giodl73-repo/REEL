@@ -126,7 +126,7 @@ For any compiled beat/camera/effect/title/caption attachment owned by another
 layer, list an `external_layers` item with `attachment_id`, `reason` and exact
 evidence FileRef. `evidence-only` records a held external delivery. `ass-overlay`
 renders one full-scene editable ASS layer. `timed-video-overlay` renders one
-hash-bound alpha video on an effect attachment for its exact compiled frame
+hash-bound alpha video on an effect or generic overlay attachment for its exact compiled frame
 span. The video must have the scene's width and height and enough decoded
 frames for that span. A timed effect becomes visible on the first display frame
 at or after its semantic start sample. The compiled end partition preserves the

@@ -99,6 +99,10 @@ pub enum Target {
         shot_id: String,
         effect_pass_id: String,
     },
+    Overlay {
+        shot_id: String,
+        overlay_id: String,
+    },
     Audio {
         audio_event_id: String,
     },
@@ -423,6 +427,17 @@ fn validate_target<'a>(
                 );
             }
             Ok(())
+        }
+        Target::Overlay {
+            shot_id,
+            overlay_id,
+        } => {
+            require(
+                shots.contains_key(shot_id.as_str()),
+                "overlay target shot",
+                shot_id,
+            )?;
+            valid_id("overlay", overlay_id)
         }
     }
 }

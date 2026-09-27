@@ -240,3 +240,21 @@ checks. Generic episode conform builds a selected lossless master; presentation
 segment creation and whole-episode creative review remain separate.
 Evidence-only external layers still require a rendered VFX implementation or
 an explicit review disposition before they can establish visible VFX delivery.
+
+## Semantic Sonic and VFX delivery
+
+Put Sonic and VFX keys on `shared_events` once. Both language lanes inherit the
+same keys while verified native phrase alignments determine their actual start
+and end samples. Bind each key exactly once in a scoped asset file with a
+logical ID, SHA-256, byte count, `cache://sha256/` URI and selection state.
+`compile-delivery` rejects missing or unselected objects. This technical
+selection does not substitute for project asset authority or creative review.
+
+Sonic keys compile to separate E-bus attachments with the delivery profile's
+`sonic_gain_db` (default -18 dB). The source must already be conformed to the
+scene sample rate and cover the language-local event duration. VFX keys compile
+to timed alpha video overlays on the event's selected shot. The overlay must
+match scene geometry and supply enough decoded frames for that language-local
+span. These layers leave the reusable cel clean. A VFX key currently spans one
+semantic event. Prepare one continuous picture composition upstream when an
+effect must cross event boundaries without restarting.
