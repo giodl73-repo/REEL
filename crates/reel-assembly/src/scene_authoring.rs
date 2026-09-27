@@ -120,8 +120,21 @@ pub struct Cue {
     pub narration_slot_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub take_binding: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub take_segments: Vec<CueTakeSegment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phrase_alignment_binding: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CueTakeSegment {
+    pub segment_id: String,
+    pub speaker_id: String,
+    pub asset_binding: String,
+    pub sample_count: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1344,6 +1357,38 @@ pub fn resolve_scene(
             }
             if cue.take_binding.is_none() || cue.phrase_alignment_binding.is_none() {
                 bail!("ready {language_id} cue lacks selected take or native alignment");
+            }
+            if cue
+                .speaker_id
+                .as_ref()
+                .is_some_and(|id| id.trim().is_empty())
+            {
+                bail!("ready {language_id} cue has an empty speaker identity");
+            }
+            if cue
+                .take_segments
+                .iter()
+                .map(|segment| &segment.speaker_id)
+                .collect::<BTreeSet<_>>()
+                .len()
+                > 1
+                && cue.speaker_id.is_some()
+            {
+                bail!("ready {language_id} mixed-speaker cue cannot claim one speaker");
+            }
+            let mut segment_ids = BTreeSet::new();
+            for segment in &cue.take_segments {
+                if segment.segment_id.trim().is_empty()
+                    || segment.speaker_id.trim().is_empty()
+                    || segment.asset_binding.trim().is_empty()
+                    || segment.sample_count == 0
+                    || !segment_ids.insert(segment.segment_id.as_str())
+                {
+                    bail!("ready {language_id} cue has invalid ordered take segments");
+                }
+                let asset = binding(&segment.asset_binding, &scopes)?.clone();
+                selected_inputs.insert(segment.asset_binding.clone(), asset.clone());
+                language_inputs.insert(segment.asset_binding.clone(), asset);
             }
             for key in [&cue.take_binding, &cue.phrase_alignment_binding]
                 .into_iter()
