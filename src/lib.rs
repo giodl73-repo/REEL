@@ -44,6 +44,7 @@ pub mod production_package;
 pub mod review_decision;
 pub mod scene_authoring_inputs;
 pub mod scene_delivery;
+pub mod scene_delivery_compile;
 pub mod scene_review;
 pub mod screen_demo;
 pub mod selection_lock;
