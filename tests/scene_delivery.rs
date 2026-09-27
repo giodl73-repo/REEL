@@ -259,22 +259,10 @@ fn timed_alpha_effect_changes_only_its_selected_frames() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path();
     let mut job = fixture(root);
-    let mut production: Value =
-        serde_json::from_slice(&fs::read(root.join("production.json")).unwrap()).unwrap();
-    production["shots"][0]["effect_passes"] = json!([{
-        "id":"glow", "color":{"path":"red.ppm","sha256":file(root,"red.ppm")["sha256"]},
-        "matte":{"path":"blue.ppm","sha256":file(root,"blue.ppm")["sha256"]},
-        "alpha_mode":"separate-matte", "composite_operator":"over", "color_space":"srgb",
-        "alpha_mode_detail":"straight", "timing_fps":24, "duration_frames":48,
-        "placement":{"space":"normalized","x":0,"y":0,"width":1,"height":1},
-        "visible_start_frame":12, "visible_end_frame":36
-    }]);
-    write_json(&root.join("production.json"), &production);
-    job["production_manifest_sha256"] = file(root, "production.json")["sha256"].clone();
     let mut contract: Value =
         serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
     contract["attachments"].as_array_mut().unwrap().push(json!({
-        "id":"timed-effect", "target":{"kind":"effect","shot_id":"shot","effect_pass_id":"glow"},
+        "id":"timed-effect", "target":{"kind":"overlay","shot_id":"shot","overlay_id":"storm-glow"},
         "start":{"kind":"cue-start","cue_id":"a","offset_samples":24000},
         "end":{"kind":"cue-start","cue_id":"b","offset_samples":24000}
     }));
