@@ -183,6 +183,37 @@ fn resolves_exact_source_phrases_to_selected_native_word_samples() {
 }
 
 #[test]
+fn resolves_spanish_diacritic_variants_without_changing_source_hash() {
+    let (mut evidence, mut spec) = fixture();
+    spec.spoken_text = "Se rompió en añicos".into();
+    spec.spoken_text_sha256 = text_sha(&spec.spoken_text);
+    evidence.words = ["Se", "rompio", "en", "anicos"]
+        .iter()
+        .enumerate()
+        .map(|(i, word)| TimedWord {
+            word: (*word).into(),
+            start_sample: i as u64 * 6000,
+            end_sample: i as u64 * 6000 + 3000,
+        })
+        .collect();
+    spec.markers = vec![
+        TextMarker {
+            id: "start".into(),
+            phrase: None,
+            occurrence: None,
+        },
+        TextMarker {
+            id: "shattered".into(),
+            phrase: Some("añicos".into()),
+            occurrence: Some(1),
+        },
+    ];
+    let alignment = resolve_text_triggers(&evidence, &spec).unwrap();
+    assert_eq!(alignment.semantic_markers["shattered"], 18000);
+    assert!(alignment.semantic_markers["shattered"] < alignment.cue_end_sample);
+}
+
+#[test]
 fn repeated_phrase_requires_explicit_occurrence() {
     let (mut evidence, mut spec) = fixture();
     spec.spoken_text = "la casa y la casa".into();

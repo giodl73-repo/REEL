@@ -419,8 +419,18 @@ fn tokens(value: &str) -> Vec<String> {
     let mut result = Vec::new();
     let mut token = String::new();
     for c in value.chars().flat_map(char::to_lowercase) {
-        if c.is_alphanumeric() {
-            token.push(c);
+        let folded = match c {
+            'á' | 'à' | 'â' | 'ä' | 'ã' | 'å' => 'a',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'í' | 'ì' | 'î' | 'ï' => 'i',
+            'ó' | 'ò' | 'ô' | 'ö' | 'õ' => 'o',
+            'ú' | 'ù' | 'û' | 'ü' => 'u',
+            'ñ' => 'n',
+            'ç' => 'c',
+            _ => c,
+        };
+        if folded.is_alphanumeric() {
+            token.push(folded);
         } else if !token.is_empty() {
             result.push(std::mem::take(&mut token));
         }

@@ -2,7 +2,9 @@
 //! Segment clocks come from verified WAV samples, never authored seconds.
 
 use anyhow::{Context, Result, bail};
-use reel_assembly::scene_authoring::{Scene, ScopedBindings};
+use reel_assembly::scene_authoring::{
+    Scene, ScopedBindings, TimedWord, WORD_TIMING_SCHEMA, WordTimingEvidence,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -20,6 +22,24 @@ pub struct ComposeManifest {
     pub cue_id: String,
     pub segment_bindings: String,
     pub output_wav: String,
+    pub output_receipt: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SegmentWordEvidence {
+    pub segment_id: String,
+    pub path: String,
+    pub sha256: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComposeWordEvidenceManifest {
+    pub schema: String,
+    pub compose_receipt: String,
+    pub segment_word_evidence: Vec<SegmentWordEvidence>,
+    pub output_word_evidence: String,
     pub output_receipt: String,
 }
 
@@ -218,9 +238,158 @@ pub fn compose(root: &Path, cache_root: &Path, manifest: &ComposeManifest) -> Re
     Ok(receipt)
 }
 
+/// Shift exact segment-local word samples by the sample boundaries recorded by
+/// `compose-cue`. This does not infer any word timing or change a transcription.
+pub fn compose_word_evidence(
+    root: &Path,
+    cache_root: &Path,
+    manifest: &ComposeWordEvidenceManifest,
+) -> Result<Value> {
+    if manifest.schema != "reel.scene-cue-word-compose.v1" {
+        bail!("unsupported cue word composition schema");
+    }
+    let root = root.canonicalize()?;
+    let cache_root = cache_root.canonicalize()?;
+    let receipt_path = checked(&root, &manifest.compose_receipt)?;
+    let out_path = checked(&root, &manifest.output_word_evidence)?;
+    let out_receipt_path = checked(&root, &manifest.output_receipt)?;
+    if out_path == out_receipt_path || out_path.exists() || out_receipt_path.exists() {
+        bail!("word composition outputs must be new and distinct");
+    }
+    let receipt_bytes = fs::read(&receipt_path)?;
+    let receipt: Value = serde_json::from_slice(&receipt_bytes)?;
+    if receipt["schema"] != "reel.scene-cue-compose-receipt.v1"
+        || receipt["output_cache_uri"]
+            != format!(
+                "cache://sha256/{}",
+                receipt["output_sha256"]
+                    .as_str()
+                    .context("output hash absent")?
+            )
+    {
+        bail!("cue composition receipt identity invalid");
+    }
+    let output_sha = receipt["output_sha256"]
+        .as_str()
+        .context("output hash absent")?;
+    if output_sha.len() != 64 || !output_sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!("composed cue hash invalid");
+    }
+    let cache_path = cache_root
+        .join("objects/sha256")
+        .join(&output_sha[..2])
+        .join(output_sha);
+    let cached = fs::read(&cache_path).with_context(|| cache_path.display().to_string())?;
+    if cached.len() as u64
+        != receipt["output_bytes"]
+            .as_u64()
+            .context("output bytes absent")?
+        || digest(&cached) != output_sha
+    {
+        bail!("composed cue cache bytes differ from receipt");
+    }
+    let cue_id = receipt["cue_id"].as_str().context("cue absent")?;
+    let language = receipt["language"].as_str().context("language absent")?;
+    let sample_rate = receipt["sample_rate"]
+        .as_u64()
+        .context("sample rate absent")? as u32;
+    let cue_end_sample = receipt["sample_count"]
+        .as_u64()
+        .context("sample count absent")?;
+    let segments = receipt["segments"].as_array().context("segments absent")?;
+    if segments.len() < 2
+        || segments.len() != manifest.segment_word_evidence.len()
+        || sample_rate == 0
+    {
+        bail!("segment word evidence count or sample rate invalid");
+    }
+    let mut words = Vec::<TimedWord>::new();
+    let mut inputs = Vec::new();
+    let mut prior_end = 0;
+    for (segment, input) in segments.iter().zip(&manifest.segment_word_evidence) {
+        let id = segment["segment_id"]
+            .as_str()
+            .context("segment ID absent")?;
+        let start = segment["start_sample"]
+            .as_u64()
+            .context("segment start absent")?;
+        let end = segment["end_sample"]
+            .as_u64()
+            .context("segment end absent")?;
+        if id != input.segment_id || start != prior_end || end <= start || end > cue_end_sample {
+            bail!("segment word evidence order or clock differs from cue composition");
+        }
+        let path = checked(&root, &input.path)?;
+        let bytes = fs::read(&path)?;
+        if digest(&bytes) != input.sha256 {
+            bail!("segment word evidence hash differs");
+        }
+        let evidence: WordTimingEvidence = serde_json::from_slice(&bytes)?;
+        if evidence.schema != WORD_TIMING_SCHEMA
+            || evidence.cue_id != cue_id
+            || evidence.language != language
+            || evidence.selected_take_sha256
+                != segment["sha256"].as_str().context("segment hash absent")?
+            || evidence.sample_rate != sample_rate
+            || evidence.cue_end_sample != end - start
+            || evidence.words.is_empty()
+        {
+            bail!("segment word evidence identity differs from composed cue");
+        }
+        let mut prior_word = None;
+        for word in evidence.words {
+            if word.word.trim().is_empty()
+                || word.end_sample <= word.start_sample
+                || word.end_sample > end - start
+                || prior_word.is_some_and(|previous| word.start_sample < previous)
+            {
+                bail!("segment word timing invalid");
+            }
+            prior_word = Some(word.start_sample);
+            words.push(TimedWord {
+                word: word.word,
+                start_sample: start + word.start_sample,
+                end_sample: start + word.end_sample,
+            });
+        }
+        inputs.push(json!({"segment_id":id,"speaker_id":segment["speaker_id"],"word_evidence_path":input.path,"word_evidence_sha256":input.sha256,"start_sample":start,"end_sample":end}));
+        prior_end = end;
+    }
+    if prior_end != cue_end_sample {
+        bail!("composed segment words do not cover cue sample clock");
+    }
+    let output = WordTimingEvidence {
+        schema: WORD_TIMING_SCHEMA.into(),
+        language: language.into(),
+        cue_id: cue_id.into(),
+        selected_take_sha256: output_sha.into(),
+        sample_rate,
+        cue_end_sample,
+        words,
+    };
+    let output_bytes = serde_json::to_vec_pretty(&output)?;
+    let result = json!({
+        "schema":"reel.scene-cue-word-compose-receipt.v1",
+        "cue_id":cue_id,"language":language,
+        "compose_receipt_path":manifest.compose_receipt,
+        "compose_receipt_sha256":digest(&receipt_bytes),
+        "composed_take_sha256":output_sha,
+        "segment_word_evidence":inputs,
+        "output_word_evidence_sha256":digest(&output_bytes),
+        "word_count":output.words.len(),
+        "state":"machine word timing evidence; listening and performance review remain external"
+    });
+    fs::write(&out_path, output_bytes)?;
+    fs::write(&out_receipt_path, serde_json::to_vec_pretty(&result)?)?;
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ComposeManifest, compose, digest, read_pcm24_mono, wav};
+    use super::{
+        ComposeManifest, ComposeWordEvidenceManifest, compose, compose_word_evidence, digest,
+        read_pcm24_mono, wav,
+    };
     use serde_json::json;
     use std::fs;
 
@@ -239,6 +408,45 @@ mod tests {
         let mut bytes = wav(&[1, 2, 3], 24_000).unwrap();
         bytes[22] = 2;
         assert!(read_pcm24_mono(&bytes).is_err());
+    }
+
+    #[test]
+    fn composed_word_samples_follow_verified_speaker_boundaries() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let cache = root.join("cache");
+        let bytes = wav(&[0u8; 60], 24_000).unwrap();
+        let cue_sha = digest(&bytes);
+        let cache_dir = cache.join("objects/sha256").join(&cue_sha[..2]);
+        fs::create_dir_all(&cache_dir).unwrap();
+        fs::write(cache_dir.join(&cue_sha), &bytes).unwrap();
+        let segments = [
+            ("S01", "a".repeat(64), 0, 10),
+            ("S02", "b".repeat(64), 10, 20),
+        ];
+        let receipt = json!({"schema":"reel.scene-cue-compose-receipt.v1","cue_id":"cue","language":"es","sample_rate":24000,"sample_count":20,"output_sha256":cue_sha,"output_bytes":bytes.len(),"output_cache_uri":format!("cache://sha256/{cue_sha}"),"segments":segments.iter().map(|(id,sha,start,end)|json!({"segment_id":id,"speaker_id":id,"sha256":sha,"start_sample":start,"end_sample":end})).collect::<Vec<_>>()});
+        fs::write(
+            root.join("compose.json"),
+            serde_json::to_vec(&receipt).unwrap(),
+        )
+        .unwrap();
+        let mut inputs = Vec::new();
+        for (id, sha, _, _) in &segments {
+            let value = json!({"schema":"reel.scene-word-timing-evidence.v1","language":"es","cue_id":"cue","selected_take_sha256":sha,"sample_rate":24000,"cue_end_sample":10,"words":[{"word":id,"start_sample":2,"end_sample":4}]});
+            let path = format!("{id}.json");
+            let data = serde_json::to_vec(&value).unwrap();
+            let hash = digest(&data);
+            fs::write(root.join(&path), data).unwrap();
+            inputs.push(json!({"segment_id":id,"path":path,"sha256":hash}));
+        }
+        let manifest: ComposeWordEvidenceManifest = serde_json::from_value(json!({"schema":"reel.scene-cue-word-compose.v1","compose_receipt":"compose.json","segment_word_evidence":inputs,"output_word_evidence":"words.json","output_receipt":"words-receipt.json"})).unwrap();
+        let result = compose_word_evidence(root, &cache, &manifest).unwrap();
+        assert_eq!(result["word_count"], 2);
+        let output: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("words.json")).unwrap()).unwrap();
+        assert_eq!(output["words"][0]["start_sample"], 2);
+        assert_eq!(output["words"][1]["start_sample"], 12);
+        assert_eq!(output["selected_take_sha256"], cue_sha);
     }
 
     #[test]
