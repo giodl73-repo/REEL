@@ -43,6 +43,7 @@ pub mod production_operations;
 pub mod production_package;
 pub mod review_decision;
 pub mod scene_authoring_inputs;
+pub mod scene_cue_compose;
 pub mod scene_delivery;
 pub mod scene_delivery_compile;
 pub mod scene_review;

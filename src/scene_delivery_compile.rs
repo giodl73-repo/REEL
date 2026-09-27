@@ -400,10 +400,22 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
             "source":format!("objects/sha256/{}/{}", &take.sha256[..2],take.sha256),
             "start_seconds":0
         }));
-        narration_cues.push(json!({
-            "id":cue.cue_id,
-            "speaker_id":format!("narrator-{}",request.language)
-        }));
+        let speakers = cue
+            .take_segments
+            .iter()
+            .map(|segment| &segment.speaker_id)
+            .collect::<BTreeSet<_>>();
+        let speaker_id = if speakers.len() > 1 {
+            format!("multi-speaker-{}", request.language)
+        } else {
+            cue.speaker_id.clone().unwrap_or_else(|| {
+                cue.take_segments
+                    .first()
+                    .map(|segment| segment.speaker_id.clone())
+                    .unwrap_or_else(|| format!("narrator-{}", request.language))
+            })
+        };
+        narration_cues.push(json!({"id":cue.cue_id,"speaker_id":speaker_id}));
         contract_cues.push(json!({
             "cue_id":cue.cue_id,
             "duration_samples":clock.end-clock.start
