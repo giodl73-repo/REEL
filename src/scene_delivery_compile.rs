@@ -261,12 +261,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         offset = end;
     }
     let duration = offset;
-    let selected_events = graph
-        .events
-        .iter()
-        .filter(|event| event.scene_id == scene.scene_id && event.language == request.language)
-        .map(|event| (event.event_id.as_str(), event))
-        .collect::<BTreeMap<_, _>>();
+    let selected_events = active_scene_events(&graph, &scene.scene_id, &request.language)?;
     if selected_events.len() != lane.events.len() {
         bail!("selected graph does not cover each scene language event");
     }
@@ -617,9 +612,35 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     Ok(receipt)
 }
 
+fn active_scene_events<'a>(
+    graph: &'a reel_assembly::Graph,
+    scene_id: &str,
+    language: &str,
+) -> Result<BTreeMap<&'a str, &'a reel_assembly::SemanticEvent>> {
+    let active_event_ids = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == scene_id)
+        .context("scene node missing from selected graph")?
+        .events
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    Ok(graph
+        .events
+        .iter()
+        .filter(|event| {
+            event.scene_id == scene_id
+                && event.language == language
+                && active_event_ids.contains(event.event_id.as_str())
+        })
+        .map(|event| (event.event_id.as_str(), event))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{CueClock, anchor, score_role};
+    use super::{CueClock, active_scene_events, anchor, score_role};
     use reel_assembly::scene_authoring::ScoreUse;
     use serde_json::json;
 
@@ -652,5 +673,47 @@ mod tests {
     fn unresolved_score_does_not_silently_become_silence() {
         assert!(score_role(&ScoreUse::Held).is_err());
         assert_eq!(score_role(&ScoreUse::Silence).unwrap(), None);
+    }
+
+    #[test]
+    fn superseded_picture_event_is_not_counted_as_active() {
+        let event = |id: &str, language: &str| {
+            json!({
+                "event_id": id,
+                "scene_id": "scene-1",
+                "language": language,
+                "narration": {"logical_id": "voice", "sha256": "0".repeat(64)},
+                "picture": {"logical_id": "cel", "sha256": "1".repeat(64)},
+                "phrase_start_seconds": 0.0,
+                "phrase_end_seconds": 1.0
+            })
+        };
+        let graph = serde_json::from_value(json!({
+            "schema": "reel.semantic-assembly.v1",
+            "lock": {"logical_id": "lock", "sha256": "0".repeat(64)},
+            "slots": [],
+            "events": [
+                event("scene-1.es.old", "es"),
+                event("scene-1.es.new", "es"),
+                event("scene-1.en.current", "en")
+            ],
+            "nodes": [{
+                "id": "scene-1",
+                "inputs": [],
+                "slots": [],
+                "events": ["scene-1.es.new", "scene-1.en.current"]
+            }],
+            "presentation_targets": []
+        }))
+        .unwrap();
+        let spanish = active_scene_events(&graph, "scene-1", "es").unwrap();
+        assert_eq!(
+            spanish.keys().copied().collect::<Vec<_>>(),
+            vec!["scene-1.es.new"]
+        );
+        assert_eq!(
+            active_scene_events(&graph, "scene-1", "en").unwrap().len(),
+            1
+        );
     }
 }
