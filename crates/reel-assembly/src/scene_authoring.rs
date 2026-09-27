@@ -222,6 +222,162 @@ pub struct TimedWord {
     pub end_sample: u64,
 }
 
+pub const WHISPERCPP_WORD_IMPORT_SCHEMA: &str = "reel.whispercpp-word-import.v1";
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CacheObjectRef {
+    pub cache_uri: String,
+    pub sha256: String,
+    pub bytes: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WhisperCppWordImport {
+    pub schema: String,
+    pub language: String,
+    pub cue_id: String,
+    pub sample_rate: u32,
+    pub cue_end_sample: u64,
+    pub take: CacheObjectRef,
+    pub model: CacheObjectRef,
+    pub tool: CacheObjectRef,
+    pub transcription_path: String,
+    pub transcription_sha256: String,
+    pub transcription_bytes: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct WordImportDiagnostics {
+    pub ignored_zero_offset_tokens: usize,
+    pub ignored_out_of_take_punctuation: usize,
+}
+
+#[derive(Deserialize)]
+struct WhisperCppOutput {
+    transcription: Vec<WhisperCppSegment>,
+}
+
+#[derive(Deserialize)]
+struct WhisperCppSegment {
+    tokens: Vec<WhisperCppToken>,
+}
+
+#[derive(Deserialize)]
+struct WhisperCppToken {
+    text: String,
+    offsets: WhisperCppOffsets,
+}
+
+#[derive(Deserialize)]
+struct WhisperCppOffsets {
+    from: u64,
+    to: u64,
+}
+
+fn flush_whisper_word(words: &mut Vec<TimedWord>, word: &mut Option<TimedWord>) {
+    if let Some(item) = word.take() {
+        words.push(item);
+    }
+}
+
+/// Convert native whisper.cpp token offsets into reusable word evidence.
+/// The upstream ASR result is machine evidence; this does not certify that
+/// the words were heard correctly or that the proposed picture cuts are good.
+pub fn import_whispercpp_words(
+    json: &[u8],
+    spec: &WhisperCppWordImport,
+) -> Result<(WordTimingEvidence, WordImportDiagnostics)> {
+    if spec.schema != WHISPERCPP_WORD_IMPORT_SCHEMA
+        || spec.language.trim().is_empty()
+        || spec.cue_id.trim().is_empty()
+        || spec.sample_rate == 0
+        || spec.cue_end_sample == 0
+        || !sha(&spec.take.sha256)
+    {
+        bail!("whisper.cpp import identity or cue clock is invalid");
+    }
+    let output: WhisperCppOutput = serde_json::from_slice(json)?;
+    let mut words = Vec::new();
+    let mut diagnostics = WordImportDiagnostics::default();
+    let mut current: Option<TimedWord> = None;
+    for segment in output.transcription {
+        flush_whisper_word(&mut words, &mut current);
+        for token in segment.tokens {
+            let part = token.text.trim();
+            if part.is_empty() || (part.starts_with('[') && part.ends_with(']')) {
+                continue;
+            }
+            if token.offsets.to < token.offsets.from {
+                bail!("whisper.cpp token offset is reversed");
+            }
+            if token.offsets.to == token.offsets.from {
+                diagnostics.ignored_zero_offset_tokens += 1;
+                continue;
+            }
+            let start =
+                (u128::from(token.offsets.from) * u128::from(spec.sample_rate) + 500) / 1000;
+            let end = (u128::from(token.offsets.to) * u128::from(spec.sample_rate) + 500) / 1000;
+            let start = u64::try_from(start)?;
+            let end = u64::try_from(end)?;
+            if end <= start {
+                bail!("whisper.cpp token has no selected-take samples");
+            }
+            if end > spec.cue_end_sample {
+                if part.chars().any(char::is_alphanumeric) {
+                    bail!("whisper.cpp spoken token lies outside selected cue take");
+                }
+                diagnostics.ignored_out_of_take_punctuation += 1;
+                continue;
+            }
+            let begins_word = token.text.chars().next().is_some_and(char::is_whitespace)
+                && part.chars().any(char::is_alphanumeric);
+            if begins_word {
+                flush_whisper_word(&mut words, &mut current);
+            }
+            match current.as_mut() {
+                Some(item) => {
+                    if start < item.start_sample {
+                        bail!("whisper.cpp token clock moves backward");
+                    }
+                    item.word.push_str(part);
+                    item.end_sample = end.max(item.end_sample);
+                }
+                None => {
+                    current = Some(TimedWord {
+                        word: part.to_owned(),
+                        start_sample: start,
+                        end_sample: end,
+                    });
+                }
+            }
+        }
+    }
+    flush_whisper_word(&mut words, &mut current);
+    if words.is_empty() {
+        bail!("whisper.cpp transcription contains no timed words");
+    }
+    if words
+        .windows(2)
+        .any(|pair| pair[1].start_sample < pair[0].start_sample)
+    {
+        bail!("whisper.cpp words are out of order");
+    }
+    Ok((
+        WordTimingEvidence {
+            schema: WORD_TIMING_SCHEMA.into(),
+            language: spec.language.clone(),
+            cue_id: spec.cue_id.clone(),
+            selected_take_sha256: spec.take.sha256.clone(),
+            sample_rate: spec.sample_rate,
+            cue_end_sample: spec.cue_end_sample,
+            words,
+        },
+        diagnostics,
+    ))
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TriggerTextSpec {
