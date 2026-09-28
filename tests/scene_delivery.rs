@@ -441,6 +441,72 @@ fn timed_alpha_effect_changes_only_its_selected_frames() {
     write_json(&root.join("job.json"), &job);
     assert!(scene_delivery::plan(&root.join("job.json"), root).is_err());
 }
+
+#[test]
+fn two_timed_overlays_render_and_check_as_independent_semantic_layers() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let mut job = fixture(root);
+    let mut contract: Value =
+        serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
+    for (id, cue) in [("storm-light", "a"), ("storm-rain", "b")] {
+        contract["attachments"].as_array_mut().unwrap().push(json!({
+            "id":id,
+            "target":{"kind":"overlay","shot_id":"shot","overlay_id":id},
+            "start":{"kind":"cue-start","cue_id":cue,"offset_samples":6000},
+            "end":{"kind":"cue-start","cue_id":cue,"offset_samples":18000}
+        }));
+    }
+    write_json(&root.join("contract.json"), &contract);
+    let effect = root.join("effect.mkv");
+    assert!(
+        Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-v",
+                "error",
+                "-nostdin",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=lime@0.75:s=64x64:r=24:d=1",
+                "-c:v",
+                "ffv1",
+                "-pix_fmt",
+                "yuva444p",
+                "-frames:v",
+                "24",
+                "-y"
+            ])
+            .arg(&effect)
+            .status()
+            .unwrap()
+            .success()
+    );
+    job["contract"] = file(root, "contract.json");
+    job["external_layers"] = json!(
+        ["storm-light", "storm-rain"]
+            .into_iter()
+            .map(|id| json!({
+                "attachment_id":id,"reason":"Selected semantic storm effect",
+                "evidence":file(root,"effect.mkv"),"render_mode":"timed-video-overlay"
+            }))
+            .collect::<Vec<_>>()
+    );
+    write_json(&root.join("job.json"), &job);
+    let output = root.join("rendered");
+    let receipt = scene_delivery::render(&root.join("job.json"), root, &output).unwrap();
+    assert_eq!(
+        receipt.plan.rendered_external_layers,
+        vec!["storm-light", "storm-rain"]
+    );
+    assert!(receipt.outputs.contains_key("selected-overlay-000.mkv"));
+    assert!(receipt.outputs.contains_key("selected-overlay-001.mkv"));
+    assert!(receipt.outputs.contains_key("layered-picture-000.mkv"));
+    scene_delivery::check(&root.join("job.json"), root, &output).unwrap();
+    fs::write(output.join("selected-overlay-001.mkv"), b"tampered").unwrap();
+    assert!(scene_delivery::check(&root.join("job.json"), root, &output).is_err());
+}
 #[test]
 fn plan_uses_compiled_samples_and_one_global_frame_partition() {
     let t = tempfile::tempdir().unwrap();

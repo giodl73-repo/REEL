@@ -686,8 +686,13 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         external_layers.push(layer.attachment_id.clone());
         external_layer_spans.push(layer_span);
     }
-    if rendered_external_layers.len() > 1 {
-        bail!("this scene-delivery version renders one external picture layer");
+    if rendered_external_layers.len() > 1
+        && job.external_layers.iter().any(|layer| {
+            layer.render_mode != ExternalLayerRenderMode::EvidenceOnly
+                && layer.render_mode != ExternalLayerRenderMode::TimedVideoOverlay
+        })
+    {
+        bail!("multiple rendered layers require timed video overlays");
     }
     if used.len() != attached.len() {
         bail!("unconsumed compiled attachments; declare external layers explicitly");
@@ -822,7 +827,14 @@ fn render_ass_overlay(root: &Path, fps: &str, font_bound: bool) -> Result<()> {
     Ok(())
 }
 
-fn render_timed_video_overlay(root: &Path, plan: &Plan, span: &Span) -> Result<()> {
+fn render_timed_video_overlay(
+    root: &Path,
+    plan: &Plan,
+    span: &Span,
+    picture_input: &str,
+    overlay_input: &str,
+    picture_output: &str,
+) -> Result<()> {
     let count = span.end_frame - span.start_frame;
     let graph = format!(
         "[1:v]setpts=N*{}/{}/TB,trim=start_frame=0:end_frame={count},setpts=PTS-STARTPTS+{}/{}/TB[effect];[0:v][effect]overlay=eof_action=pass:repeatlast=0:shortest=0:format=auto[v]",
@@ -834,7 +846,7 @@ fn render_timed_video_overlay(root: &Path, plan: &Plan, span: &Span) -> Result<(
     let output = Command::new("ffmpeg")
         .current_dir(root)
         .args(["-hide_banner", "-v", "error", "-nostdin", "-n"])
-        .args(["-i", "clean-picture.mkv", "-i", "selected-overlay.mkv"])
+        .args(["-i", picture_input, "-i", overlay_input])
         .args([
             "-filter_complex",
             &graph,
@@ -850,7 +862,7 @@ fn render_timed_video_overlay(root: &Path, plan: &Plan, span: &Span) -> Result<(
             "-frames:v",
             &plan.frame_count.to_string(),
         ])
-        .args(["picture.mkv"])
+        .args([picture_output])
         .output()?;
     if !output.status.success() {
         bail!(
@@ -1079,10 +1091,12 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         .tempdir_in(parent)?;
     let root = stage.path();
     let fps = format!("{}/{}", plan.fps_numerator, plan.fps_denominator);
-    let overlay = job
+    let overlays: Vec<_> = job
         .external_layers
         .iter()
-        .find(|layer| layer.render_mode != ExternalLayerRenderMode::EvidenceOnly);
+        .filter(|layer| layer.render_mode != ExternalLayerRenderMode::EvidenceOnly)
+        .collect();
+    let overlay = overlays.first().copied();
     let mut inputs = Vec::new();
     let mut filters = Vec::new();
     let mut groups = Vec::new();
@@ -1185,7 +1199,32 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         })),
     ]);
     ffmpeg(&inputs)?;
-    if let Some(layer) = overlay {
+    if overlays.len() > 1 {
+        for (index, layer) in overlays.iter().enumerate() {
+            let span = plan
+                .external_layer_spans
+                .iter()
+                .find(|span| span.attachment_id == layer.attachment_id)
+                .context("timed overlay span missing")?;
+            let source = checked_file(asset_root, timed_overlay_source(asset_root, layer)?)?;
+            if decoded_video_frames(&source)? < span.end_frame - span.start_frame {
+                bail!("timed overlay lacks frames for its selected span");
+            }
+            let selected = format!("selected-overlay-{index:03}.mkv");
+            let input = if index == 0 {
+                "clean-picture.mkv".to_string()
+            } else {
+                format!("layered-picture-{:03}.mkv", index - 1)
+            };
+            let output = if index + 1 == overlays.len() {
+                "picture.mkv".to_string()
+            } else {
+                format!("layered-picture-{index:03}.mkv")
+            };
+            fs::copy(source, root.join(&selected))?;
+            render_timed_video_overlay(root, &plan, span, &input, &selected, &output)?;
+        }
+    } else if let Some(layer) = overlay {
         match layer.render_mode {
             ExternalLayerRenderMode::AssOverlay => {
                 fs::copy(
@@ -1216,7 +1255,14 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                     bail!("timed overlay lacks frames for its selected span");
                 }
                 fs::copy(source, root.join("selected-overlay.mkv"))?;
-                render_timed_video_overlay(root, &plan, span)?;
+                render_timed_video_overlay(
+                    root,
+                    &plan,
+                    span,
+                    "clean-picture.mkv",
+                    "selected-overlay.mkv",
+                    "picture.mkv",
+                )?;
             }
             ExternalLayerRenderMode::EvidenceOnly => unreachable!(),
         }
@@ -1368,7 +1414,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         "+faststart".into(),
         arg(&root.join("review.mp4")),
     ])?;
-    let mut names = vec![
+    let mut names: Vec<String> = vec![
         "picture.mkv",
         "D.wav",
         "M.wav",
@@ -1376,23 +1422,37 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         "mix.wav",
         "master.mkv",
         "review.mp4",
-    ];
-    if let Some(overlay) = overlay {
-        names.push("clean-picture.mkv");
-        names.push(match overlay.render_mode {
-            ExternalLayerRenderMode::AssOverlay => "presentation.ass",
-            ExternalLayerRenderMode::TimedVideoOverlay => "selected-overlay.mkv",
-            ExternalLayerRenderMode::EvidenceOnly => unreachable!(),
-        });
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+    if overlays.len() > 1 {
+        names.push("clean-picture.mkv".into());
+        for index in 0..overlays.len() {
+            names.push(format!("selected-overlay-{index:03}.mkv"));
+            if index + 1 < overlays.len() {
+                names.push(format!("layered-picture-{index:03}.mkv"));
+            }
+        }
+    } else if let Some(overlay) = overlay {
+        names.push("clean-picture.mkv".into());
+        names.push(
+            match overlay.render_mode {
+                ExternalLayerRenderMode::AssOverlay => "presentation.ass",
+                ExternalLayerRenderMode::TimedVideoOverlay => "selected-overlay.mkv",
+                ExternalLayerRenderMode::EvidenceOnly => unreachable!(),
+            }
+            .into(),
+        );
     }
     if job.post_compose_camera.is_some() {
-        names.push("pre-camera-picture.mkv");
+        names.push("pre-camera-picture.mkv".into());
     }
     let mut outputs = BTreeMap::new();
     for name in names {
-        let p = root.join(name);
+        let p = root.join(&name);
         outputs.insert(
-            name.into(),
+            name.clone(),
             FileRef {
                 path: name.into(),
                 sha256: crate::sha256_file(&p)?,
@@ -1451,7 +1511,7 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
     {
         bail!("receipt does not match current compiled scene");
     }
-    let mut expected = BTreeSet::from([
+    let mut expected: BTreeSet<String> = [
         "picture.mkv",
         "D.wav",
         "M.wav",
@@ -1459,21 +1519,37 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
         "mix.wav",
         "master.mkv",
         "review.mp4",
-    ]);
-    let overlay = job
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+    let overlays: Vec<_> = job
         .external_layers
         .iter()
-        .find(|layer| layer.render_mode != ExternalLayerRenderMode::EvidenceOnly);
-    if let Some(overlay) = overlay {
-        expected.insert("clean-picture.mkv");
-        expected.insert(match overlay.render_mode {
-            ExternalLayerRenderMode::AssOverlay => "presentation.ass",
-            ExternalLayerRenderMode::TimedVideoOverlay => "selected-overlay.mkv",
-            ExternalLayerRenderMode::EvidenceOnly => unreachable!(),
-        });
+        .filter(|layer| layer.render_mode != ExternalLayerRenderMode::EvidenceOnly)
+        .collect();
+    let overlay = overlays.first().copied();
+    if overlays.len() > 1 {
+        expected.insert("clean-picture.mkv".into());
+        for index in 0..overlays.len() {
+            expected.insert(format!("selected-overlay-{index:03}.mkv"));
+            if index + 1 < overlays.len() {
+                expected.insert(format!("layered-picture-{index:03}.mkv"));
+            }
+        }
+    } else if let Some(overlay) = overlay {
+        expected.insert("clean-picture.mkv".into());
+        expected.insert(
+            match overlay.render_mode {
+                ExternalLayerRenderMode::AssOverlay => "presentation.ass",
+                ExternalLayerRenderMode::TimedVideoOverlay => "selected-overlay.mkv",
+                ExternalLayerRenderMode::EvidenceOnly => unreachable!(),
+            }
+            .into(),
+        );
     }
     if job.post_compose_camera.is_some() {
-        expected.insert("pre-camera-picture.mkv");
+        expected.insert("pre-camera-picture.mkv".into());
     }
     let font_name = overlay.and_then(|layer| layer.font.as_ref()).map(|font| {
         format!(
@@ -1482,15 +1558,9 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
         )
     });
     if let Some(name) = font_name.as_deref() {
-        expected.insert(name);
+        expected.insert(name.to_string());
     }
-    if receipt
-        .outputs
-        .keys()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>()
-        != expected
-    {
+    if receipt.outputs.keys().cloned().collect::<BTreeSet<_>>() != expected {
         bail!("receipt output set mismatch");
     }
     for (name, item) in &receipt.outputs {
@@ -1516,7 +1586,67 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
             bail!("post-composition camera made no visible change");
         }
     }
-    if let Some(layer) = overlay {
+    if overlays.len() > 1 {
+        for (index, layer) in overlays.iter().enumerate() {
+            let selected = format!("selected-overlay-{index:03}.mkv");
+            if receipt.outputs[&selected].sha256 != timed_overlay_source(asset_root, layer)?.sha256
+            {
+                bail!("rendered timed-overlay source differs from selected evidence");
+            }
+            let before = output.join(if index == 0 {
+                "clean-picture.mkv".to_string()
+            } else {
+                format!("layered-picture-{:03}.mkv", index - 1)
+            });
+            let after = output.join(if index + 1 == overlays.len() {
+                if job.post_compose_camera.is_some() {
+                    "pre-camera-picture.mkv".to_string()
+                } else {
+                    "picture.mkv".to_string()
+                }
+            } else {
+                format!("layered-picture-{index:03}.mkv")
+            });
+            if decoded_video_frames(&before)? != plan.frame_count
+                || decoded_video_frames(&after)? != plan.frame_count
+            {
+                bail!("timed overlay changed scene frame count");
+            }
+            let span = plan
+                .external_layer_spans
+                .iter()
+                .find(|span| span.attachment_id == layer.attachment_id)
+                .context("timed overlay span missing")?;
+            let active_frames = span.end_frame - span.start_frame;
+            let mut visible = false;
+            for frame in [
+                span.start_frame,
+                span.start_frame + active_frames / 4,
+                span.start_frame + active_frames / 2,
+                span.start_frame + active_frames * 3 / 4,
+                span.end_frame - 1,
+            ] {
+                visible |= rgb_frame_at_index(&before, &plan, frame)?
+                    != rgb_frame_at_index(&after, &plan, frame)?;
+            }
+            if !visible {
+                bail!("timed overlay made no visible change in its selected span");
+            }
+            for frame in [
+                span.start_frame.checked_sub(1),
+                (span.end_frame < plan.frame_count).then_some(span.end_frame),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if rgb_frame_at_index(&before, &plan, frame)?
+                    != rgb_frame_at_index(&after, &plan, frame)?
+                {
+                    bail!("timed overlay changed picture outside its selected span");
+                }
+            }
+        }
+    } else if let Some(layer) = overlay {
         let layered_picture = output.join(if job.post_compose_camera.is_some() {
             "pre-camera-picture.mkv"
         } else {
