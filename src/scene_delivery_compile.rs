@@ -56,10 +56,20 @@ pub struct DeliveryProfile {
     pub score_fade_out_samples: u64,
     #[serde(default = "default_sonic_gain_db")]
     pub sonic_gain_db: f64,
+    #[serde(default)]
+    pub sonic_gain_db_by_binding: BTreeMap<String, f64>,
 }
 
 fn default_sonic_gain_db() -> f64 {
     -18.0
+}
+
+fn sonic_gain_db(profile: &DeliveryProfile, binding: &str) -> f64 {
+    profile
+        .sonic_gain_db_by_binding
+        .get(binding)
+        .copied()
+        .unwrap_or(profile.sonic_gain_db)
 }
 
 #[derive(Clone)]
@@ -253,6 +263,10 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         || !profile.score_gain_db.is_finite()
         || !profile.sonic_gain_db.is_finite()
         || profile.sonic_gain_db.abs() > 60.0
+        || profile
+            .sonic_gain_db_by_binding
+            .iter()
+            .any(|(key, gain)| !key.starts_with("sonic.") || !gain.is_finite() || gain.abs() > 60.0)
     {
         bail!("invalid scene delivery profile");
     }
@@ -499,6 +513,17 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         used_roles.insert(role.to_owned());
     }
     let mut selected_sonic = false;
+    let used_sonic = events
+        .iter()
+        .flat_map(|event| event.sonic_bindings.iter())
+        .collect::<BTreeSet<_>>();
+    if profile
+        .sonic_gain_db_by_binding
+        .keys()
+        .any(|key| !used_sonic.contains(key))
+    {
+        bail!("scene delivery profile has an unused Sonic gain binding");
+    }
     for (index, event) in events.iter().enumerate() {
         if event.sonic_bindings.iter().collect::<BTreeSet<_>>().len() != event.sonic_bindings.len()
         {
@@ -522,7 +547,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
                 "source": media_ref(sonic),
                 "bus": "E",
                 "source_start_sample": 0,
-                "gain_db": profile.sonic_gain_db
+                "gain_db": sonic_gain_db(&profile, key)
             }));
             audio_events.push(json!({
                 "id": attachment,
@@ -790,9 +815,29 @@ fn active_scene_events<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{CueClock, active_scene_events, anchor, presentation_binding, score_role};
+    use super::{CueClock, DeliveryProfile, active_scene_events, anchor, presentation_binding, score_role, sonic_gain_db};
     use reel_assembly::scene_authoring::ScoreUse;
     use serde_json::json;
+
+    #[test]
+    fn sonic_gain_override_preserves_the_default_for_other_bindings() {
+        let profile: DeliveryProfile = serde_json::from_value(json!({
+            "schema": "reel.scene-delivery-profile.v1",
+            "width": 448,
+            "height": 252,
+            "sample_rate": 44100,
+            "frame_rate_numerator": 24,
+            "frame_rate_denominator": 1,
+            "max_composition_samples": 441000,
+            "score_gain_db": -18,
+            "score_fade_in_samples": 0,
+            "score_fade_out_samples": 0,
+            "sonic_gain_db": -30,
+            "sonic_gain_db_by_binding": {"sonic.thunder": -19}
+        })).unwrap();
+        assert_eq!(sonic_gain_db(&profile, "sonic.thunder"), -19.0);
+        assert_eq!(sonic_gain_db(&profile, "sonic.rain"), -30.0);
+    }
 
     #[test]
     fn scene_clock_anchors_are_relative_to_the_selected_cue() {
