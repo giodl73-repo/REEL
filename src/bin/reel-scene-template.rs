@@ -307,7 +307,13 @@ fn run() -> Result<()> {
         &source_text,
         &scene.source_authority_id,
         &presentation_scope,
+        &scene.presentation_source_scope_ids,
     )?;
+    if definition.post_poem_title_duration_ms.is_some()
+        != (source_text.schema == reel_assembly::template_presentation::SCENE_SOURCE_TEXT_SCHEMA_V2)
+    {
+        bail!("post-poem title template and per-display V2 source text must agree");
+    }
     let lane = scene
         .languages
         .get(language)

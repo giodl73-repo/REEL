@@ -3,14 +3,16 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::scene_authoring::{NATIVE_ALIGNMENT_SCHEMA, NativeAlignment};
 
 pub const TEMPLATE_SCHEMA: &str = "reel.editable-text-template.v1";
 pub const INVOCATION_SCHEMA: &str = "reel.editable-text-invocation.v1";
 pub const SOURCE_TEXT_SCHEMA: &str = "reel.presentation-source-text.v1";
+pub const SCENE_SOURCE_TEXT_SCHEMA_V2: &str = "reel.scene-presentation-source-text.v2";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -26,6 +28,20 @@ pub struct PresentationSourceText {
     pub byline: Option<String>,
     pub chapter_number: Option<String>,
     pub lines: Vec<SourceLine>,
+    /// V2 exact source/display join for a post-poem title and poet credit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub display_units: Vec<DisplaySourceUnit>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DisplaySourceUnit {
+    pub source_scope_id: String,
+    pub role: String,
+    pub source_text: String,
+    pub source_text_sha256: String,
+    pub editable_text: String,
+    pub editable_text_sha256: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -61,6 +77,9 @@ pub struct EditableTextTemplate {
     #[serde(default)]
     pub byline: Option<BylineStyle>,
     pub fixed_duration_seconds: Option<u32>,
+    /// Optional title/byline card after the last native poem cue, before prose.
+    #[serde(default)]
+    pub post_poem_title_duration_ms: Option<u32>,
     #[serde(default)]
     pub chapter: Option<ChapterStyle>,
 }
@@ -151,9 +170,12 @@ pub fn verify_source_text(
     source: &PresentationSourceText,
     source_authority_id: &str,
     source_scope_ids: &[String],
+    display_scope_ids: &[String],
 ) -> Result<()> {
-    if source.schema != SOURCE_TEXT_SCHEMA
-        || source.source_authority_id != source_authority_id
+    if !matches!(
+        source.schema.as_str(),
+        SOURCE_TEXT_SCHEMA | SCENE_SOURCE_TEXT_SCHEMA_V2
+    ) || source.source_authority_id != source_authority_id
         || source.language != invocation.language
         || source.source_document_sha256.len() != 64
         || !source
@@ -180,7 +202,43 @@ pub fn verify_source_text(
             bail!("poem wording, cue scope, or stanza breaks differ from selected source");
         }
     }
+    if source.schema == SOURCE_TEXT_SCHEMA {
+        if !source.display_units.is_empty() {
+            bail!("legacy source text cannot claim V2 display units");
+        }
+    } else {
+        if display_scope_ids.len() != 2
+            || source.display_units.len() != 2
+            || source.display_units[0].role != "poem-title"
+            || source.display_units[1].role != "poet-credit"
+            || invocation.byline.is_none()
+        {
+            bail!("post-poem display requires exact title and credit units");
+        }
+        for (index, unit) in source.display_units.iter().enumerate() {
+            if unit.source_scope_id != display_scope_ids[index]
+                || unit.source_text.trim().is_empty()
+                || unit.editable_text.trim().is_empty()
+                || unit.source_text_sha256 != hex_sha(unit.source_text.as_bytes())
+                || unit.editable_text_sha256 != hex_sha(unit.editable_text.as_bytes())
+            {
+                bail!("post-poem source and editable display text differ");
+            }
+        }
+        if source.display_units[0].editable_text != invocation.title
+            || Some(source.display_units[1].editable_text.as_str()) != invocation.byline.as_deref()
+        {
+            bail!("post-poem title or credit differs from selected display units");
+        }
+    }
     Ok(())
+}
+
+fn hex_sha(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn color(rgb: [u8; 3]) -> String {
@@ -288,7 +346,10 @@ pub fn compile_layer(
         let duration = template
             .fixed_duration_seconds
             .ok_or_else(|| anyhow::anyhow!("chapter template needs fixed duration"))?;
-        if duration == 0 || template.panel.is_some() {
+        if duration == 0
+            || template.panel.is_some()
+            || template.post_poem_title_duration_ms.is_some()
+        {
             bail!("invalid chapter card template");
         }
         let chapter = template
@@ -350,6 +411,9 @@ pub fn compile_layer(
     if invocation.byline.is_some() != template.byline.is_some() {
         bail!("poem byline content and template style must agree");
     }
+    if template.post_poem_title_duration_ms.is_some() && invocation.byline.is_none() {
+        bail!("post-poem title route requires a poet credit");
+    }
     let panel = template
         .panel
         .as_ref()
@@ -387,6 +451,24 @@ pub fn compile_layer(
             .ok_or_else(|| anyhow::anyhow!("native clock overflow"))?;
     }
     let rate = rate.unwrap();
+    let end = if let Some(duration_ms) = template.post_poem_title_duration_ms {
+        if !(10..=30_000).contains(&duration_ms) || duration_ms % 10 != 0 {
+            bail!("post-poem title duration must be 10 ms to 30 s in whole centiseconds");
+        }
+        let tail_samples = u64::from(duration_ms)
+            .checked_mul(u64::from(rate))
+            .context("post-poem title duration overflows native sample clock")?
+            / 1000;
+        let end = cursor
+            .checked_add(tail_samples)
+            .context("post-poem title end overflows native sample clock")?;
+        if centiseconds(end, rate) <= centiseconds(cursor, rate) {
+            bail!("post-poem title has no visible duration on ASS clock");
+        }
+        end
+    } else {
+        cursor
+    };
     let mut entrances = Vec::new();
     let mut used = BTreeSet::new();
     for line in &invocation.lines {
@@ -452,9 +534,10 @@ pub fn compile_layer(
         template.canvas_height
     );
     ass.push_str(&event(0, cursor, rate, "Panel", &divider));
+    let title_start = if end == cursor { 0 } else { cursor };
     ass.push_str(&event(
-        0,
-        cursor,
+        title_start,
+        end,
         rate,
         "Text",
         &format!(
@@ -475,8 +558,8 @@ pub fn compile_layer(
             bail!("poem byline style does not fit canvas");
         }
         ass.push_str(&event(
-            0,
-            cursor,
+            title_start,
+            end,
             rate,
             "Text",
             &format!(
@@ -522,7 +605,7 @@ pub fn compile_layer(
         schema: "reel.compiled-editable-layer.v1".into(),
         template_id: template.template_id.clone(),
         language: invocation.language.clone(),
-        duration_samples: cursor,
+        duration_samples: end,
         sample_rate: rate,
         ass,
     })

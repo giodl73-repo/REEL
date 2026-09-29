@@ -186,6 +186,91 @@ fn compiles_selected_poem_from_scene_content_and_rejects_changed_definition() {
         fs::read(dir.join("poem.ass")).unwrap(),
         fs::read(dir.join("poem-v2.ass")).unwrap()
     );
+    let mut tail_definition = scored_definition.clone();
+    tail_definition["post_poem_title_duration_ms"] = json!(2_000);
+    write(&dir.join("definition.json"), &tail_definition);
+    catalog["templates"][2]["definition_sha256"] =
+        sha(&fs::read(dir.join("definition.json")).unwrap()).into();
+    write(&dir.join("catalog.json"), &catalog);
+    scene["presentation"]["content"]["titles"]["es"] = json!("de “Recuerdos”");
+    write(&dir.join("scene.json"), &scene);
+    let mut tail_source = source_text.clone();
+    tail_source["schema"] = json!("reel.scene-presentation-source-text.v2");
+    tail_source["text_state"] = json!("project-draft-review-held");
+    tail_source["title"] = json!("de “Recuerdos”");
+    tail_source["display_units"] = json!([
+        {"source_scope_id":"poem-title","role":"poem-title",
+         "source_text":"nde “Recuerdos”","source_text_sha256":sha("nde “Recuerdos”".as_bytes()),
+         "editable_text":"de “Recuerdos”","editable_text_sha256":sha("de “Recuerdos”".as_bytes())},
+        {"source_scope_id":"poet-credit","role":"poet-credit",
+         "source_text":"Andrés Alarcón García","source_text_sha256":sha("Andrés Alarcón García".as_bytes()),
+         "editable_text":"por Andrés Alarcón García","editable_text_sha256":sha("por Andrés Alarcón García".as_bytes())}
+    ]);
+    write(&dir.join("source-text.json"), &tail_source);
+    let tail_bytes = fs::read(dir.join("source-text.json")).unwrap();
+    let tail_sha = sha(&tail_bytes);
+    scene_bindings["assets"]["es.poem.source"]["sha256"] = tail_sha.clone().into();
+    scene_bindings["assets"]["es.poem.source"]["bytes"] = (tail_bytes.len() as u64).into();
+    scene_bindings["assets"]["es.poem.source"]["cache_uri"] =
+        format!("cache://sha256/{tail_sha}").into();
+    write(&dir.join("bindings.json"), &scene_bindings);
+    let tail = run("poem-tail.ass", "receipt-tail.json");
+    assert!(
+        tail.status.success(),
+        "{}",
+        String::from_utf8_lossy(&tail.stderr)
+    );
+    let tail_ass = fs::read_to_string(dir.join("poem-tail.ass")).unwrap();
+    assert!(tail_ass.lines().any(
+        |line| line.starts_with("Dialogue: 0,0:00:01.00,0:00:03.00,Text")
+            && line.contains("de “Recuerdos”")
+    ));
+    assert!(
+        !tail_ass
+            .lines()
+            .any(|line| line.contains("de “Recuerdos”") && line.contains("0:00:00.00"))
+    );
+    let tail_receipt: Value =
+        serde_json::from_slice(&fs::read(dir.join("receipt-tail.json")).unwrap()).unwrap();
+    assert_eq!(tail_receipt["duration_samples"], 72_000);
+    write(&dir.join("definition.json"), &scored_definition);
+    catalog["templates"][2]["definition_sha256"] =
+        sha(&fs::read(dir.join("definition.json")).unwrap()).into();
+    write(&dir.join("catalog.json"), &catalog);
+    assert!(
+        !run("v2-without-tail.ass", "v2-without-tail-receipt.json")
+            .status
+            .success()
+    );
+    write(&dir.join("definition.json"), &tail_definition);
+    catalog["templates"][2]["definition_sha256"] =
+        sha(&fs::read(dir.join("definition.json")).unwrap()).into();
+    write(&dir.join("catalog.json"), &catalog);
+    tail_source["display_units"][0]["source_scope_id"] = json!("wrong-title-id");
+    write(&dir.join("source-text.json"), &tail_source);
+    let changed_bytes = fs::read(dir.join("source-text.json")).unwrap();
+    let changed_sha = sha(&changed_bytes);
+    scene_bindings["assets"]["es.poem.source"]["sha256"] = changed_sha.clone().into();
+    scene_bindings["assets"]["es.poem.source"]["bytes"] = (changed_bytes.len() as u64).into();
+    scene_bindings["assets"]["es.poem.source"]["cache_uri"] =
+        format!("cache://sha256/{changed_sha}").into();
+    write(&dir.join("bindings.json"), &scene_bindings);
+    assert!(
+        !run("wrong-display.ass", "wrong-display-receipt.json")
+            .status
+            .success()
+    );
+    tail_source["display_units"][0]["source_scope_id"] = json!("poem-title");
+    write(&dir.join("source-text.json"), &tail_source);
+    write(&dir.join("bindings.json"), &{
+        let restored_bytes = fs::read(dir.join("source-text.json")).unwrap();
+        let restored_sha = sha(&restored_bytes);
+        scene_bindings["assets"]["es.poem.source"]["sha256"] = restored_sha.clone().into();
+        scene_bindings["assets"]["es.poem.source"]["bytes"] = (restored_bytes.len() as u64).into();
+        scene_bindings["assets"]["es.poem.source"]["cache_uri"] =
+            format!("cache://sha256/{restored_sha}").into();
+        scene_bindings.clone()
+    });
     let mut wrong_season = fixture("season-bindings");
     wrong_season["scope_id"] = "another-season".into();
     write(&dir.join("season.json"), &wrong_season);

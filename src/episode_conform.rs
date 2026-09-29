@@ -9,7 +9,7 @@ use reel_assembly::scene_authoring::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::{Read, Write},
     path::Path,
@@ -55,6 +55,9 @@ pub struct Segment {
     /// Exact source-adoption manifest for an inherited presentation master.
     #[serde(default)]
     pub adoption_manifest: Option<scene_delivery::FileRef>,
+    /// V2 source-text selection evidence for an editable episode display.
+    #[serde(default)]
+    pub source_text_evidence: Option<scene_delivery::FileRef>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,14 +65,51 @@ pub struct Segment {
 struct MasterTemplate {
     schema: String,
     template_id: String,
+    #[serde(default)]
     ordered_roles: Vec<String>,
     #[serde(default)]
     optional_roles: Vec<String>,
     #[serde(default)]
+    ordered_units: Vec<MasterUnit>,
+    #[serde(default)]
     source_template_sha256: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct MasterUnit {
+    kind: SegmentKind,
+    id: String,
+    /// Stable source IDs in display order; empty for scenes or non-text presentation.
+    #[serde(default)]
+    source_ids: Vec<String>,
+    /// Exact selected source-text hashes for each language, in `source_ids` order.
+    #[serde(default)]
+    source_text_sha256_by_language: BTreeMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceTextEvidence {
+    schema: String,
+    episode_id: String,
+    role: String,
+    language: String,
+    picture_binding: String,
+    picture_sha256: String,
+    caption_template_id: String,
+    units: Vec<SourceTextUnit>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceTextUnit {
+    source_id: String,
+    text: String,
+    sha256: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum SegmentKind {
     Scene,
@@ -301,6 +341,142 @@ fn selected_receipt(segment: &Segment, language: &str, receipt: &serde_json::Val
     Ok(())
 }
 
+fn valid_sha(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn validate_v2_order(template: &MasterTemplate, manifest: &Manifest) -> Result<()> {
+    if !template.ordered_roles.is_empty()
+        || !template.optional_roles.is_empty()
+        || template.ordered_units.is_empty()
+        || template.ordered_units.len() != manifest.segments.len()
+    {
+        bail!("invalid ordered-unit episode master grammar");
+    }
+    let mut scene_ids = BTreeSet::new();
+    let mut presentation_ids = BTreeSet::new();
+    let mut display_source_ids = BTreeSet::new();
+    for (unit, segment) in template.ordered_units.iter().zip(&manifest.segments) {
+        if unit.id.is_empty() || unit.kind != segment.kind || unit.id != segment.id {
+            bail!("episode segment differs from selected ordered unit");
+        }
+        match unit.kind {
+            SegmentKind::Scene => {
+                if !scene_ids.insert(unit.id.as_str())
+                    || !unit.source_ids.is_empty()
+                    || !unit.source_text_sha256_by_language.is_empty()
+                    || segment.source_text_evidence.is_some()
+                {
+                    bail!("invalid ordered scene unit");
+                }
+            }
+            SegmentKind::EpisodePresentation => {
+                if !presentation_ids.insert(unit.id.as_str()) {
+                    bail!("duplicate ordered presentation unit");
+                }
+                if unit.source_ids.is_empty() {
+                    if !unit.source_text_sha256_by_language.is_empty()
+                        || segment.source_text_evidence.is_some()
+                    {
+                        bail!("non-text presentation has source text evidence");
+                    }
+                } else {
+                    let unique = unit.source_ids.iter().collect::<BTreeSet<_>>();
+                    if unique.len() != unit.source_ids.len()
+                        || unit.source_ids.iter().any(String::is_empty)
+                        || unit
+                            .source_ids
+                            .iter()
+                            .any(|source_id| !display_source_ids.insert(source_id.as_str()))
+                        || unit.source_text_sha256_by_language.len() != 2
+                        || !unit.source_text_sha256_by_language.contains_key("es")
+                        || !unit.source_text_sha256_by_language.contains_key("en")
+                        || segment.source_text_evidence.is_none()
+                    {
+                        bail!("editable display lacks exact bilingual source identity");
+                    }
+                    for hashes in unit.source_text_sha256_by_language.values() {
+                        if hashes.len() != unit.source_ids.len()
+                            || hashes.iter().any(|hash| !valid_sha(hash))
+                        {
+                            bail!("editable display source hashes are invalid");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn verify_source_text_evidence(
+    unit: &MasterUnit,
+    segment: &Segment,
+    manifest: &Manifest,
+    receipt: &serde_json::Value,
+    invocation: &reel_assembly::scene_authoring::PresentationUse,
+    bindings: [&ScopedBindings; 2],
+    input_root: &Path,
+) -> Result<()> {
+    if unit.source_ids.is_empty() {
+        return Ok(());
+    }
+    let reference = segment
+        .source_text_evidence
+        .as_ref()
+        .context("editable display lacks source-text evidence")?;
+    let path = scene_delivery::checked_file(input_root, reference)?;
+    let evidence: SourceTextEvidence = serde_json::from_slice(&fs::read(path)?)?;
+    if evidence.schema != "reel.presentation-source-text.v1"
+        || evidence.episode_id != manifest.episode_id
+        || evidence.role != segment.id
+        || evidence.language != manifest.language
+        || evidence.caption_template_id != invocation.template_id
+        || receipt["selection_evidence_sha256"] != reference.sha256
+        || invocation.content["source_text_evidence_sha256_by_language"][&manifest.language]
+            != reference.sha256
+        || invocation.content["picture_binding"] != evidence.picture_binding
+        || evidence.units.len() != unit.source_ids.len()
+    {
+        bail!("editable display evidence differs from selected source or template");
+    }
+    let expected_hashes = unit
+        .source_text_sha256_by_language
+        .get(&manifest.language)
+        .context("selected language lacks display source hashes")?;
+    for (index, source) in evidence.units.iter().enumerate() {
+        if source.source_id != unit.source_ids[index]
+            || source.sha256 != expected_hashes[index]
+            || sha(source.text.as_bytes()) != source.sha256
+        {
+            bail!("editable display text differs from selected source hash");
+        }
+    }
+    let candidates = bindings
+        .into_iter()
+        .filter_map(|scope| scope.assets.get(&evidence.picture_binding))
+        .collect::<Vec<_>>();
+    if candidates.len() != 1 {
+        bail!("editable display picture binding must resolve exactly once");
+    }
+    let picture = candidates[0];
+    if picture.sha256 != evidence.picture_sha256
+        || !valid_sha(&picture.sha256)
+        || picture.bytes == 0
+        || picture.cache_uri != format!("cache://sha256/{}", picture.sha256)
+        || !matches!(
+            picture.selection_state.as_str(),
+            "selected-private-production" | "principal-approved" | "release-cleared"
+        )
+    {
+        bail!("editable display picture differs from selected clean-picture binding");
+    }
+    Ok(())
+}
+
 pub fn build(
     manifest_path: &Path,
     input_root: &Path,
@@ -336,15 +512,24 @@ pub fn build(
                 bail!("master template source differs from selected original");
             }
             let original: serde_json::Value = serde_json::from_slice(&bytes)?;
-            let original_roles = original["ordered_roles"]
-                .as_array()
-                .context("source master lacks ordered roles")?
-                .iter()
-                .map(|value| value.as_str().map(str::to_owned))
-                .collect::<Option<Vec<_>>>()
-                .context("source master has non-text ordered role")?;
-            if original_roles != master_template.ordered_roles {
-                bail!("generic master role order differs from source master");
+            if master_template.schema == "reel.episode-master-template.v2" {
+                let original_units: Vec<MasterUnit> =
+                    serde_json::from_value(original["ordered_units"].clone())
+                        .context("source master lacks ordered units")?;
+                if original_units != master_template.ordered_units {
+                    bail!("generic master unit order differs from source master");
+                }
+            } else {
+                let original_roles = original["ordered_roles"]
+                    .as_array()
+                    .context("source master lacks ordered roles")?
+                    .iter()
+                    .map(|value| value.as_str().map(str::to_owned))
+                    .collect::<Option<Vec<_>>>()
+                    .context("source master has non-text ordered role")?;
+                if original_roles != master_template.ordered_roles {
+                    bail!("generic master role order differs from source master");
+                }
             }
         }
         (None, None) => {}
@@ -366,19 +551,14 @@ pub fn build(
             item.template_id == episode.master_template_id && item.kind == "episode-master"
         })
         .context("episode master template is not selected")?;
-    if master_template.schema != "reel.episode-master-template.v1"
+    let ordered_units_v2 = master_template.schema == "reel.episode-master-template.v2";
+    if !ordered_units_v2 && master_template.schema != "reel.episode-master-template.v1"
         || master_template.template_id != episode.master_template_id
         || selected_master_template.definition_sha256 != sha(&master_bytes)
-        || master_template.ordered_roles.is_empty()
         || master_template
             .source_template_sha256
             .as_ref()
-            .is_some_and(|value| {
-                value.len() != 64
-                    || !value
-                        .bytes()
-                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-            })
+            .is_some_and(|value| !valid_sha(value))
     {
         bail!("episode master order definition differs from selected template");
     }
@@ -392,10 +572,13 @@ pub fn build(
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
-    if role_set.len() != master_template.ordered_roles.len()
+    if ordered_units_v2 {
+        validate_v2_order(&master_template, &manifest)?;
+    } else if role_set.len() != master_template.ordered_roles.len()
         || !role_set.contains("chapter-scenes")
         || !optional_set.is_subset(&role_set)
         || optional_set.contains("chapter-scenes")
+        || !master_template.ordered_units.is_empty()
     {
         bail!("invalid episode master role grammar");
     }
@@ -407,7 +590,10 @@ pub fn build(
     let mut upstream_verified = Vec::new();
     let mut presentation_verified = Vec::new();
     let mut presentation_counts = Vec::new();
-    for segment in &manifest.segments {
+    for (segment_index, segment) in manifest.segments.iter().enumerate() {
+        if !ordered_units_v2 && segment.source_text_evidence.is_some() {
+            bail!("v1 episode segment cannot carry v2 source-text evidence");
+        }
         let master = scene_delivery::checked_file(asset_root, &segment.master)?;
         let receipt_path = scene_delivery::checked_file(asset_root, &segment.source_receipt)?;
         let receipt: serde_json::Value = serde_json::from_slice(&fs::read(&receipt_path)?)?;
@@ -549,6 +735,17 @@ pub fn build(
                 if receipt["template_definition_sha256"] != *template_sha {
                     bail!("presentation receipt differs from selected template definition");
                 }
+                if ordered_units_v2 {
+                    verify_source_text_evidence(
+                        &master_template.ordered_units[segment_index],
+                        segment,
+                        &manifest,
+                        &receipt,
+                        invocation,
+                        [&episode_bindings, &season],
+                        input_root,
+                    )?;
+                }
             }
         }
         sources.push(master);
@@ -567,14 +764,16 @@ pub fn build(
     {
         bail!("episode presentation coverage mismatch");
     }
-    let expected_roles = master_template
-        .ordered_roles
-        .iter()
-        .filter(|role| !optional_set.contains(*role) || observed_roles.contains(*role))
-        .cloned()
-        .collect::<Vec<_>>();
-    if observed_roles != expected_roles {
-        bail!("episode segment order differs from selected master template");
+    if !ordered_units_v2 {
+        let expected_roles = master_template
+            .ordered_roles
+            .iter()
+            .filter(|role| !optional_set.contains(*role) || observed_roles.contains(*role))
+            .cloned()
+            .collect::<Vec<_>>();
+        if observed_roles != expected_roles {
+            bail!("episode segment order differs from selected master template");
+        }
     }
     let parent = output
         .parent()
