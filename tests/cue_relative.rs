@@ -86,3 +86,35 @@ fn rejects_out_of_range_markers_and_offsets() {
             .contains("outside sequence")
     );
 }
+
+#[test]
+fn explicit_nonspoken_tail_extends_scene_without_extending_last_cue() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cue-relative");
+    let mut contract = reel::cue_relative::load(root.join("old.yaml")).unwrap();
+    let mut title = contract.attachments.last().unwrap().clone();
+    title.id = "post-poem-title".into();
+    title.start_boundary = None;
+    title.end_boundary = None;
+    title.start = reel::cue_relative::Anchor::CueEnd {
+        cue_id: "cue-after".into(),
+        offset_samples: 0,
+    };
+    title.end = Some(reel::cue_relative::Anchor::CueEnd {
+        cue_id: "cue-after".into(),
+        offset_samples: 48_000,
+    });
+    contract.attachments.push(title);
+    assert!(reel::cue_relative::compile(&contract, &root).is_err());
+    contract.tail_duration_samples = 48_000;
+    let compiled = reel::cue_relative::compile(&contract, &root).unwrap();
+    assert_eq!(compiled.cues.last().unwrap().end_sample, 192_000);
+    assert_eq!(compiled.duration_samples, 240_000);
+    let title = compiled
+        .attachments
+        .iter()
+        .find(|item| item.id == "post-poem-title")
+        .unwrap();
+    assert_eq!((title.start_sample, title.end_sample), (192_000, 240_000));
+    contract.tail_duration_samples = 48_000 * 31;
+    assert!(reel::cue_relative::compile(&contract, &root).is_err());
+}

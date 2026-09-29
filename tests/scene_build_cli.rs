@@ -871,6 +871,163 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
         "{}",
         String::from_utf8_lossy(&shifted.stderr)
     );
+
+    // A nonspoken post-poem interval is part of the selected scene clock.
+    // The native D take remains one second; picture and ASS cover both seconds.
+    contract["tail_duration_samples"] = serde_json::json!(48_000);
+    contract["attachments"][0]["end"] = serde_json::json!({
+        "kind":"cue-end","cue_id":"cue","offset_samples":48_000
+    });
+    contract["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|item| item["id"] != "p-tail");
+    let title = contract["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|item| item["id"] == "title")
+        .unwrap();
+    title["end"] = serde_json::json!({"kind":"cue-end","cue_id":"cue","offset_samples":48_000});
+    write_json(&root.join("contract.json"), &contract);
+    job["pictures"].as_array_mut().unwrap().truncate(1);
+    job["contract"] = reference(root, "contract.json");
+
+    let mut definition: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("definition.json")).unwrap()).unwrap();
+    definition["post_poem_title_duration_ms"] = serde_json::json!(1_000);
+    definition["byline"] = serde_json::json!({
+        "x":34,"y":50,"font_size":9,"rgb":[255,255,255]
+    });
+    write_json(&root.join("definition.json"), &definition);
+    catalog["templates"][0]["definition_sha256"] =
+        reference(root, "definition.json")["sha256"].clone();
+    write_json(&root.join("catalog.json"), &catalog);
+    scene["presentation_source_scope_ids"] = serde_json::json!(["poem-title", "poet-credit"]);
+    scene["presentation"]["content"]["titles"]["es"] = serde_json::json!("de “P”");
+    scene["presentation"]["content"]["bylines"] = serde_json::json!({"es":"por Poet"});
+    write_json(&root.join("scene.json"), &scene);
+    let source = serde_json::json!({
+        "schema":"reel.scene-presentation-source-text.v2","source_authority_id":"source",
+        "source_document_sha256":"b".repeat(64),"source_scope_ids":["beat","poem-title","poet-credit"],
+        "language":"es","text_state":"project-draft-review-held","title":"de “P”","byline":"por Poet",
+        "chapter_number":null,"lines":[{"text":"A","cue_id":"cue","stanza_break_before":false}],
+        "display_units":[
+            {"source_scope_id":"poem-title","role":"poem-title","source_text":"nde “P”",
+             "source_text_sha256":reference_text("nde “P”"),"editable_text":"de “P”",
+             "editable_text_sha256":reference_text("de “P”")},
+            {"source_scope_id":"poet-credit","role":"poet-credit","source_text":"Poet",
+             "source_text_sha256":reference_text("Poet"),"editable_text":"por Poet",
+             "editable_text_sha256":reference_text("por Poet")}
+        ]
+    });
+    write_json(&root.join("source.json"), &source);
+    bindings["assets"]["source-text"] = asset("source-text", &reference(root, "source.json"));
+    write_json(&root.join("scene-bindings.json"), &bindings);
+    let compiled_tail = Command::new(env!("CARGO_BIN_EXE_reel-scene-template"))
+        .arg("compile")
+        .arg(root.join("catalog.json"))
+        .arg(root.join("definition.json"))
+        .arg(root.join("episode.json"))
+        .arg(root.join("scene.json"))
+        .arg("es")
+        .arg(root.join("season-bindings.json"))
+        .arg(root.join("episode-bindings.json"))
+        .arg(root.join("scene-bindings.json"))
+        .arg(root.join("alignment-paths.json"))
+        .arg(root.join("source.json"))
+        .arg("--output-ass")
+        .arg(root.join("poem-tail.ass"))
+        .arg("--receipt")
+        .arg(root.join("template-tail-receipt.json"))
+        .output()
+        .unwrap();
+    assert!(
+        compiled_tail.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled_tail.stderr)
+    );
+    let tail_ass = fs::read_to_string(root.join("poem-tail.ass")).unwrap();
+    assert!(tail_ass.lines().any(
+        |line| line.starts_with("Dialogue: 0,0:00:01.00,0:00:02.00,Text")
+            && line.contains("de “P”")
+    ));
+    bindings["assets"]["ass-layer"] = asset("ass-layer", &reference(root, "poem-tail.ass"));
+    bindings["assets"]["template-receipt"] = asset(
+        "template-receipt",
+        &reference(root, "template-tail-receipt.json"),
+    );
+    write_json(&root.join("scene-bindings.json"), &bindings);
+    job["external_layers"][0]["evidence"] = reference(root, "poem-tail.ass");
+    write_json(&root.join("job.json"), &job);
+    semantic["scene_delivery_job"] = reference(root, "job.json");
+    let ass_sha = reference(root, "poem-tail.ass")["sha256"].clone();
+    let ass_slot = semantic["graph"]["slots"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|slot| slot["slot_id"] == "ass-slot")
+        .unwrap();
+    ass_slot["revisions"][0]["asset"]["sha256"] = ass_sha.clone();
+    ass_slot["revisions"][0]["asset"]["cache_uri"] =
+        format!("cache://sha256/{}", ass_sha.as_str().unwrap()).into();
+    write_json(&root.join("semantic.json"), &semantic);
+    build["template_receipt"] = "template-tail-receipt.json".into();
+    write_json(&root.join("build.json"), &build);
+    let tail_output = root.join("tail-output");
+    let built_tail = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
+        .arg("build")
+        .arg(root)
+        .arg("build.json")
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output-dir")
+        .arg(&tail_output)
+        .output()
+        .unwrap();
+    assert!(
+        built_tail.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built_tail.stderr)
+    );
+    assert!(tail_output.join("master.mkv").exists());
+    assert!(tail_output.join("clean-picture.mkv").exists());
+    let receipt: serde_json::Value = serde_json::from_slice(
+        &fs::read(tail_output.join("scene-authoring-build-receipt.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        receipt["template_ass_sha256"],
+        reference(root, "poem-tail.ass")["sha256"]
+    );
+    let delivery: serde_json::Value =
+        serde_json::from_slice(&fs::read(tail_output.join("receipt.json")).unwrap()).unwrap();
+    assert_eq!(delivery["plan"]["duration_samples"], 96_000);
+    let native = reel::cue_relative::compile(
+        &reel::cue_relative::load(root.join("contract.json")).unwrap(),
+        root,
+    )
+    .unwrap();
+    assert_eq!(native.cues[0].end_sample, 48_000);
+    let frame = |name: &str| {
+        let output = Command::new("ffmpeg")
+            .args(["-v", "error", "-ss", "1.5", "-i"])
+            .arg(tail_output.join(name))
+            .args(["-frames:v", "1", "-f", "image2pipe", "-vcodec", "ppm", "-"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        output.stdout
+    };
+    assert_ne!(frame("master.mkv"), frame("clean-picture.mkv"));
+}
+
+fn reference_text(value: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(value.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 #[test]

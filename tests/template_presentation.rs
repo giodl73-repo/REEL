@@ -1,10 +1,12 @@
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 use reel_assembly::scene_authoring::{NATIVE_ALIGNMENT_SCHEMA, NativeAlignment};
 use reel_assembly::template_presentation::{
-    BylineStyle, ChapterLineStyle, ChapterStyle, EditableTextInvocation, EditableTextTemplate,
-    INVOCATION_SCHEMA, Panel, PoemLine, PresentationSourceText, SOURCE_TEXT_SCHEMA, SourceLine,
-    TEMPLATE_SCHEMA, compile_layer, verify_source_text,
+    BylineStyle, ChapterLineStyle, ChapterStyle, DisplaySourceUnit, EditableTextInvocation,
+    EditableTextTemplate, INVOCATION_SCHEMA, Panel, PoemLine, PresentationSourceText,
+    SCENE_SOURCE_TEXT_SCHEMA_V2, SOURCE_TEXT_SCHEMA, SourceLine, TEMPLATE_SCHEMA, compile_layer,
+    verify_source_text,
 };
 
 fn chapter_line(font_size: u32, margin_left: u32, margin_vertical: u32) -> ChapterLineStyle {
@@ -51,6 +53,7 @@ fn template(kind: &str) -> EditableTextTemplate {
         }),
         byline: None,
         fixed_duration_seconds: (kind == "chapter-title").then_some(4),
+        post_poem_title_duration_ms: None,
         chapter: (kind == "chapter-title").then_some(ChapterStyle {
             number: chapter_line(54, 110, 88),
             title: chapter_line(36, 190, 102),
@@ -178,12 +181,14 @@ fn selected_poet_byline_is_source_checked_and_editable_from_first_frame() {
                 stanza_break_before: line.stanza_break_before,
             })
             .collect(),
+        display_units: vec![],
     };
     verify_source_text(
         &invocation,
         &source,
         "manuscript",
         &["source-block-1".into()],
+        &[],
     )
     .unwrap();
     let mut changed = source;
@@ -193,10 +198,129 @@ fn selected_poet_byline_is_source_checked_and_editable_from_first_frame() {
             &invocation,
             &changed,
             "manuscript",
-            &["source-block-1".into()]
+            &["source-block-1".into()],
+            &[],
         )
         .is_err()
     );
+}
+
+#[test]
+fn poem_title_and_credit_can_follow_the_last_native_line() {
+    let mut invocation = poem();
+    invocation.title = "de “Recuerdos”".into();
+    invocation.byline = Some("por Andrés Alarcón García".into());
+    let mut master = template("opening-poem");
+    master.post_poem_title_duration_ms = Some(2_000);
+    master.byline = Some(BylineStyle {
+        x: 880,
+        y: 660,
+        font_size: 21,
+        rgb: [255, 255, 255],
+    });
+    let layer = compile_layer(&master, &invocation, &["a".into(), "b".into()], &clocks()).unwrap();
+    assert_eq!(layer.duration_samples, 120_000);
+    let title = layer
+        .ass
+        .lines()
+        .filter(|line| line.contains("de “Recuerdos”"))
+        .collect::<Vec<_>>();
+    let credit = layer
+        .ass
+        .lines()
+        .filter(|line| line.contains("por Andrés Alarcón García"))
+        .collect::<Vec<_>>();
+    assert_eq!(title.len(), 1);
+    assert_eq!(credit.len(), 1);
+    assert!(title[0].starts_with("Dialogue: 0,0:00:03.00,0:00:05.00,Text"));
+    assert!(credit[0].starts_with("Dialogue: 0,0:00:03.00,0:00:05.00,Text"));
+    assert!(
+        !layer
+            .ass
+            .lines()
+            .any(|line| line.contains("Recuerdos") && line.contains("0:00:00.00"))
+    );
+    assert!(
+        layer
+            .ass
+            .contains("Dialogue: 0,0:00:00.00,0:00:03.00,Panel")
+    );
+    assert!(layer.ass.contains("Dialogue: 0,0:00:01.00,0:00:03.00,Text"));
+}
+
+#[test]
+fn post_poem_title_duration_is_validated_and_not_a_chapter_card_option() {
+    let mut master = template("opening-poem");
+    master.post_poem_title_duration_ms = Some(0);
+    assert!(compile_layer(&master, &poem(), &["a".into(), "b".into()], &clocks()).is_err());
+    master.post_poem_title_duration_ms = Some(15);
+    assert!(compile_layer(&master, &poem(), &["a".into(), "b".into()], &clocks()).is_err());
+    master.post_poem_title_duration_ms = Some(2_000);
+    assert!(compile_layer(&master, &poem(), &["a".into(), "b".into()], &clocks()).is_err());
+    let mut chapter = template("chapter-title");
+    chapter.post_poem_title_duration_ms = Some(2_000);
+    assert!(compile_layer(&chapter, &poem(), &[], &BTreeMap::new()).is_err());
+}
+
+#[test]
+fn v2_source_binds_each_post_poem_title_and_credit_id_to_editable_text() {
+    let hash = |text: &str| {
+        Sha256::digest(text.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    };
+    let mut invocation = poem();
+    invocation.title = "de “Recuerdos”".into();
+    invocation.byline = Some("por Andrés Alarcón García".into());
+    let unit = |id: &str, role: &str, raw: &str, editable: &str| DisplaySourceUnit {
+        source_scope_id: id.into(),
+        role: role.into(),
+        source_text: raw.into(),
+        source_text_sha256: hash(raw),
+        editable_text: editable.into(),
+        editable_text_sha256: hash(editable),
+    };
+    let mut source = PresentationSourceText {
+        schema: SCENE_SOURCE_TEXT_SCHEMA_V2.into(),
+        source_authority_id: "manuscript".into(),
+        source_document_sha256: "a".repeat(64),
+        source_scope_ids: vec!["spoken".into(), "title".into(), "credit".into()],
+        language: "es".into(),
+        text_state: "canonical-original".into(),
+        title: invocation.title.clone(),
+        byline: invocation.byline.clone(),
+        chapter_number: None,
+        lines: invocation
+            .lines
+            .iter()
+            .map(|line| SourceLine {
+                text: line.text.clone(),
+                cue_id: line.cue_id.clone(),
+                stanza_break_before: line.stanza_break_before,
+            })
+            .collect(),
+        display_units: vec![
+            unit("title", "poem-title", "nde “Recuerdos”", "de “Recuerdos”"),
+            unit(
+                "credit",
+                "poet-credit",
+                "Andrés Alarcón García",
+                "por Andrés Alarcón García",
+            ),
+        ],
+    };
+    let scopes = ["spoken".into(), "title".into(), "credit".into()];
+    let displays = ["title".into(), "credit".into()];
+    assert!(verify_source_text(&invocation, &source, "manuscript", &scopes, &displays).is_ok());
+    source.display_units.swap(0, 1);
+    assert!(verify_source_text(&invocation, &source, "manuscript", &scopes, &displays).is_err());
+    source.display_units.swap(0, 1);
+    source.display_units[0].editable_text = "from “Memories”".into();
+    assert!(verify_source_text(&invocation, &source, "manuscript", &scopes, &displays).is_err());
+    source.display_units[0].editable_text = invocation.title.clone();
+    source.language = "en".into();
+    assert!(verify_source_text(&invocation, &source, "manuscript", &scopes, &displays).is_err());
 }
 
 #[test]
@@ -293,13 +417,15 @@ fn selected_source_must_match_every_poem_line_and_stanza() {
                 stanza_break_before: line.stanza_break_before,
             })
             .collect(),
+        display_units: vec![],
     };
     assert!(
         verify_source_text(
             &invocation,
             &source,
             "manuscript",
-            &["source-block-1".into()]
+            &["source-block-1".into()],
+            &[],
         )
         .is_ok()
     );
@@ -309,7 +435,8 @@ fn selected_source_must_match_every_poem_line_and_stanza() {
             &invocation,
             &source,
             "manuscript",
-            &["source-block-1".into()]
+            &["source-block-1".into()],
+            &[],
         )
         .is_err()
     );
@@ -320,7 +447,8 @@ fn selected_source_must_match_every_poem_line_and_stanza() {
             &invocation,
             &source,
             "manuscript",
-            &["source-block-1".into()]
+            &["source-block-1".into()],
+            &[],
         )
         .is_err()
     );
