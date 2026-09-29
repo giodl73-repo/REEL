@@ -89,6 +89,7 @@ reel-scene-authoring resolve <catalog.json> <episode.json> <scene.json> <policy.
 reel-scene-authoring resolve-language <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <language> --output <new.json>
 reel-scene-authoring resolve-episode-presentation <catalog.json> <episode.json> <season-bindings.json> <episode-bindings.json> --output <new.json>
 reel-scene-authoring import-whispercpp-words <import-spec.json> <asset-root> --output <word-evidence.json> --receipt <new.json>
+reel-scene-authoring import-provider-words <import-spec.json> <asset-root> --output <word-evidence.json> --receipt <new.json>
 reel-scene-authoring resolve-trigger-text <word-evidence.json> <trigger-spec.json> --alignment <new.json> --receipt <new.json>
 reel-scene-authoring compile-events <graph.json> <pointer.json> <episode.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <next-lock-id> --output <new.json>
 reel-scene-authoring audit-picture <policy.json> <rendered-spans.json> <sample-rate> --output <new.json>
@@ -114,6 +115,12 @@ transcription by SHA-256 and byte count; the command verifies those bytes in
 the cache before writing a receipt. Zero-duration tokens and punctuation beyond
 the selected take are reported and ignored; spoken tokens beyond the take fail.
 This is machine transcription evidence, not a performance or listening approval.
+`import-provider-words` accepts a cache-verified selected take and a hash-bound
+ElevenLabs forced-alignment response. It requires the provider's word strings
+to reproduce the exact source text, including spaces, and converts their time
+values to the selected take's sample clock. The output has the same REEL word
+evidence schema and can feed `resolve-trigger-text`. It does not select the
+performance or grant creative approval.
 `resolve-trigger-text` turns an author-named spoken phrase into a sample-exact
 native marker using word evidence from the selected take. The trigger file
 contains the exact cue text, its SHA-256, selected take SHA-256, and ordered

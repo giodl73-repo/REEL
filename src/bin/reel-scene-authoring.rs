@@ -5,10 +5,10 @@ use reel::scene_cue_compose::{
 };
 use reel::scene_delivery_compile::{CompileManifest, compile_to_dir};
 use reel_assembly::scene_authoring::{
-    CacheObjectRef, Episode, RenderedSpan, Scene, ScenePolicy, ScopedBindings, TemplateCatalog,
-    TriggerTextSpec, WhisperCppWordImport, WordTimingEvidence, audit_rendered_compositions,
-    compile_selected_event_request, import_whispercpp_words, resolve_episode_presentation,
-    resolve_scene, resolve_text_triggers,
+    CacheObjectRef, Episode, ProviderWordImport, RenderedSpan, Scene, ScenePolicy, ScopedBindings,
+    TemplateCatalog, TriggerTextSpec, WhisperCppWordImport, WordTimingEvidence,
+    audit_rendered_compositions, compile_selected_event_request, import_provider_words,
+    import_whispercpp_words, resolve_episode_presentation, resolve_scene, resolve_text_triggers,
 };
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
@@ -97,6 +97,68 @@ fn run() -> Result<()> {
                 receipt["scene_id"].as_str().unwrap_or("scene"),
                 receipt["language"].as_str().unwrap_or("language"),
                 receipt["semantic_event_count"].as_u64().unwrap_or(0)
+            );
+        }
+        [
+            _,
+            command,
+            spec_path,
+            asset_root,
+            output_flag,
+            output_path,
+            receipt_flag,
+            receipt_path,
+        ] if command == "import-provider-words"
+            && output_flag == "--output"
+            && receipt_flag == "--receipt" =>
+        {
+            if Path::new(output_path).exists() || Path::new(receipt_path).exists() {
+                bail!("provider word import outputs must be new");
+            }
+            let spec_bytes = fs::read(spec_path)?;
+            let spec: ProviderWordImport = serde_json::from_slice(&spec_bytes)?;
+            verify_cache_object(Path::new(asset_root), &spec.take)?;
+            verify_cache_object(Path::new(asset_root), &spec.alignment)?;
+            let response_name = Path::new(&spec.alignment_path);
+            if response_name.components().count() != 1
+                || !matches!(
+                    response_name.components().next(),
+                    Some(std::path::Component::Normal(_))
+                )
+            {
+                bail!("provider alignment response path must be a local file name");
+            }
+            let source = Path::new(spec_path)
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join(&spec.alignment_path);
+            let response = fs::read(&source).with_context(|| source.display().to_string())?;
+            if response.len() as u64 != spec.alignment.bytes
+                || digest(&response) != spec.alignment.sha256
+            {
+                bail!("provider alignment response hash or byte count mismatch");
+            }
+            let evidence = import_provider_words(&response, &spec)?;
+            let evidence_bytes = serde_json::to_vec_pretty(&evidence)?;
+            write_new(output_path, &evidence_bytes)?;
+            let receipt = serde_json::json!({
+                "schema":"reel.provider-word-import-receipt.v1",
+                "provider":spec.provider,
+                "language":evidence.language,
+                "cue_id":evidence.cue_id,
+                "take_sha256":spec.take.sha256,
+                "alignment_sha256":spec.alignment.sha256,
+                "import_spec_sha256":digest(&spec_bytes),
+                "word_evidence_sha256":digest(&evidence_bytes),
+                "word_count":evidence.words.len(),
+                "state":"provider word evidence; listening-and-text-review-held",
+                "publication":"not-authorized"
+            });
+            write_new(receipt_path, &serde_json::to_vec_pretty(&receipt)?)?;
+            println!(
+                "{} {} provider-timed words",
+                evidence.cue_id,
+                evidence.words.len()
             );
         }
         [
@@ -327,7 +389,7 @@ fn run() -> Result<()> {
             println!("{} visible composition runs checked", runs.len());
         }
         _ => bail!(
-            "usage: reel-scene-authoring compose-cue <project-root> <compose-manifest.json> <cache-root>\n       reel-scene-authoring compose-word-evidence <project-root> <word-compose-manifest.json> <cache-root>\n       reel-scene-authoring compile-delivery <project-root> <compile-manifest.json>\n       reel-scene-authoring resolve <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> --output <new.json>\n       reel-scene-authoring resolve-language <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <language> --output <new.json>\n       reel-scene-authoring resolve-episode-presentation <catalog.json> <episode.json> <season-bindings.json> <episode-bindings.json> --output <new.json>\n       reel-scene-authoring import-whispercpp-words <import-spec.json> <asset-root> --output <word-evidence.json> --receipt <new.json>\n       reel-scene-authoring resolve-trigger-text <word-evidence.json> <trigger-spec.json> --alignment <new.json> --receipt <new.json>\n       reel-scene-authoring compile-events <graph.json> <pointer.json> <episode.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <next-lock-id> --output <new.json>\n       reel-scene-authoring audit-picture <policy.json> <rendered-spans.json> <sample-rate> --output <new.json>"
+            "usage: reel-scene-authoring compose-cue <project-root> <compose-manifest.json> <cache-root>\n       reel-scene-authoring compose-word-evidence <project-root> <word-compose-manifest.json> <cache-root>\n       reel-scene-authoring compile-delivery <project-root> <compile-manifest.json>\n       reel-scene-authoring resolve <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> --output <new.json>\n       reel-scene-authoring resolve-language <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <language> --output <new.json>\n       reel-scene-authoring resolve-episode-presentation <catalog.json> <episode.json> <season-bindings.json> <episode-bindings.json> --output <new.json>\n       reel-scene-authoring import-provider-words <import-spec.json> <asset-root> --output <word-evidence.json> --receipt <new.json>\n       reel-scene-authoring import-whispercpp-words <import-spec.json> <asset-root> --output <word-evidence.json> --receipt <new.json>\n       reel-scene-authoring resolve-trigger-text <word-evidence.json> <trigger-spec.json> --alignment <new.json> --receipt <new.json>\n       reel-scene-authoring compile-events <graph.json> <pointer.json> <episode.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <next-lock-id> --output <new.json>\n       reel-scene-authoring audit-picture <policy.json> <rendered-spans.json> <sample-rate> --output <new.json>"
         ),
     }
     Ok(())
