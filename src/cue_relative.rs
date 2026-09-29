@@ -28,6 +28,9 @@ pub struct Contract {
     pub sample_rate: u32,
     pub frame_rate: Rational,
     pub cues: Vec<CueClock>,
+    /// Explicit nonspoken scene tail, such as an editable title card after a poem.
+    #[serde(default)]
+    pub tail_duration_samples: u64,
     #[serde(default)]
     pub attachments: Vec<Attachment>,
 }
@@ -307,6 +310,12 @@ pub fn compile(contract: &Contract, base: &Path) -> Result<CompiledConform> {
         });
         cursor = end;
     }
+    if contract.tail_duration_samples > u64::from(contract.sample_rate) * 30 {
+        bail!("nonspoken scene tail exceeds 30 seconds");
+    }
+    cursor = cursor
+        .checked_add(contract.tail_duration_samples)
+        .context("nonspoken scene tail overflows sample clock")?;
 
     let mut attachment_ids = BTreeSet::new();
     let mut boundary_samples = BTreeMap::<String, u64>::new();
@@ -588,6 +597,7 @@ mod tests {
                 denominator: 1,
             },
             cues: vec![],
+            tail_duration_samples: 0,
             attachments: vec![],
         };
         assert!(compile(&contract, Path::new(".")).is_err());
