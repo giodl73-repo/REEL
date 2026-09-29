@@ -598,7 +598,13 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         }
         match layer.render_mode {
             ExternalLayerRenderMode::AssOverlay => {
-                if layer.evidence.path.extension().and_then(|ext| ext.to_str()) != Some("ass")
+                // Content-addressed cache objects have a hash for a filename,
+                // so the ASS format cannot be inferred from the extension.
+                let ass = fs::read_to_string(checked_file(asset_root, &layer.evidence)?)?;
+                if !ass
+                    .trim_start_matches('\u{feff}')
+                    .starts_with("[Script Info]")
+                    || !ass.contains("[Events]")
                     || a.start_sample != 0
                     || a.end_sample != compiled.duration_samples
                     || layer.render_source.is_some()
