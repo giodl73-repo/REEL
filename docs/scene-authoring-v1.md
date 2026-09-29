@@ -258,7 +258,10 @@ logical ID, SHA-256, byte count, `cache://sha256/` URI and selection state.
 selection does not substitute for project asset authority or creative review.
 
 Sonic keys compile to separate E-bus attachments with the delivery profile's
-`sonic_gain_db` (default -18 dB). The source must already be conformed to the
+`sonic_gain_db` (default -18 dB). A profile may set
+`sonic_gain_db_by_binding` to give specific selected Sonic keys their own
+absolute dB gain while leaving every other key at the default. REEL rejects
+non-finite, out-of-range, or unused override keys. The source must already be conformed to the
 scene sample rate and cover the language-local event duration. VFX keys compile
 to timed alpha video overlays on the event's selected shot. The overlay must
 match scene geometry and supply enough decoded frames for that language-local
