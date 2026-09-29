@@ -14,3 +14,22 @@ reel-aligned-split build <manifest.json> --root <authoring-root> --output-dir <n
 ```
 
 Both tools produce technical media and receipts. They do not approve a performance, title, likeness, score, or publication.
+
+## Title over the next scene's first picture
+
+For a chapter title that belongs on the opening cel rather than on a separate card, the presentation scene declares:
+
+```json
+"placement": {
+  "mode": "overlay-on-target-scene-start",
+  "target_scene_id": "next-scene-id",
+  "target_picture_slot_id": "next-scene-first-picture-slot"
+}
+```
+
+`reel-scene-title-overlay` consumes the presentation scene, target scene, selected template, compiled ASS layer and rendered target scene through exact hash/byte references. Its manifest supplies the language but no layout coordinates or timing. The template owns four seconds, placement and fades. The tool rejects a target slot that is not the first picture event in that language, then renders a new scene review with the title over that picture. Its checker verifies full decode, identical video frame count and bit-identical copied audio packets. This lets the episode use the resulting scene as one input without inserting a separate card or changing narration clocks.
+
+```text
+reel-scene-title-overlay build <manifest.json> --root <authoring-root> --output-dir <new-dir>
+reel-scene-title-overlay check <manifest.json> --root <authoring-root> --output-dir <rendered-dir>
+```
