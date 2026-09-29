@@ -236,6 +236,7 @@ pub struct TimedWord {
 }
 
 pub const WHISPERCPP_WORD_IMPORT_SCHEMA: &str = "reel.whispercpp-word-import.v1";
+pub const PROVIDER_WORD_IMPORT_SCHEMA: &str = "reel.provider-word-import.v1";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -259,6 +260,112 @@ pub struct WhisperCppWordImport {
     pub transcription_path: String,
     pub transcription_sha256: String,
     pub transcription_bytes: u64,
+}
+
+/// Import exact-text word timing returned for a previously selected take.
+/// The caller must separately verify the provider response bytes and the
+/// cache-backed take named here; this conversion never selects a performance.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWordImport {
+    pub schema: String,
+    pub provider: String,
+    pub language: String,
+    pub cue_id: String,
+    pub sample_rate: u32,
+    pub cue_end_sample: u64,
+    pub take: CacheObjectRef,
+    pub spoken_text: String,
+    pub spoken_text_sha256: String,
+    pub alignment_path: String,
+    pub alignment: CacheObjectRef,
+}
+
+#[derive(Deserialize)]
+struct ProviderAlignmentOutput {
+    words: Vec<ProviderAlignedWord>,
+}
+
+#[derive(Deserialize)]
+struct ProviderAlignedWord {
+    text: String,
+    start: f64,
+    end: f64,
+}
+
+/// Convert provider seconds to the exact selected-take sample clock. The
+/// response must reproduce the source text byte-for-byte, including spaces,
+/// so an unrelated transcript cannot silently drive scene events.
+pub fn import_provider_words(json: &[u8], spec: &ProviderWordImport) -> Result<WordTimingEvidence> {
+    if spec.schema != PROVIDER_WORD_IMPORT_SCHEMA
+        || spec.provider != "elevenlabs-forced-alignment"
+        || spec.language.trim().is_empty()
+        || spec.cue_id.trim().is_empty()
+        || spec.sample_rate == 0
+        || spec.cue_end_sample == 0
+        || !sha(&spec.take.sha256)
+        || !sha(&spec.spoken_text_sha256)
+    {
+        bail!("provider word import identity or cue clock is invalid");
+    }
+    let text_sha = Sha256::digest(spec.spoken_text.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    if text_sha != spec.spoken_text_sha256 {
+        bail!("provider word import spoken text hash differs");
+    }
+    let output: ProviderAlignmentOutput = serde_json::from_slice(json)?;
+    if output.words.is_empty()
+        || output
+            .words
+            .iter()
+            .map(|word| word.text.as_str())
+            .collect::<String>()
+            != spec.spoken_text
+    {
+        bail!("provider words do not reproduce exact spoken text");
+    }
+    let mut words = Vec::new();
+    let mut prior_start = None;
+    for item in output.words {
+        if !item.start.is_finite()
+            || !item.end.is_finite()
+            || item.start < 0.0
+            || item.end < item.start
+        {
+            bail!("provider word clock is invalid");
+        }
+        if item.text.trim().is_empty() {
+            continue;
+        }
+        let start = (item.start * f64::from(spec.sample_rate)).round() as u64;
+        let end = (item.end * f64::from(spec.sample_rate)).round() as u64;
+        if end <= start
+            || end > spec.cue_end_sample
+            || prior_start.is_some_and(|previous| start < previous)
+        {
+            bail!("provider word lies outside selected take or moves backward");
+        }
+        words.push(TimedWord {
+            word: item.text.trim().to_owned(),
+            start_sample: start,
+            end_sample: end,
+        });
+        prior_start = Some(start);
+    }
+    if words.is_empty() {
+        bail!("provider response has no spoken words");
+    }
+    Ok(WordTimingEvidence {
+        schema: WORD_TIMING_SCHEMA.into(),
+        language: spec.language.clone(),
+        cue_id: spec.cue_id.clone(),
+        selected_take_sha256: spec.take.sha256.clone(),
+        sample_rate: spec.sample_rate,
+        cue_end_sample: spec.cue_end_sample,
+        words,
+    })
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -1497,6 +1604,50 @@ mod tests {
             hard_unchanged_composition_seconds_max: 10.0,
             semantic_cuts_required: true,
         }
+    }
+
+    #[test]
+    fn provider_words_keep_exact_source_text_and_selected_take_clock() {
+        let spoken = "Hola mundo.";
+        let spoken_hash = Sha256::digest(spoken.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let spec = ProviderWordImport {
+            schema: PROVIDER_WORD_IMPORT_SCHEMA.into(),
+            provider: "elevenlabs-forced-alignment".into(),
+            language: "es".into(),
+            cue_id: "cue-1".into(),
+            sample_rate: 1_000,
+            cue_end_sample: 2_000,
+            take: CacheObjectRef {
+                cache_uri: format!("cache://sha256/{}", "a".repeat(64)),
+                sha256: "a".repeat(64),
+                bytes: 44,
+            },
+            spoken_text: spoken.into(),
+            spoken_text_sha256: spoken_hash,
+            alignment_path: "alignment.json".into(),
+            alignment: CacheObjectRef {
+                cache_uri: format!("cache://sha256/{}", "b".repeat(64)),
+                sha256: "b".repeat(64),
+                bytes: 100,
+            },
+        };
+        let response = br#"{"words":[{"text":"Hola","start":0.1,"end":0.4},{"text":" ","start":0.4,"end":0.45},{"text":"mundo.","start":0.45,"end":1.0}],"loss":0.2}"#;
+        let evidence = import_provider_words(response, &spec).unwrap();
+        assert_eq!(evidence.words.len(), 2);
+        assert_eq!(evidence.words[0].start_sample, 100);
+        assert_eq!(evidence.words[1].start_sample, 450);
+        assert_eq!(evidence.selected_take_sha256, "a".repeat(64));
+        assert!(
+            import_provider_words(
+                br#"{"words":[{"text":"Wrong","start":0.1,"end":0.4}]}"#,
+                &spec
+            )
+            .is_err()
+        );
+        assert!(import_provider_words(br#"{"words":[{"text":"Hola","start":0.1,"end":0.4},{"text":" ","start":0.4,"end":0.45},{"text":"mundo.","start":0.45,"end":3.0}]}"#, &spec).is_err());
     }
 
     #[test]
