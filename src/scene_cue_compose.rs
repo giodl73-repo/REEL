@@ -93,7 +93,26 @@ fn read_pcm24_mono(bytes: &[u8]) -> Result<(u32, &[u8])> {
                 let rate = u32::from_le_bytes(bytes[start + 4..start + 8].try_into()?);
                 let block = u16::from_le_bytes(bytes[start + 12..start + 14].try_into()?);
                 let bits = u16::from_le_bytes(bytes[start + 14..start + 16].try_into()?);
-                if code != 1 || channels != 1 || rate == 0 || block != 3 || bits != 24 {
+                let pcm_format = match code {
+                    1 => true,
+                    0xfffe if size >= 40 => {
+                        let extension_size =
+                            u16::from_le_bytes(bytes[start + 16..start + 18].try_into()?);
+                        let valid_bits =
+                            u16::from_le_bytes(bytes[start + 18..start + 20].try_into()?);
+                        let channel_mask =
+                            u32::from_le_bytes(bytes[start + 20..start + 24].try_into()?);
+                        const PCM_SUBFORMAT: [u8; 16] = [
+                            1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71,
+                        ];
+                        extension_size >= 22
+                            && valid_bits == 24
+                            && (channel_mask == 0 || channel_mask == 4)
+                            && bytes[start + 24..start + 40] == PCM_SUBFORMAT
+                    }
+                    _ => false,
+                };
+                if !pcm_format || channels != 1 || rate == 0 || block != 3 || bits != 24 {
                     bail!("cue takes must be mono PCM24 WAV");
                 }
                 format = Some(rate);
@@ -400,6 +419,34 @@ mod tests {
         let (rate, actual) = read_pcm24_mono(&bytes).unwrap();
         assert_eq!(rate, 24_000);
         assert_eq!(actual, samples);
+    }
+
+    #[test]
+    fn extensible_pcm24_mono_preserves_exact_samples() {
+        let samples = [1, 2, 3, 4, 5, 6];
+        let original = wav(&samples, 44_100).unwrap();
+        let mut bytes = original[..36].to_vec();
+        bytes[16..20].copy_from_slice(&40u32.to_le_bytes());
+        bytes[20..22].copy_from_slice(&0xfffeu16.to_le_bytes());
+        bytes.extend_from_slice(&22u16.to_le_bytes());
+        bytes.extend_from_slice(&24u16.to_le_bytes());
+        bytes.extend_from_slice(&4u32.to_le_bytes());
+        bytes.extend_from_slice(&[
+            1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71,
+        ]);
+        bytes.extend_from_slice(&original[36..]);
+        let riff_size = u32::try_from(bytes.len() - 8).unwrap();
+        bytes[4..8].copy_from_slice(&riff_size.to_le_bytes());
+
+        let (rate, actual) = read_pcm24_mono(&bytes).unwrap();
+        assert_eq!(rate, 44_100);
+        assert_eq!(actual, samples);
+
+        bytes[44] = 3;
+        assert!(read_pcm24_mono(&bytes).is_err());
+        bytes[44] = 1;
+        bytes[38] = 16;
+        assert!(read_pcm24_mono(&bytes).is_err());
     }
 
     #[test]
