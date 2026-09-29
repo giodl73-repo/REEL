@@ -160,6 +160,16 @@ fn media_ref(item: &AssetRef) -> Value {
     })
 }
 
+fn presentation_binding<'a>(content: &'a Value, field: &str, language: &str) -> Result<&'a str> {
+    content
+        .get(field)
+        .and_then(Value::as_object)
+        .and_then(|bindings| bindings.get(language))
+        .and_then(Value::as_str)
+        .filter(|binding| !binding.is_empty())
+        .with_context(|| format!("presentation {field} missing for {language}"))
+}
+
 fn anchor(sample: u64, cues: &[CueClock]) -> Result<Value> {
     let last = cues.last().context("scene has no cues")?;
     if sample == last.end {
@@ -574,6 +584,48 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
             }
         }
     }
+    if let Some(presentation) = &scene.presentation {
+        let content = &presentation.content;
+        let source_text_key =
+            presentation_binding(content, "source_text_bindings", &request.language)?;
+        let layer_key = presentation_binding(content, "ass_layer_bindings", &request.language)?;
+        let receipt_key =
+            presentation_binding(content, "template_receipt_bindings", &request.language)?;
+        // The editable master must have been compiled from selected source text.
+        // Its receipt stays a distinct selected input even though only the ASS
+        // bytes and optional font become rendered media.
+        asset(source_text_key, &scopes)?;
+        asset(receipt_key, &scopes)?;
+        let layer = asset(layer_key, &scopes)?;
+        let font = presentation
+            .asset_binding
+            .as_deref()
+            .map(|key| asset(key, &scopes))
+            .transpose()?;
+        let attachment = format!("presentation-{}", request.language);
+        attachments.push(json!({
+            "id": attachment,
+            "target": {"kind":"title","title_id":scene.scene_id},
+            "start":anchor(0, &cues)?,
+            "end":anchor(duration, &cues)?
+        }));
+        let mut external = json!({
+            "attachment_id": attachment,
+            "reason": format!("Editable {} master", presentation.role),
+            "evidence": media_ref(layer),
+            "render_mode": "ass-overlay"
+        });
+        if let Some(font) = font {
+            external["font"] = media_ref(font);
+        }
+        external_layers.push(external);
+        for binding in &mut event_bindings {
+            binding["external_layer_attachment_ids"]
+                .as_array_mut()
+                .context("semantic event external layer binding is not an array")?
+                .push(json!(attachment));
+        }
+    }
     let production = json!({
         "manifest_version":"reel.manifest.v0.2",
         "profile":"animatic",
@@ -738,7 +790,7 @@ fn active_scene_events<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{CueClock, active_scene_events, anchor, score_role};
+    use super::{CueClock, active_scene_events, anchor, presentation_binding, score_role};
     use reel_assembly::scene_authoring::ScoreUse;
     use serde_json::json;
 
@@ -771,6 +823,19 @@ mod tests {
     fn unresolved_score_does_not_silently_become_silence() {
         assert!(score_role(&ScoreUse::Held).is_err());
         assert_eq!(score_role(&ScoreUse::Silence).unwrap(), None);
+    }
+
+    #[test]
+    fn presentation_requires_language_local_editable_layer_bindings() {
+        let content = json!({
+            "ass_layer_bindings": {"es": "poem-layer.es", "en": "poem-layer.en"}
+        });
+        assert_eq!(
+            presentation_binding(&content, "ass_layer_bindings", "en").unwrap(),
+            "poem-layer.en"
+        );
+        assert!(presentation_binding(&content, "ass_layer_bindings", "fr").is_err());
+        assert!(presentation_binding(&content, "template_receipt_bindings", "es").is_err());
     }
 
     #[test]

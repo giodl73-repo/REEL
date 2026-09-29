@@ -235,10 +235,15 @@ fn selected_ass_layer_changes_rendered_pixels_and_is_checked() {
     }));
     write_json(&root.join("contract.json"), &contract);
     fs::write(root.join("panel.ass"), "[Script Info]\nScriptType: v4.00+\nPlayResX: 64\nPlayResY: 64\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Arial,30,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,1,0,5,0,0,0,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:02.00,Default,,0,0,0,,TEST\n").unwrap();
+    fs::rename(
+        root.join("panel.ass"),
+        root.join("extensionless-ass-object"),
+    )
+    .unwrap();
     job["contract"] = file(root, "contract.json");
     job["external_layers"] = json!([{
         "attachment_id":"editable-title", "reason":"Selected editable title",
-        "evidence":file(root,"panel.ass"), "render_mode":"ass-overlay"
+        "evidence":file(root,"extensionless-ass-object"), "render_mode":"ass-overlay"
     }]);
     write_json(&root.join("job.json"), &job);
     let output = root.join("rendered");
