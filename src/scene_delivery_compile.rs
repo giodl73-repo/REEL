@@ -815,7 +815,10 @@ fn active_scene_events<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{CueClock, DeliveryProfile, active_scene_events, anchor, presentation_binding, score_role, sonic_gain_db};
+    use super::{
+        CueClock, DeliveryProfile, active_scene_events, anchor, presentation_binding, score_role,
+        sonic_gain_db,
+    };
     use reel_assembly::scene_authoring::ScoreUse;
     use serde_json::json;
 
@@ -834,7 +837,8 @@ mod tests {
             "score_fade_out_samples": 0,
             "sonic_gain_db": -30,
             "sonic_gain_db_by_binding": {"sonic.thunder": -19}
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(sonic_gain_db(&profile, "sonic.thunder"), -19.0);
         assert_eq!(sonic_gain_db(&profile, "sonic.rain"), -30.0);
     }
