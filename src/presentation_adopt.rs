@@ -167,11 +167,13 @@ pub fn build(
         .iter()
         .find(|template| template.template_id == manifest.template_id)
         .context("presentation template is not selected")?;
+    let poem_role_matches = manifest.role == "internal-poem" && definition.kind == "opening-poem";
     if catalog.schema != "reel.scene-template-catalog.v1"
         || definition.schema != "reel.selected-presentation-master-template.v1"
         || definition.template_id != manifest.template_id
-        || definition.kind != manifest.role
-        || selected_template.kind != manifest.role
+        || !(definition.kind == manifest.role || poem_role_matches)
+        || !(selected_template.kind == manifest.role
+            || (manifest.role == "internal-poem" && selected_template.kind == "opening-poem"))
         || selected_template.definition_sha256 != sha(&definition_bytes)
         || definition.width == 0
         || definition.height == 0

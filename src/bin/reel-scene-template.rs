@@ -172,7 +172,9 @@ fn run() -> Result<()> {
         .iter()
         .find(|entry| entry.template_id == use_.template_id)
         .context("template missing from catalog")?;
-    if template_entry.kind != use_.role {
+    if template_entry.kind != use_.role
+        && !(template_entry.kind == "opening-poem" && use_.role == "internal-poem")
+    {
         bail!("template role mismatch");
     }
     let definition_bytes = fs::read(definition_path)?;
@@ -223,7 +225,7 @@ fn run() -> Result<()> {
         Some(value) => serde_json::from_value(value.clone())?,
         None => vec![],
     };
-    if definition.kind == "opening-poem" && lines.is_empty() {
+    if matches!(definition.kind.as_str(), "opening-poem" | "internal-poem") && lines.is_empty() {
         bail!("language-local poem lines missing");
     }
     let invocation = EditableTextInvocation {
@@ -318,22 +320,23 @@ fn run() -> Result<()> {
         .languages
         .get(language)
         .context("scene language missing")?;
-    let (ordered_cues, native) = if definition.kind == "opening-poem" {
-        (
-            lane.cues
-                .iter()
-                .map(|cue| cue.cue_id.clone())
-                .collect::<Vec<_>>(),
-            alignments(&scene, language, alignment_paths, &scopes)?,
-        )
-    } else {
-        (vec![], BTreeMap::new())
-    };
+    let (ordered_cues, native) =
+        if matches!(definition.kind.as_str(), "opening-poem" | "internal-poem") {
+            (
+                lane.cues
+                    .iter()
+                    .map(|cue| cue.cue_id.clone())
+                    .collect::<Vec<_>>(),
+                alignments(&scene, language, alignment_paths, &scopes)?,
+            )
+        } else {
+            (vec![], BTreeMap::new())
+        };
     let line_cue_ids = content
         .get("line_cue_ids")
         .and_then(|v| v.get(language))
         .and_then(|v| v.as_array());
-    if definition.kind == "opening-poem"
+    if matches!(definition.kind.as_str(), "opening-poem" | "internal-poem")
         && scene.schema != SCENE_SCHEMA_V2
         && line_cue_ids.is_none()
     {
@@ -353,7 +356,7 @@ fn run() -> Result<()> {
             bail!("line-to-cue map differs from source lines");
         }
     }
-    if definition.kind == "opening-poem" {
+    if matches!(definition.kind.as_str(), "opening-poem" | "internal-poem") {
         let covered = invocation
             .lines
             .iter()

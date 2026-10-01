@@ -1254,7 +1254,9 @@ fn use_template<'a>(use_: &PresentationUse, catalog: &'a TemplateCatalog) -> Res
         .iter()
         .find(|item| item.template_id == use_.template_id)
         .ok_or_else(|| anyhow::anyhow!("unknown template {}", use_.template_id))?;
-    if template.kind != use_.role {
+    if template.kind != use_.role
+        && !(template.kind == "opening-poem" && use_.role == "internal-poem")
+    {
         bail!(
             "template {} has kind {}, not {}",
             template.template_id,

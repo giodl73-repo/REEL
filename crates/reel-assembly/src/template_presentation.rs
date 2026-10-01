@@ -317,7 +317,10 @@ pub fn compile_layer(
     if template.schema != TEMPLATE_SCHEMA
         || invocation.schema != INVOCATION_SCHEMA
         || template.template_id != invocation.template_id
-        || !matches!(template.kind.as_str(), "opening-poem" | "chapter-title")
+        || !matches!(
+            template.kind.as_str(),
+            "opening-poem" | "internal-poem" | "chapter-title"
+        )
         || template.canvas_width == 0
         || template.canvas_height == 0
         || template.font_name.trim().is_empty()
@@ -502,15 +505,50 @@ pub fn compile_layer(
     }
     let mut y = template.body_y;
     let mut positions = Vec::new();
+    let mut displayed_lines = Vec::new();
+    let available_width = template.canvas_width - template.body_x - 20;
+    let characters_per_row =
+        (u64::from(available_width) * 100 / (u64::from(template.body_size) * 47)) as usize;
+    if characters_per_row == 0 {
+        bail!("poem panel has no usable text width");
+    }
     for line in &invocation.lines {
+        let mut rows = Vec::new();
+        let mut row = String::new();
+        for word in line.text.split_whitespace() {
+            if word.chars().count() > characters_per_row {
+                bail!("poem word exceeds template panel width");
+            }
+            if !row.is_empty()
+                && row.chars().count() + 1 + word.chars().count() > characters_per_row
+            {
+                rows.push(row);
+                row = String::new();
+            }
+            if !row.is_empty() {
+                row.push(' ');
+            }
+            row.push_str(word);
+        }
+        if !row.is_empty() {
+            rows.push(row);
+        }
         if line.stanza_break_before {
             y += template.line_spacing / 2;
         }
-        if y + template.body_size >= template.canvas_height {
+        if y + template.body_size + (rows.len().saturating_sub(1) as u32 * template.line_spacing)
+            >= template.canvas_height
+        {
             bail!("poem text exceeds template canvas");
         }
         positions.push(y);
-        y += template.line_spacing;
+        displayed_lines.push(
+            rows.iter()
+                .map(|row| escape(row))
+                .collect::<Result<Vec<_>>>()?
+                .join("\\N"),
+        );
+        y += template.line_spacing * rows.len() as u32;
     }
     let draw = format!(
         "{{\\an7\\pos(0,0)\\p1\\1c{}}}m {} 0 l {} 0 {} {} {} {}{{\\p0}}",
@@ -575,7 +613,7 @@ pub fn compile_layer(
     for boundary in 0..invocation.lines.len() {
         let start = entrances[boundary];
         let end = entrances.get(boundary + 1).copied().unwrap_or(cursor);
-        for (index, line) in invocation.lines.iter().enumerate() {
+        for index in 0..invocation.lines.len() {
             let state = if index < boundary {
                 template.completed_rgb
             } else if index == boundary {
@@ -596,7 +634,7 @@ pub fn compile_layer(
                     positions[index],
                     color(state),
                     bold,
-                    escape(&line.text)?
+                    displayed_lines[index]
                 ),
             ));
         }

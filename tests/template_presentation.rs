@@ -44,7 +44,7 @@ fn template(kind: &str) -> EditableTextTemplate {
         future_rgb: [120, 127, 133],
         active_rgb: [216, 227, 232],
         completed_rgb: [255, 255, 255],
-        panel: (kind == "opening-poem").then_some(Panel {
+        panel: matches!(kind, "opening-poem" | "internal-poem").then_some(Panel {
             x: 853,
             width: 427,
             background_rgb: [20, 18, 16],
@@ -146,6 +146,39 @@ fn complete_poem_is_visible_from_zero_and_highlights_native_markers() {
     assert!(layer.ass.contains("&HB96BB2D3"));
     assert!(layer.ass.contains("Dialogue: 0,0:00:00.50,0:00:01.00,Text"));
     assert!(layer.ass.contains("Dialogue: 0,0:00:01.00,0:00:03.00,Text"));
+}
+
+#[test]
+fn internal_poem_uses_the_same_source_ordered_native_panel() {
+    let mut invocation = poem();
+    invocation.title = "¿Por qué vuelan?".into();
+    let layer = compile_layer(
+        &template("internal-poem"),
+        &invocation,
+        &["a".into(), "b".into()],
+        &clocks(),
+    )
+    .unwrap();
+    assert_eq!(layer.duration_samples, 72_000);
+    assert!(layer.ass.contains("¿Por qué vuelan?"));
+    assert!(layer.ass.contains("Tercera línea"));
+}
+
+#[test]
+fn long_poem_lines_wrap_inside_the_panel_without_changing_source_text() {
+    let mut invocation = poem();
+    invocation.lines[1].text =
+        "¿Por qué el hombre sus pies los tiene clavados en la tierra?".into();
+    let layer = compile_layer(
+        &template("internal-poem"),
+        &invocation,
+        &["a".into(), "b".into()],
+        &clocks(),
+    )
+    .unwrap();
+    assert!(layer.ass.contains("\\N"));
+    assert!(layer.ass.contains("clavados"));
+    assert!(layer.ass.contains("tierra?"));
 }
 
 #[test]
