@@ -62,6 +62,11 @@ name multiple `source_cue_ids` when translation combines source cues.
 `language_event_bindings.<lang>` maps a shared `semantic_id` to the local cue,
 trigger marker and selected graph event/picture slot. An explicit picture
 binding override is available for a language-specific picture selection.
+`sonic_bindings_override` and `vfx_bindings_override` may be set on a language
+event binding when an effect exists in only one language or differs by language.
+An omitted override inherits the shared list; an explicit empty list means
+silence for that language. The native resolver checks the resulting local
+asset keys and builds each language from its own effect list.
 For V2 poem content, each `lines_by_language` line carries its cue ID;
 `line_cue_ids` is unnecessary. The template compiler checks that the lines
 cover every selected native poem cue exactly once. V1 continues to require
@@ -254,6 +259,10 @@ Put Sonic and VFX keys on `shared_events` once. Both language lanes inherit the
 same keys while verified native phrase alignments determine their actual start
 and end samples. Bind each key exactly once in a scoped asset file with a
 logical ID, SHA-256, byte count, `cache://sha256/` URI and selection state.
+For a language-only effect, declare the key in that language's
+`language_event_bindings` override; for a silent language, use an explicit
+empty override. Keep both overrides absent when the shared intent applies to
+both languages.
 `compile-delivery` rejects missing or unselected objects. This technical
 selection does not substitute for project asset authority or creative review.
 
