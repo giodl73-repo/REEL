@@ -35,6 +35,37 @@ fn subject() -> (
 }
 
 #[test]
+fn internal_poem_reuses_the_poem_master_without_relabeling_the_scene() {
+    let (catalog, episode, mut scene, policy, season, episode_bindings, scene_bindings) = subject();
+    scene.presentation.as_mut().unwrap().role = "internal-poem".into();
+    assert!(
+        resolve_scene(
+            &catalog,
+            &episode,
+            &scene,
+            &policy,
+            &season,
+            &episode_bindings,
+            &scene_bindings,
+        )
+        .is_ok()
+    );
+    scene.presentation.as_mut().unwrap().role = "chapter-title".into();
+    assert!(
+        resolve_scene(
+            &catalog,
+            &episode,
+            &scene,
+            &policy,
+            &season,
+            &episode_bindings,
+            &scene_bindings,
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn soundtrack_required_poem_rejects_missing_role_wrong_poem_and_silent_lane() {
     let (mut catalog, mut episode, mut scene, policy, season, episode_bindings, scene_bindings) =
         subject();
