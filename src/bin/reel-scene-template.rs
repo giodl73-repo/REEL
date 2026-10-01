@@ -172,7 +172,9 @@ fn run() -> Result<()> {
         .iter()
         .find(|entry| entry.template_id == use_.template_id)
         .context("template missing from catalog")?;
-    if template_entry.kind != use_.role {
+    if template_entry.kind != use_.role
+        && !(template_entry.kind == "opening-poem" && use_.role == "internal-poem")
+    {
         bail!("template role mismatch");
     }
     let definition_bytes = fs::read(definition_path)?;
