@@ -125,8 +125,11 @@ fn v2_owns_effects_once_and_compiles_language_local_triggers() {
                 event_id: old.event_id,
                 cue_id: old.cue_id,
                 semantic_trigger_id: format!("{language}-native-line"),
+                spoken_trigger_phrase: None,
                 picture_slot_id: old.picture_slot_id,
                 picture_binding_override: None,
+                sonic_bindings_override: None,
+                vfx_bindings_override: None,
                 supersedes_event_id: None,
             }],
         );
@@ -185,6 +188,42 @@ fn v2_owns_effects_once_and_compiles_language_local_triggers() {
             if language == "es" { 48_000 } else { 72_000 }
         );
     }
+    // An explicit empty override preserves Spanish silence without discarding
+    // the selected English effect from the shared semantic event.
+    scene.language_event_bindings.get_mut("es").unwrap()[0].sonic_bindings_override = Some(vec![]);
+    scene.language_event_bindings.get_mut("es").unwrap()[0].vfx_bindings_override = Some(vec![]);
+    let scoped = materialize_scene(&scene).unwrap();
+    assert!(scoped.languages["es"].events[0].sonic_bindings.is_empty());
+    assert!(scoped.languages["es"].events[0].vfx_bindings.is_empty());
+    assert_eq!(
+        scoped.languages["en"].events[0].vfx_bindings,
+        vec!["vfx.dust"]
+    );
+
+    // A language-only effect can also be declared when the shared route is
+    // silent in both languages by default.
+    scene.shared_events[0].vfx_bindings.clear();
+    scene.language_event_bindings.get_mut("es").unwrap()[0].vfx_bindings_override = None;
+    scene.language_event_bindings.get_mut("en").unwrap()[0].vfx_bindings_override =
+        Some(vec!["vfx.dust".into()]);
+    let scoped = materialize_scene(&scene).unwrap();
+    assert!(scoped.languages["es"].events[0].vfx_bindings.is_empty());
+    assert_eq!(
+        scoped.languages["en"].events[0].vfx_bindings,
+        vec!["vfx.dust"]
+    );
+    let resolved = resolve_scene(
+        &catalog,
+        &episode,
+        &scene,
+        &policy,
+        &season,
+        &episode_bindings,
+        &scene_bindings,
+    )
+    .unwrap();
+    assert!(resolved.selected_inputs.contains_key("vfx.dust"));
+
     let mut duplicate = scene;
     duplicate.languages.get_mut("es").unwrap().events = native.languages["es"].events.clone();
     assert!(materialize_scene(&duplicate).is_err());
