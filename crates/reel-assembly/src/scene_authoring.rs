@@ -194,6 +194,10 @@ pub struct LanguageEventBinding {
     pub picture_slot_id: String,
     #[serde(default)]
     pub picture_binding_override: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sonic_bindings_override: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vfx_bindings_override: Option<Vec<String>>,
     #[serde(default)]
     pub supersedes_event_id: Option<String>,
 }
@@ -1012,8 +1016,14 @@ pub fn materialize_scene(scene: &Scene) -> Result<Scene> {
                         .to_owned(),
                 ),
                 score: event.score.clone(),
-                sonic_bindings: event.sonic_bindings.clone(),
-                vfx_bindings: event.vfx_bindings.clone(),
+                sonic_bindings: binding
+                    .sonic_bindings_override
+                    .clone()
+                    .unwrap_or_else(|| event.sonic_bindings.clone()),
+                vfx_bindings: binding
+                    .vfx_bindings_override
+                    .clone()
+                    .unwrap_or_else(|| event.vfx_bindings.clone()),
             });
         }
         if bound.len() != shared.len() {
