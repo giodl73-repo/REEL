@@ -69,7 +69,7 @@ fn checked(root: &Path, relative: &str) -> Result<std::path::PathBuf> {
     Ok(full)
 }
 
-fn read_pcm24_mono(bytes: &[u8]) -> Result<(u32, &[u8])> {
+fn read_pcm_mono_as_pcm24(bytes: &[u8]) -> Result<(u32, Vec<u8>)> {
     if bytes.len() < 44 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
         bail!("take is not RIFF/WAVE");
     }
@@ -106,20 +106,24 @@ fn read_pcm24_mono(bytes: &[u8]) -> Result<(u32, &[u8])> {
                             1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71,
                         ];
                         extension_size >= 22
-                            && valid_bits == 24
+                            && valid_bits == bits
                             && (channel_mask == 0 || channel_mask == 4)
                             && bytes[start + 24..start + 40] == PCM_SUBFORMAT
                     }
                     _ => false,
                 };
-                if !pcm_format || channels != 1 || rate == 0 || block != 3 || bits != 24 {
-                    bail!("cue takes must be mono PCM24 WAV");
+                if !pcm_format
+                    || channels != 1
+                    || rate == 0
+                    || !matches!((bits, block), (16, 2) | (24, 3))
+                {
+                    bail!("cue takes must be mono PCM16 or PCM24 WAV");
                 }
-                format = Some(rate);
+                format = Some((rate, bits));
             }
             b"data" => {
-                if data.is_some() || size == 0 || size % 3 != 0 {
-                    bail!("invalid PCM24 sample payload");
+                if data.is_some() || size == 0 {
+                    bail!("invalid PCM sample payload");
                 }
                 data = Some(&bytes[start..end]);
             }
@@ -127,10 +131,22 @@ fn read_pcm24_mono(bytes: &[u8]) -> Result<(u32, &[u8])> {
         }
         cursor = end + (size & 1);
     }
-    Ok((
-        format.context("WAV format absent")?,
-        data.context("WAV data absent")?,
-    ))
+    let (rate, bits) = format.context("WAV format absent")?;
+    let samples = data.context("WAV data absent")?;
+    if bits == 24 {
+        if samples.len() % 3 != 0 {
+            bail!("invalid PCM24 sample payload");
+        }
+        return Ok((rate, samples.to_vec()));
+    }
+    if samples.len() % 2 != 0 {
+        bail!("invalid PCM16 sample payload");
+    }
+    let mut converted = Vec::with_capacity(samples.len() / 2 * 3);
+    for sample in samples.chunks_exact(2) {
+        converted.extend_from_slice(&[0, sample[0], sample[1]]);
+    }
+    Ok((rate, converted))
 }
 
 fn wav(samples: &[u8], rate: u32) -> Result<Vec<u8>> {
@@ -214,7 +230,7 @@ pub fn compose(root: &Path, cache_root: &Path, manifest: &ComposeManifest) -> Re
         if bytes.len() as u64 != source.bytes || digest(&bytes) != source.sha256 {
             bail!("segment cache bytes differ from scoped binding");
         }
-        let (segment_rate, samples) = read_pcm24_mono(&bytes)?;
+        let (segment_rate, samples) = read_pcm_mono_as_pcm24(&bytes)?;
         if rate.is_some_and(|previous| previous != segment_rate) {
             bail!("ordered cue segments have different sample rates");
         }
@@ -223,7 +239,7 @@ pub fn compose(root: &Path, cache_root: &Path, manifest: &ComposeManifest) -> Re
             bail!("ordered cue segment sample count differs from scene");
         }
         let start_sample = payload.len() as u64 / 3;
-        payload.extend_from_slice(samples);
+        payload.extend_from_slice(&samples);
         inputs.push(json!({
             "segment_id":segment.segment_id,
             "speaker_id":segment.speaker_id,
@@ -407,16 +423,48 @@ pub fn compose_word_evidence(
 mod tests {
     use super::{
         ComposeManifest, ComposeWordEvidenceManifest, compose, compose_word_evidence, digest,
-        read_pcm24_mono, wav,
+        read_pcm_mono_as_pcm24, wav,
     };
     use serde_json::json;
     use std::fs;
+
+    fn pcm16_wav(samples: &[i16], rate: u32) -> Vec<u8> {
+        let data_len = u32::try_from(samples.len() * 2).unwrap();
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&rate.to_le_bytes());
+        bytes.extend_from_slice(&(rate * 2).to_le_bytes());
+        bytes.extend_from_slice(&2u16.to_le_bytes());
+        bytes.extend_from_slice(&16u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&data_len.to_le_bytes());
+        for sample in samples {
+            bytes.extend_from_slice(&sample.to_le_bytes());
+        }
+        bytes
+    }
+
+    #[test]
+    fn pcm16_conversion_preserves_signed_samples_and_rate() {
+        let bytes = pcm16_wav(&[i16::MIN, -1, 0, 1, i16::MAX], 44_100);
+        let (rate, converted) = read_pcm_mono_as_pcm24(&bytes).unwrap();
+        assert_eq!(rate, 44_100);
+        assert_eq!(
+            converted,
+            [0, 0, 128, 0, 255, 255, 0, 0, 0, 0, 1, 0, 0, 255, 127]
+        );
+    }
 
     #[test]
     fn pcm24_round_trip_preserves_exact_samples() {
         let samples = [1, 2, 3, 4, 5, 6];
         let bytes = wav(&samples, 24_000).unwrap();
-        let (rate, actual) = read_pcm24_mono(&bytes).unwrap();
+        let (rate, actual) = read_pcm_mono_as_pcm24(&bytes).unwrap();
         assert_eq!(rate, 24_000);
         assert_eq!(actual, samples);
     }
@@ -438,23 +486,23 @@ mod tests {
         let riff_size = u32::try_from(bytes.len() - 8).unwrap();
         bytes[4..8].copy_from_slice(&riff_size.to_le_bytes());
 
-        let (rate, actual) = read_pcm24_mono(&bytes).unwrap();
+        let (rate, actual) = read_pcm_mono_as_pcm24(&bytes).unwrap();
         assert_eq!(rate, 44_100);
         assert_eq!(actual, samples);
 
         bytes[44] = 3;
-        assert!(read_pcm24_mono(&bytes).is_err());
+        assert!(read_pcm_mono_as_pcm24(&bytes).is_err());
         bytes[44] = 1;
         bytes[38] = 16;
-        assert!(read_pcm24_mono(&bytes).is_err());
+        assert!(read_pcm_mono_as_pcm24(&bytes).is_err());
     }
 
     #[test]
     fn truncated_or_wrong_format_is_rejected() {
-        assert!(read_pcm24_mono(b"not a wav").is_err());
+        assert!(read_pcm_mono_as_pcm24(b"not a wav").is_err());
         let mut bytes = wav(&[1, 2, 3], 24_000).unwrap();
         bytes[22] = 2;
-        assert!(read_pcm24_mono(&bytes).is_err());
+        assert!(read_pcm_mono_as_pcm24(&bytes).is_err());
     }
 
     #[test]
@@ -504,11 +552,15 @@ mod tests {
         fs::create_dir(&cache).unwrap();
         let inputs = [
             ("narrator", [1u8, 2, 3], "voice.narrator"),
-            ("character", [4u8, 5, 6], "voice.character"),
+            ("character", [0u8, 5, 6], "voice.character"),
         ];
         let mut assets = serde_json::Map::new();
         for (id, samples, binding) in inputs {
-            let bytes = wav(&samples, 24_000).unwrap();
+            let bytes = if id == "character" {
+                pcm16_wav(&[i16::from_le_bytes([samples[1], samples[2]])], 24_000)
+            } else {
+                wav(&samples, 24_000).unwrap()
+            };
             let sha = digest(&bytes);
             let path = cache.join("objects").join("sha256").join(&sha[..2]);
             fs::create_dir_all(&path).unwrap();
@@ -546,7 +598,10 @@ mod tests {
         };
         let receipt = compose(root, &cache, &manifest).unwrap();
         let result = fs::read(root.join("out/cue.wav")).unwrap();
-        assert_eq!(read_pcm24_mono(&result).unwrap().1, &[1, 2, 3, 4, 5, 6]);
+        assert_eq!(
+            read_pcm_mono_as_pcm24(&result).unwrap().1,
+            &[1, 2, 3, 0, 5, 6]
+        );
         assert_eq!(receipt["segments"][0]["speaker_id"], "narrator");
         assert_eq!(receipt["segments"][1]["speaker_id"], "character");
         assert_eq!(receipt["segments"][1]["start_sample"], 1);
