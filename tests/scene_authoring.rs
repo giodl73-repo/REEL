@@ -156,6 +156,7 @@ fn v2_owns_effects_once_and_compiles_language_local_triggers() {
                 event_id: old.event_id,
                 cue_id: old.cue_id,
                 semantic_trigger_id: format!("{language}-native-line"),
+                spoken_trigger_phrase: None,
                 picture_slot_id: old.picture_slot_id,
                 picture_binding_override: None,
                 supersedes_event_id: None,
@@ -846,5 +847,25 @@ fn native_markers_bind_only_to_selected_reel_slots() {
             "lock-2"
         )
         .is_err()
+    );
+}
+#[test]
+fn language_event_binding_accepts_optional_spoken_trigger_phrase() {
+    let binding: LanguageEventBinding = serde_json::from_value(serde_json::json!({
+        "semantic_id": "entry",
+        "event_id": "scene.es.entry",
+        "cue_id": "B0001",
+        "semantic_trigger_id": "word-entry",
+        "spoken_trigger_phrase": "the spoken words",
+        "picture_slot_id": "picture.entry"
+    }))
+    .unwrap();
+    assert_eq!(
+        binding.spoken_trigger_phrase.as_deref(),
+        Some("the spoken words")
+    );
+    assert_eq!(
+        serde_json::to_value(&binding).unwrap()["spoken_trigger_phrase"],
+        "the spoken words"
     );
 }

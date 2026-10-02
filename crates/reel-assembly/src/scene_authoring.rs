@@ -191,6 +191,8 @@ pub struct LanguageEventBinding {
     pub event_id: String,
     pub cue_id: String,
     pub semantic_trigger_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spoken_trigger_phrase: Option<String>,
     pub picture_slot_id: String,
     #[serde(default)]
     pub picture_binding_override: Option<String>,
