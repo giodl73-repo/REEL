@@ -1,6 +1,6 @@
 //! Render a data-driven, editable-layer still sequence for episode presentation.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -397,7 +397,9 @@ fn main() {
                 _ => bail!("expected build or check"),
             }
         } else {
-            bail!("usage: reel-presentation-still-sequence <build|check> <manifest> --root <root> --output-dir <dir>");
+            bail!(
+                "usage: reel-presentation-still-sequence <build|check> <manifest> --root <root> --output-dir <dir>"
+            );
         }
     })();
     if let Err(error) = result {
