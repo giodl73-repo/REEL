@@ -82,6 +82,8 @@ pub struct PresentationUse {
     pub template_id: String,
     pub content: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placement: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset_binding: Option<String>,
 }
 
@@ -1734,5 +1736,21 @@ mod tests {
                 .unwrap_or(&episode.scene_policy_id),
             "montage"
         );
+    }
+
+    #[test]
+    fn chapter_title_placement_survives_scene_authoring_parse() {
+        let input = serde_json::json!({
+            "role": "chapter-title",
+            "template_id": "reader-card",
+            "content": {"chapter_number": "8"},
+            "placement": {
+                "mode": "overlay-on-target-scene-start",
+                "target_scene_id": "scene-014",
+                "target_picture_slot_id": "scene-014.first-picture"
+            }
+        });
+        let parsed: PresentationUse = serde_json::from_value(input.clone()).unwrap();
+        assert_eq!(serde_json::to_value(parsed).unwrap(), input);
     }
 }
