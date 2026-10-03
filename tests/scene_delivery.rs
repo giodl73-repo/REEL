@@ -4,6 +4,44 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::Path, process::Command};
 
 #[test]
+#[ignore = "requires FFmpeg; compressed working-picture equivalence"]
+fn h264_working_files_preserve_exact_picture_and_pcm_checks() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let mut job = fixture(root);
+    let reference = root.join("reference");
+    scene_delivery::render(&root.join("job.json"), root, &reference).unwrap();
+    job["intermediate_video_codec"] = json!("h264-lossless");
+    write_json(&root.join("job.json"), &job);
+    let compact = root.join("compact");
+    let receipt = scene_delivery::render(&root.join("job.json"), root, &compact).unwrap();
+    scene_delivery::check(&root.join("job.json"), root, &compact).unwrap();
+    assert_eq!(receipt.delivery_frames, 48);
+    let pixels = |path: &Path| {
+        let result = Command::new("ffmpeg").args(["-v", "error", "-i"]).arg(path)
+            .args(["-map", "0:v:0", "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"]).output().unwrap();
+        assert!(result.status.success());
+        result.stdout
+    };
+    assert_eq!(pixels(&reference.join("picture.mkv")), pixels(&compact.join("picture.mkv")));
+    assert_eq!(fs::read(reference.join("mix.wav")).unwrap(), fs::read(compact.join("mix.wav")).unwrap());
+    job["review_only"] = json!(true);
+    write_json(&root.join("job.json"), &job);
+    let retained = root.join("retained");
+    let receipt = scene_delivery::render(&root.join("job.json"), root, &retained).unwrap();
+    assert_eq!(receipt.outputs.len(), 1);
+    assert_eq!(receipt.verified_retired_outputs.len(), 6);
+    assert!(!retained.join("master.mkv").exists());
+    assert!(!retained.join("picture.mkv").exists());
+    scene_delivery::check(&root.join("job.json"), root, &retained).unwrap();
+    fs::write(retained.join("review.mp4"), b"corrupt").unwrap();
+    assert!(scene_delivery::check(&root.join("job.json"), root, &retained).is_err());
+    job["intermediate_video_codec"] = json!("unknown");
+    write_json(&root.join("job.json"), &job);
+    assert!(scene_delivery::plan(&root.join("job.json"), root).is_err());
+}
+
+#[test]
 #[ignore = "requires FFmpeg; synthetic episode and review integration"]
 fn real_episode_consumption_boundaries_and_controlled_review() {
     let t = tempfile::tempdir().unwrap();
@@ -255,6 +293,15 @@ fn selected_ass_layer_changes_rendered_pixels_and_is_checked() {
     assert!(output.join("clean-picture.mkv").exists());
     assert!(output.join("presentation.ass").exists());
     scene_delivery::check(&root.join("job.json"), root, &output).unwrap();
+    let mut compact_job = job.clone();
+    compact_job["intermediate_video_codec"] = json!("h264-lossless");
+    compact_job["review_only"] = json!(true);
+    write_json(&root.join("compact-job.json"), &compact_job);
+    let compact_output = root.join("compact-rendered");
+    let compact_receipt = scene_delivery::render(&root.join("compact-job.json"), root, &compact_output).unwrap();
+    assert_eq!(compact_receipt.outputs.len(), 1);
+    assert!(compact_receipt.verified_retired_outputs.contains_key("presentation.ass"));
+    scene_delivery::check(&root.join("compact-job.json"), root, &compact_output).unwrap();
     fs::write(output.join("presentation.ass"), b"tampered").unwrap();
     assert!(scene_delivery::check(&root.join("job.json"), root, &output).is_err());
 }

@@ -216,3 +216,18 @@ The generated local fixture uses color images, silent dialogue and a short signa
 It tests an off-millisecond 123-sample event, a native cue boundary at sample 48,001,
 unchanged-composition detection, bus omission, exact D/M/E sum, native recast,
 overwrite refusal and tamper rejection. No consumer media or literary text is used.
+# Compact working files and retention
+
+Scene jobs may set `intermediate_video_codec` to `h264-lossless` and
+`review_only` to `true`. The renderer uses compressed H.264 working pictures,
+keeps PCM mixing and exact pixel/frame/sample checks, then retires the working
+picture, stems, master, and copied overlays after the full delivery passes.
+Only `review.mp4` and `receipt.json` remain. The receipt preserves hashes and
+sizes of the checked retired files in `verified_retired_outputs`.
+
+Rechecking this compact package verifies current source/plan identity, the
+review hash, codec, dimensions, frame rate, frame count and audio format. It
+does not recheck bytes of retired stems; their verification was performed
+before retirement. Default jobs continue to retain the complete FFV1/PCM
+delivery. Source recordings and reusable picture inputs are never retired by
+this setting.

@@ -29,6 +29,12 @@ pub struct Job {
     pub width: u32,
     pub height: u32,
     pub max_composition_samples: u64,
+    /// Small, exact H.264 working files for bounded review builds.
+    #[serde(default)]
+    pub intermediate_video_codec: IntermediateVideoCodec,
+    /// Keep only the checked review film and receipt after a bounded build.
+    #[serde(default)]
+    pub review_only: bool,
     pub pictures: Vec<Picture>,
     pub audio: Vec<Audio>,
     pub buses: BTreeMap<String, BusPolicy>,
@@ -38,6 +44,26 @@ pub struct Job {
     /// Camera applied to the composed scene picture after selected overlays.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post_compose_camera: Option<PostComposeCamera>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum IntermediateVideoCodec {
+    #[default]
+    Ffv1,
+    H264Lossless,
+}
+
+impl IntermediateVideoCodec {
+    fn encoder_args(self) -> Vec<String> {
+        match self {
+            Self::Ffv1 => vec!["-c:v".into(), "ffv1".into()],
+            Self::H264Lossless => ["-c:v", "libx264", "-preset", "veryfast", "-qp", "0"].into_iter().map(str::to_string).collect(),
+        }
+    }
+    fn codec_name(self) -> &'static str {
+        match self { Self::Ffv1 => "ffv1", Self::H264Lossless => "h264" }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -794,7 +820,7 @@ fn arg(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-fn render_ass_overlay(root: &Path, fps: &str, font_bound: bool) -> Result<()> {
+fn render_ass_overlay(root: &Path, fps: &str, font_bound: bool, codec: IntermediateVideoCodec) -> Result<()> {
     let filter = if font_bound {
         "ass=presentation.ass:fontsdir=fonts"
     } else {
@@ -815,8 +841,9 @@ fn render_ass_overlay(root: &Path, fps: &str, font_bound: bool) -> Result<()> {
             "-vf",
             filter,
             "-an",
-            "-c:v",
-            "ffv1",
+        ])
+        .args(codec.encoder_args())
+        .args([
             "-pix_fmt",
             "yuv444p",
             "-r",
@@ -840,6 +867,7 @@ fn render_timed_video_overlay(
     picture_input: &str,
     overlay_input: &str,
     picture_output: &str,
+    codec: IntermediateVideoCodec,
 ) -> Result<()> {
     let count = span.end_frame - span.start_frame;
     let graph = format!(
@@ -859,9 +887,8 @@ fn render_timed_video_overlay(
             "-map",
             "[v]",
             "-an",
-            "-c:v",
-            "ffv1",
         ])
+        .args(codec.encoder_args())
         .args([
             "-pix_fmt",
             "yuv444p",
@@ -879,7 +906,7 @@ fn render_timed_video_overlay(
     Ok(())
 }
 
-fn render_post_compose_camera(root: &Path, plan: &Plan, camera: &PostComposeCamera) -> Result<()> {
+fn render_post_compose_camera(root: &Path, plan: &Plan, camera: &PostComposeCamera, codec: IntermediateVideoCodec) -> Result<()> {
     let before = root.join("pre-camera-picture.mkv");
     fs::rename(root.join("picture.mkv"), &before)?;
     let mut zoom = "1".to_string();
@@ -914,7 +941,7 @@ fn render_post_compose_camera(root: &Path, plan: &Plan, camera: &PostComposeCame
     let filter = format!(
         "zoompan=z='{zoom}':x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s={width}x{height}:fps={fps},format=yuv444p"
     );
-    ffmpeg(&[
+    let mut args = vec![
         "-i".into(),
         arg(&before),
         "-vf".into(),
@@ -922,10 +949,10 @@ fn render_post_compose_camera(root: &Path, plan: &Plan, camera: &PostComposeCame
         "-frames:v".into(),
         plan.frame_count.to_string(),
         "-an".into(),
-        "-c:v".into(),
-        "ffv1".into(),
-        arg(&root.join("picture.mkv")),
-    ])?;
+    ];
+    args.extend(codec.encoder_args());
+    args.push(arg(&root.join("picture.mkv")));
+    ffmpeg(&args)?;
     Ok(())
 }
 
@@ -1077,6 +1104,9 @@ pub struct Receipt {
     pub ffmpeg_version: String,
     pub plan: Plan,
     pub outputs: BTreeMap<String, FileRef>,
+    /// Exact outputs checked before their owner-requested retirement.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub verified_retired_outputs: BTreeMap<String, FileRef>,
     pub content_samples: u64,
     pub delivery_frames: u64,
     pub publication: String,
@@ -1192,8 +1222,9 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         "-map".into(),
         "[v]".into(),
         "-an".into(),
-        "-c:v".into(),
-        "ffv1".into(),
+    ]);
+    inputs.extend(job.intermediate_video_codec.encoder_args());
+    inputs.extend([
         "-pix_fmt".into(),
         "yuv444p".into(),
         "-r".into(),
@@ -1228,7 +1259,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                 format!("layered-picture-{index:03}.mkv")
             };
             fs::copy(source, root.join(&selected))?;
-            render_timed_video_overlay(root, &plan, span, &input, &selected, &output)?;
+            render_timed_video_overlay(root, &plan, span, &input, &selected, &output, job.intermediate_video_codec)?;
         }
     } else if let Some(layer) = overlay {
         match layer.render_mode {
@@ -1248,7 +1279,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                         root.join("fonts").join(name),
                     )?;
                 }
-                render_ass_overlay(root, &fps, layer.font.is_some())?;
+                render_ass_overlay(root, &fps, layer.font.is_some(), job.intermediate_video_codec)?;
             }
             ExternalLayerRenderMode::TimedVideoOverlay => {
                 let span = plan
@@ -1268,13 +1299,14 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                     "clean-picture.mkv",
                     "selected-overlay.mkv",
                     "picture.mkv",
+                    job.intermediate_video_codec,
                 )?;
             }
             ExternalLayerRenderMode::EvidenceOnly => unreachable!(),
         }
     }
     if let Some(camera) = &job.post_compose_camera {
-        render_post_compose_camera(root, &plan, camera)?;
+        render_post_compose_camera(root, &plan, camera, job.intermediate_video_codec)?;
     }
     for bus in ["D", "M", "E"] {
         let mut inputs = Vec::new();
@@ -1483,7 +1515,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         );
     }
     let version = Command::new("ffmpeg").arg("-version").output()?;
-    let receipt = Receipt {
+    let mut receipt = Receipt {
         schema: "reel.scene-delivery-receipt.v0.1".into(),
         tool_version: env!("CARGO_PKG_VERSION").into(),
         ffmpeg_version: String::from_utf8_lossy(&version.stdout)
@@ -1495,6 +1527,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         delivery_frames: plan.frame_count,
         plan,
         outputs,
+        verified_retired_outputs: BTreeMap::new(),
         publication: "not-authorized-by-tool".into(),
     };
     fs::write(
@@ -1502,6 +1535,17 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         serde_json::to_vec_pretty(&receipt)?,
     )?;
     check(job_path, asset_root, root)?;
+    if job.review_only {
+        let review = receipt.outputs.remove("review.mp4").context("checked review missing")?;
+        receipt.verified_retired_outputs = std::mem::take(&mut receipt.outputs);
+        receipt.outputs.insert("review.mp4".into(), review);
+        for item in receipt.verified_retired_outputs.values() {
+            fs::remove_file(root.join(&item.path))?;
+        }
+        if root.join("fonts").exists() { fs::remove_dir(root.join("fonts"))?; }
+        fs::write(root.join("receipt.json"), serde_json::to_vec_pretty(&receipt)?)?;
+        check(job_path, asset_root, root)?;
+    }
     // No result directory is published until all streams and hashes recheck.
     fs::rename(root, output)?;
     Ok(receipt)
@@ -1565,6 +1609,26 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
     });
     if let Some(name) = font_name.as_deref() {
         expected.insert(name.to_string());
+    }
+    if !receipt.verified_retired_outputs.is_empty() {
+        if !job.review_only || receipt.outputs.keys().map(String::as_str).collect::<Vec<_>>() != vec!["review.mp4"] {
+            bail!("retired working outputs require an explicit review-only job");
+        }
+        let names = receipt.verified_retired_outputs.keys().cloned().chain(receipt.outputs.keys().cloned()).collect::<BTreeSet<_>>();
+        if names != expected { bail!("retired output evidence does not cover the checked delivery"); }
+        for item in receipt.verified_retired_outputs.values() {
+            if output.join(&item.path).exists() { bail!("retired working output still present"); }
+        }
+        checked_file(output, &receipt.outputs["review.mp4"])?;
+        let info = probe(&output.join("review.mp4"))?;
+        let streams = info["streams"].as_array().context("review streams missing")?;
+        let video = streams.iter().find(|s| s["codec_type"] == "video").context("review video missing")?;
+        let audio = streams.iter().find(|s| s["codec_type"] == "audio").context("review audio missing")?;
+        let rate = format!("{}/{}", plan.fps_numerator, plan.fps_denominator);
+        if video["codec_name"] != "h264" || video["width"].as_u64() != Some(u64::from(job.width)) || video["height"].as_u64() != Some(u64::from(job.height)) || video["r_frame_rate"].as_str() != Some(&rate) || decoded_video_frames(&output.join("review.mp4"))? != plan.frame_count || audio["codec_name"] != "aac" || audio["channels"].as_u64() != Some(2) || audio["sample_rate"].as_str() != Some(&plan.sample_rate.to_string()) {
+            bail!("compact review stream format or frame count mismatch");
+        }
+        return Ok(receipt);
     }
     if receipt.outputs.keys().cloned().collect::<BTreeSet<_>>() != expected {
         bail!("receipt output set mismatch");
@@ -1764,7 +1828,7 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
             .context("video frame rate missing")?;
         let (rn, rd) = rate.split_once('/').context("invalid video frame rate")?;
         let (rn, rd) = (rn.parse::<u64>()?, rd.parse::<u64>()?);
-        let codec = if name == "review.mp4" { "h264" } else { "ffv1" };
+        let codec = if name == "review.mp4" { "h264" } else { job.intermediate_video_codec.codec_name() };
         if stream["codec_name"] != codec
             || rd == 0
             || u128::from(rn) * u128::from(plan.fps_denominator)
