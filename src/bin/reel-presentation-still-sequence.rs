@@ -66,6 +66,8 @@ struct Receipt {
     publication: String,
 }
 
+type LoadedPresentation = (Manifest, Template, Vec<PathBuf>, Option<PathBuf>, Vec<u8>);
+
 fn hash(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
@@ -168,10 +170,7 @@ fn check_media(path: &Path, template: &Template) -> Result<(u64, u64)> {
     Ok((frames, samples))
 }
 
-fn load(
-    manifest_path: &Path,
-    root: &Path,
-) -> Result<(Manifest, Template, Vec<PathBuf>, Option<PathBuf>, Vec<u8>)> {
+fn load(manifest_path: &Path, root: &Path) -> Result<LoadedPresentation> {
     let manifest_bytes = fs::read(manifest_path)?;
     let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
     if manifest.schema != "reel.presentation-still-sequence.v1"
