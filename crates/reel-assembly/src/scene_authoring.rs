@@ -116,6 +116,10 @@ pub struct Episode {
 pub struct Cue {
     pub cue_id: String,
     pub source_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_text_overlay: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_source_text_sha256: Option<String>,
     #[serde(default)]
     pub source_cue_ids: Vec<String>,
     pub exact_text_sha256: String,
@@ -193,6 +197,11 @@ pub struct LanguageEventBinding {
     pub event_id: String,
     pub cue_id: String,
     pub semantic_trigger_id: String,
+    /// Exact language-local phrase proposal; measured clocks remain separate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spoken_trigger_phrase: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spoken_trigger_occurrence: Option<usize>,
     pub picture_slot_id: String,
     #[serde(default)]
     pub picture_binding_override: Option<String>,
@@ -522,6 +531,207 @@ pub struct TextMarker {
     /// Explicit one-based occurrence when a phrase repeats.
     #[serde(default)]
     pub occurrence: Option<usize>,
+}
+
+/// Match a phrase against both exact source words and measured native words,
+/// including a phrase beginning at sample zero. This validates an entrance
+/// without requiring it to create an additional, zero-length event span.
+pub fn spoken_phrase_sample(
+    evidence: &WordTimingEvidence,
+    spoken_text: &str,
+    phrase: &str,
+    occurrence: Option<usize>,
+) -> Result<u64> {
+    let wanted = tokens(phrase);
+    if wanted.is_empty() || occurrence == Some(0) {
+        bail!("invalid spoken phrase or occurrence");
+    }
+    let mut words = Vec::new();
+    let mut previous = None;
+    for word in &evidence.words {
+        if word.end_sample <= word.start_sample
+            || word.end_sample > evidence.cue_end_sample
+            || previous.is_some_and(|start| word.start_sample < start)
+        {
+            bail!("invalid native word clock");
+        }
+        let normalized = tokens(&word.word);
+        if normalized.is_empty() {
+            bail!("word evidence has an empty token");
+        }
+        words.extend(
+            normalized
+                .into_iter()
+                .map(|token| (token, word.start_sample)),
+        );
+        previous = Some(word.start_sample);
+    }
+    let source_hits = occurrences(&tokens(spoken_text), &wanted);
+    let measured_hits = occurrences(
+        &words
+            .iter()
+            .map(|(token, _)| token.clone())
+            .collect::<Vec<_>>(),
+        &wanted,
+    );
+    let index = occurrence.unwrap_or(1);
+    if source_hits.len() != measured_hits.len()
+        || index > source_hits.len()
+        || (source_hits.len() > 1 && occurrence.is_none())
+    {
+        bail!("spoken phrase missing or ambiguous between source and take");
+    }
+    Ok(words[measured_hits[index - 1]].1)
+}
+
+/// Verify the complete lexical sequence, rather than only selected trigger
+/// phrases. Word timing evidence remains a measurement, not a listening review.
+pub fn verify_word_text(evidence: &WordTimingEvidence, spoken_text: &str) -> Result<()> {
+    let measured = evidence
+        .words
+        .iter()
+        .flat_map(|word| tokens(&word.word))
+        .collect::<Vec<_>>();
+    let expected = tokens(spoken_text);
+    if expected.is_empty() || measured != expected {
+        bail!("complete word evidence differs from exact spoken text");
+    }
+    Ok(())
+}
+
+/// Derive timing proposals directly from one scoped scene manifest. The spoken
+/// text is verified against the cue, and the recording identity comes from the
+/// word evidence. This does not select a performance or approve an alignment.
+pub fn authored_trigger_text(
+    scene: &Scene,
+    evidence: &WordTimingEvidence,
+    spoken_text: &str,
+) -> Result<TriggerTextSpec> {
+    if scene.schema != SCENE_SCHEMA_V2 {
+        bail!("authored trigger text requires a V2 scene");
+    }
+    let lane = scene
+        .languages
+        .get(&evidence.language)
+        .ok_or_else(|| anyhow::anyhow!("word evidence language outside scene"))?;
+    let cue = lane
+        .cues
+        .iter()
+        .find(|cue| cue.cue_id == evidence.cue_id)
+        .ok_or_else(|| anyhow::anyhow!("word evidence cue outside scene"))?;
+    let source_ids = if cue.source_cue_ids.is_empty() {
+        vec![cue.source_id.as_str()]
+    } else {
+        cue.source_cue_ids.iter().map(String::as_str).collect()
+    };
+    if source_ids.iter().any(|id| {
+        !scene
+            .canonical_cue_ids
+            .iter()
+            .any(|canonical| canonical == id)
+    }) {
+        bail!("authored cue maps outside canonical scene scope");
+    }
+    let text_hash: String = Sha256::digest(spoken_text.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    if text_hash != cue.exact_text_sha256 {
+        bail!("spoken text differs from scoped cue hash");
+    }
+    let bindings = scene
+        .language_event_bindings
+        .get(&evidence.language)
+        .ok_or_else(|| anyhow::anyhow!("language event bindings missing"))?;
+    let mut markers = Vec::new();
+    let mut seen = BTreeSet::new();
+    for binding in bindings
+        .iter()
+        .filter(|binding| binding.cue_id == evidence.cue_id)
+    {
+        if !scene.shared_events.iter().any(|event| {
+            event.semantic_id == binding.semantic_id
+                && source_ids.contains(&event.canonical_cue_id.as_str())
+        }) {
+            bail!("authored trigger maps outside shared semantic cue scope");
+        }
+        if !seen.insert(binding.semantic_trigger_id.clone()) {
+            bail!("duplicate authored trigger ID in cue");
+        }
+        let mut phrase = binding.spoken_trigger_phrase.clone();
+        if binding.spoken_trigger_occurrence == Some(0)
+            || (phrase.is_none() && binding.spoken_trigger_occurrence.is_some())
+        {
+            bail!("authored trigger occurrence needs a phrase and a one-based index");
+        }
+        if let Some(value) = &phrase {
+            if tokens(value).is_empty() {
+                bail!("authored trigger phrase is empty");
+            }
+        }
+        if markers.is_empty() {
+            if let Some(value) = &phrase {
+                spoken_phrase_sample(
+                    evidence,
+                    spoken_text,
+                    value,
+                    binding.spoken_trigger_occurrence,
+                )?;
+            }
+            // A cue-opening composition also covers the recording's leading
+            // silence. A later first phrase must retain its measured entrance.
+            if binding
+                .spoken_trigger_occurrence
+                .is_none_or(|index| index == 1)
+                && phrase.as_ref().is_none_or(|value| {
+                    tokens(spoken_text).starts_with(&tokens(value))
+                        && tokens(
+                            &evidence
+                                .words
+                                .iter()
+                                .map(|word| word.word.as_str())
+                                .collect::<Vec<_>>()
+                                .join(" "),
+                        )
+                        .starts_with(&tokens(value))
+                })
+            {
+                phrase = None;
+            } else {
+                if !seen.insert("cue-start".into()) {
+                    bail!("authored trigger conflicts with cue-start marker");
+                }
+                markers.push(TextMarker {
+                    id: "cue-start".into(),
+                    phrase: None,
+                    occurrence: None,
+                });
+            }
+        } else if phrase.is_none() {
+            bail!("non-opening authored trigger needs a spoken phrase");
+        }
+        markers.push(TextMarker {
+            id: binding.semantic_trigger_id.clone(),
+            occurrence: if phrase.is_some() {
+                binding.spoken_trigger_occurrence
+            } else {
+                None
+            },
+            phrase,
+        });
+    }
+    if markers.is_empty() {
+        bail!("cue has no authored semantic triggers");
+    }
+    Ok(TriggerTextSpec {
+        schema: TRIGGER_TEXT_SCHEMA.into(),
+        language: evidence.language.clone(),
+        cue_id: evidence.cue_id.clone(),
+        selected_take_sha256: evidence.selected_take_sha256.clone(),
+        spoken_text: spoken_text.into(),
+        spoken_text_sha256: text_hash,
+        markers,
+    })
 }
 
 fn tokens(value: &str) -> Vec<String> {
@@ -882,6 +1092,8 @@ pub struct Scene {
     #[serde(default)]
     pub presentation_source_scope_ids: Vec<String>,
     pub source_authority_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_scope: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scene_policy_override_id: Option<String>,
     pub languages: BTreeMap<String, Language>,
@@ -1721,6 +1933,7 @@ mod tests {
             canonical_cue_ids: vec![],
             presentation_source_scope_ids: vec![],
             source_authority_id: "source-1".into(),
+            source_scope: None,
             scene_policy_override_id: Some("montage".into()),
             languages: BTreeMap::new(),
             shared_events: vec![],

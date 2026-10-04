@@ -2,6 +2,10 @@
 //! The manifest owns cue IDs and exact input hashes; no editor seconds are used.
 
 use anyhow::{Context, Result, bail};
+use reel_assembly::scene_authoring::{
+    TextMarker, TriggerTextSpec, WordTimingEvidence, resolve_text_triggers, spoken_phrase_sample,
+    verify_word_text,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -96,8 +100,10 @@ fn run(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
         bail!("output directory already exists");
     }
     let manifest: Manifest = serde_json::from_slice(&fs::read(manifest_path)?)?;
-    if manifest.schema != "reel.aligned-line-split.v1"
-        || !(8_000..=192_000).contains(&manifest.sample_rate)
+    if !matches!(
+        manifest.schema.as_str(),
+        "reel.aligned-line-split.v1" | "reel.word-aligned-line-split.v1"
+    ) || !(8_000..=192_000).contains(&manifest.sample_rate)
         || !matches!(manifest.language.as_str(), "es" | "en")
         || manifest.cue_ids.is_empty()
         || manifest.cue_ids.iter().any(|id| id.contains(['/', '\\']))
@@ -108,25 +114,72 @@ fn run(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
         bail!("invalid aligned line split manifest");
     }
     verified(root, &manifest.source)?;
-    let alignment: Alignment = serde_json::from_slice(&verified(root, &manifest.alignment)?)?;
-    let aligned_text = alignment
-        .characters
-        .iter()
-        .map(|c| c.text.as_str())
-        .collect::<String>();
-    if aligned_text != manifest.text {
-        bail!("alignment does not match exact source text");
-    }
-    let newline_ends = alignment
-        .characters
-        .iter()
-        .filter(|c| c.text == "\n")
-        .map(|c| c.end)
-        .collect::<Vec<_>>();
-    if newline_ends.len() + 1 != manifest.cue_ids.len() {
-        bail!("line count differs from cue IDs");
-    }
+    let alignment_bytes = verified(root, &manifest.alignment)?;
+    let word_evidence = if manifest.schema == "reel.word-aligned-line-split.v1" {
+        Some(serde_json::from_slice::<WordTimingEvidence>(
+            &alignment_bytes,
+        )?)
+    } else {
+        None
+    };
+    let line_samples = if let Some(evidence) = &word_evidence {
+        word_line_samples(&manifest, evidence)?
+    } else {
+        let alignment: Alignment = serde_json::from_slice(&alignment_bytes)?;
+        let aligned_text = alignment
+            .characters
+            .iter()
+            .map(|c| c.text.as_str())
+            .collect::<String>();
+        if aligned_text != manifest.text {
+            bail!("alignment does not match exact source text");
+        }
+        let newline_ends = alignment
+            .characters
+            .iter()
+            .filter(|c| c.text == "\n")
+            .map(|c| c.end)
+            .collect::<Vec<_>>();
+        if newline_ends.len() + 1 != manifest.cue_ids.len() {
+            bail!("line count differs from cue IDs");
+        }
+        newline_ends
+            .into_iter()
+            .map(|seconds| {
+                if !seconds.is_finite() || seconds < 0.0 {
+                    bail!("invalid provider line boundary");
+                }
+                Ok((seconds * f64::from(manifest.sample_rate)).round() as usize)
+            })
+            .collect::<Result<Vec<_>>>()?
+    };
     let source_path = root.join(&manifest.source.path);
+    if word_evidence.is_some() {
+        let probe = Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "a:0",
+                "-show_entries",
+                "stream=sample_rate,channels,codec_name",
+                "-of",
+                "json",
+            ])
+            .arg(&source_path)
+            .output()?;
+        if !probe.status.success() {
+            bail!("native split source probe failed");
+        }
+        let value: serde_json::Value = serde_json::from_slice(&probe.stdout)?;
+        let stream = &value["streams"][0];
+        if stream["codec_name"] != "pcm_s16le"
+            || stream["channels"] != 1
+            || stream["sample_rate"].as_str() != Some(manifest.sample_rate.to_string().as_str())
+        {
+            bail!("native word split requires unchanged mono PCM16 source rate");
+        }
+    }
     let decoded = Command::new("ffmpeg")
         .args(["-v", "error", "-i"])
         .arg(&source_path)
@@ -143,11 +196,13 @@ fn run(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
         .map(|b| i16::from_le_bytes([b[0], b[1]]))
         .collect::<Vec<_>>();
     let mut boundaries = vec![0usize];
-    for seconds in newline_ends {
-        if !seconds.is_finite() || seconds < 0.0 {
-            bail!("invalid provider line boundary");
-        }
-        let sample = (seconds * f64::from(manifest.sample_rate)).round() as usize;
+    if word_evidence
+        .as_ref()
+        .is_some_and(|evidence| evidence.cue_end_sample != samples.len() as u64)
+    {
+        bail!("word evidence sample clock differs from decoded source");
+    }
+    for sample in line_samples {
         if sample <= *boundaries.last().unwrap() || sample >= samples.len() {
             bail!("nonmonotonic provider line boundary");
         }
@@ -188,11 +243,57 @@ fn run(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
         serde_json::to_vec_pretty(&serde_json::json!({
             "schema":"reel.aligned-line-split-receipt.v1", "language":manifest.language,
             "source_sha256":manifest.source.sha256, "alignment_sha256":manifest.alignment.sha256,
+            "alignment_method":if word_evidence.is_some(){"native-word-phrase-entrances"}else{"provider-character-newlines"},
             "sample_rate":manifest.sample_rate, "source_samples":samples.len(), "outputs":outputs
         }))?,
     )?;
     println!("{} contiguous cue slices", outputs.len());
     Ok(())
+}
+
+fn word_line_samples(manifest: &Manifest, evidence: &WordTimingEvidence) -> Result<Vec<usize>> {
+    verify_word_text(evidence, &manifest.text)?;
+    if evidence.language != manifest.language
+        || evidence.sample_rate != manifest.sample_rate
+        || evidence.selected_take_sha256 != manifest.source.sha256
+        || evidence.cue_id != manifest.cue_ids[0]
+    {
+        bail!("word evidence does not bind the exact source, language and sample clock");
+    }
+    let lines = manifest.text.split('\n').collect::<Vec<_>>();
+    if lines.len() != manifest.cue_ids.len() || lines.iter().any(|line| line.trim().is_empty()) {
+        bail!("exact line text differs from cue IDs");
+    }
+    let spec = TriggerTextSpec {
+        schema: "reel.scene-trigger-text.v1".into(),
+        language: manifest.language.clone(),
+        cue_id: evidence.cue_id.clone(),
+        selected_take_sha256: manifest.source.sha256.clone(),
+        spoken_text: manifest.text.clone(),
+        spoken_text_sha256: hash(manifest.text.as_bytes()),
+        markers: manifest
+            .cue_ids
+            .iter()
+            .enumerate()
+            .map(|(index, id)| TextMarker {
+                id: id.clone(),
+                phrase: if index == 0 {
+                    None
+                } else {
+                    Some(lines[index].into())
+                },
+                occurrence: None,
+            })
+            .collect(),
+    };
+    spoken_phrase_sample(evidence, &manifest.text, lines[0], None)?;
+    let alignment = resolve_text_triggers(evidence, &spec)?;
+    Ok(manifest
+        .cue_ids
+        .iter()
+        .skip(1)
+        .map(|id| alignment.semantic_markers[id] as usize)
+        .collect())
 }
 
 fn main() {
@@ -217,4 +318,62 @@ fn bail_usage() -> Result<()> {
     bail!(
         "usage: reel-aligned-split build <manifest.json> --root <input-root> --output-dir <new-dir>"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn fixture() -> (Manifest, WordTimingEvidence) {
+        let manifest = serde_json::from_value(serde_json::json!({
+            "schema":"reel.word-aligned-line-split.v1","language":"es","sample_rate":44100,
+            "source":{"path":"source.wav","sha256":"a".repeat(64),"bytes":100},
+            "alignment":{"path":"words.json","sha256":"b".repeat(64),"bytes":100},
+            "text":"Hola Sara\nMira acá","cue_ids":["cue-1","cue-2"]
+        }))
+        .unwrap();
+        let evidence = serde_json::from_value(serde_json::json!({
+            "schema":"reel.scene-word-timing-evidence.v1","language":"es","cue_id":"cue-1",
+            "selected_take_sha256":"a".repeat(64),"sample_rate":44100,"cue_end_sample":10000,
+            "words":[
+                {"word":"Hola","start_sample":0,"end_sample":400},
+                {"word":"Sara","start_sample":500,"end_sample":900},
+                {"word":"Mira","start_sample":3000,"end_sample":3400},
+                {"word":"acá","start_sample":4000,"end_sample":4400}]
+        }))
+        .unwrap();
+        (manifest, evidence)
+    }
+    #[test]
+    fn native_line_cut_uses_measured_words_and_allows_zero_start() {
+        let (manifest, evidence) = fixture();
+        assert_eq!(word_line_samples(&manifest, &evidence).unwrap(), vec![3000]);
+    }
+    #[test]
+    fn wrong_take_clock_language_and_line_scope_are_rejected() {
+        let (manifest, mut evidence) = fixture();
+        evidence.selected_take_sha256 = "c".repeat(64);
+        assert!(word_line_samples(&manifest, &evidence).is_err());
+        evidence.selected_take_sha256 = manifest.source.sha256.clone();
+        evidence.sample_rate = 48000;
+        assert!(word_line_samples(&manifest, &evidence).is_err());
+        evidence.sample_rate = 44100;
+        evidence.language = "en".into();
+        assert!(word_line_samples(&manifest, &evidence).is_err());
+        evidence.language = "es".into();
+        evidence.cue_id = "other-cue".into();
+        assert!(word_line_samples(&manifest, &evidence).is_err());
+    }
+
+    #[test]
+    fn extra_words_are_rejected_even_when_every_line_phrase_matches() {
+        let (manifest, mut evidence) = fixture();
+        evidence
+            .words
+            .push(reel_assembly::scene_authoring::TimedWord {
+                word: "instruction".into(),
+                start_sample: 5000,
+                end_sample: 5500,
+            });
+        assert!(word_line_samples(&manifest, &evidence).is_err());
+    }
 }
