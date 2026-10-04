@@ -7,8 +7,9 @@ use reel::scene_delivery_compile::{CompileManifest, compile_to_dir};
 use reel_assembly::scene_authoring::{
     CacheObjectRef, Episode, ProviderWordImport, RenderedSpan, Scene, ScenePolicy, ScopedBindings,
     TemplateCatalog, TriggerTextSpec, WhisperCppWordImport, WordTimingEvidence,
-    audit_rendered_compositions, compile_selected_event_request, import_provider_words,
-    import_whispercpp_words, resolve_episode_presentation, resolve_scene, resolve_text_triggers,
+    audit_rendered_compositions, authored_trigger_text, compile_selected_event_request,
+    import_provider_words, import_whispercpp_words, resolve_episode_presentation, resolve_scene,
+    resolve_text_triggers,
 };
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
@@ -217,6 +218,51 @@ fn run() -> Result<()> {
         [
             _,
             command,
+            scene_path,
+            evidence_path,
+            text_path,
+            alignment_flag,
+            alignment_path,
+            receipt_flag,
+            receipt_path,
+        ] if command == "resolve-scene-trigger-text"
+            && alignment_flag == "--alignment"
+            && receipt_flag == "--receipt" =>
+        {
+            if Path::new(alignment_path).exists() || Path::new(receipt_path).exists() {
+                bail!("trigger outputs must be new");
+            }
+            let scene_bytes = fs::read(scene_path)?;
+            let evidence_bytes = fs::read(evidence_path)?;
+            let text = fs::read_to_string(text_path)?;
+            let scene: Scene = serde_json::from_slice(&scene_bytes)?;
+            let evidence: WordTimingEvidence = serde_json::from_slice(&evidence_bytes)?;
+            let spec = authored_trigger_text(&scene, &evidence, &text)?;
+            let alignment = resolve_text_triggers(&evidence, &spec)?;
+            let bytes = serde_json::to_vec_pretty(&alignment)?;
+            let receipt = serde_json::json!({
+                "schema":"reel.scene-trigger-resolution-receipt.v1",
+                "language":alignment.language,"cue_id":alignment.cue_id,
+                "selected_take_sha256":alignment.selected_take_sha256,
+                "scene_sha256":digest(&scene_bytes),
+                "word_evidence_sha256":digest(&evidence_bytes),
+                "spoken_text_sha256":spec.spoken_text_sha256,
+                "trigger_spec_sha256":digest(&serde_json::to_vec_pretty(&spec)?),
+                "native_alignment_sha256":digest(&bytes),
+                "state":"authored-phrases-resolved; listening-and-review-held",
+                "publication":"not-authorized"
+            });
+            write_new(alignment_path, &bytes)?;
+            write_new(receipt_path, &serde_json::to_vec_pretty(&receipt)?)?;
+            println!(
+                "{} {} authored semantic markers",
+                alignment.cue_id,
+                alignment.semantic_markers.len()
+            );
+        }
+        [
+            _,
+            command,
             evidence_path,
             spec_path,
             alignment_flag,
@@ -389,7 +435,7 @@ fn run() -> Result<()> {
             println!("{} visible composition runs checked", runs.len());
         }
         _ => bail!(
-            "usage: reel-scene-authoring compose-cue <project-root> <compose-manifest.json> <cache-root>\n       reel-scene-authoring compose-word-evidence <project-root> <word-compose-manifest.json> <cache-root>\n       reel-scene-authoring compile-delivery <project-root> <compile-manifest.json>\n       reel-scene-authoring resolve <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> --output <new.json>\n       reel-scene-authoring resolve-language <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <language> --output <new.json>\n       reel-scene-authoring resolve-episode-presentation <catalog.json> <episode.json> <season-bindings.json> <episode-bindings.json> --output <new.json>\n       reel-scene-authoring import-provider-words <import-spec.json> <asset-root> --output <word-evidence.json> --receipt <new.json>\n       reel-scene-authoring import-whispercpp-words <import-spec.json> <asset-root> --output <word-evidence.json> --receipt <new.json>\n       reel-scene-authoring resolve-trigger-text <word-evidence.json> <trigger-spec.json> --alignment <new.json> --receipt <new.json>\n       reel-scene-authoring compile-events <graph.json> <pointer.json> <episode.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <next-lock-id> --output <new.json>\n       reel-scene-authoring audit-picture <policy.json> <rendered-spans.json> <sample-rate> --output <new.json>"
+            "usage: reel-scene-authoring compose-cue <project-root> <compose-manifest.json> <cache-root>\n       reel-scene-authoring compose-word-evidence <project-root> <word-compose-manifest.json> <cache-root>\n       reel-scene-authoring compile-delivery <project-root> <compile-manifest.json>\n       reel-scene-authoring resolve <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> --output <new.json>\n       reel-scene-authoring resolve-language <catalog.json> <episode.json> <scene.json> <policy.json> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <language> --output <new.json>\n       reel-scene-authoring resolve-episode-presentation <catalog.json> <episode.json> <season-bindings.json> <episode-bindings.json> --output <new.json>\n       reel-scene-authoring import-provider-words <import-spec.json> <asset-root> --output <word-evidence.json> --receipt <new.json>\n       reel-scene-authoring import-whispercpp-words <import-spec.json> <asset-root> --output <word-evidence.json> --receipt <new.json>\n       reel-scene-authoring resolve-scene-trigger-text <scene.json> <word-evidence.json> <exact-spoken-text.txt> --alignment <new.json> --receipt <new.json>\n       reel-scene-authoring resolve-trigger-text <word-evidence.json> <trigger-spec.json> --alignment <new.json> --receipt <new.json>\n       reel-scene-authoring compile-events <graph.json> <pointer.json> <episode.json> <scene.json> <language> <season-bindings.json> <episode-bindings.json> <scene-bindings.json> <alignment-paths.json> <next-lock-id> --output <new.json>\n       reel-scene-authoring audit-picture <policy.json> <rendered-spans.json> <sample-rate> --output <new.json>"
         ),
     }
     Ok(())

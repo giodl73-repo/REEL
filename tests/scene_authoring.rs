@@ -156,6 +156,8 @@ fn v2_owns_effects_once_and_compiles_language_local_triggers() {
                 event_id: old.event_id,
                 cue_id: old.cue_id,
                 semantic_trigger_id: format!("{language}-native-line"),
+                spoken_trigger_phrase: None,
+                spoken_trigger_occurrence: None,
                 picture_slot_id: old.picture_slot_id,
                 picture_binding_override: None,
                 supersedes_event_id: None,
