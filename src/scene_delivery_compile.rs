@@ -39,6 +39,8 @@ pub struct CompileManifest {
     pub delivery_id: String,
     pub delivery_title: String,
     pub output_dir: String,
+    #[serde(default)]
+    pub template_receipt: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -96,6 +98,131 @@ fn hash(bytes: &[u8]) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+fn delivery_id(prefix: &str, semantic: &str) -> String {
+    if semantic
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    {
+        format!("{prefix}-{semantic}")
+    } else {
+        format!("{prefix}-{}", hash(semantic.as_bytes()))
+    }
+}
+
+/// Close every consumed bus and editable layer from the explicit selected
+/// scoped bindings, using the normal append-only graph transactions.
+fn close_delivery_graph(
+    graph: &Graph,
+    pointer: &SelectedPointer,
+    target: &str,
+    id: &str,
+    scopes: &[&ScopedBindings],
+    job: &Value,
+) -> Result<(Graph, SelectedPointer)> {
+    use reel_assembly::{
+        Asset, Disposition, Lane, REVISION_BATCH_REQUEST_SCHEMA, Revision,
+        SLOT_EXTENSION_REQUEST_SCHEMA, Slot, SlotAddition, SlotExtensionRequest,
+        SlotRevisionBatchRequest, SlotRevisionSelection, append_selected_revisions, extend_slots,
+    };
+    let selected = selected_closure(pointer, graph, target)?;
+    let mut known = selected
+        .closure
+        .selected_assets
+        .iter()
+        .map(|a| a.sha256.clone())
+        .collect::<BTreeSet<_>>();
+    let mut media = Vec::new();
+    for row in job["audio"].as_array().into_iter().flatten() {
+        media.push((
+            &row["source"],
+            if row["bus"] == "M" {
+                Lane::Score
+            } else {
+                Lane::Sonic
+            },
+        ));
+    }
+    for row in job["external_layers"].as_array().into_iter().flatten() {
+        media.push((&row["evidence"], Lane::Presentation));
+        if !row["font"].is_null() {
+            media.push((&row["font"], Lane::Presentation));
+        }
+        if !row["render_source"].is_null() {
+            media.push((&row["render_source"], Lane::Vfx));
+        }
+    }
+    let mut additions = Vec::new();
+    let mut revisions = Vec::new();
+    for (reference, lane) in media {
+        let sha = reference["sha256"]
+            .as_str()
+            .context("delivery media hash absent")?;
+        if !known.insert(sha.into()) {
+            continue;
+        }
+        let selected = scopes
+            .iter()
+            .flat_map(|scope| scope.assets.values())
+            .find(|a| {
+                a.sha256 == sha
+                    && [
+                        "selected-private-production",
+                        "principal-approved",
+                        "release-cleared",
+                    ]
+                    .contains(&a.selection_state.as_str())
+            })
+            .context("delivery media is not an explicitly selected scoped asset")?;
+        let slot = format!("{id}.media.{sha}");
+        additions.push(SlotAddition {
+            node_id: target.into(),
+            slot: Slot {
+                slot_id: slot.clone(),
+                beat_id: target.into(),
+                lane,
+                disposition: Disposition::Unselected,
+                selected_revision_id: None,
+                revisions: vec![],
+            },
+        });
+        revisions.push(SlotRevisionSelection {
+            slot_id: slot.clone(),
+            revision: Revision {
+                revision_id: format!("{slot}.selected"),
+                supersedes: None,
+                asset: Asset {
+                    logical_id: selected.logical_id.clone(),
+                    sha256: selected.sha256.clone(),
+                    cache_uri: selected.cache_uri.clone(),
+                },
+            },
+        });
+    }
+    if additions.is_empty() {
+        return Ok((graph.clone(), pointer.clone()));
+    }
+    let extended = extend_slots(
+        graph,
+        &SlotExtensionRequest {
+            schema: SLOT_EXTENSION_REQUEST_SCHEMA.into(),
+            additions,
+            next_lock_logical_id: format!("{id}.media-planned"),
+        },
+    )?;
+    let graph = append_selected_revisions(
+        &extended,
+        &SlotRevisionBatchRequest {
+            schema: REVISION_BATCH_REQUEST_SCHEMA.into(),
+            revisions,
+            next_lock_logical_id: format!("{id}.media-selected"),
+        },
+    )?;
+    let mut pointer = pointer.clone();
+    pointer.selected_lock = graph.lock.clone();
+    selected_closure(&pointer, &graph, target)?;
+    Ok((graph, pointer))
 }
 
 fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
@@ -229,6 +356,9 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     let episode: Episode = read(&checked(&root, &request.episode)?)?;
     let source_scene: Scene = read(&checked(&root, &request.scene)?)?;
     let scene = materialize_scene(&source_scene)?;
+    if scene.presentation.is_none() && request.template_receipt.is_some() {
+        bail!("ordinary scene cannot declare a template receipt");
+    }
     let policy: ScenePolicy = read(&checked(&root, &request.policy)?)?;
     let season: ScopedBindings = read(&checked(&root, &request.season_bindings)?)?;
     let episode_bindings: ScopedBindings = read(&checked(&root, &request.episode_bindings)?)?;
@@ -381,8 +511,8 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     let mut attachments = Vec::new();
     let mut event_bindings = Vec::new();
     for event in &events {
-        let picture_id = format!("p-{}", event.semantic_id);
-        let shot_id = format!("shot-{}", event.semantic_id);
+        let picture_id = delivery_id("p", &event.semantic_id);
+        let shot_id = delivery_id("shot", &event.semantic_id);
         shots.push(json!({"id":shot_id,"scene_id":id}));
         pictures.push(json!({
             "attachment_id":picture_id,
@@ -392,7 +522,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         }));
         attachments.push(json!({
             "id":picture_id,
-            "target":{"kind":"cel","shot_id":shot_id,"cel_id":format!("cel-{}",event.semantic_id)},
+            "target":{"kind":"cel","shot_id":shot_id,"cel_id":delivery_id("cel", &event.semantic_id)},
             "start":anchor(event.start,&cues)?,
             "end":anchor(event.end,&cues)?
         }));
@@ -541,7 +671,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
                 run_end += 1;
             }
             let sonic = asset(key, &scopes)?;
-            let attachment = format!("e-{}-{}", event.semantic_id, position + 1);
+            let attachment = format!("{}-{}", delivery_id("e", &event.semantic_id), position + 1);
             audio.push(json!({
                 "attachment_id": attachment,
                 "source": media_ref(sonic),
@@ -584,7 +714,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
             }
             let overlay = asset(key, &scopes)?;
             let attachment = format!("fx-{}-{}", event.semantic_id, position + 1);
-            let shot_id = format!("shot-{}", event.semantic_id);
+            let shot_id = delivery_id("shot", &event.semantic_id);
             attachments.push(json!({
                 "id": attachment,
                 "target": {
@@ -620,7 +750,17 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         // Its receipt stays a distinct selected input even though only the ASS
         // bytes and optional font become rendered media.
         asset(source_text_key, &scopes)?;
-        asset(receipt_key, &scopes)?;
+        let receipt_asset = asset(receipt_key, &scopes)?;
+        let receipt_path = request
+            .template_receipt
+            .as_deref()
+            .context("presentation compile requires template_receipt path")?;
+        let receipt_bytes = fs::read(checked(&root, receipt_path)?)?;
+        if hash(&receipt_bytes) != receipt_asset.sha256
+            || receipt_bytes.len() as u64 != receipt_asset.bytes
+        {
+            bail!("template receipt path differs from selected presentation receipt");
+        }
         let layer = asset(layer_key, &scopes)?;
         let font = presentation
             .asset_binding
@@ -709,6 +849,9 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         }
     });
     let (job_sha, job_bytes) = write_new(&dir, "job.json", &job)?;
+    let source_selected_graph_lock = graph.lock.clone();
+    let (graph, pointer) =
+        close_delivery_graph(&graph, &pointer, &scene.scene_id, &id, &scopes, &job)?;
     let semantic = json!({
         "schema":"reel.semantic-delivery.v1",
         "id":id,
@@ -721,7 +864,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         "event_bindings":event_bindings
     });
     let (semantic_sha, _) = write_new(&dir, "semantic-delivery.json", &semantic)?;
-    let build = json!({
+    let mut build = json!({
         "schema":"reel.scene-build.v1",
         "scene_id":scene.scene_id,
         "language":request.language,
@@ -735,6 +878,11 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         "alignment_paths":request.alignment_paths,
         "semantic_delivery":format!("{}/semantic-delivery.json",request.output_dir)
     });
+    if scene.presentation.is_some() {
+        build["template_receipt"] = json!(request.template_receipt);
+    } else if request.template_receipt.is_some() {
+        bail!("ordinary scene cannot declare a template receipt");
+    }
     let (build_sha, _) = write_new(&dir, "build.json", &build)?;
     let mut input_sha256 = BTreeMap::new();
     for (name, path) in [
@@ -773,6 +921,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         "compiler_source_sha256":hash(include_bytes!("scene_delivery_compile.rs")),
         "compiler_package_version":env!("CARGO_PKG_VERSION"),
         "selected_graph_lock":semantic["pointer"]["selected_lock"],
+        "source_selected_graph_lock":source_selected_graph_lock,
         "cue_count":cues.len(),
         "semantic_event_count":events.len(),
         "score_roles":used_roles,
@@ -816,8 +965,9 @@ fn active_scene_events<'a>(
 #[cfg(test)]
 mod tests {
     use super::{
-        CueClock, DeliveryProfile, active_scene_events, anchor, presentation_binding, score_role,
-        sonic_gain_db,
+        CueClock, DeliveryProfile, Graph, ScopedBindings, SelectedPointer, active_scene_events,
+        anchor, close_delivery_graph, delivery_id, presentation_binding, score_role,
+        selected_closure, sonic_gain_db,
     };
     use reel_assembly::scene_authoring::ScoreUse;
     use serde_json::json;
@@ -885,6 +1035,53 @@ mod tests {
         );
         assert!(presentation_binding(&content, "ass_layer_bindings", "fr").is_err());
         assert!(presentation_binding(&content, "template_receipt_bindings", "es").is_err());
+    }
+
+    #[test]
+    fn selected_score_is_appended_to_delivery_closure_without_rewriting_picture_events() {
+        let graph: Graph = serde_json::from_value(json!({
+            "schema":"reel.semantic-assembly.v1", "lock":{"logical_id":"lock","sha256":"0".repeat(64)},
+            "slots":[{"slot_id":"d","beat_id":"cue","lane":"narration","disposition":"selected","selected_revision_id":"d1",
+                "revisions":[{"revision_id":"d1","asset":{"logical_id":"voice","sha256":"2".repeat(64),"cache_uri":format!("cache://sha256/{}","2".repeat(64))}}]}],
+            "nodes":[{"id":"scene","inputs":[],"slots":["d"],"events":[]}],"events":[],"presentation_targets":[]
+        })).unwrap();
+        let pointer: SelectedPointer = serde_json::from_value(json!({"schema":"reel.selected-pointer.v1","logical_id":"current","selected_lock":graph.lock})).unwrap();
+        let scope: ScopedBindings = serde_json::from_value(json!({"schema":"reel.scene-asset-bindings.v1","scope_id":"episode","assets":{
+            "score.theme":{"logical_id":"music","sha256":"1".repeat(64),"cache_uri":format!("cache://sha256/{}","1".repeat(64)),"bytes":100,"selection_state":"selected-private-production"}
+        }})).unwrap();
+        let job =
+            json!({"audio":[{"bus":"M","source":{"sha256":"1".repeat(64)}}],"external_layers":[]});
+        let (next, selected) =
+            close_delivery_graph(&graph, &pointer, "scene", "delivery", &[&scope], &job).unwrap();
+        assert_eq!(graph.slots.len(), 1);
+        assert_eq!(next.events.len(), graph.events.len());
+        assert_eq!(
+            selected_closure(&selected, &next, "scene")
+                .unwrap()
+                .closure
+                .selected_assets
+                .len(),
+            2
+        );
+        let mut candidate = scope.clone();
+        candidate
+            .assets
+            .get_mut("score.theme")
+            .unwrap()
+            .selection_state = "candidate".into();
+        assert!(
+            close_delivery_graph(&graph, &pointer, "scene", "delivery", &[&candidate], &job)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn unicode_semantics_keep_stable_safe_attachment_identity() {
+        assert_eq!(delivery_id("p", "academy-guines"), "p-academy-guines");
+        let encoded = delivery_id("p", "academy-güines");
+        assert!(encoded.is_ascii());
+        assert_ne!(encoded, delivery_id("p", "academy-guines"));
+        assert_eq!(encoded, delivery_id("p", "academy-güines"));
     }
 
     #[test]

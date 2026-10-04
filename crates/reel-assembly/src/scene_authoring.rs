@@ -184,6 +184,10 @@ pub struct SharedEvent {
     pub canonical_cue_id: String,
     pub picture_binding: String,
     pub score: ScoreUse,
+    /// Empty means every lane. A translated cue may need a scoped continuation
+    /// before its first word-triggered cut without inventing a zero-length event.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub language_ids: Vec<String>,
     #[serde(default)]
     pub sonic_bindings: Vec<String>,
     #[serde(default)]
@@ -1154,6 +1158,12 @@ pub fn materialize_scene(scene: &Scene) -> Result<Scene> {
             event.semantic_id.is_empty()
                 || event.picture_binding.is_empty()
                 || !canonical.contains(&event.canonical_cue_id)
+                || event.language_ids.iter().collect::<BTreeSet<_>>().len()
+                    != event.language_ids.len()
+                || event
+                    .language_ids
+                    .iter()
+                    .any(|id| !scene.languages.contains_key(id))
         })
     {
         bail!("shared V2 semantic events are duplicated or outside cue scope");
@@ -1204,6 +1214,7 @@ pub fn materialize_scene(scene: &Scene) -> Result<Scene> {
                 cue.source_cue_ids.iter().map(String::as_str).collect()
             };
             if !mapped.contains(&event.canonical_cue_id.as_str())
+                || (!event.language_ids.is_empty() && !event.language_ids.contains(language_id))
                 || binding.event_id.is_empty()
                 || binding.semantic_trigger_id.is_empty()
                 || binding.picture_slot_id.is_empty()
@@ -1230,7 +1241,13 @@ pub fn materialize_scene(scene: &Scene) -> Result<Scene> {
                 vfx_bindings: event.vfx_bindings.clone(),
             });
         }
-        if bound.len() != shared.len() {
+        let expected = shared
+            .values()
+            .filter(|event| {
+                event.language_ids.is_empty() || event.language_ids.contains(language_id)
+            })
+            .count();
+        if bound.len() != expected {
             bail!("V2 language {language_id} omits a shared semantic event");
         }
     }

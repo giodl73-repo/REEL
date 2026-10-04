@@ -49,6 +49,32 @@ fn evidence(language: &str, text: &str, second_cut: u64) -> WordTimingEvidence {
 }
 
 #[test]
+fn translated_leading_continuation_can_be_scoped_without_a_zero_length_other_lane() {
+    let mut scene = scene();
+    scene.authoring_state = "ready-for-private-build".into();
+    scene.shared_events[0].language_ids = vec!["es".into()];
+    scene
+        .language_event_bindings
+        .get_mut("en")
+        .unwrap()
+        .remove(0);
+    let materialized = reel_assembly::scene_authoring::materialize_scene(&scene).unwrap();
+    assert_eq!(materialized.languages["es"].events.len(), 2);
+    assert_eq!(materialized.languages["en"].events.len(), 1);
+    assert_eq!(materialized.languages["en"].events[0].event_id, "look-en");
+}
+
+#[test]
+fn scoped_event_rejects_unknown_language_and_binding_in_excluded_lane() {
+    let mut scene = scene();
+    scene.authoring_state = "ready-for-private-build".into();
+    scene.shared_events[0].language_ids = vec!["fr".into()];
+    assert!(reel_assembly::scene_authoring::materialize_scene(&scene).is_err());
+    scene.shared_events[0].language_ids = vec!["es".into()];
+    assert!(reel_assembly::scene_authoring::materialize_scene(&scene).is_err());
+}
+
+#[test]
 fn one_manifest_resolves_language_local_phrases_to_different_native_clocks() {
     let scene = scene();
     for (language, text, cut) in [

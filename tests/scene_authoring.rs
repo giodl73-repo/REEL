@@ -141,6 +141,7 @@ fn v2_owns_effects_once_and_compiles_language_local_triggers() {
         semantic_id: "poem-image".into(),
         canonical_cue_id: "source-block-1".into(),
         picture_binding: "picture.first-line".into(),
+        language_ids: vec![],
         score: ScoreUse::Role {
             role: "poem.intimate".into(),
         },
