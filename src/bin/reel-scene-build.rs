@@ -372,6 +372,7 @@ fn execute_changed_only(
             manifest,
             asset_root,
             scene_output.to_str().context("non-UTF8 scene output")?,
+            false,
         )?;
         let result_path = output.join(format!("result-{ordinal:03}.json"));
         let scene_receipt = scene_output.join("scene-authoring-build-receipt.json");
@@ -707,6 +708,7 @@ fn build_scene(
     manifest_path: &str,
     asset_root: &str,
     output_dir: &str,
+    check_only: bool,
 ) -> Result<()> {
     let root = Path::new(project_root).canonicalize()?;
     let manifest: BuildManifest = read(&checked(&root, manifest_path)?)?;
@@ -796,6 +798,24 @@ fn build_scene(
     )?;
     let template =
         validate_template_layer(&root, &manifest, &scene, &resolved, &job, &delivery_plan)?;
+    let planned_spans = delivery_plan
+        .pictures
+        .iter()
+        .zip(&job.pictures)
+        .map(|(span, picture)| RenderedSpan {
+            composition_id: format!("{}:{:?}", picture.source.sha256, picture.crop),
+            start_sample: span.start_sample,
+            end_sample: span.end_sample,
+        })
+        .collect::<Vec<_>>();
+    audit_rendered_compositions(&policy, delivery_plan.sample_rate, &planned_spans)?;
+    if check_only {
+        println!(
+            "{} {} native inputs verified",
+            scene.scene_id, manifest.language
+        );
+        return Ok(());
+    }
     let output = Path::new(output_dir);
     let rendered = reel::semantic_delivery::render(&delivery_path, Path::new(asset_root), output)?;
     let checked_receipt = reel::scene_delivery::check(&job_path, Path::new(asset_root), output)?;
@@ -1142,6 +1162,11 @@ fn validate_semantic_timeline(
 
 fn run() -> Result<()> {
     let args: Vec<String> = env::args().collect();
+    if let [_, command, root, manifest, flag, assets] = args.as_slice() {
+        if command == "check-inputs" && flag == "--asset-root" {
+            return build_scene(root, manifest, assets, "", true);
+        }
+    }
     if let [
         _,
         command,
@@ -1202,7 +1227,7 @@ fn run() -> Result<()> {
             return execute_changed_only(index, state, asset_root, output_root);
         }
         if command == "build" && root_flag == "--asset-root" && output_flag == "--output-dir" {
-            return build_scene(index, state, asset_root, output_root);
+            return build_scene(index, state, asset_root, output_root, false);
         }
     }
     bail!(
