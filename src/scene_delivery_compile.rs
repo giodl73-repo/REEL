@@ -49,6 +49,8 @@ pub struct DeliveryProfile {
     pub schema: String,
     pub width: u32,
     pub height: u32,
+    #[serde(default)]
+    pub still_sequence_encoding: Option<String>,
     pub sample_rate: u32,
     pub frame_rate_numerator: u64,
     pub frame_rate_denominator: u64,
@@ -384,6 +386,10 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     )?;
     let profile: DeliveryProfile = read(&checked(&root, &request.profile)?)?;
     if profile.schema != "reel.scene-delivery-profile.v1"
+        || profile
+            .still_sequence_encoding
+            .as_deref()
+            .is_some_and(|value| value != "h264-lossless")
         || profile.width == 0
         || profile.height == 0
         || profile.sample_rate == 0
@@ -830,6 +836,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     let (production_sha, _) = write_new(&dir, "production.json", &production)?;
     let (contract_sha, contract_bytes) = write_new(&dir, "contract.json", &contract)?;
     let job = json!({
+        "still_sequence_encoding":profile.still_sequence_encoding,
         "schema":"reel.scene-delivery.v0.1",
         "id":id,
         "contract":{"path":"contract.json","sha256":contract_sha,"bytes":contract_bytes},

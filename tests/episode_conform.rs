@@ -34,7 +34,11 @@ fn source(root: &Path, name: &str, color: &str, sample_rate: u32) {
         .args([
             "-shortest",
             "-c:v",
-            "ffv1",
+            if name == "credits.mkv" {
+                "libx264"
+            } else {
+                "ffv1"
+            },
             "-pix_fmt",
             "yuv444p",
             "-c:a",
@@ -228,6 +232,41 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
             .iter()
             .any(|finding| finding["code"] == "black-at-cut")
     );
+    let mut compact = manifest.clone();
+    compact["compact_delivery"] = serde_json::json!({"crf":18,"audio_bitrate_kbps":320,"retain_lossless_master":false,"intermediate_video_encoding":"h264-lossless"});
+    write(&root.join("compact.json"), &compact);
+    let compact_output = root.join("compact-output");
+    let compact_result = Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
+        .arg("build")
+        .arg(root.join("compact.json"))
+        .arg("--input-root")
+        .arg(root)
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output-dir")
+        .arg(&compact_output)
+        .output()
+        .unwrap();
+    assert!(
+        compact_result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compact_result.stderr)
+    );
+    assert!(!compact_output.join("master.mkv").exists());
+    assert!(compact_output.join("episode.mp4").exists());
+    let compact_receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(compact_output.join("receipt.json")).unwrap()).unwrap();
+    assert_eq!(compact_receipt["encoded_delivery"]["decoded_frames"], 120);
+    assert_eq!(
+        compact_receipt["encoded_delivery"]["full_decode_verified"],
+        true
+    );
+    assert_eq!(
+        compact_receipt["encoded_delivery"]["lossless_master_retained"],
+        false
+    );
+    // Retention affects only this conform's generated movie, never the sources.
+    assert!(output.join("master.mkv").exists());
     manifest["segments"].as_array_mut().unwrap().swap(1, 3);
     write(&root.join("wrong-order.json"), &manifest);
     let rejected = Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))

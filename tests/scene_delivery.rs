@@ -163,6 +163,33 @@ fn real_episode_consumption_boundaries_and_controlled_review() {
 fn write_json(path: &Path, v: &Value) {
     fs::write(path, serde_json::to_vec_pretty(v).unwrap()).unwrap();
 }
+
+#[test]
+fn temporal_lossless_scene_encoding_preserves_every_decoded_pixel_and_sample() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let mut job = fixture(root);
+    scene_delivery::render(&root.join("job.json"), root, &root.join("ffv1")).unwrap();
+    job["still_sequence_encoding"] = json!("h264-lossless");
+    write_json(&root.join("job-compact.json"), &job);
+    scene_delivery::render(&root.join("job-compact.json"), root, &root.join("compact")).unwrap();
+    for (stream, format) in [("0:v:0", "rawvideo"), ("0:a:0", "s24le")] {
+        let decode = |folder: &str| {
+            let mut command = Command::new("ffmpeg");
+            command
+                .args(["-v", "error", "-i"])
+                .arg(root.join(folder).join("master.mkv"))
+                .args(["-map", stream]);
+            if format == "rawvideo" {
+                command.args(["-pix_fmt", "yuv444p"]);
+            }
+            let output = command.args(["-f", format, "-"]).output().unwrap();
+            assert!(output.status.success());
+            output.stdout
+        };
+        assert_eq!(decode("ffv1"), decode("compact"));
+    }
+}
 fn file(root: &Path, name: &str) -> Value {
     let b = fs::read(root.join(name)).unwrap();
     json!({"path":name,"sha256":Sha256::digest(&b).iter().map(|b| format!("{b:02x}")).collect::<String>(),"bytes":b.len()})
@@ -226,6 +253,7 @@ fn selected_ass_layer_changes_rendered_pixels_and_is_checked() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path();
     let mut job = fixture(root);
+    job["still_sequence_encoding"] = json!("h264-lossless");
     let mut contract: Value =
         serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
     contract["attachments"].as_array_mut().unwrap().push(json!({
@@ -264,6 +292,7 @@ fn timed_alpha_effect_changes_only_its_selected_frames() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path();
     let mut job = fixture(root);
+    job["still_sequence_encoding"] = json!("h264-lossless");
     let mut contract: Value =
         serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
     contract["attachments"].as_array_mut().unwrap().push(json!({

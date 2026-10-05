@@ -28,6 +28,8 @@ pub struct Job {
     pub production_manifest_sha256: String,
     pub width: u32,
     pub height: u32,
+    #[serde(default)]
+    pub still_sequence_encoding: Option<String>,
     pub max_composition_samples: u64,
     pub pictures: Vec<Picture>,
     pub audio: Vec<Audio>,
@@ -970,25 +972,86 @@ fn rgb_frame_at_index(path: &Path, plan: &Plan, index: u64) -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
-fn rgb_frame_at_midpoint(path: &Path, plan: &Plan) -> Result<Vec<u8>> {
-    let seconds = plan.duration_samples as f64 / plan.sample_rate as f64 / 2.0;
-    let output = Command::new("ffmpeg")
-        .args([
-            "-hide_banner",
-            "-v",
-            "error",
-            "-nostdin",
-            "-ss",
-            &format!("{seconds:.6}"),
-            "-i",
-        ])
-        .arg(path)
-        .args(["-frames:v", "1", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"])
-        .output()?;
-    if !output.status.success() || output.stdout.is_empty() {
-        bail!("could not decode presentation midpoint frame");
+fn ass_visibility_frames(
+    ass: &str,
+    fps_numerator: u64,
+    fps_denominator: u64,
+    frame_count: u64,
+) -> Result<Vec<u64>> {
+    fn centiseconds(value: &str) -> Result<u64> {
+        let fields = value.trim().split(':').collect::<Vec<_>>();
+        if fields.len() != 3 {
+            bail!("invalid ASS dialogue clock");
+        }
+        let (seconds, fraction) = fields[2].split_once('.').context("invalid ASS seconds")?;
+        let hours: u64 = fields[0].parse()?;
+        let minutes: u64 = fields[1].parse()?;
+        let seconds: u64 = seconds.parse()?;
+        let fraction: u64 = fraction.parse()?;
+        if hours > 999 || minutes >= 60 || seconds >= 60 || fraction >= 100 {
+            bail!("invalid ASS time range");
+        }
+        Ok(((hours * 60 + minutes) * 60 + seconds) * 100 + fraction)
     }
-    Ok(output.stdout)
+    if fps_numerator == 0 || fps_denominator == 0 {
+        bail!("invalid ASS probe frame rate");
+    }
+    let mut frames = BTreeSet::new();
+    for line in ass
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("Dialogue:"))
+    {
+        let fields = line.splitn(10, ',').collect::<Vec<_>>();
+        if fields.len() != 10 {
+            bail!("invalid ASS dialogue fields");
+        }
+        let start = centiseconds(fields[1])?;
+        let end = centiseconds(fields[2])?;
+        if end <= start {
+            bail!("empty ASS dialogue interval");
+        }
+        let frame = ((u128::from(start) + u128::from(end)) * u128::from(fps_numerator)
+            / (200 * u128::from(fps_denominator))) as u64;
+        if frame < frame_count {
+            frames.insert(frame);
+        }
+    }
+    if frames.is_empty() {
+        bail!("ASS has no dialogue visible within scene");
+    }
+    Ok(frames.into_iter().collect())
+}
+
+#[cfg(test)]
+mod ass_visibility_tests {
+    use super::*;
+    #[test]
+    fn short_title_is_checked_while_visible_in_long_scene() {
+        let ass = "Dialogue: 0,0:00:00.00,0:00:04.00,Chapter,,0,0,0,,Lourdes";
+        assert_eq!(ass_visibility_frames(ass, 24, 1, 2400).unwrap(), vec![48]);
+    }
+    #[test]
+    fn rejects_invisible_and_malformed_intervals() {
+        assert!(
+            ass_visibility_frames(
+                "Dialogue: 0,0:02:00.00,0:02:04.00,X,,0,0,0,,Title",
+                24,
+                1,
+                2400
+            )
+            .is_err()
+        );
+        assert!(
+            ass_visibility_frames(
+                "Dialogue: 0,0:00:04.00,0:00:00.00,X,,0,0,0,,Title",
+                24,
+                1,
+                2400
+            )
+            .is_err()
+        );
+        assert!(ass_visibility_frames("", 24, 1, 2400).is_err());
+    }
 }
 
 pub(crate) fn finish_pcm(float_path: &Path, output: &Path) -> Result<()> {
@@ -1084,6 +1147,13 @@ pub struct Receipt {
 
 pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receipt> {
     let (job, plan) = plan(job_path, asset_root)?;
+    if job
+        .still_sequence_encoding
+        .as_deref()
+        .is_some_and(|value| value != "h264-lossless")
+    {
+        bail!("unsupported still sequence encoding");
+    }
     if output.exists() {
         bail!("output already exists; use a new delivery directory");
     }
@@ -1186,6 +1256,14 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
             .collect::<String>(),
         groups.len()
     ));
+    if job.still_sequence_encoding.as_deref() == Some("h264-lossless") {
+        inputs.extend([
+            "-crf".into(),
+            "0".into(),
+            "-preset".into(),
+            "veryfast".into(),
+        ]);
+    }
     inputs.extend([
         "-filter_complex".into(),
         filters.join(";"),
@@ -1193,7 +1271,12 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         "[v]".into(),
         "-an".into(),
         "-c:v".into(),
-        "ffv1".into(),
+        if job.still_sequence_encoding.as_deref() == Some("h264-lossless") {
+            "libx264"
+        } else {
+            "ffv1"
+        }
+        .into(),
         "-pix_fmt".into(),
         "yuv444p".into(),
         "-r".into(),
@@ -1501,13 +1584,36 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         root.join("receipt.json"),
         serde_json::to_vec_pretty(&receipt)?,
     )?;
-    check(job_path, asset_root, root)?;
+    let verified = check(job_path, asset_root, root)?;
+    if serde_json::to_vec(&receipt.outputs)? != serde_json::to_vec(&verified.outputs)? {
+        bail!("render and independent check disagree on output bytes");
+    }
     // No result directory is published until all streams and hashes recheck.
     fs::rename(root, output)?;
-    Ok(receipt)
+    Ok(verified)
 }
 
 pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receipt> {
+    check_impl(job_path, asset_root, output, true)
+}
+
+/// Recheck immutable bytes after the caller verifies the exact native scene
+/// build proof's job and delivery-receipt hashes. That native proof is issued
+/// only after `check` succeeds. Standalone checks always decode all media.
+pub(crate) fn recheck_native_receipt(
+    job_path: &Path,
+    asset_root: &Path,
+    output: &Path,
+) -> Result<Receipt> {
+    check_impl(job_path, asset_root, output, false)
+}
+
+fn check_impl(
+    job_path: &Path,
+    asset_root: &Path,
+    output: &Path,
+    decode_media: bool,
+) -> Result<Receipt> {
     let (job, plan) = plan(job_path, asset_root)?;
     let receipt: Receipt = serde_json::from_slice(&fs::read(output.join("receipt.json"))?)?;
     if receipt.schema != "reel.scene-delivery-receipt.v0.1"
@@ -1574,6 +1680,9 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
             bail!("output name mismatch");
         }
         checked_file(output, item)?;
+    }
+    if !decode_media {
+        return Ok(receipt);
     }
     if let Some(camera) = &job.post_compose_camera {
         let before = output.join("pre-camera-picture.mkv");
@@ -1668,10 +1777,30 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
                         bail!("rendered presentation font differs from selected font");
                     }
                 }
-                let clean = rgb_frame_at_midpoint(&output.join("clean-picture.mkv"), &plan)?;
-                let rendered = rgb_frame_at_midpoint(&layered_picture, &plan)?;
-                if clean.len() != rendered.len() || clean == rendered {
-                    bail!("selected ASS layer made no visible change at scene midpoint");
+                let ass = fs::read_to_string(checked_file(asset_root, &layer.evidence)?)?;
+                let frames = ass_visibility_frames(
+                    &ass,
+                    plan.fps_numerator,
+                    plan.fps_denominator,
+                    plan.frame_count,
+                )?;
+                let mut visible = false;
+                for frame in frames {
+                    let clean =
+                        rgb_frame_at_index(&output.join("clean-picture.mkv"), &plan, frame)?;
+                    let rendered = rgb_frame_at_index(&layered_picture, &plan, frame)?;
+                    if clean.len() != rendered.len() {
+                        bail!("ASS layer changed picture geometry");
+                    }
+                    if clean != rendered {
+                        visible = true;
+                        break;
+                    }
+                }
+                if !visible {
+                    bail!(
+                        "selected ASS layer made no visible change during its dialogue intervals"
+                    );
                 }
             }
             ExternalLayerRenderMode::TimedVideoOverlay => {
@@ -1764,7 +1893,15 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
             .context("video frame rate missing")?;
         let (rn, rd) = rate.split_once('/').context("invalid video frame rate")?;
         let (rn, rd) = (rn.parse::<u64>()?, rd.parse::<u64>()?);
-        let codec = if name == "review.mp4" { "h264" } else { "ffv1" };
+        let codec = if name == "review.mp4"
+            || (overlays.is_empty()
+                && job.post_compose_camera.is_none()
+                && job.still_sequence_encoding.as_deref() == Some("h264-lossless"))
+        {
+            "h264"
+        } else {
+            "ffv1"
+        };
         if stream["codec_name"] != codec
             || rd == 0
             || u128::from(rn) * u128::from(plan.fps_denominator)

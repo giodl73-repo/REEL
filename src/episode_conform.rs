@@ -18,6 +18,46 @@ use std::{
 
 pub const SCHEMA: &str = "reel.episode-conform.v1";
 
+fn verify_native_delivery_proof(
+    receipt: &serde_json::Value,
+    job: &scene_delivery::FileRef,
+    delivery: &scene_delivery::FileRef,
+) -> Result<()> {
+    if receipt["scene_delivery_receipt_sha256"] != delivery.sha256 {
+        bail!("scene build receipt differs from selected delivery receipt");
+    }
+    if receipt["selected_delivery_job_sha256"] != job.sha256 {
+        bail!("scene build receipt differs from selected delivery job");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod native_proof_tests {
+    use super::*;
+    #[test]
+    fn repinned_job_or_receipt_cannot_reuse_an_old_native_proof() {
+        let mut job = scene_delivery::FileRef {
+            path: "job.json".into(),
+            sha256: "a".repeat(64),
+            bytes: 1,
+        };
+        let mut delivery = scene_delivery::FileRef {
+            path: "receipt.json".into(),
+            sha256: "b".repeat(64),
+            bytes: 1,
+        };
+        let proof = serde_json::json!({"selected_delivery_job_sha256":job.sha256,"scene_delivery_receipt_sha256":delivery.sha256});
+        verify_native_delivery_proof(&proof, &job, &delivery).unwrap();
+        job.sha256 = "c".repeat(64);
+        assert!(verify_native_delivery_proof(&proof, &job, &delivery).is_err());
+        job.sha256 = "a".repeat(64);
+        delivery.sha256 = "d".repeat(64);
+        assert!(verify_native_delivery_proof(&proof, &job, &delivery).is_err());
+        assert!(verify_native_delivery_proof(&serde_json::json!({}), &job, &delivery).is_err());
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
@@ -33,6 +73,33 @@ pub struct Manifest {
     pub season_bindings: scene_delivery::FileRef,
     pub episode_bindings: scene_delivery::FileRef,
     pub segments: Vec<Segment>,
+    /// Optional compact delivery after the lossless conform has been verified.
+    #[serde(default)]
+    pub compact_delivery: Option<CompactDelivery>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompactDelivery {
+    pub crf: u8,
+    pub audio_bitrate_kbps: u16,
+    pub retain_lossless_master: bool,
+    #[serde(default)]
+    pub intermediate_video_encoding: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EncodedDelivery {
+    pub filename: String,
+    pub sha256: String,
+    pub bytes: u64,
+    pub video_codec: String,
+    pub audio_codec: String,
+    pub crf: u8,
+    pub audio_bitrate_kbps: u16,
+    pub decoded_frames: u64,
+    pub full_decode_verified: bool,
+    pub lossless_master_retained: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -150,6 +217,8 @@ pub struct Receipt {
     pub total_samples: u64,
     pub master_sha256: String,
     pub master_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encoded_delivery: Option<EncodedDelivery>,
     pub decoded_master_matches_ordered_segments: bool,
     pub timestamps_verified: bool,
     pub boundary_findings: Vec<episode_delivery::BoundaryFinding>,
@@ -168,6 +237,8 @@ pub(crate) struct MediaFacts {
     pub height: u64,
     pub fps: String,
     pub sample_rate: u32,
+    pub video_codec: String,
+    pub reordered_video_frames: u64,
 }
 
 fn sha(bytes: &[u8]) -> String {
@@ -239,12 +310,12 @@ pub(crate) fn probe(path: &Path) -> Result<MediaFacts> {
         bail!("episode segment must have one picture and one audio stream");
     }
     let (v, a) = (video[0], audio[0]);
-    if v["codec_name"] != "ffv1"
+    if !matches!(v["codec_name"].as_str(), Some("ffv1" | "h264"))
         || v["pix_fmt"] != "yuv444p"
         || a["codec_name"] != "pcm_s24le"
         || a["channels"] != 2
     {
-        bail!("episode segment must be FFV1/yuv444p and stereo PCM24");
+        bail!("episode segment must be FFV1 or H264/yuv444p and stereo PCM24");
     }
     let width = v["width"].as_u64().context("missing picture width")?;
     let height = v["height"].as_u64().context("missing picture height")?;
@@ -260,6 +331,11 @@ pub(crate) fn probe(path: &Path) -> Result<MediaFacts> {
         bail!("invalid episode media geometry or clock");
     }
     Ok(MediaFacts {
+        reordered_video_frames: v["has_b_frames"].as_u64().unwrap_or(0),
+        video_codec: v["codec_name"]
+            .as_str()
+            .context("video codec missing")?
+            .to_owned(),
         width,
         height,
         fps,
@@ -488,6 +564,16 @@ pub fn build(
     }
     let manifest_bytes = fs::read(manifest_path)?;
     let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
+    if manifest.compact_delivery.as_ref().is_some_and(|profile| {
+        profile.crf > 51
+            || !(32..=512).contains(&profile.audio_bitrate_kbps)
+            || profile
+                .intermediate_video_encoding
+                .as_deref()
+                .is_some_and(|value| value != "h264-lossless")
+    }) {
+        bail!("invalid compact episode encoding profile");
+    }
     if manifest.schema != SCHEMA
         || manifest.episode_id.is_empty()
         || !matches!(manifest.language.as_str(), "es" | "en")
@@ -649,13 +735,15 @@ pub fn build(
                 if master != delivery_root.join("master.mkv") {
                     bail!("selected scene master is outside rechecked delivery directory");
                 }
-                if receipt["scene_delivery_receipt_sha256"] != delivery_ref.sha256 {
-                    bail!("scene build receipt differs from selected delivery receipt");
-                }
-                if receipt["selected_delivery_job_sha256"] != job_ref.sha256 {
-                    bail!("scene build receipt differs from selected delivery job");
-                }
-                let checked = scene_delivery::check(&job_path, asset_root, delivery_root)?;
+                verify_native_delivery_proof(&receipt, job_ref, delivery_ref)?;
+                let checked = if receipt["schema"] == "reel.scene-build-receipt.v1" {
+                    // The exact native proof above binds a successful full check.
+                    // Rehash all current source/output bytes and compare the plan;
+                    // final conform still decodes and compares every ordered frame.
+                    scene_delivery::recheck_native_receipt(&job_path, asset_root, delivery_root)?
+                } else {
+                    scene_delivery::check(&job_path, asset_root, delivery_root)?
+                };
                 let checked_master = checked
                     .outputs
                     .get("master.mkv")
@@ -792,6 +880,12 @@ pub fn build(
     let mut sample_cursor = 0u64;
     for (index, (segment, source)) in manifest.segments.iter().zip(&sources).enumerate() {
         let facts = probe(source)?;
+        if segment.kind == SegmentKind::Scene
+            && facts.video_codec == "h264"
+            && (segment.delivery_job.is_none() || segment.delivery_receipt.is_none())
+        {
+            bail!("H264 scene requires its verified lossless delivery job and receipt");
+        }
         if let Some(first) = &common {
             if (facts.width, facts.height, &facts.fps) != (first.width, first.height, &first.fps) {
                 bail!("episode segments differ in geometry or frame rate");
@@ -799,22 +893,52 @@ pub fn build(
         } else {
             common = Some(facts.clone());
         }
-        let selected = if facts.sample_rate == manifest.output_sample_rate {
+        let target_codec = if manifest
+            .compact_delivery
+            .as_ref()
+            .and_then(|profile| profile.intermediate_video_encoding.as_deref())
+            == Some("h264-lossless")
+        {
+            "h264"
+        } else {
+            "ffv1"
+        };
+        let needs_video_normalization = facts.video_codec != target_codec
+            || (target_codec == "h264" && facts.reordered_video_frames != 0);
+        let needs_normalization =
+            facts.sample_rate != manifest.output_sample_rate || needs_video_normalization;
+        let selected = if !needs_normalization {
             source.clone()
         } else {
             let path = temp.path().join(format!("normalized-{index:03}.mkv"));
-            let status = command("ffmpeg")
+            let mut encoder = command("ffmpeg");
+            encoder
                 .args(["-v", "error", "-nostdin", "-i"])
                 .arg(source)
-                .args(["-map", "0:v:0", "-map", "0:a:0", "-c:v", "copy", "-af"])
-                .arg(format!(
-                    "aresample={}:async=0:first_pts=0",
-                    manifest.output_sample_rate
-                ))
-                .args(["-c:a", "pcm_s24le", "-ac", "2", "-ar"])
-                .arg(manifest.output_sample_rate.to_string())
-                .arg(&path)
-                .status()?;
+                .args(["-map", "0:v:0", "-map", "0:a:0"]);
+            if !needs_video_normalization {
+                encoder.args(["-c:v", "copy"]);
+            } else if target_codec == "h264" {
+                encoder.args([
+                    "-c:v", "libx264", "-crf", "0", "-preset", "veryfast", "-bf", "0", "-pix_fmt",
+                    "yuv444p",
+                ]);
+            } else {
+                encoder.args(["-c:v", "ffv1", "-pix_fmt", "yuv444p"]);
+            }
+            if facts.sample_rate == manifest.output_sample_rate {
+                encoder.args(["-c:a", "copy"]);
+            } else {
+                encoder
+                    .args(["-af"])
+                    .arg(format!(
+                        "aresample={}:async=0:first_pts=0",
+                        manifest.output_sample_rate
+                    ))
+                    .args(["-c:a", "pcm_s24le", "-ac", "2", "-ar"])
+                    .arg(manifest.output_sample_rate.to_string());
+            }
+            let status = encoder.arg(&path).status()?;
             if !status.success() {
                 bail!("episode audio normalization failed");
             }
@@ -836,14 +960,16 @@ pub fn build(
         }
         let frames = picture_bytes / frame_bytes;
         let samples = audio_bytes / 6;
-        let (input_frames, input_samples) = if facts.sample_rate == manifest.output_sample_rate {
+        let (input_frames, input_samples) = if !needs_normalization {
             (frames, samples)
         } else {
             let (source_picture_hash, source_picture_bytes) = decoded_digest(source, true)?;
-            let (_, source_audio_bytes) = decoded_digest(source, false)?;
+            let (source_audio_hash, source_audio_bytes) = decoded_digest(source, false)?;
             if source_picture_hash != picture_hash
                 || source_picture_bytes != picture_bytes
                 || source_audio_bytes % 6 != 0
+                || (facts.sample_rate == manifest.output_sample_rate
+                    && source_audio_hash != audio_hash)
             {
                 bail!("audio normalization changed picture or input sample packing");
             }
@@ -1001,6 +1127,108 @@ pub fn build(
         .next()
         .unwrap_or("")
         .to_owned();
+    let encoded_delivery = if let Some(profile) = &manifest.compact_delivery {
+        if profile.crf > 51 || !(32..=512).contains(&profile.audio_bitrate_kbps) {
+            bail!("invalid compact episode encoding profile");
+        }
+        let target = work.join("episode.mp4");
+        let status = command("ffmpeg")
+            .args(["-v", "error", "-nostdin", "-i"])
+            .arg(&master)
+            .args(["-map", "0:v:0", "-map", "0:a:0", "-c:v", "libx264", "-crf"])
+            .arg(profile.crf.to_string())
+            .args(["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a"])
+            .arg(format!("{}k", profile.audio_bitrate_kbps))
+            .args(["-movflags", "+faststart"])
+            .arg(&target)
+            .status()?;
+        if !status.success() {
+            bail!("compact episode encoding failed");
+        }
+        let decoded = command("ffmpeg")
+            .args(["-v", "error", "-xerror", "-nostdin", "-i"])
+            .arg(&target)
+            .args(["-map", "0:v:0", "-map", "0:a:0", "-f", "null", "-"])
+            .status()?;
+        if !decoded.success() {
+            bail!("compact episode full decode failed");
+        }
+        let probe = command("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-count_frames",
+                "-show_streams",
+                "-of",
+                "json",
+            ])
+            .arg(&target)
+            .output()?;
+        if !probe.status.success() {
+            bail!("compact episode probe failed");
+        }
+        let facts: serde_json::Value = serde_json::from_slice(&probe.stdout)?;
+        let streams = facts["streams"]
+            .as_array()
+            .context("compact episode streams missing")?;
+        let video = streams
+            .iter()
+            .find(|s| s["codec_type"] == "video")
+            .context("compact video missing")?;
+        let audio = streams
+            .iter()
+            .find(|s| s["codec_type"] == "audio")
+            .context("compact audio missing")?;
+        let (encoded_num, encoded_den) = fps_parts(
+            video["r_frame_rate"]
+                .as_str()
+                .context("compact frame rate missing")?,
+        )?;
+        let (source_num, source_den) = fps_parts(&first.fps)?;
+        let audio_duration: f64 = audio["duration"]
+            .as_str()
+            .context("compact audio duration missing")?
+            .parse()?;
+        let expected_audio_duration = sample_cursor as f64 / f64::from(manifest.output_sample_rate);
+        // MP4 edit lists trim encoder delay; allow one AAC frame plus one source
+        // video frame for container quantization, never cumulative scene padding.
+        let duration_tolerance =
+            1024.0 / f64::from(manifest.output_sample_rate) + source_den as f64 / source_num as f64;
+        if video["codec_name"] != "h264"
+            || video["width"].as_u64() != Some(first.width)
+            || video["height"].as_u64() != Some(first.height)
+            || video["nb_read_frames"]
+                .as_str()
+                .and_then(|s| s.parse::<u64>().ok())
+                != Some(frame_cursor)
+            || audio["codec_name"] != "aac"
+            || audio["sample_rate"]
+                .as_str()
+                .and_then(|s| s.parse::<u32>().ok())
+                != Some(manifest.output_sample_rate)
+            || audio["channels"].as_u64() != Some(2)
+            || u128::from(encoded_num) * u128::from(source_den)
+                != u128::from(source_num) * u128::from(encoded_den)
+            || !audio_duration.is_finite()
+            || (audio_duration - expected_audio_duration).abs() > duration_tolerance
+        {
+            bail!("compact episode media differs from selected delivery policy");
+        }
+        Some(EncodedDelivery {
+            filename: "episode.mp4".into(),
+            sha256: file_sha(&target)?,
+            bytes: fs::metadata(&target)?.len(),
+            video_codec: "h264".into(),
+            audio_codec: "aac".into(),
+            crf: profile.crf,
+            audio_bitrate_kbps: profile.audio_bitrate_kbps,
+            decoded_frames: frame_cursor,
+            full_decode_verified: true,
+            lossless_master_retained: profile.retain_lossless_master,
+        })
+    } else {
+        None
+    };
     let receipt = Receipt {
         schema: "reel.episode-conform-receipt.v1".into(),
         episode_id: manifest.episode_id,
@@ -1013,6 +1241,7 @@ pub fn build(
         total_samples: sample_cursor,
         master_sha256: file_sha(&master)?,
         master_bytes: fs::metadata(&master)?.len(),
+        encoded_delivery,
         decoded_master_matches_ordered_segments: true,
         timestamps_verified: true,
         boundary_findings,
@@ -1046,6 +1275,15 @@ pub fn build(
         work.join("receipt.json"),
         serde_json::to_vec_pretty(&receipt)?,
     )?;
+    if manifest
+        .compact_delivery
+        .as_ref()
+        .is_some_and(|profile| !profile.retain_lossless_master)
+    {
+        // This file was created by this bounded conform, and all source masters
+        // remain untouched. Its exact hash stays in the provenance receipt.
+        fs::remove_file(&master)?;
+    }
     drop(temp);
     fs::rename(work, output)?;
     Ok(receipt)
