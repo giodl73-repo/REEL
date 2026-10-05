@@ -121,6 +121,36 @@ fn write_new(path: &str, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+fn overlay_clock(
+    clocks: &BTreeMap<String, NativeAlignment>,
+    visible_samples: u64,
+    visible_rate: u32,
+) -> Result<(u64, u32)> {
+    let rate = clocks
+        .values()
+        .next()
+        .context("chapter scene has no native clocks")?
+        .sample_rate;
+    let duration = clocks.values().try_fold(0u64, |sum, clock| {
+        if rate == 0 || clock.sample_rate != rate || clock.cue_end_sample == 0 {
+            bail!("chapter overlay native clocks have inconsistent sample rates or empty duration");
+        }
+        sum.checked_add(clock.cue_end_sample)
+            .context("chapter scene clock overflow")
+    })?;
+    if visible_rate == 0 {
+        bail!("chapter visibility clock has zero sample rate");
+    }
+    let visible = visible_samples
+        .checked_mul(u64::from(rate))
+        .context("chapter visible duration overflow")?
+        / u64::from(visible_rate);
+    if duration < visible {
+        bail!("chapter overlay exceeds its narrated scene");
+    }
+    Ok((duration, rate))
+}
+
 fn run() -> Result<()> {
     let args = env::args().collect::<Vec<_>>();
     let [
@@ -304,6 +334,10 @@ fn run() -> Result<()> {
         }
         presentation_scope.push(source_id.clone());
     }
+    if definition.kind == "chapter-title" && !scene.presentation_source_scope_ids.is_empty() {
+        // Chapter wording is sourced by its heading, separately from spoken prose.
+        presentation_scope = scene.presentation_source_scope_ids.clone();
+    }
     verify_source_text(
         &invocation,
         &source_text,
@@ -371,6 +405,15 @@ fn run() -> Result<()> {
         }
     }
     let compiled = compile_layer(&definition, &invocation, &ordered_cues, &native)?;
+    // A title overlays a narrated scene without replacing its native clock.
+    // The ASS still uses the template's fixed visible duration.
+    let (duration_samples, sample_rate) =
+        if definition.kind == "chapter-title" && !lane.cues.is_empty() {
+            let clocks = alignments(&scene, language, alignment_paths, &scopes)?;
+            overlay_clock(&clocks, compiled.duration_samples, compiled.sample_rate)?
+        } else {
+            (compiled.duration_samples, compiled.sample_rate)
+        };
     let ass_bytes = compiled.ass.as_bytes();
     let receipt = serde_json::json!({
         "schema":"reel.editable-layer-compile-receipt.v1", "scene_id":scene.scene_id,
@@ -378,8 +421,8 @@ fn run() -> Result<()> {
         "template_definition_sha256":definition_sha256, "ass_sha256":sha(ass_bytes),
         "source_text_sha256":source_binding.sha256,
         "source_text_state":source_text.text_state,
-        "ass_bytes":ass_bytes.len(), "duration_samples":compiled.duration_samples,
-        "sample_rate":compiled.sample_rate, "publication":"not-authorized"
+        "ass_bytes":ass_bytes.len(), "duration_samples":duration_samples,
+        "sample_rate":sample_rate, "publication":"not-authorized"
     });
     write_new(output_ass, ass_bytes)?;
     write_new(output_receipt, &serde_json::to_vec_pretty(&receipt)?)?;
@@ -391,5 +434,62 @@ fn main() {
     if let Err(error) = run() {
         eprintln!("{error:#}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn clock(rate: u32, samples: u64) -> NativeAlignment {
+        NativeAlignment {
+            schema: "reel.scene-native-alignment.v1".into(),
+            language: "es".into(),
+            cue_id: "cue".into(),
+            selected_take_sha256: "a".repeat(64),
+            sample_rate: rate,
+            cue_end_sample: samples,
+            semantic_markers: BTreeMap::new(),
+        }
+    }
+    #[test]
+    fn fixed_four_second_display_preserves_full_44100_hz_scene_clock() {
+        let clocks = BTreeMap::from([
+            ("a".into(), clock(44100, 264600)),
+            ("b".into(), clock(44100, 308700)),
+        ]);
+        assert_eq!(overlay_clock(&clocks, 400, 100).unwrap(), (573300, 44100));
+    }
+    #[test]
+    fn rejects_short_scene_mixed_rates_and_overflow() {
+        assert!(
+            overlay_clock(
+                &BTreeMap::from([("a".into(), clock(44100, 44100))]),
+                400,
+                100
+            )
+            .is_err()
+        );
+        assert!(
+            overlay_clock(
+                &BTreeMap::from([
+                    ("a".into(), clock(44100, 264600)),
+                    ("b".into(), clock(48000, 308700))
+                ]),
+                400,
+                100
+            )
+            .is_err()
+        );
+        assert!(
+            overlay_clock(
+                &BTreeMap::from([
+                    ("a".into(), clock(44100, u64::MAX)),
+                    ("b".into(), clock(44100, 1))
+                ]),
+                400,
+                100
+            )
+            .is_err()
+        );
     }
 }

@@ -373,6 +373,7 @@ fn execute_changed_only(
             asset_root,
             scene_output.to_str().context("non-UTF8 scene output")?,
             false,
+            false,
         )?;
         let result_path = output.join(format!("result-{ordinal:03}.json"));
         let scene_receipt = scene_output.join("scene-authoring-build-receipt.json");
@@ -709,6 +710,7 @@ fn build_scene(
     asset_root: &str,
     output_dir: &str,
     check_only: bool,
+    verify_existing: bool,
 ) -> Result<()> {
     let root = Path::new(project_root).canonicalize()?;
     let manifest: BuildManifest = read(&checked(&root, manifest_path)?)?;
@@ -817,8 +819,14 @@ fn build_scene(
         return Ok(());
     }
     let output = Path::new(output_dir);
-    let rendered = reel::semantic_delivery::render(&delivery_path, Path::new(asset_root), output)?;
-    let checked_receipt = reel::scene_delivery::check(&job_path, Path::new(asset_root), output)?;
+    let checked_receipt = if verify_existing {
+        // Recover a completed render after a validator repair, without encoding
+        // again. Full hashes, native inputs, decoded media and policy still pass.
+        reel::scene_delivery::check(&job_path, Path::new(asset_root), output)?
+    } else {
+        // Generic render already performs the independent strict output check.
+        reel::semantic_delivery::render(&delivery_path, Path::new(asset_root), output)?
+    };
     if checked_receipt.plan.pictures.len() != job.pictures.len() {
         bail!("rendered picture plan differs from selected job");
     }
@@ -857,9 +865,6 @@ fn build_scene(
             "open; source-and-crop grouping does not prove visible distinctness".into(),
         publication: "not-authorized".into(),
     };
-    if serde_json::to_vec(&rendered.outputs)? != serde_json::to_vec(&checked_receipt.outputs)? {
-        bail!("render and independent check disagree on output bytes");
-    }
     let output_receipt = output.join("scene-authoring-build-receipt.json");
     let bytes = serde_json::to_vec_pretty(&receipt)?;
     use std::io::Write;
@@ -1164,7 +1169,7 @@ fn run() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     if let [_, command, root, manifest, flag, assets] = args.as_slice() {
         if command == "check-inputs" && flag == "--asset-root" {
-            return build_scene(root, manifest, assets, "", true);
+            return build_scene(root, manifest, assets, "", true, false);
         }
     }
     if let [
@@ -1226,8 +1231,18 @@ fn run() -> Result<()> {
         {
             return execute_changed_only(index, state, asset_root, output_root);
         }
-        if command == "build" && root_flag == "--asset-root" && output_flag == "--output-dir" {
-            return build_scene(index, state, asset_root, output_root, false);
+        if matches!(command.as_str(), "build" | "verify-render")
+            && root_flag == "--asset-root"
+            && output_flag == "--output-dir"
+        {
+            return build_scene(
+                index,
+                state,
+                asset_root,
+                output_root,
+                false,
+                command == "verify-render",
+            );
         }
     }
     bail!(
