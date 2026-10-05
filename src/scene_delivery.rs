@@ -150,6 +150,9 @@ pub struct Crop {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum PictureMotion {
+    PhasedCamera {
+        plan: reel_assembly::motioncraft::FramePlan,
+    },
     Zoompan {
         scale_width: u32,
         scale_height: u32,
@@ -291,7 +294,8 @@ fn nonempty(s: &str) -> bool {
 }
 
 pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
-    let job: Job = serde_yaml::from_slice(&fs::read(job_path)?)?;
+    let job_bytes = fs::read(job_path)?;
+    let job: Job = serde_yaml::from_slice(&job_bytes)?;
     if job.schema != "reel.scene-delivery.v0.1" || !nonempty(&job.id) {
         bail!("invalid scene-delivery schema/id");
     }
@@ -375,6 +379,9 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                 || picture.crop.is_some()
             {
                 bail!("motion group requires a named moving still without crop");
+            }
+            if matches!(picture.motion, Some(PictureMotion::PhasedCamera { .. })) {
+                bail!("phased camera cannot share a legacy motion group");
             }
             if let Some(previous_index) = motion_group_last.insert(group.clone(), index) {
                 let previous = &job.pictures[previous_index];
@@ -471,6 +478,34 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         }
         if s.end_frame <= s.start_frame {
             bail!("composition has no delivery frame: {}", p.attachment_id);
+        }
+        if let Some(PictureMotion::PhasedCamera { plan }) = &p.motion {
+            if p.kind != PictureKind::Still || p.crop.is_some() || p.source_start_frame != 0 {
+                bail!("phased camera requires an uncropped still at its first frame");
+            }
+            reel_assembly::motioncraft::validate_camera(plan)?;
+            reel_assembly::motioncraft::camera_expression(plan)?;
+            let safe = reel_assembly::motioncraft::Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1.0,
+                height: 1.0,
+            };
+            let mut expected = reel_assembly::motioncraft::compile(
+                &plan.direction,
+                &safe,
+                s.end_sample - s.start_sample,
+                compiled.sample_rate,
+                compiled.frame_rate.numerator,
+                compiled.frame_rate.denominator,
+            )?;
+            reel_assembly::motioncraft::allocate_delivery_frames(
+                &mut expected,
+                s.end_frame - s.start_frame,
+            )?;
+            if expected != *plan {
+                bail!("phased camera compiled plan differs from native selected span");
+            }
         }
         pictures.push(s);
         cursor = a.end_sample;
@@ -708,7 +743,10 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
     let plan = Plan {
         schema: "reel.scene-delivery-plan.v0.1".into(),
         id: job.id.clone(),
-        job_sha256: crate::sha256_file(job_path)?,
+        job_sha256: <sha2::Sha256 as sha2::Digest>::digest(&job_bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
         contract_sha256: job.contract.sha256.clone(),
         production_sha256: compiled.production_manifest_sha256.clone(),
         compiled_sha256: <sha2::Sha256 as sha2::Digest>::digest(serde_json::to_vec(&compiled)?)
@@ -754,6 +792,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
             prior_end = window.end_frame;
         }
     }
+    crate::motioncraft_review::samples(&job, &plan)?;
     Ok((job, plan))
 }
 
@@ -1220,6 +1259,17 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
             .checked_add(group_frames)
             .context("source frame offset overflow")?;
         let visual = match &p.motion {
+            Some(PictureMotion::PhasedCamera { plan: motion }) => {
+                let zoom = reel_assembly::motioncraft::camera_expression(motion)?;
+                let left = format!("(W-W/({zoom}))/2");
+                let top = format!("(H-H/({zoom}))/2");
+                let right = format!("(W+W/({zoom}))/2");
+                let bottom = format!("(H+H/({zoom}))/2");
+                format!(
+                    "scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,perspective=x0='{left}':y0='{top}':x1='{right}':y1='{top}':x2='{left}':y2='{bottom}':x3='{right}':y3='{bottom}':interpolation=cubic:sense=source:eval=frame,",
+                    job.width, job.height, job.width, job.height
+                )
+            }
             Some(PictureMotion::Zoompan {
                 scale_width,
                 scale_height,
@@ -1537,6 +1587,8 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
     if job.post_compose_camera.is_some() {
         names.push("pre-camera-picture.mkv".into());
     }
+    crate::motioncraft_review::render(&job, &plan, root)?;
+    names.extend(crate::motioncraft_review::output_names(&job, &plan)?);
     let mut outputs = BTreeMap::new();
     for name in names {
         let p = root.join(&name);
@@ -1663,6 +1715,7 @@ fn check_impl(
     if job.post_compose_camera.is_some() {
         expected.insert("pre-camera-picture.mkv".into());
     }
+    expected.extend(crate::motioncraft_review::output_names(&job, &plan)?);
     let font_name = overlay.and_then(|layer| layer.font.as_ref()).map(|font| {
         format!(
             "fonts/{}",
@@ -1681,6 +1734,7 @@ fn check_impl(
         }
         checked_file(output, item)?;
     }
+    crate::motioncraft_review::check(&job, &plan, output, decode_media)?;
     if !decode_media {
         return Ok(receipt);
     }

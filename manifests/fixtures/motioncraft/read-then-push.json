@@ -1,0 +1,33 @@
+{
+  "purpose": "Read the composition before approaching the illustration",
+  "dominant_element": "picture",
+  "working_fps": 24,
+  "duration_frames": 24,
+  "elements": [
+    {
+      "id": "picture",
+      "role": "camera",
+      "bounds": { "x": 0.1, "y": 0.1, "width": 0.8, "height": 0.8 },
+      "phases": [
+        {
+          "id": "read",
+          "kind": "hold",
+          "start_frame": 0,
+          "end_frame": 11,
+          "curve": "linear",
+          "zoom_from": 1,
+          "zoom_to": 1
+        },
+        {
+          "id": "approach",
+          "kind": "settle",
+          "start_frame": 12,
+          "end_frame": 23,
+          "curve": "ease-out",
+          "zoom_from": 1,
+          "zoom_to": 1.2
+        }
+      ]
+    }
+  ]
+}

@@ -27,8 +27,10 @@ sidecar that does not reach the scene renderer cannot satisfy this project.
 `reel-assembly::motioncraft` defines strict direction/element/phase inputs,
 explicit normalized geometry, bounded zoom curves, optional phases, whole-
 direction override precedence, native-duration alignment residuals, and
-deduplicated boundary/hold/contact-sheet review samples. It does not yet claim
-render support, hash binding, typography execution, or consumer integration.
+deduplicated boundary/hold/contact-sheet review samples. The subsequent
+checkpoint connects it to scoped episode/scene authoring, fingerprinting,
+native scene-delivery compilation, actual phased camera rendering and indexed
+evidence. Typography execution and CAIMITOS adapter adoption remain open.
 
 Phase frames are zero-based inclusive working frames. Between phases the last
 zoom is retained; adjacent declared phases must have continuous zoom values.
@@ -38,13 +40,14 @@ The renderer must distinguish element holds from whole-picture holds.
 
 ## Remaining work
 
-1. Attach strict inherited direction to authoring and fingerprint it.
-2. Compile into exact selected scene delivery, preserving semantic bindings.
-3. Consume phases in the scene engine; add boundary/render failure tests.
-4. Extract real rendered evidence and build queue-explainer comparisons.
+1. Complete visual/profile direction, reusable duration-aware defaults and
+   transformed protected geometry validation.
+2. Audit immutable intent/selected-revision binding across all consumer entry
+   points; scene-build already rejects direction dropped from its selected job.
+3. Produce retained matched queue-explainer artifacts and scored visual review.
 5. Establish the CAIMITOS integration lane, implement adapter adoption,
    upgrade/rollback, hydration, and canary assembly checks.
-6. Complete role evaluation and the requirement-by-requirement audit.
+6. Complete final role evaluation and the requirement-by-requirement audit.
 
 CAIMITOS lane diagnostic: `production-engineering` is absent from the current
 registry; `animation-vfx` is `requires-dedicated-worktree`. The session-handoff

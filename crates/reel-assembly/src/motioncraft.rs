@@ -3,6 +3,16 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// Shot overrides are scoped to language-local event IDs. No positional merging.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SceneDirection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<Direction>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub shots: BTreeMap<String, BTreeMap<String, Direction>>,
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Direction {
@@ -74,7 +84,7 @@ pub struct FramePlan {
     pub delivery_fps_denominator: u64,
     pub delivery_frames: u64,
     /// Signed error in units of 1/(sample_rate * working_fps) seconds.
-    pub duration_residual_numerator: i128,
+    pub duration_residual_numerator: i64,
     pub samples: Vec<ReviewSample>,
 }
 
@@ -242,7 +252,7 @@ pub fn compile(
         delivery_fps_numerator: fps_numerator,
         delivery_fps_denominator: fps_denominator,
         delivery_frames: frames,
-        duration_residual_numerator: residual,
+        duration_residual_numerator: i64::try_from(residual)?,
         samples: samples
             .into_iter()
             .map(|(frame, reasons)| ReviewSample {
@@ -260,6 +270,93 @@ pub fn resolve<'a>(
     shot: Option<&'a Direction>,
 ) -> Option<&'a Direction> {
     shot.or(scene).or(episode)
+}
+
+/// Cumulative scene boundaries can allocate one frame differently from a local
+/// rounded duration. Keep the native sample clock and expose that allocation.
+pub fn allocate_delivery_frames(plan: &mut FramePlan, frames: u64) -> Result<()> {
+    if frames == 0 || frames.abs_diff(plan.delivery_frames) > 1 {
+        bail!("motion frame allocation differs from native duration");
+    }
+    plan.delivery_frames = frames;
+    let mut samples: BTreeMap<u64, BTreeSet<String>> = BTreeMap::new();
+    for sample in &plan.samples {
+        samples
+            .entry(sample.frame.min(frames - 1))
+            .or_default()
+            .extend(sample.reasons.clone());
+    }
+    plan.samples = samples
+        .into_iter()
+        .map(|(frame, reasons)| ReviewSample {
+            frame,
+            reasons: reasons.into_iter().collect(),
+        })
+        .collect();
+    Ok(())
+}
+
+/// The first consuming scene-engine treatment is a whole-picture camera.
+/// Other elements require a future executable layer contract, never silent loss.
+pub fn validate_camera(plan: &FramePlan) -> Result<()> {
+    if plan.direction.elements.len() != 1
+        || plan.direction.elements[0].role != "camera"
+        || plan.direction.dominant_element != plan.direction.elements[0].id
+    {
+        bail!("phased scene camera supports exactly one dominant camera element");
+    }
+    Ok(())
+}
+
+/// FFmpeg perspective's `in` is the zero-based input frame counter. Sampling
+/// from that counter matches zoom_at; expressions never depend on prior frames.
+pub fn camera_expression(plan: &FramePlan) -> Result<String> {
+    validate_camera(plan)?;
+    if plan.direction.elements[0].phases.len() > 32 {
+        bail!("phased camera exceeds bounded renderer phase budget");
+    }
+    if plan.direction.reduced_motion {
+        return Ok("1".into());
+    }
+    let element = &plan.direction.elements[0];
+    let frame = format!(
+        "(in*{}*{}/{})",
+        plan.direction.working_fps, plan.delivery_fps_denominator, plan.delivery_fps_numerator
+    );
+    let mut expression = element
+        .phases
+        .first()
+        .map_or("1".into(), |p| p.zoom_from.to_string());
+    for phase in &element.phases {
+        let raw = if phase.end_frame == phase.start_frame {
+            "1".into()
+        } else {
+            format!(
+                "min(1,max(0,({frame}-{})/{}))",
+                phase.start_frame,
+                phase.end_frame - phase.start_frame
+            )
+        };
+        let eased = match phase.curve {
+            Curve::Linear => raw,
+            Curve::EaseIn => format!("({raw})*({raw})"),
+            Curve::EaseOut => format!("1-(1-({raw}))*(1-({raw}))"),
+            Curve::EaseInOut => format!("(1-cos(PI*({raw})))/2"),
+        };
+        let value = format!(
+            "({}+({})*({eased}))",
+            phase.zoom_from,
+            phase.zoom_to - phase.zoom_from
+        );
+        expression = format!(
+            "if(gte({frame},{}),{value},{expression})",
+            phase.start_frame
+        );
+        if expression.len() > 8192 {
+            bail!("phased camera expression exceeds renderer argument budget");
+        }
+    }
+    Ok(expression)
 }
 
 pub fn zoom_at(direction: &Direction, element_id: &str, working_frame: f64) -> Result<f64> {

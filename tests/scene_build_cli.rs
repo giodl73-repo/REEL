@@ -233,6 +233,106 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
     assert_eq!(receipt["language"], "es");
     assert_eq!(receipt["publication"], "not-authorized");
 
+    // Upgrade an existing authored scene without selecting new media or clocks.
+    // Direction must compile into the actual selected scene-build route.
+    let original_episode = fs::read(root.join("episode.json")).unwrap();
+    let mut directed_episode: serde_json::Value =
+        serde_json::from_slice(&original_episode).unwrap();
+    directed_episode["motion_direction"] = serde_json::json!({
+        "purpose":"Read then approach", "dominant_element":"picture",
+        "working_fps":24,"duration_frames":24,
+        "elements":[{"id":"picture","role":"camera",
+            "bounds":{"x":0.1,"y":0.1,"width":0.8,"height":0.8},
+            "phases":[{"id":"read","kind":"hold","start_frame":0,"end_frame":11,
+                "curve":"linear","zoom_from":1,"zoom_to":1},
+                {"id":"push","kind":"settle","start_frame":12,"end_frame":23,
+                "curve":"ease-out","zoom_from":1,"zoom_to":1.08}]}]
+    });
+    write_json(&root.join("episode.json"), &directed_episode);
+    // A prior delivery job cannot silently ignore newly authored direction.
+    let dropped = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
+        .args(["build"])
+        .arg(root)
+        .arg("build.json")
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output-dir")
+        .arg(root.join("dropped-motion"))
+        .output()
+        .unwrap();
+    assert!(!dropped.status.success());
+    assert!(String::from_utf8_lossy(&dropped.stderr).contains("authored motion differs"));
+    assert!(!root.join("dropped-motion").exists());
+    write_json(&root.join("selected-graph.json"), &graph);
+    write_json(&root.join("selected-pointer.json"), &pointer);
+    write_json(
+        &root.join("motion-profile.json"),
+        &serde_json::json!({
+            "schema":"reel.scene-delivery-profile.v1","width":64,"height":64,
+            "sample_rate":48000,"frame_rate_numerator":24,"frame_rate_denominator":1,
+            "max_composition_samples":480000,"score_gain_db":-18,
+            "score_fade_in_samples":0,"score_fade_out_samples":0
+        }),
+    );
+    // Hydrated synthetic selected bytes occupy the same cache-relative layout
+    // that CAIMITOS uses at the public REEL boundary.
+    for filename in ["red.ppm", "voice.wav"] {
+        let r = reference(root, filename);
+        let sha = r["sha256"].as_str().unwrap();
+        let directory = root.join(format!("objects/sha256/{}", &sha[..2]));
+        fs::create_dir_all(&directory).unwrap();
+        fs::copy(root.join(filename), directory.join(sha)).unwrap();
+    }
+    let compile:reel::scene_delivery_compile::CompileManifest=serde_json::from_value(serde_json::json!({
+        "schema":"reel.scene-delivery-compile.v1","catalog":"catalog.json",
+        "episode":"episode.json","scene":"scene.json","policy":"policy.json",
+        "season_bindings":"season-bindings.json","episode_bindings":"episode-bindings.json",
+        "scene_bindings":"scene-bindings.json","graph":"selected-graph.json","pointer":"selected-pointer.json",
+        "alignment_paths":"alignment-paths.json","profile":"motion-profile.json","language":"es",
+        "delivery_id":"scene-directed","delivery_title":"Synthetic motion upgrade","output_dir":"compiled-motion"
+    })).unwrap();
+    let compilation = reel::scene_delivery_compile::compile_to_dir(root, &compile).unwrap();
+    assert_eq!(compilation["cue_count"], 1);
+    let compiled_job: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("compiled-motion/job.json")).unwrap()).unwrap();
+    assert_eq!(
+        compiled_job["pictures"][0]["motion"]["kind"],
+        "phased-camera"
+    );
+    assert_eq!(
+        compiled_job["pictures"][0]["source"]["sha256"],
+        picture["sha256"]
+    );
+    let directed = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
+        .arg("build")
+        .arg(root)
+        .arg("compiled-motion/build.json")
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output-dir")
+        .arg(root.join("motion-output"))
+        .output()
+        .unwrap();
+    assert!(
+        directed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&directed.stderr)
+    );
+    assert!(
+        root.join("motion-output/motioncraft/evidence.json")
+            .is_file()
+    );
+    assert!(
+        root.join("motion-output/motioncraft/contact-sheet.png")
+            .is_file()
+    );
+    assert_eq!(
+        fs::read(root.join("output/D.wav")).unwrap(),
+        fs::read(root.join("motion-output/D.wav")).unwrap()
+    );
+    // Removing the overlay restores authoring compatibility with the old job.
+    fs::write(root.join("episode.json"), original_episode).unwrap();
+
     // Changing a selected alignment and rebinding its exact new bytes cannot
     // leave the old graph phrase clock accepted by the scene build.
     let original_alignment = fs::read(root.join("alignment.json")).unwrap();
