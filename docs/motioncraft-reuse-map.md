@@ -40,11 +40,12 @@ The renderer must distinguish element holds from whole-picture holds.
 
 ## Remaining work
 
-1. Complete visual/profile direction, reusable duration-aware defaults and
-   transformed protected geometry validation.
+1. Verify owner-rendered visual intent in the retained comparison. Typed
+   visual/profile direction, explicit native-duration fitting and transformed
+   protected-region validation are implemented and covered by focused tests.
 2. Audit immutable intent/selected-revision binding across all consumer entry
    points; scene-build already rejects direction dropped from its selected job.
-3. Produce retained matched queue-explainer artifacts and scored visual review.
+3. Complete playback-based scored review of the six retained queue renders.
 5. Establish the CAIMITOS integration lane, implement adapter adoption,
    upgrade/rollback, hydration, and canary assembly checks.
 6. Complete final role evaluation and the requirement-by-requirement audit.

@@ -485,15 +485,9 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
             }
             reel_assembly::motioncraft::validate_camera(plan)?;
             reel_assembly::motioncraft::camera_expression(plan)?;
-            let safe = reel_assembly::motioncraft::Rect {
-                x: 0.0,
-                y: 0.0,
-                width: 1.0,
-                height: 1.0,
-            };
             let mut expected = reel_assembly::motioncraft::compile(
                 &plan.direction,
-                &safe,
+                &plan.safe_area,
                 s.end_sample - s.start_sample,
                 compiled.sample_rate,
                 compiled.frame_rate.numerator,

@@ -71,6 +71,16 @@ fn metadata(job: &Job, plan: &Plan, root: &Path) -> Result<Value> {
         "selected_picture_inputs":job.pictures.iter().map(|picture|json!({
             "attachment_id":picture.attachment_id,"sha256":picture.source.sha256,"bytes":picture.source.bytes
         })).collect::<Vec<_>>(),
+        "camera_direction":job.pictures.iter().filter_map(|picture|match &picture.motion {
+            Some(PictureMotion::PhasedCamera { plan:motion })=>Some(json!({
+                "attachment_id":picture.attachment_id,
+                "authored_direction":motion.direction,
+                "execution_direction":motion.execution_direction.as_ref().unwrap_or(&motion.direction),
+                "delivery_safe_area":motion.safe_area,
+                "native_duration_samples":motion.duration_samples,
+                "working_duration_residual_numerator":motion.duration_residual_numerator
+            })),_=>None
+        }).collect::<Vec<_>>(),
         "tool_version":env!("CARGO_PKG_VERSION"),
         "ffmpeg_version":String::from_utf8_lossy(&version.stdout).lines().next().unwrap_or_default(),
         "frames":samples(job,plan)?.into_iter().map(|(frame,reasons)|json!({

@@ -2,7 +2,9 @@
 
 Implementation status: phased camera authoring, compilation, actual scene
 rendering and indexed review extraction are implemented on `codex/motioncraft`.
-CAIMITOS adapter deployment, typography/palette direction, queue comparison,
+Explicit native-duration fitting and transformed protected-region checks are
+also implemented, with a typed visual brief carried into review evidence.
+CAIMITOS adapter deployment, queue comparison,
 hydrated package and final goal acceptance are still outstanding.
 
 ## Episode and scene inputs
@@ -49,10 +51,15 @@ Unknown language/event IDs and unsupported properties fail validation.
 Precedence is shot override, then scene default, then episode default. The
 selected direction replaces the whole object; phase arrays are not merged by
 position. Omitting all direction retains legacy serialization, fingerprints,
-selected media and render behavior. Defaults currently carry exact authored
-duration: use them only for matching spans, or author shot overrides. They do
-not stretch themselves to narration. General reusable duration-fitting styles
-have not yet been implemented.
+selected media and render behavior. Duration is exact by default. Set
+`fit_native_duration: true` to author an explicit reusable timing template:
+its phase boundaries scale proportionally to each selected native shot's
+working-frame allocation. Narration samples, cue order and selected assets
+remain unchanged. The compiled plan preserves the original direction and a
+separate `execution_direction` containing the resolved phases and duration.
+Collapsed phases and durations outside the renderer's bounds fail explicitly;
+no phase is silently discarded. Use exact shot overrides when a reading pause
+needs a fixed duration rather than proportional fitting.
 
 Working phase spans are zero-based and inclusive. The native narration clock
 remains in exact samples; the direction's whole duration must align within
@@ -68,12 +75,28 @@ frame offsets are rejected. A phase kind describes purpose, not a separate
 unimplemented effect such as opacity. Typographic/shape entrances must not be
 represented as if they were executed by this camera treatment.
 
-Declared normalized element bounds must be inside the normalized safe area.
-These bounds currently validate author intent; they are not a pixel detector
-or a proof that a face/text remains protected during a crop. Delivery-profile
-safe regions and protected geometry still need the planned integration.
+Delivery profiles accept `motion_safe_area`, a normalized rectangle. A direction
+may declare a narrower `safe_area` and `protected_regions`, an array of normalized
+rectangles. Regions are authored against the composed delivery canvas after
+fit/padding, not against raw source pixels. The camera validates transformed
+regions throughout every phase; monotone bounded curves allow endpoint bounds
+to prove containment across the interval. A direction cannot widen the profile
+safe area. Reduced-motion validation uses its actual stationary transform.
+These checks validate owner-declared geometry; identifying a face/text's actual
+region remains an authoring/review responsibility. Landscape and portrait
+profiles need their own correctly mapped layout and protected regions.
 
 ## Compile and build
+
+Directions optionally carry `visual_intent` with named `palette_roles`
+(`#RRGGBB` colors), `typography_roles` (font family, relative canvas-height size,
+weight), `reference_traits`, and `transition: "hard-cut"`. It records the
+owner's intended hierarchy and look for review of the selected visual. It
+does not regenerate or recolor selected illustrations or prove font use.
+The compiled job and rendered evidence retain it for frame-by-frame comparison.
+Unsupported transition execution such as a wipe is rejected. The queue proof
+must demonstrate the declared look in actual assets and review frames; valid
+brief syntax alone cannot satisfy the creative quality gate.
 
 Use the existing selected scene authoring compile manifest with its exact
 catalog, episode, scene, policy, scoped bindings, immutable graph/pointer,

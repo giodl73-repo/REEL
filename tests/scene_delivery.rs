@@ -293,6 +293,30 @@ fn phased_camera_is_bound_to_native_timing_and_compiled_evidence() {
             .to_string()
             .contains("camera element")
     );
+    let mut cropped = phased_direction();
+    cropped.protected_regions = vec![reel_assembly::motioncraft::Rect {
+        x: 0.85,
+        y: 0.3,
+        width: 0.1,
+        height: 0.1,
+    }];
+    let p = reel_assembly::motioncraft::compile(
+        &cropped,
+        &reel_assembly::motioncraft::full_canvas(),
+        48001,
+        48000,
+        24,
+        1,
+    )
+    .unwrap();
+    job["pictures"][0]["motion"] = json!({"kind":"phased-camera","plan":p});
+    write_json(&t.path().join("job.json"), &job);
+    assert!(
+        scene_delivery::plan(&t.path().join("job.json"), t.path())
+            .unwrap_err()
+            .to_string()
+            .contains("crops protected")
+    );
 }
 
 #[test]

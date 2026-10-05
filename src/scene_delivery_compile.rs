@@ -49,6 +49,8 @@ pub struct DeliveryProfile {
     pub schema: String,
     pub width: u32,
     pub height: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motion_safe_area: Option<reel_assembly::motioncraft::Rect>,
     #[serde(default)]
     pub still_sequence_encoding: Option<String>,
     pub sample_rate: u32,
@@ -429,6 +431,10 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     )?;
     if profile.schema != "reel.scene-delivery-profile.v1"
         || profile
+            .motion_safe_area
+            .as_ref()
+            .is_some_and(|r| !reel_assembly::motioncraft::valid_rect(r))
+        || profile
             .still_sequence_encoding
             .as_deref()
             .is_some_and(|value| value != "h264-lossless")
@@ -570,12 +576,10 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
             "attention":format!("source concept {}; private audition",event.semantic_id)
         }));
         if let Some(direction) = motion_directions.get(&event.id) {
-            let safe = reel_assembly::motioncraft::Rect {
-                x: 0.0,
-                y: 0.0,
-                width: 1.0,
-                height: 1.0,
-            };
+            let safe = profile
+                .motion_safe_area
+                .clone()
+                .unwrap_or_else(reel_assembly::motioncraft::full_canvas);
             let mut motion = reel_assembly::motioncraft::compile(
                 direction,
                 &safe,

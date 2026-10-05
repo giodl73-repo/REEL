@@ -249,6 +249,17 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
                 "curve":"ease-out","zoom_from":1,"zoom_to":1.08}]}]
     });
     write_json(&root.join("episode.json"), &directed_episode);
+    // Reusable episode direction is an explicit timing template, fitted to
+    // this selected native span while leaving the accepted narration intact.
+    directed_episode["motion_direction"]["fit_native_duration"] = true.into();
+    directed_episode["motion_direction"]["duration_frames"] = 48.into();
+    directed_episode["motion_direction"]["elements"][0]["phases"][0]["end_frame"] = 23.into();
+    directed_episode["motion_direction"]["elements"][0]["phases"][1]["start_frame"] = 24.into();
+    directed_episode["motion_direction"]["elements"][0]["phases"][1]["end_frame"] = 47.into();
+    directed_episode["motion_direction"]["protected_regions"] = serde_json::json!([
+        {"x":0.4,"y":0.4,"width":0.2,"height":0.2}
+    ]);
+    write_json(&root.join("episode.json"), &directed_episode);
     // A prior delivery job cannot silently ignore newly authored direction.
     let dropped = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
         .args(["build"])
@@ -270,7 +281,8 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
         &serde_json::json!({
             "schema":"reel.scene-delivery-profile.v1","width":64,"height":64,
             "sample_rate":48000,"frame_rate_numerator":24,"frame_rate_denominator":1,
-            "max_composition_samples":480000,"score_gain_db":-18,
+        "max_composition_samples":480000,"score_gain_db":-18,
+        "motion_safe_area":{"x":0.05,"y":0.05,"width":0.9,"height":0.9},
             "score_fade_in_samples":0,"score_fade_out_samples":0
         }),
     );
@@ -298,6 +310,18 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
     assert_eq!(
         compiled_job["pictures"][0]["motion"]["kind"],
         "phased-camera"
+    );
+    assert_eq!(
+        compiled_job["pictures"][0]["motion"]["plan"]["direction"]["duration_frames"],
+        48
+    );
+    assert_eq!(
+        compiled_job["pictures"][0]["motion"]["plan"]["execution_direction"]["duration_frames"],
+        24
+    );
+    assert_eq!(
+        compiled_job["pictures"][0]["motion"]["plan"]["safe_area"]["x"],
+        0.05
     );
     assert_eq!(
         compiled_job["pictures"][0]["source"]["sha256"],

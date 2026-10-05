@@ -58,11 +58,10 @@ commands, exact-duration defaults and upgrade/rollback procedure.
 
 ## Next bounded implementation
 
-Finish visual-direction/profile support and protected geometry validation.
-Resolve reusable episode defaults for differently timed native shots explicitly
-rather than silently stretching narration. Then produce the persistent matched
-queue-explainer variants, review real images/playback, and record the quality
-comparison. Complete consumer integration when its lane is established.
+Complete playback-based evaluation of the retained matched queue-explainer
+variants and record the quality comparison. Visual-direction/profile support,
+protected geometry and explicit native-duration fitting are now implemented.
+Complete consumer integration when its lane is established.
 
 The initial direction type currently describes bounded zoom and geometric
 review intent. Other element motion and typography need explicit execution
@@ -80,8 +79,57 @@ remains.
 ## Outstanding acceptance
 
 Remaining: complete immutable intent/selected-revision binding audit,
-typography/palette and delivery-profile direction, protected geometry,
-retained queue comparison and quality evaluation, CAIMITOS adapter adoption,
+queue playback comparison and quality evaluation, CAIMITOS adapter adoption,
 consumer new/upgrade/rollback canary, cache hydration and verified package,
 and requirement-by-requirement final audit. No human review, approval or
 viewer comprehension is claimed.
+
+## Native-duration and scene-engine checkpoint
+
+Explicit `fit_native_duration` now resolves reusable phase templates against
+native shot durations without changing audio samples. Delivery-profile safe
+areas and declared protected regions are validated through camera transforms.
+Typed palette/typography/reference intent is retained in indexed evidence;
+selected artwork remains responsible for realizing those visual choices.
+Eight focused Motioncraft compiler tests pass.
+
+The synthetic landscape queue study has compiled four selected semantic events
+and rendered through `reel-scene-build`, producing native stems, master/review
+media, indexed frames, a contact sheet and quarter-speed playback. Artifacts
+are under `target/motioncraft-demo-landscape/render-revised`. The contact sheet
+has been inspected for framing and text retention. This is one revised render,
+not the matched comparison or evidence of a quality-score improvement.
+
+CAIMITOS new-episode authoring, existing-episode upgrade and rollback through
+its actual adapter and the REEL scene engine remain completion requirements.
+No CAIMITOS readiness or full project completion is claimed at this checkpoint.
+
+## Matched study checkpoint
+
+All six native renders now exist: baseline, revised and reduced for 1280x720
+and 720x1280. Each has 450 decoded frames at 30 fps and 720,000 native samples.
+`tools/motioncraft_study_review.py` verifies identical D/E/M/mix WAV bytes and
+picture timing within each profile, then reuses the compiler's revised review
+schedule to extract matched baseline/revised/reduced frames. It produces an
+indexed inventory, captioned muted derivatives and labelled matched boards.
+Original selected graphics/audio and runtime media remain outside git.
+
+Generate a new study with `py tools/motioncraft_demo.py <new-root> --font
+C:/Windows/Fonts/arial.ttf`, adding `--width 720 --height 1280` for portrait.
+Compile each `compile-<variant>.json` using `reel-scene-authoring
+compile-delivery`, then render `compiled-<variant>/build.json` with
+`reel-scene-build build`. Supply the study as project and asset root. The build
+manifest argument is repository-relative. Finally run `py
+tools/motioncraft_study_review.py <study-root> --font C:/Windows/Fonts/arial.ttf`.
+All outputs are new-only. `--output-name` retains revised derivative sets.
+
+The first caption set overlapped the landscape lower label. Current review
+candidates use `review-comparison-v2`; inspected caption frames retain the
+diagram label in both profiles. The earlier set is preserved as failure
+evidence. Matched boards and sampled caption frames have been inspected;
+playback evaluation and dimension scores remain open. No quality-target pass
+is claimed from file presence or still images.
+
+Current checks: full reel-assembly suite (45 tests), scene-authoring suite (19),
+scene-delivery suite including real FFmpeg (18), independent scene-build tests
+(2) and Rust format check pass.
