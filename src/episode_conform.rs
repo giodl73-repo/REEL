@@ -76,6 +76,8 @@ pub struct Manifest {
     /// Optional compact delivery after the lossless conform has been verified.
     #[serde(default)]
     pub compact_delivery: Option<CompactDelivery>,
+    #[serde(default)]
+    pub audio_frame_conform: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -198,6 +200,7 @@ pub struct SegmentReceipt {
     pub input_samples: u64,
     pub frames: u64,
     pub samples: u64,
+    pub audio_padding_samples: u64,
     pub start_frame: u64,
     pub start_sample: u64,
     pub decoded_picture_sha256: String,
@@ -344,6 +347,14 @@ pub(crate) fn probe(path: &Path) -> Result<MediaFacts> {
 }
 
 pub(crate) fn decoded_digest(path: &Path, video: bool) -> Result<(String, u64)> {
+    decoded_digest_with_padding(path, video, 0)
+}
+
+fn decoded_digest_with_padding(
+    path: &Path,
+    video: bool,
+    padding_samples: u64,
+) -> Result<(String, u64)> {
     let mut cmd = command("ffmpeg");
     cmd.args(["-v", "error", "-nostdin", "-i"]).arg(path);
     if video {
@@ -376,6 +387,18 @@ pub(crate) fn decoded_digest(path: &Path, video: bool) -> Result<(String, u64)> 
     }
     if !child.wait()?.success() {
         bail!("segment decode failed: {}", path.display());
+    }
+    let mut padding_bytes = padding_samples
+        .checked_mul(6)
+        .context("audio padding overflow")?;
+    let zeroes = [0u8; 65536];
+    while padding_bytes > 0 {
+        let n = padding_bytes.min(zeroes.len() as u64) as usize;
+        digest.update(&zeroes[..n]);
+        count = count
+            .checked_add(n as u64)
+            .context("audio byte count overflow")?;
+        padding_bytes -= n as u64;
     }
     Ok((
         digest
@@ -573,6 +596,13 @@ pub fn build(
                 .is_some_and(|value| value != "h264-lossless")
     }) {
         bail!("invalid compact episode encoding profile");
+    }
+    if manifest
+        .audio_frame_conform
+        .as_deref()
+        .is_some_and(|value| value != "pad-silence-to-picture-boundaries")
+    {
+        bail!("unsupported episode audio frame conform policy");
     }
     if manifest.schema != SCHEMA
         || manifest.episode_id.is_empty()
@@ -907,7 +937,7 @@ pub fn build(
             || (target_codec == "h264" && facts.reordered_video_frames != 0);
         let needs_normalization =
             facts.sample_rate != manifest.output_sample_rate || needs_video_normalization;
-        let selected = if !needs_normalization {
+        let mut selected = if !needs_normalization {
             source.clone()
         } else {
             let path = temp.path().join(format!("normalized-{index:03}.mkv"));
@@ -949,7 +979,7 @@ pub fn build(
             bail!("normalization sample rate mismatch");
         }
         let (picture_hash, picture_bytes) = decoded_digest(&selected, true)?;
-        let (audio_hash, audio_bytes) = decoded_digest(&selected, false)?;
+        let (mut audio_hash, audio_bytes) = decoded_digest(&selected, false)?;
         let frame_bytes = selected_facts.width * selected_facts.height * 3;
         if picture_bytes == 0
             || picture_bytes % frame_bytes != 0
@@ -959,7 +989,7 @@ pub fn build(
             bail!("decoded segment does not contain complete frames/stereo samples");
         }
         let frames = picture_bytes / frame_bytes;
-        let samples = audio_bytes / 6;
+        let mut samples = audio_bytes / 6;
         let (input_frames, input_samples) = if !needs_normalization {
             (frames, samples)
         } else {
@@ -987,6 +1017,57 @@ pub fn build(
                 bail!("presentation decoded media differs from its source receipt");
             }
         }
+        let mut audio_padding_samples = 0;
+        if manifest.audio_frame_conform.as_deref() == Some("pad-silence-to-picture-boundaries") {
+            let (num, den) = fps_parts(&selected_facts.fps)?;
+            let boundary = |frame: u64| -> Result<u64> {
+                let value =
+                    (u128::from(frame) * u128::from(manifest.output_sample_rate) * u128::from(den)
+                        + u128::from(num) / 2)
+                        / u128::from(num);
+                u64::try_from(value).context("frame boundary sample overflow")
+            };
+            let target = boundary(
+                frame_cursor
+                    .checked_add(frames)
+                    .context("frame clock overflow")?,
+            )?
+            .checked_sub(boundary(frame_cursor)?)
+            .context("frame boundary order")?;
+            audio_padding_samples = target
+                .checked_sub(samples)
+                .context("native audio exceeds selected picture boundary; trimming is forbidden")?;
+            if u128::from(audio_padding_samples) * u128::from(num)
+                > u128::from(manifest.output_sample_rate) * u128::from(den) + u128::from(num)
+            {
+                bail!("frame conform padding exceeds one frame");
+            }
+            if audio_padding_samples != 0 {
+                let expected =
+                    decoded_digest_with_padding(&selected, false, audio_padding_samples)?;
+                let padded = temp.path().join(format!("padded-{index:03}.mkv"));
+                let status = command("ffmpeg")
+                    .args(["-v", "error", "-nostdin", "-i"])
+                    .arg(&selected)
+                    .args(["-map", "0:v:0", "-map", "0:a:0", "-c:v", "copy", "-af"])
+                    .arg(format!(
+                        "apad=pad_len={audio_padding_samples},asetpts=N/SR/TB"
+                    ))
+                    .args(["-c:a", "pcm_s24le"])
+                    .arg(&padded)
+                    .status()?;
+                if !status.success() {
+                    bail!("frame audio padding failed");
+                }
+                let actual = decoded_digest(&padded, false)?;
+                if actual != expected {
+                    bail!("frame conform changed native audio prefix or nonzero padded tail");
+                }
+                selected = padded;
+                audio_hash = actual.0;
+                samples = actual.1 / 6;
+            }
+        }
         records.push(SegmentReceipt {
             kind: if segment.kind == SegmentKind::Scene {
                 "scene"
@@ -1006,6 +1087,7 @@ pub fn build(
             input_samples,
             frames,
             samples,
+            audio_padding_samples,
             start_frame: frame_cursor,
             start_sample: sample_cursor,
             decoded_picture_sha256: picture_hash,
@@ -1035,14 +1117,44 @@ pub fn build(
     }
     drop(list);
     let master = work.join("master.mkv");
-    let status = command("ffmpeg")
+    let mut concat = command("ffmpeg");
+    concat
         .args([
             "-v", "error", "-nostdin", "-f", "concat", "-safe", "0", "-i",
         ])
         .arg(&list_path)
-        .args(["-map", "0:v:0", "-map", "0:a:0", "-c", "copy"])
-        .arg(&master)
-        .status()?;
+        .args(["-map", "0:v:0", "-map", "0:a:0"]);
+    if manifest.audio_frame_conform.is_some() {
+        let facts = common.as_ref().context("no common frame clock")?;
+        let (num, den) = fps_parts(&facts.fps)?;
+        concat
+            .args(["-vf"])
+            .arg(format!("setpts=N*{den}/({num}*TB)"))
+            .args([
+                "-af",
+                "asetpts=N/SR/TB",
+                "-fps_mode",
+                "passthrough",
+                "-c:a",
+                "pcm_s24le",
+            ]);
+        if manifest
+            .compact_delivery
+            .as_ref()
+            .and_then(|p| p.intermediate_video_encoding.as_deref())
+            == Some("h264-lossless")
+        {
+            concat.args([
+                "-c:v", "libx264", "-crf", "0", "-preset", "veryfast", "-bf", "0", "-pix_fmt",
+                "yuv444p",
+            ]);
+        } else {
+            concat.args(["-c:v", "ffv1", "-pix_fmt", "yuv444p"]);
+        }
+    } else {
+        concat.args(["-c", "copy"]);
+    }
+    let status = concat.arg(&master).status()?;
     if !status.success() {
         bail!("episode lossless concat failed");
     }

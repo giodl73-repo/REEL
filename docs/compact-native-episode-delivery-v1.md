@@ -44,3 +44,14 @@ Retain original lossless cues, clean cels, editable metadata, selected manifests
 receipts and the compact episode. Temporary scene movies can be removed by the
 production owner after final delivery and rebuild provenance are verified.
 Technical checks do not establish creative approval or publication permission.
+
+When independently rendered scenes round their pictures to whole frames but
+retain exact native audio lengths, an episode can explicitly select
+`audio_frame_conform: "pad-silence-to-picture-boundaries"`. Conform calculates
+each target from cumulative frame boundaries with integer sample rounding.
+It appends at most one frame of zero PCM per segment, rejects any required
+trimming, and verifies the exact original audio prefix followed by zeros.
+`audio_padding_samples` records the adjustment in each segment receipt.
+The final lossless conform regenerates continuous frame/sample timestamps;
+ordered decoded picture and padded audio comparison still applies. This policy
+is separate from an authored dramatic breath or any narration timing change.

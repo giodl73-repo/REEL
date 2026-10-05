@@ -30,8 +30,12 @@ fn source(root: &Path, name: &str, color: &str, sample_rate: u32) {
         .args(["-v", "error", "-f", "lavfi", "-i"])
         .arg(format!("color=c={color}:s=64x64:r=24:d=1"))
         .args(["-f", "lavfi", "-i"])
-        .arg(format!("anullsrc=r={sample_rate}:cl=stereo:d=1"))
+        .arg(format!(
+            "sine=frequency=400:sample_rate={sample_rate}:duration=1"
+        ))
         .args([
+            "-ac",
+            "2",
             "-shortest",
             "-c:v",
             if name == "credits.mkv" {
@@ -299,6 +303,72 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
     assert!(!misplaced.status.success());
     assert!(String::from_utf8_lossy(&misplaced.stderr).contains("order differs"));
     assert!(!root.join("misplaced-output").exists());
+    let mut padded = compact.clone();
+    padded["output_sample_rate"] = 44100.into();
+    padded["audio_frame_conform"] = "pad-silence-to-picture-boundaries".into();
+    for (index, id, rate) in [(1, "scene-a", 24000), (3, "scene-b", 48000)] {
+        let path = format!("{id}.mkv");
+        let shortened = format!("{id}-short.mkv");
+        let status = ffmpeg()
+            .args(["-v", "error", "-i"])
+            .arg(root.join(&path))
+            .args(["-map", "0:v:0", "-map", "0:a:0", "-c:v", "copy", "-af"])
+            .arg(format!("atrim=end_sample={}", rate * 97 / 100))
+            .args(["-c:a", "pcm_s24le"])
+            .arg(root.join(&shortened))
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let receipt_path = format!("{id}-short-receipt.json");
+        let mut proof: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join(format!("{id}-receipt.json"))).unwrap())
+                .unwrap();
+        let master = reference(root, &shortened);
+        proof["master_sha256"] = master["sha256"].clone();
+        proof["master_bytes"] = master["bytes"].clone();
+        write(&root.join(&receipt_path), &proof);
+        padded["segments"][index]["master"] = master;
+        padded["segments"][index]["source_receipt"] = reference(root, &receipt_path);
+    }
+    write(&root.join("padded.json"), &padded);
+    let padded_result = Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
+        .arg("build")
+        .arg(root.join("padded.json"))
+        .arg("--input-root")
+        .arg(root)
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output-dir")
+        .arg(root.join("padded-output"))
+        .output()
+        .unwrap();
+    assert!(
+        padded_result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&padded_result.stderr)
+    );
+    let padded_receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("padded-output/receipt.json")).unwrap())
+            .unwrap();
+    assert_eq!(padded_receipt["total_frames"], 120);
+    assert_eq!(padded_receipt["total_samples"], 220500);
+    assert_eq!(padded_receipt["timestamps_verified"], true);
+    assert_eq!(
+        padded_receipt["decoded_master_matches_ordered_segments"],
+        true
+    );
+    for index in [1, 3] {
+        assert_eq!(
+            padded_receipt["segments"][index]["audio_padding_samples"],
+            1323
+        );
+    }
+    for index in [0, 2, 4] {
+        assert_eq!(
+            padded_receipt["segments"][index]["audio_padding_samples"],
+            0
+        );
+    }
     fs::write(root.join("source-master.json"), b"altered template").unwrap();
     let stale_source = Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
         .arg("build")
