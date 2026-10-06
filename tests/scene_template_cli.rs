@@ -281,4 +281,69 @@ fn compiles_selected_poem_from_scene_content_and_rejects_changed_definition() {
     let stale = run("stale.ass", "stale-receipt.json");
     assert!(!stale.status.success());
     assert!(!dir.join("stale.ass").exists());
+
+    // Exercise a source cue inside a selected combined performance through the CLI.
+    let mut label_definition = definition.clone();
+    label_definition["kind"] = json!("semantic-label");
+    label_definition["panel"] = Value::Null;
+    label_definition["byline"] = Value::Null;
+    label_definition["title_x"] = json!(640);
+    label_definition["title_y"] = json!(680);
+    label_definition["fixed_duration_seconds"] = json!(4);
+    write(&dir.join("definition.json"), &label_definition);
+    catalog["templates"][2]["kind"] = json!("semantic-label");
+    catalog["templates"][2]["required_content_keys"] = json!(["titles", "lines_by_language"]);
+    catalog["templates"][2]
+        .as_object_mut()
+        .unwrap()
+        .remove("soundtrack_requirement");
+    catalog["templates"][2]["definition_sha256"] =
+        sha(&fs::read(dir.join("definition.json")).unwrap()).into();
+    write(&dir.join("catalog.json"), &catalog);
+    scene["presentation"]["role"] = json!("semantic-label");
+    scene
+        .as_object_mut()
+        .unwrap()
+        .remove("presentation_source_scope_ids");
+    scene["languages"]["es"]["cues"][0]["source_cue_ids"] = json!(["source-block-1"]);
+    scene["presentation"]["content"] = json!({
+        "titles":{"es":"1937","en":"1937"},
+        "lines_by_language":{"es":[{"text":"1937","cue_id":"source-block-1","audio_cue_id":"es-1","semantic_trigger_id":"first-line"}]},
+        "source_text_bindings":{"es":"es.poem.source","en":"en.poem.source"}
+    });
+    let mut label_source = json!({
+        "schema":"reel.presentation-source-text.v1", "source_authority_id":"source-1",
+        "source_document_sha256":"a".repeat(64), "source_scope_ids":["source-block-1"],
+        "language":"es", "text_state":"project-draft-review-held", "title":"1937",
+        "byline":null,"chapter_number":null,
+        "lines":[{"text":"1937","cue_id":"source-block-1","audio_cue_id":"es-1","stanza_break_before":false}]
+    });
+    for (suffix, source_id, success) in [
+        ("valid", "source-block-1", true),
+        ("unrelated", "unrelated-source", false),
+    ] {
+        scene["presentation"]["content"]["lines_by_language"]["es"][0]["cue_id"] = json!(source_id);
+        label_source["lines"][0]["cue_id"] = json!(source_id);
+        write(&dir.join("scene.json"), &scene);
+        write(&dir.join("source-text.json"), &label_source);
+        let source_bytes = fs::read(dir.join("source-text.json")).unwrap();
+        scene_bindings["assets"]["es.poem.source"]["sha256"] = sha(&source_bytes).into();
+        scene_bindings["assets"]["es.poem.source"]["bytes"] = json!(source_bytes.len());
+        scene_bindings["assets"]["es.poem.source"]["cache_uri"] =
+            format!("cache://sha256/{}", sha(&source_bytes)).into();
+        write(&dir.join("bindings.json"), &scene_bindings);
+        let result = run(
+            &format!("label-{suffix}.ass"),
+            &format!("label-{suffix}.json"),
+        );
+        assert_eq!(
+            result.status.success(),
+            success,
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    let label_ass = fs::read_to_string(dir.join("label-valid.ass")).unwrap();
+    assert!(label_ass.contains("\\pos(640,680)"));
+    assert!(label_ass.contains("1937"));
 }
