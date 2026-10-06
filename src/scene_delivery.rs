@@ -28,6 +28,8 @@ pub struct Job {
     pub production_manifest_sha256: String,
     pub width: u32,
     pub height: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption_picture_layout: Option<crate::caption_presentation::CaptionPictureLayoutConfig>,
     #[serde(default)]
     pub still_sequence_encoding: Option<String>,
     pub max_composition_samples: u64,
@@ -293,6 +295,18 @@ fn nonempty(s: &str) -> bool {
     !s.trim().is_empty()
 }
 
+pub fn picture_layout(
+    job: &Job,
+) -> Result<Option<crate::caption_presentation::CaptionPictureLayoutReport>> {
+    job.caption_picture_layout
+        .as_ref()
+        .map(|config| {
+            crate::caption_presentation::resolve_picture_layout(config, job.width, job.height)
+        })
+        .transpose()
+        .map(Option::flatten)
+}
+
 pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
     let job_bytes = fs::read(job_path)?;
     let job: Job = serde_yaml::from_slice(&job_bytes)?;
@@ -308,6 +322,20 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         || job.max_composition_samples == 0
     {
         bail!("invalid delivery dimensions/composition limit");
+    }
+    if picture_layout(&job)?.is_some() {
+        if job.post_compose_camera.is_some()
+            || job.pictures.iter().any(|picture| {
+                matches!(
+                    picture.motion,
+                    Some(PictureMotion::Zoompan { .. } | PictureMotion::CenteredZoompan { .. })
+                )
+            })
+        {
+            bail!(
+                "reserved caption band requires contained picture motion; legacy or post-compose cameras are unsupported"
+            );
+        }
     }
     let base = job_path.parent().unwrap_or(Path::new("."));
     let contract_path = checked_file(base, &job.contract)?;
@@ -1252,6 +1280,29 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
             .source_start_frame
             .checked_add(group_frames)
             .context("source frame offset overflow")?;
+        let region = picture_layout(&job)?
+            .map(|layout| layout.picture_region)
+            .unwrap_or(crate::caption_presentation::PixelRect {
+                x: 0,
+                y: 0,
+                width: job.width,
+                height: job.height,
+            });
+        let output_pad = if region.width != job.width || region.height != job.height {
+            format!(
+                "pad={}:{}:{}:{},",
+                job.width, job.height, region.x, region.y
+            )
+        } else {
+            String::new()
+        };
+        // RGB preserves odd-sized reserved regions exactly before final chroma
+        // conversion; YUV padding may otherwise round a caption boundary.
+        let layout_format = if output_pad.is_empty() {
+            ""
+        } else {
+            "format=rgb24,"
+        };
         let visual = match &p.motion {
             Some(PictureMotion::PhasedCamera { plan: motion }) => {
                 let zoom = reel_assembly::motioncraft::camera_expression(motion)?;
@@ -1260,8 +1311,8 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                 let right = format!("(W+W/({zoom}))/2");
                 let bottom = format!("(H+H/({zoom}))/2");
                 format!(
-                    "scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,perspective=x0='{left}':y0='{top}':x1='{right}':y1='{top}':x2='{left}':y2='{bottom}':x3='{right}':y3='{bottom}':interpolation=cubic:sense=source:eval=frame,",
-                    job.width, job.height, job.width, job.height
+                    "{layout_format}scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,perspective=x0='{left}':y0='{top}':x1='{right}':y1='{top}':x2='{left}':y2='{bottom}':x3='{right}':y3='{bottom}':interpolation=cubic:sense=source:eval=frame,{output_pad}",
+                    region.width, region.height, region.width, region.height
                 )
             }
             Some(PictureMotion::Zoompan {
@@ -1287,8 +1338,8 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                 group_frames, job.width, job.height
             ),
             None => format!(
-                "{crop}scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,",
-                job.width, job.height, job.width, job.height
+                "{crop}{layout_format}scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,{output_pad}",
+                region.width, region.height, region.width, region.height
             ),
         };
         filters.push(format!("[{i}:v]{visual}setsar=1,fps={fps},trim=start_frame={}:end_frame={source_end},setpts=PTS-STARTPTS[v{i}]",p.source_start_frame));

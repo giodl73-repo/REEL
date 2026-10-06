@@ -213,3 +213,42 @@ tests pass. These are cadence measurements, not viewer comprehension or final
 creative approval. Caption-band mapping and actual CAIMITOS adoption remain
 open completion requirements. Existing handoff-r1 is unchanged; cadence reports
 will need inclusion in a new final package, with the final producer pin.
+
+## Caption reservation through selected scene delivery
+
+The existing caption-presentation region resolver is now shared with scene
+profiles. Optional `caption_picture_layout` travels into the exact delivery
+job. Static contained pictures and phased cameras fit inside that region,
+animate there and pad to the full output. Camera safe/protected geometry uses
+normalized contained-picture coordinates; indexed review reports the region
+and its coordinate space. Legacy zoompan and post-compose cameras cannot move
+a reserved band: unsupported combinations reject before rendering. Absence
+preserves old jobs and review metadata; the existing compiled job golden hash
+remains unchanged.
+
+All 20 scene-delivery tests pass including explicit FFmpeg tests, as do the
+selected scene-build regression and three caption-presentation tests. A focused
+additional 900x1600 portrait render verifies the odd 1125-pixel picture height
+without rounding the caption boundary. Patterned pixels prove hold/push motion,
+clear band, 96,000 native samples, 48 frames and effect offset 123.
+
+Retained `target/motioncraft-caption-landscape-r1` and
+`target/motioncraft-caption-portrait-r1` hydrate original study inputs from the
+verified package, then opt into the layout via the profile only. Actual selected
+compile/build/check and cadence pass for both. `caption-check-r2.json`, generated
+by `tools/motioncraft_caption_check.py`, compares the stripped job exactly to
+its parent, compares all four WAVs byte-for-byte and verifies the clear band in
+all 44 indexed PNGs per profile. Representative frame 149 was visually inspected
+in both layouts: the full queue diagram remains above the band. Reports do not
+claim caption-text execution, viewer approval or a new craft score.
+
+Reproduce the independent comparison after scene receipt verification:
+
+```powershell
+py tools/motioncraft_caption_check.py <parent-study> <reserved-study> --output <new-report.json>
+```
+
+These derivatives and cadence reports still need inclusion in the final
+versioned package. Actual CAIMITOS lane, adapter/new-episode/upgrade/rollback,
+native motion canary, canonical cache/authority handoff and final integrated
+acceptance remain required. No CAIMITOS worktree or registry was modified.

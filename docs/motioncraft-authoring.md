@@ -86,14 +86,44 @@ represented as if they were executed by this camera treatment.
 
 Delivery profiles accept `motion_safe_area`, a normalized rectangle. A direction
 may declare a narrower `safe_area` and `protected_regions`, an array of normalized
-rectangles. Regions are authored against the composed delivery canvas after
-fit/padding, not against raw source pixels. The camera validates transformed
+rectangles. Regions are authored against the contained picture canvas after
+fit/padding, not against raw source pixels. Without caption reservation this
+is the full delivery canvas. The camera validates transformed
 regions throughout every phase; monotone bounded curves allow endpoint bounds
 to prove containment across the interval. A direction cannot widen the profile
 safe area. Reduced-motion validation uses its actual stationary transform.
 These checks validate owner-declared geometry; identifying a face/text's actual
 region remains an authoring/review responsibility. Landscape and portrait
 profiles need their own correctly mapped layout and protected regions.
+
+Delivery profiles can reuse the existing caption presentation geometry:
+
+```json
+{
+  "caption_picture_layout": {
+    "profile": "youtube-review",
+    "layout": "reserve-caption-band"
+  }
+}
+```
+
+Use `phone-review` for portrait delivery. This optional profile fragment travels
+into the exact selected delivery job. The existing caption style resolver
+defines the picture region: 1280×520 within 1280×720 landscape, or 720×900
+within 720×1280 portrait. The scene engine fits the picture into that region,
+applies phased camera motion there, then pads to the full output. The reserved
+band remains clear of camera motion. Captions remain a separate selected
+presentation layer; reservation alone does not create or burn caption text.
+
+With reservation, `motion_safe_area`, direction `safe_area`, element bounds and
+`protected_regions` use normalized coordinates within the contained picture
+region. To map a rectangle to output pixels, multiply by that region's width
+and height and add its x/y offsets. They are not raw-source coordinates or
+full-output percentages. Review evidence records the exact region and this
+coordinate space. Use separately authored profile layouts for different aspect
+ratios. Omitting the setting preserves existing jobs and review evidence.
+Reserved layout rejects legacy zoompan and post-compose cameras that could
+move the band; unsupported geometry fails before rendering.
 
 ## Compile and build
 

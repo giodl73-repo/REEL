@@ -81,6 +81,57 @@ impl CaptionPictureLayout {
     }
 }
 
+/// Shared caption geometry for production renderers and scene delivery.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CaptionPictureLayoutConfig {
+    pub profile: CaptionProfile,
+    pub layout: CaptionPictureLayout,
+}
+
+pub fn resolve_picture_layout(
+    config: &CaptionPictureLayoutConfig,
+    width: u32,
+    height: u32,
+) -> Result<Option<CaptionPictureLayoutReport>> {
+    if width > 8192 || height > 8192 {
+        bail!("caption picture layout exceeds supported output dimensions");
+    }
+    let style = style_for(config.profile, width, height)?;
+    validate_style(&style, width, height)?;
+    picture_layout_for(&style, config.layout, width)
+}
+
+fn picture_layout_for(
+    style: &CaptionStyleReport,
+    layout: CaptionPictureLayout,
+    width: u32,
+) -> Result<Option<CaptionPictureLayoutReport>> {
+    match layout {
+        CaptionPictureLayout::Overlay => Ok(None),
+        CaptionPictureLayout::ReserveCaptionBand => {
+            let picture_region = PixelRect {
+                x: 0,
+                y: 0,
+                width,
+                height: style.caption_region.y,
+            };
+            if picture_region.width == 0
+                || picture_region.height == 0
+                || picture_region.intersects(&style.caption_region)
+            {
+                bail!(
+                    "caption picture layout cannot reserve a valid non-overlapping picture region"
+                );
+            }
+            Ok(Some(CaptionPictureLayoutReport {
+                strategy: layout.as_str().to_string(),
+                picture_region,
+            }))
+        }
+    }
+}
+
 impl SpeakerLabelPolicy {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -247,29 +298,7 @@ pub fn prepare(
     let check_bytes = serde_json::to_vec(&check)?;
     let style = style_for(options.profile, options.width, options.height)?;
     validate_style(&style, options.width, options.height)?;
-    let picture_layout = match options.picture_layout {
-        CaptionPictureLayout::Overlay => None,
-        CaptionPictureLayout::ReserveCaptionBand => {
-            let picture_region = PixelRect {
-                x: 0,
-                y: 0,
-                width: options.width,
-                height: style.caption_region.y,
-            };
-            if picture_region.width == 0
-                || picture_region.height == 0
-                || picture_region.intersects(&style.caption_region)
-            {
-                bail!(
-                    "caption picture layout cannot reserve a valid non-overlapping picture region"
-                );
-            }
-            Some(CaptionPictureLayoutReport {
-                strategy: options.picture_layout.as_str().to_string(),
-                picture_region,
-            })
-        }
-    };
+    let picture_layout = picture_layout_for(&style, options.picture_layout, options.width)?;
 
     let (presentation_input_sha256, label_events) = if options.policy == SpeakerLabelPolicy::None {
         if options.presentation.is_some() {

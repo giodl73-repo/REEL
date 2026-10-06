@@ -64,7 +64,7 @@ fn metadata(job: &Job, plan: &Plan, root: &Path) -> Result<Value> {
     if !version.status.success() {
         bail!("FFmpeg version unavailable");
     }
-    Ok(json!({
+    let mut metadata = json!({
         "schema":"reel.motioncraft-review.v1", "job_sha256":plan.job_sha256,
         "contract_sha256":plan.contract_sha256,"production_sha256":plan.production_sha256,
         "picture_sha256":crate::sha256_file(&root.join("picture.mkv"))?,
@@ -90,7 +90,13 @@ fn metadata(job: &Job, plan: &Plan, root: &Path) -> Result<Value> {
         })).collect::<Vec<_>>(),
         "scope":"sampled picture evidence; not exhaustive inspection or creative approval",
         "quarter_speed_audio":"intentionally omitted; review.mp4 retains native audio"
-    }))
+    });
+    if let Some(layout) = crate::scene_delivery::picture_layout(job)? {
+        metadata["picture_layout"] = serde_json::to_value(layout)?;
+        metadata["camera_coordinate_space"] =
+            json!("normalized contained picture region before output padding");
+    }
+    Ok(metadata)
 }
 
 fn selected_pixels(job: &Job, plan: &Plan, root: &Path) -> Result<Vec<u8>> {

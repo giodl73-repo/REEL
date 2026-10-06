@@ -296,7 +296,7 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
         fs::create_dir_all(&directory).unwrap();
         fs::copy(root.join(filename), directory.join(sha)).unwrap();
     }
-    let compile:reel::scene_delivery_compile::CompileManifest=serde_json::from_value(serde_json::json!({
+    let mut compile:reel::scene_delivery_compile::CompileManifest=serde_json::from_value(serde_json::json!({
         "schema":"reel.scene-delivery-compile.v1","catalog":"catalog.json",
         "episode":"episode.json","scene":"scene.json","policy":"policy.json",
         "season_bindings":"season-bindings.json","episode_bindings":"episode-bindings.json",
@@ -412,6 +412,37 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
         fs::read(root.join("output/D.wav")).unwrap(),
         fs::read(root.join("motion-output/D.wav")).unwrap()
     );
+    // The same selected authoring route carries the shared caption geometry
+    // into its hash-bound delivery job without changing direction or clocks.
+    let profile_path = root.join("motion-profile.json");
+    let previous_profile = fs::read(&profile_path).unwrap();
+    let mut reserved_profile: serde_json::Value =
+        serde_json::from_slice(&previous_profile).unwrap();
+    reserved_profile["width"] = 1280.into();
+    reserved_profile["height"] = 720.into();
+    reserved_profile["caption_picture_layout"] =
+        serde_json::json!({"profile":"youtube-review","layout":"reserve-caption-band"});
+    write_json(&profile_path, &reserved_profile);
+    compile.output_dir = "compiled-caption-reservation".into();
+    reel::scene_delivery_compile::compile_to_dir(root, &compile).unwrap();
+    let (reserved_job, reserved_plan) =
+        reel::scene_delivery::plan(&root.join("compiled-caption-reservation/job.json"), root)
+            .unwrap();
+    assert_eq!(
+        reel::scene_delivery::picture_layout(&reserved_job)
+            .unwrap()
+            .unwrap()
+            .picture_region
+            .height,
+        520
+    );
+    assert_eq!(reserved_plan.duration_samples, 48000);
+    assert_eq!(reserved_plan.frame_count, 24);
+    assert_eq!(
+        serde_json::to_value(&reserved_job.pictures[0].motion).unwrap(),
+        compiled_job["pictures"][0]["motion"]
+    );
+    fs::write(profile_path, previous_profile).unwrap();
     // Removing the overlay restores authoring compatibility with the old job.
     fs::write(root.join("episode.json"), original_episode).unwrap();
 

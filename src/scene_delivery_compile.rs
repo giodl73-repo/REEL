@@ -50,6 +50,8 @@ pub struct DeliveryProfile {
     pub width: u32,
     pub height: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption_picture_layout: Option<crate::caption_presentation::CaptionPictureLayoutConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub motion_safe_area: Option<reel_assembly::motioncraft::Rect>,
     #[serde(default)]
     pub still_sequence_encoding: Option<String>,
@@ -453,6 +455,9 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
             .any(|(key, gain)| !key.starts_with("sonic.") || !gain.is_finite() || gain.abs() > 60.0)
     {
         bail!("invalid scene delivery profile");
+    }
+    if let Some(layout) = &profile.caption_picture_layout {
+        crate::caption_presentation::resolve_picture_layout(layout, profile.width, profile.height)?;
     }
     let lane = scene
         .languages
@@ -908,7 +913,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     }
     let (production_sha, _) = write_new(&dir, "production.json", &production)?;
     let (contract_sha, contract_bytes) = write_new(&dir, "contract.json", &contract)?;
-    let job = json!({
+    let mut job = json!({
         "still_sequence_encoding":profile.still_sequence_encoding,
         "schema":"reel.scene-delivery.v0.1",
         "id":id,
@@ -928,6 +933,9 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
                  "reason":if selected_sonic{"Selected semantic Sonic assets"}else{"No selected Sonic binding in this scene"}}
         }
     });
+    if let Some(layout) = &profile.caption_picture_layout {
+        job["caption_picture_layout"] = serde_json::to_value(layout)?;
+    }
     let (job_sha, job_bytes) = write_new(&dir, "job.json", &job)?;
     let source_selected_graph_lock = graph.lock.clone();
     let (graph, pointer) =
