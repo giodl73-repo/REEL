@@ -316,3 +316,14 @@ was changed. Next required work is actual adapter/compiler adoption, future
 episode and existing-version upgrade/rollback examples, the illustrated odd
 sample canary, canonical authority/cache handoff and final integrated review.
 The goal must remain incomplete until those requirements pass.
+
+### Actual CAIMITOS adoption exposes short-phase timing defect
+
+The human authorized creation of the CAIMITOS integration worktree. Its actual
+adapter pins the pushed REEL feature commit. A short illustrated 24-frame
+consumer canary exposed one early endpoint: FFmpeg perspective evaluates `in`
+one-based, while the authored plan is zero-based. A new seven-transition render
+regression failed before correction and passes with `(in-1)`. Cadence thresholds
+and native/audio clocks are unchanged. Prior native study packages retain their
+producer identity and media evidence, but their camera timing proof is superseded
+for final acceptance; directed studies must be regenerated with this correction.

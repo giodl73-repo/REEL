@@ -516,7 +516,7 @@ pub fn validate_camera(plan: &FramePlan) -> Result<()> {
     Ok(())
 }
 
-/// FFmpeg perspective's `in` is the zero-based input frame counter. Sampling
+/// FFmpeg perspective's `in` is one-based when evaluating an input frame. Sampling
 /// from that counter matches zoom_at; expressions never depend on prior frames.
 pub fn camera_expression(plan: &FramePlan) -> Result<String> {
     validate_camera(plan)?;
@@ -529,7 +529,7 @@ pub fn camera_expression(plan: &FramePlan) -> Result<String> {
     }
     let element = &direction.elements[0];
     let frame = format!(
-        "(in*{}*{}/{})",
+        "((in-1)*{}*{}/{})",
         direction.working_fps, plan.delivery_fps_denominator, plan.delivery_fps_numerator
     );
     let mut expression = element

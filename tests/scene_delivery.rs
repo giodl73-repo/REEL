@@ -1195,3 +1195,57 @@ fn real_delivery_preserves_sample_offset_stems_frames_and_rejects_tamper() {
         "failed render must not publish a result directory"
     );
 }
+
+#[test]
+fn short_phased_camera_matches_every_authored_transition() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let mut job = fixture(root);
+    let mut pixels = Vec::new();
+    for y in 0..64 {
+        for x in 0..64 {
+            pixels.extend([
+                if (x / 8 + y / 8) % 2 == 0 { 220u8 } else { 30 },
+                (x * 3) as u8,
+                (y * 3) as u8,
+            ]);
+        }
+    }
+    fs::write(
+        root.join("pattern.ppm"),
+        [b"P6\n64 64\n255\n".as_slice(), &pixels].concat(),
+    )
+    .unwrap();
+    job["pictures"][0]["source"] = file(root, "pattern.ppm");
+    job["still_sequence_encoding"] = json!("h264-lossless");
+    let mut direction = phased_direction();
+    direction.working_fps = 24;
+    direction.duration_frames = 24;
+    direction.elements[0].phases = serde_json::from_value(json!([
+        {"id":"settle","kind":"settle","start_frame":0,"end_frame":7,"curve":"linear","zoom_from":1,"zoom_to":1.15},
+        {"id":"read","kind":"hold","start_frame":8,"end_frame":23,"curve":"linear","zoom_from":1.15,"zoom_to":1.15}
+    ])).unwrap();
+    let motion = reel_assembly::motioncraft::compile(
+        &direction,
+        &reel_assembly::motioncraft::full_canvas(),
+        48001,
+        48000,
+        24,
+        1,
+    )
+    .unwrap();
+    job["pictures"][0]["motion"] = json!({"kind":"phased-camera","plan":motion});
+    write_json(&root.join("job.json"), &job);
+    let output = root.join("directed");
+    scene_delivery::render(&root.join("job.json"), root, &output).unwrap();
+    let (job, plan) = scene_delivery::plan(&root.join("job.json"), root).unwrap();
+    let report = reel::motioncraft_cadence::analyze(&job, &plan, &output).unwrap();
+    assert_eq!(
+        report["shots"][0]["unexpected_stationary_transitions"], 0,
+        "{report}"
+    );
+    assert_eq!(
+        report["shots"][0]["held_stationary_fraction"], 1.0,
+        "{report}"
+    );
+}
