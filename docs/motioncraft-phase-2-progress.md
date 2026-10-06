@@ -1,5 +1,11 @@
 # Motioncraft Phase 2 implementation record
 
+## Selected Sonic attribution — native parity remains open
+
+CAIMITOS EN/ESScenes021–025 all pass native checking and fresh reproduction of complete PCM measurements. All ten Dsources are exact; eight mixes match selected PCM exactly. Both Scene023 mixes differ: ENmax0.07649087905883789/RMS0.0008243134944322714; ESmax0.017729759216308594/RMS0.0002563397908131112. Across the first/final batches,20positions have native evidence and18mixes meet tolerance. Thirty positions remain unchecked.
+
+Historical negotiated-mono reconstruction reproduces both selected Scene023 mixes exactly; English additionally requires an eight-sample placement rounding (1517800→1517808). Average folding does not reproduce them. Six fresh diagnostic WAVs match original experiment bytes and complete PCM measurements. Reusable fresh diagnostic checker rejects changed source job before output; four sound Python tests pass. Two142-record sound closures, two15-record diagnostic scopes and7fresh-support records pass canonical hydration and standard manifests under resolverV17. Formal closeout follows committed metadata. Exact engine/CI remain0f750965de95d5f9045cfb7fd671e53b9996d670/37483141949; no new native compatibility implementation or source/master change is claimed. R36 requires explicit compatibility evidence without silent gain/anchor/default changes. Full clocks/captions/context/freeze/12episodes/shipping remain open.
+
 Goal: complete the five work packages in CAIMITOS's
 `projects/animation-vfx/MOTIONCRAFT-PHASE-2.md`, including actual consumer and
 complete bilingual episode qualification. This record is a checkpoint, not a

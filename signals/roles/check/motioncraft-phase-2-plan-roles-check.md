@@ -1,5 +1,9 @@
 # Motioncraft Phase 2 — plan role review
 
+## P2-R36 — actual selected Sonic compatibility gap
+
+Sound Designer / Editor / Rights and Provenance: both native Scene023 mixes preserve exact narration but differ from selected mono mixes (EN max0.07649087905883789, ES0.017729759216308594). Bounded historical mono negotiation reproduces both selected mixes exactly; English additionally needs eight-sample historical placement rounding. Average folding does not reproduce selected output. Six fresh diagnostic WAVs are byte-identical to original experiment outputs. Disposition: preserve false native parity flags, explicit source/channel/placement evidence and original jobs; implement an opt-in immutable compatibility route through the native scene engine or record an actual reviewed exception. Do not silently alter gain, native/shared semantic anchors or legacy defaults, and do not treat successful diagnostic reproduction as selected parity. This is assistant checklist analysis, not creative approval.
+
 ## Consolidated remaining-plan review
 
 The assistant applied the Story Director, Animation Director, Editor, Sound Designer, Platform and Audience, and Rights and Provenance checklists to the current remaining plan. This is checklist analysis, not independent review or human approval.
