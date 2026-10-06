@@ -275,6 +275,34 @@ pub struct Span {
     pub start_frame: u64,
     pub end_frame: u64,
 }
+
+fn conform_timed_layer_frames(
+    span: &mut Span,
+    pictures: &[Span],
+    duration_samples: u64,
+    delivery_frames: u64,
+    explicit_picture_frames: bool,
+) -> Result<()> {
+    if explicit_picture_frames {
+        if let Some(picture) = pictures.iter().find(|picture| {
+            picture.start_sample == span.start_sample
+                && picture.start_frame > span.start_frame
+                && picture.start_frame - span.start_frame <= 1
+        }) {
+            span.start_frame = picture.start_frame;
+        }
+        if span.end_sample == duration_samples
+            && span.end_frame > delivery_frames
+            && span.end_frame - delivery_frames <= 1
+        {
+            span.end_frame = delivery_frames;
+        }
+    }
+    if span.start_frame >= span.end_frame || span.end_frame > delivery_frames {
+        bail!("timed overlay needs a positive span inside delivered picture frames");
+    }
+    Ok(())
+}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Plan {
@@ -809,6 +837,17 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                 }
                 layer_span.start_frame = frame(a.start_sample, true)?;
                 layer_span.end_frame = frame(a.end_sample, true)?;
+                conform_timed_layer_frames(
+                    &mut layer_span,
+                    &pictures,
+                    compiled.duration_samples,
+                    if explicit_picture_frames {
+                        picture_frame_cursor
+                    } else {
+                        frame(compiled.duration_samples, true)?
+                    },
+                    explicit_picture_frames,
+                )?;
                 rendered_external_layers.push(layer.attachment_id.clone());
             }
             ExternalLayerRenderMode::TimedVideoOverlay => {
@@ -828,27 +867,13 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                 } else {
                     frame(compiled.duration_samples, true)?
                 };
-                if explicit_picture_frames {
-                    if let Some(picture) = pictures.iter().find(|picture| {
-                        picture.start_sample == a.start_sample
-                            && picture.start_frame > layer_span.start_frame
-                            && picture.start_frame - layer_span.start_frame <= 1
-                    }) {
-                        layer_span.start_frame = picture.start_frame;
-                    }
-                }
-                if explicit_picture_frames
-                    && a.end_sample == compiled.duration_samples
-                    && layer_span.end_frame > delivery_frames
-                    && layer_span.end_frame - delivery_frames <= 1
-                {
-                    layer_span.end_frame = delivery_frames;
-                }
-                if layer_span.start_frame >= layer_span.end_frame
-                    || layer_span.end_frame > delivery_frames
-                {
-                    bail!("timed overlay needs a positive span inside delivered picture frames");
-                }
+                conform_timed_layer_frames(
+                    &mut layer_span,
+                    &pictures,
+                    compiled.duration_samples,
+                    delivery_frames,
+                    explicit_picture_frames,
+                )?;
                 let source = checked_file(asset_root, timed_overlay_source(asset_root, layer)?)?;
                 let info = probe(&source)?;
                 let video = info["streams"]

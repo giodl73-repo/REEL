@@ -1,5 +1,16 @@
 # Motioncraft Phase 2 — plan role review
 
+## P2-R48 — semantic effects must conform independently of authored frame cameras
+
+Animation and Editor checklist review of the native endpoint probe found that a
+semantic transform cannot be treated as an explicitly authored frame-addressed
+camera merely because native planning synthesizes one internally. Conform its
+native sample span to the delivered picture using the existing one-frame terminal
+rule, preserve semantic endpoints, and reject empty spans or larger deficits.
+The engine regression and consumer raw-field guard incorporate this finding.
+Actual consumer endpoint rendering, new-pin CI and full episode contextual
+acceptance remain open; this checklist grants no creative or shipping approval.
+
 ## P2-R47 — content verification must preserve editorial failure
 
 Editor / Sound Designer / Rights and Provenance: the actual compact consumer

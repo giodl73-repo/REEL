@@ -2297,6 +2297,81 @@ fn semantic_picture_transform_crosses_distinct_cels_and_rejects_invalid_recipes(
     write_json(&root.join("job.json"), &job);
     assert!(scene_delivery::plan(&root.join("job.json"), root).is_err()); // Unsafe bounds.
 }
+
+#[test]
+fn semantic_transform_conforms_terminal_frame_without_changing_native_samples() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path();
+    let mut job = fixture(root);
+    wav(&root.join("b.wav"), 48000, 0);
+    job["audio"][1]["source"] = file(root, "b.wav");
+    let mut contract: Value =
+        serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
+    contract["cues"][1]["duration_samples"] = json!(48000);
+    contract["attachments"].as_array_mut().unwrap().push(json!({
+        "id":"terminal-transform", "target":{"kind":"overlay","shot_id":"shot","overlay_id":"terminal-transform"},
+        "start":{"kind":"cue-start","cue_id":"a","offset_samples":0},
+        "end":{"kind":"cue-end","cue_id":"b","offset_samples":0}
+    }));
+    write_json(&root.join("contract.json"), &contract);
+    write_json(
+        &root.join("recipe.json"),
+        &json!({"schema":"reel.timed-picture-transform.v1",
+        "zoom_step":0.001,"zoom_max":1.015,
+        "translation":{"amplitude_x_pixels":2.0,"amplitude_y_pixels":1.0,"period_frames":24}}),
+    );
+    job["contract"] = file(root, "contract.json");
+    job["external_layers"] = json!([{"attachment_id":"terminal-transform","reason":"Synthetic semantic terminal transform",
+        "evidence":file(root,"recipe.json"),"render_mode":"timed-picture-transform"}]);
+    write_json(&root.join("original.json"), &job);
+    let (_, original) = scene_delivery::plan(&root.join("original.json"), root).unwrap();
+    assert_eq!(original.duration_samples, 96001);
+    assert_eq!(original.frame_count, 49);
+    assert_eq!(original.external_layer_spans[0].end_frame, 49);
+    job["pictures"][0]["delivery_frame_count"] = json!(24);
+    job["pictures"][1]["delivery_frame_count"] = json!(24);
+    write_json(&root.join("conformed.json"), &job);
+    let (resolved, conformed) = scene_delivery::plan(&root.join("conformed.json"), root).unwrap();
+    assert_eq!(conformed.duration_samples, original.duration_samples);
+    assert_eq!(conformed.compiled_sha256, original.compiled_sha256);
+    assert_eq!(conformed.frame_count, 48);
+    assert_eq!(conformed.external_layer_spans[0].end_sample, 96001);
+    assert_eq!(conformed.external_layer_spans[0].end_frame, 48);
+    assert_eq!(
+        resolved.post_compose_camera.unwrap().windows[0].end_frame,
+        48
+    );
+    for count in [23, 1] {
+        job["pictures"][1]["delivery_frame_count"] = json!(count);
+        write_json(&root.join("rejected.json"), &job);
+        assert!(scene_delivery::plan(&root.join("rejected.json"), root).is_err());
+    }
+    job["pictures"][1]["delivery_frame_count"] = json!(24);
+    let last = contract["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap();
+    last["start"] = json!({"kind":"cue-end","cue_id":"b","offset_samples":-1});
+    write_json(&root.join("contract.json"), &contract);
+    job["contract"] = file(root, "contract.json");
+    write_json(&root.join("empty-terminal.json"), &job);
+    assert!(scene_delivery::plan(&root.join("empty-terminal.json"), root).is_err());
+    let last = contract["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap();
+    last["start"] = json!({"kind":"cue-start","cue_id":"b","offset_samples":0});
+    write_json(&root.join("contract.json"), &contract);
+    job["contract"] = file(root, "contract.json");
+    job["pictures"][0]["delivery_frame_count"] = json!(26);
+    job["pictures"][1]["delivery_frame_count"] = json!(23);
+    write_json(&root.join("picture-aligned.json"), &job);
+    let (_, aligned) = scene_delivery::plan(&root.join("picture-aligned.json"), root).unwrap();
+    assert_eq!(aligned.external_layer_spans[0].start_sample, 48001);
+    assert_eq!(aligned.external_layer_spans[0].start_frame, 26);
+}
 #[test]
 fn continuous_motion_group_requires_the_same_adjacent_still() {
     let t = tempfile::tempdir().unwrap();

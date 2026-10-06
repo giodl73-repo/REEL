@@ -1,5 +1,23 @@
 # Motioncraft Phase 2 — Camera, Validation and Episode Proof
 
+## Semantic transform endpoint repair
+
+Actual CAIMITOS nonintegral conformation probes exposed two independent gaps:
+the consumer mistook native synthesis of a semantic transform for an explicitly
+authored frame-addressed camera, and transform windows could extend one frame
+beyond conformed picture delivery. The consumer now tests the raw authored
+camera field. This engine repair applies the existing timed-overlay alignment
+and one-terminal-frame rule to semantic picture transforms, preserving native
+sample endpoints and rejecting empty or out-of-picture spans.
+
+The new regression covers a 96,001-sample / 49-to-48-frame terminal allocation,
+unchanged compiled identity, picture-aligned start, empty terminal intervals and
+excessive frame deficits. All 25 active scene-delivery tests and warnings-denied
+all-target Clippy pass; 14 explicitly ignored native/private tests remain scoped.
+Exact new-pin Windows/Linux CI and actual CAIMITOS render qualification are next.
+Caption/context, historical holds, all twelve complete episodes and reviewed
+main integration remain open.
+
 ## Qualified compact consumer and indexed presentation checkpoint
 
 Engine32b90c33e77c797a276807d6962d2655fed3891f passes exact CI37512767215
