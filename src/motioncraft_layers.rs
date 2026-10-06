@@ -105,11 +105,29 @@ impl Frames {
         region: Roi,
         normalize: &str,
     ) -> Result<Self> {
+        Self::open_at(executable, video, start, end, region, normalize, None)
+    }
+    fn open_at(
+        executable: &Path,
+        video: &Path,
+        start: u64,
+        end: u64,
+        region: Roi,
+        normalize: &str,
+        directory: Option<&Path>,
+    ) -> Result<Self> {
         let filter = format!(
             "trim=start_frame={start}:end_frame={end},{normalize}crop={}:{}:{}:{},format=rgba",
             region.width, region.height, region.x, region.y
         );
-        let mut child = Command::new(executable)
+        let mut command = Command::new(executable);
+        let video = if let Some(directory) = directory {
+            command.current_dir(directory);
+            video.canonicalize()?
+        } else {
+            video.to_path_buf()
+        };
+        let mut child = command
             .args([
                 "-v",
                 "error",
@@ -118,7 +136,7 @@ impl Frames {
                 "file,pipe",
                 "-i",
             ])
-            .arg(video)
+            .arg(&video)
             .args([
                 "-vf",
                 &filter,
@@ -166,6 +184,76 @@ impl Frames {
         Ok(())
     }
 }
+
+enum Carrier {
+    Video(Frames),
+    Ass { black: Frames, white: Frames },
+}
+impl Carrier {
+    fn ass(
+        exe: &Path,
+        root: &Path,
+        before: &Path,
+        range: (u64, u64),
+        region: Roi,
+        config: (usize, usize, bool),
+    ) -> Result<Self> {
+        let (index, count, font_bound) = config;
+        let ass = if count == 1 {
+            "presentation.ass".into()
+        } else {
+            format!("presentation-{index:03}.ass")
+        };
+        let font = if font_bound { ":fontsdir=fonts" } else { "" };
+        let stream = |value: u8| {
+            let filter = format!(
+                "format=rgb24,lutrgb=r={value}:g={value}:b={value},format=yuv444p,ass={ass}{font},"
+            );
+            // Use the actual preceding picture's timestamps, including native
+            // container rounding, rather than inventing a fresh text clock.
+            Frames::open_at(exe, before, range.0, range.1, region, &filter, Some(root))
+        };
+        Ok(Self::Ass {
+            black: stream(0)?,
+            white: stream(255)?,
+        })
+    }
+    fn next(&mut self) -> Result<Vec<u8>> {
+        match self {
+            Self::Video(frames) => frames.next(),
+            Self::Ass { black, white } => {
+                let a = black.next()?;
+                let b = white.next()?;
+                let mut rgba = Vec::with_capacity(a.len());
+                for (dark, light) in a.chunks_exact(4).zip(b.chunks_exact(4)) {
+                    let transmission = (0..3)
+                        .map(|c| (f64::from(light[c]) - f64::from(dark[c])) / 255.0)
+                        .sum::<f64>()
+                        / 3.0;
+                    let alpha = (1.0 - transmission).clamp(0.0, 1.0);
+                    for &channel in &dark[..3] {
+                        rgba.push(if alpha > 0.0 {
+                            (f64::from(channel) / alpha).round().clamp(0.0, 255.0) as u8
+                        } else {
+                            0
+                        });
+                    }
+                    rgba.push((alpha * 255.0).round() as u8);
+                }
+                Ok(rgba)
+            }
+        }
+    }
+    fn finish(&mut self) -> Result<()> {
+        match self {
+            Self::Video(frames) => frames.finish(),
+            Self::Ass { black, white } => {
+                black.finish()?;
+                white.finish()
+            }
+        }
+    }
+}
 impl Drop for Frames {
     fn drop(&mut self) {
         let _ = self.child.kill();
@@ -175,7 +263,7 @@ impl Drop for Frames {
 
 struct Occluder {
     span: Span,
-    frames: Option<Frames>,
+    frames: Option<Carrier>,
     before: Frames,
     after: Frames,
 }
@@ -199,6 +287,7 @@ fn measure(
     index: usize,
     spans: &[Span],
     interval: &Interval,
+    ass: Option<(usize, bool)>,
 ) -> Result<Value> {
     let (width, height) = geometry;
     let span = &spans[index];
@@ -206,18 +295,29 @@ fn measure(
     let start = interval.start_frame;
     let end = interval.end_frame;
     let normalize = alpha_filter(width, height);
-    let mut source = Frames::open_geometry(
-        exe,
-        &root.join(source_name(index, spans.len())),
-        start - span.start_frame,
-        end - span.start_frame,
-        r,
-        &normalize,
-    )?;
     let input = if index == 0 {
         "clean-picture.mkv".into()
     } else {
         format!("layered-picture-{:03}.mkv", index - 1)
+    };
+    let mut source = if ass.is_some_and(|(n, _)| n == index) {
+        Carrier::ass(
+            exe,
+            root,
+            &root.join(&input),
+            (start, end),
+            r,
+            (index, spans.len(), ass.unwrap().1),
+        )?
+    } else {
+        Carrier::Video(Frames::open_geometry(
+            exe,
+            &root.join(source_name(index, spans.len())),
+            start - span.start_frame,
+            end - span.start_frame,
+            r,
+            &normalize,
+        )?)
     };
     let output = if index + 1 == spans.len() {
         "picture.mkv".into()
@@ -254,14 +354,25 @@ fn measure(
                     "",
                 )?,
                 frames: if a < b {
-                    Some(Frames::open_geometry(
-                        exe,
-                        &root.join(source_name(n, spans.len())),
-                        a - other.start_frame,
-                        b - other.start_frame,
-                        r,
-                        &normalize,
-                    )?)
+                    Some(if ass.is_some_and(|(index, _)| index == n) {
+                        Carrier::ass(
+                            exe,
+                            root,
+                            &root.join(format!("layered-picture-{:03}.mkv", n - 1)),
+                            (a, b),
+                            r,
+                            (n, spans.len(), ass.unwrap().1),
+                        )?
+                    } else {
+                        Carrier::Video(Frames::open_geometry(
+                            exe,
+                            &root.join(source_name(n, spans.len())),
+                            a - other.start_frame,
+                            b - other.start_frame,
+                            r,
+                            &normalize,
+                        )?)
+                    })
                 } else {
                     None
                 },
@@ -494,7 +605,7 @@ pub fn analyze(
         bail!("layer expectations do not bind the exact job and render");
     }
     let (job, plan) = scene_delivery::plan(job_path, assets)?;
-    scene_delivery::check(job_path, assets, render)?;
+    let receipt = scene_delivery::check(job_path, assets, render)?;
     let layers: Vec<_> = job
         .external_layers
         .iter()
@@ -510,6 +621,14 @@ pub fn analyze(
     let executable = motioncraft_cadence::resolve_analyzer()?;
     let executable_sha256 = crate::sha256_file(&executable)?;
     let version = motioncraft_cadence::native_output(&executable, &["-version".into()])?;
+    let ass = layers
+        .iter()
+        .enumerate()
+        .find(|(_, layer)| layer.render_mode == ExternalLayerRenderMode::AssOverlay)
+        .map(|(index, layer)| (index, layer.font.is_some()));
+    if ass.is_some() && version.lines().next() != Some(receipt.ffmpeg_version.as_str()) {
+        bail!("ASS opacity replay requires the rendered FFmpeg version");
+    }
     let spans: Vec<_> = layers
         .iter()
         .map(|l| {
@@ -550,11 +669,7 @@ pub fn analyze(
         if cursor != span.end_frame {
             bail!("layer expectation leaves native frames uncovered");
         }
-        if job.post_compose_camera.is_some()
-            || layers
-                .iter()
-                .any(|l| l.render_mode != ExternalLayerRenderMode::TimedVideoOverlay)
-        {
+        if job.post_compose_camera.is_some() {
             rows.push(json!({"attachment_id":layer.attachment_id,"status":"needs-separate-composition-analysis","passed":null}));
             continue;
         }
@@ -569,6 +684,7 @@ pub fn analyze(
                     index,
                     &spans,
                     interval,
+                    ass,
                 )?;
                 let outside = outside_span_mismatches(
                     &executable,
@@ -627,6 +743,252 @@ mod tests {
                 .unwrap()
                 .success()
         );
+    }
+    #[test]
+    #[ignore = "requires native FFmpeg; ASS opacity and final effect contribution"]
+    fn ass_response_proves_visible_motion_and_rejects_hidden_or_wrong_composition() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path();
+        let exe = motioncraft_cadence::resolve_analyzer().unwrap();
+        ffmpeg(
+            &exe,
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:s=64x64:r=24:d=1",
+                "-c:v",
+                "ffv1",
+                "-pix_fmt",
+                "yuv444p",
+            ],
+            &root.join("clean-picture.mkv"),
+        );
+        ffmpeg(
+            &exe,
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=s=64x64:r=24:d=1,format=yuva444p,colorchannelmixer=aa=0.75",
+                "-c:v",
+                "ffv1",
+                "-pix_fmt",
+                "yuva444p",
+            ],
+            &root.join("selected-overlay-000.mkv"),
+        );
+        ffmpeg(
+            &exe,
+            &[
+                "-i",
+                root.join("clean-picture.mkv").to_str().unwrap(),
+                "-i",
+                root.join("selected-overlay-000.mkv").to_str().unwrap(),
+                "-filter_complex",
+                "[0:v][1:v]overlay=format=auto",
+                "-c:v",
+                "ffv1",
+                "-pix_fmt",
+                "yuv444p",
+            ],
+            &root.join("layered-picture-000.mkv"),
+        );
+        let render_ass = |drawing: &str| {
+            fs::write(root.join("presentation-001.ass"),format!("[Script Info]\nScriptType: v4.00+\nPlayResX: 64\nPlayResY: 64\n[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\nStyle: Text,Arial,12,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\nDialogue: 0,0:00:00.00,0:00:01.00,Text,,0,0,0,,{{\\an7\\pos(0,0)\\bord0\\p1}}{drawing}\n")).unwrap();
+            let picture = root.join("picture.mkv");
+            if picture.exists() {
+                fs::remove_file(&picture).unwrap();
+            }
+            assert!(
+                Command::new(&exe)
+                    .current_dir(root)
+                    .args([
+                        "-v",
+                        "error",
+                        "-nostdin",
+                        "-i",
+                        "layered-picture-000.mkv",
+                        "-vf",
+                        "ass=presentation-001.ass",
+                        "-c:v",
+                        "ffv1",
+                        "-pix_fmt",
+                        "yuv444p",
+                        "-n",
+                        "picture.mkv"
+                    ])
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        };
+        let spans: Vec<_> = ["effect", "text"]
+            .into_iter()
+            .map(|id| Span {
+                attachment_id: id.into(),
+                start_sample: 0,
+                end_sample: 48000,
+                start_frame: 0,
+                end_frame: 24,
+            })
+            .collect();
+        let mut interval = Interval {
+            start_frame: 0,
+            end_frame: 24,
+            kind: Kind::Moving,
+            region: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1.0,
+                height: 0.5,
+            },
+        };
+        render_ass("m 0 48 l 66 48 66 66 0 66");
+        let moving = measure(&exe, root, (64, 64), 0, &spans, &interval, Some((1, false))).unwrap();
+        assert_eq!(moving["passed"], true, "{moving}");
+        interval.kind = Kind::Hold;
+        interval.region = Rect {
+            x: 0.0,
+            y: 0.75,
+            width: 1.0,
+            height: 0.25,
+        };
+        let text = measure(&exe, root, (64, 64), 1, &spans, &interval, Some((1, false))).unwrap();
+        assert_eq!(text["passed"], true, "{text}");
+        // Real glyph edges, a warm foreground and partial opacity must agree
+        // with the native composition, not just opaque vector masks.
+        render_ass("{\\p0\\c&H00AAD7E8&\\1a&H40&\\bord1}Read");
+        interval.region = Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 1.0,
+            height: 1.0,
+        };
+        let glyph = measure(&exe, root, (64, 64), 1, &spans, &interval, Some((1, false))).unwrap();
+        assert_eq!(glyph["passed"], true, "{glyph}");
+        render_ass("m 0 0 l 66 0 66 66 0 66");
+        interval.kind = Kind::Moving;
+        interval.region = Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 1.0,
+            height: 1.0,
+        };
+        let hidden = measure(&exe, root, (64, 64), 0, &spans, &interval, Some((1, false))).unwrap();
+        assert!(hidden["passed"].is_null(), "{hidden}");
+        assert_eq!(hidden["insufficient_visibility_frames"], 24);
+        fs::copy(
+            root.join("layered-picture-000.mkv"),
+            root.join("picture.mkv"),
+        )
+        .unwrap();
+        let wrong = measure(&exe, root, (64, 64), 0, &spans, &interval, Some((1, false))).unwrap();
+        assert_eq!(wrong["passed"], false, "{wrong}");
+        assert_eq!(wrong["status"], "failed-composition-or-timing");
+        // Motion in the covered half cannot borrow visibility from the static
+        // half. Deliberately overshoot the mask edge to cover its antialiasing.
+        fs::remove_file(root.join("selected-overlay-000.mkv")).unwrap();
+        ffmpeg(
+            &exe,
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                "nullsrc=s=64x64:r=24:d=1,format=rgba,geq=r='if(lt(X,32),N*10,0)':g='if(lt(X,32),200,255)':b=0:a=191",
+                "-c:v",
+                "ffv1",
+                "-pix_fmt",
+                "yuva444p",
+            ],
+            &root.join("selected-overlay-000.mkv"),
+        );
+        fs::remove_file(root.join("layered-picture-000.mkv")).unwrap();
+        ffmpeg(
+            &exe,
+            &[
+                "-i",
+                root.join("clean-picture.mkv").to_str().unwrap(),
+                "-i",
+                root.join("selected-overlay-000.mkv").to_str().unwrap(),
+                "-filter_complex",
+                "[0:v][1:v]overlay=format=auto",
+                "-c:v",
+                "ffv1",
+                "-pix_fmt",
+                "yuv444p",
+            ],
+            &root.join("layered-picture-000.mkv"),
+        );
+        render_ass("m 0 0 l 34 0 34 66 0 66");
+        let partial =
+            measure(&exe, root, (64, 64), 0, &spans, &interval, Some((1, false))).unwrap();
+        assert_eq!(partial["passed"], false, "{partial}");
+        assert_eq!(partial["status"], "failed-source-temporal-expectation");
+        assert_eq!(partial["insufficient_visibility_frames"], 0, "{partial}");
+        // A changing caption must not supply temporal evidence for a frozen
+        // selected effect that remains visible elsewhere in the frame.
+        fs::remove_file(root.join("selected-overlay-000.mkv")).unwrap();
+        ffmpeg(
+            &exe,
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=green:s=64x64:r=24:d=1,format=yuva444p,colorchannelmixer=aa=0.75",
+                "-c:v",
+                "ffv1",
+                "-pix_fmt",
+                "yuva444p",
+            ],
+            &root.join("selected-overlay-000.mkv"),
+        );
+        fs::remove_file(root.join("layered-picture-000.mkv")).unwrap();
+        ffmpeg(
+            &exe,
+            &[
+                "-i",
+                root.join("clean-picture.mkv").to_str().unwrap(),
+                "-i",
+                root.join("selected-overlay-000.mkv").to_str().unwrap(),
+                "-filter_complex",
+                "[0:v][1:v]overlay=format=auto",
+                "-c:v",
+                "ffv1",
+                "-pix_fmt",
+                "yuv444p",
+            ],
+            &root.join("layered-picture-000.mkv"),
+        );
+        render_ass("{\\t(0,1000,\\1a&HCC&)}m 0 48 l 66 48 66 66 0 66");
+        let frozen = measure(&exe, root, (64, 64), 0, &spans, &interval, Some((1, false))).unwrap();
+        assert_eq!(frozen["passed"], false, "{frozen}");
+        assert_eq!(frozen["status"], "failed-source-temporal-expectation");
+        let caption =
+            measure(&exe, root, (64, 64), 1, &spans, &interval, Some((1, false))).unwrap();
+        assert_eq!(caption["passed"], true, "{caption}");
+    }
+    #[test]
+    #[ignore = "requires the retained CAIMITOS mixed consumer closure and native FFmpeg"]
+    fn retained_mixed_consumer_caption_and_effect_pass_native_temporal_analysis() {
+        let root = std::env::var_os("REEL_MIXED_REGRESSION_ROOT")
+            .map(std::path::PathBuf::from)
+            .expect("set REEL_MIXED_REGRESSION_ROOT");
+        let report = analyze(
+            &root.join("job.json"),
+            &root.join("assets"),
+            &root.join("render"),
+            &root.join("expectations.json"),
+        )
+        .unwrap();
+        if let Some(path) = std::env::var_os("REEL_MIXED_REGRESSION_REPORT") {
+            let path = std::path::PathBuf::from(path);
+            assert!(!path.exists(), "regression report must be new");
+            fs::write(path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+        }
+        assert_eq!(report["passed"], true, "{report}");
+        assert_eq!(report["layers"][0]["passed"], true, "{report}");
+        assert_eq!(report["layers"][1]["passed"], true, "{report}");
     }
     #[test]
     #[ignore = "requires native FFmpeg"]
@@ -713,6 +1075,7 @@ mod tests {
             0,
             std::slice::from_ref(&span),
             &interval,
+            None,
         )
         .unwrap();
         assert_eq!(row["passed"], true, "{row}");
@@ -763,12 +1126,12 @@ mod tests {
                 ..span
             },
         ];
-        let row = measure(&exe, root, (64, 64), 0, &spans, &interval).unwrap();
+        let row = measure(&exe, root, (64, 64), 0, &spans, &interval, None).unwrap();
         assert!(row["passed"].is_null(), "{row}");
         assert_eq!(row["insufficient_visibility_frames"], 24, "{row}");
         fs::remove_file(root.join("picture.mkv")).unwrap();
         fs::copy(root.join("clean-picture.mkv"), root.join("picture.mkv")).unwrap();
-        let row = measure(&exe, root, (64, 64), 0, &spans, &interval).unwrap();
+        let row = measure(&exe, root, (64, 64), 0, &spans, &interval, None).unwrap();
         assert_eq!(row["status"], "failed-composition-or-timing", "{row}");
     }
     #[test]
@@ -885,7 +1248,7 @@ mod tests {
                 height: 1.0,
             },
         };
-        let row = measure(&exe, root, (64, 64), 0, &spans, &interval).unwrap();
+        let row = measure(&exe, root, (64, 64), 0, &spans, &interval, None).unwrap();
         assert_eq!(row["status"], "failed-source-temporal-expectation", "{row}");
         assert_eq!(row["stationary_fraction"], 0.0, "{row}");
         assert_eq!(row["visible_stationary_fraction"], 1.0, "{row}");
@@ -896,7 +1259,7 @@ mod tests {
             width: 0.25,
             height: 1.0,
         };
-        let row = measure(&exe, root, (64, 64), 0, &spans, &interval).unwrap();
+        let row = measure(&exe, root, (64, 64), 0, &spans, &interval, None).unwrap();
         assert!(row["passed"].is_null(), "{row}");
         assert_eq!(row["insufficient_visibility_frames"], 24, "{row}");
         interval.region = Rect {
@@ -907,7 +1270,7 @@ mod tests {
         };
         interval.end_frame = 1;
         interval.kind = Kind::Hold;
-        let row = measure(&exe, root, (64, 64), 0, &spans, &interval).unwrap();
+        let row = measure(&exe, root, (64, 64), 0, &spans, &interval, None).unwrap();
         assert!(row["passed"].is_null(), "{row}");
     }
 }

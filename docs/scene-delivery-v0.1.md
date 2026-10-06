@@ -168,9 +168,10 @@ layer. This checks selected
 scene compositing at those frames, not the
 creative selection or derivation of the effect source. The ASS stage must add
 visible text during its dialogue intervals. Intermediate stage checks do not
-establish that every effect survives later text; the temporal layer analyzer
-continues to return an explicit null/separate-analysis disposition for mixed
-ASS stacks until final-contribution analysis is qualified. A clean-picture master
+establish that every effect survives later text. The temporal layer analyzer
+checks supported mixed stacks independently using the selected ASS response,
+native timestamps and fonts; fully hidden evidence remains inconclusive.
+Post-compose cameras retain the explicit separate-analysis disposition. A clean-picture master
 must consume clean assets; disclosures, review labels and captions belong in
 separate delivery layers. Do not feed a flattened review overlay back as clean
 picture.

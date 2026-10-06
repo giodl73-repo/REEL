@@ -34,3 +34,11 @@ Expressive travel remains optional; restrained holds and reduced motion preserve
 ## Disposition
 
 All major planning findings have an owner and an explicit acceptance gate. The plan is ready for execution. Completion requires implementation and qualification evidence; this review grants no creative selection or release approval.
+
+## Temporal-validation checkpoint
+
+| ID / role | Finding | Disposition |
+|---|---|---|
+| P2-R12 Animation Director / Editor | Major: animated captions can disguise a frozen effect; partial occlusion can hide the only moving pixels. | Test each selected layer independently against native composition and surviving visibility. Fully hidden evidence remains inconclusive; a visible frozen effect fails even when captions move. Preserve existing tolerances and require exact-pin native Windows/Linux and CAIMITOS consumer evidence before shipping. |
+
+This addition refines P2.4; it does not certify the pending analyzer implementation or close complete-episode qualification.
