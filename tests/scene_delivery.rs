@@ -492,6 +492,64 @@ fn duplicate_mono_preserves_source_level_and_rejects_stereo() {
     write_json(&root.join("unknown.json"), &job);
     assert!(scene_delivery::plan(&root.join("unknown.json"), root).is_err());
 }
+
+#[test]
+#[ignore = "requires native FFmpeg; signed PCM rails and overload rejection"]
+fn signed_pcm_rails_preserve_exact_sources_and_reject_overload_before_publication() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let mut job = fixture(root);
+    wav(&root.join("a.wav"), 48001, -8_388_608);
+    wav(&root.join("b.wav"), 47999, 8_388_607);
+    job["audio"][0]["source"] = file(root, "a.wav");
+    job["audio"][1]["source"] = file(root, "b.wav");
+    write_json(&root.join("rails.json"), &job);
+    let audio = root.join("rails-audio");
+    let full = root.join("rails-full");
+    scene_delivery::render_audio(&root.join("rails.json"), root, &audio).unwrap();
+    scene_delivery::check_audio(&root.join("rails.json"), root, &audio).unwrap();
+    scene_delivery::render(&root.join("rails.json"), root, &full).unwrap();
+    scene_delivery::check(&root.join("rails.json"), root, &full).unwrap();
+    for stem in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
+        assert_eq!(
+            fs::read(audio.join(stem)).unwrap(),
+            fs::read(full.join(stem)).unwrap()
+        );
+    }
+    let decoded = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(audio.join("D.wav"))
+        .args(["-c:a", "pcm_s24le", "-f", "s24le", "pipe:1"])
+        .output()
+        .unwrap();
+    assert!(decoded.status.success());
+    let expected = [
+        (-8_388_608_i32).to_le_bytes()[..3].repeat(48001 * 2),
+        8_388_607_i32.to_le_bytes()[..3].repeat(47999 * 2),
+    ]
+    .concat();
+    assert!(
+        decoded.stdout == expected,
+        "source samples changed at signed PCM rails"
+    );
+    for index in [0, 1] {
+        let mut overloaded = job.clone();
+        overloaded["audio"][index]["gain_db"] = json!(6.0);
+        let path = root.join(format!("overload-{index}.json"));
+        let output = root.join(format!("overload-{index}"));
+        write_json(&path, &overloaded);
+        assert!(
+            scene_delivery::render_audio(&path, root, &output)
+                .unwrap_err()
+                .to_string()
+                .contains("overload")
+        );
+        assert!(
+            !output.exists(),
+            "overload must not publish a result directory"
+        );
+    }
+}
 #[test]
 #[ignore = "requires native FFmpeg; independent audio qualification"]
 fn audio_only_matches_full_scene_and_rejects_tamper_stale_job_and_overwrite() {

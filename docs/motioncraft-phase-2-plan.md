@@ -4,7 +4,7 @@
 
 Project: **Motioncraft Phase 2 — CAIMITOS Episode Qualification**. This checkpoint takes precedence over older engine-status claims below; it retains all P2.1–P2.5 acceptance gates.
 
-The explicit Sonic compatibility implementation at `271cec2ee22f4f324936c65e7de5742921785de4` has passing local native tests. The working integration with REEL main `7d48419` also passes the Rust suite, Clippy, explicit Sonic regression and semantic picture-transform regression. That integration is not yet committed or qualified by exact-pin CI or CAIMITOS consumer evidence. Selected Scene023 parity remains unresolved until actual consumer comparisons pass.
+Merged engine `3ba293dae6deb2b28805c900cd345ba5de67141d` passes exact Windows/Ubuntu/Linux-FFmpeg CI `37496619868` and actual bilingual Scene023 compatibility/fresh-cache qualification. Both selected comparisons are within one PCM24 step; D sources, D/M bytes and shared anchors are unchanged. CAIMITOS closeout `7060df06561abf67bab34e6a134aa5e8ef559f76` retains119records with four passing metadata-bound receipts. Original failed comparisons remain history. Next bounded sound work stops at English009 because the rounded-dB guard rejects a valid signed PCM rail; P2-R41 requires exact streamed representability checking without attenuation or overload acceptance. Native regression and actual consumer qualification of that candidate remain open.
 
 Execute in this order:
 

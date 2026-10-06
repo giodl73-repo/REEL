@@ -207,8 +207,12 @@ picture.
 - `receipt.json`: source/compiled identities, integer timing, FFmpeg version,
   exact output hashes/bytes, external-layer limitations and no publication grant.
 
-Float buses and their sum are checked for overload before PCM quantization; a
-clipping mix fails and must receive explicit gain/mix changes. This does not replace
+Float buses and their sum are checked sample by sample before PCM quantization.
+Every value must be finite and lie in the signed PCM domain `[-1, 1)`; the valid
+negative full-scale rail is preserved without attenuation. Empty or partial
+decoded evidence and actual overload fail before output publication. Existing
+source saturation remains an audio-quality finding. A clipping mix fails and
+must receive explicit gain/mix changes. This does not replace
 `audio-check` loudness, true-peak, stem-margin or listening review. Decoded PCM
 content length is verified separately from frame duration and AAC codec padding.
 The `check` command rejects changed jobs, production/contract/media/evidence hashes,

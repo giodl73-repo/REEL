@@ -1,5 +1,9 @@
 # Motioncraft Phase 2 — plan role review
 
+## P2-R41 — valid signed PCM rails are distinct from added overload
+
+Sound Designer / Rights and Provenance: actual English009 source is PCM24 and reaches the valid negative rail -1.0; a rounded 0dB peak rejects otherwise representable unchanged narration. Disposition: stream every pre-quantization sample, require finite values in [-1,1), reject missing/partial evidence and real positive/negative overload before output publication, and retain exact source level. Prove exact rail samples through shared full-scene/audio-only mixing, added-overload rejection and actual selected009 native/fresh comparisons at the new pin. Existing rail saturation remains a source-quality finding, not new creative approval. Earlier partial batch and producer identities remain immutable. Pure stream, native exact rails/full-scene/audio-only/overload/Sonic regressions, full Rust suite, Clippy and fmt pass; exact new CI and actual selected consumer gates remain open.
+
 ## Latest checkpoint review — integration and consumer qualification
 
 The assistant reapplied the six production/provenance checklists to the remaining Phase 2 plan. Existing story, editorial and phone-readability gates remain mandatory. New feedback is incorporated in the plan's first checkpoint:

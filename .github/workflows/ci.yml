@@ -37,6 +37,8 @@ jobs:
         run: cargo test --test scene_delivery audio_only_matches_full_scene_and_rejects_tamper_stale_job_and_overwrite -- --ignored --exact
       - name: Verify explicit selected Sonic channel and placement compatibility
         run: cargo test --test scene_delivery explicit_sonic_mono_and_placement_match_historical_mix_without_changing_pictures_or_dialogue -- --ignored --exact
+      - name: Verify signed PCM rails preserve sources and reject overload before publication
+        run: cargo test --test scene_delivery signed_pcm_rails_preserve_exact_sources_and_reject_overload_before_publication -- --ignored --exact
       - name: Verify episode consumption, boundaries and controlled scene comparisons
         run: cargo test --test scene_delivery real_episode_consumption_boundaries_and_controlled_review -- --ignored --exact
       - name: Verify native cadence rejects a frozen moving interval

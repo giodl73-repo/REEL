@@ -1375,28 +1375,47 @@ mod ass_visibility_tests {
 pub(crate) fn finish_pcm(float_path: &Path, output: &Path) -> Result<()> {
     // Reject overload before PCM24 quantization can hide clipping. This is not
     // a loudness/true-peak or intelligibility approval; audio-quality still owns it.
-    let result = Command::new("ffmpeg")
+    // Rounded dB peaks cannot distinguish the valid negative PCM rail from
+    // overload. Inspect every unquantized sample: -1 is valid, +1 is not.
+    let mut decoder = Command::new("ffmpeg")
         .args([
-            "-hide_banner",
+            "-v",
+            "error",
             "-nostdin",
             "-protocol_whitelist",
             "file,pipe",
             "-i",
         ])
         .arg(float_path)
-        .args(["-af", "astats=metadata=0:reset=0", "-f", "null", "-"])
-        .output()?;
-    if !result.status.success() {
-        bail!("float mix inspection failed");
+        .args([
+            "-map",
+            "0:a:0",
+            "-c:a",
+            "pcm_f32le",
+            "-f",
+            "f32le",
+            "pipe:1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let inspection = validate_pcm24_stream(
+        decoder
+            .stdout
+            .take()
+            .context("missing float decoder stream")?,
+    );
+    if let Err(error) = inspection {
+        let _ = decoder.kill();
+        let _ = decoder.wait();
+        return Err(error);
     }
-    let text = String::from_utf8_lossy(&result.stderr);
-    let peaks: Vec<f64> = text
-        .lines()
-        .filter_map(|line| line.split_once("Peak level dB: "))
-        .map(|(_, value)| value.trim().parse::<f64>())
-        .collect::<std::result::Result<_, _>>()?;
-    if peaks.is_empty() || peaks.iter().any(|p| p.is_nan() || *p >= 0.0) {
-        bail!("audio overload or missing peak evidence; revise explicit gains");
+    let result = decoder.wait_with_output()?;
+    if !result.status.success() {
+        bail!(
+            "float mix inspection failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
     }
     ffmpeg(&[
         "-i".into(),
@@ -1407,6 +1426,63 @@ pub(crate) fn finish_pcm(float_path: &Path, output: &Path) -> Result<()> {
     ])?;
     fs::remove_file(float_path)?;
     Ok(())
+}
+
+fn validate_pcm24_stream(mut stream: impl Read) -> Result<()> {
+    let mut buffer = [0_u8; 65_539];
+    let mut retained = 0;
+    let mut seen = false;
+    loop {
+        let read = stream.read(&mut buffer[retained..65_536])?;
+        if read == 0 {
+            if retained != 0 {
+                bail!("partial float sample in audio inspection");
+            }
+            break;
+        }
+        let length = retained + read;
+        let complete = length - length % 4;
+        for bytes in buffer[..complete].chunks_exact(4) {
+            let sample = f32::from_le_bytes(bytes.try_into().expect("four-byte sample"));
+            if !sample.is_finite() || !(-1.0..1.0).contains(&sample) {
+                bail!("audio overload or non-finite sample; revise explicit gains");
+            }
+            seen = true;
+        }
+        buffer.copy_within(complete..length, 0);
+        retained = length - complete;
+    }
+    if !seen {
+        bail!("missing audio sample evidence");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod pcm_bound_tests {
+    use super::validate_pcm24_stream;
+    use std::io::{Cursor, Read};
+
+    #[test]
+    fn signed_pcm_rails_pass_without_admitting_overload_or_invalid_samples() {
+        let valid = [-1.0_f32, 0.0, 1.0 - 2.0_f32.powi(-23)];
+        let bytes: Vec<_> = valid.into_iter().flat_map(f32::to_le_bytes).collect();
+        struct ShortReads(Cursor<Vec<u8>>);
+        impl Read for ShortReads {
+            fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+                let limit = output.len().min(3);
+                self.0.read(&mut output[..limit])
+            }
+        }
+        validate_pcm24_stream(ShortReads(Cursor::new(bytes.clone()))).unwrap();
+        for invalid in [1.0, -1.0000001, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut data = bytes.clone();
+            data.extend(invalid.to_le_bytes());
+            assert!(validate_pcm24_stream(Cursor::new(data)).is_err());
+        }
+        assert!(validate_pcm24_stream(Cursor::new(Vec::<u8>::new())).is_err());
+        assert!(validate_pcm24_stream(Cursor::new(vec![0_u8; 3])).is_err());
+    }
 }
 fn pcm_samples(path: &Path, sr: u32) -> Result<u64> {
     let mut child = Command::new("ffmpeg")
