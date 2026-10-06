@@ -1019,6 +1019,51 @@ fn selected_ass_layer_changes_rendered_pixels_and_is_checked() {
     scene_delivery::render(&root.join("compact-ass.json"), root, &compact).unwrap();
     scene_delivery::check(&root.join("compact-ass.json"), root, &compact).unwrap();
     assert_lossless_composition_matches(&output, &compact, &["picture.mkv", "master.mkv"]);
+    // Historical per-shot rounding may retain one fewer picture frame while
+    // narration and full-scene ASS still end at the same native sample.
+    let mut retained_job = compact_job.clone();
+    retained_job["pictures"][0]["delivery_frame_count"] = json!(24);
+    retained_job["pictures"][1]["delivery_frame_count"] = json!(23);
+    let retained_path = root.join("retained-ass.json");
+    write_json(&retained_path, &retained_job);
+    let retained = root.join("retained-ass");
+    let retained_receipt = scene_delivery::render(&retained_path, root, &retained).unwrap();
+    assert_eq!(retained_receipt.plan.frame_count, 47);
+    assert_eq!(retained_receipt.plan.duration_samples, 96000);
+    assert_eq!(retained_receipt.plan.external_layer_spans[0].end_frame, 47);
+    assert_eq!(
+        retained_receipt.plan.external_layer_spans[0].end_sample,
+        96000
+    );
+    for name in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
+        assert_eq!(
+            fs::read(compact.join(name)).unwrap(),
+            fs::read(retained.join(name)).unwrap()
+        );
+    }
+    let expectations_path = root.join("retained-expectations.json");
+    let mut expectations = json!({
+        "schema":"reel.motioncraft-layer-expectations.v1",
+        "job_sha256":retained_receipt.plan.job_sha256,
+        "render_receipt_sha256":file(root,"retained-ass/receipt.json")["sha256"],
+        "layers":[{"attachment_id":"editable-title",
+            "source_sha256":retained_job["external_layers"][0]["evidence"]["sha256"],
+            "intervals":[
+                {"start_frame":0,"end_frame":24,"kind":"hold","region":{"x":0.0,"y":0.0,"width":1.0,"height":1.0}},
+                {"start_frame":24,"end_frame":47,"kind":"hold","region":{"x":0.0,"y":0.0,"width":1.0,"height":1.0}}
+            ]}]
+    });
+    write_json(&expectations_path, &expectations);
+    let report =
+        reel::motioncraft_layers::analyze(&retained_path, root, &retained, &expectations_path)
+            .unwrap();
+    assert_eq!(report["passed"], true, "{report}");
+    expectations["layers"][0]["intervals"][1]["end_frame"] = json!(48);
+    write_json(&expectations_path, &expectations);
+    assert!(
+        reel::motioncraft_layers::analyze(&retained_path, root, &retained, &expectations_path)
+            .is_err()
+    );
     fs::write(output.join("presentation.ass"), b"tampered").unwrap();
     assert!(scene_delivery::check(&root.join("job.json"), root, &output).is_err());
 }

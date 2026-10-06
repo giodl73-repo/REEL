@@ -686,6 +686,12 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                 {
                     bail!("ASS overlay must be a full-scene .ass attachment");
                 }
+                // Full-scene ASS covers the delivered picture, including an
+                // explicitly retained local frame partition. Its semantic
+                // sample end may ceil to a frame that is not in that picture.
+                if explicit_picture_frames {
+                    layer_span.end_frame = picture_frame_cursor;
+                }
                 rendered_external_layers.push(layer.attachment_id.clone());
             }
             ExternalLayerRenderMode::TimedVideoOverlay => {
