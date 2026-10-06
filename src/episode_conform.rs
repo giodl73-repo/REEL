@@ -166,6 +166,8 @@ struct SourceTextEvidence {
     language: String,
     picture_binding: String,
     picture_sha256: String,
+    #[serde(default)]
+    rendered_source_master_sha256: Option<String>,
     caption_template_id: String,
     units: Vec<SourceTextUnit>,
 }
@@ -529,6 +531,17 @@ fn verify_source_text_evidence(
         .context("editable display lacks source-text evidence")?;
     let path = scene_delivery::checked_file(input_root, reference)?;
     let evidence: SourceTextEvidence = serde_json::from_slice(&fs::read(path)?)?;
+    if let Some(adoption_reference) = &segment.adoption_manifest {
+        let adoption_path = scene_delivery::checked_file(input_root, adoption_reference)?;
+        let adoption: presentation_adopt::Manifest =
+            serde_json::from_slice(&fs::read(adoption_path)?)?;
+        verify_adopted_display_source(
+            evidence.rendered_source_master_sha256.as_deref(),
+            receipt,
+            &adoption,
+            reference,
+        )?;
+    }
     if evidence.schema != "reel.presentation-source-text.v1"
         || evidence.episode_id != manifest.episode_id
         || evidence.role != segment.id
@@ -574,6 +587,79 @@ fn verify_source_text_evidence(
         bail!("editable display picture differs from selected clean-picture binding");
     }
     Ok(())
+}
+
+fn verify_adopted_display_source(
+    source_hash: Option<&str>,
+    receipt: &serde_json::Value,
+    adoption: &presentation_adopt::Manifest,
+    reference: &scene_delivery::FileRef,
+) -> Result<()> {
+    if source_hash.is_none_or(|hash| !valid_sha(hash))
+        || receipt["source_sha256"].as_str() != source_hash
+        || source_hash != Some(adoption.source.sha256.as_str())
+        || adoption.evidence_hash_pointer.as_deref() != Some("/rendered_source_master_sha256")
+        || adoption.selection_evidence.as_ref().is_none_or(|selected| {
+            selected.sha256 != reference.sha256 || selected.bytes != reference.bytes
+        })
+    {
+        bail!("editable display evidence does not bind its adopted rendered source master");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod adopted_display_source_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn rejects_internally_consistent_but_unbound_source_proofs() {
+        let source_hash = "a".repeat(64);
+        let file = json!({"path":"evidence.json","sha256":"b".repeat(64),"bytes":42});
+        let reference: scene_delivery::FileRef = serde_json::from_value(file.clone()).unwrap();
+        let mut source = file.clone();
+        source["sha256"] = source_hash.clone().into();
+        let mut adoption: presentation_adopt::Manifest = serde_json::from_value(json!({
+            "schema":"reel.presentation-adopt.v1","role":"photo","language":"es",
+            "season_id":"season","episode_id":"episode","template_id":"caption",
+            "catalog":file,"template_definition":file,"season_bindings":file,
+            "episode_bindings":file,"source_binding":"rendered.photo","source":source,
+            "selection_evidence":file,"evidence_hash_pointer":"/rendered_source_master_sha256"
+        }))
+        .unwrap();
+        let receipt = json!({"source_sha256":source_hash});
+        assert!(
+            verify_adopted_display_source(Some(&source_hash), &receipt, &adoption, &reference)
+                .is_ok()
+        );
+        let wrong_hash = "c".repeat(64);
+        for bad in [None, Some("invalid"), Some(wrong_hash.as_str())] {
+            assert!(verify_adopted_display_source(bad, &receipt, &adoption, &reference).is_err());
+        }
+        adoption.evidence_hash_pointer = Some("/picture_sha256".into());
+        assert!(
+            verify_adopted_display_source(Some(&source_hash), &receipt, &adoption, &reference)
+                .is_err()
+        );
+        adoption.evidence_hash_pointer = Some("/rendered_source_master_sha256".into());
+        adoption.selection_evidence.as_mut().unwrap().sha256 = "d".repeat(64);
+        assert!(
+            verify_adopted_display_source(Some(&source_hash), &receipt, &adoption, &reference)
+                .is_err()
+        );
+        adoption.selection_evidence.as_mut().unwrap().sha256 = reference.sha256.clone();
+        adoption.selection_evidence.as_mut().unwrap().bytes += 1;
+        assert!(
+            verify_adopted_display_source(Some(&source_hash), &receipt, &adoption, &reference)
+                .is_err()
+        );
+        adoption.selection_evidence = None;
+        assert!(
+            verify_adopted_display_source(Some(&source_hash), &receipt, &adoption, &reference)
+                .is_err()
+        );
+    }
 }
 
 pub fn build(
