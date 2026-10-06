@@ -189,6 +189,38 @@ enum Carrier {
     Video(Frames),
     Ass { black: Frames, white: Frames },
 }
+struct CarrierFrame {
+    rgba: Vec<u8>,
+    ass_response: Option<(Vec<u8>, Vec<u8>)>,
+}
+impl CarrierFrame {
+    fn expected(&self, pixel: usize, channel: usize, base: u8) -> f64 {
+        if let Some((black, white)) = &self.ass_response {
+            let offset = pixel * 4 + channel;
+            let dark = f64::from(black[offset]);
+            let transmission = ((f64::from(white[offset]) - dark) / 255.0).clamp(0.0, 1.0);
+            dark + transmission * f64::from(base)
+        } else {
+            let offset = pixel * 4;
+            let alpha = f64::from(self.rgba[offset + 3]) / 255.0;
+            alpha * f64::from(self.rgba[offset + channel]) + (1.0 - alpha) * f64::from(base)
+        }
+    }
+    fn transmission(&self, pixel: usize) -> f64 {
+        if let Some((black, white)) = &self.ass_response {
+            // Conservative across channels: motion cannot borrow transparency
+            // from a channel in which the later presentation is opaque.
+            (0..3)
+                .map(|c| {
+                    let offset = pixel * 4 + c;
+                    ((f64::from(white[offset]) - f64::from(black[offset])) / 255.0).clamp(0.0, 1.0)
+                })
+                .fold(1.0, f64::min)
+        } else {
+            1.0 - f64::from(self.rgba[pixel * 4 + 3]) / 255.0
+        }
+    }
+}
 impl Carrier {
     fn ass(
         exe: &Path,
@@ -218,9 +250,12 @@ impl Carrier {
             white: stream(255)?,
         })
     }
-    fn next(&mut self) -> Result<Vec<u8>> {
+    fn next(&mut self) -> Result<CarrierFrame> {
         match self {
-            Self::Video(frames) => frames.next(),
+            Self::Video(frames) => Ok(CarrierFrame {
+                rgba: frames.next()?,
+                ass_response: None,
+            }),
             Self::Ass { black, white } => {
                 let a = black.next()?;
                 let b = white.next()?;
@@ -240,7 +275,12 @@ impl Carrier {
                     }
                     rgba.push((alpha * 255.0).round() as u8);
                 }
-                Ok(rgba)
+                // Preserve native per-channel responses for composition;
+                // rounded straight RGBA is only the cadence representation.
+                Ok(CarrierFrame {
+                    rgba,
+                    ass_response: Some((a, b)),
+                })
             }
         }
     }
@@ -406,17 +446,15 @@ fn measure(
                     .as_mut()
                     .context("active layer has no decoder")?
                     .next()?;
-                for (((value, pixel), base_pixel), out_pixel) in transmission
+                for (n, ((value, base_pixel), out_pixel)) in transmission
                     .iter_mut()
-                    .zip(carrier.chunks_exact(4))
                     .zip(stage_before.chunks_exact(4))
                     .zip(stage_after.chunks_exact(4))
+                    .enumerate()
                 {
-                    let alpha = f64::from(pixel[3]) / 255.0;
-                    *value *= 1.0 - alpha;
+                    *value *= carrier.transmission(n);
                     for c in 0..3 {
-                        let expected =
-                            alpha * f64::from(pixel[c]) + (1.0 - alpha) * f64::from(base_pixel[c]);
+                        let expected = carrier.expected(n, c, base_pixel[c]);
                         error = error.max((expected - f64::from(out_pixel[c])).abs());
                     }
                 }
@@ -437,6 +475,7 @@ fn measure(
         let mut delta = 0.0;
         let mut visible_delta = 0.0;
         for (n, ((s, b), out)) in src
+            .rgba
             .chunks_exact(4)
             .zip(base.chunks_exact(4))
             .zip(result.chunks_exact(4))
@@ -446,7 +485,7 @@ fn measure(
             source_visibility += alpha;
             frame_visibility += alpha * transmission[n];
             for c in 0..3 {
-                let expected = alpha * f64::from(s[c]) + (1.0 - alpha) * f64::from(b[c]);
+                let expected = src.expected(n, c, b[c]);
                 error = error.max((expected - f64::from(out[c])).abs());
                 frame_contrast +=
                     alpha * transmission[n] * (f64::from(s[c]) - f64::from(b[c])).abs() / 3.0;
@@ -485,7 +524,7 @@ fn measure(
             mismatched_frames += 1;
         }
         max_error = max_error.max(error);
-        previous = Some(src);
+        previous = Some(src.rgba);
     }
     source.finish()?;
     before.finish()?;
