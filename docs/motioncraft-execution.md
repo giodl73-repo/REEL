@@ -133,3 +133,20 @@ is claimed from file presence or still images.
 Current checks: full reel-assembly suite (45 tests), scene-authoring suite (19),
 scene-delivery suite including real FFmpeg (18), independent scene-build tests
 (2) and Rust format check pass.
+
+## Verified package and clean reproduction
+
+The study package inventories 627 components across both profiles using the
+existing production-package contract plus additive source-asset/render-audio
+kinds. REEL receipt/check passes with creative selection pending. A clean
+landscape workspace hydrated authored inputs and selected objects, then
+recompiled all six JSON outputs byte-for-byte and rendered through the scene
+engine. All 450 decoded picture frames, four native WAV files and selected
+review PNG pixels match the packaged reference. See
+[commands and evidence scope](motioncraft-study-handoff.md).
+
+Three Python transport failure/no-clobber tests and three Rust package tests
+pass. Actual CAIMITOS adapter deployment, consumer upgrade/rollback and the
+48,001/47,999-sample canary remain required; this generic study transport does
+not replace them. Portrait clean reproduction and scored playback review also
+remain open.

@@ -4,8 +4,10 @@ Implementation status: phased camera authoring, compilation, actual scene
 rendering and indexed review extraction are implemented on `codex/motioncraft`.
 Explicit native-duration fitting and transformed protected-region checks are
 also implemented, with a typed visual brief carried into review evidence.
-CAIMITOS adapter deployment, queue comparison,
-hydrated package and final goal acceptance are still outstanding.
+Matched study renders and a verified package/clean landscape reproduction are
+available; see [study handoff](motioncraft-study-handoff.md). CAIMITOS adapter
+deployment, scored playback comparison, the consumer canary and final goal
+acceptance are still outstanding.
 
 ## Episode and scene inputs
 
