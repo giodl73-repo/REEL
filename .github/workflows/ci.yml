@@ -33,6 +33,12 @@ jobs:
         run: cargo test --test scene_delivery real_delivery_preserves_sample_offset_stems_frames_and_rejects_tamper -- --ignored --exact
       - name: Verify episode consumption, boundaries and controlled scene comparisons
         run: cargo test --test scene_delivery real_episode_consumption_boundaries_and_controlled_review -- --ignored --exact
+      - name: Verify phased camera cadence and reduced motion on Linux
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test --test scene_delivery phased_camera_renders_real_hold_push_and_reduced_motion_without_audio_drift -- --ignored --exact
+      - name: Verify reserved caption geometry with phased cameras on Linux
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test --test scene_delivery reserved_caption_band_survives_real_phased_camera_in_both_profiles -- --ignored --exact
       - name: Exercise synthetic dialogue/stem graph through FFmpeg
         run: cargo test --lib audio_preview::tests::real_dialogue_ducking_stems_recombine_and_recheck -- --ignored --exact
       - name: Exercise governed synthetic sonic resolution through D/M/E rendering on Linux

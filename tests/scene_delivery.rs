@@ -1238,14 +1238,34 @@ fn short_phased_camera_matches_every_authored_transition() {
     write_json(&root.join("job.json"), &job);
     let output = root.join("directed");
     scene_delivery::render(&root.join("job.json"), root, &output).unwrap();
-    let (job, plan) = scene_delivery::plan(&root.join("job.json"), root).unwrap();
-    let report = reel::motioncraft_cadence::analyze(&job, &plan, &output).unwrap();
-    assert_eq!(
-        report["shots"][0]["unexpected_stationary_transitions"], 0,
-        "{report}"
+    // This renderer regression runs on Windows CI without WSL. The separate
+    // cadence integration tests exercise the platform-specific luma analyzer.
+    let decoded = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(output.join("picture.mkv"))
+        .args(["-map", "0:v:0", "-f", "framemd5", "-"])
+        .output()
+        .unwrap();
+    assert!(
+        decoded.status.success(),
+        "{}",
+        String::from_utf8_lossy(&decoded.stderr)
     );
-    assert_eq!(
-        report["shots"][0]["held_stationary_fraction"], 1.0,
-        "{report}"
-    );
+    let hashes: Vec<_> = String::from_utf8(decoded.stdout)
+        .unwrap()
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.trim().is_empty())
+        .map(|line| line.rsplit(',').next().unwrap().trim().to_owned())
+        .collect();
+    assert_eq!(hashes.len(), 48);
+    for frame in 1..=7 {
+        assert_ne!(
+            hashes[frame - 1],
+            hashes[frame],
+            "moving transition {frame}"
+        );
+    }
+    for frame in 8..24 {
+        assert_eq!(hashes[7], hashes[frame], "declared hold frame {frame}");
+    }
 }
