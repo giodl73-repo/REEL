@@ -49,6 +49,9 @@ pub struct DisplaySourceUnit {
 pub struct SourceLine {
     pub text: String,
     pub cue_id: String,
+    /// Native performance owning this canonical source line; defaults to cue_id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_cue_id: Option<String>,
     pub stanza_break_before: bool,
 }
 
@@ -148,6 +151,8 @@ pub struct EditableTextInvocation {
 pub struct PoemLine {
     pub text: String,
     pub cue_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_cue_id: Option<String>,
     pub semantic_trigger_id: String,
     #[serde(default)]
     pub stanza_break_before: bool,
@@ -197,6 +202,8 @@ pub fn verify_source_text(
     for (selected, authored) in source.lines.iter().zip(&invocation.lines) {
         if selected.text != authored.text
             || selected.cue_id != authored.cue_id
+            || selected.audio_cue_id.as_deref().unwrap_or(&selected.cue_id)
+                != authored.audio_cue_id.as_deref().unwrap_or(&authored.cue_id)
             || selected.stanza_break_before != authored.stanza_break_before
         {
             bail!("poem wording, cue scope, or stanza breaks differ from selected source");
@@ -476,16 +483,17 @@ pub fn compile_layer(
     let mut used = BTreeSet::new();
     for line in &invocation.lines {
         escape(&line.text)?;
+        let audio_cue_id = line.audio_cue_id.as_deref().unwrap_or(&line.cue_id);
         let base = starts
-            .get(line.cue_id.as_str())
+            .get(audio_cue_id)
             .ok_or_else(|| anyhow::anyhow!("line references cue outside poem"))?;
-        let alignment = &alignments[&line.cue_id];
+        let alignment = &alignments[audio_cue_id];
         let marker = *alignment
             .semantic_markers
             .get(&line.semantic_trigger_id)
             .ok_or_else(|| anyhow::anyhow!("line semantic marker missing"))?;
         if marker >= alignment.cue_end_sample
-            || !used.insert((&line.cue_id, &line.semantic_trigger_id))
+            || !used.insert((audio_cue_id, &line.semantic_trigger_id))
         {
             bail!("line marker invalid or reused");
         }

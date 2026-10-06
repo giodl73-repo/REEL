@@ -74,18 +74,21 @@ fn poem() -> EditableTextInvocation {
             PoemLine {
                 text: "Primera línea".into(),
                 cue_id: "a".into(),
+                audio_cue_id: None,
                 semantic_trigger_id: "first".into(),
                 stanza_break_before: false,
             },
             PoemLine {
                 text: "Segunda línea".into(),
                 cue_id: "a".into(),
+                audio_cue_id: None,
                 semantic_trigger_id: "second".into(),
                 stanza_break_before: false,
             },
             PoemLine {
                 text: "Tercera línea".into(),
                 cue_id: "b".into(),
+                audio_cue_id: None,
                 semantic_trigger_id: "first".into(),
                 stanza_break_before: true,
             },
@@ -121,6 +124,74 @@ fn clocks() -> BTreeMap<String, NativeAlignment> {
             },
         ),
     ])
+}
+
+#[test]
+fn distinct_source_lines_use_one_continuous_native_performance() {
+    let mut invocation = poem();
+    for (index, line) in invocation.lines.iter_mut().enumerate() {
+        line.cue_id = format!("source-{index}");
+        line.audio_cue_id = Some("whole".into());
+        line.semantic_trigger_id = format!("line-{index}");
+    }
+    for (language, markers, end) in [
+        ("es", [0, 24_000, 48_000], 72_000),
+        ("en", [0, 12_000, 36_000], 60_000),
+    ] {
+        invocation.language = language.into();
+        let mut native = BTreeMap::from([(
+            "whole".into(),
+            NativeAlignment {
+                schema: NATIVE_ALIGNMENT_SCHEMA.into(),
+                language: language.into(),
+                cue_id: "whole".into(),
+                selected_take_sha256: "a".repeat(64),
+                sample_rate: 24_000,
+                cue_end_sample: end,
+                semantic_markers: markers
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, n)| (format!("line-{i}"), n))
+                    .collect(),
+            },
+        )]);
+        let layer = compile_layer(
+            &template("opening-poem"),
+            &invocation,
+            &["whole".into()],
+            &native,
+        )
+        .unwrap();
+        assert_eq!(layer.duration_samples, end);
+        native
+            .get_mut("whole")
+            .unwrap()
+            .semantic_markers
+            .remove("line-1");
+        assert!(
+            compile_layer(
+                &template("opening-poem"),
+                &invocation,
+                &["whole".into()],
+                &native
+            )
+            .is_err()
+        );
+        native
+            .get_mut("whole")
+            .unwrap()
+            .semantic_markers
+            .insert("line-1".into(), markers[2]);
+        assert!(
+            compile_layer(
+                &template("opening-poem"),
+                &invocation,
+                &["whole".into()],
+                &native
+            )
+            .is_err()
+        );
+    }
 }
 
 #[test]
@@ -211,6 +282,7 @@ fn selected_poet_byline_is_source_checked_and_editable_from_first_frame() {
             .map(|line| SourceLine {
                 text: line.text.clone(),
                 cue_id: line.cue_id.clone(),
+                audio_cue_id: line.audio_cue_id.clone(),
                 stanza_break_before: line.stanza_break_before,
             })
             .collect(),
@@ -330,6 +402,7 @@ fn v2_source_binds_each_post_poem_title_and_credit_id_to_editable_text() {
             .map(|line| SourceLine {
                 text: line.text.clone(),
                 cue_id: line.cue_id.clone(),
+                audio_cue_id: line.audio_cue_id.clone(),
                 stanza_break_before: line.stanza_break_before,
             })
             .collect(),
@@ -447,6 +520,7 @@ fn selected_source_must_match_every_poem_line_and_stanza() {
             .map(|line| SourceLine {
                 text: line.text.clone(),
                 cue_id: line.cue_id.clone(),
+                audio_cue_id: line.audio_cue_id.clone(),
                 stanza_break_before: line.stanza_break_before,
             })
             .collect(),
