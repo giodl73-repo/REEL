@@ -1,5 +1,14 @@
 # Motioncraft Phase 2 implementation record
 
+## Qualified semantic and caption/effect endpoints
+
+Engine `395aa1dde94c72573ba3de67af0796b20c2f3af4` passes exact CI `37542176099` on Windows Rust, Ubuntu Rust and Linux FFmpeg. Its 25 active scene-delivery regressions and warnings-denied Clippy pass. CAIMITOS pins this revision; all twelve real conformation CLI tests and the full locked adapter all-target suite pass (79 library tests plus active binary tests, with existing private-cache tests still ignored). Adapter Clippy and formatting also pass.
+
+Actual synthetic semantic-transform and combined final ASS/timed-video rendering preserve 96,001 native samples and all four audio stems during 49-to-48-frame conformation. Fresh canonical-cache native replays reproduce all 48 decoded RGB frames and all four audio files. Combined native layer checks pass before and after conformation; the final synthetic caption is visually complete. Explicitly authored frame cameras still require migration when allocations change.
+
+CAIMITOS resolver V27 semantic scopes validate 303+42 records against metadata `c11c5ce47`; V28 combined scopes validate 150+18 records against metadata `1b0c76b49`. Failed camera/terminal diagnoses and the initial incomplete-span verification request remain retained. Current consumer checkpoint is `6e321bd61`. These are synthetic endpoint proofs, not selected-scene context or complete episodes. Historical assembly/bookends, complete bilingual/profile freeze, selected caption/effect review, capacity-qualified twelve complete variants, fresh production reproduction and reviewed main integration remain required.
+
+
 ## Qualified compact consumer and indexed presentation checkpoint
 
 Engine32b90c33e77c797a276807d6962d2655fed3891f passes exact CI37512767215
