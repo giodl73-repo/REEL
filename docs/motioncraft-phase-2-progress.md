@@ -80,6 +80,12 @@ Remaining: exact full-episode freeze, caption and presentation bindings, support
 
 ## P2.5 explicit picture viewport checkpoint — 2026-10-06
 
+### Actual selected poem render finding
+
+CAIMITOS prepared all six selected bilingual poem panels in landscape and portrait: twelve component jobs passed native preflight with original poem state events and native clocks preserved. These are component candidates, not complete episode combinations.
+
+The actual Spanish Scene001 portrait render exposed missing title/first-line glyphs later in the scene. A 360×640 frame review catches the failure despite a successful native receipt. Across all 605 frames, YUV-negotiated ASS filter hashes equal decoded FFV1 hashes: the encoder preserves the received pixels. RGB-negotiated ASS diagnostics show the complete title and text; single-threaded and explicit level-3 FFV1 do not fix the YUV path. Qualify subtitle pixel-format negotiation and final composition before promoting this candidate. CAIMITOS retains the failed render and diagnostics in `phase2-e1-poem-render-review-v1.json`; no complete episode qualification is claimed.
+
 Selected poem presentations need reserved side-panel space; portrait needs a separately composed picture/text area. An optional output-pixel `picture_region` now propagates from the delivery profile to the native job. The shared geometry resolver checks output bounds, overflow, nonempty regions and reserved caption-band containment. Absent region preserves previous serialization and behavior. Camera/protection coordinates remain local to the picture viewport; selected source hashes remain unchanged.
 
 The renderer fits and moves picture pixels inside the viewport before final padding and overlays. Review evidence records the resolved viewport, and cadence measures and identifies its explicit region. Real native Windows FFmpeg tests prove landscape/portrait containment, holds, camera travel and exact four-stem identity. The regular all-target/all-feature suite and warnings-denied Clippy pass locally; CI includes the native viewport test on both operating systems.
