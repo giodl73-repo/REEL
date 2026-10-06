@@ -771,4 +771,143 @@ mod tests {
         let row = measure(&exe, root, (64, 64), 0, &spans, &interval).unwrap();
         assert_eq!(row["status"], "failed-composition-or-timing", "{row}");
     }
+    #[test]
+    #[ignore = "requires native FFmpeg"]
+    fn hidden_motion_cannot_borrow_visibility_from_a_static_region() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path();
+        let exe = motioncraft_cadence::resolve_analyzer().unwrap();
+        ffmpeg(
+            &exe,
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:s=64x64:r=24:d=1",
+                "-c:v",
+                "ffv1",
+                "-pix_fmt",
+                "yuv444p",
+            ],
+            &root.join("clean-picture.mkv"),
+        );
+        for (name, cover) in [
+            ("selected-overlay-000", false),
+            ("selected-overlay-001", true),
+        ] {
+            let mut bytes = Vec::new();
+            for frame in 0..24u8 {
+                for _y in 0..64 {
+                    for x in 0..64 {
+                        let pixel = if cover {
+                            [0, 0, 255, if x < 32 { 255 } else { 0 }]
+                        } else if x < 32 {
+                            [frame * 10, 200, 0, 191]
+                        } else if x < 48 {
+                            [0, 255, 0, 191]
+                        } else {
+                            [0, 0, 0, 0]
+                        };
+                        bytes.extend_from_slice(&pixel);
+                    }
+                }
+            }
+            let raw = root.join(format!("{name}.rgba"));
+            fs::write(&raw, bytes).unwrap();
+            ffmpeg(
+                &exe,
+                &[
+                    "-f",
+                    "rawvideo",
+                    "-pix_fmt",
+                    "rgba",
+                    "-s",
+                    "64x64",
+                    "-r",
+                    "24",
+                    "-i",
+                    raw.to_str().unwrap(),
+                    "-c:v",
+                    "ffv1",
+                    "-pix_fmt",
+                    "bgra",
+                ],
+                &root.join(format!("{name}.mkv")),
+            );
+        }
+        for index in 0..2 {
+            let input = if index == 0 {
+                "clean-picture.mkv"
+            } else {
+                "layered-picture-000.mkv"
+            };
+            let output = if index == 0 {
+                "layered-picture-000.mkv"
+            } else {
+                "picture.mkv"
+            };
+            ffmpeg(
+                &exe,
+                &[
+                    "-i",
+                    root.join(input).to_str().unwrap(),
+                    "-i",
+                    root.join(format!("selected-overlay-{index:03}.mkv"))
+                        .to_str()
+                        .unwrap(),
+                    "-filter_complex",
+                    "[0:v][1:v]overlay=format=auto",
+                    "-c:v",
+                    "ffv1",
+                    "-pix_fmt",
+                    "yuv444p",
+                ],
+                &root.join(output),
+            );
+        }
+        let spans: Vec<_> = (0..2)
+            .map(|index| Span {
+                attachment_id: format!("layer-{index}"),
+                start_sample: 0,
+                end_sample: 48000,
+                start_frame: 0,
+                end_frame: 24,
+            })
+            .collect();
+        let mut interval = Interval {
+            start_frame: 0,
+            end_frame: 24,
+            kind: Kind::Moving,
+            region: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1.0,
+                height: 1.0,
+            },
+        };
+        let row = measure(&exe, root, (64, 64), 0, &spans, &interval).unwrap();
+        assert_eq!(row["status"], "failed-source-temporal-expectation", "{row}");
+        assert_eq!(row["stationary_fraction"], 0.0, "{row}");
+        assert_eq!(row["visible_stationary_fraction"], 1.0, "{row}");
+        assert_eq!(row["insufficient_visibility_frames"], 0, "{row}");
+        interval.region = Rect {
+            x: 0.75,
+            y: 0.0,
+            width: 0.25,
+            height: 1.0,
+        };
+        let row = measure(&exe, root, (64, 64), 0, &spans, &interval).unwrap();
+        assert!(row["passed"].is_null(), "{row}");
+        assert_eq!(row["insufficient_visibility_frames"], 24, "{row}");
+        interval.region = Rect {
+            x: 0.5,
+            y: 0.0,
+            width: 0.25,
+            height: 1.0,
+        };
+        interval.end_frame = 1;
+        interval.kind = Kind::Hold;
+        let row = measure(&exe, root, (64, 64), 0, &spans, &interval).unwrap();
+        assert!(row["passed"].is_null(), "{row}");
+    }
 }
