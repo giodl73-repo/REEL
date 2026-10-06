@@ -1,5 +1,20 @@
 # Motioncraft Phase 2 — plan role review
 
+## Consolidated remaining-plan review
+
+The assistant applied the Story Director, Animation Director, Editor, Sound Designer, Platform and Audience, and Rights and Provenance checklists to the current remaining plan. This is checklist analysis, not independent review or human approval.
+
+| Finding / role | Feedback | Incorporated disposition |
+|---|---|---|
+| P2-R30 Story Director | Technical motion success does not establish narrative emphasis. | Preserve source canon; review motivated motion/holds, opening and ending in complete episode context. |
+| P2-R31 Animation Director | Component storage savings do not establish full-render feasibility. | Require explicit peak-storage qualification before full renders; preserve final-composite visibility, whole-path protection and reduced-motion behavior. |
+| P2-R32 Editor | Ten sound checks or twelve poem components can obscure missing cuts and repetition. | Keep the twelve complete-episode matrix mandatory; review every cut at normal speed and retain rollback/comparisons. |
+| P2-R33 Sound Designer | Source preservation is distinct from selected mix and assembled clock parity. | Finish all fifty sound positions and full-package measurements; record rounding/channel differences and attribute body/join residuals without changing speech. |
+| P2-R34 Platform and Audience | Unreviewed caption candidates cannot establish phone readability. | Complete every poem reading-state/context review; resolve or explicitly disposition nine scene/language positions and thirteen cue findings under unchanged policy. |
+| P2-R35 Rights and Provenance | Later source code and incomplete top-level closures cannot reproduce an executed producer. | Retain exact executed identities and transitive inputs; require fresh native reproduction, formal receipts, exact shipping pins and separate creative authority. |
+
+All six findings have concrete acceptance gates in the consolidated plan. The plan is ready for continued execution; implementation qualification and reviewed main integration remain open.
+
 ## Renewed execution-readiness review
 
 The assistant reread all six production/provenance checklists and reviewed the active plan. Feedback is incorporated in its execution-readiness section:

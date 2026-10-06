@@ -1,5 +1,23 @@
 # Motioncraft Phase 2 — Camera, Validation and Episode Proof
 
+## Current Phase 2 plan — consolidated roles review
+
+Project: **Motioncraft Phase 2 — CAIMITOS Episode Qualification**. This refines the existing goal; it supersedes older revision and pending-work statements below without changing P2.1–P2.5 scope.
+
+Verified baseline: CAIMITOS consumes engine `0f750965de95d5f9045cfb7fd671e53b9996d670`; exact CI `37483141949` passes Windows Rust, Ubuntu Rust and Linux FFmpeg. Ten of fifty selected scene/language sound positions pass native and relocated complete-PCM checks. Consumer locked Rust, Clippy, formatting and 36 Python tests pass. These are bounded proofs; full episode qualification remains open.
+
+| Order / owner | Remaining deliverable | Exit gate |
+|---|---|---|
+| 1 — sound/assembly | Qualify the remaining 40 selected sound positions in bounded batches; reconcile selected body/master clocks. | Exact narration samples and measured M/E/mix parity, including channel behavior and rounding dispositions. Attribute residuals without stretching speech or inventing pauses. Collect transitive derivation inputs; pass fresh hydration, native checking and formal receipts. |
+| 2 — presentation/editorial | Finish poem context and caption dispositions. | Every poem state reviewed at phone size and normal speed; preserve wording, titles, fonts and clocks. Resolve or explicitly disposition nine unresolved scene/language positions and thirteen cue findings under 20 CPS, 36 characters × two lines and 0.8–7-second cards. Keep two Spanish Scene020 one-frame cadence exceptions explicit. |
+| 3 — assembly/provenance | Commit the complete bilingual E1 qualification freeze before full renders. | Bind exact selected manuscript, art, narration, music/effects, opening/credits, captions/poems, protected regions, profile-specific carriers, clocks, executed producers and exceptions. Measure selected full-package soundtrack parity. |
+| 4 — production/review | Capacity-qualify and render all twelve complete episodes. | ES/EN × landscape/portrait × still/directed/reduced. Current severe-capacity policy permits bounded work only; pass peak-storage gate before full rendering. Review every cut, phone reading, subjects/geography, opening/ending, sound bridges and repeated motion. Retain frame/sample/stem checks, comparisons, rollback and fresh-cache reproduction. |
+| 5 — maintainers | Finish authoring guidance and ship reviewed engine/consumer revisions. | Trace episode defaults and scene overrides through compilation to the native engine. Prove future authoring and immutable existing-episode upgrades, rejection and original-input rollback. Validate shipping pins, CI, runbook examples and formal handoffs; record reviewed main integration in both repositories. |
+
+The six applicable repository role checklists were reapplied. Findings P2-R30–R35 in the [role review](../signals/roles/check/motioncraft-phase-2-plan-roles-check.md) are incorporated above. This is assistant checklist analysis, not independent-agent or human approval. Sound-only receipts and twelve poem components cannot substitute for twelve full episodes. Technical qualification remains separate from creative selection and publication.
+
+Goal instruction: **Complete Motioncraft Phase 2 — CAIMITOS Episode Qualification using this plan and the CAIMITOS consumer plan. Close remaining sound, presentation, complete-freeze and twelve-episode evidence; preserve source authority, native clocks, compatibility, rollback and cache provenance; update authoring guidance and ship reviewed engine/consumer revisions. Keep unmet gates explicit.**
+
 ## Active execution plan — latest evidence takes precedence
 
 Project: **Motioncraft Phase 2 — CAIMITOS Episode Qualification**. Goal: complete P2.1–P2.5 through the CAIMITOS authoring adapter, native scene engine, reproducible episode evidence and reviewed shipping integration. This section supersedes earlier pending-work claims; historical checkpoints remain below.
