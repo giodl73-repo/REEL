@@ -1,5 +1,27 @@
 # Motioncraft Phase 2 — Camera, Validation and Episode Proof
 
+## Latest execution checkpoint — all50 scene sounds and complete body measurement
+
+CAIMITOS coverage now binds all50 selected scene/language positions to exact
+native/fresh evidence:18 at retained engine0f,2 explicit Scene023 compatibility
+revisions at3ba,30 at012. The remaining25 at012 pass exact D and selected mix within
+one PCM24 step. Original failures remain history; this is not all50 qualification
+at one shipping pin. Full-body sequential measurements now consume all25 selected
+scene sources, every gap and terminal sample in each language, and reproduce
+exactly from fresh hydrated inputs. Ordinary mono gain is near0.707 while stereo
+poem gain is near1; no global gain or narration retiming is justified.
+
+Next: reconcile complete master/bookend content and measured picture/concat
+clocks; finish captions/poem context; freeze complete bilingual sources;
+capacity-qualify and review all twelve full episodes; finish future authoring,
+immutable upgrades/rollback, common shipping-pin qualification and reviewed main
+integration. The newly retained body AAC residuals are diagnostic measurements,
+not an invented tolerance pass. Six numeric/streaming regressions pass; CAIMITOS
+resolverV21 extends exact evidence with eight scopes/761records. All eight formal
+receipts pass against metadata `1c9f58ab09e63c765429cba4a465faa8a670aa52`.
+P2-R43/R44 findings preserve the distinction
+between source/scene, assembled-body and shipping proof. All P2.1–P2.5 gates remain.
+
 ## Next execution checkpoint — engine integration and consumer proof
 
 Project: **Motioncraft Phase 2 — CAIMITOS Episode Qualification**. This checkpoint takes precedence over older engine-status claims below; it retains all P2.1–P2.5 acceptance gates.

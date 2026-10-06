@@ -1,5 +1,37 @@
 # Motioncraft Phase 2 implementation record
 
+## All50 selected sound positions and complete body measurement
+
+Remaining25 selected sound positions qualify at012 through native audio-only
+rendering and fresh hydrated complete-PCM checks. All D sources are exact; selected
+mix residuals are at most one PCM24 step. Aggregate coverage independently binds
+the50 positions to exact cached batch and fresh-report hashes:18 retained engine0f,
+2 explicit Scene023 compatibility at3ba,30 engine012. It preserves both original
+Scene023 discrepancies; a historical exact revision is not common shipping-pin proof.
+
+Both languages' complete selected bodies now have two consistent interior anchors
+per scene and full sequential measurement of all source samples, intervening
+samples and tails. ES79150686 source+219283 gap samples equals79369969 body samples;
+EN82806347+6062 equals82812409. Full-scene minimum channel correlations are
+0.9999707868 ES and0.9999540752 EN. Ordinary mono gains near0.707 and stereo poem
+gains near1 confirm that a global correction would change selected relationships.
+The214080-sample Spanish004 hold is explicit. These are measured AAC diagnostics,
+not a chosen creative mix or proof of the original executed assembly builder.
+
+All50 fresh scene comparisons and both25-scene body measurement reproductions
+pass. Six numeric/streaming regressions pass. New five sound scopes574records,
+two body scopes136 and support51 total761 under resolverV21; standard hydration
+passes all eight. Original/R2 executed sources, imported helpers, decoder and
+numeric runtime identities are frozen. All eight formal receipts pass full
+Git-blob/cache validation against metadata
+`1c9f58ab09e63c765429cba4a465faa8a670aa52`. Latest docs-only127f444
+CI37503255771 also passes Windows Rust, Ubuntu Rust and Linux FFmpeg;
+native consumer pin remains012. CAIMITOS formal closeout
+`a3508cc3daf6d1593584b6e6ea1a91c2c301bf99` is pushed. Registry, roles and diff
+checks pass; all owned execution handles are terminal.
+Full-master/bookend content, picture-clock attribution, captions/context, complete
+freeze, twelve full episodes and reviewed shipping/main remain open.
+
 ## Signed PCM consumer qualification and remaining assembled-level gate
 
 Engine `0127476c26622e550817ac49556a616fea24129e` passes exact CI `37500044203`: Windows Rust, Ubuntu Rust and Linux FFmpeg. CAIMITOS metadata `d4f5689f38fd085f4e59510230283f4641454c5c` consumes that exact pin. Actual corrected EN006–010 native D sources and selected mixes are exact; all five fresh canonical native/complete-PCM comparisons pass. English009 source rails survive without attenuation. Consumer46actual Python tests/no skips and locked all-target Rust/Clippy/fmt pass; producer bytes remain unchanged after the checks. New172-record closure contains145sound dependencies/evidence,9exact-consumer records,10bounded body-window diagnostic inputs and8executed-test/fresh support records. Standard hydration and all four formal Git-blob/cache receipt checks pass against that metadata and resolverV20.

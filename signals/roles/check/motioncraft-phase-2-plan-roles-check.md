@@ -1,5 +1,32 @@
 # Motioncraft Phase 2 — plan role review
 
+## P2-R43 — complete measurements and AAC tolerance are different claims
+
+Sound Designer / Editor: two interior anchors can locate a scene but cannot
+establish complete content, padding or levels. Disposition: measure every source
+sample and intervening body sample sequentially, retaining channel-specific gains,
+residuals and local chunk correlations. Both25-scene measurements reproduce exactly
+from hydrated inputs. Ordinary mono gains near0.707 differ from stereo poems near1;
+preserve that evidence and explicit holds. Do not invent a full-body AAC acceptance
+tolerance, infer the historical producer, normalize globally or retime speech.
+Full-master/bookend content and contextual listening remain open.
+
+## P2-R44 — complete coverage must preserve producer-revision boundaries
+
+Rights and Provenance / Sound Designer: an aggregate50-position pass could hide
+old failed comparisons or imply all positions were rendered at the shipping pin.
+Disposition: resolve exact cache-bound native batches and fresh reports against
+the selected inventory, reject missing/ambiguous coverage, retain original
+Scene023 failures separately and name each qualifying engine revision. Coverage
+is18 engine0f,2 explicit compatibility at3ba and30 engine012. Frozen original/R2
+body sources include the imported helper and exact numeric-runtime identities;
+fresh measurements and six boundary tests are separate evidence. ResolverV21's
+761records pass all eight metadata-bound formal receipts against
+`1c9f58ab09e63c765429cba4a465faa8a670aa52`. Common shipping-pin coverage,
+twelve full episodes and creative/publication decisions remain separate gates.
+
+These are assistant checklist findings, not independent review or human approval.
+
 ## P2-R42 — individual scene parity does not establish assembled soundtrack level
 
 Sound Designer / Editor / Rights and Provenance: actual selected Scene002-to-body two-second windows measure channel gains approximately0.7072 ES and0.7071 EN, near -3.01dB, with correlations above0.999995. Spanish window placement is400samples later than the declared first-scene sum; English is unchanged. Disposition: retain exact selected scene/body sources, executed bounded diagnostic and residuals; measure complete assembled content, channel behavior and every join before deciding the full-package compatibility route. Do not infer the original executed producer or apply a global gain from one window. Preserve source D samples, chosen music/effects/bookends and shared semantic anchors; any physical hold/level compatibility must be explicit and evidence-bound. Full body/master parity remains open, separate from individual scene passes. This is assistant checklist analysis, not mix selection or source-quality approval.
