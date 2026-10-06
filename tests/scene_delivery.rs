@@ -1444,3 +1444,76 @@ fn short_phased_camera_matches_every_authored_transition() {
         assert_eq!(hashes[7], hashes[frame], "declared hold frame {frame}");
     }
 }
+
+#[test]
+#[ignore = "requires native FFmpeg"]
+fn layer_cadence_rejects_frozen_effect_and_accepts_declared_hold() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let mut job = fixture(root);
+    let mut contract: Value =
+        serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
+    contract["attachments"].as_array_mut().unwrap().push(json!({
+        "id":"timed-effect", "target":{"kind":"overlay","shot_id":"shot","overlay_id":"storm-glow"},
+        "start":{"kind":"cue-start","cue_id":"a","offset_samples":24000},
+        "end":{"kind":"cue-start","cue_id":"b","offset_samples":24000}
+    }));
+    write_json(&root.join("contract.json"), &contract);
+    assert!(
+        Command::new("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-nostdin",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=lime@0.75:s=64x64:r=24:d=1.1,format=yuva444p",
+                "-c:v",
+                "ffv1",
+                "-pix_fmt",
+                "yuva444p",
+                "-frames:v",
+                "25"
+            ])
+            .arg(root.join("effect.mkv"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    job["contract"] = file(root, "contract.json");
+    job["external_layers"] = json!([{"attachment_id":"timed-effect","reason":"Layer validation regression",
+        "evidence":file(root,"effect.mkv"),"render_mode":"timed-video-overlay"}]);
+    let job_path = root.join("job.json");
+    write_json(&job_path, &job);
+    let render = root.join("render");
+    scene_delivery::render(&job_path, root, &render).unwrap();
+    let mut request = json!({"schema":"reel.motioncraft-layer-expectations.v1",
+        "job_sha256":file(root,"job.json")["sha256"],
+        "render_receipt_sha256":file(root,"render/receipt.json")["sha256"],
+        "layers":[{"attachment_id":"timed-effect","source_sha256":file(root,"effect.mkv")["sha256"],
+            "intervals":[{"start_frame":12,"end_frame":37,"kind":"moving",
+                "region":{"x":0.0,"y":0.0,"width":1.0,"height":1.0}}]}]});
+    let request_path = root.join("expectations.json");
+    write_json(&request_path, &request);
+    let report =
+        reel::motioncraft_layers::analyze(&job_path, root, &render, &request_path).unwrap();
+    assert_eq!(report["passed"], false, "{report}");
+    assert_eq!(
+        report["layers"][0]["intervals"][0]["status"], "failed-source-temporal-expectation",
+        "{report}"
+    );
+    request["layers"][0]["intervals"][0]["kind"] = json!("hold");
+    write_json(&request_path, &request);
+    let report =
+        reel::motioncraft_layers::analyze(&job_path, root, &render, &request_path).unwrap();
+    assert_eq!(report["passed"], true, "{report}");
+    request["layers"][0]["source_sha256"] = json!("0".repeat(64));
+    write_json(&request_path, &request);
+    assert!(
+        reel::motioncraft_layers::analyze(&job_path, root, &render, &request_path)
+            .unwrap_err()
+            .to_string()
+            .contains("stale selected carrier")
+    );
+}

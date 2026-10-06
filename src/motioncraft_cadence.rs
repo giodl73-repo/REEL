@@ -14,7 +14,7 @@ use std::{
 
 /// Resolve once, then execute that exact native binary for every measurement.
 /// An explicit override never falls back to PATH or WSL.
-fn resolve_analyzer() -> Result<PathBuf> {
+pub(crate) fn resolve_analyzer() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("REEL_CADENCE_FFMPEG") {
         return checked_executable(Path::new(&path));
     }
@@ -42,7 +42,7 @@ fn checked_executable(path: &Path) -> Result<PathBuf> {
     Ok(resolved)
 }
 
-fn native_output(executable: &Path, args: &[String]) -> Result<String> {
+pub(crate) fn native_output(executable: &Path, args: &[String]) -> Result<String> {
     let output = Command::new(executable)
         .args(args)
         .output()
