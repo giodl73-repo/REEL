@@ -67,6 +67,20 @@ rejects this option for a source with more than one channel. Omitting the field
 preserves the existing automatic FFmpeg channel conversion, including its mono
 upmix attenuation. Use the explicit mapping only when the selected soundtrack
 requires duplication; it changes neither source samples nor authored gain.
+For an explicitly selected historical effect mix, E events may instead use
+`channel_mapping: downmix-mono-duplicate`. It requires a stereo source and uses
+FFmpeg's mono conversion followed by duplication. It is distinct from averaging
+the stereo channels; D/M use of this compatibility mapping rejects.
+
+An E event may declare `placement_offset: {samples: 8, evidence: <FileRef>,
+reason: <nonempty explanation>}`. The signed offset moves the rendered effect
+without editing its source excerpt, duration, fades or compiled semantic anchor.
+Hash-bound evidence is mandatory. D/M offsets and placements outside the scene
+reject. `plan.audio` records actual rendered positions; when an offset is
+declared, `plan.audio_anchor_spans` separately preserves every contract audio
+anchor. With no offset, that field is omitted and legacy plan/output behavior
+remains unchanged. This is explicit compatibility intent, not inferred timing
+or authority to select a mix.
 Fades use sample counts and placement uses FFmpeg's `adelay=<samples>S`, avoiding
 the loss introduced by rounding to milliseconds. Short sources fail; no looping
 or padding of a missing performance is inferred. Authored ambience loops and room

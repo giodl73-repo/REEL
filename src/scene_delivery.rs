@@ -207,12 +207,43 @@ pub struct Audio {
     pub fade_out_samples: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel_mapping: Option<AudioChannelMapping>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placement_offset: Option<AudioPlacementOffset>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AudioChannelMapping {
     DuplicateMono,
+    /// Default FFmpeg stereo-to-mono conversion, then exact mono duplication.
+    /// This is not a 0.5 + 0.5 average or a loudness normalization.
+    DownmixMonoDuplicate,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AudioPlacementOffset {
+    pub samples: i64,
+    pub evidence: FileRef,
+    pub reason: String,
+}
+
+pub(crate) fn audio_placement_samples(
+    start: u64,
+    end: u64,
+    duration: u64,
+    offset: i64,
+) -> Result<(u64, u64)> {
+    let placed_start = start
+        .checked_add_signed(offset)
+        .context("audio placement offset starts before the scene or overflows")?;
+    let placed_end = end
+        .checked_add_signed(offset)
+        .context("audio placement offset ends before the scene or overflows")?;
+    if placed_start >= placed_end || placed_end > duration {
+        bail!("audio placement offset exceeds the scene end or has no positive span");
+    }
+    Ok((placed_start, placed_end))
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -240,6 +271,10 @@ pub struct Plan {
     pub frame_count: u64,
     pub pictures: Vec<Span>,
     pub audio: Vec<Span>,
+    /// Original contract anchors when explicit E placement is requested.
+    /// `audio` always reports actual rendered sample/frame positions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audio_anchor_spans: Vec<Span>,
     pub external_layers: Vec<String>,
     #[serde(default)]
     pub external_layer_spans: Vec<Span>,
@@ -569,6 +604,11 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         bail!("declare exactly D, M and E bus policies");
     }
     let mut audio = Vec::new();
+    let mut audio_anchor_spans = Vec::new();
+    let explicit_audio_placement = job
+        .audio
+        .iter()
+        .any(|event| event.placement_offset.is_some());
     // A normal D cue is one complete native take.  A declared handoff may use
     // two distinct takes to cover one cue (for example, dialogue into a
     // preserved narrator tail); those spans must remain contiguous/overlapped
@@ -594,6 +634,13 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
             bail!("invalid audio span/fades");
         }
         checked_file(asset_root, &event.source)?;
+        if matches!(
+            event.channel_mapping,
+            Some(AudioChannelMapping::DownmixMonoDuplicate)
+        ) && event.bus != "E"
+        {
+            bail!("downmix-mono-duplicate is an explicit E-only channel mapping");
+        }
         if event.bus == "D" {
             let id = event.cue_id.as_deref().context("D event needs cue_id")?;
             let c = compiled
@@ -622,7 +669,26 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         } else if event.cue_id.is_some() {
             bail!("only D events declare cue_id");
         }
-        audio.push(span(a)?);
+        let anchor = span(a)?;
+        let mut rendered = anchor.clone();
+        if let Some(offset) = &event.placement_offset {
+            if event.bus != "E" || !nonempty(&offset.reason) {
+                bail!("audio placement offsets require an E event and an explicit reason");
+            }
+            checked_file(asset_root, &offset.evidence)?;
+            (rendered.start_sample, rendered.end_sample) = audio_placement_samples(
+                anchor.start_sample,
+                anchor.end_sample,
+                compiled.duration_samples,
+                offset.samples,
+            )?;
+            rendered.start_frame = frame(rendered.start_sample, false)?;
+            rendered.end_frame = frame(rendered.end_sample, true)?;
+        }
+        if explicit_audio_placement {
+            audio_anchor_spans.push(anchor);
+        }
+        audio.push(rendered);
     }
     for (id, (covered_end, parts, _)) in &dialogue {
         let cue = compiled
@@ -826,6 +892,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         },
         pictures,
         audio,
+        audio_anchor_spans,
         external_layers,
         external_layer_spans,
         rendered_external_layers,
@@ -1823,6 +1890,12 @@ fn render_audio_stems(job: &Job, plan: &Plan, asset_root: &Path, root: &Path) ->
                         bail!("duplicate-mono channel mapping requires a mono source");
                     }
                     "pan=stereo|c0=c0|c1=c0,aformat=sample_fmts=fltp:channel_layouts=stereo"
+                }
+                Some(AudioChannelMapping::DownmixMonoDuplicate) => {
+                    if aud["channels"].as_u64() != Some(2) {
+                        bail!("downmix-mono-duplicate channel mapping requires a stereo source");
+                    }
+                    "aformat=sample_fmts=fltp:channel_layouts=mono,pan=stereo|c0=c0|c1=c0,aformat=sample_fmts=fltp:channel_layouts=stereo"
                 }
             };
             let mut f = format!(

@@ -70,6 +70,19 @@ pub struct DeliveryProfile {
     pub sonic_gain_db: f64,
     #[serde(default)]
     pub sonic_gain_db_by_binding: BTreeMap<String, f64>,
+    #[serde(default)]
+    pub sonic_channel_mappings_by_binding:
+        BTreeMap<String, crate::scene_delivery::AudioChannelMapping>,
+    #[serde(default)]
+    pub sonic_placement_offsets_by_binding: BTreeMap<String, SonicPlacementOffset>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SonicPlacementOffset {
+    pub samples: i64,
+    pub evidence_binding: String,
+    pub reason: String,
 }
 
 fn default_sonic_gain_db() -> f64 {
@@ -153,6 +166,9 @@ fn close_delivery_graph(
                 Lane::Sonic
             },
         ));
+        if !row["placement_offset"].is_null() {
+            media.push((&row["placement_offset"]["evidence"], Lane::Sonic));
+        }
     }
     for row in job["external_layers"].as_array().into_iter().flatten() {
         media.push((&row["evidence"], Lane::Presentation));
@@ -756,6 +772,14 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     {
         bail!("scene delivery profile has an unused Sonic gain binding");
     }
+    if profile
+        .sonic_channel_mappings_by_binding
+        .keys()
+        .chain(profile.sonic_placement_offsets_by_binding.keys())
+        .any(|key| !used_sonic.contains(key))
+    {
+        bail!("scene delivery profile has an unused Sonic channel/placement binding");
+    }
     for (index, event) in events.iter().enumerate() {
         if event.sonic_bindings.iter().collect::<BTreeSet<_>>().len() != event.sonic_bindings.len()
         {
@@ -781,6 +805,27 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
                 "source_start_sample": 0,
                 "gain_db": sonic_gain_db(&profile, key)
             }));
+            if let Some(mapping) = profile.sonic_channel_mappings_by_binding.get(key) {
+                audio.last_mut().unwrap()["channel_mapping"] = serde_json::to_value(mapping)?;
+            }
+            if let Some(offset) = profile.sonic_placement_offsets_by_binding.get(key) {
+                if offset.reason.trim().is_empty() {
+                    bail!("Sonic placement offset needs an explicit reason");
+                }
+                let evidence = asset(&offset.evidence_binding, &scopes)?;
+                let reference: crate::scene_delivery::FileRef =
+                    serde_json::from_value(media_ref(evidence))?;
+                crate::scene_delivery::checked_file(&root, &reference)?;
+                crate::scene_delivery::audio_placement_samples(
+                    event.start,
+                    events[run_end - 1].end,
+                    duration,
+                    offset.samples,
+                )?;
+                audio.last_mut().unwrap()["placement_offset"] = json!({
+                    "samples":offset.samples, "reason":offset.reason, "evidence":media_ref(evidence)
+                });
+            }
             audio_events.push(json!({
                 "id": attachment,
                 "role": "effect",

@@ -1,5 +1,9 @@
 # Motioncraft Phase 2 implementation record
 
+## Explicit native Sonic compatibility implementation
+
+Added opt-in E-only `downmix-mono-duplicate` and signed, reason/evidence-bound `placement_offset`. Actual render spans and original semantic anchors are separately retained; compiled clocks and source excerpts remain unchanged. Future delivery profiles resolve exact Sonic/evidence bindings into native intent and selected closure. Unknown/unused bindings, stale evidence, invalid bounds and narration offsets reject. Native selected-graph regression passes historical mono mix within one PCM24 step, unchanged decoded picture/D/M, full-scene/audio-only four-stem equality, negative placement and non-stereo rejection. All-target/all-feature tests, warnings-denied Clippy and fmt pass. Exact-pin CI, actual CAIMITOS adoption and selected Scene023 consumer qualification are next; full episode gates remain open.
+
 ## Selected Sonic attribution — native parity remains open
 
 CAIMITOS EN/ESScenes021–025 all pass native checking and fresh reproduction of complete PCM measurements. All ten Dsources are exact; eight mixes match selected PCM exactly. Both Scene023 mixes differ: ENmax0.07649087905883789/RMS0.0008243134944322714; ESmax0.017729759216308594/RMS0.0002563397908131112. Across the first/final batches,20positions have native evidence and18mixes meet tolerance. Thirty positions remain unchecked.
