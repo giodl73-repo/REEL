@@ -205,6 +205,14 @@ pub struct Audio {
     pub fade_in_samples: u64,
     #[serde(default)]
     pub fade_out_samples: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_mapping: Option<AudioChannelMapping>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AudioChannelMapping {
+    DuplicateMono,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1568,8 +1576,17 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                 bail!("native audio duration mismatch or insufficient source samples");
             }
             inputs.extend(["-i".into(), arg(&path)]);
+            let mapping = match event.channel_mapping {
+                None => "aformat=sample_fmts=fltp:channel_layouts=stereo",
+                Some(AudioChannelMapping::DuplicateMono) => {
+                    if aud["channels"].as_u64() != Some(1) {
+                        bail!("duplicate-mono channel mapping requires a mono source");
+                    }
+                    "pan=stereo|c0=c0|c1=c0,aformat=sample_fmts=fltp:channel_layouts=stereo"
+                }
+            };
             let mut f = format!(
-                "[{count}:a]aformat=sample_fmts=fltp:channel_layouts=stereo,atrim=start_sample={}:end_sample={},asetpts=PTS-STARTPTS,volume={}dB",
+                "[{count}:a]{mapping},atrim=start_sample={}:end_sample={},asetpts=PTS-STARTPTS,volume={}dB",
                 event.source_start_sample,
                 event.source_start_sample + n,
                 event.gain_db

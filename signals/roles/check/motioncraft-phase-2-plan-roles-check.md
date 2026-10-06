@@ -83,3 +83,8 @@ The assistant reread the six applicable `.roles` checklists and reviewed the cur
 | P2-R16 Rights and Provenance | Major: a current engine test pass can be misrepresented as consumer qualification, creative approval or release. | Bind exact adapter/engine/tool revisions and formal cache receipts; require reviewed main integration and separate creative authority. |
 
 All four findings are incorporated in the ordered checkpoint with owners and concrete gates. The plan is ready to execute; full episode qualification and shipping remain open.
+
+
+## Selected soundtrack parity finding
+
+P2-R27 — Sound Designer / Rights and Provenance (major): source identity and unchanged native clocks do not prove the selected mix level. Actual English Scene001 native narration is 0.707106766 times the selected mono source (−3.010300143 dB); the selected historical renderer duplicated mono to both channels. Native mix RMS difference is 0.030641464 and maximum difference 0.248329043. Disposition: implement explicit hash-bound `audio[].channel_mapping: duplicate-mono` while preserving omitted-field behavior, reject non-mono sources and unknown mapping values, and carry the choice through immutable consumer upgrades and future authoring. The native regression confirms exact source level in both channels and unchanged M/E stems. Exact-pin CI, actual selected consumer mix measurement, full-package parity and formal evidence remain open. This is assistant checklist analysis, not creative mix selection.

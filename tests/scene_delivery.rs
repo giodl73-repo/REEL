@@ -400,6 +400,83 @@ fn file(root: &Path, name: &str) -> Value {
     let b = fs::read(root.join(name)).unwrap();
     json!({"path":name,"sha256":Sha256::digest(&b).iter().map(|b| format!("{b:02x}")).collect::<String>(),"bytes":b.len()})
 }
+
+#[test]
+#[ignore = "requires native FFmpeg; explicit mono channel mapping"]
+fn duplicate_mono_preserves_source_level_and_rejects_stereo() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let mut job = fixture(root);
+    for (name, samples) in [("a.wav", 48001u32), ("b.wav", 47999)] {
+        let size = samples * 3;
+        let mut bytes = Vec::new();
+        bytes.extend(b"RIFF");
+        bytes.extend((36 + size).to_le_bytes());
+        bytes.extend(b"WAVEfmt ");
+        bytes.extend(16u32.to_le_bytes());
+        bytes.extend(1u16.to_le_bytes());
+        bytes.extend(1u16.to_le_bytes());
+        bytes.extend(48000u32.to_le_bytes());
+        bytes.extend(144000u32.to_le_bytes());
+        bytes.extend(3u16.to_le_bytes());
+        bytes.extend(24u16.to_le_bytes());
+        bytes.extend(b"data");
+        bytes.extend(size.to_le_bytes());
+        for _ in 0..samples {
+            bytes.extend(&1_000_000i32.to_le_bytes()[..3]);
+        }
+        fs::write(root.join(name), bytes).unwrap();
+    }
+    job["audio"][0]["source"] = file(root, "a.wav");
+    job["audio"][1]["source"] = file(root, "b.wav");
+    write_json(&root.join("legacy.json"), &job);
+    scene_delivery::render(&root.join("legacy.json"), root, &root.join("legacy")).unwrap();
+    for event in job["audio"].as_array_mut().unwrap().iter_mut().take(2) {
+        event["channel_mapping"] = json!("duplicate-mono");
+    }
+    write_json(&root.join("duplicate.json"), &job);
+    scene_delivery::render(&root.join("duplicate.json"), root, &root.join("duplicate")).unwrap();
+    let samples = |folder: &str| {
+        let output = Command::new("ffmpeg")
+            .args(["-v", "error", "-i"])
+            .arg(root.join(folder).join("D.wav"))
+            .args(["-f", "s32le", "-"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        output
+            .stdout
+            .chunks_exact(4)
+            .map(|bytes| i32::from_le_bytes(bytes.try_into().unwrap()) / 256)
+            .collect::<Vec<_>>()
+    };
+    let legacy = samples("legacy");
+    let duplicate = samples("duplicate");
+    assert_eq!(duplicate.len(), 96000 * 2);
+    assert!(duplicate.iter().all(|sample| *sample == 1_000_000));
+    assert!(
+        legacy
+            .iter()
+            .all(|sample| (707105..=707108).contains(sample))
+    );
+    for stem in ["M.wav", "E.wav"] {
+        assert_eq!(
+            fs::read(root.join("legacy").join(stem)).unwrap(),
+            fs::read(root.join("duplicate").join(stem)).unwrap()
+        );
+    }
+    job["audio"][2]["channel_mapping"] = json!("duplicate-mono");
+    write_json(&root.join("stereo.json"), &job);
+    assert!(
+        scene_delivery::render(&root.join("stereo.json"), root, &root.join("stereo"))
+            .unwrap_err()
+            .to_string()
+            .contains("requires a mono source")
+    );
+    job["audio"][0]["channel_mapping"] = json!("unknown");
+    write_json(&root.join("unknown.json"), &job);
+    assert!(scene_delivery::plan(&root.join("unknown.json"), root).is_err());
+}
 fn wav(path: &Path, samples: u32, signal: i32) {
     let size = samples * 6;
     let mut b = Vec::new();

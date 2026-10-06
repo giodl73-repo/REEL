@@ -61,6 +61,12 @@ intentional silence, but cannot be called an accepted performance or final episo
 Audio events may additionally set `source_start_sample`, `gain_db`,
 `fade_in_samples`, and `fade_out_samples`. Only M/E may take excerpts. Sources
 must already have the contract sample rate. No duration or pitch scaling occurs.
+An optional `channel_mapping: duplicate-mono` copies a mono source at its native
+level into both stereo channels before gain, fades and placement. Rendering
+rejects this option for a source with more than one channel. Omitting the field
+preserves the existing automatic FFmpeg channel conversion, including its mono
+upmix attenuation. Use the explicit mapping only when the selected soundtrack
+requires duplication; it changes neither source samples nor authored gain.
 Fades use sample counts and placement uses FFmpeg's `adelay=<samples>S`, avoiding
 the loss introduced by rounding to milliseconds. Short sources fail; no looping
 or padding of a missing performance is inferred. Authored ambience loops and room
