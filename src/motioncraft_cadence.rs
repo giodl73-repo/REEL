@@ -168,7 +168,19 @@ pub fn analyze(job: &Job, plan: &Plan, root: &Path) -> Result<Value> {
                             &direction.dominant_element,
                             working(local),
                         )?;
-                        Ok((a - b).abs() < 1e-12)
+                        let pa = reel_assembly::motioncraft::pan_at(
+                            direction,
+                            &direction.dominant_element,
+                            working(local - 1),
+                        )?;
+                        let pb = reel_assembly::motioncraft::pan_at(
+                            direction,
+                            &direction.dominant_element,
+                            working(local),
+                        )?;
+                        Ok((a - b).abs() < 1e-12
+                            && (pa.x - pb.x).abs() < 1e-12
+                            && (pa.y - pb.y).abs() < 1e-12)
                     }
                     None => Ok(true),
                     _ => unreachable!(),

@@ -25,6 +25,8 @@ pub struct Direction {
     pub fit_native_duration: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub safe_area: Option<Rect>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focal_anchor: Option<Point>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub protected_regions: Vec<Rect>,
     /// Owner's visual brief, carried into review; it never recolors selected art.
@@ -73,6 +75,13 @@ pub struct Rect {
     pub height: f64,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Point {
+    pub x: f64,
+    pub y: f64,
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Phase {
@@ -83,6 +92,10 @@ pub struct Phase {
     pub curve: Curve,
     pub zoom_from: f64,
     pub zoom_to: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pan_from: Option<Point>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pan_to: Option<Point>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -231,6 +244,14 @@ pub fn validate(direction: &Direction, safe: &Rect) -> Result<()> {
         bail!("invalid or unsafe protected motion region");
     }
     let safe = effective;
+    if direction.focal_anchor.is_some_and(|p| {
+        !p.x.is_finite()
+            || !p.y.is_finite()
+            || !(0.0..=1.0).contains(&p.x)
+            || !(0.0..=1.0).contains(&p.y)
+    }) {
+        bail!("invalid camera focal anchor");
+    }
     let mut ids = BTreeSet::new();
     for element in &direction.elements {
         if !portable(&element.id) || !ids.insert(&element.id) || element.role.trim().is_empty() {
@@ -248,10 +269,23 @@ pub fn validate(direction: &Direction, safe: &Rect) -> Result<()> {
         let mut phase_ids = BTreeSet::new();
         let mut previous_end = None;
         let mut previous_zoom = None;
+        let mut previous_pan = None;
         if element.phases.len() > 256 {
             bail!("too many motion phases");
         }
         for phase in &element.phases {
+            let from = phase.pan_from.unwrap_or_default();
+            let to = phase.pan_to.unwrap_or_default();
+            if phase.pan_from.is_some() != phase.pan_to.is_some()
+                || [from.x, from.y, to.x, to.y]
+                    .iter()
+                    .any(|v| !v.is_finite() || !(-1.0..=1.0).contains(v))
+                || ((phase.kind == PhaseKind::Hold || phase.start_frame == phase.end_frame)
+                    && from != to)
+                || previous_pan.is_some_and(|pan| pan != from)
+            {
+                bail!("invalid or discontinuous camera pan in {}", phase.id);
+            }
             if !portable(&phase.id)
                 || !phase_ids.insert(&phase.id)
                 || phase.start_frame > phase.end_frame
@@ -275,6 +309,7 @@ pub fn validate(direction: &Direction, safe: &Rect) -> Result<()> {
             }
             previous_end = Some(phase.end_frame);
             previous_zoom = Some(phase.zoom_to);
+            previous_pan = Some(to);
         }
     }
     if !ids.contains(&direction.dominant_element) {
@@ -390,7 +425,10 @@ pub fn compile(
             element
                 .phases
                 .iter()
-                .filter(|phase| phase.zoom_from != phase.zoom_to)
+                .filter(|phase| {
+                    phase.zoom_from != phase.zoom_to
+                        || phase.pan_from.unwrap_or_default() != phase.pan_to.unwrap_or_default()
+                })
                 .map(move |phase| (element.id.as_str(), phase))
         })
         .collect::<Vec<_>>();
@@ -492,19 +530,30 @@ pub fn validate_camera(plan: &FramePlan) -> Result<()> {
         bail!("resolved phased scene camera has unsupported elements");
     }
     let safe = direction.safe_area.as_ref().unwrap_or(&plan.safe_area);
-    // These curves are bounded and monotone; every intermediate zoom lies
-    // between phase endpoints. Endpoint containment proves the whole interval.
-    let mut zooms = vec![1.0];
+    // Fixed anchor plus zoom/pan affine in the same bounded easing parameter
+    // makes each transformed edge affine. Endpoints prove the whole interval.
+    let anchor = direction.focal_anchor.unwrap_or(Point { x: 0.5, y: 0.5 });
+    let mut poses = vec![(1.0, Point::default())];
     if !direction.reduced_motion {
         for phase in &direction.elements[0].phases {
-            zooms.extend([phase.zoom_from, phase.zoom_to]);
+            poses.extend([
+                (phase.zoom_from, phase.pan_from.unwrap_or_default()),
+                (phase.zoom_to, phase.pan_to.unwrap_or_default()),
+            ]);
         }
     }
-    for zoom in zooms {
+    for (zoom, pan) in poses {
+        if anchor.x * (1.0 - zoom) + pan.x > 1e-12
+            || anchor.y * (1.0 - zoom) + pan.y > 1e-12
+            || anchor.x + zoom * (1.0 - anchor.x) + pan.x < 1.0 - 1e-12
+            || anchor.y + zoom * (1.0 - anchor.y) + pan.y < 1.0 - 1e-12
+        {
+            bail!("phased camera exposes source edges");
+        }
         for region in &direction.protected_regions {
             let transformed = Rect {
-                x: 0.5 + (region.x - 0.5) * zoom,
-                y: 0.5 + (region.y - 0.5) * zoom,
+                x: anchor.x + (region.x - anchor.x) * zoom + pan.x,
+                y: anchor.y + (region.y - anchor.y) * zoom + pan.y,
                 width: region.width * zoom,
                 height: region.height * zoom,
             };
@@ -520,12 +569,20 @@ pub fn validate_camera(plan: &FramePlan) -> Result<()> {
 /// from that counter matches zoom_at; expressions never depend on prior frames.
 pub fn camera_expression(plan: &FramePlan) -> Result<String> {
     validate_camera(plan)?;
+    scalar_expression(plan, |phase| (phase.zoom_from, phase.zoom_to), 1.0)
+}
+
+fn scalar_expression(
+    plan: &FramePlan,
+    endpoints: impl Fn(&Phase) -> (f64, f64),
+    identity: f64,
+) -> Result<String> {
     let direction = plan.execution_direction.as_ref().unwrap_or(&plan.direction);
     if direction.elements[0].phases.len() > 32 {
         bail!("phased camera exceeds bounded renderer phase budget");
     }
     if direction.reduced_motion {
-        return Ok("1".into());
+        return Ok(identity.to_string());
     }
     let element = &direction.elements[0];
     let frame = format!(
@@ -535,7 +592,7 @@ pub fn camera_expression(plan: &FramePlan) -> Result<String> {
     let mut expression = element
         .phases
         .first()
-        .map_or("1".into(), |p| p.zoom_from.to_string());
+        .map_or(identity.to_string(), |p| endpoints(p).0.to_string());
     for phase in &element.phases {
         let raw = if phase.end_frame == phase.start_frame {
             "1".into()
@@ -552,11 +609,8 @@ pub fn camera_expression(plan: &FramePlan) -> Result<String> {
             Curve::EaseOut => format!("1-(1-({raw}))*(1-({raw}))"),
             Curve::EaseInOut => format!("(1-cos(PI*({raw})))/2"),
         };
-        let value = format!(
-            "({}+({})*({eased}))",
-            phase.zoom_from,
-            phase.zoom_to - phase.zoom_from
-        );
+        let (from, to) = endpoints(phase);
+        let value = format!("({}+({})*({eased}))", from, to - from);
         expression = format!(
             "if(gte({frame},{}),{value},{expression})",
             phase.start_frame
@@ -568,7 +622,103 @@ pub fn camera_expression(plan: &FramePlan) -> Result<String> {
     Ok(expression)
 }
 
+/// Inverse picture transform used by FFmpeg's source-sense perspective filter.
+/// Legacy directions keep their exact expressions and therefore pixel output.
+pub fn camera_geometry(plan: &FramePlan) -> Result<[String; 4]> {
+    let zoom = camera_expression(plan)?;
+    let direction = plan.execution_direction.as_ref().unwrap_or(&plan.direction);
+    if direction.focal_anchor.is_none()
+        && direction.elements[0]
+            .phases
+            .iter()
+            .all(|p| p.pan_from.is_none() && p.pan_to.is_none())
+    {
+        return Ok([
+            format!("(W-W/({zoom}))/2"),
+            format!("(H-H/({zoom}))/2"),
+            format!("(W+W/({zoom}))/2"),
+            format!("(H+H/({zoom}))/2"),
+        ]);
+    }
+    let anchor = direction.focal_anchor.unwrap_or(Point { x: 0.5, y: 0.5 });
+    let x = scalar_expression(
+        plan,
+        |p| {
+            (
+                p.pan_from.unwrap_or_default().x,
+                p.pan_to.unwrap_or_default().x,
+            )
+        },
+        0.0,
+    )?;
+    let y = scalar_expression(
+        plan,
+        |p| {
+            (
+                p.pan_from.unwrap_or_default().y,
+                p.pan_to.unwrap_or_default().y,
+            )
+        },
+        0.0,
+    )?;
+    let geometry = [
+        format!("W*({}+(-{}-({x}))/({zoom}))", anchor.x, anchor.x),
+        format!("H*({}+(-{}-({y}))/({zoom}))", anchor.y, anchor.y),
+        format!("W*({}+(1-{}-({x}))/({zoom}))", anchor.x, anchor.x),
+        format!("H*({}+(1-{}-({y}))/({zoom}))", anchor.y, anchor.y),
+    ];
+    if geometry.iter().map(String::len).sum::<usize>() > 16384 {
+        bail!("focal camera geometry exceeds bounded renderer argument budget");
+    }
+    Ok(geometry)
+}
+
 pub fn zoom_at(direction: &Direction, element_id: &str, working_frame: f64) -> Result<f64> {
+    value_at(
+        direction,
+        element_id,
+        working_frame,
+        |p| (p.zoom_from, p.zoom_to),
+        1.0,
+    )
+}
+
+pub fn pan_at(direction: &Direction, element_id: &str, working_frame: f64) -> Result<Point> {
+    Ok(Point {
+        x: value_at(
+            direction,
+            element_id,
+            working_frame,
+            |p| {
+                (
+                    p.pan_from.unwrap_or_default().x,
+                    p.pan_to.unwrap_or_default().x,
+                )
+            },
+            0.0,
+        )?,
+        y: value_at(
+            direction,
+            element_id,
+            working_frame,
+            |p| {
+                (
+                    p.pan_from.unwrap_or_default().y,
+                    p.pan_to.unwrap_or_default().y,
+                )
+            },
+            0.0,
+        )?,
+    })
+}
+
+fn value_at(
+    direction: &Direction,
+    element_id: &str,
+    working_frame: f64,
+    endpoints: impl Fn(&Phase) -> (f64, f64),
+    identity: f64,
+) -> Result<f64> {
     if !working_frame.is_finite() || working_frame < 0.0 {
         bail!("invalid sampled frame");
     }
@@ -578,9 +728,9 @@ pub fn zoom_at(direction: &Direction, element_id: &str, working_frame: f64) -> R
         .find(|e| e.id == element_id)
         .ok_or_else(|| anyhow::anyhow!("unknown sampled motion element"))?;
     if direction.reduced_motion {
-        return Ok(1.0);
+        return Ok(identity);
     }
-    let mut zoom = element.phases.first().map_or(1.0, |p| p.zoom_from);
+    let mut zoom = element.phases.first().map_or(identity, |p| endpoints(p).0);
     for phase in &element.phases {
         if working_frame < phase.start_frame as f64 {
             break;
@@ -597,7 +747,8 @@ pub fn zoom_at(direction: &Direction, element_id: &str, working_frame: f64) -> R
             Curve::EaseOut => 1.0 - (1.0 - t) * (1.0 - t),
             Curve::EaseInOut => (1.0 - (std::f64::consts::PI * t).cos()) / 2.0,
         };
-        zoom = phase.zoom_from + (phase.zoom_to - phase.zoom_from) * t;
+        let (from, to) = endpoints(phase);
+        zoom = from + (to - from) * t;
     }
     Ok(zoom)
 }
@@ -605,6 +756,74 @@ pub fn zoom_at(direction: &Direction, element_id: &str, working_frame: f64) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn focal_pan_bounds_continuity_reduced_and_legacy_serialization() {
+        let mut d = direction();
+        let legacy = serde_json::to_value(&d).unwrap();
+        assert!(legacy.get("focal_anchor").is_none());
+        assert!(legacy["elements"][0]["phases"][0].get("pan_from").is_none());
+        d.focal_anchor = Some(Point { x: 0.75, y: 0.4 });
+        d.protected_regions = vec![Rect {
+            x: 0.6,
+            y: 0.3,
+            width: 0.15,
+            height: 0.2,
+        }];
+        let plan = compile(&d, &safe(), 96000, 48000, 24, 1).unwrap();
+        validate_camera(&plan).unwrap();
+        assert!(camera_geometry(&plan).unwrap()[0].contains("0.75"));
+        for phase in &mut d.elements[0].phases {
+            phase.zoom_from = 1.2;
+            phase.zoom_to = 1.2;
+        }
+        d.focal_anchor = None;
+        let p = &mut d.elements[0].phases[1];
+        p.curve = Curve::Linear;
+        p.pan_from = Some(Point::default());
+        p.pan_to = Some(Point { x: 0.08, y: 0.0 });
+        let plan = compile(&d, &safe(), 96000, 48000, 24, 1).unwrap();
+        validate_camera(&plan).unwrap();
+        assert_eq!(zoom_at(&d, "picture", 47.0).unwrap(), 1.2);
+        assert_eq!(pan_at(&d, "picture", 47.0).unwrap().x, 0.08);
+        d.fit_native_duration = true;
+        for (samples, numerator, denominator) in [(48001, 24, 1), (77777, 30000, 1001)] {
+            let fitted = compile(&d, &safe(), samples, 48000, numerator, denominator).unwrap();
+            validate_camera(&fitted).unwrap();
+            assert_eq!(fitted.duration_samples, samples);
+            let resolved = fitted.execution_direction.as_ref().unwrap();
+            assert_eq!(resolved.elements[0].phases[1].pan_to.unwrap().x, 0.08);
+        }
+        assert!(compile(&d, &safe(), 1000, 48000, 24, 1).is_err());
+        d.fit_native_duration = false;
+        let saved = d.protected_regions.clone();
+        d.protected_regions = vec![Rect {
+            x: 0.8,
+            y: 0.3,
+            width: 0.1,
+            height: 0.2,
+        }];
+        assert!(
+            validate_camera(&compile(&d, &safe(), 96000, 48000, 24, 1).unwrap())
+                .unwrap_err()
+                .to_string()
+                .contains("crops protected")
+        );
+        d.protected_regions = saved;
+        d.elements[0].phases[1].pan_to = Some(Point { x: 0.11, y: 0.0 });
+        assert!(validate_camera(&compile(&d, &safe(), 96000, 48000, 24, 1).unwrap()).is_err());
+        d.elements[0].phases[1].pan_from = None;
+        assert!(compile(&d, &safe(), 96000, 48000, 24, 1).is_err());
+        d.elements[0].phases[1].pan_from = Some(Point::default());
+        d.elements[0].phases[1].pan_to = Some(Point { x: 0.08, y: 0.0 });
+        d.reduced_motion = true;
+        validate_camera(&compile(&d, &safe(), 96000, 48000, 24, 1).unwrap()).unwrap();
+        assert_eq!(pan_at(&d, "picture", 47.0).unwrap(), Point::default());
+        assert_eq!(zoom_at(&d, "picture", 47.0).unwrap(), 1.0);
+        d.reduced_motion = false;
+        d.elements[0].phases[0].pan_from = Some(Point::default());
+        d.elements[0].phases[0].pan_to = Some(Point { x: 0.01, y: 0.0 });
+        assert!(compile(&d, &safe(), 96000, 48000, 24, 1).is_err());
+    }
     fn safe() -> Rect {
         Rect {
             x: 0.0,
@@ -617,6 +836,7 @@ mod tests {
         Direction {
             fit_native_duration: false,
             safe_area: None,
+            focal_anchor: None,
             protected_regions: vec![],
             visual_intent: None,
             purpose: "read then approach".into(),
@@ -637,6 +857,8 @@ mod tests {
                         curve: Curve::Linear,
                         zoom_from: 1.0,
                         zoom_to: 1.0,
+                        pan_from: None,
+                        pan_to: None,
                     },
                     Phase {
                         id: "push".into(),
@@ -646,6 +868,8 @@ mod tests {
                         curve: Curve::EaseOut,
                         zoom_from: 1.0,
                         zoom_to: 1.08,
+                        pan_from: None,
+                        pan_to: None,
                     },
                 ],
             }],
@@ -710,6 +934,8 @@ mod tests {
             curve: Curve::EaseOut,
             zoom_from: 1.0,
             zoom_to: 1.08,
+            pan_from: None,
+            pan_to: None,
         }];
         d.elements.push(secondary);
         let plan = compile(&d, &safe(), 96000, 48000, 24, 1).unwrap();

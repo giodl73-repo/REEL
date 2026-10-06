@@ -514,7 +514,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                 bail!("phased camera requires an uncropped still at its first frame");
             }
             reel_assembly::motioncraft::validate_camera(plan)?;
-            reel_assembly::motioncraft::camera_expression(plan)?;
+            reel_assembly::motioncraft::camera_geometry(plan)?;
             let mut expected = reel_assembly::motioncraft::compile(
                 &plan.direction,
                 &plan.safe_area,
@@ -1307,11 +1307,8 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         };
         let visual = match &p.motion {
             Some(PictureMotion::PhasedCamera { plan: motion }) => {
-                let zoom = reel_assembly::motioncraft::camera_expression(motion)?;
-                let left = format!("(W-W/({zoom}))/2");
-                let top = format!("(H-H/({zoom}))/2");
-                let right = format!("(W+W/({zoom}))/2");
-                let bottom = format!("(H+H/({zoom}))/2");
+                let [left, top, right, bottom] =
+                    reel_assembly::motioncraft::camera_geometry(motion)?;
                 format!(
                     "{layout_format}scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,perspective=x0='{left}':y0='{top}':x1='{right}':y1='{top}':x2='{left}':y2='{bottom}':x3='{right}':y3='{bottom}':interpolation=cubic:sense=source:eval=frame,{output_pad}",
                     region.width, region.height, region.width, region.height

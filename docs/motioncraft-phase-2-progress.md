@@ -41,6 +41,29 @@ a real illustrated moving camera, exact still/reduced pixels, source withdrawal,
 whole-package relocation, no-clobber and tampered audio rejection. CI runs the
 portable comparison on Windows and Linux.
 
-Pending: completed cross-platform CI evidence, CAIMITOS pin/adoption and cache
-hydration verification, P2.3 focal camera, P2.4 layer validation and P2.5 complete
-episode qualification. Do not declare Phase 2 complete from these engine tests.
+## P2.3 — focal anchor and bounded pan
+
+Optional normalized `focal_anchor` and paired phase `pan_from`/`pan_to` compile
+through the shared Direction API into actual source-sense perspective geometry.
+Pan and zoom share bounded phase easing. Fixed-anchor affine geometry permits
+endpoint validation of protected regions and source-edge coverage over every
+phase. Holds, one-frame moves, nonfinite values, partial point pairs and endpoint
+discontinuity reject. Native fitting changes phase frames only. Cadence considers
+pan as well as zoom; reduced motion restores identity composition. Directions
+without the new fields retain exact Phase 1 expressions and serialization.
+
+Unit coverage includes protected-region/source-edge rejection, continuity,
+reduced identity, short fitted phase rejection and different native sample/FPS
+spans. Real-media tests cover pure pan, off-center versus centered framing,
+identity reduced frames, exact stems, and caption reservation at landscape,
+portrait and odd-sized picture-region geometries. See the
+[execution contract](motioncraft-focal-camera-contract.md).
+
+Role findings applied by the current assistant: protect family/reading regions
+throughout the path; preserve audio and approved image pixels; expose intended
+geometry rather than inferred face targeting; retain legacy rollback. Actual
+principal approvals and creative choice remain separate.
+
+Pending: completed cross-platform CI for new focal/pan code, CAIMITOS
+pin/adoption and cache hydration verification, P2.4 layer validation and P2.5
+complete episode qualification. Do not declare Phase 2 complete from engine tests.

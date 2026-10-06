@@ -1,7 +1,7 @@
 # Phase 2 focal-camera execution contract
 
-Design checkpoint, not an implemented capability. Implement and verify this
-contract before exposing it through the CAIMITOS adapter/runbook.
+Implemented in the Phase 2 engine branch; CAIMITOS adoption and full consumer
+qualification remain required before claiming that consumer capability.
 
 ## Coordinates and transform
 
@@ -10,6 +10,13 @@ picture viewport. Missing means `(0.5, 0.5)`, preserving Phase 1's center zoom.
 The anchor is fixed for the entire direction: zooming around it keeps that point
 at its original screen location when pan is zero. It does not automatically
 center a detected face or synthesize picture detail.
+
+For example, add `"focal_anchor": {"x": 0.8, "y": 0.4}` to a complete
+Direction. In an approach phase, add both
+`"pan_from": {"x": 0, "y": 0}` and
+`"pan_to": {"x": 0.02, "y": 0}`. Subsequent holds must carry the same
+end pan in both endpoints; omitted pan means zero, not inheritance from the
+previous phase. These are illustrative fragments, not a standalone Direction.
 
 Each Phase may supply `pan_from` and `pan_to`, normalized displacement points in
 the output picture viewport. Both are supplied together or both omitted; missing
@@ -52,7 +59,8 @@ composition; no alternate crop, take or editorial cut is invented.
 ## Compatibility and required evidence
 
 Omit default values from serialized output, preserving existing Phase 1 fixtures
-and legacy job bytes. Keep strict unknown-field validation and whole-direction
+and legacy job bytes when new fields are absent. Explicitly authored points are
+retained in evidence. Keep strict unknown-field validation and whole-direction
 inheritance. Carry the new fields through native compiled plans, selected overlays,
 future authoring, existing-job upgrades, review samples and cadence expectations.
 Cadence must recognize pan movement even when zoom remains constant.

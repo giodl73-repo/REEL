@@ -4,6 +4,89 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::Path, process::Command};
 
 #[test]
+#[ignore = "requires native FFmpeg; focal and pan camera execution"]
+fn focal_and_pan_camera_render_real_pixels_and_preserve_native_audio() {
+    use reel_assembly::motioncraft::{self, Point};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let mut job = fixture(root);
+    let mut pixels = Vec::new();
+    for y in 0..64 {
+        for x in 0..64 {
+            pixels.extend([
+                if (x / 8 + y / 8) % 2 == 0 { 220u8 } else { 30 },
+                (x * 3) as u8,
+                (y * 3) as u8,
+            ]);
+        }
+    }
+    fs::write(
+        root.join("pattern.ppm"),
+        [b"P6\n64 64\n255\n".as_slice(), &pixels].concat(),
+    )
+    .unwrap();
+    job["pictures"][0]["source"] = file(root, "pattern.ppm");
+    job["still_sequence_encoding"] = json!("h264-lossless");
+    let mut direction = phased_direction();
+    for phase in &mut direction.elements[0].phases {
+        phase.zoom_from = 1.2;
+        phase.zoom_to = 1.2;
+    }
+    direction.elements[0].phases[1].curve = motioncraft::Curve::Linear;
+    direction.elements[0].phases[1].pan_from = Some(Point::default());
+    direction.elements[0].phases[1].pan_to = Some(Point { x: 0.08, y: 0.0 });
+    let render = |name: &str, direction: &motioncraft::Direction| {
+        let mut job = job.clone();
+        let plan =
+            motioncraft::compile(direction, &motioncraft::full_canvas(), 48001, 48000, 24, 1)
+                .unwrap();
+        job["pictures"][0]["motion"] = json!({"kind":"phased-camera","plan":plan});
+        let job_path = root.join(format!("{name}.json"));
+        write_json(&job_path, &job);
+        let output = root.join(name);
+        scene_delivery::render(&job_path, root, &output).unwrap();
+        let (job, plan) = scene_delivery::plan(&job_path, root).unwrap();
+        let cadence = reel::motioncraft_cadence::analyze(&job, &plan, &output).unwrap();
+        assert_eq!(cadence["passed"], true, "{cadence}");
+        output
+    };
+    let pan = render("pan", &direction);
+    assert_ne!(
+        fs::read(pan.join("motioncraft/frame-00000012.png")).unwrap(),
+        fs::read(pan.join("motioncraft/frame-00000023.png")).unwrap()
+    );
+    let mut anchor = phased_direction();
+    anchor.focal_anchor = Some(Point { x: 0.8, y: 0.4 });
+    let anchored = render("anchor", &anchor);
+    let centered = render("center", &phased_direction());
+    assert_ne!(
+        fs::read(anchored.join("motioncraft/frame-00000023.png")).unwrap(),
+        fs::read(centered.join("motioncraft/frame-00000023.png")).unwrap()
+    );
+    direction.reduced_motion = true;
+    direction.focal_anchor = Some(Point { x: 0.8, y: 0.4 });
+    let reduced = render("reduced", &direction);
+    assert_eq!(
+        fs::read(reduced.join("motioncraft/frame-00000012.png")).unwrap(),
+        fs::read(reduced.join("motioncraft/frame-00000023.png")).unwrap()
+    );
+    assert_eq!(
+        fs::read(reduced.join("motioncraft/frame-00000012.png")).unwrap(),
+        fs::read(centered.join("motioncraft/frame-00000012.png")).unwrap()
+    );
+    for stem in ["D.wav", "E.wav", "M.wav", "mix.wav"] {
+        assert_eq!(
+            fs::read(pan.join(stem)).unwrap(),
+            fs::read(reduced.join(stem)).unwrap()
+        );
+        assert_eq!(
+            fs::read(anchored.join(stem)).unwrap(),
+            fs::read(centered.join(stem)).unwrap()
+        );
+    }
+}
+
+#[test]
 #[ignore = "requires native FFmpeg; portable Motioncraft comparison"]
 fn matched_motioncraft_package_rehydrates_and_rejects_tamper() {
     let temp = tempfile::tempdir().unwrap();
@@ -411,7 +494,22 @@ fn reserved_caption_band_survives_real_phased_camera_in_both_profiles() {
         job["height"] = json!(height);
         job["still_sequence_encoding"] = json!("h264-lossless");
         job["caption_picture_layout"] = json!({"profile":profile,"layout":"reserve-caption-band"});
-        add_phased_camera(&mut job);
+        let mut direction = phased_direction();
+        direction.focal_anchor = Some(reel_assembly::motioncraft::Point { x: 0.8, y: 0.4 });
+        direction.elements[0].phases[1].pan_from =
+            Some(reel_assembly::motioncraft::Point::default());
+        direction.elements[0].phases[1].pan_to =
+            Some(reel_assembly::motioncraft::Point { x: 0.02, y: 0.0 });
+        let camera = reel_assembly::motioncraft::compile(
+            &direction,
+            &reel_assembly::motioncraft::full_canvas(),
+            48001,
+            48000,
+            24,
+            1,
+        )
+        .unwrap();
+        job["pictures"][0]["motion"] = json!({"kind":"phased-camera","plan":camera});
         write_json(&root.join("job.json"), &job);
         let output = root.join("reserved");
         scene_delivery::render(&root.join("job.json"), root, &output).unwrap();
