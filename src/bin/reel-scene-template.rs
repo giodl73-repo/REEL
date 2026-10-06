@@ -394,14 +394,46 @@ fn run() -> Result<()> {
         let covered = invocation
             .lines
             .iter()
-            .map(|line| line.cue_id.as_str())
+            .map(|line| line.audio_cue_id.as_deref().unwrap_or(&line.cue_id))
             .collect::<std::collections::BTreeSet<_>>();
         let selected = ordered_cues
             .iter()
             .map(String::as_str)
             .collect::<std::collections::BTreeSet<_>>();
-        if covered != selected || covered.len() != invocation.lines.len() {
-            bail!("poem display does not cover every selected native cue exactly once");
+        if covered != selected {
+            bail!("poem display does not cover every selected native performance");
+        }
+        if invocation
+            .lines
+            .iter()
+            .any(|line| line.audio_cue_id.is_some())
+        {
+            let source_lines = invocation
+                .lines
+                .iter()
+                .map(|line| line.cue_id.as_str())
+                .collect::<Vec<_>>();
+            let canonical = scene
+                .source_scope_ids
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            if source_lines != canonical {
+                bail!(
+                    "continuous poem display must cover canonical source lines once in source order"
+                );
+            }
+        }
+        for line in &invocation.lines {
+            let audio_id = line.audio_cue_id.as_deref().unwrap_or(&line.cue_id);
+            let cue = lane
+                .cues
+                .iter()
+                .find(|cue| cue.cue_id == audio_id)
+                .context("poem line native performance missing")?;
+            if line.cue_id != cue.cue_id && !cue.source_cue_ids.contains(&line.cue_id) {
+                bail!("poem line is outside its native performance source scope");
+            }
         }
     }
     let compiled = compile_layer(&definition, &invocation, &ordered_cues, &native)?;

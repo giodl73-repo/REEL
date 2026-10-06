@@ -1,5 +1,17 @@
 # Motioncraft Phase 2 — plan role review
 
+## Latest checkpoint review — integration and consumer qualification
+
+The assistant reapplied the six production/provenance checklists to the remaining Phase 2 plan. Existing story, editorial and phone-readability gates remain mandatory. New feedback is incorporated in the plan's first checkpoint:
+
+| Finding / role | Feedback | Incorporated disposition |
+|---|---|---|
+| P2-R38 Animation Director / Platform and Audience | A semantic transform recipe can introduce a camera move after the authored-camera containment check. | Include recipe-derived movement in protected-region rejection; retain continuous poems and timed transforms when integrating main. The merged native regression passes locally; exact-pin CI and consumer checks remain required. |
+| P2-R39 Rights and Provenance / Sound Designer | Repinning an adapter can make retained sound evidence impossible to replay with its recorded producer identity. | Retain the exact historical executable, manifest and executed sources; qualify relocated replay separately from the new compatibility producer and issue metadata-bound receipts. |
+| P2-R40 Editor / Sound Designer | Native synthetic parity and a passing merge suite do not prove the actual selected Scene023 mix or assembled episode. | Require actual bilingual complete-PCM comparisons, unchanged semantic anchors and D/M/pictures, then all remaining sound positions and body/master measurements. Preserve false historical comparisons and the full twelve-episode gate. |
+
+Disposition: execution plan is ready; exact-revision consumer, CI, episode and shipping gates remain open. This is assistant checklist analysis, not independent-agent or human approval.
+
 ## P2-R37 — explicit audio placement must retain shared anchors
 
 Sound Designer / Editor / Rights and Provenance: replacing semantic sample anchors with historical millisecond positions would conceal a cross-lane disagreement. Disposition: E-only, signed, evidence-bound placement offsets preserve the contract and source excerpt; native `audio` spans show actual rendering and `audio_anchor_spans` retain unchanged semantic positions. Stereo mono conversion is separately opt-in and rejects non-stereo sources or D/M use. Future profile binding and immutable existing-job upgrades must reach the same mixer, preserve original inputs and reject stale evidence, overflow/out-of-scene offsets, unused keys and narration retiming. Native regression passes picture/D/M preservation, complete historical mix comparison and full-scene/audio-only stem equality; exact-pin CI and actual selected CAIMITOS qualification remain required. This is assistant checklist analysis, not creative approval.

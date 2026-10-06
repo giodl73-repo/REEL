@@ -1183,6 +1183,7 @@ fn phased_camera_renders_real_hold_push_and_reduced_motion_without_audio_drift()
         evidence: layered_job.contract.clone(),
         zoom_step: 0.02,
         zoom_max: 1.5,
+        translation: None,
         windows: vec![scene_delivery::CameraWindow {
             start_frame: 0,
             end_frame: 48,
@@ -2031,6 +2032,56 @@ fn post_compose_camera_is_scoped_to_selected_frames_and_checked() {
     job["post_compose_camera"]["windows"][0]["end_frame"] = json!(49);
     write_json(&root.join("job.json"), &job);
     assert!(scene_delivery::plan(&root.join("job.json"), root).is_err());
+}
+
+#[test]
+fn semantic_picture_transform_crosses_distinct_cels_and_rejects_invalid_recipes() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let mut job = fixture(root);
+    let mut pixels = b"P6\n64 64\n255\n".to_vec();
+    for y in 0..64 {
+        for x in 0..64 {
+            pixels.extend([x * 4, y * 4, 80]);
+        }
+    }
+    fs::write(root.join("pattern.ppm"), pixels).unwrap();
+    job["pictures"][0]["source"] = file(root, "pattern.ppm");
+    let mut contract: Value =
+        serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
+    contract["attachments"].as_array_mut().unwrap().push(json!({
+        "id":"jolt", "target":{"kind":"overlay","shot_id":"shot","overlay_id":"jolt"},
+        "start":{"kind":"cue-start","cue_id":"a","offset_samples":24000},
+        "end":{"kind":"cue-start","cue_id":"b","offset_samples":24000}
+    }));
+    write_json(&root.join("contract.json"), &contract);
+    let mut recipe = json!({"schema":"reel.timed-picture-transform.v1","zoom_step":0.03,"zoom_max":1.06,
+        "translation":{"amplitude_x_pixels":2.0,"amplitude_y_pixels":1.0,"period_frames":5}});
+    write_json(&root.join("recipe.json"), &recipe);
+    job["contract"] = file(root, "contract.json");
+    job["external_layers"] = json!([{"attachment_id":"jolt","reason":"Source motivated carriage jolt across a cut",
+        "evidence":file(root,"recipe.json"),"render_mode":"timed-picture-transform"}]);
+    write_json(&root.join("job.json"), &job);
+    let (_, plan) = scene_delivery::plan(&root.join("job.json"), root).unwrap();
+    assert_eq!(plan.rendered_external_layers, vec!["jolt"]);
+    job["picture_region"] = json!({"x":0,"y":0,"width":64,"height":40});
+    write_json(&root.join("reserved.json"), &job);
+    assert!(
+        scene_delivery::plan(&root.join("reserved.json"), root)
+            .unwrap_err()
+            .to_string()
+            .contains("contained picture motion")
+    );
+    job.as_object_mut().unwrap().remove("picture_region");
+    let out = root.join("transform-render");
+    scene_delivery::render(&root.join("job.json"), root, &out).unwrap();
+    scene_delivery::check(&root.join("job.json"), root, &out).unwrap();
+    recipe["translation"]["amplitude_x_pixels"] = json!(500);
+    write_json(&root.join("recipe.json"), &recipe);
+    assert!(scene_delivery::plan(&root.join("job.json"), root).is_err()); // Hash tampering.
+    job["external_layers"][0]["evidence"] = file(root, "recipe.json");
+    write_json(&root.join("job.json"), &job);
+    assert!(scene_delivery::plan(&root.join("job.json"), root).is_err()); // Unsafe bounds.
 }
 #[test]
 fn continuous_motion_group_requires_the_same_adjacent_still() {

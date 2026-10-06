@@ -279,3 +279,41 @@ hash-verified cache object and joins the selected delivery closure. Unused keys,
 missing/stale evidence, empty reasons and out-of-scene placement reject before
 delivery output. The generated native job retains source/gain/semantic anchors
 and carries explicit channel/placement intent to the shared scene mixer.
+
+## Continuous poem readings and bounded picture transforms
+
+A displayed poem line retains its canonical source `cue_id`. Optional
+`audio_cue_id` identifies the selected continuous native performance containing
+that line, and `semantic_trigger_id` selects its measured line entrance. The
+selected source-text line repeats this mapping. The template requires exact
+canonical line order, complete selected-performance coverage, source ownership,
+unique markers and increasing entrances. Existing one-take-per-line invocations
+omit `audio_cue_id` and retain their behavior. Audio is never duplicated to
+display several lines.
+
+A VFX binding normally selects an alpha-video overlay. A scene delivery profile
+may instead map its key in `vfx_render_mode_by_binding` to
+`timed-picture-transform`. Its scoped asset must select cached JSON:
+
+```json
+{
+  "schema": "reel.timed-picture-transform.v1",
+  "zoom_step": 0.01,
+  "zoom_max": 1.025,
+  "translation": {
+    "amplitude_x_pixels": 8,
+    "amplitude_y_pixels": 4,
+    "period_frames": 5
+  }
+}
+```
+
+Adjacent semantic events sharing the key form one language-local native span,
+including cuts between distinct cels. The renderer applies the selected recipe
+after composition, retains the pre-camera picture and checks frame count,
+visible change in each interval and sampled unchanged boundary frames outside it.
+One recipe may own multiple disjoint windows; conflicting recipes, overlapping
+windows, invalid numeric bounds and a separately authored camera are rejected.
+The selected recipe remains hashed VFX evidence in the semantic closure. Clean
+source cels are unchanged. Neither a render check nor a selected binding grants
+creative approval.

@@ -75,6 +75,9 @@ pub struct DeliveryProfile {
         BTreeMap<String, crate::scene_delivery::AudioChannelMapping>,
     #[serde(default)]
     pub sonic_placement_offsets_by_binding: BTreeMap<String, SonicPlacementOffset>,
+    /// Explicit modes; cache evidence remains owned by scoped asset bindings.
+    #[serde(default)]
+    pub vfx_render_mode_by_binding: BTreeMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -860,6 +863,14 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
                 run_end += 1;
             }
             let overlay = asset(key, &scopes)?;
+            let mode = profile
+                .vfx_render_mode_by_binding
+                .get(key)
+                .map(String::as_str)
+                .unwrap_or("timed-video-overlay");
+            if !matches!(mode, "timed-video-overlay" | "timed-picture-transform") {
+                bail!("unsupported authored VFX render mode {mode}");
+            }
             let attachment = format!("fx-{}-{}", event.semantic_id, position + 1);
             let shot_id = delivery_id("shot", &event.semantic_id);
             attachments.push(json!({
@@ -876,7 +887,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
                 "attachment_id": attachment,
                 "reason": format!("Selected semantic VFX for {}", event.semantic_id),
                 "evidence": media_ref(overlay),
-                "render_mode": "timed-video-overlay"
+                "render_mode": mode
             }));
             for binding in &mut event_bindings[index..run_end] {
                 binding["external_layer_attachment_ids"]

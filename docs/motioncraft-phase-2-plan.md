@@ -1,5 +1,21 @@
 # Motioncraft Phase 2 — Camera, Validation and Episode Proof
 
+## Next execution checkpoint — engine integration and consumer proof
+
+Project: **Motioncraft Phase 2 — CAIMITOS Episode Qualification**. This checkpoint takes precedence over older engine-status claims below; it retains all P2.1–P2.5 acceptance gates.
+
+The explicit Sonic compatibility implementation at `271cec2ee22f4f324936c65e7de5742921785de4` has passing local native tests. The working integration with REEL main `7d48419` also passes the Rust suite, Clippy, explicit Sonic regression and semantic picture-transform regression. That integration is not yet committed or qualified by exact-pin CI or CAIMITOS consumer evidence. Selected Scene023 parity remains unresolved until actual consumer comparisons pass.
+
+Execute in this order:
+
+1. Commit the resolved producer integration, retain continuous poem timing and semantic picture transforms, and obtain exact-revision Windows/Linux CI. Keep reserved caption/picture regions protected when transforms are derived from recipes.
+2. Pin CAIMITOS to that exact integration revision, build the locked adapter and run actual authoring/immutable-upgrade tests. Prove defaults, overrides, explicit E-only mapping/placement, stale-input rejection and original-input rollback through the native engine.
+3. Qualify selected English and Spanish Scene023 with the explicit compatibility route. Preserve semantic anchors, picture frames and D/M stems; measure complete selected PCM within the declared one-PCM24-LSB tolerance. English's eight-sample physical offset requires immutable evidence; Spanish requires no offset. Keep original failed comparisons.
+4. Freeze new executed producers and compatibility evidence, hydrate from canonical cache and issue formal receipts against committed metadata. Retain the old qualified executable and manifest so earlier sound evidence remains reproducible after repinning.
+5. Complete the remaining thirty sound positions and selected body/master measurements, presentation/caption dispositions, complete bilingual E1 freeze, capacity qualification, twelve complete episode variants, runbook examples and reviewed main integration in both repositories.
+
+The role review adds P2-R38–R40 for merged-feature containment, historical consumer replay and exact-revision qualification. These are assistant checklist findings, not independent reviewers or human approval. No component or diagnostic pass closes the complete-episode gate.
+
 ## Current Phase 2 plan — consolidated roles review
 
 Project: **Motioncraft Phase 2 — CAIMITOS Episode Qualification**. This refines the existing goal; it supersedes older revision and pending-work statements below without changing P2.1–P2.5 scope.
