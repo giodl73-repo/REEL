@@ -1937,20 +1937,21 @@ fn check_impl(
             if length > 1 && !visible {
                 bail!("post-composition camera made no visible change");
             }
-            for inactive in [
+            for index in [
                 window.start_frame.checked_sub(1),
                 (window.end_frame < plan.frame_count).then_some(window.end_frame),
-            ] {
-                if let Some(index) = inactive {
-                    if !camera
-                        .windows
-                        .iter()
-                        .any(|w| w.start_frame <= index && index < w.end_frame)
-                        && rgb_frame_at_index(&before, &plan, index)?
-                            != rgb_frame_at_index(&after, &plan, index)?
-                    {
-                        bail!("post-composition camera changed a frame outside its semantic span");
-                    }
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !camera
+                    .windows
+                    .iter()
+                    .any(|w| w.start_frame <= index && index < w.end_frame)
+                    && rgb_frame_at_index(&before, &plan, index)?
+                        != rgb_frame_at_index(&after, &plan, index)?
+                {
+                    bail!("post-composition camera changed a frame outside its semantic span");
                 }
             }
         }
