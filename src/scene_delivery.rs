@@ -151,6 +151,9 @@ pub struct Crop {
 }
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+// Keep the public construction API stable: plans are shot-level metadata, not
+// a per-frame collection, and callers already construct this variant directly.
+#[allow(clippy::large_enum_variant)]
 pub enum PictureMotion {
     PhasedCamera {
         plan: reel_assembly::motioncraft::FramePlan,
@@ -323,19 +326,18 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
     {
         bail!("invalid delivery dimensions/composition limit");
     }
-    if picture_layout(&job)?.is_some() {
-        if job.post_compose_camera.is_some()
+    if picture_layout(&job)?.is_some()
+        && (job.post_compose_camera.is_some()
             || job.pictures.iter().any(|picture| {
                 matches!(
                     picture.motion,
                     Some(PictureMotion::Zoompan { .. } | PictureMotion::CenteredZoompan { .. })
                 )
-            })
-        {
-            bail!(
-                "reserved caption band requires contained picture motion; legacy or post-compose cameras are unsupported"
-            );
-        }
+            }))
+    {
+        bail!(
+            "reserved caption band requires contained picture motion; legacy or post-compose cameras are unsupported"
+        );
     }
     let base = job_path.parent().unwrap_or(Path::new("."));
     let contract_path = checked_file(base, &job.contract)?;
