@@ -186,7 +186,14 @@ After rendering, run `reel-scene-cadence <job.json> --asset-root <assets>
 existing motion-check luma analyzer and thresholds. The command first verifies
 the scene receipt, then measures exact adjacent delivery frames. Reports bind
 the job and picture hashes and record the actual analyzer backend/FFmpeg
-version separately from the native rendering runtime; output is no-clobber and belongs outside the render
+version separately from the native rendering runtime. Motioncraft cadence uses
+native FFmpeg on Windows and Linux, without a WSL fallback. Set
+`REEL_CADENCE_FFMPEG` to an explicit executable path, or let it resolve FFmpeg
+from PATH. An invalid explicit override rejects rather than falling back.
+The report records the canonical executable path and SHA-256 and rejects an
+executable that changes during analysis. These local evidence reports include
+machine paths; do not treat them as sanitized public receipts.
+Output is no-clobber and belongs outside the render
 directory. A failed check retains its report and exits nonzero.
 
 Only an unlayered still camera treatment can grant whole-frame hold allowances.

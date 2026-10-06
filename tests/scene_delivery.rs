@@ -494,10 +494,7 @@ fn phased_camera_renders_real_hold_push_and_reduced_motion_without_audio_drift()
             .unwrap()
             .starts_with("ffmpeg version ")
     );
-    assert_eq!(
-        cadence["analyzer_backend"],
-        if cfg!(windows) { "wsl" } else { "native" }
-    );
+    assert_eq!(cadence["analyzer_backend"], "native");
     let mut layered_job = cadence_job.clone();
     layered_job.post_compose_camera = Some(scene_delivery::PostComposeCamera {
         evidence: layered_job.contract.clone(),
