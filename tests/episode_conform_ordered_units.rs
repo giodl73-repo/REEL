@@ -75,20 +75,25 @@ fn run(root: &Path, manifest: &str, output: &str) -> std::process::Output {
 
 #[test]
 fn ordered_units_conform_bilingual_displays_and_rejects_bad_sources() {
-    ordered_fixture(false, false);
+    ordered_fixture(false, false, false);
 }
 
 #[test]
 fn adopted_editable_displays_bind_source_text_and_rendered_master() {
-    ordered_fixture(true, false);
+    ordered_fixture(true, false, false);
 }
 
 #[test]
 fn compact_conform_keeps_global_clock_across_display_property_changes() {
-    ordered_fixture(true, true);
+    ordered_fixture(true, true, false);
 }
 
-fn ordered_fixture(adopt: bool, clock_transition: bool) {
+#[test]
+fn verified_presentation_reuse_rehashes_inputs_and_checks_new_full_episode() {
+    ordered_fixture(true, true, true);
+}
+
+fn ordered_fixture(adopt: bool, clock_transition: bool, reuse_cache: bool) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     fs::write(root.join("clean-picture.bin"), b"selected clean background").unwrap();
@@ -333,6 +338,7 @@ fn ordered_fixture(adopt: bool, clock_transition: bool) {
                 item["source_text_evidence"] = reference(root, &format!("{id}-{lang}-text.json"));
                 if adopt {
                     item["adoption_manifest"] = reference(root, &format!("{id}-{lang}-adopt.json"));
+                    item["master"] = reference(root, &format!("adopted-{id}-{lang}/master.mkv"));
                 }
             }
             item
@@ -354,6 +360,9 @@ fn ordered_fixture(adopt: bool, clock_transition: bool) {
                 "intermediate_video_encoding":"h264-lossless"
             });
         }
+        if reuse_cache {
+            manifest["reuse_verified_presentations"] = true.into();
+        }
         let manifest_name = format!("manifest-{lang}.json");
         write(&root.join(&manifest_name), &manifest);
         let output = run(root, &manifest_name, &format!("output-{lang}"));
@@ -373,6 +382,134 @@ fn ordered_fixture(adopt: bool, clock_transition: bool) {
         );
         assert_eq!(receipt["decoded_master_matches_ordered_segments"], true);
         assert_eq!(receipt["timestamps_verified"], true);
+        if reuse_cache {
+            assert_eq!(
+                receipt["presentation_verification_cache"]["reused_verified_checks"],
+                0
+            );
+            assert_eq!(
+                receipt["presentation_verification_cache"]["fresh_full_checks"],
+                2
+            );
+            let warm_dir = format!("warm-{lang}");
+            let warm = run(root, &manifest_name, &warm_dir);
+            assert!(
+                warm.status.success(),
+                "{}",
+                String::from_utf8_lossy(&warm.stderr)
+            );
+            let warm_receipt: Value = serde_json::from_slice(
+                &fs::read(root.join(&warm_dir).join("receipt.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                warm_receipt["presentation_verification_cache"]["reused_verified_checks"],
+                2
+            );
+            assert_eq!(
+                warm_receipt["presentation_verification_cache"]["fresh_full_checks"],
+                0
+            );
+            assert_eq!(
+                warm_receipt["decoded_master_matches_ordered_segments"],
+                true
+            );
+            assert_eq!(warm_receipt["timestamps_verified"], true);
+            assert_eq!(warm_receipt["total_frames"], 96);
+            assert_eq!(warm_receipt["total_samples"], 176_400);
+            assert_eq!(
+                warm_receipt["encoded_delivery"]["full_decode_verified"],
+                true
+            );
+
+            // Cached success never permits a current dependency byte change.
+            let cache_dir = root.join(".reel-verification-cache/presentation-adoption-v1");
+            let cached_count = fs::read_dir(&cache_dir).unwrap().count();
+            let adoption_name = format!("display-a-{lang}-adopt.json");
+            let adoption: Value =
+                serde_json::from_slice(&fs::read(root.join(&adoption_name)).unwrap()).unwrap();
+            let mut paths = vec![
+                adoption_name,
+                format!("display-a-{lang}-receipt.json"),
+                format!("adopted-display-a-{lang}/master.mkv"),
+            ];
+            for field in [
+                "catalog",
+                "template_definition",
+                "season_bindings",
+                "episode_bindings",
+                "selection_evidence",
+                "source",
+            ] {
+                paths.push(adoption[field]["path"].as_str().unwrap().into());
+            }
+            for (index, path) in paths.iter().enumerate() {
+                let target = root.join(path);
+                let original = fs::read(&target).unwrap();
+                let mut bad = original.clone();
+                bad[0] ^= 1;
+                fs::write(&target, bad).unwrap();
+                let rejected = run(root, &manifest_name, &format!("mutated-{lang}-{index}"));
+                fs::write(&target, original).unwrap();
+                assert!(
+                    !rejected.status.success(),
+                    "cached byte mutation accepted: {path}"
+                );
+            }
+            let adoption_path = root.join(format!("display-a-{lang}-adopt.json"));
+            let original_adoption = fs::read(&adoption_path).unwrap();
+            for (index, bad_path) in ["../escape.mkv".to_string(), format!("DISPLAY-A-{lang}.mkv")]
+                .iter()
+                .enumerate()
+            {
+                let mut bad_adoption = adoption.clone();
+                bad_adoption["source"]["path"] = bad_path.clone().into();
+                write(&adoption_path, &bad_adoption);
+                let mut bad_manifest = manifest.clone();
+                bad_manifest["segments"][1]["adoption_manifest"] =
+                    reference(root, &format!("display-a-{lang}-adopt.json"));
+                let bad_name = format!("bad-cached-path-{lang}-{index}.json");
+                write(&root.join(&bad_name), &bad_manifest);
+                let rejected = run(root, &bad_name, &format!("bad-cached-path-{lang}-{index}"));
+                fs::write(&adoption_path, &original_adoption).unwrap();
+                assert!(
+                    !rejected.status.success(),
+                    "cached invalid path accepted: {bad_path}"
+                );
+            }
+            assert_eq!(
+                fs::read_dir(&cache_dir).unwrap().count(),
+                cached_count,
+                "failed verification published new success records"
+            );
+
+            // Corrupt records are misses, never trusted successes.
+            for entry in
+                fs::read_dir(root.join(".reel-verification-cache/presentation-adoption-v1"))
+                    .unwrap()
+            {
+                fs::write(entry.unwrap().path(), b"partial{").unwrap();
+            }
+            let recovered_dir = format!("recovered-{lang}");
+            let recovered = run(root, &manifest_name, &recovered_dir);
+            assert!(
+                recovered.status.success(),
+                "{}",
+                String::from_utf8_lossy(&recovered.stderr)
+            );
+            let recovered_receipt: Value = serde_json::from_slice(
+                &fs::read(root.join(recovered_dir).join("receipt.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                recovered_receipt["presentation_verification_cache"]["reused_verified_checks"],
+                0
+            );
+            assert_eq!(
+                recovered_receipt["presentation_verification_cache"]["fresh_full_checks"],
+                2
+            );
+        }
 
         if adopt {
             let evidence_name = format!("display-a-{lang}-text.json");
