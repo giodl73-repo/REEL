@@ -1206,11 +1206,25 @@ pub fn build(
     let mut concat = command("ffmpeg");
     concat
         .args([
-            "-v", "error", "-nostdin", "-f", "concat", "-safe", "0", "-i",
+            "-v",
+            "error",
+            "-nostdin",
+            "-reinit_filter",
+            "0",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
         ])
         .arg(&list_path)
         .args(["-map", "0:v:0", "-map", "0:a:0"]);
     if manifest.audio_frame_conform.is_some() {
+        // Preserve the episode-wide setpts/asetpts counters when an adopted
+        // display changes SAR or color metadata. Filter reinitialization would
+        // restart N at zero; the muxer then clamps the remaining video PTS to
+        // the preceding frame. Ordered decoded-content checks still reject any
+        // incompatible source property that changes the selected pixels/audio.
         let facts = common.as_ref().context("no common frame clock")?;
         let (num, den) = fps_parts(&facts.fps)?;
         concat

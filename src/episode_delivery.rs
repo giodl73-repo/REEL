@@ -450,7 +450,10 @@ pub(crate) fn verify_timestamps(
             _ => bail!("unexpected master frame type"),
         };
         if !time.is_finite() || (time - expected).abs() > 0.002 {
-            bail!("master timestamp gap/offset differs from continuous frame/sample timeline");
+            bail!(
+                "master timestamp gap/offset differs from continuous frame/sample timeline: {} timestamp {time:.6}s, expected {expected:.6}s (video frames {video}, audio samples {audio})",
+                frame["media_type"].as_str().unwrap_or("unknown")
+            );
         }
     }
     if video == 0 || audio == 0 {
