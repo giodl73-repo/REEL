@@ -34,8 +34,18 @@ Scene IDs must match their compiled jobs and be unique within the episode.
 Model bookends as scene deliveries too. This contract describes a continuous
 ordered concatenation, not overlapping scene transitions or a lossy final MP4.
 
-The master must contain exactly FFV1/yuv444p picture and stereo PCM24 audio at the
-scene dimensions, frame rate and sample rate. Decoding uses no audio resampling,
+Omitting `master_encoding` requires exactly FFV1/yuv444p picture and stereo PCM24
+audio. An explicit `master_encoding: h264-lossless-flac` accepts H.264/yuv444p
+and stereo 24-bit FLAC instead, at the same scene dimensions, frame rate and
+sample rate. Encode picture with libx264 CRF0 and audio with `-c:a flac -sample_fmt
+s32 -bits_per_raw_sample 24`; use separate ordered video/audio concatenation so
+container frame rounding does not insert unrequested audio holds. Unknown values
+reject, and compact codecs without the explicit field reject. Codec labels are
+insufficient: both formats pass the same complete decoded-content and timestamp
+checks. The report records the explicit compact encoding; legacy serialization
+is unchanged. Compact output still needs a measured peak-storage forecast.
+
+Decoding uses no audio resampling,
 time stretching or frame-rate conversion. Bounded-memory hashing compares every
 frame and PCM sample, in order, with the scene picture and mix. Extra, short,
 reordered or substituted content fails, even with updated file hashes. Each

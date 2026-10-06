@@ -369,6 +369,162 @@ fn real_episode_consumption_boundaries_and_controlled_review() {
     assert!(!root.join("invalid-review").exists());
 }
 
+#[test]
+#[ignore = "requires native FFmpeg; complete compact episode consumption"]
+fn compact_lossless_episode_preserves_content_and_rejects_lossy_or_retimed_masters() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    for name in ["a", "b"] {
+        let dir = root.join(name);
+        fs::create_dir(&dir).unwrap();
+        let mut job = fixture(&dir);
+        let mut contract: Value =
+            serde_json::from_slice(&fs::read(dir.join("contract.json")).unwrap()).unwrap();
+        contract["id"] = json!(name);
+        write_json(&dir.join("contract.json"), &contract);
+        job["id"] = json!(name);
+        job["contract"] = file(&dir, "contract.json");
+        job["still_sequence_encoding"] = json!("h264-lossless");
+        let pixels: Vec<u8> = (0..64 * 64 * 3)
+            .map(|i| ((i * 37 + i / 17 + usize::from(name == "b") * 53) % 256) as u8)
+            .collect();
+        fs::write(
+            dir.join("pattern.ppm"),
+            [b"P6\n64 64\n255\n".as_slice(), &pixels].concat(),
+        )
+        .unwrap();
+        job["pictures"][0]["source"] = file(&dir, "pattern.ppm");
+        write_json(&dir.join("job.json"), &job);
+        scene_delivery::render(&dir.join("job.json"), &dir, &dir.join("delivery")).unwrap();
+    }
+    let result = Command::new("ffmpeg")
+        .args(["-v", "error", "-nostdin", "-i"])
+        .arg(root.join("a/delivery/master.mkv"))
+        .arg("-i")
+        .arg(root.join("b/delivery/master.mkv"))
+        .args([
+            "-filter_complex",
+            "[0:v][1:v]concat=n=2:v=1:a=0[v];[0:a][1:a]concat=n=2:v=0:a=1[a]",
+            "-map",
+            "[v]",
+            "-map",
+            "[a]",
+            "-c:v",
+            "ffv1",
+            "-pix_fmt",
+            "yuv444p",
+            "-c:a",
+            "pcm_s24le",
+        ])
+        .arg(root.join("legacy.mkv"))
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let scene = |name: &str| {
+        json!({"id":name,"job":file(root,&format!("{name}/job.json")),
+        "asset_root":name,"receipt":file(root,&format!("{name}/delivery/receipt.json"))})
+    };
+    let mut contract = json!({"schema":"reel.episode-delivery.v0.1","id":"episode",
+        "scenes":[scene("a"),scene("b")],"master":file(root,"legacy.mkv"),"layers":[],"boundary_decisions":[]});
+    let path = root.join("episode.json");
+    write_json(&path, &contract);
+    let legacy = reel::episode_delivery::check(&path, root).unwrap();
+    assert!(legacy.content_verified);
+    assert!(legacy.master_encoding.is_none());
+    let encode = |name: &str, crf: &str, format: &str, muted: bool| {
+        let mut command = Command::new("ffmpeg");
+        command
+            .args(["-v", "error", "-nostdin", "-i"])
+            .arg(root.join("legacy.mkv"));
+        command.args([
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            crf,
+            "-pix_fmt",
+            "yuv444p",
+            "-c:a",
+            "flac",
+            "-sample_fmt",
+            format,
+        ]);
+        if format == "s32" {
+            command.args(["-bits_per_raw_sample", "24"]);
+        }
+        if muted {
+            command.args(["-af", "volume=0"]);
+        }
+        let result = command.arg(root.join(name)).output().unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    };
+    encode("compact.mkv", "0", "s32", false);
+    contract["master"] = file(root, "compact.mkv");
+    write_json(&path, &contract);
+    assert!(
+        reel::episode_delivery::check(&path, root)
+            .unwrap_err()
+            .to_string()
+            .contains("declared episode encoding")
+    );
+    contract["master_encoding"] = json!("h264-lossless-flac");
+    write_json(&path, &contract);
+    let compact = reel::episode_delivery::check(&path, root).unwrap();
+    assert!(compact.content_verified);
+    assert!(compact.master_encoding.is_some());
+    assert_eq!(
+        serde_json::to_value(&compact.scenes).unwrap(),
+        serde_json::to_value(&legacy.scenes).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(&compact.boundary_findings).unwrap(),
+        serde_json::to_value(&legacy.boundary_findings).unwrap()
+    );
+    assert_eq!(compact.scenes[1].start_frame, 48);
+    assert_eq!(compact.scenes[1].start_sample, 96000);
+    for (name, crf, format, muted, diagnostic) in [
+        ("lossy.mkv", "20", "s32", false, "does not consume"),
+        ("muted.mkv", "0", "s32", true, "does not consume"),
+        ("pcm16.mkv", "0", "s16", false, "declared episode encoding"),
+    ] {
+        encode(name, crf, format, muted);
+        contract["master"] = file(root, name);
+        write_json(&path, &contract);
+        assert!(
+            reel::episode_delivery::check(&path, root)
+                .unwrap_err()
+                .to_string()
+                .contains(diagnostic),
+            "{name}"
+        );
+    }
+    let result = Command::new("ffmpeg")
+        .args(["-v", "error", "-nostdin", "-itsoffset", "0.25", "-i"])
+        .arg(root.join("compact.mkv"))
+        .args(["-c", "copy", "-copyts"])
+        .arg(root.join("late.mkv"))
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    contract["master"] = file(root, "late.mkv");
+    write_json(&path, &contract);
+    assert!(
+        reel::episode_delivery::check(&path, root)
+            .unwrap_err()
+            .to_string()
+            .contains("timestamp gap/offset")
+    );
+}
+
 fn write_json(path: &Path, v: &Value) {
     fs::write(path, serde_json::to_vec_pretty(v).unwrap()).unwrap();
 }

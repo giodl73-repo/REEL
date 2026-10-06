@@ -41,6 +41,8 @@ jobs:
         run: cargo test --test scene_delivery signed_pcm_rails_preserve_exact_sources_and_reject_overload_before_publication -- --ignored --exact
       - name: Verify episode consumption, boundaries and controlled scene comparisons
         run: cargo test --test scene_delivery real_episode_consumption_boundaries_and_controlled_review -- --ignored --exact
+      - name: Verify compact lossless episodes preserve every frame and PCM24 sample
+        run: cargo test --test scene_delivery compact_lossless_episode_preserves_content_and_rejects_lossy_or_retimed_masters -- --ignored --exact
       - name: Verify native cadence rejects a frozen moving interval
         run: cargo test --lib motioncraft_cadence::tests::native_metrics_reject_a_frozen_moving_interval -- --ignored --exact
       - name: Verify portable matched Motioncraft comparisons

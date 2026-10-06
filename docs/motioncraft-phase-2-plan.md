@@ -1,5 +1,30 @@
 # Motioncraft Phase 2 — Camera, Validation and Episode Proof
 
+## Current checkpoint — complete master measurements and compact episode proof
+
+Both selected masters now have complete sequential opening/body/credits PCM
+measurements and exact fresh-cache reproduction, including every gap/tail sample.
+Spanish90602000 and English94044409 samples reconcile. Measured credits begin
+after31 additional Spanish samples and0 English samples, matching the longer
+decoded body A/V spans. Coarse seeking changes some credits-window samples;
+sequential-from-start indexing is authoritative. Original failures remain retained.
+AAC gains/residuals are measurements, not an invented lossy-codec acceptance pass.
+
+Native episode delivery now supports an explicit `master_encoding:
+h264-lossless-flac`, preserving the legacy FFV1/PCM24 default and unchanged full
+decoded-content, frame/sample offset, stem-sum and timestamp checks. The native
+synthetic regression proves parity and rejects undeclared compact encoding,
+lossy picture, muted audio,16-bit audio and late timestamps. Legacy native
+episode/review and pure schema checks, all-target/all-feature Rust tests,
+warnings-denied Clippy and fmt pass locally. Exact new-revision CI, actual
+consumer pin/mode/overlay qualification and full episode capacity measurements
+remain required before shipping or treating compact storage as sufficient.
+
+Next: qualify this compact native episode route in CAIMITOS, finish presentation
+and caption dispositions, freeze all bilingual/profile sources, capacity-qualify
+and review all twelve full variants, then ship reviewed exact revisions. All
+P2.1–P2.5 gates remain; component and diagnostic evidence cannot close them.
+
 ## Latest execution checkpoint — all50 scene sounds and complete body measurement
 
 CAIMITOS coverage now binds all50 selected scene/language positions to exact

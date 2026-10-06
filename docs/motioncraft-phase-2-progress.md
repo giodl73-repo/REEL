@@ -1,5 +1,39 @@
 # Motioncraft Phase 2 implementation record
 
+## Complete master measurements and compact native episode implementation
+
+Actual selected masters are sequentially compared against complete selected
+opening/body/credits content; every component sample and intervening/tail sample
+is consumed. Both fresh hydrated reproductions are exact. ES90602000 samples
+include31 before credits; EN94044409 include0. These measured joins equal the
+longer decoded body A/V span (ES79370000 picture vs79369969 audio; EN82812000
+picture vs82812409 audio). AAC residuals remain measured diagnostics and do not
+identify the original executed builder or establish a chosen tolerance.
+
+Original master-audit failures reproduce before publication: coarse seeking
+changes late master samples and the EN bookends use a nested identity shape.
+Both are retained. Corrected measurement always uses sequential sample indexing,
+records coarse-seek differences, accepts explicit flat/nested metadata and
+rejects conflicts. Three metadata/seek-authority regressions pass. Two45-record
+master closures plus15support records pass canonical freeze, standard hydration
+and actual full measurement reproduction under resolverV22; formal receipts
+must bind the committed metadata checkpoint.
+
+REEL's episode checker previously rejected compact lossless movie codecs. Added
+explicit `master_encoding: h264-lossless-flac`; omission preserves FFV1/PCM24 and
+legacy serialization. Complete decoded picture/PCM24 comparison, native counts,
+stem recombination, offset checks, cut findings and timestamp tolerances are
+unchanged. New native two-scene proof matches all legacy consumptions/findings
+and rejects undeclared encoding, lossy pixels, muted audio,16-bit FLAC and late
+timestamps. The legacy native episode/review test, pure schema checks, complete
+all-target/all-feature tests, Clippy-Dwarnings and fmt pass locally. CI adds the
+new native regression on Windows/Linux. Exact new-pin CI and actual CAIMITOS
+consumer propagation remain open; earlier b13a327 CI37508620919 is fully successful.
+
+No twelve-full-episode or capacity acceptance is inferred from the synthetic
+proof. Presentation/captions, complete bilingual/profile freeze, all twelve full
+movies, rollback/fresh-cache and reviewed main integration remain open.
+
 ## All50 selected sound positions and complete body measurement
 
 Remaining25 selected sound positions qualify at012 through native audio-only

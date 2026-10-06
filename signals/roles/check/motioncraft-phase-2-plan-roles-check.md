@@ -1,5 +1,28 @@
 # Motioncraft Phase 2 — plan role review
 
+## P2-R45 — sample seeking is an optimization until identity is verified
+
+Sound Designer / Rights and Provenance: actual coarse-seek master decoding differs
+from sequential decoding near both credits sections, despite matching interior
+offsets. Disposition: retain the original pre-publication failure, use sequential
+indexing for all authoritative anchors/content and record seek differences. Full
+opening/body/credits measurements and fresh reproduction consume all samples;
+ES31/EN0 join extensions reconcile with the decoded body A/V spans. Preserve
+AAC residuals as measurements, not a newly invented tolerance or old-producer claim.
+
+## P2-R46 — compact episode storage must preserve native consumption proof
+
+Editor / Rights and Provenance / Sound Designer: accepting compact scene outputs
+while the episode checker requires FFV1 prevents bounded full-episode qualification.
+Disposition: opt-in H.264 lossless/24-bit FLAC master contracts with legacy default
+unchanged; keep every decoded-frame/sample comparison, stem-sum check, native
+offset and timestamp tolerance. Native parity, lossy/muted/16-bit/late rejection,
+legacy episode review, pure schema, full Rust/Clippy/fmt pass locally. Require exact
+new-pin CI and actual CAIMITOS mode/authoring/immutable-upgrade propagation, measured
+storage peaks and all twelve full episodes. A smaller encoded file alone does not
+qualify content, capacity or artistic quality. These are assistant checklist
+findings, not independent review or principal approval.
+
 ## P2-R43 — complete measurements and AAC tolerance are different claims
 
 Sound Designer / Editor: two interior anchors can locate a scene but cannot

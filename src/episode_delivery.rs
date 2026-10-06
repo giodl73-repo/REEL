@@ -38,8 +38,18 @@ pub struct Contract {
     pub id: String,
     pub scenes: Vec<Scene>,
     pub master: FileRef,
+    /// Omission retains the established FFV1/PCM24 contract. Compact masters
+    /// still require exact decoded equality for every frame and PCM24 sample.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub master_encoding: Option<MasterEncoding>,
     pub layers: Vec<Layer>,
     pub boundary_decisions: Vec<BoundaryDecision>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+pub enum MasterEncoding {
+    #[serde(rename = "h264-lossless-flac")]
+    H264LosslessFlac,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -97,6 +107,8 @@ pub struct Report {
     pub schema: String,
     pub contract_sha256: String,
     pub master_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub master_encoding: Option<MasterEncoding>,
     pub content_verified: bool,
     pub passed: bool,
     pub scenes: Vec<Consumption>,
@@ -501,18 +513,24 @@ pub fn check(contract_path: &Path, root: &Path) -> Result<Report> {
         .and_then(|s| s.split_once('/'))
         .context("master frame rate missing")?;
     let (rate_n, rate_d) = (rate_n.parse::<u64>()?, rate_d.parse::<u64>()?);
+    let (video_codec, audio_codec) = match contract.master_encoding {
+        None => ("ffv1", "pcm_s24le"),
+        Some(MasterEncoding::H264LosslessFlac) => ("h264", "flac"),
+    };
     if streams.len() != 2
-        || v["codec_name"] != "ffv1"
+        || v["codec_name"] != video_codec
         || v["pix_fmt"] != "yuv444p"
         || v["width"] != width
         || v["height"] != height
         || rate_d == 0
         || u128::from(rate_n) * u128::from(fd) != u128::from(rate_d) * u128::from(fn_)
-        || a["codec_name"] != "pcm_s24le"
+        || a["codec_name"] != audio_codec
+        || (contract.master_encoding.is_some()
+            && (a["sample_fmt"] != "s32" || a["bits_per_raw_sample"] != "24"))
         || a["channels"] != 2
         || a["sample_rate"].as_str() != Some(&sr.to_string())
     {
-        bail!("master must match scene FFV1/yuv444p and stereo PCM24 format");
+        bail!("master must match declared episode encoding, yuv444p and stereo PCM24 content");
     }
     let mut expected_layers = BTreeSet::new();
     let mut video_lengths = Vec::new();
@@ -696,7 +714,7 @@ pub fn check(contract_path: &Path, root: &Path) -> Result<Report> {
             .context("stale or unmatched boundary decision")?;
         f.disposition = "documented-intentional-boundary".into();
     }
-    Ok(Report {schema:"reel.episode-delivery-check.v0.1".into(),contract_sha256:crate::sha256_file(contract_path)?,master_sha256:contract.master.sha256,content_verified:true,passed:findings.iter().all(|f|f.disposition!="needs-review"),scenes:consumptions,boundary_findings:findings,layers:contract.layers,limitations:vec!["Exact decoded scene picture/mix inclusion; no creative or release approval.".into(),"External-layer evidence binds declared precompositions, not semantic VFX correctness or separate delivery tracks. Run their existing validators.".into(),"Boundary thresholds are review heuristics; equal-level ambience changes and all perceptual defects cannot be detected automatically.".into()]})
+    Ok(Report {schema:"reel.episode-delivery-check.v0.1".into(),contract_sha256:crate::sha256_file(contract_path)?,master_sha256:contract.master.sha256,master_encoding:contract.master_encoding,content_verified:true,passed:findings.iter().all(|f|f.disposition!="needs-review"),scenes:consumptions,boundary_findings:findings,layers:contract.layers,limitations:vec!["Exact decoded scene picture/mix inclusion; no creative or release approval.".into(),"External-layer evidence binds declared precompositions, not semantic VFX correctness or separate delivery tracks. Run their existing validators.".into(),"Boundary thresholds are review heuristics; equal-level ambience changes and all perceptual defects cannot be detected automatically.".into()]})
 }
 
 #[cfg(test)]
@@ -708,5 +726,18 @@ mod tests {
         assert_eq!(f.len(), 4);
         assert!(f.iter().all(|f| f.disposition == "needs-review"));
         assert!(boundary_findings("a", "b", 0.0, 0.0, 0.0, false).is_empty());
+    }
+
+    #[test]
+    fn unsupported_master_encoding_rejects_and_omission_stays_absent() {
+        let source = serde_json::json!({"schema":"reel.episode-delivery.v0.1","id":"test",
+            "scenes":[],"master":{"path":"master.mkv","sha256":"a".repeat(64),"bytes":1},
+            "layers":[],"boundary_decisions":[]});
+        let legacy: Contract = serde_json::from_value(source.clone()).unwrap();
+        assert!(legacy.master_encoding.is_none());
+        assert_eq!(serde_json::to_value(legacy).unwrap(), source);
+        let mut unknown = source;
+        unknown["master_encoding"] = serde_json::json!("h264-lossy");
+        assert!(serde_json::from_value::<Contract>(unknown).is_err());
     }
 }
