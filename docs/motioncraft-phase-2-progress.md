@@ -64,6 +64,14 @@ throughout the path; preserve audio and approved image pixels; expose intended
 geometry rather than inferred face targeting; retain legacy rollback. Actual
 principal approvals and creative choice remain separate.
 
-Pending: completed cross-platform CI for new focal/pan code, CAIMITOS
-pin/adoption and cache hydration verification, P2.4 layer validation and P2.5
-complete episode qualification. Do not declare Phase 2 complete from engine tests.
+## P2.4 and actual consumer checkpoint — 2026-10-06
+
+Layer validation now proves source contribution through every later composite stage, checks per-frame visibility and active-span timing, and prevents hidden motion from borrowing a pass from visible static content. Real-media tests cover freeze/hold classification, partial alpha, complete occlusion, transparent regions, contradictory composition and outside-span contribution. Inconclusive intervals retain a null result.
+
+The actual CAIMITOS consumer exposed a lost final overlay frame and a JSON feature-combination parsing failure. REEL b674148 corrected native frame time bases and uses the native JSON/YAML job reader consistently. Windows, Linux and FFmpeg CI all passed at that engine revision (run 37425306578).
+
+CAIMITOS pins b674148. Its freshly hydrated 84-file layer handoff reproduces the producer report exactly; its freshly hydrated 272-file comparison passes the actual native consumer checker with all three cadence results and exact stems. Retained consumer reports identify historical producers without retagging them. Current adapter test targets, format and all-target Clippy pass.
+
+Episode 1 intake: all 25 scenes in both languages compiled from isolated hash-bound metadata and passed native cache preflight. This is not episode qualification: none of these intake jobs has captions, and soundtrack/presentation parity still requires reconciliation against the selected full packages. One historical Scene 004 English matrix root pin is stale; the current revision is recorded explicitly. The selected Spanish Scene 004 clock differs by 215040 samples, matching the existing native-clock correction rather than an invented retime.
+
+Remaining: exact full-episode freeze, protected focal consumer/rollback evidence, caption and presentation bindings, supported profile/layer dispositions, all 12 delivery combinations and contextual review, formal cache authority receipts, reviewed PR integration and main shipping. Do not declare Phase 2 complete from engine tests or intake planning.
