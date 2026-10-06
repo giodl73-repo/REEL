@@ -42,3 +42,16 @@ All major planning findings have an owner and an explicit acceptance gate. The p
 | P2-R12 Animation Director / Editor | Major: animated captions can disguise a frozen effect; partial occlusion can hide the only moving pixels. | Test each selected layer independently against native composition and surviving visibility. Fully hidden evidence remains inconclusive; a visible frozen effect fails even when captions move. Preserve existing tolerances and require exact-pin native Windows/Linux and CAIMITOS consumer evidence before shipping. |
 
 This addition refines P2.4; it does not certify the pending analyzer implementation or close complete-episode qualification.
+
+## Current remaining-plan review
+
+The assistant reread the six applicable `.roles` checklists and reviewed the current execution checkpoint. Earlier pending-implementation language is historical; current ASS evidence is recorded in the progress log. This remains checklist analysis, not independent-agent review or human approval.
+
+| ID / role | Finding | Incorporated disposition |
+|---|---|---|
+| P2-R13 Animation Director / Rights and Provenance | Major: changing intermediate encoding can preserve appearance in a sample while altering other stages or losing exact provenance. | Qualify single ASS, mixed layers and post-camera output by every decoded YUV/RGB frame and exact stems; preserve defaults, source/font identity and rollback. Require actual consumer and exact-pin CI before shipping. |
+| P2-R14 Platform and Audience / Sound Designer | Major: smaller files do not resolve poem readability or the remaining measured caption failures. | Keep phone-state review and the 13 ordinary-caption dispositions as separate acceptance gates; preserve reading clocks, wording and soundtrack. |
+| P2-R15 Story Director / Editor | Major: completed component proofs can conceal missing episode context, bookends or repetitive camera choices. | Freeze complete E1 selections, then review every cut in all twelve complete variants, including opening, poems and ending. Retain motivated holds and rejected alternatives. |
+| P2-R16 Rights and Provenance | Major: a current engine test pass can be misrepresented as consumer qualification, creative approval or release. | Bind exact adapter/engine/tool revisions and formal cache receipts; require reviewed main integration and separate creative authority. |
+
+All four findings are incorporated in the ordered checkpoint with owners and concrete gates. The plan is ready to execute; full episode qualification and shipping remain open.

@@ -424,6 +424,7 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
         serde_json::json!({"profile":"youtube-review","layout":"reserve-caption-band"});
     reserved_profile["picture_region"] =
         serde_json::json!({"x":20,"y":30,"width":800,"height":480});
+    reserved_profile["composition_encoding"] = serde_json::json!("h264-lossless");
     write_json(&profile_path, &reserved_profile);
     compile.output_dir = "compiled-caption-reservation".into();
     reel::scene_delivery_compile::compile_to_dir(root, &compile).unwrap();
@@ -440,8 +441,21 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
     );
     assert_eq!(reserved_job.picture_region.as_ref().unwrap().x, 20);
     assert_eq!(reserved_job.picture_region.as_ref().unwrap().width, 800);
+    assert_eq!(
+        reserved_job.composition_encoding.as_deref(),
+        Some("h264-lossless")
+    );
     assert_eq!(reserved_plan.duration_samples, 48000);
     assert_eq!(reserved_plan.frame_count, 24);
+    reserved_profile["composition_encoding"] = serde_json::json!("h264-lossy");
+    write_json(&profile_path, &reserved_profile);
+    compile.output_dir = "compiled-invalid-composition-encoding".into();
+    assert!(reel::scene_delivery_compile::compile_to_dir(root, &compile).is_err());
+    assert!(
+        !root
+            .join("compiled-invalid-composition-encoding/job.json")
+            .exists()
+    );
     assert_eq!(
         serde_json::to_value(&reserved_job.pictures[0].motion).unwrap(),
         compiled_job["pictures"][0]["motion"]

@@ -3,6 +3,49 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path, process::Command};
 
+fn assert_lossless_composition_matches(before: &Path, after: &Path, pictures: &[&str]) {
+    for name in pictures {
+        for format in ["yuv444p", "rgb24"] {
+            let decode = |folder: &Path| {
+                let output = Command::new("ffmpeg")
+                    .args(["-v", "error", "-nostdin", "-i"])
+                    .arg(folder.join(name))
+                    .args([
+                        "-map",
+                        "0:v:0",
+                        "-fps_mode",
+                        "passthrough",
+                        "-pix_fmt",
+                        format,
+                        "-f",
+                        "rawvideo",
+                        "-",
+                    ])
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                output.stdout
+            };
+            assert_eq!(
+                decode(before),
+                decode(after),
+                "decoded {format} differs for {name}"
+            );
+        }
+    }
+    for name in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
+        assert_eq!(
+            fs::read(before.join(name)).unwrap(),
+            fs::read(after.join(name)).unwrap(),
+            "stem differs: {name}"
+        );
+    }
+}
+
 #[test]
 #[ignore = "requires native FFmpeg; focal and pan camera execution"]
 fn focal_and_pan_camera_render_real_pixels_and_preserve_native_audio() {
@@ -969,6 +1012,13 @@ fn selected_ass_layer_changes_rendered_pixels_and_is_checked() {
         assert!(visible_text > 20, "selected title missing at frame {index}");
     }
     scene_delivery::check(&root.join("job.json"), root, &output).unwrap();
+    let mut compact_job = job.clone();
+    compact_job["composition_encoding"] = json!("h264-lossless");
+    write_json(&root.join("compact-ass.json"), &compact_job);
+    let compact = root.join("compact-ass");
+    scene_delivery::render(&root.join("compact-ass.json"), root, &compact).unwrap();
+    scene_delivery::check(&root.join("compact-ass.json"), root, &compact).unwrap();
+    assert_lossless_composition_matches(&output, &compact, &["picture.mkv", "master.mkv"]);
     fs::write(output.join("presentation.ass"), b"tampered").unwrap();
     assert!(scene_delivery::check(&root.join("job.json"), root, &output).is_err());
 }
@@ -1409,6 +1459,17 @@ fn timed_effect_and_final_ass_preserve_text_timing_and_audio() {
         );
     }
     scene_delivery::check(&root.join("mixed.json"), root, &output).unwrap();
+    let mut compact_job = job.clone();
+    compact_job["composition_encoding"] = json!("h264-lossless");
+    write_json(&root.join("compact-mixed.json"), &compact_job);
+    let compact = root.join("compact-mixed");
+    scene_delivery::render(&root.join("compact-mixed.json"), root, &compact).unwrap();
+    scene_delivery::check(&root.join("compact-mixed.json"), root, &compact).unwrap();
+    assert_lossless_composition_matches(
+        &output,
+        &compact,
+        &["layered-picture-000.mkv", "picture.mkv", "master.mkv"],
+    );
     let mut reversed = job.clone();
     reversed["external_layers"]
         .as_array_mut()
@@ -1475,6 +1536,29 @@ fn plan_uses_compiled_samples_and_one_global_frame_partition() {
     assert_eq!(p.pictures[0].end_sample, 48001);
     assert_eq!(p.pictures[0].end_frame, p.pictures[1].start_frame);
     assert_eq!(p.audio[2].start_sample, 123);
+}
+#[test]
+fn unknown_composition_encoding_rejects_before_output() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let mut job = fixture(root);
+    let (legacy, _) = scene_delivery::plan(&root.join("job.json"), root).unwrap();
+    assert!(
+        serde_json::to_value(legacy)
+            .unwrap()
+            .get("composition_encoding")
+            .is_none()
+    );
+    job["composition_encoding"] = json!("h264-lossy");
+    write_json(&root.join("job.json"), &job);
+    let output = root.join("invalid-encoding");
+    assert!(
+        scene_delivery::render(&root.join("job.json"), root, &output)
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported composition encoding")
+    );
+    assert!(!output.exists());
 }
 #[test]
 fn recorded_picture_frame_counts_preserve_selected_cut_boundary() {
@@ -1596,6 +1680,17 @@ fn post_compose_camera_is_scoped_to_selected_frames_and_checked() {
     scene_delivery::render(&root.join("job.json"), root, &out).unwrap();
     scene_delivery::check(&root.join("job.json"), root, &out).unwrap();
     assert!(out.join("pre-camera-picture.mkv").exists());
+    let mut compact_job = job.clone();
+    compact_job["composition_encoding"] = json!("h264-lossless");
+    write_json(&root.join("compact-camera.json"), &compact_job);
+    let compact = root.join("compact-camera");
+    scene_delivery::render(&root.join("compact-camera.json"), root, &compact).unwrap();
+    scene_delivery::check(&root.join("compact-camera.json"), root, &compact).unwrap();
+    assert_lossless_composition_matches(
+        &out,
+        &compact,
+        &["pre-camera-picture.mkv", "picture.mkv", "master.mkv"],
+    );
     job["post_compose_camera"]["windows"][0]["end_frame"] = json!(49);
     write_json(&root.join("job.json"), &job);
     assert!(scene_delivery::plan(&root.join("job.json"), root).is_err());

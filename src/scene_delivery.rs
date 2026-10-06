@@ -36,6 +36,9 @@ pub struct Job {
     pub picture_region: Option<crate::caption_presentation::PixelRect>,
     #[serde(default)]
     pub still_sequence_encoding: Option<String>,
+    /// Optional temporal lossless encoding for overlay and post-camera stages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub composition_encoding: Option<String>,
     pub max_composition_samples: u64,
     pub pictures: Vec<Picture>,
     pub audio: Vec<Audio>,
@@ -318,6 +321,13 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
     let job: Job = serde_yaml::from_slice(&job_bytes)?;
     if job.schema != "reel.scene-delivery.v0.1" || !nonempty(&job.id) {
         bail!("invalid scene-delivery schema/id");
+    }
+    if job
+        .composition_encoding
+        .as_deref()
+        .is_some_and(|value| value != "h264-lossless")
+    {
+        bail!("unsupported composition encoding");
     }
     if job.width == 0
         || job.height == 0
@@ -897,6 +907,14 @@ fn copy_ass_layer(root: &Path, asset_root: &Path, layer: &ExternalLayer, name: &
     Ok(())
 }
 
+fn composition_encoder_args(encoding: Option<&str>) -> Vec<&'static str> {
+    if encoding == Some("h264-lossless") {
+        vec!["-c:v", "libx264", "-crf", "0", "-preset", "veryfast"]
+    } else {
+        vec!["-c:v", "ffv1"]
+    }
+}
+
 fn render_ass_overlay(
     root: &Path,
     fps: &str,
@@ -904,6 +922,7 @@ fn render_ass_overlay(
     input: &str,
     ass: &str,
     output_name: &str,
+    encoding: Option<&str>,
 ) -> Result<()> {
     let filter = if font_bound {
         format!("ass={ass}:fontsdir=fonts")
@@ -913,18 +932,9 @@ fn render_ass_overlay(
     let output = Command::new("ffmpeg")
         .current_dir(root)
         .args(["-hide_banner", "-v", "error", "-nostdin", "-n", "-i", input])
-        .args([
-            "-vf",
-            &filter,
-            "-an",
-            "-c:v",
-            "ffv1",
-            "-pix_fmt",
-            "yuv444p",
-            "-r",
-            fps,
-            output_name,
-        ])
+        .args(["-vf", &filter, "-an"])
+        .args(composition_encoder_args(encoding))
+        .args(["-pix_fmt", "yuv444p", "-r", fps, output_name])
         .output()?;
     if !output.status.success() {
         bail!(
@@ -942,6 +952,7 @@ fn render_timed_video_overlay(
     picture_input: &str,
     overlay_input: &str,
     picture_output: &str,
+    encoding: Option<&str>,
 ) -> Result<()> {
     let count = span.end_frame - span.start_frame;
     // Matroska timestamps may round native frame positions to milliseconds.
@@ -959,15 +970,8 @@ fn render_timed_video_overlay(
         .current_dir(root)
         .args(["-hide_banner", "-v", "error", "-nostdin", "-n"])
         .args(["-i", picture_input, "-i", overlay_input])
-        .args([
-            "-filter_complex",
-            &graph,
-            "-map",
-            "[v]",
-            "-an",
-            "-c:v",
-            "ffv1",
-        ])
+        .args(["-filter_complex", &graph, "-map", "[v]", "-an"])
+        .args(composition_encoder_args(encoding))
         .args([
             "-pix_fmt",
             "yuv444p",
@@ -985,7 +989,12 @@ fn render_timed_video_overlay(
     Ok(())
 }
 
-fn render_post_compose_camera(root: &Path, plan: &Plan, camera: &PostComposeCamera) -> Result<()> {
+fn render_post_compose_camera(
+    root: &Path,
+    plan: &Plan,
+    camera: &PostComposeCamera,
+    encoding: Option<&str>,
+) -> Result<()> {
     let before = root.join("pre-camera-picture.mkv");
     fs::rename(root.join("picture.mkv"), &before)?;
     let mut zoom = "1".to_string();
@@ -1020,7 +1029,7 @@ fn render_post_compose_camera(root: &Path, plan: &Plan, camera: &PostComposeCame
     let filter = format!(
         "zoompan=z='{zoom}':x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s={width}x{height}:fps={fps},format=yuv444p"
     );
-    ffmpeg(&[
+    let mut args = vec![
         "-i".into(),
         arg(&before),
         "-vf".into(),
@@ -1028,10 +1037,14 @@ fn render_post_compose_camera(root: &Path, plan: &Plan, camera: &PostComposeCame
         "-frames:v".into(),
         plan.frame_count.to_string(),
         "-an".into(),
-        "-c:v".into(),
-        "ffv1".into(),
-        arg(&root.join("picture.mkv")),
-    ])?;
+    ];
+    args.extend(
+        composition_encoder_args(encoding)
+            .into_iter()
+            .map(str::to_string),
+    );
+    args.push(arg(&root.join("picture.mkv")));
+    ffmpeg(&args)?;
     Ok(())
 }
 
@@ -1446,6 +1459,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                         &input,
                         &selected,
                         &output,
+                        job.composition_encoding.as_deref(),
                     )?;
                 }
                 ExternalLayerRenderMode::TimedVideoOverlay => {
@@ -1460,7 +1474,15 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                         bail!("timed overlay lacks frames for its selected span");
                     }
                     fs::copy(source, root.join(&selected))?;
-                    render_timed_video_overlay(root, &plan, span, &input, &selected, &output)?;
+                    render_timed_video_overlay(
+                        root,
+                        &plan,
+                        span,
+                        &input,
+                        &selected,
+                        &output,
+                        job.composition_encoding.as_deref(),
+                    )?;
                 }
                 ExternalLayerRenderMode::EvidenceOnly => unreachable!(),
             }
@@ -1476,6 +1498,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                     "clean-picture.mkv",
                     "presentation.ass",
                     "picture.mkv",
+                    job.composition_encoding.as_deref(),
                 )?;
             }
             ExternalLayerRenderMode::TimedVideoOverlay => {
@@ -1496,13 +1519,14 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                     "clean-picture.mkv",
                     "selected-overlay.mkv",
                     "picture.mkv",
+                    job.composition_encoding.as_deref(),
                 )?;
             }
             ExternalLayerRenderMode::EvidenceOnly => unreachable!(),
         }
     }
     if let Some(camera) = &job.post_compose_camera {
-        render_post_compose_camera(root, &plan, camera)?;
+        render_post_compose_camera(root, &plan, camera, job.composition_encoding.as_deref())?;
     }
     for bus in ["D", "M", "E"] {
         let mut inputs = Vec::new();
@@ -2079,6 +2103,8 @@ fn check_impl(
         let (rn, rd) = rate.split_once('/').context("invalid video frame rate")?;
         let (rn, rd) = (rn.parse::<u64>()?, rd.parse::<u64>()?);
         let codec = if name == "review.mp4"
+            || ((!overlays.is_empty() || job.post_compose_camera.is_some())
+                && job.composition_encoding.as_deref() == Some("h264-lossless"))
             || (overlays.is_empty()
                 && job.post_compose_camera.is_none()
                 && job.still_sequence_encoding.as_deref() == Some("h264-lossless"))

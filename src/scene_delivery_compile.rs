@@ -57,6 +57,8 @@ pub struct DeliveryProfile {
     pub motion_safe_area: Option<reel_assembly::motioncraft::Rect>,
     #[serde(default)]
     pub still_sequence_encoding: Option<String>,
+    #[serde(default)]
+    pub composition_encoding: Option<String>,
     pub sample_rate: u32,
     pub frame_rate_numerator: u64,
     pub frame_rate_denominator: u64,
@@ -443,6 +445,10 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
             .as_deref()
             .is_some_and(|value| value != "h264-lossless")
         || profile.width == 0
+        || profile
+            .composition_encoding
+            .as_deref()
+            .is_some_and(|value| value != "h264-lossless")
         || profile.height == 0
         || profile.sample_rate == 0
         || profile.frame_rate_numerator == 0
@@ -943,6 +949,9 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     }
     if let Some(region) = &profile.picture_region {
         job["picture_region"] = serde_json::to_value(region)?;
+    }
+    if let Some(encoding) = &profile.composition_encoding {
+        job["composition_encoding"] = json!(encoding);
     }
     let (job_sha, job_bytes) = write_new(&dir, "job.json", &job)?;
     let source_selected_graph_lock = graph.lock.clone();
