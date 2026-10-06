@@ -1276,6 +1276,118 @@ pub struct Receipt {
     pub publication: String,
 }
 
+/// Sound-only evidence shares the full scene's mixer and native plan. It makes
+/// no claim that pictures, captions, effects or complete episodes were rendered.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AudioReceipt {
+    pub schema: String,
+    pub tool_version: String,
+    pub ffmpeg_version: String,
+    pub plan: Plan,
+    pub outputs: BTreeMap<String, FileRef>,
+    pub content_samples: u64,
+    pub publication: String,
+}
+
+const AUDIO_OUTPUTS: [&str; 4] = ["D.wav", "M.wav", "E.wav", "mix.wav"];
+
+/// Render native D/M/E/mix for independent soundtrack qualification without
+/// producing scene pictures. All job/source bindings are still planned.
+pub fn render_audio(job_path: &Path, asset_root: &Path, output: &Path) -> Result<AudioReceipt> {
+    let (job, plan) = plan(job_path, asset_root)?;
+    if output.exists() {
+        bail!("audio output already exists; use a new directory");
+    }
+    let parent = output
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    fs::create_dir_all(parent)?;
+    let stage = tempfile::Builder::new()
+        .prefix(".scene-audio-")
+        .tempdir_in(parent)?;
+    let root = stage.path();
+    render_audio_stems(&job, &plan, asset_root, root)?;
+    let mut outputs = BTreeMap::new();
+    for name in AUDIO_OUTPUTS {
+        let path = root.join(name);
+        outputs.insert(
+            name.into(),
+            FileRef {
+                path: name.into(),
+                sha256: crate::sha256_file(&path)?,
+                bytes: fs::metadata(path)?.len(),
+            },
+        );
+    }
+    let version = Command::new("ffmpeg").arg("-version").output()?;
+    if !version.status.success() {
+        bail!("FFmpeg version inspection failed");
+    }
+    let receipt = AudioReceipt {
+        schema: "reel.scene-audio-receipt.v0.1".into(),
+        tool_version: env!("CARGO_PKG_VERSION").into(),
+        ffmpeg_version: String::from_utf8_lossy(&version.stdout)
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .into(),
+        content_samples: plan.duration_samples,
+        plan,
+        outputs,
+        publication: "not-authorized-by-tool".into(),
+    };
+    fs::write(
+        root.join("audio-receipt.json"),
+        serde_json::to_vec_pretty(&receipt)?,
+    )?;
+    let verified = check_audio(job_path, asset_root, root)?;
+    fs::rename(root, output)?;
+    Ok(verified)
+}
+
+/// Verify an audio-only receipt, its exact job/plan and four decoded PCM clocks.
+/// This receipt cannot be consumed as a complete scene-delivery receipt.
+pub fn check_audio(job_path: &Path, asset_root: &Path, output: &Path) -> Result<AudioReceipt> {
+    let (_, plan) = plan(job_path, asset_root)?;
+    let receipt: AudioReceipt =
+        serde_json::from_slice(&fs::read(output.join("audio-receipt.json"))?)?;
+    if receipt.schema != "reel.scene-audio-receipt.v0.1"
+        || serde_json::to_value(&receipt.plan)? != serde_json::to_value(&plan)?
+        || receipt.content_samples != plan.duration_samples
+        || receipt.publication != "not-authorized-by-tool"
+        || receipt
+            .outputs
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>()
+            != AUDIO_OUTPUTS.into_iter().collect()
+    {
+        bail!("audio receipt does not match current compiled scene");
+    }
+    for name in AUDIO_OUTPUTS {
+        let item = &receipt.outputs[name];
+        if item.path != Path::new(name) {
+            bail!("audio output name mismatch");
+        }
+        let path = checked_file(output, item)?;
+        let info = probe(&path)?;
+        let audio = info["streams"]
+            .as_array()
+            .and_then(|xs| xs.iter().find(|s| s["codec_type"] == "audio"))
+            .context("delivery audio stream missing")?;
+        if audio["codec_name"] != "pcm_s24le"
+            || audio["sample_rate"].as_str() != Some(&plan.sample_rate.to_string())
+            || audio["channels"].as_u64() != Some(2)
+            || pcm_samples(&path, plan.sample_rate)? != plan.duration_samples
+        {
+            bail!("audio PCM format or decoded sample count mismatch: {name}");
+        }
+    }
+    Ok(receipt)
+}
+
 pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receipt> {
     let (job, plan) = plan(job_path, asset_root)?;
     if job
@@ -1542,125 +1654,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
     if let Some(camera) = &job.post_compose_camera {
         render_post_compose_camera(root, &plan, camera, job.composition_encoding.as_deref())?;
     }
-    for bus in ["D", "M", "E"] {
-        let mut inputs = Vec::new();
-        let mut filters = Vec::new();
-        let mut labels = String::new();
-        let mut count = 0;
-        for (event, s) in job
-            .audio
-            .iter()
-            .zip(&plan.audio)
-            .filter(|(a, _)| a.bus == bus)
-        {
-            let path = checked_file(asset_root, &event.source)?;
-            let info = probe(&path)?;
-            let streams = info["streams"]
-                .as_array()
-                .context("audio streams missing")?;
-            let aud = streams
-                .iter()
-                .find(|s| s["codec_type"] == "audio")
-                .context("audio stream missing")?;
-            if aud["sample_rate"].as_str() != Some(&plan.sample_rate.to_string()) {
-                bail!("audio must be preconformed to the scene sample rate");
-            }
-            let samples = pcm_samples(&path, plan.sample_rate)?;
-            let n = s.end_sample - s.start_sample;
-            if event
-                .source_start_sample
-                .checked_add(n)
-                .is_none_or(|end| end > samples)
-                || (bus == "D" && event.source_start_sample == 0 && samples != n)
-            {
-                bail!("native audio duration mismatch or insufficient source samples");
-            }
-            inputs.extend(["-i".into(), arg(&path)]);
-            let mapping = match event.channel_mapping {
-                None => "aformat=sample_fmts=fltp:channel_layouts=stereo",
-                Some(AudioChannelMapping::DuplicateMono) => {
-                    if aud["channels"].as_u64() != Some(1) {
-                        bail!("duplicate-mono channel mapping requires a mono source");
-                    }
-                    "pan=stereo|c0=c0|c1=c0,aformat=sample_fmts=fltp:channel_layouts=stereo"
-                }
-            };
-            let mut f = format!(
-                "[{count}:a]{mapping},atrim=start_sample={}:end_sample={},asetpts=PTS-STARTPTS,volume={}dB",
-                event.source_start_sample,
-                event.source_start_sample + n,
-                event.gain_db
-            );
-            if event.fade_in_samples > 0 {
-                f.push_str(&format!(",afade=t=in:ss=0:ns={}", event.fade_in_samples));
-            }
-            if event.fade_out_samples > 0 {
-                f.push_str(&format!(
-                    ",afade=t=out:ss={}:ns={}",
-                    n - event.fade_out_samples,
-                    event.fade_out_samples
-                ));
-            }
-            f.push_str(&format!(
-                ",adelay={}S:all=1,apad=whole_len={},atrim=end_sample={}[a{count}]",
-                s.start_sample, plan.duration_samples, plan.duration_samples
-            ));
-            filters.push(f);
-            labels.push_str(&format!("[a{count}]"));
-            count += 1;
-        }
-        if count == 0 {
-            inputs.extend([
-                "-f".into(),
-                "lavfi".into(),
-                "-i".into(),
-                format!("anullsrc=r={}:cl=stereo", plan.sample_rate),
-            ]);
-            filters.push(format!(
-                "[0:a]atrim=end_sample={}[out]",
-                plan.duration_samples
-            ));
-        } else {
-            filters.push(format!(
-                "{labels}amix=inputs={count}:normalize=0:duration=longest,atrim=end_sample={}[out]",
-                plan.duration_samples
-            ));
-        }
-        inputs.extend([
-            "-filter_complex".into(),
-            filters.join(";"),
-            "-map".into(),
-            "[out]".into(),
-            "-ar".into(),
-            plan.sample_rate.to_string(),
-            "-c:a".into(),
-            "pcm_f32le".into(),
-            arg(&root.join(format!("{bus}-float.wav"))),
-        ]);
-        ffmpeg(&inputs)?;
-        finish_pcm(
-            &root.join(format!("{bus}-float.wav")),
-            &root.join(format!("{bus}.wav")),
-        )?;
-    }
-    let mut mix = Vec::new();
-    for bus in ["D", "M", "E"] {
-        mix.extend(["-i".into(), arg(&root.join(format!("{bus}.wav")))]);
-    }
-    mix.extend([
-        "-filter_complex".into(),
-        format!(
-            "[0:a][1:a][2:a]amix=inputs=3:normalize=0,atrim=end_sample={}[a]",
-            plan.duration_samples
-        ),
-        "-map".into(),
-        "[a]".into(),
-        "-c:a".into(),
-        "pcm_f32le".into(),
-        arg(&root.join("mix-float.wav")),
-    ]);
-    ffmpeg(&mix)?;
-    finish_pcm(&root.join("mix-float.wav"), &root.join("mix.wav"))?;
+    render_audio_stems(&job, &plan, asset_root, root)?;
     ffmpeg(&[
         "-i".into(),
         arg(&root.join("picture.mkv")),
@@ -1785,6 +1779,129 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
     // No result directory is published until all streams and hashes recheck.
     fs::rename(root, output)?;
     Ok(verified)
+}
+
+fn render_audio_stems(job: &Job, plan: &Plan, asset_root: &Path, root: &Path) -> Result<()> {
+    for bus in ["D", "M", "E"] {
+        let mut inputs = Vec::new();
+        let mut filters = Vec::new();
+        let mut labels = String::new();
+        let mut count = 0;
+        for (event, s) in job
+            .audio
+            .iter()
+            .zip(&plan.audio)
+            .filter(|(a, _)| a.bus == bus)
+        {
+            let path = checked_file(asset_root, &event.source)?;
+            let info = probe(&path)?;
+            let streams = info["streams"]
+                .as_array()
+                .context("audio streams missing")?;
+            let aud = streams
+                .iter()
+                .find(|s| s["codec_type"] == "audio")
+                .context("audio stream missing")?;
+            if aud["sample_rate"].as_str() != Some(&plan.sample_rate.to_string()) {
+                bail!("audio must be preconformed to the scene sample rate");
+            }
+            let samples = pcm_samples(&path, plan.sample_rate)?;
+            let n = s.end_sample - s.start_sample;
+            if event
+                .source_start_sample
+                .checked_add(n)
+                .is_none_or(|end| end > samples)
+                || (bus == "D" && event.source_start_sample == 0 && samples != n)
+            {
+                bail!("native audio duration mismatch or insufficient source samples");
+            }
+            inputs.extend(["-i".into(), arg(&path)]);
+            let mapping = match event.channel_mapping {
+                None => "aformat=sample_fmts=fltp:channel_layouts=stereo",
+                Some(AudioChannelMapping::DuplicateMono) => {
+                    if aud["channels"].as_u64() != Some(1) {
+                        bail!("duplicate-mono channel mapping requires a mono source");
+                    }
+                    "pan=stereo|c0=c0|c1=c0,aformat=sample_fmts=fltp:channel_layouts=stereo"
+                }
+            };
+            let mut f = format!(
+                "[{count}:a]{mapping},atrim=start_sample={}:end_sample={},asetpts=PTS-STARTPTS,volume={}dB",
+                event.source_start_sample,
+                event.source_start_sample + n,
+                event.gain_db
+            );
+            if event.fade_in_samples > 0 {
+                f.push_str(&format!(",afade=t=in:ss=0:ns={}", event.fade_in_samples));
+            }
+            if event.fade_out_samples > 0 {
+                f.push_str(&format!(
+                    ",afade=t=out:ss={}:ns={}",
+                    n - event.fade_out_samples,
+                    event.fade_out_samples
+                ));
+            }
+            f.push_str(&format!(
+                ",adelay={}S:all=1,apad=whole_len={},atrim=end_sample={}[a{count}]",
+                s.start_sample, plan.duration_samples, plan.duration_samples
+            ));
+            filters.push(f);
+            labels.push_str(&format!("[a{count}]"));
+            count += 1;
+        }
+        if count == 0 {
+            inputs.extend([
+                "-f".into(),
+                "lavfi".into(),
+                "-i".into(),
+                format!("anullsrc=r={}:cl=stereo", plan.sample_rate),
+            ]);
+            filters.push(format!(
+                "[0:a]atrim=end_sample={}[out]",
+                plan.duration_samples
+            ));
+        } else {
+            filters.push(format!(
+                "{labels}amix=inputs={count}:normalize=0:duration=longest,atrim=end_sample={}[out]",
+                plan.duration_samples
+            ));
+        }
+        inputs.extend([
+            "-filter_complex".into(),
+            filters.join(";"),
+            "-map".into(),
+            "[out]".into(),
+            "-ar".into(),
+            plan.sample_rate.to_string(),
+            "-c:a".into(),
+            "pcm_f32le".into(),
+            arg(&root.join(format!("{bus}-float.wav"))),
+        ]);
+        ffmpeg(&inputs)?;
+        finish_pcm(
+            &root.join(format!("{bus}-float.wav")),
+            &root.join(format!("{bus}.wav")),
+        )?;
+    }
+    let mut mix = Vec::new();
+    for bus in ["D", "M", "E"] {
+        mix.extend(["-i".into(), arg(&root.join(format!("{bus}.wav")))]);
+    }
+    mix.extend([
+        "-filter_complex".into(),
+        format!(
+            "[0:a][1:a][2:a]amix=inputs=3:normalize=0,atrim=end_sample={}[a]",
+            plan.duration_samples
+        ),
+        "-map".into(),
+        "[a]".into(),
+        "-c:a".into(),
+        "pcm_f32le".into(),
+        arg(&root.join("mix-float.wav")),
+    ]);
+    ffmpeg(&mix)?;
+    finish_pcm(&root.join("mix-float.wav"), &root.join("mix.wav"))?;
+    Ok(())
 }
 
 pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receipt> {

@@ -436,6 +436,18 @@ fn duplicate_mono_preserves_source_level_and_rejects_stereo() {
     }
     write_json(&root.join("duplicate.json"), &job);
     scene_delivery::render(&root.join("duplicate.json"), root, &root.join("duplicate")).unwrap();
+    scene_delivery::render_audio(
+        &root.join("duplicate.json"),
+        root,
+        &root.join("duplicate-audio"),
+    )
+    .unwrap();
+    for name in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
+        assert_eq!(
+            fs::read(root.join("duplicate").join(name)).unwrap(),
+            fs::read(root.join("duplicate-audio").join(name)).unwrap()
+        );
+    }
     let samples = |folder: &str| {
         let output = Command::new("ffmpeg")
             .args(["-v", "error", "-i"])
@@ -477,6 +489,69 @@ fn duplicate_mono_preserves_source_level_and_rejects_stereo() {
     write_json(&root.join("unknown.json"), &job);
     assert!(scene_delivery::plan(&root.join("unknown.json"), root).is_err());
 }
+#[test]
+#[ignore = "requires native FFmpeg; independent audio qualification"]
+fn audio_only_matches_full_scene_and_rejects_tamper_stale_job_and_overwrite() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let mut job = fixture(root);
+    wav(&root.join("a.wav"), 48001, 900000);
+    wav(&root.join("b.wav"), 47999, -700000);
+    wav(&root.join("effect.wav"), 32, 2000000);
+    for (index, name) in [(0, "a.wav"), (1, "b.wav"), (2, "effect.wav")] {
+        job["audio"][index]["source"] = file(root, name);
+    }
+    job["audio"][0]["gain_db"] = json!(-1.25);
+    job["audio"][0]["fade_in_samples"] = json!(128);
+    job["audio"][0]["fade_out_samples"] = json!(256);
+    job["audio"][2]["source_start_sample"] = json!(4);
+    job["audio"][2]["fade_out_samples"] = json!(4);
+    let mut production: Value =
+        serde_json::from_slice(&fs::read(root.join("production.json")).unwrap()).unwrap();
+    production["audio_events"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id":"m","role":"music","source":"a.wav","start_seconds":0}));
+    write_json(&root.join("production.json"), &production);
+    let mut contract: Value =
+        serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
+    contract["attachments"].as_array_mut().unwrap().push(json!({"id":"m","target":{"kind":"audio","audio_event_id":"m"},"start":{"kind":"cue-start","cue_id":"a"},"end":{"kind":"cue-end","cue_id":"a"}}));
+    write_json(&root.join("contract.json"), &contract);
+    job["production_manifest_sha256"] = file(root, "production.json")["sha256"].clone();
+    job["contract"] = file(root, "contract.json");
+    job["buses"]["M"] = json!({"state":"present","reason":"Bounded selected music window"});
+    job["audio"].as_array_mut().unwrap().push(json!({"attachment_id":"m","bus":"M","source":file(root,"a.wav"),"gain_db":-18,"fade_in_samples":64,"fade_out_samples":128}));
+    let path = root.join("job.json");
+    write_json(&path, &job);
+    scene_delivery::render(&path, root, &root.join("full")).unwrap();
+    let receipt = scene_delivery::render_audio(&path, root, &root.join("audio")).unwrap();
+    assert_eq!(receipt.content_samples, 96000);
+    assert_eq!(receipt.outputs.len(), 4);
+    assert_eq!(receipt.schema, "reel.scene-audio-receipt.v0.1");
+    assert!(!root.join("audio/picture.mkv").exists());
+    assert!(!root.join("audio/receipt.json").exists());
+    assert!(scene_delivery::check(&path, root, &root.join("audio")).is_err());
+    for name in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
+        assert_eq!(
+            fs::read(root.join("full").join(name)).unwrap(),
+            fs::read(root.join("audio").join(name)).unwrap()
+        );
+    }
+    scene_delivery::check_audio(&path, root, &root.join("audio")).unwrap();
+    assert!(scene_delivery::render_audio(&path, root, &root.join("audio")).is_err());
+    let original = fs::read(root.join("audio/D.wav")).unwrap();
+    fs::write(root.join("audio/D.wav"), b"tampered").unwrap();
+    assert!(scene_delivery::check_audio(&path, root, &root.join("audio")).is_err());
+    fs::write(root.join("audio/D.wav"), original).unwrap();
+    job["audio"][0]["gain_db"] = json!(-2);
+    write_json(&path, &job);
+    assert!(scene_delivery::check_audio(&path, root, &root.join("audio")).is_err());
+    job["audio"][0]["channel_mapping"] = json!("duplicate-mono");
+    write_json(&path, &job);
+    assert!(scene_delivery::render_audio(&path, root, &root.join("rejected")).is_err());
+    assert!(!root.join("rejected").exists());
+}
+
 fn wav(path: &Path, samples: u32, signal: i32) {
     let size = samples * 6;
     let mut b = Vec::new();
