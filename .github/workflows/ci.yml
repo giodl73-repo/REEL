@@ -45,6 +45,8 @@ jobs:
         run: cargo test --lib motioncraft_layers::tests::hidden_motion_cannot_borrow_visibility_from_a_static_region -- --ignored --exact
       - name: Verify ASS temporal response, occlusion and independent effect motion
         run: cargo test --lib motioncraft_layers::tests::ass_response_proves_visible_motion_and_rejects_hidden_or_wrong_composition -- --ignored --exact
+      - name: Verify ASS reading states retain rational native timestamps
+        run: cargo test --lib motioncraft_layers::tests::ass_state_holds_keep_native_timestamps_after_interval_trim -- --ignored --exact
       - name: Verify native focal camera and pan execution
         run: cargo test --test scene_delivery focal_and_pan_camera_render_real_pixels_and_preserve_native_audio -- --ignored --exact
       - name: Verify phased camera cadence and reduced motion on both platforms

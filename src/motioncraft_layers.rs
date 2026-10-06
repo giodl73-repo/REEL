@@ -1006,6 +1006,100 @@ mod tests {
         let caption =
             measure(&exe, root, (64, 64), 1, &spans, &interval, Some((1, false))).unwrap();
         assert_eq!(caption["passed"], true, "{caption}");
+        // The legacy single-presentation filenames must use the same response
+        // model without requiring an indexed mixed-stack intermediate.
+        fs::copy(
+            root.join("clean-picture.mkv"),
+            root.join("layered-picture-000.mkv"),
+        )
+        .unwrap();
+        render_ass("m 0 48 l 66 48 66 66 0 66");
+        fs::rename(
+            root.join("presentation-001.ass"),
+            root.join("presentation.ass"),
+        )
+        .unwrap();
+        interval.kind = Kind::Hold;
+        interval.region.y = 0.75;
+        interval.region.height = 0.25;
+        let single = measure(
+            &exe,
+            root,
+            (64, 64),
+            0,
+            &spans[1..],
+            &interval,
+            Some((0, false)),
+        )
+        .unwrap();
+        assert_eq!(single["passed"], true, "{single}");
+    }
+    #[test]
+    #[ignore = "requires native FFmpeg; ASS state changes on a rational frame clock"]
+    fn ass_state_holds_keep_native_timestamps_after_interval_trim() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path();
+        let exe = motioncraft_cadence::resolve_analyzer().unwrap();
+        ffmpeg(
+            &exe,
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:s=64x64:r=24000/1001:d=1",
+                "-c:v",
+                "ffv1",
+                "-pix_fmt",
+                "yuv444p",
+            ],
+            &root.join("clean-picture.mkv"),
+        );
+        fs::write(root.join("presentation.ass"), "[Script Info]\nScriptType: v4.00+\nPlayResX: 64\nPlayResY: 64\n[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\nStyle: Text,Arial,12,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\nDialogue: 0,0:00:00.00,0:00:00.50,Text,,0,0,0,,{\\an7\\pos(0,0)\\bord0\\p1}m 0 0 l 32 0 32 64 0 64\nDialogue: 0,0:00:00.50,0:00:01.01,Text,,0,0,0,,{\\an7\\pos(0,0)\\bord0\\p1}m 32 0 l 64 0 64 64 32 64\n").unwrap();
+        assert!(
+            Command::new(&exe)
+                .current_dir(root)
+                .args([
+                    "-v",
+                    "error",
+                    "-nostdin",
+                    "-i",
+                    "clean-picture.mkv",
+                    "-vf",
+                    "ass=presentation.ass",
+                    "-c:v",
+                    "ffv1",
+                    "-pix_fmt",
+                    "yuv444p",
+                    "-n",
+                    "picture.mkv"
+                ])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let spans = [Span {
+            attachment_id: "states".into(),
+            start_sample: 0,
+            end_sample: 48048,
+            start_frame: 0,
+            end_frame: 24,
+        }];
+        for (start, end) in [(0, 12), (12, 24)] {
+            let interval = Interval {
+                start_frame: start,
+                end_frame: end,
+                kind: Kind::Hold,
+                region: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 1.0,
+                    height: 1.0,
+                },
+            };
+            let report =
+                measure(&exe, root, (64, 64), 0, &spans, &interval, Some((0, false))).unwrap();
+            assert_eq!(report["passed"], true, "{report}");
+        }
     }
     #[test]
     #[ignore = "requires the retained CAIMITOS mixed consumer closure and native FFmpeg"]
