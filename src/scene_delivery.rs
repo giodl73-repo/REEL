@@ -49,6 +49,25 @@ pub struct PostComposeCamera {
     pub zoom_step: f64,
     pub zoom_max: f64,
     pub windows: Vec<CameraWindow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translation: Option<CameraTranslation>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CameraTranslation {
+    pub amplitude_x_pixels: f64,
+    pub amplitude_y_pixels: f64,
+    pub period_frames: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PictureTransformRecipe {
+    pub schema: String,
+    pub zoom_step: f64,
+    pub zoom_max: f64,
+    pub translation: CameraTranslation,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -93,6 +112,7 @@ pub enum ExternalLayerRenderMode {
     EvidenceOnly,
     AssOverlay,
     TimedVideoOverlay,
+    TimedPictureTransform,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -291,7 +311,7 @@ fn nonempty(s: &str) -> bool {
 }
 
 pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
-    let job: Job = serde_yaml::from_slice(&fs::read(job_path)?)?;
+    let mut job: Job = serde_yaml::from_slice(&fs::read(job_path)?)?;
     if job.schema != "reel.scene-delivery.v0.1" || !nonempty(&job.id) {
         bail!("invalid scene-delivery schema/id");
     }
@@ -616,6 +636,25 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                 }
                 rendered_external_layers.push(layer.attachment_id.clone());
             }
+            ExternalLayerRenderMode::TimedPictureTransform => {
+                if !matches!(a.target, Target::Effect { .. } | Target::Overlay { .. })
+                    || layer.font.is_some()
+                    || layer.render_source.is_some()
+                    || layer.derivation_receipt.is_some()
+                {
+                    bail!(
+                        "picture transform requires one selected recipe and a semantic effect span"
+                    );
+                }
+                let recipe: PictureTransformRecipe =
+                    serde_json::from_slice(&fs::read(checked_file(asset_root, &layer.evidence)?)?)?;
+                if recipe.schema != "reel.timed-picture-transform.v1" {
+                    bail!("wrong picture transform recipe schema");
+                }
+                layer_span.start_frame = frame(a.start_sample, true)?;
+                layer_span.end_frame = frame(a.end_sample, true)?;
+                rendered_external_layers.push(layer.attachment_id.clone());
+            }
             ExternalLayerRenderMode::TimedVideoOverlay => {
                 if !matches!(a.target, Target::Effect { .. } | Target::Overlay { .. })
                     || layer.font.is_some()
@@ -697,6 +736,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
     if rendered_external_layers.len() > 1
         && job.external_layers.iter().any(|layer| {
             layer.render_mode != ExternalLayerRenderMode::EvidenceOnly
+                && layer.render_mode != ExternalLayerRenderMode::TimedPictureTransform
                 && layer.render_mode != ExternalLayerRenderMode::TimedVideoOverlay
         })
     {
@@ -732,6 +772,46 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         buses: job.buses.clone(),
         creative_authority: "not-granted; external layers are not certified as rendered".into(),
     };
+    let transforms = job
+        .external_layers
+        .iter()
+        .filter(|layer| layer.render_mode == ExternalLayerRenderMode::TimedPictureTransform)
+        .collect::<Vec<_>>();
+    if let Some(first) = transforms.first() {
+        if job.post_compose_camera.is_some()
+            || transforms
+                .iter()
+                .any(|layer| layer.evidence != first.evidence)
+        {
+            bail!(
+                "picture transforms require one recipe and cannot overlap a separately authored camera"
+            );
+        }
+        let recipe: PictureTransformRecipe =
+            serde_json::from_slice(&fs::read(checked_file(asset_root, &first.evidence)?)?)?;
+        let mut windows = transforms
+            .iter()
+            .map(|layer| {
+                let span = plan
+                    .external_layer_spans
+                    .iter()
+                    .find(|span| span.attachment_id == layer.attachment_id)
+                    .unwrap();
+                CameraWindow {
+                    start_frame: span.start_frame,
+                    end_frame: span.end_frame,
+                }
+            })
+            .collect::<Vec<_>>();
+        windows.sort_by_key(|window| window.start_frame);
+        job.post_compose_camera = Some(PostComposeCamera {
+            evidence: first.evidence.clone(),
+            zoom_step: recipe.zoom_step,
+            zoom_max: recipe.zoom_max,
+            windows,
+            translation: Some(recipe.translation),
+        });
+    }
     if let Some(camera) = &job.post_compose_camera {
         checked_file(asset_root, &camera.evidence)?;
         if !camera.zoom_step.is_finite()
@@ -742,6 +822,17 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
             || camera.windows.is_empty()
         {
             bail!("invalid post-composition camera");
+        }
+        if let Some(translation) = &camera.translation {
+            if !translation.amplitude_x_pixels.is_finite()
+                || !translation.amplitude_y_pixels.is_finite()
+                || !(0.0..=32.0).contains(&translation.amplitude_x_pixels)
+                || !(0.0..=32.0).contains(&translation.amplitude_y_pixels)
+                || !(2..=120).contains(&translation.period_frames)
+                || (translation.amplitude_x_pixels == 0.0 && translation.amplitude_y_pixels == 0.0)
+            {
+                bail!("invalid bounded camera translation");
+            }
         }
         let mut prior_end = 0;
         for window in &camera.windows {
@@ -896,6 +987,30 @@ fn render_post_compose_camera(root: &Path, plan: &Plan, camera: &PostComposeCame
             zoom
         );
     }
+    let mut offset_x = "0".to_string();
+    let mut offset_y = "0".to_string();
+    if let Some(translation) = &camera.translation {
+        for window in camera.windows.iter().rev() {
+            offset_x = format!(
+                "if(between(on,{},{}),{}*sin(2*PI*(on-{})/{}),{})",
+                window.start_frame,
+                window.end_frame - 1,
+                translation.amplitude_x_pixels,
+                window.start_frame,
+                translation.period_frames,
+                offset_x
+            );
+            offset_y = format!(
+                "if(between(on,{},{}),{}*sin(2*PI*(on-{})/{}+PI/2),{})",
+                window.start_frame,
+                window.end_frame - 1,
+                translation.amplitude_y_pixels,
+                window.start_frame,
+                translation.period_frames,
+                offset_y
+            );
+        }
+    }
     let fps = format!("{}/{}", plan.fps_numerator, plan.fps_denominator);
     // Geometry comes from the decoded composed picture, not a source still.
     let picture = probe(&before)?;
@@ -914,7 +1029,7 @@ fn render_post_compose_camera(root: &Path, plan: &Plan, camera: &PostComposeCame
         .as_u64()
         .context("composed picture height unavailable")?;
     let filter = format!(
-        "zoompan=z='{zoom}':x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s={width}x{height}:fps={fps},format=yuv444p"
+        "zoompan=z='{zoom}':x='max(0,min(iw-iw/zoom,iw/2-iw/zoom/2+{offset_x}))':y='max(0,min(ih-ih/zoom,ih/2-ih/zoom/2+{offset_y}))':d=1:s={width}x{height}:fps={fps},format=yuv444p"
     );
     ffmpeg(&[
         "-i".into(),
@@ -1170,7 +1285,12 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
     let overlays: Vec<_> = job
         .external_layers
         .iter()
-        .filter(|layer| layer.render_mode != ExternalLayerRenderMode::EvidenceOnly)
+        .filter(|layer| {
+            matches!(
+                layer.render_mode,
+                ExternalLayerRenderMode::AssOverlay | ExternalLayerRenderMode::TimedVideoOverlay
+            )
+        })
         .collect();
     let overlay = overlays.first().copied();
     let mut inputs = Vec::new();
@@ -1353,7 +1473,8 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                     "picture.mkv",
                 )?;
             }
-            ExternalLayerRenderMode::EvidenceOnly => unreachable!(),
+            ExternalLayerRenderMode::EvidenceOnly
+            | ExternalLayerRenderMode::TimedPictureTransform => unreachable!(),
         }
     }
     if let Some(camera) = &job.post_compose_camera {
@@ -1529,7 +1650,8 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
             match overlay.render_mode {
                 ExternalLayerRenderMode::AssOverlay => "presentation.ass",
                 ExternalLayerRenderMode::TimedVideoOverlay => "selected-overlay.mkv",
-                ExternalLayerRenderMode::EvidenceOnly => unreachable!(),
+                ExternalLayerRenderMode::EvidenceOnly
+                | ExternalLayerRenderMode::TimedPictureTransform => unreachable!(),
             }
             .into(),
         );
@@ -1638,7 +1760,12 @@ fn check_impl(
     let overlays: Vec<_> = job
         .external_layers
         .iter()
-        .filter(|layer| layer.render_mode != ExternalLayerRenderMode::EvidenceOnly)
+        .filter(|layer| {
+            matches!(
+                layer.render_mode,
+                ExternalLayerRenderMode::AssOverlay | ExternalLayerRenderMode::TimedVideoOverlay
+            )
+        })
         .collect();
     let overlay = overlays.first().copied();
     if overlays.len() > 1 {
@@ -1655,7 +1782,8 @@ fn check_impl(
             match overlay.render_mode {
                 ExternalLayerRenderMode::AssOverlay => "presentation.ass",
                 ExternalLayerRenderMode::TimedVideoOverlay => "selected-overlay.mkv",
-                ExternalLayerRenderMode::EvidenceOnly => unreachable!(),
+                ExternalLayerRenderMode::EvidenceOnly
+                | ExternalLayerRenderMode::TimedPictureTransform => unreachable!(),
             }
             .into(),
         );
@@ -1692,13 +1820,38 @@ fn check_impl(
         {
             bail!("post-composition camera changed scene frame count");
         }
-        let window = &camera.windows[0];
-        let active_frame = window.end_frame - 1;
-        if active_frame > window.start_frame
-            && rgb_frame_at_index(&before, &plan, active_frame)?
-                == rgb_frame_at_index(&after, &plan, active_frame)?
-        {
-            bail!("post-composition camera made no visible change");
+        for window in &camera.windows {
+            let length = window.end_frame - window.start_frame;
+            let mut visible = false;
+            for index in [
+                window.start_frame,
+                window.start_frame + length / 4,
+                window.start_frame + length / 2,
+                window.start_frame + length * 3 / 4,
+                window.end_frame - 1,
+            ] {
+                visible |= rgb_frame_at_index(&before, &plan, index)?
+                    != rgb_frame_at_index(&after, &plan, index)?;
+            }
+            if length > 1 && !visible {
+                bail!("post-composition camera made no visible change");
+            }
+            for inactive in [
+                window.start_frame.checked_sub(1),
+                (window.end_frame < plan.frame_count).then_some(window.end_frame),
+            ] {
+                if let Some(index) = inactive {
+                    if !camera
+                        .windows
+                        .iter()
+                        .any(|w| w.start_frame <= index && index < w.end_frame)
+                        && rgb_frame_at_index(&before, &plan, index)?
+                            != rgb_frame_at_index(&after, &plan, index)?
+                    {
+                        bail!("post-composition camera changed a frame outside its semantic span");
+                    }
+                }
+            }
         }
     }
     if overlays.len() > 1 {
@@ -1849,7 +2002,8 @@ fn check_impl(
                     }
                 }
             }
-            ExternalLayerRenderMode::EvidenceOnly => unreachable!(),
+            ExternalLayerRenderMode::EvidenceOnly
+            | ExternalLayerRenderMode::TimedPictureTransform => unreachable!(),
         }
     }
     for name in ["D.wav", "M.wav", "E.wav", "mix.wav", "master.mkv"] {
