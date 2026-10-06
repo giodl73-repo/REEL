@@ -67,6 +67,15 @@ fn run(root: &Path, manifest: &str, output: &str) -> std::process::Output {
 
 #[test]
 fn ordered_units_conform_bilingual_displays_and_rejects_bad_sources() {
+    ordered_fixture(false);
+}
+
+#[test]
+fn adopted_editable_displays_bind_source_text_and_rendered_master() {
+    ordered_fixture(true);
+}
+
+fn ordered_fixture(adopt: bool) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     fs::write(root.join("clean-picture.bin"), b"selected clean background").unwrap();
@@ -208,6 +217,71 @@ fn ordered_units_conform_bilingual_displays_and_rejects_bad_sources() {
             "schema":"reel.scene-asset-bindings.v1","scope_id":"episode","assets":assets
         }),
     );
+    if adopt {
+        let mut catalog: Value =
+            serde_json::from_slice(&fs::read(root.join("catalog.json")).unwrap()).unwrap();
+        for (index, role) in ["display-a", "display-b"].iter().enumerate() {
+            let name = format!("{role}-template.json");
+            write(
+                &root.join(&name),
+                &json!({
+                    "schema":"reel.selected-presentation-master-template.v1",
+                    "template_id":format!("{role}-template"),"kind":role,
+                    "width":64,"height":64,"fps_numerator":24,"fps_denominator":1,
+                    "sample_rate":48000,"duration_frames":24
+                }),
+            );
+            catalog["templates"][index + 1]["definition_sha256"] =
+                reference(root, &name)["sha256"].clone();
+        }
+        write(&root.join("catalog.json"), &catalog);
+        for (lang, _) in text {
+            for role in ["display-a", "display-b"] {
+                let text_name = format!("{role}-{lang}-text.json");
+                let media_name = format!("{role}-{lang}.mkv");
+                let mut evidence: Value =
+                    serde_json::from_slice(&fs::read(root.join(&text_name)).unwrap()).unwrap();
+                evidence["rendered_source_master_sha256"] =
+                    reference(root, &media_name)["sha256"].clone();
+                write(&root.join(&text_name), &evidence);
+                let manifest_name = format!("{role}-{lang}-adopt.json");
+                write(
+                    &root.join(&manifest_name),
+                    &json!({
+                        "schema":"reel.presentation-adopt.v1","role":role,"language":lang,
+                        "season_id":"season","episode_id":"episode",
+                        "template_id":format!("{role}-template"),"catalog":reference(root,"catalog.json"),
+                        "template_definition":reference(root,&format!("{role}-template.json")),
+                        "season_bindings":reference(root,"season.json"),"episode_bindings":reference(root,"episode-bindings.json"),
+                        "source_binding":format!("{role}-{lang}-master"),"source":reference(root,&media_name),
+                        "selection_evidence":reference(root,&text_name),"evidence_hash_pointer":"/rendered_source_master_sha256"
+                    }),
+                );
+                let output_dir = format!("adopted-{role}-{lang}");
+                let output = Command::new(env!("CARGO_BIN_EXE_reel-presentation-adopt"))
+                    .arg("build")
+                    .arg(root.join(&manifest_name))
+                    .arg("--input-root")
+                    .arg(root)
+                    .arg("--asset-root")
+                    .arg(root)
+                    .arg("--output-dir")
+                    .arg(root.join(&output_dir))
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                fs::copy(
+                    root.join(output_dir).join("receipt.json"),
+                    root.join(format!("{role}-{lang}-receipt.json")),
+                )
+                .unwrap();
+            }
+        }
+    }
     for (lang, _) in text {
         let presentation = ["display-a", "display-b"].map(|role| {
             json!({
@@ -239,6 +313,9 @@ fn ordered_units_conform_bilingual_displays_and_rejects_bad_sources() {
             });
             if id.starts_with("display") {
                 item["source_text_evidence"] = reference(root, &format!("{id}-{lang}-text.json"));
+                if adopt {
+                    item["adoption_manifest"] = reference(root, &format!("{id}-{lang}-adopt.json"));
+                }
             }
             item
         });
@@ -266,6 +343,34 @@ fn ordered_units_conform_bilingual_displays_and_rejects_bad_sources() {
         assert_eq!(receipt["total_frames"], 96);
         assert_eq!(receipt["total_samples"], 192_000);
         assert_eq!(receipt["decoded_master_matches_ordered_segments"], true);
+
+        if adopt {
+            let evidence_name = format!("display-a-{lang}-text.json");
+            let original = fs::read(root.join(&evidence_name)).unwrap();
+            for (name, bad_hash) in [("missing", None), ("wrong", Some("f".repeat(64)))] {
+                let mut evidence: Value = serde_json::from_slice(&original).unwrap();
+                if let Some(hash) = bad_hash {
+                    evidence["rendered_source_master_sha256"] = hash.into();
+                } else {
+                    evidence
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("rendered_source_master_sha256");
+                }
+                write(&root.join(&evidence_name), &evidence);
+                // The evidence file is now stale; neither adoption nor conform may accept it.
+                let rejected = run(
+                    root,
+                    &manifest_name,
+                    &format!("rejected-{lang}-source-{name}"),
+                );
+                assert!(
+                    !rejected.status.success(),
+                    "{name} rendered source hash accepted"
+                );
+            }
+            fs::write(root.join(&evidence_name), original).unwrap();
+        }
 
         let cases = [
             ("omit", vec![1_usize], false),
