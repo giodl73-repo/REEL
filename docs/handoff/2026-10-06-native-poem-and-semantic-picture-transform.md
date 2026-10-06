@@ -40,3 +40,11 @@ scope. These are producer checklist findings, not opinions of real principals.
 
 Remaining: consumer context audition; true instrumental score selection remains
 an upstream creative decision. No child media or private manuscript is stored here.
+
+Integration recheck: origin/main ac29636 (authored motion compiler) arrived during
+this work. Merge preserves the upstream byte-based plan hash, motioncraft and
+caption layout behavior while allowing recipe-derived camera state. Release
+test run passes 18 scene-delivery tests and 12 presentation tests; 4 pre-existing
+scene-delivery tests remain ignored. Existing E7 private compilation used the
+a0a1d38 runtime snapshot; runtime executable SHA values are retained by its
+consumer rather than assumed equal to a later main build.

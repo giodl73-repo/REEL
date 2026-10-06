@@ -34,6 +34,85 @@ fn subject() -> (
     )
 }
 
+fn motion_direction() -> reel_assembly::motioncraft::Direction {
+    serde_json::from_value(serde_json::json!({
+        "purpose":"Let the viewer read before approaching the illustration",
+        "dominant_element":"picture", "working_fps":24, "duration_frames":24,
+        "elements":[{"id":"picture","role":"camera",
+            "bounds":{"x":0.1,"y":0.1,"width":0.8,"height":0.8},
+            "phases":[{"id":"read","kind":"hold","start_frame":0,"end_frame":11,
+                "curve":"linear","zoom_from":1,"zoom_to":1},
+                {"id":"approach","kind":"settle","start_frame":12,"end_frame":23,
+                "curve":"ease-out","zoom_from":1,"zoom_to":1.08}]}]
+    }))
+    .unwrap()
+}
+
+#[test]
+fn motion_authoring_is_optional_fingerprinted_and_scoped() {
+    use reel_assembly::scene_authoring::resolve_motion_direction;
+    let (catalog, mut episode, mut scene, policy, season, eb, sb) = subject();
+    let legacy = resolve_scene(&catalog, &episode, &scene, &policy, &season, &eb, &sb).unwrap();
+    assert!(
+        !serde_json::to_value(&episode)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .contains_key("motion_direction")
+    );
+    episode.motion_direction = Some(motion_direction());
+    let directed = resolve_scene(&catalog, &episode, &scene, &policy, &season, &eb, &sb).unwrap();
+    assert_ne!(legacy.fingerprint_sha256, directed.fingerprint_sha256);
+    assert_eq!(
+        legacy.selected_inputs.keys().collect::<Vec<_>>(),
+        directed.selected_inputs.keys().collect::<Vec<_>>()
+    );
+    let language = scene.languages.keys().next().unwrap().clone();
+    let event = scene.languages[&language].events[0].event_id.clone();
+    let mut scene_default = motion_direction();
+    scene_default.reduced_motion = true;
+    let mut scope = reel_assembly::motioncraft::SceneDirection {
+        default: Some(scene_default.clone()),
+        ..Default::default()
+    };
+    scene.motion_direction = Some(scope.clone());
+    assert_eq!(
+        resolve_motion_direction(&episode, &scene, &language).unwrap()[&event],
+        scene_default
+    );
+    scope
+        .shots
+        .entry(language.clone())
+        .or_default()
+        .insert(event.clone(), motion_direction());
+    scene.motion_direction = Some(scope.clone());
+    assert_eq!(
+        resolve_motion_direction(&episode, &scene, &language).unwrap()[&event],
+        motion_direction()
+    );
+    scope
+        .shots
+        .get_mut(&language)
+        .unwrap()
+        .insert("unknown-event".into(), motion_direction());
+    scene.motion_direction = Some(scope.clone());
+    assert!(resolve_motion_direction(&episode, &scene, &language).is_err());
+    scope.shots.clear();
+    scope
+        .shots
+        .insert("unknown-language".into(), Default::default());
+    scene.motion_direction = Some(scope);
+    assert!(resolve_scene(&catalog, &episode, &scene, &policy, &season, &eb, &sb).is_err());
+    episode.motion_direction = None;
+    scene.motion_direction = None;
+    assert_eq!(
+        legacy.fingerprint_sha256,
+        resolve_scene(&catalog, &episode, &scene, &policy, &season, &eb, &sb)
+            .unwrap()
+            .fingerprint_sha256
+    );
+}
+
 #[test]
 fn internal_poem_reuses_the_poem_master_without_relabeling_the_scene() {
     let (catalog, episode, mut scene, policy, season, episode_bindings, scene_bindings) = subject();

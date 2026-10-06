@@ -1,13 +1,13 @@
 //! Compile a selected scene authoring graph into the generic REEL delivery
 //! files. All cut positions come from verified native phrase alignments.
 
-use crate::scene_authoring_inputs::read_verified_alignments;
+use crate::scene_authoring_inputs::read_verified_alignments_from_bytes;
 use anyhow::{Context, Result, bail};
 use reel_assembly::{
     Graph, SelectedPointer,
     scene_authoring::{
         AssetRef, Episode, Scene, ScenePolicy, ScopedBindings, ScoreUse, TemplateCatalog,
-        compile_native_event_spans, materialize_scene, resolve_scene,
+        compile_native_event_spans, materialize_scene, resolve_motion_direction, resolve_scene,
     },
     selected_closure,
 };
@@ -49,6 +49,10 @@ pub struct DeliveryProfile {
     pub schema: String,
     pub width: u32,
     pub height: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption_picture_layout: Option<crate::caption_presentation::CaptionPictureLayoutConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motion_safe_area: Option<reel_assembly::motioncraft::Rect>,
     #[serde(default)]
     pub still_sequence_encoding: Option<String>,
     pub sample_rate: u32,
@@ -230,9 +234,14 @@ fn close_delivery_graph(
     Ok((graph, pointer))
 }
 
-fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
-    serde_json::from_slice(&fs::read(path).with_context(|| path.display().to_string())?)
-        .with_context(|| path.display().to_string())
+fn read<T: serde::de::DeserializeOwned>(
+    path: &Path,
+    key: &str,
+    hashes: &mut BTreeMap<String, String>,
+) -> Result<T> {
+    let bytes = fs::read(path).with_context(|| path.display().to_string())?;
+    hashes.insert(key.into(), hash(&bytes));
+    serde_json::from_slice(&bytes).with_context(|| path.display().to_string())
 }
 
 fn checked(root: &Path, relative: &str) -> Result<PathBuf> {
@@ -357,17 +366,42 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         bail!("unsupported scene delivery compile schema");
     }
     let root = root.canonicalize()?;
-    let catalog: TemplateCatalog = read(&checked(&root, &request.catalog)?)?;
-    let episode: Episode = read(&checked(&root, &request.episode)?)?;
-    let source_scene: Scene = read(&checked(&root, &request.scene)?)?;
+    let mut input_sha256 = BTreeMap::new();
+    let catalog: TemplateCatalog = read(
+        &checked(&root, &request.catalog)?,
+        "catalog",
+        &mut input_sha256,
+    )?;
+    let episode: Episode = read(
+        &checked(&root, &request.episode)?,
+        "episode",
+        &mut input_sha256,
+    )?;
+    let source_scene: Scene = read(&checked(&root, &request.scene)?, "scene", &mut input_sha256)?;
     let scene = materialize_scene(&source_scene)?;
     if scene.presentation.is_none() && request.template_receipt.is_some() {
         bail!("ordinary scene cannot declare a template receipt");
     }
-    let policy: ScenePolicy = read(&checked(&root, &request.policy)?)?;
-    let season: ScopedBindings = read(&checked(&root, &request.season_bindings)?)?;
-    let episode_bindings: ScopedBindings = read(&checked(&root, &request.episode_bindings)?)?;
-    let scene_bindings: ScopedBindings = read(&checked(&root, &request.scene_bindings)?)?;
+    let policy: ScenePolicy = read(
+        &checked(&root, &request.policy)?,
+        "policy",
+        &mut input_sha256,
+    )?;
+    let season: ScopedBindings = read(
+        &checked(&root, &request.season_bindings)?,
+        "season_bindings",
+        &mut input_sha256,
+    )?;
+    let episode_bindings: ScopedBindings = read(
+        &checked(&root, &request.episode_bindings)?,
+        "episode_bindings",
+        &mut input_sha256,
+    )?;
+    let scene_bindings: ScopedBindings = read(
+        &checked(&root, &request.scene_bindings)?,
+        "scene_bindings",
+        &mut input_sha256,
+    )?;
     let scopes = [&scene_bindings, &episode_bindings, &season];
     resolve_scene(
         &catalog,
@@ -378,17 +412,33 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         &episode_bindings,
         &scene_bindings,
     )?;
-    let graph: Graph = read(&checked(&root, &request.graph)?)?;
-    let pointer: SelectedPointer = read(&checked(&root, &request.pointer)?)?;
+    let graph: Graph = read(&checked(&root, &request.graph)?, "graph", &mut input_sha256)?;
+    let pointer: SelectedPointer = read(
+        &checked(&root, &request.pointer)?,
+        "pointer",
+        &mut input_sha256,
+    )?;
     selected_closure(&pointer, &graph, &scene.scene_id)?;
-    let alignments = read_verified_alignments(
+    let alignment_path = checked(&root, &request.alignment_paths)?;
+    let alignment_bytes = fs::read(&alignment_path)?;
+    input_sha256.insert("alignment_paths".into(), hash(&alignment_bytes));
+    let alignments = read_verified_alignments_from_bytes(
         &source_scene,
         &request.language,
-        &checked(&root, &request.alignment_paths)?,
+        &alignment_path,
+        &alignment_bytes,
         &scopes,
     )?;
-    let profile: DeliveryProfile = read(&checked(&root, &request.profile)?)?;
+    let profile: DeliveryProfile = read(
+        &checked(&root, &request.profile)?,
+        "profile",
+        &mut input_sha256,
+    )?;
     if profile.schema != "reel.scene-delivery-profile.v1"
+        || profile
+            .motion_safe_area
+            .as_ref()
+            .is_some_and(|r| !reel_assembly::motioncraft::valid_rect(r))
         || profile
             .still_sequence_encoding
             .as_deref()
@@ -408,6 +458,9 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
             .any(|(key, gain)| !key.starts_with("sonic.") || !gain.is_finite() || gain.abs() > 60.0)
     {
         bail!("invalid scene delivery profile");
+    }
+    if let Some(layout) = &profile.caption_picture_layout {
+        crate::caption_presentation::resolve_picture_layout(layout, profile.width, profile.height)?;
     }
     let lane = scene
         .languages
@@ -519,6 +572,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     let mut pictures = Vec::new();
     let mut attachments = Vec::new();
     let mut event_bindings = Vec::new();
+    let motion_directions = resolve_motion_direction(&episode, &scene, &request.language)?;
     for event in &events {
         let picture_id = delivery_id("p", &event.semantic_id);
         let shot_id = delivery_id("shot", &event.semantic_id);
@@ -529,6 +583,30 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
             "kind":"still",
             "attention":format!("source concept {}; private audition",event.semantic_id)
         }));
+        if let Some(direction) = motion_directions.get(&event.id) {
+            let safe = profile
+                .motion_safe_area
+                .clone()
+                .unwrap_or_else(reel_assembly::motioncraft::full_canvas);
+            let mut motion = reel_assembly::motioncraft::compile(
+                direction,
+                &safe,
+                event.end - event.start,
+                profile.sample_rate,
+                profile.frame_rate_numerator,
+                profile.frame_rate_denominator,
+            )?;
+            let frame = |sample: u64, ceil: bool| -> Result<u64> {
+                let n = u128::from(sample) * u128::from(profile.frame_rate_numerator);
+                let d =
+                    u128::from(profile.sample_rate) * u128::from(profile.frame_rate_denominator);
+                Ok(u64::try_from(if ceil { n.div_ceil(d) } else { n / d })?)
+            };
+            let frames = frame(event.end, event.end == duration)? - frame(event.start, false)?;
+            reel_assembly::motioncraft::allocate_delivery_frames(&mut motion, frames)?;
+            reel_assembly::motioncraft::validate_camera(&motion)?;
+            pictures.last_mut().unwrap()["motion"] = json!({"kind":"phased-camera","plan":motion});
+        }
         attachments.push(json!({
             "id":picture_id,
             "target":{"kind":"cel","shot_id":shot_id,"cel_id":delivery_id("cel", &event.semantic_id)},
@@ -846,7 +924,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     }
     let (production_sha, _) = write_new(&dir, "production.json", &production)?;
     let (contract_sha, contract_bytes) = write_new(&dir, "contract.json", &contract)?;
-    let job = json!({
+    let mut job = json!({
         "still_sequence_encoding":profile.still_sequence_encoding,
         "schema":"reel.scene-delivery.v0.1",
         "id":id,
@@ -866,6 +944,9 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
                  "reason":if selected_sonic{"Selected semantic Sonic assets"}else{"No selected Sonic binding in this scene"}}
         }
     });
+    if let Some(layout) = &profile.caption_picture_layout {
+        job["caption_picture_layout"] = serde_json::to_value(layout)?;
+    }
     let (job_sha, job_bytes) = write_new(&dir, "job.json", &job)?;
     let source_selected_graph_lock = graph.lock.clone();
     let (graph, pointer) =
@@ -902,22 +983,6 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         bail!("ordinary scene cannot declare a template receipt");
     }
     let (build_sha, _) = write_new(&dir, "build.json", &build)?;
-    let mut input_sha256 = BTreeMap::new();
-    for (name, path) in [
-        ("catalog", &request.catalog),
-        ("episode", &request.episode),
-        ("scene", &request.scene),
-        ("policy", &request.policy),
-        ("season_bindings", &request.season_bindings),
-        ("episode_bindings", &request.episode_bindings),
-        ("scene_bindings", &request.scene_bindings),
-        ("graph", &request.graph),
-        ("pointer", &request.pointer),
-        ("alignment_paths", &request.alignment_paths),
-        ("profile", &request.profile),
-    ] {
-        input_sha256.insert(name, hash(&fs::read(checked(&root, path)?)?));
-    }
     let alignment_sha256 = lane
         .cues
         .iter()

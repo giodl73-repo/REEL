@@ -1,0 +1,21 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Motioncraft local playback review</title>
+<style>body{font:16px Arial;margin:24px;background:#faf7f2;color:#1f1e1b}section{display:flex;gap:16px}article{width:32%}video{width:100%;background:#eee}button,select{font:inherit;margin:8px;padding:6px}output{display:block}h2{font-size:18px}@media(max-width:600px){body{margin:16px}section{display:block}article{width:100%}}</style>
+<h1>Motioncraft local playback review</h1><p>Synthetic queue study. Simulated craft inspection; no viewer or creative approval.</p>
+<label>Profile <select id="profile"><option>landscape</option><option>portrait</option></select></label>
+<label>Treatment <select id="treatment"><option value="native">Native sound-on</option><option value="captioned">Muted with captions</option></select></label>
+<label>Audio focus <select id="audioFocus"><option>baseline</option><option selected>revised</option><option>reduced</option></select></label>
+<button id="play">Play all from start</button><button id="pause">Pause all</button><button id="normal">Normal speed</button><button id="quarter">Quarter speed</button>
+<section></section><output id="state"></output>
+<script>
+const variants=['baseline','revised','reduced'];let rate=1;const panel=document.querySelector('section');
+for(const v of variants){const a=document.createElement('article');a.innerHTML=`<h2>${v}</h2><video controls playsinline preload="auto"></video><output></output>`;panel.append(a)}
+const videos=[...document.querySelectorAll('video')];
+function load(){videos.forEach((v,i)=>{v.src=`motioncraft-demo-${profile.value}/`+(treatment.value==='native'?`render-${variants[i]}/review.mp4`:`review-comparison-v2/${variants[i]}/muted-captioned.mp4`);v.muted=variants[i]!==audioFocus.value;v.playbackRate=rate;v.load()})}
+audioFocus.onchange=()=>videos.forEach((v,i)=>v.muted=variants[i]!==audioFocus.value);
+profile.onchange=load;treatment.onchange=load;
+document.querySelector('#play').onclick=()=>videos.forEach(v=>{v.currentTime=0;v.playbackRate=rate;v.play().catch(e=>document.querySelector('#state').textContent=e.message)});
+document.querySelector('#pause').onclick=()=>videos.forEach(v=>v.pause());
+document.querySelector('#normal').onclick=()=>{rate=1;videos.forEach(v=>v.playbackRate=rate)};
+document.querySelector('#quarter').onclick=()=>{rate=.25;videos.forEach(v=>v.playbackRate=rate)};
+function tick(){videos.forEach((v,i)=>v.nextElementSibling.textContent=`${variants[i]}: ${v.currentTime.toFixed(3)} / ${Number.isFinite(v.duration)?v.duration.toFixed(3):'loading'} s; rate ${v.playbackRate}; ${v.paused?'paused':'playing'}; ${v.ended?'ended':''}`);requestAnimationFrame(tick)}load();tick();
+</script></html>

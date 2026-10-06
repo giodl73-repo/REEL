@@ -109,6 +109,8 @@ pub struct Episode {
     pub presentation: Vec<PresentationUse>,
     pub score_palette: Vec<ScoreBinding>,
     pub scene_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motion_direction: Option<crate::motioncraft::Direction>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1111,6 +1113,67 @@ pub struct Scene {
     pub continuity_tags: Vec<String>,
     #[serde(default)]
     pub holds: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motion_direction: Option<crate::motioncraft::SceneDirection>,
+}
+
+/// Resolve explicit direction without changing source, selected assets or clocks.
+pub fn resolve_motion_direction(
+    episode: &Episode,
+    scene: &Scene,
+    language: &str,
+) -> Result<BTreeMap<String, crate::motioncraft::Direction>> {
+    let lane = scene
+        .languages
+        .get(language)
+        .ok_or_else(|| anyhow::anyhow!("motion language is outside scene scope"))?;
+    let safe = crate::motioncraft::Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 1.0,
+        height: 1.0,
+    };
+    if let Some(direction) = &episode.motion_direction {
+        crate::motioncraft::validate(direction, &safe)?;
+    }
+    if let Some(scope) = &scene.motion_direction {
+        if let Some(direction) = &scope.default {
+            crate::motioncraft::validate(direction, &safe)?;
+        }
+        for (language_id, shots) in &scope.shots {
+            let scoped_lane = scene.languages.get(language_id).ok_or_else(|| {
+                anyhow::anyhow!("motion override has unknown language {language_id}")
+            })?;
+            for (event_id, direction) in shots {
+                if !scoped_lane
+                    .events
+                    .iter()
+                    .any(|event| &event.event_id == event_id)
+                {
+                    bail!("motion override has unknown {language_id} event {event_id}");
+                }
+                crate::motioncraft::validate(direction, &safe)?;
+            }
+        }
+    }
+    let mut resolved = BTreeMap::new();
+    for event in &lane.events {
+        if let Some(direction) = crate::motioncraft::resolve(
+            episode.motion_direction.as_ref(),
+            scene
+                .motion_direction
+                .as_ref()
+                .and_then(|scope| scope.default.as_ref()),
+            scene
+                .motion_direction
+                .as_ref()
+                .and_then(|scope| scope.shots.get(language))
+                .and_then(|shots| shots.get(&event.event_id)),
+        ) {
+            resolved.insert(event.event_id.clone(), direction.clone());
+        }
+    }
+    Ok(resolved)
 }
 
 /// V2 owns cue order and editorial layer intent once. Language bindings only
@@ -1791,25 +1854,31 @@ pub fn resolve_scene(
                 bail!("{language_id} has no event bound to required soundtrack role {role}");
             }
         }
+        let motion = resolve_motion_direction(episode, scene, language_id)?;
+        let legacy_fingerprint = digest(&(
+            &episode.episode_id,
+            &episode.season_id,
+            &scene.episode_id,
+            &scene.scene_id,
+            &scene.source_scope_ids,
+            &scene.canonical_cue_ids,
+            &scene.presentation_source_scope_ids,
+            &scene.source_authority_id,
+            language_presentation(&scene.presentation, language_id),
+            &scene.continuity_tags,
+            &language,
+            &language_inputs,
+            &used_scores,
+            &template_definitions,
+            &policy,
+        ))?;
         language_fingerprints.insert(
             language_id.clone(),
-            digest(&(
-                &episode.episode_id,
-                &episode.season_id,
-                &scene.episode_id,
-                &scene.scene_id,
-                &scene.source_scope_ids,
-                &scene.canonical_cue_ids,
-                &scene.presentation_source_scope_ids,
-                &scene.source_authority_id,
-                language_presentation(&scene.presentation, language_id),
-                &scene.continuity_tags,
-                &language,
-                &language_inputs,
-                &used_scores,
-                &template_definitions,
-                &policy,
-            ))?,
+            if motion.is_empty() {
+                legacy_fingerprint
+            } else {
+                digest(&(legacy_fingerprint, motion))?
+            },
         );
     }
     let fingerprint_sha256 = digest(&(&scene.scene_id, &language_fingerprints))?;
@@ -1938,6 +2007,7 @@ mod tests {
             presentation: vec![],
             score_palette: vec![],
             scene_ids: vec!["montage".into()],
+            motion_direction: None,
         };
         let scene = Scene {
             schema: SCENE_SCHEMA.into(),
@@ -1958,6 +2028,7 @@ mod tests {
             presentation: None,
             continuity_tags: vec![],
             holds: vec![],
+            motion_direction: None,
         };
         assert_eq!(
             scene

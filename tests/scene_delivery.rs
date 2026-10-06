@@ -248,6 +248,333 @@ fn fixture(root: &Path) -> Value {
     j
 }
 
+fn phased_direction() -> reel_assembly::motioncraft::Direction {
+    serde_json::from_slice(include_bytes!(
+        "../manifests/fixtures/motioncraft/read-then-push.json"
+    ))
+    .unwrap()
+}
+
+fn add_phased_camera(job: &mut Value) {
+    let safe = reel_assembly::motioncraft::Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 1.0,
+        height: 1.0,
+    };
+    let plan = reel_assembly::motioncraft::compile(&phased_direction(), &safe, 48001, 48000, 24, 1)
+        .unwrap();
+    job["pictures"][0]["motion"] = json!({"kind":"phased-camera","plan":plan});
+}
+
+#[test]
+fn caption_reservation_reuses_profile_geometry_and_rejects_unsafe_cameras() {
+    let t = tempfile::tempdir().unwrap();
+    let mut job = fixture(t.path());
+    job["width"] = json!(1280);
+    job["height"] = json!(720);
+    job["caption_picture_layout"] =
+        json!({"profile":"youtube-review","layout":"reserve-caption-band"});
+    add_phased_camera(&mut job);
+    write_json(&t.path().join("job.json"), &job);
+    let (parsed, _) = scene_delivery::plan(&t.path().join("job.json"), t.path()).unwrap();
+    let layout = scene_delivery::picture_layout(&parsed).unwrap().unwrap();
+    assert_eq!(layout.picture_region.height, 520);
+    job["post_compose_camera"] = json!({"evidence":file(t.path(),"contract.json"),"zoom_step":0.02,"zoom_max":1.5,"windows":[{"start_frame":0,"end_frame":48}]});
+    write_json(&t.path().join("job.json"), &job);
+    assert!(
+        scene_delivery::plan(&t.path().join("job.json"), t.path())
+            .unwrap_err()
+            .to_string()
+            .contains("reserved caption band")
+    );
+    job.as_object_mut().unwrap().remove("post_compose_camera");
+    job["caption_picture_layout"]["profile"] = json!("phone-review");
+    write_json(&t.path().join("job.json"), &job);
+    assert!(
+        scene_delivery::plan(&t.path().join("job.json"), t.path())
+            .unwrap_err()
+            .to_string()
+            .contains("9:16")
+    );
+}
+
+#[test]
+#[ignore = "requires FFmpeg; run explicitly for Motioncraft"]
+fn reserved_caption_band_survives_real_phased_camera_in_both_profiles() {
+    for (width, height, profile, band_y) in [
+        (1280, 720, "youtube-review", 520),
+        (720, 1280, "phone-review", 900),
+        (900, 1600, "phone-review", 1125),
+    ] {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path();
+        let mut job = fixture(root);
+        let pixels = (0..64)
+            .flat_map(|y| {
+                (0..64).flat_map(move |x| {
+                    [
+                        if (x / 8 + y / 8) % 2 == 0 { 220u8 } else { 30 },
+                        (x * 3) as u8,
+                        (y * 3) as u8,
+                    ]
+                })
+            })
+            .collect::<Vec<_>>();
+        fs::write(
+            root.join("pattern.ppm"),
+            [b"P6\n64 64\n255\n".as_slice(), &pixels].concat(),
+        )
+        .unwrap();
+        job["pictures"][0]["source"] = file(root, "pattern.ppm");
+        job["width"] = json!(width);
+        job["height"] = json!(height);
+        job["still_sequence_encoding"] = json!("h264-lossless");
+        job["caption_picture_layout"] = json!({"profile":profile,"layout":"reserve-caption-band"});
+        add_phased_camera(&mut job);
+        write_json(&root.join("job.json"), &job);
+        let output = root.join("reserved");
+        scene_delivery::render(&root.join("job.json"), root, &output).unwrap();
+        scene_delivery::check(&root.join("job.json"), root, &output).unwrap();
+        let decoded = Command::new("ffmpeg")
+            .args(["-v", "error", "-i"])
+            .arg(output.join("picture.mkv"))
+            .args([
+                "-vf",
+                "select=eq(n\\,0)+eq(n\\,10)+eq(n\\,23)",
+                "-fps_mode",
+                "passthrough",
+                "-pix_fmt",
+                "rgb24",
+                "-f",
+                "rawvideo",
+                "-",
+            ])
+            .output()
+            .unwrap();
+        assert!(decoded.status.success());
+        let stride = width as usize * height as usize * 3;
+        assert_eq!(decoded.stdout.len(), stride * 3);
+        assert_eq!(
+            &decoded.stdout[..stride],
+            &decoded.stdout[stride..stride * 2],
+            "reading hold changed in {profile}"
+        );
+        assert_ne!(
+            &decoded.stdout[..stride],
+            &decoded.stdout[stride * 2..],
+            "camera did not move in {profile}"
+        );
+        for frame in decoded.stdout.chunks_exact(stride) {
+            let band = &frame[(band_y as usize + 4) * width as usize * 3..];
+            assert!(
+                band.iter().all(|v| *v <= 2),
+                "camera entered caption band in {profile}"
+            );
+            let center = (band_y as usize / 2 * width as usize + width as usize / 2) * 3;
+            assert!(
+                frame[center..center + 3].iter().any(|v| *v > 20),
+                "picture missing in {profile}"
+            );
+        }
+        let evidence: Value =
+            serde_json::from_slice(&fs::read(output.join("motioncraft/evidence.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            evidence["picture_layout"]["picture_region"]["height"],
+            band_y
+        );
+        assert_eq!(
+            evidence["camera_coordinate_space"],
+            "normalized contained picture region before output padding"
+        );
+        let (_, plan) = scene_delivery::plan(&root.join("job.json"), root).unwrap();
+        assert_eq!(plan.duration_samples, 96000);
+        assert_eq!(plan.frame_count, 48);
+        assert_eq!(plan.audio[2].start_sample, 123);
+    }
+}
+
+#[test]
+fn phased_camera_is_bound_to_native_timing_and_compiled_evidence() {
+    let t = tempfile::tempdir().unwrap();
+    let mut job = fixture(t.path());
+    add_phased_camera(&mut job);
+    write_json(&t.path().join("job.json"), &job);
+    let (_, plan) = scene_delivery::plan(&t.path().join("job.json"), t.path()).unwrap();
+    assert_eq!(plan.duration_samples, 96000);
+    assert_eq!(plan.audio[2].start_sample, 123);
+    job["pictures"][0]["motion"]["plan"]["duration_samples"] = json!(48000);
+    write_json(&t.path().join("job.json"), &job);
+    assert!(
+        scene_delivery::plan(&t.path().join("job.json"), t.path())
+            .unwrap_err()
+            .to_string()
+            .contains("compiled plan")
+    );
+    add_phased_camera(&mut job);
+    job["pictures"][0]["motion"]["plan"]["direction"]["elements"][0]["role"] = json!("headline");
+    write_json(&t.path().join("job.json"), &job);
+    assert!(
+        scene_delivery::plan(&t.path().join("job.json"), t.path())
+            .unwrap_err()
+            .to_string()
+            .contains("camera element")
+    );
+    let mut cropped = phased_direction();
+    cropped.protected_regions = vec![reel_assembly::motioncraft::Rect {
+        x: 0.85,
+        y: 0.3,
+        width: 0.1,
+        height: 0.1,
+    }];
+    let p = reel_assembly::motioncraft::compile(
+        &cropped,
+        &reel_assembly::motioncraft::full_canvas(),
+        48001,
+        48000,
+        24,
+        1,
+    )
+    .unwrap();
+    job["pictures"][0]["motion"] = json!({"kind":"phased-camera","plan":p});
+    write_json(&t.path().join("job.json"), &job);
+    assert!(
+        scene_delivery::plan(&t.path().join("job.json"), t.path())
+            .unwrap_err()
+            .to_string()
+            .contains("crops protected")
+    );
+}
+
+#[test]
+#[ignore = "requires FFmpeg; run explicitly for Motioncraft"]
+fn phased_camera_renders_real_hold_push_and_reduced_motion_without_audio_drift() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let mut job = fixture(root);
+    let mut pixels = Vec::new();
+    for y in 0..64 {
+        for x in 0..64 {
+            pixels.extend([
+                if (x / 8 + y / 8) % 2 == 0 { 220u8 } else { 30 },
+                (x * 3) as u8,
+                (y * 3) as u8,
+            ]);
+        }
+    }
+    fs::write(
+        root.join("pattern.ppm"),
+        [b"P6\n64 64\n255\n".as_slice(), &pixels].concat(),
+    )
+    .unwrap();
+    job["pictures"][0]["source"] = file(root, "pattern.ppm");
+    job["still_sequence_encoding"] = json!("h264-lossless");
+    add_phased_camera(&mut job);
+    write_json(&root.join("job.json"), &job);
+    let output = root.join("directed");
+    scene_delivery::render(&root.join("job.json"), root, &output).unwrap();
+    let decode = |dir: &Path| {
+        let result = Command::new("ffmpeg")
+            .args(["-v", "error", "-i"])
+            .arg(dir.join("picture.mkv"))
+            .args(["-pix_fmt", "rgb24", "-f", "rawvideo", "-"])
+            .output()
+            .unwrap();
+        assert!(result.status.success());
+        result.stdout
+    };
+    let rendered = decode(&output);
+    let (cadence_job, cadence_plan) = scene_delivery::plan(&root.join("job.json"), root).unwrap();
+    let cadence = reel::motioncraft_cadence::analyze(&cadence_job, &cadence_plan, &output).unwrap();
+    assert_eq!(cadence["passed"], true, "{cadence}");
+    assert!(
+        cadence["analyzer_ffmpeg_version"]
+            .as_str()
+            .unwrap()
+            .starts_with("ffmpeg version ")
+    );
+    assert_eq!(
+        cadence["analyzer_backend"],
+        if cfg!(windows) { "wsl" } else { "native" }
+    );
+    let mut layered_job = cadence_job.clone();
+    layered_job.post_compose_camera = Some(scene_delivery::PostComposeCamera {
+        evidence: layered_job.contract.clone(),
+        zoom_step: 0.02,
+        zoom_max: 1.5,
+        translation: None,
+        windows: vec![scene_delivery::CameraWindow {
+            start_frame: 0,
+            end_frame: 48,
+        }],
+    });
+    let layered = reel::motioncraft_cadence::analyze(&layered_job, &cadence_plan, &output).unwrap();
+    assert_eq!(layered["passed"], false);
+    assert_eq!(layered["shots"][0]["passed"], Value::Null);
+    assert_eq!(layered["shots"][0]["whole_frame_hold_allowance"], false);
+    let frame = 64 * 64 * 3;
+    assert_eq!(rendered.len(), 48 * frame);
+    assert_eq!(
+        &rendered[0..frame],
+        &rendered[10 * frame..11 * frame],
+        "declared reading hold must be stationary"
+    );
+    assert_ne!(
+        &rendered[0..frame],
+        &rendered[23 * frame..24 * frame],
+        "declared push must reach rendered pixels"
+    );
+    let evidence: Value =
+        serde_json::from_slice(&fs::read(output.join("motioncraft/evidence.json")).unwrap())
+            .unwrap();
+    assert!(
+        evidence["frames"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["frame_index"] == 23)
+    );
+    assert!(output.join("motioncraft/contact-sheet.png").is_file());
+    assert!(output.join("motioncraft/quarter-speed.mp4").is_file());
+    let selected = image::open(output.join("motioncraft/frame-00000023.png"))
+        .unwrap()
+        .to_rgb8();
+    assert_eq!(
+        selected.as_raw().as_slice(),
+        &rendered[23 * frame..24 * frame],
+        "indexed evidence must match an independent full-video frame decode"
+    );
+    let mut reduced = phased_direction();
+    reduced.reduced_motion = true;
+    let safe = reel_assembly::motioncraft::Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 1.0,
+        height: 1.0,
+    };
+    let p = reel_assembly::motioncraft::compile(&reduced, &safe, 48001, 48000, 24, 1).unwrap();
+    job["pictures"][0]["motion"] = json!({"kind":"phased-camera","plan":p});
+    write_json(&root.join("reduced-job.json"), &job);
+    let reduced_output = root.join("reduced");
+    scene_delivery::render(&root.join("reduced-job.json"), root, &reduced_output).unwrap();
+    let stationary = decode(&reduced_output);
+    let (cadence_job, cadence_plan) =
+        scene_delivery::plan(&root.join("reduced-job.json"), root).unwrap();
+    let cadence =
+        reel::motioncraft_cadence::analyze(&cadence_job, &cadence_plan, &reduced_output).unwrap();
+    assert_eq!(cadence["passed"], true, "{cadence}");
+    assert_eq!(&stationary[0..frame], &stationary[23 * frame..24 * frame]);
+    assert_eq!(
+        fs::read(output.join("D.wav")).unwrap(),
+        fs::read(reduced_output.join("D.wav")).unwrap()
+    );
+    assert_eq!(
+        fs::read(output.join("E.wav")).unwrap(),
+        fs::read(reduced_output.join("E.wav")).unwrap()
+    );
+}
+
 #[test]
 fn selected_ass_layer_changes_rendered_pixels_and_is_checked() {
     let t = tempfile::tempdir().unwrap();
@@ -909,4 +1236,78 @@ fn real_delivery_preserves_sample_offset_stems_frames_and_rejects_tamper() {
         !clipped.exists(),
         "failed render must not publish a result directory"
     );
+}
+
+#[test]
+fn short_phased_camera_matches_every_authored_transition() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let mut job = fixture(root);
+    let mut pixels = Vec::new();
+    for y in 0..64 {
+        for x in 0..64 {
+            pixels.extend([
+                if (x / 8 + y / 8) % 2 == 0 { 220u8 } else { 30 },
+                (x * 3) as u8,
+                (y * 3) as u8,
+            ]);
+        }
+    }
+    fs::write(
+        root.join("pattern.ppm"),
+        [b"P6\n64 64\n255\n".as_slice(), &pixels].concat(),
+    )
+    .unwrap();
+    job["pictures"][0]["source"] = file(root, "pattern.ppm");
+    job["still_sequence_encoding"] = json!("h264-lossless");
+    let mut direction = phased_direction();
+    direction.working_fps = 24;
+    direction.duration_frames = 24;
+    direction.elements[0].phases = serde_json::from_value(json!([
+        {"id":"settle","kind":"settle","start_frame":0,"end_frame":7,"curve":"linear","zoom_from":1,"zoom_to":1.15},
+        {"id":"read","kind":"hold","start_frame":8,"end_frame":23,"curve":"linear","zoom_from":1.15,"zoom_to":1.15}
+    ])).unwrap();
+    let motion = reel_assembly::motioncraft::compile(
+        &direction,
+        &reel_assembly::motioncraft::full_canvas(),
+        48001,
+        48000,
+        24,
+        1,
+    )
+    .unwrap();
+    job["pictures"][0]["motion"] = json!({"kind":"phased-camera","plan":motion});
+    write_json(&root.join("job.json"), &job);
+    let output = root.join("directed");
+    scene_delivery::render(&root.join("job.json"), root, &output).unwrap();
+    // This renderer regression runs on Windows CI without WSL. The separate
+    // cadence integration tests exercise the platform-specific luma analyzer.
+    let decoded = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(output.join("picture.mkv"))
+        .args(["-map", "0:v:0", "-f", "framemd5", "-"])
+        .output()
+        .unwrap();
+    assert!(
+        decoded.status.success(),
+        "{}",
+        String::from_utf8_lossy(&decoded.stderr)
+    );
+    let hashes: Vec<_> = String::from_utf8(decoded.stdout)
+        .unwrap()
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.trim().is_empty())
+        .map(|line| line.rsplit(',').next().unwrap().trim().to_owned())
+        .collect();
+    assert_eq!(hashes.len(), 48);
+    for frame in 1..=7 {
+        assert_ne!(
+            hashes[frame - 1],
+            hashes[frame],
+            "moving transition {frame}"
+        );
+    }
+    for frame in 8..24 {
+        assert_eq!(hashes[7], hashes[frame], "declared hold frame {frame}");
+    }
 }
