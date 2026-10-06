@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use reel_assembly::scene_authoring::{ScopedBindings, TemplateCatalog};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{fs, path::Path, process::Stdio};
+use std::{fs, io::Write, path::Path, process::Stdio};
 
 pub const SCHEMA: &str = "reel.presentation-adopt.v1";
 
@@ -479,4 +479,211 @@ pub fn check(
         bail!("selected presentation master differs from rechecked source content");
     }
     Ok(())
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct VerifiedFile {
+    role: String,
+    sha256: String,
+    bytes: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct VerificationKey {
+    schema: String,
+    files: Vec<VerifiedFile>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct VerificationRecord {
+    schema: String,
+    key: VerificationKey,
+    full_check_passed: bool,
+}
+
+fn verified_file(role: &str, path: &Path) -> Result<VerifiedFile> {
+    Ok(VerifiedFile {
+        role: role.into(),
+        sha256: episode_conform::file_sha(path)?,
+        bytes: fs::metadata(path)?.len(),
+    })
+}
+
+fn verification_key(
+    manifest_path: &Path,
+    input_root: &Path,
+    asset_root: &Path,
+    master_path: &Path,
+    receipt_path: &Path,
+) -> Result<VerificationKey> {
+    let manifest: Manifest = serde_json::from_slice(&fs::read(manifest_path)?)?;
+    let mut files = vec![
+        verified_file("adoption-manifest", manifest_path)?,
+        verified_file("selected-master", master_path)?,
+        verified_file("selected-receipt", receipt_path)?,
+    ];
+    for (role, item) in [
+        ("catalog", Some(&manifest.catalog)),
+        ("template-definition", Some(&manifest.template_definition)),
+        ("source-template", manifest.source_template.as_ref()),
+        ("season-bindings", Some(&manifest.season_bindings)),
+        ("episode-bindings", Some(&manifest.episode_bindings)),
+        ("selection-evidence", manifest.selection_evidence.as_ref()),
+    ] {
+        if let Some(item) = item {
+            scene_delivery::checked_file(input_root, item)?;
+            files.push(VerifiedFile {
+                role: role.into(),
+                sha256: item.sha256.clone(),
+                bytes: item.bytes,
+            });
+        }
+    }
+    scene_delivery::checked_file(asset_root, &manifest.source)?;
+    files.push(VerifiedFile {
+        role: "selected-source".into(),
+        sha256: manifest.source.sha256.clone(),
+        bytes: manifest.source.bytes,
+    });
+    files.extend([
+        verified_file("validator", &std::env::current_exe()?)?,
+        verified_file("ffmpeg", &episode_conform::media_tool_path("ffmpeg")?)?,
+        verified_file("ffprobe", &episode_conform::media_tool_path("ffprobe")?)?,
+    ]);
+    Ok(VerificationKey {
+        schema: "reel.presentation-adoption-verification-key.v1".into(),
+        files,
+    })
+}
+
+fn cache_hit(path: &Path, key: &VerificationKey) -> bool {
+    fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<VerificationRecord>(&bytes).ok())
+        .is_some_and(|record| {
+            record.schema == "reel.presentation-adoption-verification.v1"
+                && record.full_check_passed
+                && record.key == *key
+        })
+}
+
+/// Reuse a successful full adoption check only after rehashing every current
+/// dependency, selected output/receipt, validator, and both media tools.
+/// Returns true for a verified cache hit. The cache is local build evidence,
+/// never creative approval; callers must still verify the new episode output.
+pub fn check_cached(
+    manifest_path: &Path,
+    input_root: &Path,
+    asset_root: &Path,
+    master_path: &Path,
+    receipt_path: &Path,
+    stage_parent: &Path,
+    cache_root: &Path,
+) -> Result<bool> {
+    let key = verification_key(
+        manifest_path,
+        input_root,
+        asset_root,
+        master_path,
+        receipt_path,
+    )?;
+    let digest = sha(&serde_json::to_vec(&key)?);
+    let cache_path = cache_root.join(format!("{digest}.json"));
+    if cache_hit(&cache_path, &key) {
+        return Ok(true);
+    }
+    check(
+        manifest_path,
+        input_root,
+        asset_root,
+        master_path,
+        receipt_path,
+        stage_parent,
+    )?;
+    if verification_key(
+        manifest_path,
+        input_root,
+        asset_root,
+        master_path,
+        receipt_path,
+    )? != key
+    {
+        bail!("adoption dependencies changed during verification");
+    }
+    fs::create_dir_all(cache_root)?;
+    let mut staged = tempfile::NamedTempFile::new_in(cache_root)?;
+    staged.write_all(&serde_json::to_vec_pretty(&VerificationRecord {
+        schema: "reel.presentation-adoption-verification.v1".into(),
+        key,
+        full_check_passed: true,
+    })?)?;
+    staged.as_file().sync_all()?;
+    staged.persist(&cache_path)?;
+    Ok(false)
+}
+
+#[cfg(test)]
+mod verification_cache_tests {
+    use super::*;
+
+    #[test]
+    fn only_complete_exact_success_records_can_be_reused() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("cache.json");
+        let key = VerificationKey {
+            schema: "reel.presentation-adoption-verification-key.v1".into(),
+            files: [
+                "validator",
+                "ffmpeg",
+                "ffprobe",
+                "adoption-manifest",
+                "catalog",
+                "template-definition",
+                "source-template",
+                "season-bindings",
+                "episode-bindings",
+                "selection-evidence",
+                "selected-source",
+                "selected-master",
+                "selected-receipt",
+            ]
+            .map(|role| VerifiedFile {
+                role: role.into(),
+                sha256: "a".repeat(64),
+                bytes: 1,
+            })
+            .into(),
+        };
+        assert!(!cache_hit(&path, &key));
+        let mut record = serde_json::to_value(VerificationRecord {
+            schema: "reel.presentation-adoption-verification.v1".into(),
+            key: serde_json::from_value(serde_json::to_value(&key).unwrap()).unwrap(),
+            full_check_passed: true,
+        })
+        .unwrap();
+        fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+        assert!(cache_hit(&path, &key));
+        for index in 0..key.files.len() {
+            record["key"]["files"][index]["sha256"] = "b".repeat(64).into();
+            fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+            assert!(!cache_hit(&path, &key));
+            record["key"]["files"][index]["sha256"] = "a".repeat(64).into();
+            record["key"]["files"][index]["bytes"] = 2.into();
+            fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+            assert!(!cache_hit(&path, &key));
+            record["key"]["files"][index]["bytes"] = 1.into();
+        }
+        record["schema"] = "stale-version".into();
+        fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+        assert!(!cache_hit(&path, &key));
+        record["schema"] = "reel.presentation-adoption-verification.v1".into();
+        record["full_check_passed"] = false.into();
+        fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+        assert!(!cache_hit(&path, &key));
+        fs::write(&path, b"partial{").unwrap();
+        assert!(!cache_hit(&path, &key));
+    }
 }

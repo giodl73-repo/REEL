@@ -12,7 +12,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     io::{Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
@@ -78,6 +78,10 @@ pub struct Manifest {
     pub compact_delivery: Option<CompactDelivery>,
     #[serde(default)]
     pub audio_frame_conform: Option<String>,
+    /// Reuse exact successful adopted-presentation verification, after current
+    /// dependencies and tool binaries have been rehashed. Defaults to full checks.
+    #[serde(default)]
+    pub reuse_verified_presentations: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -226,6 +230,8 @@ pub struct Receipt {
     pub encoded_delivery: Option<EncodedDelivery>,
     pub decoded_master_matches_ordered_segments: bool,
     pub timestamps_verified: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub presentation_verification_cache: Option<PresentationVerificationCache>,
     pub boundary_findings: Vec<episode_delivery::BoundaryFinding>,
     pub boundary_review_state: String,
     pub external_layer_review_state: String,
@@ -234,6 +240,13 @@ pub struct Receipt {
     pub creative_review_state: String,
     pub segments: Vec<SegmentReceipt>,
     pub publication: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PresentationVerificationCache {
+    pub reused_verified_checks: usize,
+    pub fresh_full_checks: usize,
+    pub policy: String,
 }
 
 #[derive(Clone)]
@@ -280,15 +293,74 @@ pub(crate) fn file_sha(path: &Path) -> Result<String> {
         .collect())
 }
 
-pub(crate) fn command(name: &str) -> Command {
+fn media_tool_in_path(name: &str, search: &std::ffi::OsStr) -> Result<PathBuf> {
+    for directory in std::env::split_paths(search) {
+        let candidate = directory.join(if cfg!(windows) {
+            format!("{name}.exe")
+        } else {
+            name.into()
+        });
+        if candidate.is_file() {
+            return fs::canonicalize(candidate).context("cannot resolve media tool");
+        }
+    }
+    bail!("cannot identify {name} executable for verification reuse")
+}
+
+pub(crate) fn media_tool_path(name: &str) -> Result<PathBuf> {
+    media_tool_in_path(
+        name,
+        &std::env::var_os("PATH").context("tool PATH is missing")?,
+    )
+}
+
+fn command_with_search(name: &str, search: Option<&std::ffi::OsStr>) -> Command {
+    // Resolve to the same absolute PATH binary used by verification keys.
+    // Windows' implicit executable-directory search can otherwise run a
+    // different tool from the one whose bytes were validated for cache reuse.
+    let program = search
+        .and_then(|search| media_tool_in_path(name, search).ok())
+        .unwrap_or_else(|| PathBuf::from(name));
     #[allow(unused_mut)] // Windows adds CREATE_NO_WINDOW to this command.
-    let mut cmd = Command::new(name);
+    let mut cmd = Command::new(program);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW for desktop callers.
     }
     cmd
+}
+
+pub(crate) fn command(name: &str) -> Command {
+    command_with_search(name, std::env::var_os("PATH").as_deref())
+}
+
+#[cfg(test)]
+mod media_tool_resolution_tests {
+    use super::*;
+
+    #[test]
+    fn cache_identity_and_invocation_select_the_same_absolute_tool() {
+        let temp = tempfile::tempdir().unwrap();
+        let first = temp.path().join("first");
+        let second = temp.path().join("second");
+        fs::create_dir_all(&first).unwrap();
+        fs::create_dir_all(&second).unwrap();
+        let filename = if cfg!(windows) {
+            "ffmpeg.exe"
+        } else {
+            "ffmpeg"
+        };
+        fs::write(first.join(filename), b"first tool").unwrap();
+        fs::write(second.join(filename), b"different same-name tool").unwrap();
+        let search = std::env::join_paths([&second, &first]).unwrap();
+        let selected = media_tool_in_path("ffmpeg", &search).unwrap();
+        assert_eq!(selected, fs::canonicalize(second.join(filename)).unwrap());
+        assert_eq!(
+            command_with_search("ffmpeg", Some(&search)).get_program(),
+            selected.as_os_str()
+        );
+    }
 }
 
 pub(crate) fn probe(path: &Path) -> Result<MediaFacts> {
@@ -792,6 +864,8 @@ pub fn build(
     let mut upstream_verified = Vec::new();
     let mut presentation_verified = Vec::new();
     let mut presentation_counts = Vec::new();
+    let mut presentation_cache_hits = 0;
+    let mut presentation_cache_misses = 0;
     for (segment_index, segment) in manifest.segments.iter().enumerate() {
         if !ordered_units_v2 && segment.source_text_evidence.is_some() {
             bail!("v1 episode segment cannot carry v2 source-text evidence");
@@ -814,14 +888,31 @@ pub fn build(
                     .parent()
                     .filter(|path| !path.as_os_str().is_empty())
                     .unwrap_or(Path::new("."));
-                presentation_adopt::check(
-                    &adoption_path,
-                    input_root,
-                    asset_root,
-                    &master,
-                    &receipt_path,
-                    stage_parent,
-                )?;
+                if manifest.reuse_verified_presentations {
+                    let hit = presentation_adopt::check_cached(
+                        &adoption_path,
+                        input_root,
+                        asset_root,
+                        &master,
+                        &receipt_path,
+                        stage_parent,
+                        &asset_root.join(".reel-verification-cache/presentation-adoption-v1"),
+                    )?;
+                    if hit {
+                        presentation_cache_hits += 1;
+                    } else {
+                        presentation_cache_misses += 1;
+                    }
+                } else {
+                    presentation_adopt::check(
+                        &adoption_path,
+                        input_root,
+                        asset_root,
+                        &master,
+                        &receipt_path,
+                        stage_parent,
+                    )?;
+                }
                 true
             }
             (SegmentKind::EpisodePresentation, None) => {
@@ -1456,6 +1547,13 @@ pub fn build(
         encoded_delivery,
         decoded_master_matches_ordered_segments: true,
         timestamps_verified: true,
+        presentation_verification_cache: manifest.reuse_verified_presentations.then(|| {
+            PresentationVerificationCache {
+                reused_verified_checks: presentation_cache_hits,
+                fresh_full_checks: presentation_cache_misses,
+                policy: "Rehash all dependencies and validator/FFmpeg/FFprobe binaries; always decode and verify the new ordered episode".into(),
+            }
+        }),
         boundary_findings,
         boundary_review_state: "open; inspect and disposition adjacent cuts".into(),
         external_layer_review_state: "open; source delivery layers need independent evidence"

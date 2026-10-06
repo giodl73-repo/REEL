@@ -12,14 +12,7 @@ use std::{
 };
 
 fn ffmpeg_command() -> Command {
-    #[allow(unused_mut)] // Windows adds CREATE_NO_WINDOW to this command.
-    let mut command = Command::new("ffmpeg");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000);
-    }
-    command
+    crate::episode_conform::command("ffmpeg")
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -300,7 +293,7 @@ fn verify_stem_sum(dir: &Path, samples: u64) -> Result<()> {
     let result = (|| -> Result<()> {
         for name in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
             children.push(
-                Command::new("ffmpeg")
+                ffmpeg_command()
                     .args([
                         "-v",
                         "error",
@@ -397,12 +390,7 @@ pub(crate) fn verify_timestamps(
     numerator: u64,
     denominator: u64,
 ) -> Result<()> {
-    let mut command = Command::new("ffprobe");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000);
-    }
+    let mut command = crate::episode_conform::command("ffprobe");
     let o = command
         .args([
             "-v",

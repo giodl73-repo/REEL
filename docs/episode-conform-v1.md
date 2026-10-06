@@ -36,6 +36,24 @@ selected master, and records `upstream_presentation_verified`. This recheck is
 deliberately expensive for long, high-resolution segments; a higher build graph
 may reuse an exact prior verification result.
 
+Set `"reuse_verified_presentations": true` in the conform manifest to enable
+REEL's local adoption-verification cache. The default remains a fresh full
+adoption check. A cold or invalid cache record runs that same full check and
+atomically records success under
+`<asset-root>/.reel-verification-cache/presentation-adoption-v1/`.
+
+A warm hit rehashes the current adoption manifest, every referenced catalog,
+template, source template, scoped binding and selection-evidence file, selected
+source/master/receipt, and the REEL validator, FFmpeg and FFprobe executables.
+Changing any of these invalidates reuse; corrupt or incomplete records are
+misses. Missing or altered selected input bytes are still errors. Cache records
+are trusted local build evidence and can be removed to force fresh checks.
+The episode receipt reports fresh and reused presentation checks separately.
+This option skips repeated adoption rebuilding/decoding only: the new episode
+still undergoes ordered picture/audio comparison, timestamp verification and
+full compact-output decoding. Scene receipt checks and creative approval remain
+independent.
+
 A scene segment may also supply `delivery_job` (an exact authoring-root file
 reference) and `delivery_receipt` (an exact media-root file reference beside the
 hydrated scene outputs). They must be supplied together. The selected scene
@@ -55,6 +73,17 @@ definition hash against the catalog, expands scene presentation roles and
 ordinary chapter scenes, and rejects reordered or missing roles and scene IDs.
 The template owns ordering; scene files and episode presentation invocations
 own their content and selected bindings.
+
+For optional chapter-closing photographs, use
+`reel.episode-master-template.v2` and its `ordered_units`: place each selected
+photo presentation directly after its chapter's final scene. Omit the unit
+when that episode has no photograph there. Each occurrence has a distinct
+presentation ID; its template owns image fit and caption layout, while scoped
+bindings select the image and language-local caption. Duration belongs to that
+presentation's authored delivery. The conform checks source-text evidence and
+selected media just as it does for other presentation units. This also supports
+photographs between chapters or immediately before end credits, without an
+episode-specific renderer or a global photo toggle.
 
 Each input must decode as one FFV1/yuv444p picture stream and one stereo PCM24
 audio stream. Geometry and frame rate must agree. An input at a different
