@@ -1290,6 +1290,181 @@ fn two_timed_overlays_render_and_check_as_independent_semantic_layers() {
     fs::write(output.join("selected-overlay-001.mkv"), b"tampered").unwrap();
     assert!(scene_delivery::check(&root.join("job.json"), root, &output).is_err());
 }
+
+#[test]
+fn timed_effect_and_final_ass_preserve_text_timing_and_audio() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let mut job = fixture(root);
+    let mut contract: Value =
+        serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
+    contract["attachments"].as_array_mut().unwrap().push(json!({
+        "id":"effect", "target":{"kind":"overlay","shot_id":"shot","overlay_id":"effect"},
+        "start":{"kind":"cue-start","cue_id":"a","offset_samples":24000},
+        "end":{"kind":"cue-start","cue_id":"b","offset_samples":24000}
+    }));
+    write_json(&root.join("contract.json"), &contract);
+    assert!(
+        Command::new("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-nostdin",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=lime@0.75:s=64x64:r=24:d=2",
+                "-c:v",
+                "ffv1",
+                "-pix_fmt",
+                "yuva444p",
+                "-n"
+            ])
+            .arg(root.join("effect.mkv"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    job["contract"] = file(root, "contract.json");
+    job["external_layers"] = json!([{"attachment_id":"effect","reason":"Timed selected effect",
+        "evidence":file(root,"effect.mkv"),"render_mode":"timed-video-overlay"}]);
+    write_json(&root.join("baseline.json"), &job);
+    let baseline = root.join("baseline");
+    scene_delivery::render(&root.join("baseline.json"), root, &baseline).unwrap();
+    contract["attachments"].as_array_mut().unwrap().push(json!({
+        "id":"text", "target":{"kind":"caption","cue_id":"a","caption_id":"text"},
+        "start":{"kind":"cue-start","cue_id":"a","offset_samples":0},
+        "end":{"kind":"cue-end","cue_id":"b","offset_samples":0}
+    }));
+    write_json(&root.join("contract.json"), &contract);
+    fs::write(root.join("text.ass"), "[Script Info]\nScriptType: v4.00+\nPlayResX: 64\nPlayResY: 64\n[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\nStyle: Text,Arial,18,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1\n[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\nDialogue: 0,0:00:00.00,0:00:02.00,Text,,0,0,0,,READ\n").unwrap();
+    job["contract"] = file(root, "contract.json");
+    job["external_layers"].as_array_mut().unwrap().push(json!({"attachment_id":"text",
+        "reason":"Final caption presentation above selected effect","evidence":file(root,"text.ass"),"render_mode":"ass-overlay"}));
+    let font = [
+        "C:/Windows/Fonts/arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    .into_iter()
+    .find(|path| Path::new(path).exists());
+    if let Some(font) = font {
+        fs::copy(font, root.join("selected-font.ttf")).unwrap();
+        job["external_layers"][1]["font"] = file(root, "selected-font.ttf");
+    }
+    write_json(&root.join("mixed.json"), &job);
+    let output = root.join("mixed");
+    let receipt = scene_delivery::render(&root.join("mixed.json"), root, &output).unwrap();
+    assert_eq!(
+        receipt.plan.rendered_external_layers,
+        vec!["effect", "text"]
+    );
+    assert_eq!(
+        (
+            receipt.plan.external_layer_spans[0].start_frame,
+            receipt.plan.external_layer_spans[0].end_frame
+        ),
+        (12, 37)
+    );
+    assert!(output.join("layered-picture-000.mkv").exists());
+    assert!(output.join("presentation-001.ass").exists());
+    for name in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
+        assert_eq!(
+            fs::read(baseline.join(name)).unwrap(),
+            fs::read(output.join(name)).unwrap()
+        );
+    }
+    let decode = |path: &Path| {
+        let result = Command::new("ffmpeg")
+            .args(["-v", "error", "-i"])
+            .arg(path)
+            .args(["-f", "rawvideo", "-pix_fmt", "rgb24", "-"])
+            .output()
+            .unwrap();
+        assert!(result.status.success());
+        result.stdout
+    };
+    let before = decode(&baseline.join("picture.mkv"));
+    let after = decode(&output.join("picture.mkv"));
+    assert_eq!(before.len(), 48 * 64 * 64 * 3);
+    assert_eq!(before.len(), after.len());
+    for (index, (a, b)) in before
+        .chunks_exact(64 * 64 * 3)
+        .zip(after.chunks_exact(64 * 64 * 3))
+        .enumerate()
+    {
+        assert_eq!(
+            &a[..64 * 3 * 8],
+            &b[..64 * 3 * 8],
+            "text changed protected top rows at frame {index}"
+        );
+        let white = b
+            .chunks_exact(3)
+            .filter(|pixel| pixel.iter().all(|&c| c > 200))
+            .count();
+        assert!(white > 20, "text obscured at frame {index}");
+        assert_eq!(
+            b[1] > 100,
+            (12..37).contains(&index),
+            "effect clock wrong at frame {index}"
+        );
+    }
+    scene_delivery::check(&root.join("mixed.json"), root, &output).unwrap();
+    let mut reversed = job.clone();
+    reversed["external_layers"]
+        .as_array_mut()
+        .unwrap()
+        .reverse();
+    write_json(&root.join("reversed.json"), &reversed);
+    assert!(
+        scene_delivery::plan(&root.join("reversed.json"), root)
+            .unwrap_err()
+            .to_string()
+            .contains("must follow")
+    );
+    fs::write(output.join("presentation-001.ass"), b"tampered").unwrap();
+    assert!(scene_delivery::check(&root.join("mixed.json"), root, &output).is_err());
+    if font.is_some() {
+        let mut stale = job.clone();
+        stale["external_layers"][1]["font"]["sha256"] = json!("0".repeat(64));
+        write_json(&root.join("stale-font.json"), &stale);
+        assert!(scene_delivery::plan(&root.join("stale-font.json"), root).is_err());
+    }
+}
+
+#[test]
+fn multiple_ass_presentations_require_one_combined_source() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let mut job = fixture(root);
+    let mut contract: Value =
+        serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
+    fs::write(
+        root.join("text.ass"),
+        "[Script Info]\nScriptType: v4.00+\n[Events]\n",
+    )
+    .unwrap();
+    job["external_layers"] = json!([]);
+    for id in ["text-a", "text-b"] {
+        contract["attachments"].as_array_mut().unwrap().push(json!({
+            "id":id,"target":{"kind":"title","title_id":id},
+            "start":{"kind":"cue-start","cue_id":"a","offset_samples":0},
+            "end":{"kind":"cue-end","cue_id":"b","offset_samples":0}
+        }));
+        job["external_layers"].as_array_mut().unwrap().push(json!({
+            "attachment_id":id,"reason":"Competing presentation source",
+            "evidence":file(root,"text.ass"),"render_mode":"ass-overlay"
+        }));
+    }
+    write_json(&root.join("contract.json"), &contract);
+    job["contract"] = file(root, "contract.json");
+    write_json(&root.join("job.json"), &job);
+    assert!(
+        scene_delivery::plan(&root.join("job.json"), root)
+            .unwrap_err()
+            .to_string()
+            .contains("combine text presentations")
+    );
+}
 #[test]
 fn plan_uses_compiled_samples_and_one_global_frame_partition() {
     let t = tempfile::tempdir().unwrap();

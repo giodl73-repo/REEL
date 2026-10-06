@@ -128,8 +128,13 @@ evidence FileRef. `evidence-only` records a held external delivery. `ass-overlay
 renders one full-scene editable ASS layer. `timed-video-overlay` renders hash-bound
 alpha videos on effect or generic overlay attachments for their exact compiled
 frame spans. Multiple timed overlays compose in job order; each intermediate
-picture and selected overlay source is retained and checked separately. Mixing
-an ASS overlay with multiple timed overlays is not supported. Each video must
+picture and selected overlay source is retained and checked separately. A mixed
+stack supports timed overlays followed by one combined full-scene ASS presentation.
+ASS before a timed overlay or more than one ASS presentation rejects; combine
+captions, poem states and titles into the selected ASS source. Mixed stacks retain
+`selected-overlay-NNN.mkv`, final `presentation-NNN.ass`, intermediate
+`layered-picture-NNN.mkv` and the optional selected font. Single-layer filenames
+remain unchanged. Each video must
 have the scene's width and height and enough decoded
 frames for that span. A timed effect becomes visible on the first display frame
 at or after its semantic start sample. The compiled end partition preserves the
@@ -154,13 +159,18 @@ overrun is rejected. A source cut boundary and an effect boundary may differ
 by a frame when a recorded edit rounded its picture cuts.
 
 For rendered layers, the receipt retains `clean-picture.mkv`, the selected
-ASS or alpha-video sources, and intermediate pictures when multiple timed
-overlays are bound. The checker verifies exact source bytes, samples each
+ASS or alpha-video sources, and intermediate pictures when multiple rendered
+layers are bound. The checker verifies exact source and font bytes, checks each
+stage's frame count, samples each
 layer's active frames and requires a visible change somewhere in its span,
 and compares picture frames immediately outside that span with the preceding
 layer. This checks selected
 scene compositing at those frames, not the
-creative selection or derivation of the effect source. A clean-picture master
+creative selection or derivation of the effect source. The ASS stage must add
+visible text during its dialogue intervals. Intermediate stage checks do not
+establish that every effect survives later text; the temporal layer analyzer
+continues to return an explicit null/separate-analysis disposition for mixed
+ASS stacks until final-contribution analysis is qualified. A clean-picture master
 must consume clean assets; disclosures, review labels and captions belong in
 separate delivery layers. Do not feed a flattened review overlay back as clean
 picture.

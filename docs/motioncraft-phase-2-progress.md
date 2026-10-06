@@ -80,6 +80,14 @@ Remaining: exact full-episode freeze, caption and presentation bindings, support
 
 ## P2.5 explicit picture viewport checkpoint — 2026-10-06
 
+### Native timed effects with final ASS presentation
+
+The scene compositor now accepts timed video layers followed by one combined full-scene ASS presentation. It preserves job order, indexed selected sources, each intermediate composite and a hash-bound optional font. Text below timed effects and competing ASS presentations reject before delivery. Single-layer ASS and existing all-video stacks retain their previous filenames and rendering path.
+
+The native mixed test passes: 48 frames, exact effect interval 12–36 inclusive across a cut, visible text on every frame, unchanged protected rows and four baseline audio stems, selected-source/font checks, reversed-order rejection and tamper rejection. The regular all-target/all-feature suite, the added competing-ASS rejection test, formatting and warnings-denied Clippy pass locally. The authoring compiler already appends selected presentation after semantic VFX, so its existing contract reaches this route. Exact CAIMITOS pin adoption, cross-platform CI and selected episode renders remain open.
+
+This is render support, not a temporal-validation pass for mixed stacks. The layer analyzer still reports `needs-separate-composition-analysis` with a null result for ASS/mixed compositions. Final-effect contribution beneath text requires its own proof before episode qualification; do not substitute the native receipt or intermediate visibility check for that gate.
+
 ### Actual selected poem render finding
 
 **Correction:** the later `phase2-e1-poem-render-review-v2.json` supersedes the interpretation below. The unchanged native renderer passes a streaming check of the persistent title and first line on every one of the 605 frames; measured visibility also covers all eight poem lines. Native indexed RGB frame 480 matches the complete RGB stream, and the encoded review contains the complete text. The misleading images came from sparse YUV-to-phone-size PNG resizing, not native ASS composition or FFV1 encoding. No compositor change is required. CAIMITOS now has a hash-bound phone-frame extractor that converts to RGB before selection/resizing; all four audio stems and every decoded picture frame match the original component render. The earlier evidence remains immutable history, not the current diagnosis. Other poem components and complete episode qualification remain open.
