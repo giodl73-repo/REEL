@@ -953,9 +953,87 @@ fn selected_ass_layer_changes_rendered_pixels_and_is_checked() {
     );
     assert!(output.join("clean-picture.mkv").exists());
     assert!(output.join("presentation.ass").exists());
+    let decoded = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(output.join("picture.mkv"))
+        .args(["-f", "rawvideo", "-pix_fmt", "rgb24", "-"])
+        .output()
+        .unwrap();
+    assert!(decoded.status.success());
+    assert_eq!(decoded.stdout.len(), 48 * 64 * 64 * 3);
+    for (index, frame) in decoded.stdout.chunks_exact(64 * 64 * 3).enumerate() {
+        let visible_text = frame
+            .chunks_exact(3)
+            .filter(|pixel| pixel.iter().all(|&c| c > 200))
+            .count();
+        assert!(visible_text > 20, "selected title missing at frame {index}");
+    }
     scene_delivery::check(&root.join("job.json"), root, &output).unwrap();
     fs::write(output.join("presentation.ass"), b"tampered").unwrap();
     assert!(scene_delivery::check(&root.join("job.json"), root, &output).is_err());
+}
+
+#[test]
+#[ignore = "requires the hash-bound CAIMITOS portrait poem regression job and native FFmpeg"]
+fn selected_poem_ass_keeps_title_and_complete_reading_states() {
+    use std::io::Read;
+    let job_path = std::env::var_os("REEL_ASS_REGRESSION_JOB")
+        .map(std::path::PathBuf::from)
+        .expect("set REEL_ASS_REGRESSION_JOB");
+    let assets = std::env::var_os("REEL_ASS_REGRESSION_ASSETS")
+        .map(std::path::PathBuf::from)
+        .expect("set REEL_ASS_REGRESSION_ASSETS");
+    let temporary = tempfile::tempdir().unwrap();
+    let output = std::env::var_os("REEL_ASS_REGRESSION_OUTPUT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| temporary.path().join("rendered"));
+    let (job, plan) = scene_delivery::plan(&job_path, &assets).unwrap();
+    assert_eq!((job.width, job.height), (720, 1280));
+    let viewport = scene_delivery::picture_layout(&job).unwrap().unwrap();
+    assert!(viewport.picture_region.y + viewport.picture_region.height < 465);
+    assert_eq!(
+        plan.frame_count, 605,
+        "use the retained Spanish Scene001 fixture"
+    );
+    let receipt = scene_delivery::render(&job_path, &assets, &output).unwrap();
+    assert_eq!(receipt.plan.frame_count, 605);
+    let mut child = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(output.join("picture.mkv"))
+        .args(["-f", "rawvideo", "-pix_fmt", "rgb24", "-"])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    let mut frame = vec![0; 720 * 1280 * 3];
+    let mut missing = Vec::new();
+    for index in 0..605 {
+        stdout.read_exact(&mut frame).unwrap();
+        for (name, top, bottom) in [("title", 465, 525), ("first line", 540, 575)] {
+            let bright = (top..bottom)
+                .flat_map(|y| (40..680).map(move |x| (y * 720 + x) * 3))
+                .filter(|&offset| frame[offset..offset + 3].iter().all(|&c| c > 150))
+                .count();
+            if bright < 100 {
+                missing.push((index, name, bright));
+            }
+        }
+    }
+    let mut trailing = [0];
+    assert_eq!(stdout.read(&mut trailing).unwrap(), 0);
+    assert!(child.wait().unwrap().success());
+    assert!(missing.is_empty(), "persistent text missing: {missing:?}");
+    if let Some(baseline) = std::env::var_os("REEL_ASS_REGRESSION_BASELINE") {
+        let baseline = std::path::PathBuf::from(baseline);
+        for name in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
+            assert_eq!(
+                fs::read(baseline.join(name)).unwrap(),
+                fs::read(output.join(name)).unwrap(),
+                "subtitle composition changed {name}"
+            );
+        }
+    }
+    scene_delivery::check(&job_path, &assets, &output).unwrap();
 }
 
 #[test]
