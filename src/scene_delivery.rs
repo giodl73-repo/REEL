@@ -907,12 +907,16 @@ fn render_timed_video_overlay(
     picture_output: &str,
 ) -> Result<()> {
     let count = span.end_frame - span.start_frame;
+    // Matroska timestamps may round native frame positions to milliseconds.
+    // Put both decoded streams on the same exact frame-index timebase before
+    // framesync, or EOF can hide the carrier's final selected frame at 30 fps.
     let graph = format!(
-        "[1:v]setpts=N*{}/{}/TB,trim=start_frame=0:end_frame={count},setpts=PTS-STARTPTS+{}/{}/TB[effect];[0:v][effect]overlay=eof_action=pass:repeatlast=0:shortest=0:format=auto[v]",
+        "[0:v]settb=expr={}/{},setpts=N[base];[1:v]settb=expr={}/{},trim=start_frame=0:end_frame={count},setpts=N+{}[effect];[base][effect]overlay=eof_action=pass:repeatlast=0:shortest=0:format=auto[v]",
         plan.fps_denominator,
         plan.fps_numerator,
-        span.start_frame * plan.fps_denominator,
-        plan.fps_numerator
+        plan.fps_denominator,
+        plan.fps_numerator,
+        span.start_frame
     );
     let output = Command::new("ffmpeg")
         .current_dir(root)

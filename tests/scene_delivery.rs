@@ -1453,10 +1453,11 @@ fn layer_cadence_rejects_frozen_effect_and_accepts_declared_hold() {
     let mut job = fixture(root);
     let mut contract: Value =
         serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
+    contract["frame_rate"]["numerator"] = json!(30);
     contract["attachments"].as_array_mut().unwrap().push(json!({
         "id":"timed-effect", "target":{"kind":"overlay","shot_id":"shot","overlay_id":"storm-glow"},
-        "start":{"kind":"cue-start","cue_id":"a","offset_samples":24000},
-        "end":{"kind":"cue-start","cue_id":"b","offset_samples":24000}
+        "start":{"kind":"cue-start","cue_id":"a","offset_samples":0},
+        "end":{"kind":"cue-start","cue_id":"a","offset_samples":48000}
     }));
     write_json(&root.join("contract.json"), &contract);
     assert!(
@@ -1468,13 +1469,13 @@ fn layer_cadence_rejects_frozen_effect_and_accepts_declared_hold() {
                 "-f",
                 "lavfi",
                 "-i",
-                "color=c=lime@0.75:s=64x64:r=24:d=1.1,format=yuva444p",
+                "color=c=lime@0.75:s=64x64:r=30:d=1.0,format=yuva444p",
                 "-c:v",
                 "ffv1",
                 "-pix_fmt",
                 "yuva444p",
                 "-frames:v",
-                "25"
+                "30"
             ])
             .arg(root.join("effect.mkv"))
             .status()
@@ -1492,7 +1493,7 @@ fn layer_cadence_rejects_frozen_effect_and_accepts_declared_hold() {
         "job_sha256":file(root,"job.json")["sha256"],
         "render_receipt_sha256":file(root,"render/receipt.json")["sha256"],
         "layers":[{"attachment_id":"timed-effect","source_sha256":file(root,"effect.mkv")["sha256"],
-            "intervals":[{"start_frame":12,"end_frame":37,"kind":"moving",
+            "intervals":[{"start_frame":0,"end_frame":30,"kind":"moving",
                 "region":{"x":0.0,"y":0.0,"width":1.0,"height":1.0}}]}]});
     let request_path = root.join("expectations.json");
     write_json(&request_path, &request);
