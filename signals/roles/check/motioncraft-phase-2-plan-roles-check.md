@@ -1,5 +1,18 @@
 # Motioncraft Phase 2 — plan role review
 
+## Current plan review — repair and episode completion
+
+The assistant reread `.roles/ROLE.md` and the Story Director, Animation Director, Editor, Sound Designer, Platform and Audience, and Rights and Provenance checklists. Reviewed artifact: the active plan in `docs/motioncraft-phase-2-plan.md`. This is checklist analysis, not independent agents, principal approval or implementation certification.
+
+| ID / role | Finding | Feedback incorporated into plan |
+|---|---|---|
+| P2-R23 Platform and Audience / Animation Director | Major: a faithfully composited poem can still clip authored line endings. English Scene001 landscape demonstrates this gap. | Presentation owner creates a separate wrapped revision, preserves original events/text/clocks, rejects panel-edge clipping and reviews every phone state. Keep the original failure as diagnostic history. |
+| P2-R24 Editor / Sound Designer | Major: a scene-spanning card can satisfy reading budgets while revealing a later cue too early or losing speech synchronization. | Caption owner reviews native cue crossings, reveal timing and spoken context before selection; exact joins and text reconstruction remain mandatory. The 35/44 candidates are unreviewed, with nine positions unresolved. |
+| P2-R25 Story Director / Editor | Major: twelve component composition results do not establish episode rhythm, bookends or motivated motion. | Assembly freezes full E1 before capacity-qualified twelve-episode rendering. Reviewer inspects every cut at normal speed, including opening, poems, ending and repetition. |
+| P2-R26 Rights and Provenance | Major: updated producer code can obscure which version generated historical evidence. | Preserve executed snapshots and immutable failed/repaired proofs; close new scopes through formal receipts and clean hydration before shipping. |
+
+All findings have owners and measurable gates. Planning feedback is incorporated; implementation findings remain open. Retained tension: scene-spanning cards may improve reading time while harming reveal order; current policy and measured clocks remain fixed until actual review dispositions exist.
+
 ## Latest implementation-gap review
 
 Reviewed artifact: the active execution plan at the top of `docs/motioncraft-phase-2-plan.md`. The assistant reread the six core/provenance checklists. Findings refine the remaining gates; they do not certify completed episodes or represent human decisions.
