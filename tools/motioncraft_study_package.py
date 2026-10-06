@@ -50,7 +50,7 @@ def kind(path: Path) -> str:
         return "render-video"
     if path.suffix == ".srt":
         return "captions"
-    if path.suffix == ".png" or "motioncraft" in path.parts or "review-comparison-v2" in path.parts:
+    if path.suffix == ".png" or "motioncraft" in path.parts or "review-comparison-v2" in path.parts or "cadence-r1" in path.parts:
         return "review-evidence"
     if path.name.startswith("episode-") or path.name == "scene.json":
         return "craft-plan"
@@ -61,15 +61,63 @@ def kind(path: Path) -> str:
     return "production-manifest"
 
 
-def pack(studies: dict[str, Path], output: Path) -> None:
+def validate_cadence(root: Path, variant: str) -> None:
+    report = read(root / f"cadence-r1/{variant}.json")
+    if (report.get("schema") != "reel.motioncraft-cadence.v1"
+        or report.get("passed") is not True
+        or not report.get("shots")
+        or any(shot.get("passed") is not True for shot in report["shots"])
+        or report.get("job_sha256") != sha(root / f"compiled-{variant}/job.json")
+        or report.get("picture_sha256") != sha(root / f"render-{variant}/picture.mkv")):
+        raise ValueError("cadence report failed or differs from inventoried render/job")
+
+
+def pack(studies: dict[str, Path], output: Path,
+         caption_studies: dict[str, Path] | None = None,
+         producer: Path | None = None) -> None:
     if output.exists():
         raise FileExistsError(output)
+    if set(studies) != {"landscape", "portrait"}:
+        raise ValueError("both portable study profiles are required")
+    caption_studies = caption_studies or {}
+    if caption_studies and set(caption_studies) != set(studies):
+        raise ValueError("both caption-reserved profiles are required")
+    if caption_studies and producer is None:
+        raise ValueError("integrated caption package requires a producer pin")
+    combined = dict(studies)
+    combined.update({f"caption-{profile}": root for profile, root in caption_studies.items()})
     selected, transfers = {}, []
-    for profile, root in studies.items():
+    for profile, root in combined.items():
         study = read(root / "study.json")
-        comparison = read(root / "review-comparison-v2/comparison.json")
-        if not study.get("synthetic_only") or not comparison.get("native_clock_verified"):
+        caption = profile.startswith("caption-")
+        if not study.get("synthetic_only"):
             raise ValueError("only verified synthetic studies may use this helper")
+        if caption:
+            parent = studies[profile.removeprefix("caption-")]
+            job_path = root / "compiled-revised/job.json"
+            job = read(job_path)
+            layout = job.pop("caption_picture_layout", None)
+            check = read(root / "caption-check.json")
+            if (not layout or layout.get("layout") != "reserve-caption-band"
+                or job != read(parent / "compiled-revised/job.json")
+                or check.get("passed") is not True
+                or check.get("job_sha256") != sha(job_path)
+                or check.get("evidence_sha256") != sha(root / "render-revised/motioncraft/evidence.json")):
+                raise ValueError("caption derivative check or parent binding differs")
+            for stem in ("D.wav", "E.wav", "M.wav", "mix.wav"):
+                if (sha(root / "render-revised" / stem) != sha(parent / "render-revised" / stem)
+                    or check.get("native_stems_identical", {}).get(stem) != sha(root / "render-revised" / stem)):
+                    raise ValueError("caption derivative changed native audio")
+            variants = ("revised",)
+            directories = ["compiled-revised", "render-revised", "cadence-r1"]
+        else:
+            comparison = read(root / "review-comparison-v2/comparison.json")
+            if not comparison.get("native_clock_verified"):
+                raise ValueError("study comparison has not verified the native clock")
+            variants = ("baseline", "revised", "reduced")
+            directories = [f"{prefix}-{v}" for prefix in ("compiled", "render") for v in variants] + ["review-comparison-v2", "cadence-r1"]
+        for variant in variants:
+            validate_cadence(root, variant)
         assets = []
         seen = set()
         for scope in ("season", "episode", "scene"):
@@ -94,7 +142,7 @@ def pack(studies: dict[str, Path], output: Path) -> None:
             relative = f"studies/{profile}/{source.name}"
             transfers.append((inside(root, source.name), relative))
             authored.append(relative)
-        for dirname in [f"{prefix}-{v}" for prefix in ("compiled", "render") for v in ("baseline", "revised", "reduced")] + ["review-comparison-v2"]:
+        for dirname in directories:
             directory = root / dirname
             if not directory.is_dir():
                 raise ValueError(f"required study output missing: {directory}")
@@ -105,6 +153,17 @@ def pack(studies: dict[str, Path], output: Path) -> None:
         selected[profile] = {"assets": assets, "authoring_files": authored,
             "expected_compiled_directory": f"studies/{profile}/compiled-revised",
             "native_duration_samples": study["duration_samples"], "delivery_frames": study["delivery_frames"]}
+    if producer is not None:
+        pin = read(producer)
+        if (pin.get("schema") != "reel.motioncraft-producer.v1"
+            or not re.fullmatch("[0-9a-f]{40}", pin.get("source_commit", ""))
+            or not pin.get("binaries")
+            or any(not re.fullmatch("[0-9a-f]{64}", item.get("sha256", "")) for item in pin["binaries"])):
+            raise ValueError("invalid producer identity pin")
+        transfers.append((producer.resolve(strict=True), "producer.json"))
+    destinations = [relative for _, relative in transfers]
+    if len(destinations) != len(set(destinations)):
+        raise ValueError("duplicate package path")
     # Preflight all paths/selected inputs before creating the new package.
     output.mkdir(parents=True)
     components = []
@@ -116,13 +175,15 @@ def pack(studies: dict[str, Path], output: Path) -> None:
         shutil.copyfile(source, target)
         components.append({"id": f"file-{index:04}", "kind": kind(Path(relative)),
                            "path": relative, "sha256": sha(target), "required": True})
+        if relative == "producer.json":
+            components[-1]["kind"] = "department-packet"
     hydration = {"schema": "reel.motioncraft-study-hydration.v1", "synthetic_only": True,
         "profiles": selected, "scope": "Transport exact inputs; preserve existing selected identities; no approval/reselection"}
     write(output / "hydration.json", hydration)
     components.append({"id": "hydration", "kind": "department-packet", "path": "hydration.json",
                        "sha256": sha(output / "hydration.json"), "required": True})
     write(output / "package.json", {"schema": "reel.production-package.v0.1", "work": "motioncraft-queue-study",
-        "revision": "matched-study-r2", "publication_scope": "internal-review", "components": components,
+        "revision": "motioncraft-integrated-r1", "publication_scope": "internal-review", "components": components,
         "review_gates": [{"id": "creative-selection", "owner": "human-project-owner", "status": "pending"}]})
 
 
@@ -224,17 +285,23 @@ if __name__ == "__main__":
     packing.add_argument("output", type=Path)
     packing.add_argument("--landscape", type=Path, required=True)
     packing.add_argument("--portrait", type=Path, required=True)
+    packing.add_argument("--caption-landscape", type=Path)
+    packing.add_argument("--caption-portrait", type=Path)
+    packing.add_argument("--producer", type=Path)
     hydrating = sub.add_parser("hydrate")
     hydrating.add_argument("package", type=Path)
-    hydrating.add_argument("profile", choices=("landscape", "portrait"))
+    hydrating.add_argument("profile", choices=("landscape", "portrait", "caption-landscape", "caption-portrait"))
     hydrating.add_argument("output", type=Path)
     verifying = sub.add_parser("verify-reproduction")
     verifying.add_argument("package", type=Path)
-    verifying.add_argument("profile", choices=("landscape", "portrait"))
+    verifying.add_argument("profile", choices=("landscape", "portrait", "caption-landscape", "caption-portrait"))
     verifying.add_argument("clean", type=Path)
     args = parser.parse_args()
     if args.command == "pack":
-        pack({"landscape": args.landscape.resolve(), "portrait": args.portrait.resolve()}, args.output.resolve())
+        if bool(args.caption_landscape) != bool(args.caption_portrait):
+            parser.error("supply both caption-reserved study roots")
+        captions = {"landscape": args.caption_landscape.resolve(), "portrait": args.caption_portrait.resolve()} if args.caption_landscape else None
+        pack({"landscape": args.landscape.resolve(), "portrait": args.portrait.resolve()}, args.output.resolve(), captions, args.producer)
     elif args.command == "hydrate":
         hydrate(args.package.resolve(), args.profile, args.output.resolve())
     else:

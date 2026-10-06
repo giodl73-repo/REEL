@@ -57,5 +57,44 @@ class HydrationFailures(unittest.TestCase):
                 package.hydrate(root, "landscape", output)
 
 
+class PackageCadenceFailures(unittest.TestCase):
+    def fixture(self, root):
+        package.write(root / "study.json", {"synthetic_only": True})
+        (root / "review-comparison-v2").mkdir()
+        package.write(root / "review-comparison-v2/comparison.json", {"native_clock_verified": True})
+        (root / "cadence-r1").mkdir()
+        (root / "compiled-baseline").mkdir()
+        (root / "render-baseline").mkdir()
+        package.write(root / "compiled-baseline/job.json", {})
+        (root / "render-baseline/picture.mkv").write_bytes(b"test-only bytes")
+        report = {"schema": "reel.motioncraft-cadence.v1", "passed": True,
+            "shots": [{"passed": True}],
+            "job_sha256": package.sha(root / "compiled-baseline/job.json"),
+            "picture_sha256": package.sha(root / "render-baseline/picture.mkv")}
+        package.write(root / "cadence-r1/baseline.json", report)
+        return report
+
+    def test_failed_cadence_prevents_package_publication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = self.fixture(root)
+            report["passed"] = False
+            (root / "cadence-r1/baseline.json").write_text(json.dumps(report))
+            output = root / "package"
+            with self.assertRaisesRegex(ValueError, "cadence report failed"):
+                package.pack({"landscape": root, "portrait": root}, output)
+            self.assertFalse(output.exists())
+
+    def test_stale_cadence_job_binding_prevents_package_publication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.fixture(root)
+            (root / "compiled-baseline/job.json").write_text('{"changed":true}')
+            output = root / "package"
+            with self.assertRaisesRegex(ValueError, "inventoried render/job"):
+                package.pack({"landscape": root, "portrait": root}, output)
+            self.assertFalse(output.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
