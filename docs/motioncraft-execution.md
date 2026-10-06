@@ -327,3 +327,8 @@ regression failed before correction and passes with `(in-1)`. Cadence thresholds
 and native/audio clocks are unchanged. Prior native study packages retain their
 producer identity and media evidence, but their camera timing proof is superseded
 for final acceptance; directed studies must be regenerated with this correction.
+
+
+## Final actual-consumer acceptance
+
+CAIMITOS worktree established under updated human authorization. Actual future authoring, immutable existing scene/job revisions, native caption/reduced/odd-sample checks and clean canonical-cache reproduction pass. Four corrected r4 profiles reproduce. Final requirements and role dispositions are in motioncraft-acceptance-audit.md and signals/roles/check/reel-motioncraft-final-integration-2026-10-05.md. CAIMITOS producer checkpoint 5edd2ffcae17d5f3ca7740f9fc5276a3ba2add56 is pushed; its integration request passes.

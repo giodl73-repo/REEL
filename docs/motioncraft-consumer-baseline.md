@@ -1,3 +1,5 @@
+> Current status: actual CAIMITOS adoption, corrected r4 package, canonical-cache authority and clean reproduction pass. See motioncraft-acceptance-audit.md. Earlier checkpoints below are historical.
+
 # Actual CAIMITOS adapter baseline
 
 The existing sanitized CAIMITOS adapter was executed read-only from its

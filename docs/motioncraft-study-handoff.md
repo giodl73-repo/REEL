@@ -1,3 +1,5 @@
+> Current status: actual CAIMITOS adoption, corrected r4 package, canonical-cache authority and clean reproduction pass. See motioncraft-acceptance-audit.md. Earlier checkpoints below are historical.
+
 # Motioncraft study handoff
 
 This handoff demonstrates transport and same-runtime reproduction of the
