@@ -13,6 +13,11 @@ records the bounded playback/score evaluation; it is not creative approval.
 
 ## Episode and scene inputs
 
+Planning review supports concurrent moving phases across elements and samples
+their intersections at start, midpoint and end. Pairwise work is bounded to
+512 moving phases per direction. The current scene camera still requires one
+dominant camera element; unsupported multi-element execution fails explicitly.
+
 `reel.episode-authoring.v1` accepts optional `motion_direction`, containing a
 complete direction. `reel.scene-authoring.v1/v2` accepts optional
 `motion_direction` with `default` and `shots` members:

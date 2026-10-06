@@ -380,6 +380,41 @@ pub fn compile(
             }
         }
     }
+    // Concurrent elements are legal planning intent. Inspect the interior of
+    // moving-phase intersections, not just the individual phase boundaries.
+    // Bound the pairwise work independently of the delivery frame count.
+    let moving = direction
+        .elements
+        .iter()
+        .flat_map(|element| {
+            element
+                .phases
+                .iter()
+                .filter(|phase| phase.zoom_from != phase.zoom_to)
+                .map(move |phase| (element.id.as_str(), phase))
+        })
+        .collect::<Vec<_>>();
+    if moving.len() > 512 {
+        bail!("motion overlap review exceeds 512 moving phase budget");
+    }
+    for (index, (element, phase)) in moving.iter().enumerate() {
+        for (other_element, other) in &moving[index + 1..] {
+            if element == other_element {
+                continue;
+            }
+            let start = phase.start_frame.max(other.start_frame);
+            let end = phase.end_frame.min(other.end_frame);
+            if start <= end {
+                let reason = format!(
+                    "overlap:{element}.{}+{other_element}.{}",
+                    phase.id, other.id
+                );
+                for frame in [start, start + (end - start) / 2, end] {
+                    add(frame, reason.clone())?;
+                }
+            }
+        }
+    }
     for i in 0..=8 {
         add(
             (direction.duration_frames - 1) * i / 8,
@@ -660,6 +695,54 @@ mod tests {
         let mut value = serde_json::to_value(direction()).unwrap();
         value["spring"] = serde_json::json!(true);
         assert!(serde_json::from_value::<Direction>(value).is_err());
+    }
+    #[test]
+    fn concurrent_element_motion_has_deduplicated_overlap_interior_evidence() {
+        let mut d = direction();
+        let mut secondary = d.elements[0].clone();
+        secondary.id = "secondary".into();
+        secondary.role = "planned-layer".into();
+        secondary.phases = vec![Phase {
+            id: "reveal".into(),
+            kind: PhaseKind::Entrance,
+            start_frame: 12,
+            end_frame: 35,
+            curve: Curve::EaseOut,
+            zoom_from: 1.0,
+            zoom_to: 1.08,
+        }];
+        d.elements.push(secondary);
+        let plan = compile(&d, &safe(), 96000, 48000, 24, 1).unwrap();
+        let reason = "overlap:picture.push+secondary.reveal";
+        for frame in [24, 29, 35] {
+            assert!(
+                plan.samples
+                    .iter()
+                    .any(|sample| sample.frame == frame
+                        && sample.reasons.iter().any(|r| r == reason))
+            );
+        }
+        assert_eq!(
+            plan.samples
+                .iter()
+                .filter(|sample| sample.frame == 29)
+                .count(),
+            1
+        );
+        assert!(
+            plan.samples
+                .iter()
+                .any(|sample| sample.frame == 11
+                    && sample.reasons.iter().any(|r| r == "picture.read"))
+        );
+        assert_eq!(plan.duration_samples, 96000);
+        // Planned concurrency must not be silently lost by the first renderer.
+        assert!(
+            validate_camera(&plan)
+                .unwrap_err()
+                .to_string()
+                .contains("exactly one")
+        );
     }
     #[test]
     fn working_and_delivery_clocks_have_explicit_residuals() {

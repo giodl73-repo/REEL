@@ -10,7 +10,7 @@ execution and indexed evidence are implemented; the complete goal is not done.
 Worktree: `C:/Users/giodl/.codex/worktrees/motioncraft/REEL`.
 Branch: `codex/motioncraft`. Baseline: `4effab1`.
 
-## Verified progress
+## Initial implementation evidence (historical checkpoint)
 
 - Imported the reviewed v4 plan and its twelve role finding dispositions into
   the current REEL codebase.
@@ -29,8 +29,8 @@ Branch: `codex/motioncraft`. Baseline: `4effab1`.
 - The latest input-snapshot provenance fix passes the same independent-scene
   integration test. Formatting and diff checks pass.
 - Current dependencies are locally usable: Cargo, FFmpeg, FFprobe and Python
-  are available. Synthetic FFmpeg renders have passed; retained queue-comparison
-  and consumer-package artifacts have not yet been produced.
+  are available. Subsequent retained study/package and consumer-baseline
+  evidence is recorded below.
 - Recorded reuse/gap map in `docs/motioncraft-reuse-map.md`.
 
 ## Implemented handoff
@@ -180,3 +180,18 @@ inspection pass at 48,001/47,999 native cue samples, 96,000 total samples,
 Consumer code remains read-only: the latest lane diagnostic still requires
 Asset Authority provisioning before production writes. This is baseline
 evidence only; no Motioncraft adapter adoption or upgrade is claimed.
+
+## Requirement audit checkpoint
+
+The full-plan [acceptance audit](motioncraft-acceptance-audit.md) now separates
+REEL evidence from actual consumer requirements. It also identifies open
+cadence-check and caption-band contract integration instead of assuming
+indexed extraction covers those gates. The compiler now samples concurrent
+moving-element overlap interiors with bounded pairwise work; nine focused
+Motioncraft tests and the full 46-test assembly suite pass.
+
+The scene-build fixture's duplicate handwritten phase schedule was removed
+in favor of the shared authored fixture. Its exact compiled job hash matches
+the pre-removal capture, and the actual scene-build test passes. Two phased
+delivery tests including FFmpeg pass after the overlap sampler change. These
+are progress checkpoints; the full goal remains incomplete.

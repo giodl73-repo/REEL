@@ -238,24 +238,25 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
     let original_episode = fs::read(root.join("episode.json")).unwrap();
     let mut directed_episode: serde_json::Value =
         serde_json::from_slice(&original_episode).unwrap();
-    directed_episode["motion_direction"] = serde_json::json!({
-        "purpose":"Read then approach", "dominant_element":"picture",
-        "working_fps":24,"duration_frames":24,
-        "elements":[{"id":"picture","role":"camera",
-            "bounds":{"x":0.1,"y":0.1,"width":0.8,"height":0.8},
-            "phases":[{"id":"read","kind":"hold","start_frame":0,"end_frame":11,
-                "curve":"linear","zoom_from":1,"zoom_to":1},
-                {"id":"push","kind":"settle","start_frame":12,"end_frame":23,
-                "curve":"ease-out","zoom_from":1,"zoom_to":1.08}]}]
-    });
-    write_json(&root.join("episode.json"), &directed_episode);
+    let mut reusable: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../manifests/fixtures/motioncraft/read-then-push.json"
+    ))
+    .unwrap();
+    // Share the authored timing fixture, with only this test's intent/zoom
+    // variation. Review frame scheduling belongs to the compiler.
+    reusable["purpose"] = "Read then approach".into();
+    reusable["elements"][0]["phases"][1]["id"] = "push".into();
+    reusable["elements"][0]["phases"][1]["zoom_to"] = 1.08.into();
+    directed_episode["motion_direction"] = reusable;
     // Reusable episode direction is an explicit timing template, fitted to
     // this selected native span while leaving the accepted narration intact.
     directed_episode["motion_direction"]["fit_native_duration"] = true.into();
-    directed_episode["motion_direction"]["duration_frames"] = 48.into();
-    directed_episode["motion_direction"]["elements"][0]["phases"][0]["end_frame"] = 23.into();
-    directed_episode["motion_direction"]["elements"][0]["phases"][1]["start_frame"] = 24.into();
-    directed_episode["motion_direction"]["elements"][0]["phases"][1]["end_frame"] = 47.into();
+    let motion = &mut directed_episode["motion_direction"];
+    motion["duration_frames"] = (motion["duration_frames"].as_u64().unwrap() * 2).into();
+    for phase in motion["elements"][0]["phases"].as_array_mut().unwrap() {
+        phase["start_frame"] = (phase["start_frame"].as_u64().unwrap() * 2).into();
+        phase["end_frame"] = ((phase["end_frame"].as_u64().unwrap() + 1) * 2 - 1).into();
+    }
     directed_episode["motion_direction"]["protected_regions"] = serde_json::json!([
         {"x":0.4,"y":0.4,"width":0.2,"height":0.2}
     ]);
@@ -304,6 +305,13 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
         "delivery_id":"scene-directed","delivery_title":"Synthetic motion upgrade","output_dir":"compiled-motion"
     })).unwrap();
     let compilation = reel::scene_delivery_compile::compile_to_dir(root, &compile).unwrap();
+    // Captured before removing the duplicate handwritten phase schedule.
+    // Exact job equality covers native timing, compiled direction and its
+    // review schedule as well as the selected source references.
+    assert_eq!(
+        compilation["job_sha256"],
+        "6f89aaf3e6ac9ac9a507381aa24ec375bb6a6b2696913a5900d9cb232094c896"
+    );
     assert_eq!(compilation["cue_count"], 1);
     let compiled_job: serde_json::Value =
         serde_json::from_slice(&fs::read(root.join("compiled-motion/job.json")).unwrap()).unwrap();
