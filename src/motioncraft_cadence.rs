@@ -40,6 +40,13 @@ fn evaluate(values: &[f64], holds: &[bool]) -> Value {
 }
 
 pub fn analyze(job: &Job, plan: &Plan, root: &Path) -> Result<Value> {
+    let analyzer_version =
+        crate::adapters::ffmpeg::FfmpegAdapter.run_ffmpeg(&["-version".to_string()], &[])?;
+    let analyzer_version = analyzer_version
+        .lines()
+        .next()
+        .filter(|line| !line.trim().is_empty())
+        .context("cadence analyzer FFmpeg version unavailable")?;
     let layered = !job.external_layers.is_empty() || job.post_compose_camera.is_some();
     let mut rows = Vec::new();
     for (picture, span) in job.pictures.iter().zip(&plan.pictures) {
@@ -96,6 +103,8 @@ pub fn analyze(job: &Job, plan: &Plan, root: &Path) -> Result<Value> {
         json!({"schema":"reel.motioncraft-cadence.v1","job_sha256":plan.job_sha256,
         "picture_sha256":crate::sha256_file(&root.join("picture.mkv"))?,
         "fps_numerator":plan.fps_numerator,"fps_denominator":plan.fps_denominator,
+        "analyzer_ffmpeg_version":analyzer_version,
+        "analyzer_backend":if cfg!(windows) { "wsl" } else { "native" },
         "near_stationary_luma_threshold":NEAR_STATIONARY_LUMA_THRESHOLD,
         "maximum_moving_near_stationary_fraction":MAX_NEAR_STATIONARY_FRACTION,
         "minimum_hold_stationary_fraction":MIN_HOLD_STATIONARY_FRACTION,

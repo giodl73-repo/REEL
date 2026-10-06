@@ -252,3 +252,32 @@ These derivatives and cadence reports still need inclusion in the final
 versioned package. Actual CAIMITOS lane, adapter/new-episode/upgrade/rollback,
 native motion canary, canonical cache/authority handoff and final integrated
 acceptance remain required. No CAIMITOS worktree or registry was modified.
+
+## Integrated r2 package and runtime follow-up
+
+The new r2 inventory verifies 840 components with package SHA
+`079f612edea69632804010a627c3aa6921369283dd5f969c0b31069d67a5913a`.
+All eight native renders/cadence checks pass. Four clean hydration workspaces
+reproduce six compiled files, four WAVs, 450 decoded frames and 44 review samples
+each using retained producer binaries. All original matched-study native WAVs
+and 1,350 decoded frames per profile match; compile receipts retain the verified
+compiler source identity change. Workspace library checks pass 169 tests with
+three default ignored tests; all 20 scene-delivery tests including FFmpeg and
+six transport tests pass. Package/role checkpoint details are retained in the
+study handoff and package-checkpoint role review.
+
+An extra explicitly invoked legacy mixed-media smoke failed twice on this
+branch with WSL FFmpeg filter ENOSPC, while clean baseline 4effab1 passes. Disk,
+WSL root/tmp and shared-memory capacity are available. Baseline source/lockfile
+remain clean; generated build output is under this worktree's target. This is
+an unresolved differential requiring graph/invocation comparison. No production
+backend configuration or source change was made to hide the failing check.
+
+Cadence provenance also needs separate WSL identity: actual analyzer FFmpeg is
+8.0.1-3ubuntu2 at /usr/bin/ffmpeg with binary SHA
+`bdf6aabffdba7411edff8d36c389d695257fcdf823d196020176e117612862f6`.
+New reports record analyzer backend/version; the patterned camera/reduced render
+verifies those fields. The existing r2 package remains unchanged. A subsequent
+package must include refreshed reports/runtime identity. Meaningful REEL work
+remains, so the goal stays active despite the repeated CAIMITOS provisioning
+gate. Final actual consumer adoption and integrated acceptance are still unmet.

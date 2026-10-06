@@ -488,6 +488,16 @@ fn phased_camera_renders_real_hold_push_and_reduced_motion_without_audio_drift()
     let (cadence_job, cadence_plan) = scene_delivery::plan(&root.join("job.json"), root).unwrap();
     let cadence = reel::motioncraft_cadence::analyze(&cadence_job, &cadence_plan, &output).unwrap();
     assert_eq!(cadence["passed"], true, "{cadence}");
+    assert!(
+        cadence["analyzer_ffmpeg_version"]
+            .as_str()
+            .unwrap()
+            .starts_with("ffmpeg version ")
+    );
+    assert_eq!(
+        cadence["analyzer_backend"],
+        if cfg!(windows) { "wsl" } else { "native" }
+    );
     let mut layered_job = cadence_job.clone();
     layered_job.post_compose_camera = Some(scene_delivery::PostComposeCamera {
         evidence: layered_job.contract.clone(),

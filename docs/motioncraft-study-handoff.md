@@ -23,10 +23,13 @@ and must be reproduced in the clean workspace.
 
 ## Command sequence
 
-Build `reel`, `reel-scene-authoring` and `reel-scene-build` from this checkout.
+Build `reel`, `reel-scene-authoring`, `reel-scene-build` and
+`reel-scene-cadence` from this checkout.
 The Python helpers require Pillow. Supply already generated landscape/portrait
-study directories with all three native renders and corrected caption sets in
-`review-comparison-v2`. The package and clean workspace must not exist.
+study directories with all three native renders, passing hash-bound reports in
+`cadence-r1`, and corrected caption sets in `review-comparison-v2`. The package
+and clean workspace must not exist. Run scene cadence after each native render;
+the report belongs outside its render receipt directory.
 
 ```powershell
 py tools/motioncraft_study_package.py pack <new-package> --landscape <landscape-study> --portrait <portrait-study>
@@ -80,3 +83,90 @@ Python's HTTP server. The page offers normal/quarter playback, native/captioned
 media and one audio focus. Its responsive layout supports phone-width
 inspection. It does not submit data or produce production receipts. The review
 session's temporary server was stopped and its browser viewport restored.
+
+## Integrated package checkpoint r2
+
+`target/motioncraft-handoff-r2` adds cadence reports, the caption-reserved
+landscape/portrait derivatives and an inventoried `producer.json`. Its 840
+components pass REEL package receipt/check. Package SHA256 is
+`079f612edea69632804010a627c3aa6921369283dd5f969c0b31069d67a5913a`.
+The earlier r1 package remains intact. This is a synthetic REEL integration
+checkpoint; CAIMITOS adapter/cache adoption is still required.
+
+All eight native renders were regenerated with the recorded REEL binaries.
+`producer.json` pins media source commit
+`fd0f9951504a857243da86d3d94dae12aeb80f8d`, all four binary SHA256/byte counts,
+native render FFmpeg/FFprobe binary hashes and versions, Python/Pillow and
+helper identities.
+Its separate package-source commit
+`768c70d3bdfba81869b116d0d00eff0a2f642b70` and helper hash identify the assembler.
+The exact four Windows binaries are retained separately at
+`target/motioncraft-runtime-fd0f995`; they are not shipped as media components.
+Use that runtime snapshot for the local reproduction commands. A downstream
+runtime also needs the documented FFmpeg/Python/Pillow dependencies. This does
+not promise byte-identical recompilation of executables on another toolchain.
+
+The six matched native study variants preserve every decoded frame and native
+WAV byte from their earlier counterparts: 1,350 picture frames per profile.
+Five compiled files are identical per variant; the compile receipt changes only
+its compiler source hash, independently checked against the producing source.
+The receipts retain that change rather than pretending an old producer made
+the new media. Regeneration reports are inventoried under each base profile's
+`review-comparison-v2`. Representative corrected caption frames were inspected
+again. No new viewer or creative score is inferred from this matching proof.
+
+The two caption derivatives preserve their parent job except for the explicit
+layout setting. All native stems are exact; their 44 indexed samples keep the
+band clear. They reserve picture space; caption text remains a separately owned
+presentation layer. Their layout is an optional demonstration, not a rescore of
+the original matched study.
+
+Packing now rejects failed/stale cadence bindings before creating the package,
+requires both caption profiles and a producer pin when they are included, and
+preserves prior hydration/check receipts as inventory evidence instead of
+replaying them into new input workspaces. Six transport tests cover these
+failure cases and clean hydration. To assemble the integrated form:
+
+```powershell
+py tools/motioncraft_study_package.py pack <new-package> --landscape <base-landscape> --portrait <base-portrait> --caption-landscape <reserved-landscape> --caption-portrait <reserved-portrait> --producer <producer.json>
+```
+
+Each reserved root needs `caption-check.json` from
+`tools/motioncraft_caption_check.py`, a passing `cadence-r1/revised.json`, its
+compiled/revised render outputs and exact selected inputs. The base roots need
+all three variants and their cadence reports. Generic inventory checks establish
+integrity; verify scene receipts and execute the comparison tools before packing.
+
+Hydration/reproduction accepts four keys: `landscape`, `portrait`,
+`caption-landscape`, `caption-portrait`. It copies authored inputs and selected
+cache objects; it creates a fresh receipt bound to the new package. It does not
+copy compiled directories, renders or an old hydration receipt. Run the same
+compile/build/verify sequence above for the selected key and a new workspace.
+All four `target/motioncraft-handoff-r2-clean-<key>` workspaces passed the
+retained-runtime compile/build/check and reproduction sequence. Each
+`reproduction-check.json` binds the r2 package SHA and proves six exact compiled
+files, four exact WAVs, all 450 decoded picture frames and 44 indexed review
+samples. The command processes completed successfully; no compiled/rendered
+outputs were copied during hydration.
+
+The creative-selection gate stays pending and `release_ready` stays false.
+These files are development evidence in `target`, not a canonical CAIMITOS cache
+handoff or deployment. Preserve the package and runtime snapshot before cleaning
+that directory.
+
+## Follow-up runtime findings
+
+The reused cadence analyzer invokes WSL FFmpeg on Windows, separately from the
+native scene-rendering FFmpeg. New report code records the actual analyzer
+backend and version; the patterned hold/push/reduced test verifies those fields.
+The r2 inventory preserves the earlier reports unchanged. A subsequent package
+must include the refreshed analyzer reports and its separate runtime identity.
+Do not infer that the native render-tool pin also identifies the WSL analyzer.
+
+An additional legacy mixed-media still-animatic smoke failed twice on the
+Motioncraft branch with a filter `No space left on device` error, despite ample
+Windows/WSL storage. The same test passed on clean baseline 4effab1, built with
+output isolated under this worktree's target. This differential is unresolved;
+none of the eight native scene renders or four clean r2 reproductions failed.
+The full goal remains active while this additional check and provenance update
+are investigated, alongside the still-gated actual CAIMITOS adoption.
