@@ -34,6 +34,7 @@ pub mod episode_conform;
 pub mod episode_delivery;
 pub mod exposure_sheet;
 pub mod motioncraft_cadence;
+pub mod motioncraft_comparison;
 pub mod motioncraft_review;
 pub mod music_render;
 pub mod music_score;

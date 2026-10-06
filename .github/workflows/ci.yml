@@ -35,6 +35,8 @@ jobs:
         run: cargo test --test scene_delivery real_episode_consumption_boundaries_and_controlled_review -- --ignored --exact
       - name: Verify native cadence rejects a frozen moving interval
         run: cargo test --lib motioncraft_cadence::tests::native_metrics_reject_a_frozen_moving_interval -- --ignored --exact
+      - name: Verify portable matched Motioncraft comparisons
+        run: cargo test --test scene_delivery matched_motioncraft_package_rehydrates_and_rejects_tamper -- --ignored --exact
       - name: Verify phased camera cadence and reduced motion on both platforms
         run: cargo test --test scene_delivery phased_camera_renders_real_hold_push_and_reduced_motion_without_audio_drift -- --ignored --exact
       - name: Verify reserved caption geometry with phased cameras on both platforms

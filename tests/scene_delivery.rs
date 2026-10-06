@@ -4,6 +4,86 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::Path, process::Command};
 
 #[test]
+#[ignore = "requires native FFmpeg; portable Motioncraft comparison"]
+fn matched_motioncraft_package_rehydrates_and_rejects_tamper() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let assets = root.join("selected");
+    fs::create_dir(&assets).unwrap();
+    let mut job = fixture(&assets);
+    let mut pixels = Vec::new();
+    for y in 0..64 {
+        for x in 0..64 {
+            pixels.extend([
+                if (x / 8 + y / 8) % 2 == 0 { 220u8 } else { 30 },
+                (x * 3) as u8,
+                (y * 3) as u8,
+            ]);
+        }
+    }
+    fs::write(
+        assets.join("pattern.ppm"),
+        [b"P6\n64 64\n255\n".as_slice(), &pixels].concat(),
+    )
+    .unwrap();
+    job["pictures"][0]["source"] = file(&assets, "pattern.ppm");
+    add_phased_camera(&mut job);
+    job["still_sequence_encoding"] = json!("h264-lossless");
+    write_json(&assets.join("job.json"), &job);
+    let request = root.join("request.json");
+    write_json(
+        &request,
+        &json!({"schema":"reel.motioncraft-comparison-request.v1", "source_job":file(root,"selected/job.json"),
+        "asset_root":"selected","engine_commit":"0000000000000000000000000000000000000000"}),
+    );
+    let output = root.join("package");
+    let report = reel::motioncraft_comparison::render(&request, &output).unwrap();
+    assert_eq!(report["native_clock_verified"], true);
+    assert_eq!(report["variants"].as_object().unwrap().len(), 3);
+    assert_eq!(report["all_camera_cadence_passed"], true);
+    assert_ne!(
+        fs::read(output.join("still/comparison-frames/frame-00000023.png")).unwrap(),
+        fs::read(output.join("directed/comparison-frames/frame-00000023.png")).unwrap()
+    );
+    assert_eq!(
+        fs::read(output.join("still/comparison-frames/frame-00000023.png")).unwrap(),
+        fs::read(output.join("reduced/comparison-frames/frame-00000023.png")).unwrap()
+    );
+    assert_eq!(
+        fs::read(output.join("original-job.json")).unwrap(),
+        fs::read(assets.join("job.json")).unwrap()
+    );
+    assert!(reel::motioncraft_comparison::render(&request, &output).is_err());
+    fs::rename(&assets, root.join("unavailable-original")).unwrap();
+    // Moving the entire package preserves all contract and asset-relative locators.
+    let hydrated = root.join("hydrated");
+    fs::rename(&output, &hydrated).unwrap();
+    reel::motioncraft_comparison::check(&hydrated).unwrap();
+    fs::write(hydrated.join("reduced/D.wav"), b"wrong native stem").unwrap();
+    assert!(reel::motioncraft_comparison::check(&hydrated).is_err());
+}
+
+#[test]
+fn comparison_rejects_a_stale_request_before_creating_output() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let assets = root.join("selected");
+    fs::create_dir(&assets).unwrap();
+    let job = fixture(&assets);
+    write_json(&assets.join("job.json"), &job);
+    let request = root.join("request.json");
+    write_json(
+        &request,
+        &json!({"schema":"reel.motioncraft-comparison-request.v1", "source_job":file(root,"selected/job.json"),
+        "asset_root":"selected","engine_commit":"0000000000000000000000000000000000000000"}),
+    );
+    fs::write(assets.join("job.json"), b"stale").unwrap();
+    let output = root.join("package");
+    assert!(reel::motioncraft_comparison::render(&request, &output).is_err());
+    assert!(!output.exists());
+}
+
+#[test]
 #[ignore = "requires FFmpeg; synthetic episode and review integration"]
 fn real_episode_consumption_boundaries_and_controlled_review() {
     let t = tempfile::tempdir().unwrap();
