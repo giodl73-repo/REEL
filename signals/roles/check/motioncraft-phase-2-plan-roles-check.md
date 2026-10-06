@@ -1,5 +1,19 @@
 # Motioncraft Phase 2 — plan role review
 
+## Latest implementation-gap review
+
+Reviewed artifact: the active execution plan at the top of `docs/motioncraft-phase-2-plan.md`. The assistant reread the six core/provenance checklists. Findings refine the remaining gates; they do not certify completed episodes or represent human decisions.
+
+| ID / role | Finding | Incorporated disposition / owner |
+|---|---|---|
+| P2-R17 Platform and Audience / Provenance | Major: sparse phone extraction can omit glyphs despite an intact native render, producing misleading review evidence. | Presentation owner uses complete native RGB decoding with indexed frame hashes and independently verified resizing; preserve negative evidence and versioned extractor identity. Review every corrected reading state. |
+| P2-R18 Animation Director | Major: a one-frame hold has no temporal transitions, so correct composition cannot establish cadence. | Validator/producer retain raw inconclusive results. Permit only an explicit duration-only disposition with visible contribution and unchanged composition tolerance; hidden, wrong-composite and moving intervals remain rejected. |
+| P2-R19 Editor / Platform and Audience | Major: whole-cue CPS can overstate impossibility because caption seams remove display spaces. | Caption owner records an optimistic policy-bound lower limit separately from measured boundary feasibility. Resolve or review-disposition all 13 findings without silently relaxing policy or changing authored words. |
+| P2-R20 Story Director / Editor / Sound Designer | Major: additional component proofs still omit full sequence rhythm and selected soundtrack/bookends. | Assembly owner freezes the complete selected episode; production reviewer checks every cut and sound bridge in all twelve variants after capacity qualification. |
+| P2-R21 Rights and Provenance | Major: historical pending claims and newer source versions can obscure the exact evidence used for shipping. | Maintainers make the latest plan authoritative while retaining history; bind executed sources, tool/pin identities, cache receipts and exact reviewed main revisions. |
+
+All findings have an owner and an acceptance gate in the active plan. Implementation findings remain open until their evidence closes them.
+
 Date: 2026-10-06. Reviewed artifact: `docs/motioncraft-phase-2-plan.md`.
 
 The current assistant applied `.roles/ROLE.md`, the five core production checklists and the rights/provenance checklist. Findings below are analytical, not named-person opinions, independent agent reviews or approval. This is a plan review, not certification of implementation.
