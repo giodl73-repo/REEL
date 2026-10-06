@@ -31,6 +31,8 @@ jobs:
       - run: cargo test --all-targets --all-features
       - name: Verify compiled scene delivery samples, stems, frames and tamper rejection
         run: cargo test --test scene_delivery real_delivery_preserves_sample_offset_stems_frames_and_rejects_tamper -- --ignored --exact
+      - name: Verify explicit mono duplication preserves source level and rejects stereo
+        run: cargo test --test scene_delivery duplicate_mono_preserves_source_level_and_rejects_stereo -- --ignored --exact
       - name: Verify episode consumption, boundaries and controlled scene comparisons
         run: cargo test --test scene_delivery real_episode_consumption_boundaries_and_controlled_review -- --ignored --exact
       - name: Verify native cadence rejects a frozen moving interval

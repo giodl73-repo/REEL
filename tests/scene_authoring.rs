@@ -49,6 +49,33 @@ fn motion_direction() -> reel_assembly::motioncraft::Direction {
 }
 
 #[test]
+fn dialogue_channel_mapping_is_optional_fingerprinted_and_scene_overridable() {
+    use reel_assembly::scene_authoring::DialogueChannelMapping;
+    let (catalog, mut episode, mut scene, policy, season, eb, sb) = subject();
+    let resolve = |episode: &Episode, scene: &Scene| {
+        resolve_scene(&catalog, episode, scene, &policy, &season, &eb, &sb).unwrap()
+    };
+    let legacy = resolve(&episode, &scene);
+    assert!(
+        serde_json::to_value(&episode)
+            .unwrap()
+            .get("dialogue_channel_mapping")
+            .is_none()
+    );
+    episode.dialogue_channel_mapping = Some(DialogueChannelMapping::DuplicateMono);
+    let duplicated = resolve(&episode, &scene);
+    assert_ne!(legacy.fingerprint_sha256, duplicated.fingerprint_sha256);
+    scene.dialogue_channel_mapping = Some(DialogueChannelMapping::Automatic);
+    assert_eq!(
+        legacy.fingerprint_sha256,
+        resolve(&episode, &scene).fingerprint_sha256
+    );
+    let mut invalid = serde_json::to_value(scene).unwrap();
+    invalid["dialogue_channel_mapping"] = serde_json::json!("unknown");
+    assert!(serde_json::from_value::<Scene>(invalid).is_err());
+}
+
+#[test]
 fn motion_authoring_is_optional_fingerprinted_and_scoped() {
     use reel_assembly::scene_authoring::resolve_motion_direction;
     let (catalog, mut episode, mut scene, policy, season, eb, sb) = subject();

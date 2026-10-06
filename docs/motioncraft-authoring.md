@@ -217,3 +217,8 @@ Rollback uses the previous authored revision and its existing delivery package;
 no old file or render is overwritten. The implementation tests prove this
 path in REEL's synthetic scene harness; CAIMITOS's own adapter adoption remains
 a separate required completion gate.
+
+
+## Selected narration channel mapping
+
+`episode.json` may set `"dialogue_channel_mapping": "duplicate-mono"` to preserve a selected mono performance at its source level in both stereo channels. A `scene.json` override takes precedence; `"automatic"` explicitly restores legacy automatic conversion. With both fields absent, output and fingerprints preserve legacy behavior. This setting affects only D attachments, not music or effects, and leaves source identity, sample clocks, gains and fades unchanged. Unknown values reject during authoring; duplicate-mono rendering rejects a non-mono source. The resolved choice is included in scene identity and reaches native `audio[].channel_mapping`. Technical mapping does not select a creative mix.

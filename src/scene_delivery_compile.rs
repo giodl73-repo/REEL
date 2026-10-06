@@ -648,6 +648,13 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
             "bus":"D",
             "cue_id":cue.cue_id
         }));
+        if scene
+            .dialogue_channel_mapping
+            .or(episode.dialogue_channel_mapping)
+            == Some(reel_assembly::scene_authoring::DialogueChannelMapping::DuplicateMono)
+        {
+            audio.last_mut().unwrap()["channel_mapping"] = json!("duplicate-mono");
+        }
         audio_events.push(json!({
             "id":cue.cue_id,
             "role":"narration",
