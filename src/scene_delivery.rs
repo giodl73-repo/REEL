@@ -30,6 +30,10 @@ pub struct Job {
     pub height: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption_picture_layout: Option<crate::caption_presentation::CaptionPictureLayoutConfig>,
+    /// Explicit output-space viewport for side panels or portrait reflow.
+    /// Source/protection coordinates remain local to the fitted picture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture_region: Option<crate::caption_presentation::PixelRect>,
     #[serde(default)]
     pub still_sequence_encoding: Option<String>,
     pub max_composition_samples: u64,
@@ -301,13 +305,12 @@ fn nonempty(s: &str) -> bool {
 pub fn picture_layout(
     job: &Job,
 ) -> Result<Option<crate::caption_presentation::CaptionPictureLayoutReport>> {
-    job.caption_picture_layout
-        .as_ref()
-        .map(|config| {
-            crate::caption_presentation::resolve_picture_layout(config, job.width, job.height)
-        })
-        .transpose()
-        .map(Option::flatten)
+    crate::caption_presentation::resolve_scene_picture_layout(
+        job.caption_picture_layout.as_ref(),
+        job.picture_region.as_ref(),
+        job.width,
+        job.height,
+    )
 }
 
 pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
@@ -336,7 +339,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
             }))
     {
         bail!(
-            "reserved caption band requires contained picture motion; legacy or post-compose cameras are unsupported"
+            "reserved caption band or explicit picture region requires contained picture motion; legacy or post-compose cameras are unsupported"
         );
     }
     let base = job_path.parent().unwrap_or(Path::new("."));

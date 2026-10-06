@@ -74,4 +74,14 @@ CAIMITOS pins b674148. Its freshly hydrated 84-file layer handoff reproduces the
 
 Episode 1 intake: all 25 scenes in both languages compiled from isolated hash-bound metadata and passed native cache preflight. This is not episode qualification: none of these intake jobs has captions, and soundtrack/presentation parity still requires reconciliation against the selected full packages. One historical Scene 004 English matrix root pin is stale; the current revision is recorded explicitly. The selected Spanish Scene 004 clock differs by 215040 samples, matching the existing native-clock correction rather than an invented retime.
 
-Remaining: exact full-episode freeze, protected focal consumer/rollback evidence, caption and presentation bindings, supported profile/layer dispositions, all 12 delivery combinations and contextual review, formal cache authority receipts, reviewed PR integration and main shipping. Do not declare Phase 2 complete from engine tests or intake planning.
+Later CAIMITOS checkpoints retain actual focal authoring/upgrade/rollback proof and fresh cache consumer checks. Five formal technical authority receipts now cover 1667 retained assets. Native word evidence covers all 282 selected body cues and exact PCM joins for all 50 scene/language positions. Caption segmentation remains unreviewed: 268 cues admit 810 candidates under the provisional phone policy; a second constrained alignment adds a candidate for Spanish F1-089 while retaining other failures. These results do not qualify a complete episode.
+
+Remaining: exact full-episode freeze, caption and presentation bindings, supported profile/layer dispositions, all 12 delivery combinations and contextual review, reviewed PR integration and main shipping. Do not declare Phase 2 complete from engine tests or intake planning.
+
+## P2.5 explicit picture viewport checkpoint — 2026-10-06
+
+Selected poem presentations need reserved side-panel space; portrait needs a separately composed picture/text area. An optional output-pixel `picture_region` now propagates from the delivery profile to the native job. The shared geometry resolver checks output bounds, overflow, nonempty regions and reserved caption-band containment. Absent region preserves previous serialization and behavior. Camera/protection coordinates remain local to the picture viewport; selected source hashes remain unchanged.
+
+The renderer fits and moves picture pixels inside the viewport before final padding and overlays. Review evidence records the resolved viewport, and cadence measures and identifies its explicit region. Real native Windows FFmpeg tests prove landscape/portrait containment, holds, camera travel and exact four-stem identity. The regular all-target/all-feature suite and warnings-denied Clippy pass locally; CI includes the native viewport test on both operating systems.
+
+CAIMITOS pin propagation, actual selected poem/profile text binding and final episode review remain separate open gates. The viewport itself neither creates nor qualifies caption/poem text, nor automatically migrates old camera treatments or profile-specific effect carriers.

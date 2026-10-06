@@ -56,13 +56,25 @@ pub(crate) fn native_output(executable: &Path, args: &[String]) -> Result<String
     String::from_utf8(output.stdout).context("native cadence FFmpeg wrote non-UTF8 metrics")
 }
 
-fn native_frame_values(executable: &Path, video: &Path, start: u64, end: u64) -> Result<Vec<f64>> {
+fn native_frame_values(
+    executable: &Path,
+    video: &Path,
+    start: u64,
+    end: u64,
+    region: Option<&crate::caption_presentation::PixelRect>,
+) -> Result<Vec<f64>> {
     if end
         .checked_sub(start)
         .is_none_or(|n| !(2..=432_000).contains(&n))
     {
         anyhow::bail!("indexed cadence requires 2..432000 frames");
     }
+    let crop = region.map_or_else(String::new, |region| {
+        format!(
+            "crop={}:{}:{}:{}:exact=1,",
+            region.width, region.height, region.x, region.y
+        )
+    });
     let output = native_output(
         executable,
         &[
@@ -73,7 +85,7 @@ fn native_frame_values(executable: &Path, video: &Path, start: u64, end: u64) ->
             video.to_string_lossy().into_owned(),
             "-vf".into(),
             format!(
-                "trim=start_frame={start}:end_frame={end},setpts=PTS-STARTPTS,tblend=all_mode=difference,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-"
+                "trim=start_frame={start}:end_frame={end},setpts=PTS-STARTPTS,{crop}tblend=all_mode=difference,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-"
             ),
             "-f".into(),
             "null".into(),
@@ -125,6 +137,7 @@ fn evaluate(values: &[f64], holds: &[bool]) -> Value {
 }
 
 pub fn analyze(job: &Job, plan: &Plan, root: &Path) -> Result<Value> {
+    crate::scene_delivery::picture_layout(job)?;
     let analyzer = resolve_analyzer()?;
     let analyzer_sha256 = crate::sha256_file(&analyzer)?;
     let analyzer_version = native_output(&analyzer, &["-version".into()])?;
@@ -192,12 +205,16 @@ pub fn analyze(job: &Job, plan: &Plan, root: &Path) -> Result<Value> {
             &root.join("picture.mkv"),
             span.start_frame,
             span.end_frame,
+            job.picture_region.as_ref(),
         )?;
         let mut report = evaluate(&values, &holds);
         report["attachment_id"] = json!(picture.attachment_id);
         report["start_frame"] = json!(span.start_frame);
         report["end_frame_exclusive"] = json!(span.end_frame);
         report["status"] = json!("evaluated");
+        if let Some(region) = &job.picture_region {
+            report["measurement_region"] = serde_json::to_value(region)?;
+        }
         rows.push(report);
     }
     if crate::sha256_file(&analyzer)? != analyzer_sha256 {
@@ -260,7 +277,7 @@ mod tests {
             ],
         )
         .unwrap();
-        let values = native_frame_values(&executable, &video, 0, 24).unwrap();
+        let values = native_frame_values(&executable, &video, 0, 24, None).unwrap();
         assert_eq!(evaluate(&values, &[false; 23])["passed"], false);
         assert_eq!(evaluate(&values, &[true; 23])["passed"], true);
     }

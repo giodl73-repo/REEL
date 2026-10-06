@@ -71,3 +71,27 @@ hold/freeze detection, both caption layouts, differing measured ES/EN spans,
 short fitted phases, rational FPS, identity reduced motion, byte-stable legacy
 fixtures and actual CAIMITOS upgrade/rollback. Retain native rendered frames and
 exact source/tool hashes; a transform unit test alone is insufficient proof.
+
+## Explicit picture viewport
+
+An optional `picture_region` in the scene delivery profile propagates unchanged
+to the native job. Its output-pixel rectangle reserves space for a side panel or
+portrait text area without changing any selected image source hash:
+
+```json
+"picture_region": { "x": 0, "y": 30, "width": 720, "height": 405 }
+```
+
+The rectangle must be nonempty and fit within the output. When caption-band
+reservation is configured it must fit within that reservation's picture area.
+Unknown rectangle fields, overflowing coordinates and caption-band overlap
+reject. Absent viewport retains the previous geometry and serialization.
+
+The engine fits the original image inside the viewport, applies its camera
+there, then pads to the output before text/effect layers. Normalized focal,
+safe-area and protected coordinates remain local to the picture viewport.
+Legacy or post-compose camera treatments require explicit migration before
+using a reserved viewport. The review evidence records the resolved rectangle;
+cadence measures the explicit viewport and records its measurement region so
+unused text space cannot dilute the camera metric. Viewport support does not
+create, bind or qualify poem/caption text or profile-specific effect carriers.

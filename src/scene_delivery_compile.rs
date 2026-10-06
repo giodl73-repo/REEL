@@ -52,6 +52,8 @@ pub struct DeliveryProfile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption_picture_layout: Option<crate::caption_presentation::CaptionPictureLayoutConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture_region: Option<crate::caption_presentation::PixelRect>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub motion_safe_area: Option<reel_assembly::motioncraft::Rect>,
     #[serde(default)]
     pub still_sequence_encoding: Option<String>,
@@ -456,9 +458,12 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     {
         bail!("invalid scene delivery profile");
     }
-    if let Some(layout) = &profile.caption_picture_layout {
-        crate::caption_presentation::resolve_picture_layout(layout, profile.width, profile.height)?;
-    }
+    crate::caption_presentation::resolve_scene_picture_layout(
+        profile.caption_picture_layout.as_ref(),
+        profile.picture_region.as_ref(),
+        profile.width,
+        profile.height,
+    )?;
     let lane = scene
         .languages
         .get(&request.language)
@@ -935,6 +940,9 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     });
     if let Some(layout) = &profile.caption_picture_layout {
         job["caption_picture_layout"] = serde_json::to_value(layout)?;
+    }
+    if let Some(region) = &profile.picture_region {
+        job["picture_region"] = serde_json::to_value(region)?;
     }
     let (job_sha, job_bytes) = write_new(&dir, "job.json", &job)?;
     let source_selected_graph_lock = graph.lock.clone();

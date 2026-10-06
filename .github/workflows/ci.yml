@@ -49,6 +49,8 @@ jobs:
         run: cargo test --test scene_delivery phased_camera_renders_real_hold_push_and_reduced_motion_without_audio_drift -- --ignored --exact
       - name: Verify reserved caption geometry with phased cameras on both platforms
         run: cargo test --test scene_delivery reserved_caption_band_survives_real_phased_camera_in_both_profiles -- --ignored --exact
+      - name: Verify explicit poem and portrait picture viewports on both platforms
+        run: cargo test --test scene_delivery explicit_picture_viewport_contains_native_camera_and_preserves_audio -- --ignored --exact
       - name: Exercise synthetic dialogue/stem graph through FFmpeg
         run: cargo test --lib audio_preview::tests::real_dialogue_ducking_stems_recombine_and_recheck -- --ignored --exact
       - name: Exercise governed synthetic sonic resolution through D/M/E rendering on Linux

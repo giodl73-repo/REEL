@@ -463,6 +463,176 @@ fn caption_reservation_reuses_profile_geometry_and_rejects_unsafe_cameras() {
 }
 
 #[test]
+fn explicit_picture_viewport_rejects_overflow_and_caption_overlap() {
+    use reel::caption_presentation::{self, CaptionPictureLayoutConfig, PixelRect};
+    let config: CaptionPictureLayoutConfig =
+        serde_json::from_value(json!({"profile":"phone-review","layout":"reserve-caption-band"}))
+            .unwrap();
+    let region = PixelRect {
+        x: 0,
+        y: 30,
+        width: 720,
+        height: 405,
+    };
+    let resolved =
+        caption_presentation::resolve_scene_picture_layout(Some(&config), Some(&region), 720, 1280)
+            .unwrap()
+            .unwrap();
+    assert_eq!(resolved.picture_region, region);
+    for invalid in [
+        PixelRect {
+            x: 0,
+            y: 899,
+            width: 720,
+            height: 2,
+        },
+        PixelRect {
+            x: u32::MAX,
+            y: 0,
+            width: 2,
+            height: 2,
+        },
+        PixelRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 2,
+        },
+    ] {
+        assert!(
+            caption_presentation::resolve_scene_picture_layout(
+                Some(&config),
+                Some(&invalid),
+                720,
+                1280
+            )
+            .is_err()
+        );
+    }
+    assert!(
+        serde_json::from_value::<PixelRect>(json!({"x":0,"y":0,"width":720,"height":405,"typo":1}))
+            .is_err()
+    );
+    assert!(
+        caption_presentation::resolve_scene_picture_layout(None, None, 1280, 720)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+#[ignore = "requires native FFmpeg; explicit landscape and portrait picture viewports"]
+fn explicit_picture_viewport_contains_native_camera_and_preserves_audio() {
+    for (width, height, region, caption) in [
+        (
+            1280,
+            720,
+            json!({"x":0,"y":0,"width":853,"height":720}),
+            None,
+        ),
+        (
+            720,
+            1280,
+            json!({"x":0,"y":30,"width":720,"height":405}),
+            Some("phone-review"),
+        ),
+    ] {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path();
+        let mut job = fixture(root);
+        let pixels: Vec<_> = (0..64)
+            .flat_map(|y| {
+                (0..64).flat_map(move |x| {
+                    [
+                        if (x / 8 + y / 8) % 2 == 0 { 220u8 } else { 30 },
+                        (x * 3) as u8,
+                        (y * 3) as u8,
+                    ]
+                })
+            })
+            .collect();
+        fs::write(
+            root.join("pattern.ppm"),
+            [b"P6\n64 64\n255\n".as_slice(), &pixels].concat(),
+        )
+        .unwrap();
+        job["pictures"][0]["source"] = file(root, "pattern.ppm");
+        job["width"] = json!(width);
+        job["height"] = json!(height);
+        job["picture_region"] = region.clone();
+        job["still_sequence_encoding"] = json!("h264-lossless");
+        if let Some(profile) = caption {
+            job["caption_picture_layout"] =
+                json!({"profile":profile,"layout":"reserve-caption-band"});
+        }
+        let original = root.join("still-job.json");
+        write_json(&original, &job);
+        scene_delivery::render(&original, root, &root.join("still")).unwrap();
+        add_phased_camera(&mut job);
+        write_json(&root.join("job.json"), &job);
+        let output = root.join("directed");
+        scene_delivery::render(&root.join("job.json"), root, &output).unwrap();
+        scene_delivery::check(&root.join("job.json"), root, &output).unwrap();
+        for stem in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
+            assert_eq!(
+                fs::read(root.join("still").join(stem)).unwrap(),
+                fs::read(output.join(stem)).unwrap()
+            );
+        }
+        let decoded = Command::new("ffmpeg")
+            .args(["-v", "error", "-i"])
+            .arg(output.join("picture.mkv"))
+            .args([
+                "-vf",
+                "select=eq(n\\,0)+eq(n\\,10)+eq(n\\,23)",
+                "-fps_mode",
+                "passthrough",
+                "-pix_fmt",
+                "rgb24",
+                "-f",
+                "rawvideo",
+                "-",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            decoded.status.success(),
+            "{}",
+            String::from_utf8_lossy(&decoded.stderr)
+        );
+        let stride = width as usize * height as usize * 3;
+        assert_eq!(decoded.stdout.len(), stride * 3);
+        assert_eq!(
+            &decoded.stdout[..stride],
+            &decoded.stdout[stride..2 * stride]
+        );
+        assert_ne!(&decoded.stdout[..stride], &decoded.stdout[2 * stride..]);
+        let x = region["x"].as_u64().unwrap() as usize;
+        let y = region["y"].as_u64().unwrap() as usize;
+        let rw = region["width"].as_u64().unwrap() as usize;
+        let rh = region["height"].as_u64().unwrap() as usize;
+        for frame in decoded.stdout.chunks_exact(stride) {
+            for py in 0..height as usize {
+                for px in 0..width as usize {
+                    if px < x || px >= x + rw || py < y || py >= y + rh {
+                        let index = (py * width as usize + px) * 3;
+                        assert!(
+                            frame[index..index + 3].iter().all(|v| *v <= 2),
+                            "camera entered reserved text space"
+                        );
+                    }
+                }
+            }
+        }
+        let report =
+            reel::motioncraft_cadence::checked_report(&root.join("job.json"), root, &output)
+                .unwrap();
+        assert_eq!(report["passed"], true);
+        assert_eq!(report["shots"][0]["measurement_region"], region);
+    }
+}
+
+#[test]
 #[ignore = "requires FFmpeg; run explicitly for Motioncraft"]
 fn reserved_caption_band_survives_real_phased_camera_in_both_profiles() {
     for (width, height, profile, band_y) in [
