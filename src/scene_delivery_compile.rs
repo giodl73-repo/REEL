@@ -52,9 +52,13 @@ pub struct DeliveryProfile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption_picture_layout: Option<crate::caption_presentation::CaptionPictureLayoutConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture_region: Option<crate::caption_presentation::PixelRect>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub motion_safe_area: Option<reel_assembly::motioncraft::Rect>,
     #[serde(default)]
     pub still_sequence_encoding: Option<String>,
+    #[serde(default)]
+    pub composition_encoding: Option<String>,
     pub sample_rate: u32,
     pub frame_rate_numerator: u64,
     pub frame_rate_denominator: u64,
@@ -66,9 +70,22 @@ pub struct DeliveryProfile {
     pub sonic_gain_db: f64,
     #[serde(default)]
     pub sonic_gain_db_by_binding: BTreeMap<String, f64>,
+    #[serde(default)]
+    pub sonic_channel_mappings_by_binding:
+        BTreeMap<String, crate::scene_delivery::AudioChannelMapping>,
+    #[serde(default)]
+    pub sonic_placement_offsets_by_binding: BTreeMap<String, SonicPlacementOffset>,
     /// Explicit modes; cache evidence remains owned by scoped asset bindings.
     #[serde(default)]
     pub vfx_render_mode_by_binding: BTreeMap<String, String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SonicPlacementOffset {
+    pub samples: i64,
+    pub evidence_binding: String,
+    pub reason: String,
 }
 
 fn default_sonic_gain_db() -> f64 {
@@ -152,6 +169,9 @@ fn close_delivery_graph(
                 Lane::Sonic
             },
         ));
+        if !row["placement_offset"].is_null() {
+            media.push((&row["placement_offset"]["evidence"], Lane::Sonic));
+        }
     }
     for row in job["external_layers"].as_array().into_iter().flatten() {
         media.push((&row["evidence"], Lane::Presentation));
@@ -444,6 +464,10 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
             .as_deref()
             .is_some_and(|value| value != "h264-lossless")
         || profile.width == 0
+        || profile
+            .composition_encoding
+            .as_deref()
+            .is_some_and(|value| value != "h264-lossless")
         || profile.height == 0
         || profile.sample_rate == 0
         || profile.frame_rate_numerator == 0
@@ -459,9 +483,12 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     {
         bail!("invalid scene delivery profile");
     }
-    if let Some(layout) = &profile.caption_picture_layout {
-        crate::caption_presentation::resolve_picture_layout(layout, profile.width, profile.height)?;
-    }
+    crate::caption_presentation::resolve_scene_picture_layout(
+        profile.caption_picture_layout.as_ref(),
+        profile.picture_region.as_ref(),
+        profile.width,
+        profile.height,
+    )?;
     let lane = scene
         .languages
         .get(&request.language)
@@ -640,6 +667,13 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
             "bus":"D",
             "cue_id":cue.cue_id
         }));
+        if scene
+            .dialogue_channel_mapping
+            .or(episode.dialogue_channel_mapping)
+            == Some(reel_assembly::scene_authoring::DialogueChannelMapping::DuplicateMono)
+        {
+            audio.last_mut().unwrap()["channel_mapping"] = json!("duplicate-mono");
+        }
         audio_events.push(json!({
             "id":cue.cue_id,
             "role":"narration",
@@ -741,6 +775,14 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     {
         bail!("scene delivery profile has an unused Sonic gain binding");
     }
+    if profile
+        .sonic_channel_mappings_by_binding
+        .keys()
+        .chain(profile.sonic_placement_offsets_by_binding.keys())
+        .any(|key| !used_sonic.contains(key))
+    {
+        bail!("scene delivery profile has an unused Sonic channel/placement binding");
+    }
     for (index, event) in events.iter().enumerate() {
         if event.sonic_bindings.iter().collect::<BTreeSet<_>>().len() != event.sonic_bindings.len()
         {
@@ -766,6 +808,27 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
                 "source_start_sample": 0,
                 "gain_db": sonic_gain_db(&profile, key)
             }));
+            if let Some(mapping) = profile.sonic_channel_mappings_by_binding.get(key) {
+                audio.last_mut().unwrap()["channel_mapping"] = serde_json::to_value(mapping)?;
+            }
+            if let Some(offset) = profile.sonic_placement_offsets_by_binding.get(key) {
+                if offset.reason.trim().is_empty() {
+                    bail!("Sonic placement offset needs an explicit reason");
+                }
+                let evidence = asset(&offset.evidence_binding, &scopes)?;
+                let reference: crate::scene_delivery::FileRef =
+                    serde_json::from_value(media_ref(evidence))?;
+                crate::scene_delivery::checked_file(&root, &reference)?;
+                crate::scene_delivery::audio_placement_samples(
+                    event.start,
+                    events[run_end - 1].end,
+                    duration,
+                    offset.samples,
+                )?;
+                audio.last_mut().unwrap()["placement_offset"] = json!({
+                    "samples":offset.samples, "reason":offset.reason, "evidence":media_ref(evidence)
+                });
+            }
             audio_events.push(json!({
                 "id": attachment,
                 "role": "effect",
@@ -946,6 +1009,12 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     });
     if let Some(layout) = &profile.caption_picture_layout {
         job["caption_picture_layout"] = serde_json::to_value(layout)?;
+    }
+    if let Some(region) = &profile.picture_region {
+        job["picture_region"] = serde_json::to_value(region)?;
+    }
+    if let Some(encoding) = &profile.composition_encoding {
+        job["composition_encoding"] = json!(encoding);
     }
     let (job_sha, job_bytes) = write_new(&dir, "job.json", &job)?;
     let source_selected_graph_lock = graph.lock.clone();

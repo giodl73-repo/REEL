@@ -102,6 +102,52 @@ pub fn resolve_picture_layout(
     picture_layout_for(&style, config.layout, width)
 }
 
+/// Resolve an explicit viewport inside the normal picture area. This can
+/// reserve poem/sidebar space without altering selected source image bytes.
+/// Caption reservation remains a hard outer boundary when configured.
+pub fn resolve_scene_picture_layout(
+    config: Option<&CaptionPictureLayoutConfig>,
+    explicit: Option<&PixelRect>,
+    width: u32,
+    height: u32,
+) -> Result<Option<CaptionPictureLayoutReport>> {
+    let base = config
+        .map(|config| resolve_picture_layout(config, width, height))
+        .transpose()?
+        .flatten();
+    let Some(region) = explicit else {
+        return Ok(base);
+    };
+    let available = base
+        .as_ref()
+        .map(|layout| layout.picture_region.clone())
+        .unwrap_or(PixelRect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        });
+    if width == 0
+        || height == 0
+        || width > 8192
+        || height > 8192
+        || region.width == 0
+        || region.height == 0
+        || region.x < available.x
+        || region.y < available.y
+        || region.right() > available.right()
+        || region.bottom() > available.bottom()
+    {
+        bail!(
+            "explicit picture region must fit inside the available picture area without entering the reserved caption band"
+        );
+    }
+    Ok(Some(CaptionPictureLayoutReport {
+        strategy: "explicit-picture-region".to_string(),
+        picture_region: region.clone(),
+    }))
+}
+
 fn picture_layout_for(
     style: &CaptionStyleReport,
     layout: CaptionPictureLayout,
@@ -176,6 +222,7 @@ pub struct DeliveryCueAssignment {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct PixelRect {
     pub x: u32,
     pub y: u32,

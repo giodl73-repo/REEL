@@ -61,6 +61,26 @@ intentional silence, but cannot be called an accepted performance or final episo
 Audio events may additionally set `source_start_sample`, `gain_db`,
 `fade_in_samples`, and `fade_out_samples`. Only M/E may take excerpts. Sources
 must already have the contract sample rate. No duration or pitch scaling occurs.
+An optional `channel_mapping: duplicate-mono` copies a mono source at its native
+level into both stereo channels before gain, fades and placement. Rendering
+rejects this option for a source with more than one channel. Omitting the field
+preserves the existing automatic FFmpeg channel conversion, including its mono
+upmix attenuation. Use the explicit mapping only when the selected soundtrack
+requires duplication; it changes neither source samples nor authored gain.
+For an explicitly selected historical effect mix, E events may instead use
+`channel_mapping: downmix-mono-duplicate`. It requires a stereo source and uses
+FFmpeg's mono conversion followed by duplication. It is distinct from averaging
+the stereo channels; D/M use of this compatibility mapping rejects.
+
+An E event may declare `placement_offset: {samples: 8, evidence: <FileRef>,
+reason: <nonempty explanation>}`. The signed offset moves the rendered effect
+without editing its source excerpt, duration, fades or compiled semantic anchor.
+Hash-bound evidence is mandatory. D/M offsets and placements outside the scene
+reject. `plan.audio` records actual rendered positions; when an offset is
+declared, `plan.audio_anchor_spans` separately preserves every contract audio
+anchor. With no offset, that field is omitted and legacy plan/output behavior
+remains unchanged. This is explicit compatibility intent, not inferred timing
+or authority to select a mix.
 Fades use sample counts and placement uses FFmpeg's `adelay=<samples>S`, avoiding
 the loss introduced by rounding to milliseconds. Short sources fail; no looping
 or padding of a missing performance is inferred. Authored ambience loops and room
@@ -128,8 +148,13 @@ evidence FileRef. `evidence-only` records a held external delivery. `ass-overlay
 renders one full-scene editable ASS layer. `timed-video-overlay` renders hash-bound
 alpha videos on effect or generic overlay attachments for their exact compiled
 frame spans. Multiple timed overlays compose in job order; each intermediate
-picture and selected overlay source is retained and checked separately. Mixing
-an ASS overlay with multiple timed overlays is not supported. Each video must
+picture and selected overlay source is retained and checked separately. A mixed
+stack supports timed overlays followed by one combined full-scene ASS presentation.
+ASS before a timed overlay or more than one ASS presentation rejects; combine
+captions, poem states and titles into the selected ASS source. Mixed stacks retain
+`selected-overlay-NNN.mkv`, final `presentation-NNN.ass`, intermediate
+`layered-picture-NNN.mkv` and the optional selected font. Single-layer filenames
+remain unchanged. Each video must
 have the scene's width and height and enough decoded
 frames for that span. A timed effect becomes visible on the first display frame
 at or after its semantic start sample. The compiled end partition preserves the
@@ -154,13 +179,19 @@ overrun is rejected. A source cut boundary and an effect boundary may differ
 by a frame when a recorded edit rounded its picture cuts.
 
 For rendered layers, the receipt retains `clean-picture.mkv`, the selected
-ASS or alpha-video sources, and intermediate pictures when multiple timed
-overlays are bound. The checker verifies exact source bytes, samples each
+ASS or alpha-video sources, and intermediate pictures when multiple rendered
+layers are bound. The checker verifies exact source and font bytes, checks each
+stage's frame count, samples each
 layer's active frames and requires a visible change somewhere in its span,
 and compares picture frames immediately outside that span with the preceding
 layer. This checks selected
 scene compositing at those frames, not the
-creative selection or derivation of the effect source. A clean-picture master
+creative selection or derivation of the effect source. The ASS stage must add
+visible text during its dialogue intervals. Intermediate stage checks do not
+establish that every effect survives later text. The temporal layer analyzer
+checks supported mixed stacks independently using the selected ASS response,
+native timestamps and fonts; fully hidden evidence remains inconclusive.
+Post-compose cameras retain the explicit separate-analysis disposition. A clean-picture master
 must consume clean assets; disclosures, review labels and captions belong in
 separate delivery layers. Do not feed a flattened review overlay back as clean
 picture.
@@ -176,8 +207,12 @@ picture.
 - `receipt.json`: source/compiled identities, integer timing, FFmpeg version,
   exact output hashes/bytes, external-layer limitations and no publication grant.
 
-Float buses and their sum are checked for overload before PCM quantization; a
-clipping mix fails and must receive explicit gain/mix changes. This does not replace
+Float buses and their sum are checked sample by sample before PCM quantization.
+Every value must be finite and lie in the signed PCM domain `[-1, 1)`; the valid
+negative full-scale rail is preserved without attenuation. Empty or partial
+decoded evidence and actual overload fail before output publication. Existing
+source saturation remains an audio-quality finding. A clipping mix fails and
+must receive explicit gain/mix changes. This does not replace
 `audio-check` loudness, true-peak, stem-margin or listening review. Decoded PCM
 content length is verified separately from frame duration and AAC codec padding.
 The `check` command rejects changed jobs, production/contract/media/evidence hashes,

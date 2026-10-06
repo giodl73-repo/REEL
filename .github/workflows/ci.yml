@@ -31,14 +31,40 @@ jobs:
       - run: cargo test --all-targets --all-features
       - name: Verify compiled scene delivery samples, stems, frames and tamper rejection
         run: cargo test --test scene_delivery real_delivery_preserves_sample_offset_stems_frames_and_rejects_tamper -- --ignored --exact
+      - name: Verify explicit mono duplication preserves source level and rejects stereo
+        run: cargo test --test scene_delivery duplicate_mono_preserves_source_level_and_rejects_stereo -- --ignored --exact
+      - name: Verify independent native audio matches full-scene stems and rejects stale evidence
+        run: cargo test --test scene_delivery audio_only_matches_full_scene_and_rejects_tamper_stale_job_and_overwrite -- --ignored --exact
+      - name: Verify explicit selected Sonic channel and placement compatibility
+        run: cargo test --test scene_delivery explicit_sonic_mono_and_placement_match_historical_mix_without_changing_pictures_or_dialogue -- --ignored --exact
+      - name: Verify signed PCM rails preserve sources and reject overload before publication
+        run: cargo test --test scene_delivery signed_pcm_rails_preserve_exact_sources_and_reject_overload_before_publication -- --ignored --exact
       - name: Verify episode consumption, boundaries and controlled scene comparisons
         run: cargo test --test scene_delivery real_episode_consumption_boundaries_and_controlled_review -- --ignored --exact
-      - name: Verify phased camera cadence and reduced motion on Linux
-        if: matrix.os == 'ubuntu-latest'
+      - name: Verify compact lossless episodes preserve every frame and PCM24 sample
+        run: cargo test --test scene_delivery compact_lossless_episode_preserves_content_and_rejects_lossy_or_retimed_masters -- --ignored --exact
+      - name: Verify native cadence rejects a frozen moving interval
+        run: cargo test --lib motioncraft_cadence::tests::native_metrics_reject_a_frozen_moving_interval -- --ignored --exact
+      - name: Verify portable matched Motioncraft comparisons
+        run: cargo test --test scene_delivery matched_motioncraft_package_rehydrates_and_rejects_tamper -- --ignored --exact
+      - name: Verify frozen layer expectations independently of camera holds
+        run: cargo test --test scene_delivery layer_cadence_rejects_frozen_effect_and_accepts_declared_hold -- --ignored --exact
+      - name: Verify moving alpha layers and final occlusion
+        run: cargo test --lib motioncraft_layers::tests::moving_alpha_layer_and_final_occlusion_are_measured_independently -- --ignored --exact
+      - name: Verify hidden motion and transparent regions remain unqualified
+        run: cargo test --lib motioncraft_layers::tests::hidden_motion_cannot_borrow_visibility_from_a_static_region -- --ignored --exact
+      - name: Verify ASS temporal response, occlusion and independent effect motion
+        run: cargo test --lib motioncraft_layers::tests::ass_response_proves_visible_motion_and_rejects_hidden_or_wrong_composition -- --ignored --exact
+      - name: Verify ASS reading states retain rational native timestamps
+        run: cargo test --lib motioncraft_layers::tests::ass_state_holds_keep_native_timestamps_after_interval_trim -- --ignored --exact
+      - name: Verify native focal camera and pan execution
+        run: cargo test --test scene_delivery focal_and_pan_camera_render_real_pixels_and_preserve_native_audio -- --ignored --exact
+      - name: Verify phased camera cadence and reduced motion on both platforms
         run: cargo test --test scene_delivery phased_camera_renders_real_hold_push_and_reduced_motion_without_audio_drift -- --ignored --exact
-      - name: Verify reserved caption geometry with phased cameras on Linux
-        if: matrix.os == 'ubuntu-latest'
+      - name: Verify reserved caption geometry with phased cameras on both platforms
         run: cargo test --test scene_delivery reserved_caption_band_survives_real_phased_camera_in_both_profiles -- --ignored --exact
+      - name: Verify explicit poem and portrait picture viewports on both platforms
+        run: cargo test --test scene_delivery explicit_picture_viewport_contains_native_camera_and_preserves_audio -- --ignored --exact
       - name: Exercise synthetic dialogue/stem graph through FFmpeg
         run: cargo test --lib audio_preview::tests::real_dialogue_ducking_stems_recombine_and_recheck -- --ignored --exact
       - name: Exercise governed synthetic sonic resolution through D/M/E rendering on Linux

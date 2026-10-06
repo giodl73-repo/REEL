@@ -30,8 +30,15 @@ pub struct Job {
     pub height: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption_picture_layout: Option<crate::caption_presentation::CaptionPictureLayoutConfig>,
+    /// Explicit output-space viewport for side panels or portrait reflow.
+    /// Source/protection coordinates remain local to the fitted picture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture_region: Option<crate::caption_presentation::PixelRect>,
     #[serde(default)]
     pub still_sequence_encoding: Option<String>,
+    /// Optional temporal lossless encoding for overlay and post-camera stages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub composition_encoding: Option<String>,
     pub max_composition_samples: u64,
     pub pictures: Vec<Picture>,
     pub audio: Vec<Audio>,
@@ -218,6 +225,45 @@ pub struct Audio {
     pub fade_in_samples: u64,
     #[serde(default)]
     pub fade_out_samples: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_mapping: Option<AudioChannelMapping>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placement_offset: Option<AudioPlacementOffset>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AudioChannelMapping {
+    DuplicateMono,
+    /// Default FFmpeg stereo-to-mono conversion, then exact mono duplication.
+    /// This is not a 0.5 + 0.5 average or a loudness normalization.
+    DownmixMonoDuplicate,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AudioPlacementOffset {
+    pub samples: i64,
+    pub evidence: FileRef,
+    pub reason: String,
+}
+
+pub(crate) fn audio_placement_samples(
+    start: u64,
+    end: u64,
+    duration: u64,
+    offset: i64,
+) -> Result<(u64, u64)> {
+    let placed_start = start
+        .checked_add_signed(offset)
+        .context("audio placement offset starts before the scene or overflows")?;
+    let placed_end = end
+        .checked_add_signed(offset)
+        .context("audio placement offset ends before the scene or overflows")?;
+    if placed_start >= placed_end || placed_end > duration {
+        bail!("audio placement offset exceeds the scene end or has no positive span");
+    }
+    Ok((placed_start, placed_end))
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -228,6 +274,39 @@ pub struct Span {
     pub end_sample: u64,
     pub start_frame: u64,
     pub end_frame: u64,
+}
+
+fn conform_timed_layer_frames(
+    span: &mut Span,
+    pictures: &[Span],
+    duration_samples: u64,
+    native_terminal_frame: u64,
+    delivery_frames: u64,
+    explicit_picture_frames: bool,
+) -> Result<()> {
+    if explicit_picture_frames {
+        if let Some(picture) = pictures.iter().find(|picture| {
+            picture.start_sample == span.start_sample
+                && picture.start_frame > span.start_frame
+                && picture.start_frame - span.start_frame <= 1
+        }) {
+            span.start_frame = picture.start_frame;
+        }
+        // An appended sub-frame clock tail can make an old terminal effect
+        // interior in samples while it stays in the final native frame cell.
+        // Preserve its sample endpoint and trim only that same terminal cell.
+        if span.end_sample <= duration_samples
+            && span.end_frame == native_terminal_frame
+            && span.end_frame > delivery_frames
+            && span.end_frame - delivery_frames <= 1
+        {
+            span.end_frame = delivery_frames;
+        }
+    }
+    if span.start_frame >= span.end_frame || span.end_frame > delivery_frames {
+        bail!("timed overlay needs a positive span inside delivered picture frames");
+    }
+    Ok(())
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -245,6 +324,10 @@ pub struct Plan {
     pub frame_count: u64,
     pub pictures: Vec<Span>,
     pub audio: Vec<Span>,
+    /// Original contract anchors when explicit E placement is requested.
+    /// `audio` always reports actual rendered sample/frame positions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audio_anchor_spans: Vec<Span>,
     pub external_layers: Vec<String>,
     #[serde(default)]
     pub external_layer_spans: Vec<Span>,
@@ -321,13 +404,12 @@ fn nonempty(s: &str) -> bool {
 pub fn picture_layout(
     job: &Job,
 ) -> Result<Option<crate::caption_presentation::CaptionPictureLayoutReport>> {
-    job.caption_picture_layout
-        .as_ref()
-        .map(|config| {
-            crate::caption_presentation::resolve_picture_layout(config, job.width, job.height)
-        })
-        .transpose()
-        .map(Option::flatten)
+    crate::caption_presentation::resolve_scene_picture_layout(
+        job.caption_picture_layout.as_ref(),
+        job.picture_region.as_ref(),
+        job.width,
+        job.height,
+    )
 }
 
 pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
@@ -335,6 +417,13 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
     let mut job: Job = serde_yaml::from_slice(&job_bytes)?;
     if job.schema != "reel.scene-delivery.v0.1" || !nonempty(&job.id) {
         bail!("invalid scene-delivery schema/id");
+    }
+    if job
+        .composition_encoding
+        .as_deref()
+        .is_some_and(|value| value != "h264-lossless")
+    {
+        bail!("unsupported composition encoding");
     }
     if job.width == 0
         || job.height == 0
@@ -348,6 +437,10 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
     }
     if picture_layout(&job)?.is_some()
         && (job.post_compose_camera.is_some()
+            || job
+                .external_layers
+                .iter()
+                .any(|layer| layer.render_mode == ExternalLayerRenderMode::TimedPictureTransform)
             || job.pictures.iter().any(|picture| {
                 matches!(
                     picture.motion,
@@ -356,7 +449,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
             }))
     {
         bail!(
-            "reserved caption band requires contained picture motion; legacy or post-compose cameras are unsupported"
+            "reserved caption band or explicit picture region requires contained picture motion; legacy or post-compose cameras are unsupported"
         );
     }
     let base = job_path.parent().unwrap_or(Path::new("."));
@@ -534,7 +627,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                 bail!("phased camera requires an uncropped still at its first frame");
             }
             reel_assembly::motioncraft::validate_camera(plan)?;
-            reel_assembly::motioncraft::camera_expression(plan)?;
+            reel_assembly::motioncraft::camera_geometry(plan)?;
             let mut expected = reel_assembly::motioncraft::compile(
                 &plan.direction,
                 &plan.safe_area,
@@ -568,6 +661,11 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         bail!("declare exactly D, M and E bus policies");
     }
     let mut audio = Vec::new();
+    let mut audio_anchor_spans = Vec::new();
+    let explicit_audio_placement = job
+        .audio
+        .iter()
+        .any(|event| event.placement_offset.is_some());
     // A normal D cue is one complete native take.  A declared handoff may use
     // two distinct takes to cover one cue (for example, dialogue into a
     // preserved narrator tail); those spans must remain contiguous/overlapped
@@ -593,6 +691,13 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
             bail!("invalid audio span/fades");
         }
         checked_file(asset_root, &event.source)?;
+        if matches!(
+            event.channel_mapping,
+            Some(AudioChannelMapping::DownmixMonoDuplicate)
+        ) && event.bus != "E"
+        {
+            bail!("downmix-mono-duplicate is an explicit E-only channel mapping");
+        }
         if event.bus == "D" {
             let id = event.cue_id.as_deref().context("D event needs cue_id")?;
             let c = compiled
@@ -621,7 +726,26 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         } else if event.cue_id.is_some() {
             bail!("only D events declare cue_id");
         }
-        audio.push(span(a)?);
+        let anchor = span(a)?;
+        let mut rendered = anchor.clone();
+        if let Some(offset) = &event.placement_offset {
+            if event.bus != "E" || !nonempty(&offset.reason) {
+                bail!("audio placement offsets require an E event and an explicit reason");
+            }
+            checked_file(asset_root, &offset.evidence)?;
+            (rendered.start_sample, rendered.end_sample) = audio_placement_samples(
+                anchor.start_sample,
+                anchor.end_sample,
+                compiled.duration_samples,
+                offset.samples,
+            )?;
+            rendered.start_frame = frame(rendered.start_sample, false)?;
+            rendered.end_frame = frame(rendered.end_sample, true)?;
+        }
+        if explicit_audio_placement {
+            audio_anchor_spans.push(anchor);
+        }
+        audio.push(rendered);
     }
     for (id, (covered_end, parts, _)) in &dialogue {
         let cue = compiled
@@ -693,6 +817,12 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                 {
                     bail!("ASS overlay must be a full-scene .ass attachment");
                 }
+                // Full-scene ASS covers the delivered picture, including an
+                // explicitly retained local frame partition. Its semantic
+                // sample end may ceil to a frame that is not in that picture.
+                if explicit_picture_frames {
+                    layer_span.end_frame = picture_frame_cursor;
+                }
                 rendered_external_layers.push(layer.attachment_id.clone());
             }
             ExternalLayerRenderMode::TimedPictureTransform => {
@@ -712,6 +842,18 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                 }
                 layer_span.start_frame = frame(a.start_sample, true)?;
                 layer_span.end_frame = frame(a.end_sample, true)?;
+                conform_timed_layer_frames(
+                    &mut layer_span,
+                    &pictures,
+                    compiled.duration_samples,
+                    frame(compiled.duration_samples, true)?,
+                    if explicit_picture_frames {
+                        picture_frame_cursor
+                    } else {
+                        frame(compiled.duration_samples, true)?
+                    },
+                    explicit_picture_frames,
+                )?;
                 rendered_external_layers.push(layer.attachment_id.clone());
             }
             ExternalLayerRenderMode::TimedVideoOverlay => {
@@ -731,27 +873,14 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                 } else {
                     frame(compiled.duration_samples, true)?
                 };
-                if explicit_picture_frames {
-                    if let Some(picture) = pictures.iter().find(|picture| {
-                        picture.start_sample == a.start_sample
-                            && picture.start_frame > layer_span.start_frame
-                            && picture.start_frame - layer_span.start_frame <= 1
-                    }) {
-                        layer_span.start_frame = picture.start_frame;
-                    }
-                }
-                if explicit_picture_frames
-                    && a.end_sample == compiled.duration_samples
-                    && layer_span.end_frame > delivery_frames
-                    && layer_span.end_frame - delivery_frames <= 1
-                {
-                    layer_span.end_frame = delivery_frames;
-                }
-                if layer_span.start_frame >= layer_span.end_frame
-                    || layer_span.end_frame > delivery_frames
-                {
-                    bail!("timed overlay needs a positive span inside delivered picture frames");
-                }
+                conform_timed_layer_frames(
+                    &mut layer_span,
+                    &pictures,
+                    compiled.duration_samples,
+                    frame(compiled.duration_samples, true)?,
+                    delivery_frames,
+                    explicit_picture_frames,
+                )?;
                 let source = checked_file(asset_root, timed_overlay_source(asset_root, layer)?)?;
                 let info = probe(&source)?;
                 let video = info["streams"]
@@ -792,14 +921,24 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         external_layers.push(layer.attachment_id.clone());
         external_layer_spans.push(layer_span);
     }
-    if rendered_external_layers.len() > 1
-        && job.external_layers.iter().any(|layer| {
-            layer.render_mode != ExternalLayerRenderMode::EvidenceOnly
-                && layer.render_mode != ExternalLayerRenderMode::TimedPictureTransform
-                && layer.render_mode != ExternalLayerRenderMode::TimedVideoOverlay
-        })
+    let rendered: Vec<_> = job
+        .external_layers
+        .iter()
+        .filter(|layer| layer.render_mode != ExternalLayerRenderMode::EvidenceOnly)
+        .collect();
+    let ass_indices: Vec<_> = rendered
+        .iter()
+        .enumerate()
+        .filter(|(_, layer)| layer.render_mode == ExternalLayerRenderMode::AssOverlay)
+        .map(|(index, _)| index)
+        .collect();
+    if ass_indices.len() > 1 {
+        bail!("combine text presentations into one selected ASS layer");
+    }
+    if let Some(&index) = ass_indices.first()
+        && index + 1 != rendered.len()
     {
-        bail!("multiple rendered layers require timed video overlays");
+        bail!("ASS presentation must follow all timed overlays");
     }
     if used.len() != attached.len() {
         bail!("unconsumed compiled attachments; declare external layers explicitly");
@@ -828,6 +967,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         },
         pictures,
         audio,
+        audio_anchor_spans,
         external_layers,
         external_layer_spans,
         rendered_external_layers,
@@ -950,35 +1090,60 @@ fn arg(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-fn render_ass_overlay(root: &Path, fps: &str, font_bound: bool) -> Result<()> {
-    let filter = if font_bound {
-        "ass=presentation.ass:fontsdir=fonts"
+fn indexed_layer_source_name(layer: &ExternalLayer, index: usize) -> String {
+    match layer.render_mode {
+        ExternalLayerRenderMode::AssOverlay => format!("presentation-{index:03}.ass"),
+        ExternalLayerRenderMode::TimedVideoOverlay => format!("selected-overlay-{index:03}.mkv"),
+        ExternalLayerRenderMode::EvidenceOnly | ExternalLayerRenderMode::TimedPictureTransform => {
+            unreachable!()
+        }
+    }
+}
+
+fn copy_ass_layer(root: &Path, asset_root: &Path, layer: &ExternalLayer, name: &str) -> Result<()> {
+    fs::copy(checked_file(asset_root, &layer.evidence)?, root.join(name))?;
+    if let Some(font) = &layer.font {
+        fs::create_dir(root.join("fonts"))?;
+        let name = font
+            .path
+            .file_name()
+            .context("selected font has no file name")?;
+        fs::copy(
+            checked_file(asset_root, font)?,
+            root.join("fonts").join(name),
+        )?;
+    }
+    Ok(())
+}
+
+fn composition_encoder_args(encoding: Option<&str>) -> Vec<&'static str> {
+    if encoding == Some("h264-lossless") {
+        vec!["-c:v", "libx264", "-crf", "0", "-preset", "veryfast"]
     } else {
-        "ass=presentation.ass"
+        vec!["-c:v", "ffv1"]
+    }
+}
+
+fn render_ass_overlay(
+    root: &Path,
+    fps: &str,
+    font_bound: bool,
+    input: &str,
+    ass: &str,
+    output_name: &str,
+    encoding: Option<&str>,
+) -> Result<()> {
+    let filter = if font_bound {
+        format!("ass={ass}:fontsdir=fonts")
+    } else {
+        format!("ass={ass}")
     };
     let output = Command::new("ffmpeg")
         .current_dir(root)
-        .args([
-            "-hide_banner",
-            "-v",
-            "error",
-            "-nostdin",
-            "-n",
-            "-i",
-            "clean-picture.mkv",
-        ])
-        .args([
-            "-vf",
-            filter,
-            "-an",
-            "-c:v",
-            "ffv1",
-            "-pix_fmt",
-            "yuv444p",
-            "-r",
-            fps,
-            "picture.mkv",
-        ])
+        .args(["-hide_banner", "-v", "error", "-nostdin", "-n", "-i", input])
+        .args(["-vf", &filter, "-an"])
+        .args(composition_encoder_args(encoding))
+        .args(["-pix_fmt", "yuv444p", "-r", fps, output_name])
         .output()?;
     if !output.status.success() {
         bail!(
@@ -996,28 +1161,26 @@ fn render_timed_video_overlay(
     picture_input: &str,
     overlay_input: &str,
     picture_output: &str,
+    encoding: Option<&str>,
 ) -> Result<()> {
     let count = span.end_frame - span.start_frame;
+    // Matroska timestamps may round native frame positions to milliseconds.
+    // Put both decoded streams on the same exact frame-index timebase before
+    // framesync, or EOF can hide the carrier's final selected frame at 30 fps.
     let graph = format!(
-        "[1:v]setpts=N*{}/{}/TB,trim=start_frame=0:end_frame={count},setpts=PTS-STARTPTS+{}/{}/TB[effect];[0:v][effect]overlay=eof_action=pass:repeatlast=0:shortest=0:format=auto[v]",
+        "[0:v]settb=expr={}/{},setpts=N[base];[1:v]settb=expr={}/{},trim=start_frame=0:end_frame={count},setpts=N+{}[effect];[base][effect]overlay=eof_action=pass:repeatlast=0:shortest=0:format=auto[v]",
         plan.fps_denominator,
         plan.fps_numerator,
-        span.start_frame * plan.fps_denominator,
-        plan.fps_numerator
+        plan.fps_denominator,
+        plan.fps_numerator,
+        span.start_frame
     );
     let output = Command::new("ffmpeg")
         .current_dir(root)
         .args(["-hide_banner", "-v", "error", "-nostdin", "-n"])
         .args(["-i", picture_input, "-i", overlay_input])
-        .args([
-            "-filter_complex",
-            &graph,
-            "-map",
-            "[v]",
-            "-an",
-            "-c:v",
-            "ffv1",
-        ])
+        .args(["-filter_complex", &graph, "-map", "[v]", "-an"])
+        .args(composition_encoder_args(encoding))
         .args([
             "-pix_fmt",
             "yuv444p",
@@ -1035,7 +1198,12 @@ fn render_timed_video_overlay(
     Ok(())
 }
 
-fn render_post_compose_camera(root: &Path, plan: &Plan, camera: &PostComposeCamera) -> Result<()> {
+fn render_post_compose_camera(
+    root: &Path,
+    plan: &Plan,
+    camera: &PostComposeCamera,
+    encoding: Option<&str>,
+) -> Result<()> {
     let before = root.join("pre-camera-picture.mkv");
     fs::rename(root.join("picture.mkv"), &before)?;
     let mut zoom = "1".to_string();
@@ -1094,7 +1262,7 @@ fn render_post_compose_camera(root: &Path, plan: &Plan, camera: &PostComposeCame
     let filter = format!(
         "zoompan=z='{zoom}':x='max(0,min(iw-iw/zoom,iw/2-iw/zoom/2+{offset_x}))':y='max(0,min(ih-ih/zoom,ih/2-ih/zoom/2+{offset_y}))':d=1:s={width}x{height}:fps={fps},format=yuv444p"
     );
-    ffmpeg(&[
+    let mut args = vec![
         "-i".into(),
         arg(&before),
         "-vf".into(),
@@ -1102,10 +1270,14 @@ fn render_post_compose_camera(root: &Path, plan: &Plan, camera: &PostComposeCame
         "-frames:v".into(),
         plan.frame_count.to_string(),
         "-an".into(),
-        "-c:v".into(),
-        "ffv1".into(),
-        arg(&root.join("picture.mkv")),
-    ])?;
+    ];
+    args.extend(
+        composition_encoder_args(encoding)
+            .into_iter()
+            .map(str::to_string),
+    );
+    args.push(arg(&root.join("picture.mkv")));
+    ffmpeg(&args)?;
     Ok(())
 }
 
@@ -1235,28 +1407,47 @@ mod ass_visibility_tests {
 pub(crate) fn finish_pcm(float_path: &Path, output: &Path) -> Result<()> {
     // Reject overload before PCM24 quantization can hide clipping. This is not
     // a loudness/true-peak or intelligibility approval; audio-quality still owns it.
-    let result = Command::new("ffmpeg")
+    // Rounded dB peaks cannot distinguish the valid negative PCM rail from
+    // overload. Inspect every unquantized sample: -1 is valid, +1 is not.
+    let mut decoder = Command::new("ffmpeg")
         .args([
-            "-hide_banner",
+            "-v",
+            "error",
             "-nostdin",
             "-protocol_whitelist",
             "file,pipe",
             "-i",
         ])
         .arg(float_path)
-        .args(["-af", "astats=metadata=0:reset=0", "-f", "null", "-"])
-        .output()?;
-    if !result.status.success() {
-        bail!("float mix inspection failed");
+        .args([
+            "-map",
+            "0:a:0",
+            "-c:a",
+            "pcm_f32le",
+            "-f",
+            "f32le",
+            "pipe:1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let inspection = validate_pcm24_stream(
+        decoder
+            .stdout
+            .take()
+            .context("missing float decoder stream")?,
+    );
+    if let Err(error) = inspection {
+        let _ = decoder.kill();
+        let _ = decoder.wait();
+        return Err(error);
     }
-    let text = String::from_utf8_lossy(&result.stderr);
-    let peaks: Vec<f64> = text
-        .lines()
-        .filter_map(|line| line.split_once("Peak level dB: "))
-        .map(|(_, value)| value.trim().parse::<f64>())
-        .collect::<std::result::Result<_, _>>()?;
-    if peaks.is_empty() || peaks.iter().any(|p| p.is_nan() || *p >= 0.0) {
-        bail!("audio overload or missing peak evidence; revise explicit gains");
+    let result = decoder.wait_with_output()?;
+    if !result.status.success() {
+        bail!(
+            "float mix inspection failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
     }
     ffmpeg(&[
         "-i".into(),
@@ -1267,6 +1458,63 @@ pub(crate) fn finish_pcm(float_path: &Path, output: &Path) -> Result<()> {
     ])?;
     fs::remove_file(float_path)?;
     Ok(())
+}
+
+fn validate_pcm24_stream(mut stream: impl Read) -> Result<()> {
+    let mut buffer = [0_u8; 65_539];
+    let mut retained = 0;
+    let mut seen = false;
+    loop {
+        let read = stream.read(&mut buffer[retained..65_536])?;
+        if read == 0 {
+            if retained != 0 {
+                bail!("partial float sample in audio inspection");
+            }
+            break;
+        }
+        let length = retained + read;
+        let complete = length - length % 4;
+        for bytes in buffer[..complete].chunks_exact(4) {
+            let sample = f32::from_le_bytes(bytes.try_into().expect("four-byte sample"));
+            if !sample.is_finite() || !(-1.0..1.0).contains(&sample) {
+                bail!("audio overload or non-finite sample; revise explicit gains");
+            }
+            seen = true;
+        }
+        buffer.copy_within(complete..length, 0);
+        retained = length - complete;
+    }
+    if !seen {
+        bail!("missing audio sample evidence");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod pcm_bound_tests {
+    use super::validate_pcm24_stream;
+    use std::io::{Cursor, Read};
+
+    #[test]
+    fn signed_pcm_rails_pass_without_admitting_overload_or_invalid_samples() {
+        let valid = [-1.0_f32, 0.0, 1.0 - 2.0_f32.powi(-23)];
+        let bytes: Vec<_> = valid.into_iter().flat_map(f32::to_le_bytes).collect();
+        struct ShortReads(Cursor<Vec<u8>>);
+        impl Read for ShortReads {
+            fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+                let limit = output.len().min(3);
+                self.0.read(&mut output[..limit])
+            }
+        }
+        validate_pcm24_stream(ShortReads(Cursor::new(bytes.clone()))).unwrap();
+        for invalid in [1.0, -1.0000001, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut data = bytes.clone();
+            data.extend(invalid.to_le_bytes());
+            assert!(validate_pcm24_stream(Cursor::new(data)).is_err());
+        }
+        assert!(validate_pcm24_stream(Cursor::new(Vec::<u8>::new())).is_err());
+        assert!(validate_pcm24_stream(Cursor::new(vec![0_u8; 3])).is_err());
+    }
 }
 fn pcm_samples(path: &Path, sr: u32) -> Result<u64> {
     let mut child = Command::new("ffmpeg")
@@ -1321,6 +1569,118 @@ pub struct Receipt {
     pub content_samples: u64,
     pub delivery_frames: u64,
     pub publication: String,
+}
+
+/// Sound-only evidence shares the full scene's mixer and native plan. It makes
+/// no claim that pictures, captions, effects or complete episodes were rendered.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AudioReceipt {
+    pub schema: String,
+    pub tool_version: String,
+    pub ffmpeg_version: String,
+    pub plan: Plan,
+    pub outputs: BTreeMap<String, FileRef>,
+    pub content_samples: u64,
+    pub publication: String,
+}
+
+const AUDIO_OUTPUTS: [&str; 4] = ["D.wav", "M.wav", "E.wav", "mix.wav"];
+
+/// Render native D/M/E/mix for independent soundtrack qualification without
+/// producing scene pictures. All job/source bindings are still planned.
+pub fn render_audio(job_path: &Path, asset_root: &Path, output: &Path) -> Result<AudioReceipt> {
+    let (job, plan) = plan(job_path, asset_root)?;
+    if output.exists() {
+        bail!("audio output already exists; use a new directory");
+    }
+    let parent = output
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    fs::create_dir_all(parent)?;
+    let stage = tempfile::Builder::new()
+        .prefix(".scene-audio-")
+        .tempdir_in(parent)?;
+    let root = stage.path();
+    render_audio_stems(&job, &plan, asset_root, root)?;
+    let mut outputs = BTreeMap::new();
+    for name in AUDIO_OUTPUTS {
+        let path = root.join(name);
+        outputs.insert(
+            name.into(),
+            FileRef {
+                path: name.into(),
+                sha256: crate::sha256_file(&path)?,
+                bytes: fs::metadata(path)?.len(),
+            },
+        );
+    }
+    let version = Command::new("ffmpeg").arg("-version").output()?;
+    if !version.status.success() {
+        bail!("FFmpeg version inspection failed");
+    }
+    let receipt = AudioReceipt {
+        schema: "reel.scene-audio-receipt.v0.1".into(),
+        tool_version: env!("CARGO_PKG_VERSION").into(),
+        ffmpeg_version: String::from_utf8_lossy(&version.stdout)
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .into(),
+        content_samples: plan.duration_samples,
+        plan,
+        outputs,
+        publication: "not-authorized-by-tool".into(),
+    };
+    fs::write(
+        root.join("audio-receipt.json"),
+        serde_json::to_vec_pretty(&receipt)?,
+    )?;
+    let verified = check_audio(job_path, asset_root, root)?;
+    fs::rename(root, output)?;
+    Ok(verified)
+}
+
+/// Verify an audio-only receipt, its exact job/plan and four decoded PCM clocks.
+/// This receipt cannot be consumed as a complete scene-delivery receipt.
+pub fn check_audio(job_path: &Path, asset_root: &Path, output: &Path) -> Result<AudioReceipt> {
+    let (_, plan) = plan(job_path, asset_root)?;
+    let receipt: AudioReceipt =
+        serde_json::from_slice(&fs::read(output.join("audio-receipt.json"))?)?;
+    if receipt.schema != "reel.scene-audio-receipt.v0.1"
+        || serde_json::to_value(&receipt.plan)? != serde_json::to_value(&plan)?
+        || receipt.content_samples != plan.duration_samples
+        || receipt.publication != "not-authorized-by-tool"
+        || receipt
+            .outputs
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>()
+            != AUDIO_OUTPUTS.into_iter().collect()
+    {
+        bail!("audio receipt does not match current compiled scene");
+    }
+    for name in AUDIO_OUTPUTS {
+        let item = &receipt.outputs[name];
+        if item.path != Path::new(name) {
+            bail!("audio output name mismatch");
+        }
+        let path = checked_file(output, item)?;
+        let info = probe(&path)?;
+        let audio = info["streams"]
+            .as_array()
+            .and_then(|xs| xs.iter().find(|s| s["codec_type"] == "audio"))
+            .context("delivery audio stream missing")?;
+        if audio["codec_name"] != "pcm_s24le"
+            || audio["sample_rate"].as_str() != Some(&plan.sample_rate.to_string())
+            || audio["channels"].as_u64() != Some(2)
+            || pcm_samples(&path, plan.sample_rate)? != plan.duration_samples
+        {
+            bail!("audio PCM format or decoded sample count mismatch: {name}");
+        }
+    }
+    Ok(receipt)
 }
 
 pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receipt> {
@@ -1427,11 +1787,8 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         };
         let visual = match &p.motion {
             Some(PictureMotion::PhasedCamera { plan: motion }) => {
-                let zoom = reel_assembly::motioncraft::camera_expression(motion)?;
-                let left = format!("(W-W/({zoom}))/2");
-                let top = format!("(H-H/({zoom}))/2");
-                let right = format!("(W+W/({zoom}))/2");
-                let bottom = format!("(H+H/({zoom}))/2");
+                let [left, top, right, bottom] =
+                    reel_assembly::motioncraft::camera_geometry(motion)?;
                 format!(
                     "{layout_format}scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,perspective=x0='{left}':y0='{top}':x1='{right}':y1='{top}':x2='{left}':y2='{bottom}':x3='{right}':y3='{bottom}':interpolation=cubic:sense=source:eval=frame,{output_pad}",
                     region.width, region.height, region.width, region.height
@@ -1507,16 +1864,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
     ffmpeg(&inputs)?;
     if overlays.len() > 1 {
         for (index, layer) in overlays.iter().enumerate() {
-            let span = plan
-                .external_layer_spans
-                .iter()
-                .find(|span| span.attachment_id == layer.attachment_id)
-                .context("timed overlay span missing")?;
-            let source = checked_file(asset_root, timed_overlay_source(asset_root, layer)?)?;
-            if decoded_video_frames(&source)? < span.end_frame - span.start_frame {
-                bail!("timed overlay lacks frames for its selected span");
-            }
-            let selected = format!("selected-overlay-{index:03}.mkv");
+            let selected = indexed_layer_source_name(layer, index);
             let input = if index == 0 {
                 "clean-picture.mkv".to_string()
             } else {
@@ -1527,28 +1875,58 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
             } else {
                 format!("layered-picture-{index:03}.mkv")
             };
-            fs::copy(source, root.join(&selected))?;
-            render_timed_video_overlay(root, &plan, span, &input, &selected, &output)?;
+            match layer.render_mode {
+                ExternalLayerRenderMode::AssOverlay => {
+                    copy_ass_layer(root, asset_root, layer, &selected)?;
+                    render_ass_overlay(
+                        root,
+                        &fps,
+                        layer.font.is_some(),
+                        &input,
+                        &selected,
+                        &output,
+                        job.composition_encoding.as_deref(),
+                    )?;
+                }
+                ExternalLayerRenderMode::TimedVideoOverlay => {
+                    let span = plan
+                        .external_layer_spans
+                        .iter()
+                        .find(|span| span.attachment_id == layer.attachment_id)
+                        .context("timed overlay span missing")?;
+                    let source =
+                        checked_file(asset_root, timed_overlay_source(asset_root, layer)?)?;
+                    if decoded_video_frames(&source)? < span.end_frame - span.start_frame {
+                        bail!("timed overlay lacks frames for its selected span");
+                    }
+                    fs::copy(source, root.join(&selected))?;
+                    render_timed_video_overlay(
+                        root,
+                        &plan,
+                        span,
+                        &input,
+                        &selected,
+                        &output,
+                        job.composition_encoding.as_deref(),
+                    )?;
+                }
+                ExternalLayerRenderMode::EvidenceOnly
+                | ExternalLayerRenderMode::TimedPictureTransform => unreachable!(),
+            }
         }
     } else if let Some(layer) = overlay {
         match layer.render_mode {
             ExternalLayerRenderMode::AssOverlay => {
-                fs::copy(
-                    checked_file(asset_root, &layer.evidence)?,
-                    root.join("presentation.ass"),
+                copy_ass_layer(root, asset_root, layer, "presentation.ass")?;
+                render_ass_overlay(
+                    root,
+                    &fps,
+                    layer.font.is_some(),
+                    "clean-picture.mkv",
+                    "presentation.ass",
+                    "picture.mkv",
+                    job.composition_encoding.as_deref(),
                 )?;
-                if let Some(font) = &layer.font {
-                    fs::create_dir(root.join("fonts"))?;
-                    let name = font
-                        .path
-                        .file_name()
-                        .context("selected font has no file name")?;
-                    fs::copy(
-                        checked_file(asset_root, font)?,
-                        root.join("fonts").join(name),
-                    )?;
-                }
-                render_ass_overlay(root, &fps, layer.font.is_some())?;
             }
             ExternalLayerRenderMode::TimedVideoOverlay => {
                 let span = plan
@@ -1568,6 +1946,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                     "clean-picture.mkv",
                     "selected-overlay.mkv",
                     "picture.mkv",
+                    job.composition_encoding.as_deref(),
                 )?;
             }
             ExternalLayerRenderMode::EvidenceOnly
@@ -1575,8 +1954,137 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         }
     }
     if let Some(camera) = &job.post_compose_camera {
-        render_post_compose_camera(root, &plan, camera)?;
+        render_post_compose_camera(root, &plan, camera, job.composition_encoding.as_deref())?;
     }
+    render_audio_stems(&job, &plan, asset_root, root)?;
+    ffmpeg(&[
+        "-i".into(),
+        arg(&root.join("picture.mkv")),
+        "-i".into(),
+        arg(&root.join("mix.wav")),
+        "-map".into(),
+        "0:v:0".into(),
+        "-map".into(),
+        "1:a:0".into(),
+        "-c".into(),
+        "copy".into(),
+        arg(&root.join("master.mkv")),
+    ])?;
+    ffmpeg(&[
+        "-i".into(),
+        arg(&root.join("master.mkv")),
+        "-map".into(),
+        "0:v:0".into(),
+        "-map".into(),
+        "0:a:0".into(),
+        "-c:v".into(),
+        "libx264".into(),
+        "-crf".into(),
+        "18".into(),
+        "-pix_fmt".into(),
+        "yuv420p".into(),
+        "-c:a".into(),
+        "aac".into(),
+        "-b:a".into(),
+        "192k".into(),
+        "-movflags".into(),
+        "+faststart".into(),
+        arg(&root.join("review.mp4")),
+    ])?;
+    let mut names: Vec<String> = vec![
+        "picture.mkv",
+        "D.wav",
+        "M.wav",
+        "E.wav",
+        "mix.wav",
+        "master.mkv",
+        "review.mp4",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+    if overlays.len() > 1 {
+        names.push("clean-picture.mkv".into());
+        for (index, layer) in overlays.iter().enumerate() {
+            names.push(indexed_layer_source_name(layer, index));
+            if index + 1 < overlays.len() {
+                names.push(format!("layered-picture-{index:03}.mkv"));
+            }
+        }
+    } else if let Some(overlay) = overlay {
+        names.push("clean-picture.mkv".into());
+        names.push(
+            match overlay.render_mode {
+                ExternalLayerRenderMode::AssOverlay => "presentation.ass",
+                ExternalLayerRenderMode::TimedVideoOverlay => "selected-overlay.mkv",
+                ExternalLayerRenderMode::EvidenceOnly
+                | ExternalLayerRenderMode::TimedPictureTransform => unreachable!(),
+            }
+            .into(),
+        );
+    }
+    if job.post_compose_camera.is_some() {
+        names.push("pre-camera-picture.mkv".into());
+    }
+    crate::motioncraft_review::render(&job, &plan, root)?;
+    names.extend(crate::motioncraft_review::output_names(&job, &plan)?);
+    let mut outputs = BTreeMap::new();
+    for name in names {
+        let p = root.join(&name);
+        outputs.insert(
+            name.clone(),
+            FileRef {
+                path: name.into(),
+                sha256: crate::sha256_file(&p)?,
+                bytes: fs::metadata(p)?.len(),
+            },
+        );
+    }
+    if let Some(layer) = overlays.iter().find_map(|layer| layer.font.as_ref()) {
+        let name = layer
+            .path
+            .file_name()
+            .context("selected font has no file name")?;
+        let relative = Path::new("fonts").join(name);
+        let p = root.join(&relative);
+        outputs.insert(
+            relative.to_string_lossy().replace('\\', "/"),
+            FileRef {
+                path: relative,
+                sha256: crate::sha256_file(&p)?,
+                bytes: fs::metadata(p)?.len(),
+            },
+        );
+    }
+    let version = Command::new("ffmpeg").arg("-version").output()?;
+    let receipt = Receipt {
+        schema: "reel.scene-delivery-receipt.v0.1".into(),
+        tool_version: env!("CARGO_PKG_VERSION").into(),
+        ffmpeg_version: String::from_utf8_lossy(&version.stdout)
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .into(),
+        content_samples: plan.duration_samples,
+        delivery_frames: plan.frame_count,
+        plan,
+        outputs,
+        publication: "not-authorized-by-tool".into(),
+    };
+    fs::write(
+        root.join("receipt.json"),
+        serde_json::to_vec_pretty(&receipt)?,
+    )?;
+    let verified = check(job_path, asset_root, root)?;
+    if serde_json::to_vec(&receipt.outputs)? != serde_json::to_vec(&verified.outputs)? {
+        bail!("render and independent check disagree on output bytes");
+    }
+    // No result directory is published until all streams and hashes recheck.
+    fs::rename(root, output)?;
+    Ok(verified)
+}
+
+fn render_audio_stems(job: &Job, plan: &Plan, asset_root: &Path, root: &Path) -> Result<()> {
     for bus in ["D", "M", "E"] {
         let mut inputs = Vec::new();
         let mut filters = Vec::new();
@@ -1611,8 +2119,23 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                 bail!("native audio duration mismatch or insufficient source samples");
             }
             inputs.extend(["-i".into(), arg(&path)]);
+            let mapping = match event.channel_mapping {
+                None => "aformat=sample_fmts=fltp:channel_layouts=stereo",
+                Some(AudioChannelMapping::DuplicateMono) => {
+                    if aud["channels"].as_u64() != Some(1) {
+                        bail!("duplicate-mono channel mapping requires a mono source");
+                    }
+                    "pan=stereo|c0=c0|c1=c0,aformat=sample_fmts=fltp:channel_layouts=stereo"
+                }
+                Some(AudioChannelMapping::DownmixMonoDuplicate) => {
+                    if aud["channels"].as_u64() != Some(2) {
+                        bail!("downmix-mono-duplicate channel mapping requires a stereo source");
+                    }
+                    "aformat=sample_fmts=fltp:channel_layouts=mono,pan=stereo|c0=c0|c1=c0,aformat=sample_fmts=fltp:channel_layouts=stereo"
+                }
+            };
             let mut f = format!(
-                "[{count}:a]aformat=sample_fmts=fltp:channel_layouts=stereo,atrim=start_sample={}:end_sample={},asetpts=PTS-STARTPTS,volume={}dB",
+                "[{count}:a]{mapping},atrim=start_sample={}:end_sample={},asetpts=PTS-STARTPTS,volume={}dB",
                 event.source_start_sample,
                 event.source_start_sample + n,
                 event.gain_db
@@ -1687,131 +2210,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
     ]);
     ffmpeg(&mix)?;
     finish_pcm(&root.join("mix-float.wav"), &root.join("mix.wav"))?;
-    ffmpeg(&[
-        "-i".into(),
-        arg(&root.join("picture.mkv")),
-        "-i".into(),
-        arg(&root.join("mix.wav")),
-        "-map".into(),
-        "0:v:0".into(),
-        "-map".into(),
-        "1:a:0".into(),
-        "-c".into(),
-        "copy".into(),
-        arg(&root.join("master.mkv")),
-    ])?;
-    ffmpeg(&[
-        "-i".into(),
-        arg(&root.join("master.mkv")),
-        "-map".into(),
-        "0:v:0".into(),
-        "-map".into(),
-        "0:a:0".into(),
-        "-c:v".into(),
-        "libx264".into(),
-        "-crf".into(),
-        "18".into(),
-        "-pix_fmt".into(),
-        "yuv420p".into(),
-        "-c:a".into(),
-        "aac".into(),
-        "-b:a".into(),
-        "192k".into(),
-        "-movflags".into(),
-        "+faststart".into(),
-        arg(&root.join("review.mp4")),
-    ])?;
-    let mut names: Vec<String> = vec![
-        "picture.mkv",
-        "D.wav",
-        "M.wav",
-        "E.wav",
-        "mix.wav",
-        "master.mkv",
-        "review.mp4",
-    ]
-    .into_iter()
-    .map(str::to_string)
-    .collect();
-    if overlays.len() > 1 {
-        names.push("clean-picture.mkv".into());
-        for index in 0..overlays.len() {
-            names.push(format!("selected-overlay-{index:03}.mkv"));
-            if index + 1 < overlays.len() {
-                names.push(format!("layered-picture-{index:03}.mkv"));
-            }
-        }
-    } else if let Some(overlay) = overlay {
-        names.push("clean-picture.mkv".into());
-        names.push(
-            match overlay.render_mode {
-                ExternalLayerRenderMode::AssOverlay => "presentation.ass",
-                ExternalLayerRenderMode::TimedVideoOverlay => "selected-overlay.mkv",
-                ExternalLayerRenderMode::EvidenceOnly
-                | ExternalLayerRenderMode::TimedPictureTransform => unreachable!(),
-            }
-            .into(),
-        );
-    }
-    if job.post_compose_camera.is_some() {
-        names.push("pre-camera-picture.mkv".into());
-    }
-    crate::motioncraft_review::render(&job, &plan, root)?;
-    names.extend(crate::motioncraft_review::output_names(&job, &plan)?);
-    let mut outputs = BTreeMap::new();
-    for name in names {
-        let p = root.join(&name);
-        outputs.insert(
-            name.clone(),
-            FileRef {
-                path: name.into(),
-                sha256: crate::sha256_file(&p)?,
-                bytes: fs::metadata(p)?.len(),
-            },
-        );
-    }
-    if let Some(layer) = overlay.and_then(|layer| layer.font.as_ref()) {
-        let name = layer
-            .path
-            .file_name()
-            .context("selected font has no file name")?;
-        let relative = Path::new("fonts").join(name);
-        let p = root.join(&relative);
-        outputs.insert(
-            relative.to_string_lossy().replace('\\', "/"),
-            FileRef {
-                path: relative,
-                sha256: crate::sha256_file(&p)?,
-                bytes: fs::metadata(p)?.len(),
-            },
-        );
-    }
-    let version = Command::new("ffmpeg").arg("-version").output()?;
-    let receipt = Receipt {
-        schema: "reel.scene-delivery-receipt.v0.1".into(),
-        tool_version: env!("CARGO_PKG_VERSION").into(),
-        ffmpeg_version: String::from_utf8_lossy(&version.stdout)
-            .lines()
-            .next()
-            .unwrap_or_default()
-            .into(),
-        content_samples: plan.duration_samples,
-        delivery_frames: plan.frame_count,
-        plan,
-        outputs,
-        publication: "not-authorized-by-tool".into(),
-    };
-    fs::write(
-        root.join("receipt.json"),
-        serde_json::to_vec_pretty(&receipt)?,
-    )?;
-    let verified = check(job_path, asset_root, root)?;
-    if serde_json::to_vec(&receipt.outputs)? != serde_json::to_vec(&verified.outputs)? {
-        bail!("render and independent check disagree on output bytes");
-    }
-    // No result directory is published until all streams and hashes recheck.
-    fs::rename(root, output)?;
-    Ok(verified)
+    Ok(())
 }
 
 pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receipt> {
@@ -1869,8 +2268,8 @@ fn check_impl(
     let overlay = overlays.first().copied();
     if overlays.len() > 1 {
         expected.insert("clean-picture.mkv".into());
-        for index in 0..overlays.len() {
-            expected.insert(format!("selected-overlay-{index:03}.mkv"));
+        for (index, layer) in overlays.iter().enumerate() {
+            expected.insert(indexed_layer_source_name(layer, index));
             if index + 1 < overlays.len() {
                 expected.insert(format!("layered-picture-{index:03}.mkv"));
             }
@@ -1891,12 +2290,15 @@ fn check_impl(
         expected.insert("pre-camera-picture.mkv".into());
     }
     expected.extend(crate::motioncraft_review::output_names(&job, &plan)?);
-    let font_name = overlay.and_then(|layer| layer.font.as_ref()).map(|font| {
-        format!(
-            "fonts/{}",
-            font.path.file_name().unwrap_or_default().to_string_lossy()
-        )
-    });
+    let font_name = overlays
+        .iter()
+        .find_map(|layer| layer.font.as_ref())
+        .map(|font| {
+            format!(
+                "fonts/{}",
+                font.path.file_name().unwrap_or_default().to_string_lossy()
+            )
+        });
     if let Some(name) = font_name.as_deref() {
         expected.insert(name.to_string());
     }
@@ -1958,10 +2360,14 @@ fn check_impl(
     }
     if overlays.len() > 1 {
         for (index, layer) in overlays.iter().enumerate() {
-            let selected = format!("selected-overlay-{index:03}.mkv");
-            if receipt.outputs[&selected].sha256 != timed_overlay_source(asset_root, layer)?.sha256
-            {
-                bail!("rendered timed-overlay source differs from selected evidence");
+            let selected = indexed_layer_source_name(layer, index);
+            let source = if layer.render_mode == ExternalLayerRenderMode::AssOverlay {
+                &layer.evidence
+            } else {
+                timed_overlay_source(asset_root, layer)?
+            };
+            if receipt.outputs[&selected].sha256 != source.sha256 {
+                bail!("rendered layer source differs from selected evidence");
             }
             let before = output.join(if index == 0 {
                 "clean-picture.mkv".to_string()
@@ -1980,7 +2386,36 @@ fn check_impl(
             if decoded_video_frames(&before)? != plan.frame_count
                 || decoded_video_frames(&after)? != plan.frame_count
             {
-                bail!("timed overlay changed scene frame count");
+                bail!("rendered layer changed scene frame count");
+            }
+            if layer.render_mode == ExternalLayerRenderMode::AssOverlay {
+                if let (Some(font), Some(name)) = (&layer.font, font_name.as_deref())
+                    && receipt.outputs[name].sha256 != font.sha256
+                {
+                    bail!("rendered presentation font differs from selected font");
+                }
+                let ass = fs::read_to_string(checked_file(asset_root, &layer.evidence)?)?;
+                let frames = ass_visibility_frames(
+                    &ass,
+                    plan.fps_numerator,
+                    plan.fps_denominator,
+                    plan.frame_count,
+                )?;
+                let mut visible = false;
+                for frame in frames {
+                    let before_pixels = rgb_frame_at_index(&before, &plan, frame)?;
+                    let after_pixels = rgb_frame_at_index(&after, &plan, frame)?;
+                    if before_pixels.len() != after_pixels.len() {
+                        bail!("ASS layer changed picture geometry");
+                    }
+                    visible |= before_pixels != after_pixels;
+                }
+                if !visible {
+                    bail!(
+                        "selected ASS layer made no visible change during its dialogue intervals"
+                    );
+                }
+                continue;
             }
             let span = plan
                 .external_layer_spans
@@ -2150,6 +2585,8 @@ fn check_impl(
         let (rn, rd) = rate.split_once('/').context("invalid video frame rate")?;
         let (rn, rd) = (rn.parse::<u64>()?, rd.parse::<u64>()?);
         let codec = if name == "review.mp4"
+            || ((!overlays.is_empty() || job.post_compose_camera.is_some())
+                && job.composition_encoding.as_deref() == Some("h264-lossless"))
             || (overlays.is_empty()
                 && job.post_compose_camera.is_none()
                 && job.still_sequence_encoding.as_deref() == Some("h264-lossless"))
@@ -2176,4 +2613,52 @@ fn check_impl(
         }
     }
     Ok(receipt)
+}
+
+#[cfg(test)]
+mod terminal_layer_frame_tests {
+    use super::{Span, conform_timed_layer_frames};
+
+    fn source_span() -> Span {
+        Span {
+            attachment_id: "bound-original-effect".into(),
+            start_sample: 0,
+            end_sample: 4_413_941,
+            start_frame: 0,
+            end_frame: 2207,
+        }
+    }
+
+    #[test]
+    fn appended_clock_tail_preserves_effect_samples_in_terminal_frame_cell() {
+        let mut span = source_span();
+        conform_timed_layer_frames(&mut span, &[], 4_414_000, 2207, 2206, true).unwrap();
+        assert_eq!(span.end_sample, 4_413_941);
+        assert_eq!(span.end_frame, 2206);
+    }
+
+    #[test]
+    fn terminal_cell_rule_rejects_larger_deficits_and_nonterminal_or_empty_spans() {
+        for (duration, terminal, delivery, explicit) in [
+            (4_414_000, 2207, 2205, true),
+            (4_416_000, 2208, 2206, true),
+            (4_414_000, 2207, 2206, false),
+            (4_413_900, 2207, 2206, true),
+        ] {
+            assert!(
+                conform_timed_layer_frames(
+                    &mut source_span(),
+                    &[],
+                    duration,
+                    terminal,
+                    delivery,
+                    explicit
+                )
+                .is_err()
+            );
+        }
+        let mut empty = source_span();
+        empty.start_frame = 2206;
+        assert!(conform_timed_layer_frames(&mut empty, &[], 4_414_000, 2207, 2206, true).is_err());
+    }
 }

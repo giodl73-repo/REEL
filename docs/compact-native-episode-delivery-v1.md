@@ -3,9 +3,23 @@
 Scene delivery profiles may set `still_sequence_encoding: "h264-lossless"`.
 The initial still sequence uses libx264 CRF 0, yuv444p, and temporal compression.
 Its decoded pixels are lossless. Audio stems remain PCM24. Omitted values retain
-the existing FFV1 behavior. ASS, timed effects, and camera composition continue
-to use the existing lossless compositor; their final scene intermediates may
-therefore still be FFV1. The strict scene check verifies the final codec,
+the existing FFV1 behavior.
+
+Profiles and exact native jobs may also set `composition_encoding: "h264-lossless"`
+to use libx264 CRF 0/yuv444p for ASS, timed-overlay intermediates and the final
+post-compose camera stage. This is independent of `still_sequence_encoding`;
+set both when both the base sequence and composed stages need temporal
+compression. Omission retains each stage's existing FFV1 command. The option
+does not change selected carriers, compositor filters, native clocks, fonts or
+audio. Unsupported values reject before publishing delivery output. With no
+overlay or post-compose camera, there is no composition stage to encode;
+the base still-sequence option governs that picture.
+
+Compare every decoded YUV and RGB frame and all four native stems against the
+FFV1 treatment before adopting the option for a new production profile. Measure
+actual peak storage for representative components; compact encoding does not
+waive the repository's capacity gates for full episode rendering.
+The strict scene check verifies the selected final codec,
 geometry, frames, samples, output hashes and selected layer behavior.
 
 An episode conform manifest may include:
