@@ -22,6 +22,14 @@ Plan date: 2026-10-06. Status: role-reviewed execution plan; implementation evid
 
 ## Objective
 
+## Execution readiness — renewed roles review
+
+The six production/provenance checklists were reapplied to this plan. Execute bounded engine/adapter proofs first, then close the caption and presentation findings, freeze complete bilingual E1 sources, and pass the capacity gate before the twelve full episode renders. Future authoring and immutable existing-episode upgrades must reach the same native scene engine, with default compatibility and original-input rollback demonstrated separately.
+
+Soundtrack qualification must distinguish exact source/channel preservation from selected-mix equivalence: a measured one-PCM24-LSB rounding residual is a recorded disposition, not byte identity. A successful Scene001 proof cannot close the full selected soundtrack gate. The mono-mapping integration pin is `494cd1cbefdd8a664a630c2178a14fba2619d704`; exact CI `37478269460` passes Windows Rust, Ubuntu Rust and Linux FFmpeg. CAIMITOS metadata commit `415cf1a9b0ef7f8947c36af1b5254b8f5a939eac` binds the successful 39-record fresh native/audio closure; formal receipts pass full Git-blob/cache validation. Complete soundtrack, caption, episode and reviewed-integration gates remain open.
+
+The project and goal name is **Motioncraft Phase 2 — CAIMITOS Episode Qualification**. Completion means P2.1–P2.5 and reviewed main integration, not a count of successful components.
+
 Complete the missing production capabilities: native Windows cadence, reproducible comparisons, bounded focal-point camera movement, layer-aware temporal validation, and full bilingual episode qualification. Every supported field must travel from CAIMITOS `episode.json` defaults and `scene.json` overrides through compilation, selected delivery and the native REEL scene engine. Existing episodes use immutable upgrades with an exact rollback route.
 
 The detailed consumer plan is maintained in CAIMITOS at `projects/animation-vfx/MOTIONCRAFT-PHASE-2.md`. This REEL plan records the shared engine scope and release gates; checkpoint results belong in [the progress record](motioncraft-phase-2-progress.md).

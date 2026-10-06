@@ -1,5 +1,17 @@
 # Motioncraft Phase 2 — plan role review
 
+## Renewed execution-readiness review
+
+The assistant reread all six production/provenance checklists and reviewed the active plan. Feedback is incorporated in its execution-readiness section:
+
+- Story Director / Editor: require complete opening-to-ending context and all twelve episode treatments; component successes cannot close sequence rhythm or repetition.
+- Animation Director: retain the bounded-proof and capacity gates before full rendering; demonstrate authoring, overrides, upgrades and rollback through the native engine.
+- Platform and Audience: unresolved captions and every phone reading state remain separate acceptance gates, including reveal timing and reduced motion.
+- Sound Designer: classify the one-PCM24-LSB selected-mix residual explicitly; one corrected mono scene cannot establish full-package parity.
+- Rights and Provenance: require exact shipping-pin CI, immutable executed producers, fresh-cache reproduction and formal receipts before reviewed main integration.
+
+Disposition: ready to execute under **Motioncraft Phase 2 — CAIMITOS Episode Qualification**. This is checklist analysis, not independent-agent review or human approval; implementation and shipping gates remain open.
+
 ## Current plan review — repair and episode completion
 
 The assistant reread `.roles/ROLE.md` and the Story Director, Animation Director, Editor, Sound Designer, Platform and Audience, and Rights and Provenance checklists. Reviewed artifact: the active plan in `docs/motioncraft-phase-2-plan.md`. This is checklist analysis, not independent agents, principal approval or implementation certification.
@@ -86,5 +98,7 @@ All four findings are incorporated in the ordered checkpoint with owners and con
 
 
 ## Selected soundtrack parity finding
+
+Current R27 disposition: future authoring and immutable existing-job upgrades now propagate the mapping at engine `494cd1cbefdd8a664a630c2178a14fba2619d704`; all 33 actual consumer CLI tests and locked Rust/Clippy/fmt pass. Actual Scene001 retains every picture frame and M/E byte, with exact mono source samples in both D channels. Selected mix residual is at most one PCM24 quantization step, explicitly not byte identity. Exact Windows/Ubuntu/Linux-FFmpeg CI `37478269460` passes; complete 39-record fresh hydration/native checking and formal receipt validation pass against CAIMITOS metadata `415cf1a9b0ef7f8947c36af1b5254b8f5a939eac`. Full selected soundtrack and episode qualification remain open. The original finding below is retained history.
 
 P2-R27 — Sound Designer / Rights and Provenance (major): source identity and unchanged native clocks do not prove the selected mix level. Actual English Scene001 native narration is 0.707106766 times the selected mono source (−3.010300143 dB); the selected historical renderer duplicated mono to both channels. Native mix RMS difference is 0.030641464 and maximum difference 0.248329043. Disposition: implement explicit hash-bound `audio[].channel_mapping: duplicate-mono` while preserving omitted-field behavior, reject non-mono sources and unknown mapping values, and carry the choice through immutable consumer upgrades and future authoring. The native regression confirms exact source level in both channels and unchanged M/E stems. Exact-pin CI, actual selected consumer mix measurement, full-package parity and formal evidence remain open. This is assistant checklist analysis, not creative mix selection.
