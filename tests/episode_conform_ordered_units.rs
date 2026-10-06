@@ -18,17 +18,25 @@ fn reference(root: &Path, name: &str) -> Value {
     json!({"path":name,"sha256":digest(&bytes),"bytes":bytes.len()})
 }
 
-fn source(root: &Path, name: &str, color: &str) {
+fn source(root: &Path, name: &str, color: &str, changed_properties: bool) {
     let mut cmd = Command::new("ffmpeg");
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000);
     }
-    let status = cmd
-        .args(["-v", "error", "-f", "lavfi", "-i"])
+    cmd.args(["-v", "error", "-f", "lavfi", "-i"])
         .arg(format!("color=c={color}:s=64x64:r=24:d=1"))
-        .args(["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo:d=1"])
+        .args(["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo:d=1"]);
+    if changed_properties {
+        cmd.args([
+            "-vf",
+            "setsar=1744/1743:max=10000",
+            "-colorspace",
+            "bt470bg",
+        ]);
+    }
+    let status = cmd
         .args([
             "-shortest",
             "-c:v",
@@ -67,15 +75,20 @@ fn run(root: &Path, manifest: &str, output: &str) -> std::process::Output {
 
 #[test]
 fn ordered_units_conform_bilingual_displays_and_rejects_bad_sources() {
-    ordered_fixture(false);
+    ordered_fixture(false, false);
 }
 
 #[test]
 fn adopted_editable_displays_bind_source_text_and_rendered_master() {
-    ordered_fixture(true);
+    ordered_fixture(true, false);
 }
 
-fn ordered_fixture(adopt: bool) {
+#[test]
+fn compact_conform_keeps_global_clock_across_display_property_changes() {
+    ordered_fixture(true, true);
+}
+
+fn ordered_fixture(adopt: bool, clock_transition: bool) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     fs::write(root.join("clean-picture.bin"), b"selected clean background").unwrap();
@@ -174,7 +187,12 @@ fn ordered_fixture(adopt: bool) {
             ("scene-b", "blue"),
         ] {
             let media_name = format!("{id}-{lang}.mkv");
-            source(root, &media_name, color);
+            source(
+                root,
+                &media_name,
+                color,
+                clock_transition && id.starts_with("display"),
+            );
             let selected = reference(root, &media_name);
             if id.starts_with("display") {
                 assets.insert(
@@ -328,6 +346,14 @@ fn ordered_fixture(adopt: bool) {
             "season_bindings":reference(root,"season.json"),
             "episode_bindings":reference(root,"episode-bindings.json"),"segments":segments
         });
+        if clock_transition {
+            manifest["output_sample_rate"] = 44_100.into();
+            manifest["audio_frame_conform"] = "pad-silence-to-picture-boundaries".into();
+            manifest["compact_delivery"] = json!({
+                "crf":18,"audio_bitrate_kbps":320,"retain_lossless_master":false,
+                "intermediate_video_encoding":"h264-lossless"
+            });
+        }
         let manifest_name = format!("manifest-{lang}.json");
         write(&root.join(&manifest_name), &manifest);
         let output = run(root, &manifest_name, &format!("output-{lang}"));
@@ -341,8 +367,12 @@ fn ordered_fixture(adopt: bool) {
         )
         .unwrap();
         assert_eq!(receipt["total_frames"], 96);
-        assert_eq!(receipt["total_samples"], 192_000);
+        assert_eq!(
+            receipt["total_samples"],
+            if clock_transition { 176_400 } else { 192_000 }
+        );
         assert_eq!(receipt["decoded_master_matches_ordered_segments"], true);
+        assert_eq!(receipt["timestamps_verified"], true);
 
         if adopt {
             let evidence_name = format!("display-a-{lang}-text.json");
