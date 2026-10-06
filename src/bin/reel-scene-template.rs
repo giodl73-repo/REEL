@@ -8,7 +8,7 @@ use reel_assembly::scene_authoring::{
 };
 use reel_assembly::template_presentation::{
     EditableTextInvocation, EditableTextTemplate, INVOCATION_SCHEMA, PoemLine,
-    PresentationSourceText, compile_layer, verify_source_text,
+    PresentationSourceText, compile_layer, verify_native_line_ownership, verify_source_text,
 };
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
@@ -354,18 +354,20 @@ fn run() -> Result<()> {
         .languages
         .get(language)
         .context("scene language missing")?;
-    let (ordered_cues, native) =
-        if matches!(definition.kind.as_str(), "opening-poem" | "internal-poem") {
-            (
-                lane.cues
-                    .iter()
-                    .map(|cue| cue.cue_id.clone())
-                    .collect::<Vec<_>>(),
-                alignments(&scene, language, alignment_paths, &scopes)?,
-            )
-        } else {
-            (vec![], BTreeMap::new())
-        };
+    let (ordered_cues, native) = if matches!(
+        definition.kind.as_str(),
+        "opening-poem" | "internal-poem" | "semantic-label"
+    ) {
+        (
+            lane.cues
+                .iter()
+                .map(|cue| cue.cue_id.clone())
+                .collect::<Vec<_>>(),
+            alignments(&scene, language, alignment_paths, &scopes)?,
+        )
+    } else {
+        (vec![], BTreeMap::new())
+    };
     let line_cue_ids = content
         .get("line_cue_ids")
         .and_then(|v| v.get(language))
@@ -435,6 +437,9 @@ fn run() -> Result<()> {
                 bail!("poem line is outside its native performance source scope");
             }
         }
+    }
+    if definition.kind == "semantic-label" {
+        verify_native_line_ownership(&invocation, &lane.cues)?;
     }
     let compiled = compile_layer(&definition, &invocation, &ordered_cues, &native)?;
     // A title overlays a narrated scene without replacing its native clock.

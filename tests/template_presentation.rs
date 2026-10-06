@@ -6,7 +6,7 @@ use reel_assembly::template_presentation::{
     BylineStyle, ChapterLineStyle, ChapterStyle, DisplaySourceUnit, EditableTextInvocation,
     EditableTextTemplate, INVOCATION_SCHEMA, Panel, PoemLine, PresentationSourceText,
     SCENE_SOURCE_TEXT_SCHEMA_V2, SOURCE_TEXT_SCHEMA, SourceLine, TEMPLATE_SCHEMA, compile_layer,
-    verify_source_text,
+    verify_native_line_ownership, verify_source_text,
 };
 
 fn chapter_line(font_size: u32, margin_left: u32, margin_vertical: u32) -> ChapterLineStyle {
@@ -124,6 +124,127 @@ fn clocks() -> BTreeMap<String, NativeAlignment> {
             },
         ),
     ])
+}
+
+fn label() -> (EditableTextTemplate, EditableTextInvocation) {
+    let mut definition = template("semantic-label");
+    definition.title_x = 640;
+    definition.title_y = 680;
+    definition.fixed_duration_seconds = Some(4);
+    let mut invocation = poem();
+    invocation.title = "1937".into();
+    invocation.lines = vec![PoemLine {
+        text: "1937".into(),
+        cue_id: "b".into(),
+        audio_cue_id: None,
+        semantic_trigger_id: "first".into(),
+        stanza_break_before: false,
+    }];
+    (definition, invocation)
+}
+
+#[test]
+fn semantic_label_uses_language_local_marker_and_preserves_scene_clock() {
+    let (definition, mut invocation) = label();
+    for (language, first_duration, marker, expected_start) in [
+        ("es", 24_000, 12_000, "0:00:01.50"),
+        ("en", 48_000, 6_000, "0:00:02.25"),
+    ] {
+        let mut native = clocks();
+        invocation.language = language.into();
+        for alignment in native.values_mut() {
+            alignment.language = language.into();
+        }
+        native.get_mut("a").unwrap().cue_end_sample = first_duration;
+        native
+            .get_mut("b")
+            .unwrap()
+            .semantic_markers
+            .insert("first".into(), marker);
+        let compiled =
+            compile_layer(&definition, &invocation, &["a".into(), "b".into()], &native).unwrap();
+        assert_eq!(compiled.duration_samples, first_duration + 48_000);
+        assert!(
+            compiled
+                .ass
+                .contains(&format!("Dialogue: 0,{expected_start},"))
+        );
+        assert!(compiled.ass.contains("\\an2\\pos(640,680)\\fs42"));
+        assert_eq!(compiled.ass.matches("Dialogue:").count(), 1);
+    }
+}
+
+#[test]
+fn semantic_label_rejects_wrong_scope_missing_markers_and_mixed_clocks() {
+    let (definition, invocation) = label();
+    let mut native = clocks();
+    assert!(compile_layer(&definition, &invocation, &["a".into()], &native).is_err());
+    native.get_mut("b").unwrap().semantic_markers.clear();
+    assert!(compile_layer(&definition, &invocation, &["a".into(), "b".into()], &native).is_err());
+    native = clocks();
+    native.get_mut("b").unwrap().sample_rate = 44_100;
+    assert!(compile_layer(&definition, &invocation, &["a".into(), "b".into()], &native).is_err());
+    native = clocks();
+    native
+        .get_mut("b")
+        .unwrap()
+        .semantic_markers
+        .insert("first".into(), 48_000);
+    assert!(compile_layer(&definition, &invocation, &["a".into(), "b".into()], &native).is_err());
+}
+
+#[test]
+fn semantic_label_rejects_poem_layout_and_unbound_text() {
+    let (mut definition, mut invocation) = label();
+    invocation.lines[0].text = "1939".into();
+    assert!(
+        compile_layer(
+            &definition,
+            &invocation,
+            &["a".into(), "b".into()],
+            &clocks()
+        )
+        .is_err()
+    );
+    invocation.lines[0].text = invocation.title.clone();
+    definition.fixed_duration_seconds = Some(0);
+    assert!(
+        compile_layer(
+            &definition,
+            &invocation,
+            &["a".into(), "b".into()],
+            &clocks()
+        )
+        .is_err()
+    );
+    definition.fixed_duration_seconds = Some(4);
+    invocation.lines[0].stanza_break_before = true;
+    assert!(
+        compile_layer(
+            &definition,
+            &invocation,
+            &["a".into(), "b".into()],
+            &clocks()
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn semantic_label_cannot_borrow_an_unrelated_source_performance() {
+    let (_, mut invocation) = label();
+    let cue: reel_assembly::scene_authoring::Cue = serde_json::from_value(serde_json::json!({
+        "cue_id":"b", "source_id":"b", "source_cue_ids":["source-b"],
+        "exact_text_sha256":"b".repeat(64), "narration_slot_id":"b.voice"
+    }))
+    .unwrap();
+    invocation.lines[0].audio_cue_id = Some("b".into());
+    invocation.lines[0].cue_id = "source-a".into();
+    assert!(verify_native_line_ownership(&invocation, std::slice::from_ref(&cue)).is_err());
+    invocation.lines[0].cue_id = "source-b".into();
+    verify_native_line_ownership(&invocation, std::slice::from_ref(&cue)).unwrap();
+    invocation.lines[0].semantic_trigger_id.clear();
+    assert!(verify_native_line_ownership(&invocation, &[cue]).is_err());
 }
 
 #[test]
