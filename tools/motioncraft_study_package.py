@@ -52,6 +52,8 @@ def kind(path: Path) -> str:
         return "captions"
     if path.suffix == ".png" or "motioncraft" in path.parts or "review-comparison-v2" in path.parts or "cadence-r1" in path.parts:
         return "review-evidence"
+    if path.name.startswith("caption-check") or path.name in ("reproduction-check.json", "caption-derivation.json"):
+        return "review-evidence"
     if path.name.startswith("episode-") or path.name == "scene.json":
         return "craft-plan"
     if path.name == "job.json":
@@ -141,7 +143,11 @@ def pack(studies: dict[str, Path], output: Path,
         for source in sorted(root.glob("*.json")):
             relative = f"studies/{profile}/{source.name}"
             transfers.append((inside(root, source.name), relative))
-            authored.append(relative)
+            # Prior transport/check receipts are evidence, not clean inputs.
+            # Replaying hydration-receipt.json would collide with the fresh
+            # package-bound receipt after copying files into the destination.
+            if source.name not in {"hydration-receipt.json", "reproduction-check.json", "caption-derivation.json"} and not source.name.startswith("caption-check"):
+                authored.append(relative)
         for dirname in directories:
             directory = root / dirname
             if not directory.is_dir():

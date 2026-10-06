@@ -95,6 +95,29 @@ class PackageCadenceFailures(unittest.TestCase):
                 package.pack({"landscape": root, "portrait": root}, output)
             self.assertFalse(output.exists())
 
+    def test_repackaged_workspace_gets_a_new_hydration_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = self.fixture(root)
+            (root / "study.json").write_text(json.dumps({"synthetic_only": True,"duration_samples":96000,"delivery_frames":48}))
+            for scope in ("season", "episode", "scene"):
+                package.write(root / f"{scope}-bindings.json", {"assets": {}})
+            for variant in ("revised", "reduced"):
+                (root / f"compiled-{variant}").mkdir()
+                (root / f"render-{variant}").mkdir()
+                package.write(root / f"compiled-{variant}/job.json", {})
+                (root / f"render-{variant}/picture.mkv").write_bytes(b"test-only bytes")
+                package.write(root / f"cadence-r1/{variant}.json", report)
+            package.write(root / "hydration-receipt.json", {"package_sha256": "old-package"})
+            output = root / "package"
+            package.pack({"landscape": root, "portrait": root}, output)
+            clean = root / "clean"
+            package.hydrate(output, "landscape", clean)
+            receipt = package.read(clean / "hydration-receipt.json")
+            self.assertEqual(receipt["package_sha256"], package.sha(output / "package.json"))
+            self.assertNotEqual(receipt["package_sha256"], "old-package")
+            self.assertFalse((clean / "compiled-revised").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
