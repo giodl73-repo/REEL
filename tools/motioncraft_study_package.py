@@ -50,7 +50,7 @@ def kind(path: Path) -> str:
         return "render-video"
     if path.suffix == ".srt":
         return "captions"
-    if path.suffix == ".png" or "motioncraft" in path.parts or "review-comparison-v2" in path.parts or "cadence-r1" in path.parts:
+    if path.suffix == ".png" or "motioncraft" in path.parts or "review-comparison-v2" in path.parts or any(part in ("cadence-r1", "cadence-r2") for part in path.parts):
         return "review-evidence"
     if path.name.startswith("caption-check") or path.name in ("reproduction-check.json", "caption-derivation.json"):
         return "review-evidence"
@@ -63,8 +63,8 @@ def kind(path: Path) -> str:
     return "production-manifest"
 
 
-def validate_cadence(root: Path, variant: str) -> None:
-    report = read(root / f"cadence-r1/{variant}.json")
+def validate_cadence(root: Path, variant: str, directory: str = "cadence-r1") -> None:
+    report = read(root / f"{directory}/{variant}.json")
     if (report.get("schema") != "reel.motioncraft-cadence.v1"
         or report.get("passed") is not True
         or not report.get("shots")
@@ -72,13 +72,22 @@ def validate_cadence(root: Path, variant: str) -> None:
         or report.get("job_sha256") != sha(root / f"compiled-{variant}/job.json")
         or report.get("picture_sha256") != sha(root / f"render-{variant}/picture.mkv")):
         raise ValueError("cadence report failed or differs from inventoried render/job")
+    if directory == "cadence-r2" and (
+        report.get("analyzer_backend") not in ("wsl", "native")
+        or not report.get("analyzer_ffmpeg_version", "").startswith("ffmpeg version ")
+    ):
+        raise ValueError("cadence report lacks actual analyzer identity")
 
 
 def pack(studies: dict[str, Path], output: Path,
          caption_studies: dict[str, Path] | None = None,
-         producer: Path | None = None) -> None:
+         producer: Path | None = None,
+         cadence_directory: str = "cadence-r1",
+         revision: str = "motioncraft-integrated-r1") -> None:
     if output.exists():
         raise FileExistsError(output)
+    if cadence_directory not in ("cadence-r1", "cadence-r2") or not re.fullmatch("[a-z0-9][a-z0-9-]{0,63}", revision):
+        raise ValueError("invalid cadence directory or portable package revision")
     if set(studies) != {"landscape", "portrait"}:
         raise ValueError("both portable study profiles are required")
     caption_studies = caption_studies or {}
@@ -111,15 +120,15 @@ def pack(studies: dict[str, Path], output: Path,
                     or check.get("native_stems_identical", {}).get(stem) != sha(root / "render-revised" / stem)):
                     raise ValueError("caption derivative changed native audio")
             variants = ("revised",)
-            directories = ["compiled-revised", "render-revised", "cadence-r1"]
+            directories = ["compiled-revised", "render-revised", cadence_directory]
         else:
             comparison = read(root / "review-comparison-v2/comparison.json")
             if not comparison.get("native_clock_verified"):
                 raise ValueError("study comparison has not verified the native clock")
             variants = ("baseline", "revised", "reduced")
-            directories = [f"{prefix}-{v}" for prefix in ("compiled", "render") for v in variants] + ["review-comparison-v2", "cadence-r1"]
+            directories = [f"{prefix}-{v}" for prefix in ("compiled", "render") for v in variants] + ["review-comparison-v2", cadence_directory]
         for variant in variants:
-            validate_cadence(root, variant)
+            validate_cadence(root, variant, cadence_directory)
         assets = []
         seen = set()
         for scope in ("season", "episode", "scene"):
@@ -189,7 +198,7 @@ def pack(studies: dict[str, Path], output: Path,
     components.append({"id": "hydration", "kind": "department-packet", "path": "hydration.json",
                        "sha256": sha(output / "hydration.json"), "required": True})
     write(output / "package.json", {"schema": "reel.production-package.v0.1", "work": "motioncraft-queue-study",
-        "revision": "motioncraft-integrated-r1", "publication_scope": "internal-review", "components": components,
+        "revision": revision, "publication_scope": "internal-review", "components": components,
         "review_gates": [{"id": "creative-selection", "owner": "human-project-owner", "status": "pending"}]})
 
 
@@ -294,6 +303,8 @@ if __name__ == "__main__":
     packing.add_argument("--caption-landscape", type=Path)
     packing.add_argument("--caption-portrait", type=Path)
     packing.add_argument("--producer", type=Path)
+    packing.add_argument("--cadence-directory", choices=("cadence-r1", "cadence-r2"), default="cadence-r1")
+    packing.add_argument("--revision", default="motioncraft-integrated-r1")
     hydrating = sub.add_parser("hydrate")
     hydrating.add_argument("package", type=Path)
     hydrating.add_argument("profile", choices=("landscape", "portrait", "caption-landscape", "caption-portrait"))
@@ -307,7 +318,7 @@ if __name__ == "__main__":
         if bool(args.caption_landscape) != bool(args.caption_portrait):
             parser.error("supply both caption-reserved study roots")
         captions = {"landscape": args.caption_landscape.resolve(), "portrait": args.caption_portrait.resolve()} if args.caption_landscape else None
-        pack({"landscape": args.landscape.resolve(), "portrait": args.portrait.resolve()}, args.output.resolve(), captions, args.producer)
+        pack({"landscape": args.landscape.resolve(), "portrait": args.portrait.resolve()}, args.output.resolve(), captions, args.producer, args.cadence_directory, args.revision)
     elif args.command == "hydrate":
         hydrate(args.package.resolve(), args.profile, args.output.resolve())
     else:

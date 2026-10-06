@@ -85,6 +85,17 @@ class PackageCadenceFailures(unittest.TestCase):
                 package.pack({"landscape": root, "portrait": root}, output)
             self.assertFalse(output.exists())
 
+    def test_refreshed_cadence_requires_analyzer_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.fixture(root)
+            (root / "cadence-r2").mkdir()
+            (root / "cadence-r2/baseline.json").write_bytes((root / "cadence-r1/baseline.json").read_bytes())
+            output = root / "package"
+            with self.assertRaisesRegex(ValueError, "actual analyzer identity"):
+                package.pack({"landscape": root, "portrait": root}, output, cadence_directory="cadence-r2")
+            self.assertFalse(output.exists())
+
     def test_stale_cadence_job_binding_prevents_package_publication(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
