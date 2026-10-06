@@ -327,6 +327,56 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
         compiled_job["pictures"][0]["source"]["sha256"],
         picture["sha256"]
     );
+    // Motion is part of the exact job inside an immutable selected semantic
+    // snapshot. Neither current authoring edits nor a stale pointer may reuse
+    // that snapshot and publish a successful scene.
+    let reject_directed = |name: &str| {
+        let output = root.join(name);
+        let result = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
+            .arg("build")
+            .arg(root)
+            .arg("compiled-motion/build.json")
+            .arg("--asset-root")
+            .arg(root)
+            .arg("--output-dir")
+            .arg(&output)
+            .output()
+            .unwrap();
+        assert!(!result.status.success(), "unexpectedly accepted {name}");
+        assert!(!output.exists(), "published failed motion snapshot {name}");
+        String::from_utf8_lossy(&result.stderr).into_owned()
+    };
+    let directed_episode_bytes = fs::read(root.join("episode.json")).unwrap();
+    let mut changed_direction = directed_episode.clone();
+    changed_direction["motion_direction"]["purpose"] = "Different approved reading intent".into();
+    write_json(&root.join("episode.json"), &changed_direction);
+    assert!(reject_directed("changed-motion-authoring").contains("authored motion differs"));
+    fs::write(root.join("episode.json"), &directed_episode_bytes).unwrap();
+
+    let semantic_path = root.join("compiled-motion/semantic-delivery.json");
+    let semantic_bytes = fs::read(&semantic_path).unwrap();
+    let mut stale_motion: serde_json::Value = serde_json::from_slice(&semantic_bytes).unwrap();
+    assert_eq!(
+        stale_motion["pointer"]["selected_lock"],
+        stale_motion["graph"]["lock"]
+    );
+    stale_motion["pointer"]["selected_lock"]["sha256"] = "0".repeat(64).into();
+    write_json(&semantic_path, &stale_motion);
+    let stale_error = reject_directed("stale-motion-selection");
+    assert!(
+        stale_error.contains("does not select graph lock"),
+        "{stale_error}"
+    );
+    fs::write(&semantic_path, &semantic_bytes).unwrap();
+
+    let job_path = root.join("compiled-motion/job.json");
+    let job_bytes = fs::read(&job_path).unwrap();
+    let mut edited_job = compiled_job.clone();
+    edited_job["pictures"][0]["motion"]["plan"]["direction"]["purpose"] =
+        "Edited after selection".into();
+    write_json(&job_path, &edited_job);
+    assert!(reject_directed("edited-motion-job").contains("hash"));
+    fs::write(&job_path, &job_bytes).unwrap();
     let directed = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
         .arg("build")
         .arg(root)

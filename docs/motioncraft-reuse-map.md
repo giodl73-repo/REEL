@@ -43,9 +43,11 @@ The renderer must distinguish element holds from whole-picture holds.
 1. Verify owner-rendered visual intent in the retained comparison. Typed
    visual/profile direction, explicit native-duration fitting and transformed
    protected-region validation are implemented and covered by focused tests.
-2. Audit immutable intent/selected-revision binding across all consumer entry
-   points; scene-build already rejects direction dropped from its selected job.
-3. Complete playback-based scored review of the six retained queue renders.
+2. Complete consumer-specific binding checks when the actual adapter is
+   integrated. REEL scene-build now rejects changed authoring, stale selected
+   locks and edited job bytes before publication; its restored input renders.
+3. Apply the retained simulated playback/score review to the final integration
+   audit; both study profiles meet its bounded quality target.
 5. Establish the CAIMITOS integration lane, implement adapter adoption,
    upgrade/rollback, hydration, and canary assembly checks.
 6. Complete final role evaluation and the requirement-by-requirement audit.

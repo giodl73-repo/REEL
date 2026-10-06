@@ -150,3 +150,22 @@ pass. Actual CAIMITOS adapter deployment, consumer upgrade/rollback and the
 48,001/47,999-sample canary remain required; this generic study transport does
 not replace them. Portrait clean reproduction and scored playback review also
 remain open.
+
+## Binding audit and craft evaluation checkpoint
+
+The independent scene-build integration test now exercises current authored
+intent changes, stale selected-graph locks and edited motion job bytes. Each
+fails before creating an output directory. Restored exact bytes render
+successfully. Motion is bound by the semantic snapshot's selected graph lock,
+event/picture bindings and exact job hash; scene build additionally checks
+the authored effective direction. No second selection system was added.
+
+Clean portrait reproduction now passes the same six compiled files, four
+native audio files, 450 decoded picture frames and 44 review samples as the
+landscape proof. The simulated core-role review now includes normal/quarter
+playback and phone-width inspection. Its bounded REEL judgment meets the
+study target at landscape 69 to 72 and portrait 70 to 73; see
+[findings and score evidence](../signals/roles/check/reel-motioncraft-queue-comparison-2026-10-05.md).
+This is not a human comprehension test, creative approval, or full project
+acceptance. Actual CAIMITOS adapter deployment and new/upgrade/rollback
+canary remain required.

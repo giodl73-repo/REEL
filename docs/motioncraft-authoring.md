@@ -6,8 +6,10 @@ Explicit native-duration fitting and transformed protected-region checks are
 also implemented, with a typed visual brief carried into review evidence.
 Matched study renders and a verified package/clean landscape reproduction are
 available; see [study handoff](motioncraft-study-handoff.md). CAIMITOS adapter
-deployment, scored playback comparison, the consumer canary and final goal
+deployment, the consumer canary and final goal
 acceptance are still outstanding.
+The [simulated study comparison](../signals/roles/check/reel-motioncraft-queue-comparison-2026-10-05.md)
+records the bounded playback/score evaluation; it is not creative approval.
 
 ## Episode and scene inputs
 

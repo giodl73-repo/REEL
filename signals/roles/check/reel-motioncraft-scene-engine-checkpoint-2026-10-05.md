@@ -31,9 +31,10 @@ acceptance or creative approval.
   derivative. A smaller caption size and adjusted margin fix the observed
   overlap in `review-comparison-v2/caption-check.png` for both profiles. The
   first derivative is retained; v2 is the current candidate.
-- Full playback evaluation and scored visual review, hydrated package, and
-  actual CAIMITOS adapter new/existing episode adoption remain required.
-  Synthetic scene-engine success does not close those gates.
+- Both profile hydration/reproduction checks and the simulated scored
+  playback review now pass; see the queue-comparison review and study-handoff
+  documentation. Actual CAIMITOS adapter new/existing episode adoption remains
+  required. Synthetic scene-engine success does not close that gate.
 
 Retained disagreement: expressive camera movement can aid rhythm but can also
 harm reading. The original/reduced treatment and authored holds remain explicit;

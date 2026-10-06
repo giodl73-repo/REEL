@@ -62,6 +62,9 @@ the creative-selection gate is pending and `release_ready` is false.
 compiled JSON files, four native audio files, 450 decoded picture frames and
 the compiler-selected review samples match the packaged landscape reference.
 The clean workspace received no compiled/rendered outputs during hydration.
+`target/motioncraft-clean-portrait-r1/reproduction-check.json` now supplies
+the equivalent portrait proof: six exact compiled files, four exact WAV files,
+450 decoded picture frames and 44 indexed review samples match the package.
 
 Three transport tests cover tampered bytes, parent traversal and clean
 new-only hydration. Three package tests cover legacy inventory behavior,
@@ -69,3 +72,11 @@ new source/audio component verification and approval separation.
 The binary artifacts remain outside Git. Preserve this handoff before cleaning
 `target`; these development paths are retained checkpoints, not a deployed
 CAIMITOS package or a release.
+
+For local visual comparison, copy `tools/motioncraft_playback.html` into the
+parent of the default `motioncraft-demo-landscape` and
+`motioncraft-demo-portrait` directories and serve that parent on loopback with
+Python's HTTP server. The page offers normal/quarter playback, native/captioned
+media and one audio focus. Its responsive layout supports phone-width
+inspection. It does not submit data or produce production receipts. The review
+session's temporary server was stopped and its browser viewport restored.
