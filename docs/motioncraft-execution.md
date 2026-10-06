@@ -195,3 +195,21 @@ in favor of the shared authored fixture. Its exact compiled job hash matches
 the pre-removal capture, and the actual scene-build test passes. Two phased
 delivery tests including FFmpeg pass after the overlap sampler change. These
 are progress checkpoints; the full goal remains incomplete.
+
+## Native-frame cadence checkpoint
+
+The additive `reel-scene-cadence` command verifies existing scene receipts and
+reuses the legacy motion-check luma analyzer and thresholds with exact frame
+trims. All six study renders pass; reports are retained under each profile
+root at `cadence-r1/{baseline,revised,reduced}.json`, outside render receipts.
+Revised shots each have one near-stationary moving transition: 1/10 for the
+first shot and 1/14 for later shots, within the existing maximum 0.10.
+All intended holds are stationary. Static and reduced shots also pass.
+
+Regression checks reject frozen moving intervals even beside valid holds, and
+refuse whole-frame hold allowances for post-compose/layered treatments. The
+patterned camera/reduced FFmpeg render and existing sprite/camera expectation
+tests pass. These are cadence measurements, not viewer comprehension or final
+creative approval. Caption-band mapping and actual CAIMITOS adoption remain
+open completion requirements. Existing handoff-r1 is unchanged; cadence reports
+will need inclusion in a new final package, with the final producer pin.

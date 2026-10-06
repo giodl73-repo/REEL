@@ -149,6 +149,22 @@ frame counter, not timestamp seeking. Extraction is bounded to 256 frames and
 Camera execution also bounds phase/expression complexity. These checks do not
 prove all frames free of defects or award creative approval.
 
+## Native-frame cadence evidence
+
+After rendering, run `reel-scene-cadence <job.json> --asset-root <assets>
+--render-root <existing-render> --output <new-report.json>` to reuse the
+existing motion-check luma analyzer and thresholds. The command first verifies
+the scene receipt, then measures exact adjacent delivery frames. Reports bind
+the job and picture hashes; output is no-clobber and belongs outside the render
+directory. A failed check retains its report and exits nonzero.
+
+Only an unlayered still camera treatment can grant whole-frame hold allowances.
+External layers, post-compose cameras and other unsupported treatments require
+separate cadence analysis and cannot pass by inheriting a camera hold. Reduced
+motion and static baseline shots are checked for expected stillness. These
+perceptual checks supplement indexed pixel evidence; they do not grant creative
+approval.
+
 ## Existing-episode upgrade and rollback
 
 Keep the accepted episode/scene revision unchanged. Create a new explicit

@@ -22,7 +22,7 @@ proof of adoption.
 | Existing local renderer consumes motion | Selected authoring compile and scene-build emit phased camera jobs; patterned-pixel test, six actual study renders | Verified for first camera path. |
 | Boundary, settled-pose, hold-midpoint, adjacent and overlap evidence | Compiler sample schedule, overlap-interior test, indexed frame-counter extraction, PNG-to-picture checks | Verified for supported treatment; overlap is planned evidence when execution is unsupported. |
 | Contact sheets, normal/quarter playback, exact lineage and tool versions | Engine evidence/receipt files, sampled browser review, source/job/output hashes and FFmpeg versions | Verified for retained study. Final producer commit/binary pin remains part of consumer adoption. |
-| Reuse motion-check to distinguish holds from unexpected freezes | Existing `adapters::still_animatic::check_motion` has hold masks; Motioncraft currently uses independent hold/push pixel tests and indexed verification | Incomplete: no Motioncraft-to-existing-cadence-check bridge yet. Do not treat an element hold as a whole-frame allowance when other layers move. |
+| Reuse motion-check to distinguish holds from unexpected freezes | `reel-scene-cadence` reuses the existing luma analyzer/thresholds on exact native frame spans after receipt verification; all six retained study reports in `cadence-r1` pass; patterned render and frozen-motion tests pass | Verified for unlayered still camera treatments. Layered compositions explicitly require separate analysis and receive no whole-frame hold allowance. |
 | No-clobber and partial-failure publication safety | Existing render/receipt conventions; negative scene-build tests; hydration tamper/traversal/new-only tests | Verified at tested REEL boundaries. |
 | Matched original 15-second queue study, both profiles | 627-component study package; 1280x720 and 720x1280, 30 fps, 450 frames; same assets/audio/script/timing within profile | Verified. No deliberately degraded baseline. |
 | Native, muted/captioned and reduced treatments; phone/desktop inspection | All six renders plus corrected v2 muted derivatives, native caption frames, sampled local browser playback at desktop/360-pixel phone width | Verified within documented sampled-review scope. |
@@ -37,12 +37,12 @@ proof of adoption.
 | Canonical consumer cache ingestion, authority registration and hydration | Generic study uses content-addressed local objects/hydration; no canonical CAIMITOS cache/authority handoff performed | Unmet. Worktree-only media are not a CAIMITOS handoff. |
 | Consumer deployment/adoption instructions and compatibility results | REEL development commands/compatibility notes exist; CAIMITOS adoption not implemented | Unmet. Final handoff must pin real producer binaries/commits and tested invocation. |
 | Delete duplicate fixture timing/review schedule only after equivalence | Scene-build test now reuses `read-then-push.json` instead of inline phase boundaries; native-duration template is derived. Before/after exact job SHA is `6f89aaf3e6ac9ac9a507381aa24ec375bb6a6b2696913a5900d9cb232094c896`; actual build test passes | Verified removal of duplicate test-fixture timing; compiled job includes unchanged review schedule. Independent pixel-index assertions remain intentional verification. |
-| Required checks and final acceptance review | Focused core, scene, package and transport checks pass; most recent sampler change adds overlap coverage | Incomplete until cadence/caption and actual consumer changes are done and their required checks/final audit pass. |
+| Required checks and final acceptance review | Focused core, scene, package and transport checks pass; most recent sampler change adds overlap coverage | Incomplete until caption and actual consumer changes are done and their required checks/final audit pass. |
 
 ## Six deliverables
 
 1. Reuse map, contract documentation and authored example: available.
-2. Validator/compiler and consuming preview: available, cadence-check bridge open.
+2. Validator/compiler and consuming preview: available, native-frame cadence bridge verified for unlayered camera shots.
 3. Indexed evidence/contact sheets/lineage: available for supported camera path.
 4. Matched both-profile/reduced packages: available and reproduced.
 5. Regression/failure tests and final role review: checkpoint evidence available;

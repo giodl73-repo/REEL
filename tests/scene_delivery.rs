@@ -357,6 +357,23 @@ fn phased_camera_renders_real_hold_push_and_reduced_motion_without_audio_drift()
         result.stdout
     };
     let rendered = decode(&output);
+    let (cadence_job, cadence_plan) = scene_delivery::plan(&root.join("job.json"), root).unwrap();
+    let cadence = reel::motioncraft_cadence::analyze(&cadence_job, &cadence_plan, &output).unwrap();
+    assert_eq!(cadence["passed"], true, "{cadence}");
+    let mut layered_job = cadence_job.clone();
+    layered_job.post_compose_camera = Some(scene_delivery::PostComposeCamera {
+        evidence: layered_job.contract.clone(),
+        zoom_step: 0.02,
+        zoom_max: 1.5,
+        windows: vec![scene_delivery::CameraWindow {
+            start_frame: 0,
+            end_frame: 48,
+        }],
+    });
+    let layered = reel::motioncraft_cadence::analyze(&layered_job, &cadence_plan, &output).unwrap();
+    assert_eq!(layered["passed"], false);
+    assert_eq!(layered["shots"][0]["passed"], Value::Null);
+    assert_eq!(layered["shots"][0]["whole_frame_hold_allowance"], false);
     let frame = 64 * 64 * 3;
     assert_eq!(rendered.len(), 48 * frame);
     assert_eq!(
@@ -403,6 +420,11 @@ fn phased_camera_renders_real_hold_push_and_reduced_motion_without_audio_drift()
     let reduced_output = root.join("reduced");
     scene_delivery::render(&root.join("reduced-job.json"), root, &reduced_output).unwrap();
     let stationary = decode(&reduced_output);
+    let (cadence_job, cadence_plan) =
+        scene_delivery::plan(&root.join("reduced-job.json"), root).unwrap();
+    let cadence =
+        reel::motioncraft_cadence::analyze(&cadence_job, &cadence_plan, &reduced_output).unwrap();
+    assert_eq!(cadence["passed"], true, "{cadence}");
     assert_eq!(&stationary[0..frame], &stationary[23 * frame..24 * frame]);
     assert_eq!(
         fs::read(output.join("D.wav")).unwrap(),
