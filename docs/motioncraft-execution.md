@@ -169,3 +169,14 @@ study target at landscape 69 to 72 and portrait 70 to 73; see
 This is not a human comprehension test, creative approval, or full project
 acceptance. Actual CAIMITOS adapter deployment and new/upgrade/rollback
 canary remain required.
+
+## Actual consumer baseline checkpoint
+
+The current CAIMITOS sanitized adapter has now produced a legacy baseline in
+the REEL-owned worktree. REEL render/check and independent decoded PCM/frame
+inspection pass at 48,001/47,999 native cue samples, 96,000 total samples,
+48 frames and effect sample offset 123. See
+[exact commands, hashes and scope](motioncraft-consumer-baseline.md).
+Consumer code remains read-only: the latest lane diagnostic still requires
+Asset Authority provisioning before production writes. This is baseline
+evidence only; no Motioncraft adapter adoption or upgrade is claimed.
