@@ -280,6 +280,7 @@ fn conform_timed_layer_frames(
     span: &mut Span,
     pictures: &[Span],
     duration_samples: u64,
+    native_terminal_frame: u64,
     delivery_frames: u64,
     explicit_picture_frames: bool,
 ) -> Result<()> {
@@ -291,7 +292,11 @@ fn conform_timed_layer_frames(
         }) {
             span.start_frame = picture.start_frame;
         }
-        if span.end_sample == duration_samples
+        // An appended sub-frame clock tail can make an old terminal effect
+        // interior in samples while it stays in the final native frame cell.
+        // Preserve its sample endpoint and trim only that same terminal cell.
+        if span.end_sample <= duration_samples
+            && span.end_frame == native_terminal_frame
             && span.end_frame > delivery_frames
             && span.end_frame - delivery_frames <= 1
         {
@@ -841,6 +846,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                     &mut layer_span,
                     &pictures,
                     compiled.duration_samples,
+                    frame(compiled.duration_samples, true)?,
                     if explicit_picture_frames {
                         picture_frame_cursor
                     } else {
@@ -871,6 +877,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                     &mut layer_span,
                     &pictures,
                     compiled.duration_samples,
+                    frame(compiled.duration_samples, true)?,
                     delivery_frames,
                     explicit_picture_frames,
                 )?;
@@ -2606,4 +2613,52 @@ fn check_impl(
         }
     }
     Ok(receipt)
+}
+
+#[cfg(test)]
+mod terminal_layer_frame_tests {
+    use super::{Span, conform_timed_layer_frames};
+
+    fn source_span() -> Span {
+        Span {
+            attachment_id: "bound-original-effect".into(),
+            start_sample: 0,
+            end_sample: 4_413_941,
+            start_frame: 0,
+            end_frame: 2207,
+        }
+    }
+
+    #[test]
+    fn appended_clock_tail_preserves_effect_samples_in_terminal_frame_cell() {
+        let mut span = source_span();
+        conform_timed_layer_frames(&mut span, &[], 4_414_000, 2207, 2206, true).unwrap();
+        assert_eq!(span.end_sample, 4_413_941);
+        assert_eq!(span.end_frame, 2206);
+    }
+
+    #[test]
+    fn terminal_cell_rule_rejects_larger_deficits_and_nonterminal_or_empty_spans() {
+        for (duration, terminal, delivery, explicit) in [
+            (4_414_000, 2207, 2205, true),
+            (4_416_000, 2208, 2206, true),
+            (4_414_000, 2207, 2206, false),
+            (4_413_900, 2207, 2206, true),
+        ] {
+            assert!(
+                conform_timed_layer_frames(
+                    &mut source_span(),
+                    &[],
+                    duration,
+                    terminal,
+                    delivery,
+                    explicit
+                )
+                .is_err()
+            );
+        }
+        let mut empty = source_span();
+        empty.start_frame = 2206;
+        assert!(conform_timed_layer_frames(&mut empty, &[], 4_414_000, 2207, 2206, true).is_err());
+    }
 }
