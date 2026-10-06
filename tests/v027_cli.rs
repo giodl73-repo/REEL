@@ -90,3 +90,59 @@ fn integrity_does_not_infer_release_approval() {
     assert_eq!(value["review_gates_approved"], false);
     assert_eq!(value["release_ready"], false);
 }
+
+#[test]
+fn source_assets_and_native_audio_are_verified_without_inferred_approval() {
+    let root = tempdir().unwrap();
+    fs::write(
+        root.path().join("selected-input.bin"),
+        b"selected original bytes",
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("native-stem.wav"),
+        b"native test audio bytes",
+    )
+    .unwrap();
+    let components: Vec<_> = [
+        ("input", "source-asset", "selected-input.bin"),
+        ("stem", "render-audio", "native-stem.wav"),
+    ]
+    .into_iter()
+    .map(|(id, kind, path)| {
+        serde_json::json!({"id": id, "kind": kind, "path": path,
+                "sha256": reel::production::sha256_path(root.path().join(path)).unwrap()})
+    })
+    .collect();
+    let package_path = root.path().join("package.json");
+    fs::write(
+        &package_path,
+        serde_json::to_vec(&serde_json::json!({
+            "schema": "reel.production-package.v0.1", "work": "motioncraft",
+            "revision": "r1", "publication_scope": "internal-review",
+            "components": components, "review_gates": []
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let receipt_path = root.path().join("receipt.json");
+    let receipt = reel::production_package::write_receipt(&package_path, &receipt_path).unwrap();
+    assert!(receipt.required_components_verified);
+    assert!(!receipt.release_ready);
+    assert!(
+        reel::production_package::check(&receipt_path, &package_path)
+            .unwrap()
+            .passed
+    );
+    fs::write(
+        root.path().join("selected-input.bin"),
+        b"different selection",
+    )
+    .unwrap();
+    assert!(
+        reel::production_package::check(&receipt_path, &package_path)
+            .unwrap_err()
+            .to_string()
+            .contains("hash mismatch")
+    );
+}

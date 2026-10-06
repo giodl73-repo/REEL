@@ -15,7 +15,25 @@ pub fn read_verified_alignments(
     manifest_path: &Path,
     scopes: &[&ScopedBindings],
 ) -> Result<BTreeMap<String, NativeAlignment>> {
-    let paths: BTreeMap<String, String> = serde_json::from_slice(&fs::read(manifest_path)?)?;
+    read_verified_alignments_from_bytes(
+        scene,
+        language_id,
+        manifest_path,
+        &fs::read(manifest_path)?,
+        scopes,
+    )
+}
+
+/// Compile callers retain and hash this exact manifest buffer rather than
+/// re-reading a mutable file after native timing has already been resolved.
+pub fn read_verified_alignments_from_bytes(
+    scene: &Scene,
+    language_id: &str,
+    manifest_path: &Path,
+    manifest_bytes: &[u8],
+    scopes: &[&ScopedBindings],
+) -> Result<BTreeMap<String, NativeAlignment>> {
+    let paths: BTreeMap<String, String> = serde_json::from_slice(manifest_bytes)?;
     let lane = scene
         .languages
         .get(language_id)

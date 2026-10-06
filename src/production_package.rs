@@ -61,6 +61,10 @@ pub enum ComponentKind {
     DepartmentReceipt,
     RenderArtifactReport,
     RenderVideo,
+    /// Exact selected inputs; verification grants no selection or usage rights.
+    SourceAsset,
+    /// Rendered native stems and mix, independently hash-bound from video.
+    RenderAudio,
     Captions,
     ReviewEvidence,
 }

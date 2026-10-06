@@ -768,6 +768,27 @@ fn build_scene(
         .join(&semantic.scene_delivery_job.path);
     let job: reel::scene_delivery::Job = serde_yaml::from_slice(&fs::read(&job_path)?)?;
     let (_, delivery_plan) = reel::scene_delivery::plan(&job_path, Path::new(asset_root))?;
+    let directions = reel_assembly::scene_authoring::resolve_motion_direction(
+        &episode,
+        &scene,
+        &manifest.language,
+    )?;
+    for binding in &semantic.event_bindings {
+        let expected = directions.get(&binding.event_id);
+        let picture = job
+            .pictures
+            .iter()
+            .find(|picture| picture.attachment_id == binding.picture_attachment_id)
+            .context("authored motion picture binding missing")?;
+        match (&picture.motion, expected) {
+            (Some(reel::scene_delivery::PictureMotion::PhasedCamera { plan }), Some(direction))
+                if &plan.direction == direction => {}
+            (Some(reel::scene_delivery::PictureMotion::PhasedCamera { .. }), _) | (_, Some(_)) => {
+                bail!("authored motion differs from selected scene delivery")
+            }
+            _ => {}
+        }
+    }
     let alignments = read_verified_alignments(
         &scene,
         &manifest.language,

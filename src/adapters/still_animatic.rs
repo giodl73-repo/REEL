@@ -2815,10 +2815,40 @@ pub fn analyze_motion(video: impl AsRef<Path>) -> Result<MotionCadenceReport> {
 }
 
 fn cadence_values(video: &Path, start_seconds: f64, duration_seconds: f64) -> Result<Vec<f64>> {
-    let adapter = FfmpegAdapter;
     let filter = format!(
         "trim=start={start_seconds:.3}:duration={duration_seconds:.3},setpts=PTS-STARTPTS,tblend=all_mode=difference,signalstats,metadata=print:file=-"
     );
+    cadence_values_with_filter(video, filter)
+}
+
+/// Native scene delivery must trim by decoded frame indices, not rounded ms.
+pub fn cadence_values_for_frames(video: &Path, start: u64, end: u64) -> Result<Vec<f64>> {
+    if end
+        .checked_sub(start)
+        .is_none_or(|frames| !(2..=432_000).contains(&frames))
+    {
+        bail!("indexed cadence requires 2..432000 frames");
+    }
+    let values = cadence_values_with_filter(
+        video,
+        format!(
+            "trim=start_frame={start}:end_frame={end},setpts=PTS-STARTPTS,tblend=all_mode=difference,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-"
+        ),
+    )?;
+    if values.len() as u64 != end - start - 1 {
+        bail!("indexed cadence transition count differs from native frame span");
+    }
+    if values
+        .iter()
+        .any(|value| !value.is_finite() || *value < 0.0)
+    {
+        bail!("indexed cadence produced invalid luma metrics");
+    }
+    Ok(values)
+}
+
+fn cadence_values_with_filter(video: &Path, filter: String) -> Result<Vec<f64>> {
+    let adapter = FfmpegAdapter;
     let output = adapter.run_ffmpeg(
         &[
             "-hide_banner".to_string(),
