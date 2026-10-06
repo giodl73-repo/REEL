@@ -281,3 +281,38 @@ verifies those fields. The existing r2 package remains unchanged. A subsequent
 package must include refreshed reports/runtime identity. Meaningful REEL work
 remains, so the goal stays active despite the repeated CAIMITOS provisioning
 gate. Final actual consumer adoption and integrated acceptance are still unmet.
+
+### Follow-up legacy comparison and analyzer refresh
+
+A shared baseline/current fixture proves identical FFmpeg arguments excluding
+output paths, 144 decoded picture frames and 576,000 decoded audio bytes. Two
+unmodified current legacy smoke runs subsequently passed. Earlier WSL failures
+remain unexplained; no production runtime flags changed and diagnostic test
+instrumentation was removed. The acceptance audit records this limited scope.
+
+Commit 5645995 adds new-version package selection and rejects refreshed cadence
+reports missing analyzer identity. Seven transport tests pass. Native media
+retains its fd0f995 producer; new cadence reports use the separately hashed
+5645995 analyzer and WSL FFmpeg runtime. The actual CAIMITOS entry check still
+requires Asset Authority to establish its dedicated worktree.
+
+### Verified r3 analyzer provenance checkpoint
+
+`target/motioncraft-handoff-r3` passes the actual REEL package receipt/check:
+840 components; package SHA256
+`20760e61f00e9ebaa10b99d3d1e714bc3ba742c8cdaf1715f33184b75a514ccb`.
+All eight refreshed cadence reports pass and match the separate actual analyzer
+backend/version pin. 830 unchanged component hashes match r2; only the selected
+cadence reports and producer/hydration metadata change. Four clean r3 input
+hydrations verify every copied input and match the previously reproduced r2
+inputs; no compiled/rendered outputs were copied. This refresh does not claim
+four new rendered reproductions: r2 retains that rendering proof.
+
+Actual CAIMITOS integration remains blocked: its animation-vfx entry check still
+requires Asset Authority to provision or clear the dedicated worktree. The
+bertica-session-handoff skill explicitly keeps such lanes gated until
+administration establishes them. No CAIMITOS source, registry or canonical cache
+was changed. Next required work is actual adapter/compiler adoption, future
+episode and existing-version upgrade/rollback examples, the illustrated odd
+sample canary, canonical authority/cache handoff and final integrated review.
+The goal must remain incomplete until those requirements pass.

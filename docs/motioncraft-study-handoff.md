@@ -156,17 +156,37 @@ that directory.
 
 ## Follow-up runtime findings
 
-The reused cadence analyzer invokes WSL FFmpeg on Windows, separately from the
-native scene-rendering FFmpeg. New report code records the actual analyzer
-backend and version; the patterned hold/push/reduced test verifies those fields.
-The r2 inventory preserves the earlier reports unchanged. A subsequent package
-must include the refreshed analyzer reports and its separate runtime identity.
-Do not infer that the native render-tool pin also identifies the WSL analyzer.
+The reused cadence analyzer invokes WSL FFmpeg separately from native rendering.
+Refreshed reports in `cadence-r2` record actual backend/version. Assemble the
+subsequent package with `--cadence-directory cadence-r2 --revision motioncraft-integrated-r2`
+and the separate `motioncraft-package-producer-5645995.json` pin. Native media
+retains its fd0f995 producer; refreshed analysis is produced by 5645995. Preserve
+both runtime snapshots. The original r2 package and its four reproductions remain
+intact; do not retag their older reports.
 
-An additional legacy mixed-media still-animatic smoke failed twice on the
-Motioncraft branch with a filter `No space left on device` error, despite ample
-Windows/WSL storage. The same test passed on clean baseline 4effab1, built with
-output isolated under this worktree's target. This differential is unresolved;
-none of the eight native scene renders or four clean r2 reproductions failed.
-The full goal remains active while this additional check and provenance update
-are investigated, alongside the still-gated actual CAIMITOS adoption.
+The legacy mixed-media smoke initially failed twice in WSL. Later shared-fixture
+baseline/current commands, all 144 decoded frames and decoded audio matched,
+and two unmodified current smoke runs passed. Earlier failures are retained with
+no diagnosed cause and no production configuration change. See the acceptance
+audit and `target/motioncraft-mixed-diagnostic-r1/render-comparison.json`.
+
+### Verified r3 analyzer provenance checkpoint
+
+`target/motioncraft-handoff-r3` passes the actual REEL package receipt/check:
+840 components; package SHA256
+`20760e61f00e9ebaa10b99d3d1e714bc3ba742c8cdaf1715f33184b75a514ccb`.
+All eight refreshed cadence reports pass and match the separate actual analyzer
+backend/version pin. 830 unchanged component hashes match r2; only the selected
+cadence reports and producer/hydration metadata change. Four clean r3 input
+hydrations verify every copied input and match the previously reproduced r2
+inputs; no compiled/rendered outputs were copied. This refresh does not claim
+four new rendered reproductions: r2 retains that rendering proof.
+
+Actual CAIMITOS integration remains blocked: its animation-vfx entry check still
+requires Asset Authority to provision or clear the dedicated worktree. The
+bertica-session-handoff skill explicitly keeps such lanes gated until
+administration establishes them. No CAIMITOS source, registry or canonical cache
+was changed. Next required work is actual adapter/compiler adoption, future
+episode and existing-version upgrade/rollback examples, the illustrated odd
+sample canary, canonical authority/cache handoff and final integrated review.
+The goal must remain incomplete until those requirements pass.

@@ -32,11 +32,31 @@ The existing matched-study review scores (landscape 69→72, portrait 70→73)
 remain the prior simulated assessment. Current regeneration preserves its
 native pixels/audio; it does not invent an additional review or a real viewer.
 The native REEL package checkpoint passes, while the Motioncraft goal remains
-incomplete. Additional verification identified two open technical findings:
+incomplete. Follow-up evidence supersedes the earlier open differential:
+shared-fixture FFmpeg arguments, 144 decoded frames and decoded audio match
+baseline/current, and two unmodified current smoke runs pass. Earlier intermittent
+WSL failures remain unexplained; general legacy compatibility is not inferred.
+Cadence now records its separate WSL backend/version and the next package pins
+its analyzer runtime independently of native media. These are assistant-simulated
+review dispositions, not independent reviewer or consumer acceptance.
 
-- The legacy mixed-media still-animatic smoke fails twice on Motioncraft while
-  baseline 4effab1 passes. Storage is available. Compare the graph/invocation
-  before calling this resolved or declaring general legacy compatibility.
-- Cadence uses WSL FFmpeg separately from native rendering. New code exposes
-  backend/version and its real render test passes; refresh the subsequent
-  package with that provenance rather than retagging the existing r2 reports.
+### Verified r3 analyzer provenance checkpoint
+
+`target/motioncraft-handoff-r3` passes the actual REEL package receipt/check:
+840 components; package SHA256
+`20760e61f00e9ebaa10b99d3d1e714bc3ba742c8cdaf1715f33184b75a514ccb`.
+All eight refreshed cadence reports pass and match the separate actual analyzer
+backend/version pin. 830 unchanged component hashes match r2; only the selected
+cadence reports and producer/hydration metadata change. Four clean r3 input
+hydrations verify every copied input and match the previously reproduced r2
+inputs; no compiled/rendered outputs were copied. This refresh does not claim
+four new rendered reproductions: r2 retains that rendering proof.
+
+Actual CAIMITOS integration remains blocked: its animation-vfx entry check still
+requires Asset Authority to provision or clear the dedicated worktree. The
+bertica-session-handoff skill explicitly keeps such lanes gated until
+administration establishes them. No CAIMITOS source, registry or canonical cache
+was changed. Next required work is actual adapter/compiler adoption, future
+episode and existing-version upgrade/rollback examples, the illustrated odd
+sample canary, canonical authority/cache handoff and final integrated review.
+The goal must remain incomplete until those requirements pass.

@@ -74,22 +74,42 @@ or unregistered checkout would not satisfy the plan. A designated registered
 integration lane with the necessary owned paths is the required external change.
 Final consumer acceptance and the full goal remain unproven.
 
-### Additional runtime verification in progress
+### Additional runtime verification
 
-After the native r2 proofs, the legacy still-animatic mixed-media smoke was run
-explicitly. It failed in WSL FFmpeg with `No space left on device`. Windows C:
-has about 169 GiB available and WSL root/tmp have ample capacity; no task cleanup
-or backend configuration change was made. The same test against clean REEL commit
-`4effab167d16a971a762454dd9494dd4d590ed20` passed, with build output isolated
-under the Motioncraft target and no baseline source changes. The Motioncraft run failed again with the same filter error. This is now an
-open differential check: baseline passes while the current branch fails.
-Capture/compare the legacy graph and invocation before claiming resolution.
-Both failures are retained; no production runtime configuration was changed.
+The legacy mixed-media smoke initially failed twice in WSL FFmpeg with
+`No space left on device`, despite available storage. A clean baseline 4effab1
+passed. A shared fixture comparison subsequently proved identical FFmpeg
+arguments (excluding output paths), all 144 decoded picture frames and decoded
+audio bytes between baseline and Motioncraft. Two unmodified Motioncraft smoke
+runs then passed. No production flags or backend configuration were changed;
+temporary diagnostic instrumentation was removed. The earlier failures remain
+intermittent and unexplained; no deterministic command/output regression was
+reproduced. This single fixture does not establish general legacy compatibility.
+Evidence is retained in `target/motioncraft-mixed-diagnostic-r1`.
 
-The diagnostic also identified separate rendering/analyzer runtimes: scene
-rendering uses native Windows FFmpeg, while the reused cadence adapter invokes
-WSL FFmpeg 8.0.1 on Windows. New cadence reports now record their actual analyzer
-backend/version. The r2 package remains valid for its declared native media
-proof, but a subsequent package must retain this additional analyzer provenance.
-This is meaningful REEL work still in progress; the goal is not yet at an impasse
-solely on the CAIMITOS lane gate.
+Scene rendering uses native Windows FFmpeg; cadence invokes WSL FFmpeg 8.0.1.
+Refreshed cadence reports record actual backend/version, separately from the
+native media producer. The subsequent package checkpoint records both identities.
+Actual CAIMITOS adoption, new/existing episode upgrades and canonical cache
+handoff remain required before this goal can be completed.
+
+### Verified r3 analyzer provenance checkpoint
+
+`target/motioncraft-handoff-r3` passes the actual REEL package receipt/check:
+840 components; package SHA256
+`20760e61f00e9ebaa10b99d3d1e714bc3ba742c8cdaf1715f33184b75a514ccb`.
+All eight refreshed cadence reports pass and match the separate actual analyzer
+backend/version pin. 830 unchanged component hashes match r2; only the selected
+cadence reports and producer/hydration metadata change. Four clean r3 input
+hydrations verify every copied input and match the previously reproduced r2
+inputs; no compiled/rendered outputs were copied. This refresh does not claim
+four new rendered reproductions: r2 retains that rendering proof.
+
+Actual CAIMITOS integration remains blocked: its animation-vfx entry check still
+requires Asset Authority to provision or clear the dedicated worktree. The
+bertica-session-handoff skill explicitly keeps such lanes gated until
+administration establishes them. No CAIMITOS source, registry or canonical cache
+was changed. Next required work is actual adapter/compiler adoption, future
+episode and existing-version upgrade/rollback examples, the illustrated odd
+sample canary, canonical authority/cache handoff and final integrated review.
+The goal must remain incomplete until those requirements pass.
