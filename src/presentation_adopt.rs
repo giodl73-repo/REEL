@@ -126,6 +126,27 @@ fn source_facts(path: &Path) -> Result<(u64, u64, String, u32)> {
     ))
 }
 
+fn is_native_lossless(path: &Path) -> Result<bool> {
+    let output = episode_conform::command("ffprobe")
+        .args(["-v", "error", "-show_streams", "-of", "json"])
+        .arg(path)
+        .output()?;
+    if !output.status.success() {
+        bail!("FFprobe rejected presentation codecs");
+    }
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let streams = value["streams"]
+        .as_array()
+        .context("missing source streams")?;
+    Ok(streams.len() == 2
+        && streams.iter().any(|s| {
+            s["codec_type"] == "video" && s["codec_name"] == "ffv1" && s["pix_fmt"] == "yuv444p"
+        })
+        && streams.iter().any(|s| {
+            s["codec_type"] == "audio" && s["codec_name"] == "pcm_s24le" && s["channels"] == 2
+        }))
+}
+
 pub fn build(
     manifest_path: &Path,
     input_root: &Path,
@@ -257,32 +278,36 @@ pub fn build(
         .prefix(".presentation-adopt-")
         .tempdir_in(parent)?;
     let master = stage.path().join("master.mkv");
-    let status = episode_conform::command("ffmpeg")
-        .args(["-v", "error", "-nostdin", "-i"])
-        .arg(&source)
-        .args([
-            "-map",
-            "0:v:0",
-            "-map",
-            "0:a:0",
-            "-fps_mode",
-            "passthrough",
-            "-c:v",
-            "ffv1",
-            "-pix_fmt",
-            "yuv444p",
-            "-c:a",
-            "pcm_s24le",
-            "-ac",
-            "2",
-            "-ar",
-        ])
-        .arg(definition.sample_rate.to_string())
-        .arg(&master)
-        .stdout(Stdio::null())
-        .status()?;
-    if !status.success() {
-        bail!("presentation lossless conversion failed");
+    if is_native_lossless(&source)? {
+        fs::copy(&source, &master)?;
+    } else {
+        let status = episode_conform::command("ffmpeg")
+            .args(["-v", "error", "-nostdin", "-i"])
+            .arg(&source)
+            .args([
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a:0",
+                "-fps_mode",
+                "passthrough",
+                "-c:v",
+                "ffv1",
+                "-pix_fmt",
+                "yuv444p",
+                "-c:a",
+                "pcm_s24le",
+                "-ac",
+                "2",
+                "-ar",
+            ])
+            .arg(definition.sample_rate.to_string())
+            .arg(&master)
+            .stdout(Stdio::null())
+            .status()?;
+        if !status.success() {
+            bail!("presentation lossless conversion failed");
+        }
     }
     let facts = episode_conform::probe(&master)?;
     if (

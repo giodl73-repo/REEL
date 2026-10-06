@@ -43,6 +43,47 @@ struct Manifest {
     editable_layer: FileRef,
     #[serde(default)]
     audio: Option<FileRef>,
+    #[serde(default)]
+    audio_treatment: Option<AudioTreatment>,
+    #[serde(default)]
+    fonts: Vec<FileRef>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct AudioTreatment {
+    #[serde(default)]
+    gain_db: f64,
+    #[serde(default)]
+    fade_in_samples: u64,
+    #[serde(default)]
+    fade_out_samples: u64,
+}
+
+fn audio_envelope(treatment: Option<&AudioTreatment>, samples: u64) -> Result<String> {
+    let Some(t) = treatment else {
+        return Ok(String::new());
+    };
+    if !t.gain_db.is_finite()
+        || !(-96.0..=12.0).contains(&t.gain_db)
+        || t.fade_in_samples
+            .checked_add(t.fade_out_samples)
+            .is_none_or(|n| n > samples)
+    {
+        bail!("audio treatment exceeds bounded gain or presentation clock");
+    }
+    let mut filter = format!(",volume={}dB", t.gain_db);
+    if t.fade_in_samples > 0 {
+        filter.push_str(&format!(",afade=t=in:ss=0:ns={}", t.fade_in_samples));
+    }
+    if t.fade_out_samples > 0 {
+        filter.push_str(&format!(
+            ",afade=t=out:ss={}:ns={}",
+            samples - t.fade_out_samples,
+            t.fade_out_samples
+        ));
+    }
+    Ok(filter)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -57,6 +98,10 @@ struct Receipt {
     picture_sha256: Vec<String>,
     editable_layer_sha256: String,
     audio_sha256: Option<String>,
+    #[serde(default)]
+    audio_treatment: Option<AudioTreatment>,
+    #[serde(default)]
+    font_sha256: Vec<String>,
     master_sha256: String,
     master_bytes: u64,
     review_sha256: String,
@@ -202,6 +247,17 @@ fn load(manifest_path: &Path, root: &Path) -> Result<LoadedPresentation> {
         bail!("invalid presentation still template or picture count");
     }
     verified(root, &manifest.editable_layer)?;
+    for font in &manifest.fonts {
+        verified(root, font)?;
+    }
+    if manifest.audio_treatment.is_some() && manifest.audio.is_none() {
+        bail!("audio treatment requires a selected audio source");
+    }
+    let samples = template.picture_count as u64
+        * template.frames_per_picture as u64
+        * template.sample_rate as u64
+        / template.frame_rate as u64;
+    audio_envelope(manifest.audio_treatment.as_ref(), samples)?;
     let pictures = manifest
         .pictures
         .iter()
@@ -227,6 +283,15 @@ fn build(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
         root.join(&manifest.editable_layer.path),
         output_dir.join("editable-layer.ass"),
     )?;
+    if !manifest.fonts.is_empty() {
+        fs::create_dir(output_dir.join("fonts"))?;
+        for (index, font) in manifest.fonts.iter().enumerate() {
+            fs::copy(
+                root.join(&font.path),
+                output_dir.join(format!("fonts/font-{index}.ttf")),
+            )?;
+        }
+    }
     let seconds_each = template.frames_per_picture as f64 / template.frame_rate as f64;
     let total_seconds = template.picture_count as f64 * seconds_each;
     let mut cmd = Command::new("ffmpeg");
@@ -260,11 +325,21 @@ fn build(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
         filter.push_str(&format!("[v{i}]"));
     }
     filter.push_str(&format!(
-        "concat=n={}:v=1:a=0,ass=editable-layer.ass[v];",
-        pictures.len()
+        "concat=n={}:v=1:a=0,ass=editable-layer.ass{}[v];",
+        pictures.len(),
+        if manifest.fonts.is_empty() {
+            ""
+        } else {
+            ":fontsdir=fonts"
+        }
     ));
+    let samples = template.picture_count as u64
+        * template.frames_per_picture as u64
+        * template.sample_rate as u64
+        / template.frame_rate as u64;
+    let envelope = audio_envelope(manifest.audio_treatment.as_ref(), samples)?;
     filter.push_str(&format!(
-        "[{}:a]aresample={},aformat=channel_layouts=stereo,apad,atrim=duration={total_seconds:.9},asetpts=PTS-STARTPTS[a]",
+        "[{}:a]aresample={},aformat=channel_layouts=stereo,apad,atrim=duration={total_seconds:.9},asetpts=PTS-STARTPTS{envelope}[a]",
         pictures.len(), template.sample_rate
     ));
     cmd.args([
@@ -328,6 +403,12 @@ fn build(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
         picture_sha256: manifest.pictures.iter().map(|p| p.sha256.clone()).collect(),
         editable_layer_sha256: manifest.editable_layer.sha256,
         audio_sha256: manifest.audio.map(|a| a.sha256),
+        audio_treatment: manifest.audio_treatment,
+        font_sha256: manifest
+            .fonts
+            .iter()
+            .map(|font| font.sha256.clone())
+            .collect(),
         master_sha256: hash(&master),
         master_bytes: master.len() as u64,
         review_sha256: hash(&review),
@@ -351,6 +432,12 @@ fn check(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
     let master = fs::read(output_dir.join("master.mkv"))?;
     let review = fs::read(output_dir.join("review.mp4"))?;
     let layer = fs::read(output_dir.join("editable-layer.ass"))?;
+    for (index, font) in manifest.fonts.iter().enumerate() {
+        let bytes = fs::read(output_dir.join(format!("fonts/font-{index}.ttf")))?;
+        if hash(&bytes) != font.sha256 || bytes.len() as u64 != font.bytes {
+            bail!("retained font differs from selected font");
+        }
+    }
     let (frames, samples) = check_media(&output_dir.join("master.mkv"), &template)?;
     if receipt.schema != "reel.presentation-still-sequence-receipt.v1"
         || receipt.manifest_sha256 != hash(&manifest_bytes)
@@ -363,6 +450,13 @@ fn check(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
                 .collect::<Vec<_>>()
         || receipt.editable_layer_sha256 != hash(&layer)
         || receipt.audio_sha256 != manifest.audio.map(|a| a.sha256)
+        || receipt.audio_treatment != manifest.audio_treatment
+        || receipt.font_sha256
+            != manifest
+                .fonts
+                .iter()
+                .map(|font| font.sha256.clone())
+                .collect::<Vec<_>>()
         || receipt.master_sha256 != hash(&master)
         || receipt.master_bytes != master.len() as u64
         || receipt.review_sha256 != hash(&review)

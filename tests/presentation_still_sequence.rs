@@ -30,6 +30,15 @@ fn run(root: &Path, action: &str) -> std::process::Output {
 
 #[test]
 fn two_stills_render_exact_picture_and_audio_clocks() {
+    still_fixture(false);
+}
+
+#[test]
+fn selected_audio_envelope_fades_actual_samples_and_rejects_font_tampering() {
+    still_fixture(true);
+}
+
+fn still_fixture(with_audio: bool) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     for (name, color) in [("red.png", "red"), ("blue.png", "blue")] {
@@ -79,6 +88,35 @@ fn two_stills_render_exact_picture_and_audio_clocks() {
         .unwrap(),
     )
     .unwrap();
+    if with_audio {
+        assert!(
+            Command::new("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=440:sample_rate=48000:duration=2",
+                    "-c:a",
+                    "pcm_s24le"
+                ])
+                .arg(root.join("audio.wav"))
+                .status()
+                .unwrap()
+                .success()
+        );
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("manifest.json")).unwrap()).unwrap();
+        manifest["audio"] = reference(root, "audio.wav");
+        manifest["audio_treatment"] =
+            json!({"gain_db":-6.0,"fade_in_samples":24000,"fade_out_samples":24000});
+        fs::write(
+            root.join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+    }
     let built = run(root, "build");
     assert!(
         built.status.success(),
@@ -95,6 +133,45 @@ fn two_stills_render_exact_picture_and_audio_clocks() {
         serde_json::from_slice(&fs::read(root.join("render/receipt.json")).unwrap()).unwrap();
     assert_eq!(receipt["frames"], 48);
     assert_eq!(receipt["samples"], 96_000);
+    if with_audio {
+        let decoded = Command::new("ffmpeg")
+            .args(["-v", "error", "-i"])
+            .arg(root.join("render/master.mkv"))
+            .args(["-map", "0:a", "-f", "f32le", "-ac", "1", "-"])
+            .output()
+            .unwrap();
+        assert!(decoded.status.success());
+        let samples: Vec<f32> = decoded
+            .stdout
+            .chunks_exact(4)
+            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+            .collect();
+        let rms = |slice: &[f32]| {
+            (slice.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / slice.len() as f64).sqrt()
+        };
+        let center = rms(&samples[36000..48000]);
+        assert!(
+            center > 0.04 && center < 0.05,
+            "gain must change actual PCM: {center}"
+        );
+        assert!(rms(&samples[..2400]) < center * 0.1);
+        assert!(rms(&samples[93600..]) < center * 0.1);
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("manifest.json")).unwrap()).unwrap();
+        fs::write(root.join("font.ttf"), b"fixture-font").unwrap();
+        manifest["fonts"] = json!([reference(root, "font.ttf")]);
+        fs::write(
+            root.join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        fs::write(root.join("font.ttf"), b"tampered").unwrap();
+        let rejected = run(root, "check");
+        assert!(!rejected.status.success());
+        assert!(
+            String::from_utf8_lossy(&rejected.stderr).contains("hash, bytes or cache URI mismatch")
+        );
+    }
     fs::write(root.join("render/editable-layer.ass"), b"tampered").unwrap();
     assert!(!run(root, "check").status.success());
 }
