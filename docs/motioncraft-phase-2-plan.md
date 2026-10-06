@@ -1,5 +1,33 @@
 # Motioncraft Phase 2 — Camera, Validation and Episode Proof
 
+## Qualified compact consumer and indexed presentation checkpoint
+
+Engine32b90c33e77c797a276807d6962d2655fed3891f passes exact CI37512767215
+on Windows Rust, Ubuntu Rust and Linux FFmpeg. CAIMITOS pins that exact revision;
+locked build,46 actual authoring/upgrade tests without skips, full all-target
+Rust suite (79library plus binary tests), Clippy and formatting pass. Its existing
+private-cache test remains explicitly ignored.
+
+The actual two-scene compact consumer verifies all96 frames/192000 samples,
+immutable encoding upgrade/rollback, no-clobber and rejection of undeclared
+compact, lossy, muted and stale masters. Fresh hydrated retained native binaries
+reproduce complete legacy/compact reports and failures exactly. The synthetic
+ambience boundary remains needs-review; the CLI preserves the content-verified
+report and returns failure. This is integration proof, not selected E1 acceptance.
+
+CAIMITOS resolverV25 and two formal receipts retain79 records against metadata
+787c03a531b6b88aaf55d3f0ed4952eada4c152c. Hydration320465630 bytes is bounded;
+canary output9325893 bytes and master1427020→33275 bytes do not forecast a full
+selected episode or production peak. The105-record complete-master closure is
+formally validated separately. All nine English landscape Scene020 phone states
+are inspected and retained in an18-record scope; fresh585-frame RGB and9phone
+images reproduce exactly. Normal-speed/full episode review remains open.
+
+Next: measured long-scene/full-production capacity, complete bilingual/profile
+freeze, picture-clock and caption/presentation dispositions, all twelve complete
+variants with common shipping-pin/playback/fresh evidence, then reviewed main
+integration. Component proofs and retained diagnostics cannot replace P2.1–P2.5.
+
 ## Current checkpoint — complete master measurements and compact episode proof
 
 Both selected masters now have complete sequential opening/body/credits PCM

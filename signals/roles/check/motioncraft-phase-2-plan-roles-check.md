@@ -1,5 +1,17 @@
 # Motioncraft Phase 2 — plan role review
 
+## P2-R47 — content verification must preserve editorial failure
+
+Editor / Sound Designer / Rights and Provenance: the actual compact consumer
+canary preserves every frame/sample but retains an ambience-level-step finding.
+Disposition: require identical legacy/compact decoded consumption and findings,
+retain the needs-review boundary, write the verified report without clobbering,
+and return failure until an appropriate explicit disposition exists. The fresh
+exact-binary consumer reproduces that distinction. Synthetic engineering state
+PASS does not imply native boundary pass, selected E1 quality or principal
+approval. Full episode review and measured production peaks remain mandatory.
+These are assistant checklist findings, not independent or human review.
+
 ## P2-R45 — sample seeking is an optimization until identity is verified
 
 Sound Designer / Rights and Provenance: actual coarse-seek master decoding differs
