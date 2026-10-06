@@ -28,6 +28,15 @@ fn ffmpeg() -> Command {
 
 #[test]
 fn selected_existing_opening_becomes_verified_lossless_presentation_master() {
+    opening_fixture("libx264", "yuv420p");
+}
+
+#[test]
+fn selected_native_opening_preserves_exact_bytes_and_rechecks_timing() {
+    opening_fixture("ffv1", "yuv444p");
+}
+
+fn opening_fixture(codec: &str, pixel_format: &str) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let status = ffmpeg()
@@ -49,9 +58,9 @@ fn selected_existing_opening_becomes_verified_lossless_presentation_master() {
             "-filter:a",
             "pan=stereo|c0=c0|c1=c0",
             "-c:v",
-            "libx264",
+            codec,
             "-pix_fmt",
-            "yuv420p",
+            pixel_format,
             "-c:a",
             "pcm_s24le",
             "-shortest",
@@ -140,6 +149,10 @@ fn selected_existing_opening_becomes_verified_lossless_presentation_master() {
     assert_eq!(receipt["samples"], 96000);
     assert_eq!(receipt["source_content_matches_lossless_master"], true);
     assert_eq!(receipt["publication"], "not-authorized");
+    if codec == "ffv1" {
+        assert_eq!(receipt["source_sha256"], receipt["master_sha256"]);
+        assert_eq!(receipt["source_bytes"], receipt["master_bytes"]);
+    }
     assert_eq!(
         receipt["technical_validation_state"],
         "decoded-source-equivalent"
