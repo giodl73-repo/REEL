@@ -44,6 +44,8 @@ fn fixture(root: &Path) -> Value {
             "1:12288",
             "-video_track_timescale",
             "12288",
+            "-movie_timescale",
+            "12288",
             "-c:v",
             "libx264",
             "-bf",

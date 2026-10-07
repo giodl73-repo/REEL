@@ -92,6 +92,75 @@ struct Clocks {
     audio_packets: Vec<Packet>,
 }
 
+// MP4 edit lists use the movie timescale, whose default millisecond grid can
+// round an otherwise preserved video origin. Represent every source timestamp
+// exactly instead of accepting a shifted output or disabling edit lists.
+fn movie_timescale(clocks: &Clocks) -> Result<i128> {
+    let mut scale = 1i128;
+    for time in clocks.video_pts.iter().chain(
+        clocks
+            .audio_packets
+            .iter()
+            .flat_map(|p| [&p.pts, &p.dts, &p.duration]),
+    ) {
+        let (mut a, mut b) = (scale, time.denominator);
+        while b != 0 {
+            (a, b) = (b, a % b);
+        }
+        scale = (scale / a)
+            .checked_mul(time.denominator)
+            .context("source movie timescale overflow")?;
+        if scale > i128::from(i32::MAX) {
+            bail!("source timestamp grid exceeds MP4 movie timescale limit");
+        }
+    }
+    Ok(scale)
+}
+
+#[cfg(test)]
+mod timestamp_grid_tests {
+    use super::*;
+
+    #[test]
+    fn movie_grid_represents_video_origin_and_audio_exactly() {
+        let clocks = Clocks {
+            video_pts: vec![
+                Time::new(258, 12288).unwrap(),
+                Time::new(770, 12288).unwrap(),
+            ],
+            audio_codec: Value::Null,
+            audio_packets: vec![Packet {
+                pts: Time::new(-1024, 48000).unwrap(),
+                dts: Time::new(-1024, 48000).unwrap(),
+                duration: Time::new(1024, 48000).unwrap(),
+                bytes: 1,
+                payload_hash: String::new(),
+                side_data: Value::Null,
+            }],
+        };
+        let scale = movie_timescale(&clocks).unwrap();
+        assert_eq!(scale, 768000);
+        assert_eq!(scale % 2048, 0);
+        assert_eq!(scale % 6144, 0);
+        assert_eq!(scale % 375, 0);
+    }
+
+    #[test]
+    fn unrepresentable_movie_grid_is_rejected() {
+        let clocks = Clocks {
+            video_pts: vec![Time::new(1, 2147483647).unwrap(), Time::new(1, 2).unwrap()],
+            audio_codec: Value::Null,
+            audio_packets: vec![],
+        };
+        assert!(
+            movie_timescale(&clocks)
+                .unwrap_err()
+                .to_string()
+                .contains("timescale limit")
+        );
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 struct Placement {
     scene_id: String,
@@ -488,6 +557,7 @@ pub fn build(manifest_path: &Path, root: &Path, out: &Path) -> Result<Receipt> {
     let film = checked_file(root, &manifest.film)?;
     let source = clocks(&film)?;
     let layers = inputs(&manifest, root, &source)?;
+    let movie_timescale = movie_timescale(&source)?.to_string();
     fs::create_dir_all(out.join("fonts"))?;
     let out = fs::canonicalize(out)?;
     let mut filters = Vec::new();
@@ -519,6 +589,7 @@ pub fn build(manifest_path: &Path, root: &Path, out: &Path) -> Result<Receipt> {
         .arg(&film)
         .args(["-map", "0:v:0", "-map", "0:a:0", "-vf"])
         .arg(filters.join(","))
+        .args(["-movie_timescale", &movie_timescale])
         .args([
             "-c:v",
             "libx264",
@@ -556,7 +627,26 @@ pub fn build(manifest_path: &Path, root: &Path, out: &Path) -> Result<Receipt> {
         .context("font provider not reported by renderer")?;
     let rendered = clocks(&movie)?;
     if rendered != source {
-        bail!("film picture PTS or compressed audio packet/timestamp closure mismatch");
+        let first_picture_difference = source
+            .video_pts
+            .iter()
+            .zip(&rendered.video_pts)
+            .position(|(a, b)| a != b);
+        let first_audio_difference = source
+            .audio_packets
+            .iter()
+            .zip(&rendered.audio_packets)
+            .position(|(a, b)| a != b);
+        bail!(
+            "film picture PTS or compressed audio packet/timestamp closure mismatch: picture counts {}/{}, first picture difference {:?}, audio counts {}/{}, first audio difference {:?}, audio codec equal {}",
+            source.video_pts.len(),
+            rendered.video_pts.len(),
+            first_picture_difference,
+            source.audio_packets.len(),
+            rendered.audio_packets.len(),
+            first_audio_difference,
+            source.audio_codec == rendered.audio_codec
+        );
     }
     decode(&movie)?;
     let receipt = Receipt {

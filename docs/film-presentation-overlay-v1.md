@@ -63,6 +63,12 @@ extradata hash and stream side data. Timestamp values are compared as normalized
 rationals. Audio timestamp overlaps in the original are preserved, not guessed
 away. Both commands fully decode the result and reject a closure mismatch.
 
+The MP4 movie timescale is the least common multiple of the normalized source
+video and audio timestamp denominators. This prevents the default millisecond
+edit-list grid from rounding a preserved video origin. A grid beyond FFmpeg's
+signed 32-bit movie-timescale limit is rejected before rendering. Two unit
+fixtures cover exact mixed timestamp grids and that range rejection.
+
 Movie hashing streams through a fixed buffer. Complete ffprobe frame/packet
 metadata remains in memory; memory use grows with film duration. Production runs
 must demonstrate acceptable resource use on their real sources.
