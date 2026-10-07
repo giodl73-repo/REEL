@@ -307,7 +307,12 @@ fn run() -> Result<()> {
             .find(|score| score.role == role && score.source_poem_id == poem)
             .context("required soundtrack lacks a poem-matched episode score")?;
         selected(&score.asset_binding, &scopes)?;
+        // A title prelude has no narration events. Its separately rendered
+        // presentation unit consumes the selected, poem-matched score.
         for (lane_id, lane) in &scene.languages {
+            if definition.kind == "poem-title" {
+                continue;
+            }
             if !lane.events.iter().any(|event| matches!(&event.score,
                 reel_assembly::scene_authoring::ScoreUse::Role { role: event_role } if event_role == role)) {
                 bail!("{lane_id} has no event bound to required soundtrack role {role}");

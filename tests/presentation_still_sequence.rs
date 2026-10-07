@@ -117,6 +117,36 @@ fn still_fixture(with_audio: bool) {
         )
         .unwrap();
     }
+    if with_audio {
+        let mut template: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("template.json")).unwrap()).unwrap();
+        template["audio_required"] = json!(true);
+        fs::write(
+            root.join("template.json"),
+            serde_json::to_vec(&template).unwrap(),
+        )
+        .unwrap();
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("manifest.json")).unwrap()).unwrap();
+        manifest["template"] = reference(root, "template.json");
+        let mut silent = manifest.clone();
+        silent.as_object_mut().unwrap().remove("audio");
+        silent.as_object_mut().unwrap().remove("audio_treatment");
+        fs::write(
+            root.join("manifest.json"),
+            serde_json::to_vec(&silent).unwrap(),
+        )
+        .unwrap();
+        let rejected = run(root, "build");
+        assert!(!rejected.status.success());
+        assert!(String::from_utf8_lossy(&rejected.stderr).contains("requires a selected audio"));
+        assert!(!root.join("render").exists());
+        fs::write(
+            root.join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+    }
     let built = run(root, "build");
     assert!(
         built.status.success(),
