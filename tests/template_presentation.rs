@@ -97,6 +97,47 @@ fn poem() -> EditableTextInvocation {
     }
 }
 
+#[test]
+fn title_prelude_is_separate_from_native_reading_and_rejects_verse_clocks() {
+    let mut title = template("opening-poem");
+    title.kind = "poem-title".into();
+    title.fixed_duration_seconds = Some(2);
+    title.byline = Some(BylineStyle {
+        x: 880,
+        y: 660,
+        font_size: 21,
+        rgb: [255, 255, 255],
+    });
+    let mut text = poem();
+    text.lines.clear();
+    text.byline = Some("por Andrés Alarcón García".into());
+    let output = compile_layer(&title, &text, &[], &BTreeMap::new()).unwrap();
+    assert_eq!((output.duration_samples, output.sample_rate), (200, 100));
+    assert!(output.ass.contains("Recuerdos"));
+    assert!(output.ass.contains("por Andrés Alarcón García"));
+    assert!(!output.ass.contains("Primera línea"));
+    assert!(compile_layer(&title, &text, &["a".into()], &BTreeMap::new()).is_err());
+    text.lines = poem().lines;
+    assert!(compile_layer(&title, &text, &[], &BTreeMap::new()).is_err());
+}
+
+#[test]
+fn title_prelude_rejects_missing_duration_bad_panel_and_mismatched_credit() {
+    let mut title = template("opening-poem");
+    title.kind = "poem-title".into();
+    let mut text = poem();
+    text.lines.clear();
+    assert!(compile_layer(&title, &text, &[], &BTreeMap::new()).is_err());
+    title.fixed_duration_seconds = Some(31);
+    assert!(compile_layer(&title, &text, &[], &BTreeMap::new()).is_err());
+    title.fixed_duration_seconds = Some(2);
+    text.byline = Some("poet".into());
+    assert!(compile_layer(&title, &text, &[], &BTreeMap::new()).is_err());
+    text.byline = None;
+    title.panel.as_mut().unwrap().width = 1;
+    assert!(compile_layer(&title, &text, &[], &BTreeMap::new()).is_err());
+}
+
 fn clocks() -> BTreeMap<String, NativeAlignment> {
     BTreeMap::from([
         (

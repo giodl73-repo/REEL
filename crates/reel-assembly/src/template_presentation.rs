@@ -347,7 +347,7 @@ pub fn compile_layer(
         || template.template_id != invocation.template_id
         || !matches!(
             template.kind.as_str(),
-            "opening-poem" | "internal-poem" | "chapter-title" | "semantic-label"
+            "opening-poem" | "internal-poem" | "poem-title" | "chapter-title" | "semantic-label"
         )
         || template.canvas_width == 0
         || template.canvas_height == 0
@@ -367,6 +367,93 @@ pub fn compile_layer(
         template.body_size,
         color(template.completed_rgb)
     );
+    if template.kind == "poem-title" {
+        if !invocation.lines.is_empty()
+            || !ordered_cues.is_empty()
+            || !alignments.is_empty()
+            || invocation.chapter_number.is_some()
+            || template.chapter.is_some()
+            || template.post_poem_title_duration_ms.is_some()
+            || invocation.byline.is_some() != template.byline.is_some()
+        {
+            bail!("poem title is a separate title-only unit, without native verse clocks");
+        }
+        let seconds = template
+            .fixed_duration_seconds
+            .filter(|seconds| (1..=30).contains(seconds))
+            .context("poem title requires a bounded template duration")?;
+        let panel = template
+            .panel
+            .as_ref()
+            .context("poem title panel missing")?;
+        if panel.width == 0
+            || panel.x.checked_add(panel.width) != Some(template.canvas_width)
+            || template.title_x < panel.x
+            || template.title_x >= template.canvas_width
+            || template.title_y >= template.canvas_height
+        {
+            bail!("poem title geometry does not fit canvas");
+        }
+        let end = u64::from(seconds) * 100;
+        for (left, right, rgb) in [
+            (panel.x, template.canvas_width, color(panel.background_rgb)),
+            (
+                panel.x,
+                panel.x + 2,
+                alpha_color(panel.divider_rgb, panel.divider_alpha),
+            ),
+        ] {
+            ass.push_str(&event(0, end, 100, "Panel", &format!(
+                "{{\\an7\\pos(0,0)\\p1\\1c{rgb}}}m {left} 0 l {right} 0 {right} {} {left} {}{{\\p0}}",
+                template.canvas_height, template.canvas_height,
+            )));
+        }
+        ass.push_str(&event(
+            0,
+            end,
+            100,
+            "Text",
+            &format!(
+                "{{\\pos({},{})\\fs{}\\1c{}}}{}",
+                template.title_x,
+                template.title_y,
+                template.title_size,
+                color(template.completed_rgb),
+                escape(&invocation.title)?,
+            ),
+        ));
+        if let (Some(byline), Some(style)) = (&invocation.byline, &template.byline) {
+            if style.font_size == 0
+                || style.x < panel.x
+                || style.x >= template.canvas_width
+                || style.y >= template.canvas_height
+            {
+                bail!("poem title byline does not fit canvas");
+            }
+            ass.push_str(&event(
+                0,
+                end,
+                100,
+                "Text",
+                &format!(
+                    "{{\\pos({},{})\\fs{}\\1c{}}}{}",
+                    style.x,
+                    style.y,
+                    style.font_size,
+                    color(style.rgb),
+                    escape(byline)?,
+                ),
+            ));
+        }
+        return Ok(CompiledLayer {
+            schema: "reel.compiled-editable-layer.v1".into(),
+            template_id: template.template_id.clone(),
+            language: invocation.language.clone(),
+            duration_samples: end,
+            sample_rate: 100,
+            ass,
+        });
+    }
     if template.kind == "semantic-label" {
         if invocation.lines.len() != 1
             || invocation.lines[0].text != invocation.title

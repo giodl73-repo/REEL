@@ -121,6 +121,86 @@ fn compiles_selected_poem_from_scene_content_and_rejects_changed_definition() {
         "{}",
         String::from_utf8_lossy(&good.stderr)
     );
+    // A title-first prelude has its own display clock and never borrows the
+    // first line's narration. Its selected poem score remains mandatory.
+    let saved_catalog = catalog.clone();
+    let saved_scene = scene.clone();
+    let saved_bindings = scene_bindings.clone();
+    let mut title_definition = definition.clone();
+    title_definition["kind"] = json!("poem-title");
+    title_definition["fixed_duration_seconds"] = json!(2);
+    title_definition["soundtrack_requirement"] = json!("selected-episode-score");
+    write(&dir.join("definition.json"), &title_definition);
+    catalog["templates"][2]["kind"] = json!("poem-title");
+    catalog["templates"][2]["required_content_keys"] = json!(["poem_id", "score_role"]);
+    catalog["templates"][2]["soundtrack_requirement"] = json!("selected-episode-score");
+    catalog["templates"][2]["definition_sha256"] =
+        sha(&fs::read(dir.join("definition.json")).unwrap()).into();
+    write(&dir.join("catalog.json"), &catalog);
+    scene["source_scope_ids"] = json!([]);
+    for language in ["es", "en"] {
+        scene["languages"][language]["cues"] = json!([]);
+        scene["languages"][language]["events"] = json!([]);
+    }
+    scene["presentation"]["role"] = json!("poem-title");
+    scene["presentation"]["content"]
+        .as_object_mut()
+        .unwrap()
+        .remove("line_cue_ids");
+    scene["presentation"]["content"]
+        .as_object_mut()
+        .unwrap()
+        .remove("lines_by_language");
+    scene["presentation"]["content"]["score_role"] = json!("poem.intimate");
+    let mut title_source = source_text.clone();
+    title_source["source_scope_ids"] = json!(["poem-title", "poet-credit"]);
+    title_source["lines"] = json!([]);
+    write(&dir.join("source-text.json"), &title_source);
+    let title_bytes = fs::read(dir.join("source-text.json")).unwrap();
+    let title_sha = sha(&title_bytes);
+    scene_bindings["assets"]["es.poem.source"] = json!({
+        "logical_id":"es-title-source", "sha256":title_sha,
+        "bytes":title_bytes.len(), "cache_uri":format!("cache://sha256/{title_sha}"),
+        "selection_state":"selected-private-production"
+    });
+    write(&dir.join("scene.json"), &scene);
+    write(&dir.join("bindings.json"), &scene_bindings);
+    let title_only = run("title-first.ass", "title-first-receipt.json");
+    assert!(
+        title_only.status.success(),
+        "{}",
+        String::from_utf8_lossy(&title_only.stderr)
+    );
+    let title_ass = fs::read_to_string(dir.join("title-first.ass")).unwrap();
+    assert!(title_ass.contains("Recuerdos"));
+    assert!(!title_ass.contains("Línea original"));
+    assert!(title_ass.contains("0:00:02.00"));
+    let mut unavailable_score = fixture("episode-bindings");
+    unavailable_score["assets"]["score.poem.intimate"]["selection_state"] = json!("candidate");
+    write(&dir.join("episode-bindings.json"), &unavailable_score);
+    assert!(
+        !run("title-unselected.ass", "title-unselected.json")
+            .status
+            .success()
+    );
+    scene["presentation"]["content"]["poem_id"] = json!("unrelated-poem");
+    write(&dir.join("scene.json"), &scene);
+    write(
+        &dir.join("episode-bindings.json"),
+        &fixture("episode-bindings"),
+    );
+    assert!(
+        !run("title-unrelated.ass", "title-unrelated.json")
+            .status
+            .success()
+    );
+    catalog = saved_catalog;
+    scene = saved_scene;
+    scene_bindings = saved_bindings;
+    write(&dir.join("catalog.json"), &catalog);
+    write(&dir.join("scene.json"), &scene);
+    write(&dir.join("bindings.json"), &scene_bindings);
+    write(&dir.join("source-text.json"), &source_text);
     let mut scored_definition = definition.clone();
     scored_definition["soundtrack_requirement"] = json!("selected-episode-score");
     write(&dir.join("definition.json"), &scored_definition);
