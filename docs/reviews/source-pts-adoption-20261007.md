@@ -45,3 +45,34 @@ The reviewer inspected source, tests, docs, conform routing and verification
 cache logic, finding no static blocker. Tests above were executed by the producer;
 the reviewer did not rerun them. These role lenses are engineering findings,
 not real-person approval or a listening review of production media.
+
+## Local-anchor correction after actual E1 intake
+
+Actual E1 ES/EN intake rejected global source continuity: an AAC clock reset
+at the 120-second opening boundary precedes the selected scene. Decoded frame
+5626 has PTS5760001 at 48kHz versus cumulative5761024 samples; the next frame
+has PTS5761024 versus cumulative5762048. This diagnosis does not authorize a
+manual sample offset or replacement mix.
+
+The importer now finds a unique half-open decoded audio frame interval at the
+selected picture PTS, records its native cumulative sample ordinal and PTS,
+and validates audio continuity only across the selected excerpt. Earlier audio
+resets are allowed. Rendering/source verification share the measured window;
+bounded reads include its cumulative end sample. Original first audio PTS is
+retained separately. The frame-index picture continuity guard remains intact.
+
+Synthetic local-reset fixture independently slices whole-source decoded PCM
+at samples29008..77008 and verifies exact adopted content. Additional fixtures
+reject overlapping coverage at the selected anchor and a reset inside the
+selected range. Original11-fixture run passed; expanded13-fixture result and
+final independent source review are recorded at the producer checkpoint.
+
+Final producer validation after the full-metadata probe change:
+`cargo test --locked --test presentation_adopt -- --test-threads=2` passed all13.
+The positive oracle now asserts anchor tick576 and cumulative ordinal27648
+without the reset, 28672 with it. The complete metadata probe avoids a fixed
+pre-range reset limit; actual FFmpeg media reads remain bounded. Final actual
+read-only reviewer found no static correctness blocker, and flagged full frame
+metadata memory use for long sources. It did not rerun media or tests. Reviewed
+source SHA a14ab71a532159bf449bec37d019eecc0bef216d5f23ebba6fca65e23b2a401d,
+tests SHA 2bf6010ff97976c854fa8ca69e41bf67b4fbb9f86972e06fa1086c4946dbeb96.

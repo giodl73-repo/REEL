@@ -117,13 +117,18 @@ authoring a manual offset:
 ```
 
 The hash-bound selection evidence must contain `"selected-decoded-video-pts"`
-at that pointer. REEL probes the actual selected picture frame and first decoded
-audio PTS, validates continuous source clocks through the excerpt, and computes
+at that pointer. REEL probes the actual selected picture frame and finds the
+unique decoded audio-frame interval containing that PTS. Its cumulative decoded
+sample ordinal and local PTS anchor map the excerpt into the native sample
+stream. Earlier audio clock resets outside the excerpt are permitted; ambiguous
+coverage at its start and discontinuities within the excerpt fail. Picture
+clocks remain continuous from the source start. REEL computes
 the native audio sample window with checked rational math. The end boundary is
 computed before rounding; fractional sample carry is retained. Missing clocks,
 negative windows, overflow, unavailable media, and source timestamp gaps fail.
 Rendering and independent decoded-source verification use the same resolved
-window. The receipt records both PTS/time bases and sample boundaries; `check`
+window. The receipt records the original first audio PTS, selected picture PTS, local
+audio anchor PTS and sample ordinal, and sample boundaries; `check`
 and episode conform independently resolve them again.
 
 This policy chooses samples. `audio_clock_repair` independently controls output
