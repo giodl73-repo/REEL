@@ -2,7 +2,7 @@
 //! a decoded-content-equivalent lossless segment for episode conform.
 
 use crate::{episode_conform, episode_delivery, scene_delivery};
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use reel_assembly::scene_authoring::{ScopedBindings, TemplateCatalog};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
