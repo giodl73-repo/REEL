@@ -28,20 +28,25 @@ fn ffmpeg() -> Command {
 
 #[test]
 fn selected_existing_opening_becomes_verified_lossless_presentation_master() {
-    opening_fixture("libx264", "yuv420p", false);
+    opening_fixture("libx264", "yuv420p", false, false);
 }
 
 #[test]
 fn selected_native_opening_preserves_exact_bytes_and_rechecks_timing() {
-    opening_fixture("ffv1", "yuv444p", false);
+    opening_fixture("ffv1", "yuv444p", false, false);
 }
 
 #[test]
 fn source_excerpt_preserves_exact_selected_frames_and_samples() {
-    opening_fixture("libx264", "yuv420p", true);
+    opening_fixture("libx264", "yuv420p", true, false);
 }
 
-fn opening_fixture(codec: &str, pixel_format: &str, excerpt: bool) {
+#[test]
+fn excerpt_rejects_inherited_picture_timestamp_gaps() {
+    opening_fixture("ffv1", "yuv444p", true, true);
+}
+
+fn opening_fixture(codec: &str, pixel_format: &str, excerpt: bool, gapped: bool) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let status = ffmpeg()
@@ -70,6 +75,11 @@ fn opening_fixture(codec: &str, pixel_format: &str, excerpt: bool) {
             "pcm_s24le",
             "-shortest",
         ])
+        .args(if gapped {
+            vec!["-vf", "select=not(eq(n\\,24))", "-fps_mode", "passthrough"]
+        } else {
+            vec![]
+        })
         .arg(root.join("opening.mkv"))
         .status()
         .unwrap();
@@ -147,6 +157,12 @@ fn opening_fixture(codec: &str, pixel_format: &str, excerpt: bool) {
         .arg(root.join("adopted"))
         .output()
         .unwrap();
+    if gapped {
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("timestamp gap/offset"));
+        assert!(!root.join("adopted").exists());
+        return;
+    }
     assert!(
         output.status.success(),
         "{}",
