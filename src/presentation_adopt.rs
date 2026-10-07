@@ -24,6 +24,15 @@ pub struct SourceRange {
     pub frame_count: u64,
 }
 
+/// Explicit repair of an inherited audio timestamp fault. Decoded samples are
+/// kept in order; no resampling, padding, shifting or performance edits occur.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AudioClockRepair {
+    pub policy: String,
+    pub evidence_pointer: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
@@ -49,6 +58,8 @@ pub struct Manifest {
     pub source_range: Option<SourceRange>,
     #[serde(default)]
     pub evidence_range_pointer: Option<String>,
+    #[serde(default)]
+    pub audio_clock_repair: Option<AudioClockRepair>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,6 +98,8 @@ pub struct Receipt {
     pub source_range: Option<SourceRange>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence_range_pointer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_clock_repair: Option<AudioClockRepair>,
     pub selection_evidence_sha256: Option<String>,
     pub evidence_hash_pointer: Option<String>,
     pub master_sha256: String,
@@ -391,10 +404,25 @@ pub fn build(
                 (None, None) => {}
                 _ => bail!("source range and its evidence pointer must be supplied together"),
             }
+            if let Some(repair) = &manifest.audio_clock_repair {
+                if manifest.source_range.is_none()
+                    || repair.policy != "decoded-sample-count"
+                    || value
+                        .pointer(&repair.evidence_pointer)
+                        .and_then(|v| v.as_str())
+                        != Some(repair.policy.as_str())
+                {
+                    bail!(
+                        "audio clock repair requires a source range and exact selected policy evidence"
+                    );
+                }
+            }
             Some(evidence.sha256.clone())
         }
         (None, None)
-            if manifest.source_range.is_none() && manifest.evidence_range_pointer.is_none() =>
+            if manifest.source_range.is_none()
+                && manifest.evidence_range_pointer.is_none()
+                && manifest.audio_clock_repair.is_none() =>
         {
             None
         }
@@ -438,7 +466,12 @@ pub fn build(
                 .arg(range_filter(range, &definition, true)?);
             command
                 .arg("-af")
-                .arg(range_filter(range, &definition, false)?);
+                .arg(if manifest.audio_clock_repair.is_some() {
+                    let (_, start, end) = range_clocks(range, &definition)?;
+                    format!("atrim=start_sample={start}:end_sample={end},asetpts=N/SR/TB")
+                } else {
+                    range_filter(range, &definition, false)?
+                });
         }
         let status = command
             .args([
@@ -537,6 +570,7 @@ pub fn build(
         source_bytes: selected.bytes,
         source_range: manifest.source_range,
         evidence_range_pointer: manifest.evidence_range_pointer,
+        audio_clock_repair: manifest.audio_clock_repair,
         selection_evidence_sha256,
         evidence_hash_pointer: manifest.evidence_hash_pointer,
         master_sha256: episode_conform::file_sha(&master)?,

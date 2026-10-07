@@ -28,25 +28,47 @@ fn ffmpeg() -> Command {
 
 #[test]
 fn selected_existing_opening_becomes_verified_lossless_presentation_master() {
-    opening_fixture("libx264", "yuv420p", false, false);
+    opening_fixture("libx264", "yuv420p", false, false, false, false);
 }
 
 #[test]
 fn selected_native_opening_preserves_exact_bytes_and_rechecks_timing() {
-    opening_fixture("ffv1", "yuv444p", false, false);
+    opening_fixture("ffv1", "yuv444p", false, false, false, false);
 }
 
 #[test]
 fn source_excerpt_preserves_exact_selected_frames_and_samples() {
-    opening_fixture("libx264", "yuv420p", true, false);
+    opening_fixture("libx264", "yuv420p", true, false, false, false);
 }
 
 #[test]
 fn excerpt_rejects_inherited_picture_timestamp_gaps() {
-    opening_fixture("ffv1", "yuv444p", true, true);
+    opening_fixture("ffv1", "yuv444p", true, true, false, false);
 }
 
-fn opening_fixture(codec: &str, pixel_format: &str, excerpt: bool, gapped: bool) {
+#[test]
+fn excerpt_rejects_audio_timestamp_fault_without_explicit_repair() {
+    opening_fixture("ffv1", "yuv444p", true, false, true, false);
+}
+
+#[test]
+fn evidenced_audio_clock_repair_preserves_exact_samples_and_conform_consumption() {
+    opening_fixture("ffv1", "yuv444p", true, false, true, true);
+}
+
+#[test]
+fn audio_clock_repair_does_not_hide_picture_timestamp_gaps() {
+    opening_fixture("ffv1", "yuv444p", true, true, true, true);
+}
+
+fn opening_fixture(
+    codec: &str,
+    pixel_format: &str,
+    excerpt: bool,
+    gapped: bool,
+    audio_gap: bool,
+    repair: bool,
+) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let status = ffmpeg()
@@ -66,7 +88,11 @@ fn opening_fixture(codec: &str, pixel_format: &str, excerpt: bool, gapped: bool)
         ])
         .args([
             "-filter:a",
-            "pan=stereo|c0=c0|c1=c0",
+            if audio_gap {
+                "pan=stereo|c0=c0|c1=c0,asetpts=PTS+if(gte(N\\,24000)\\,0.1/TB\\,0)"
+            } else {
+                "pan=stereo|c0=c0|c1=c0"
+            },
             "-c:v",
             codec,
             "-pix_fmt",
@@ -127,7 +153,8 @@ fn opening_fixture(codec: &str, pixel_format: &str, excerpt: bool, gapped: bool)
         &json!({
             "schema":"source.private-opening.v1",
             "series_opening":{"cache_uri":format!("cache://sha256/{hash}")},
-            "source_range":{"start_frame":12,"frame_count":24}
+            "source_range":{"start_frame":12,"frame_count":24},
+            "audio_clock_policy":"decoded-sample-count"
         }),
     );
     let mut manifest = json!({
@@ -145,6 +172,10 @@ fn opening_fixture(codec: &str, pixel_format: &str, excerpt: bool, gapped: bool)
         manifest["source_range"] = json!({"start_frame":12,"frame_count":24});
         manifest["evidence_range_pointer"] = "/source_range".into();
     }
+    if repair {
+        manifest["audio_clock_repair"] =
+            json!({"policy":"decoded-sample-count", "evidence_pointer":"/audio_clock_policy"});
+    }
     write(&root.join("manifest.json"), &manifest);
     let output = Command::new(env!("CARGO_BIN_EXE_reel-presentation-adopt"))
         .arg("build")
@@ -157,7 +188,7 @@ fn opening_fixture(codec: &str, pixel_format: &str, excerpt: bool, gapped: bool)
         .arg(root.join("adopted"))
         .output()
         .unwrap();
-    if gapped {
+    if gapped || (audio_gap && !repair) {
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr).contains("timestamp gap/offset"));
         assert!(!root.join("adopted").exists());
@@ -181,6 +212,42 @@ fn opening_fixture(codec: &str, pixel_format: &str, excerpt: bool, gapped: bool)
     }
     if excerpt {
         assert_eq!(receipt["source_range"], manifest["source_range"]);
+        if repair {
+            assert_eq!(
+                receipt["audio_clock_repair"],
+                manifest["audio_clock_repair"]
+            );
+            for (name, policy) in [
+                (
+                    "unevidenced-repair",
+                    json!({"policy":"decoded-sample-count","evidence_pointer":"/missing"}),
+                ),
+                (
+                    "unknown-repair",
+                    json!({"policy":"resample","evidence_pointer":"/audio_clock_policy"}),
+                ),
+            ] {
+                let mut bad = manifest.clone();
+                bad["audio_clock_repair"] = policy;
+                write(&root.join(format!("{name}.json")), &bad);
+                let o = Command::new(env!("CARGO_BIN_EXE_reel-presentation-adopt"))
+                    .arg("build")
+                    .arg(root.join(format!("{name}.json")))
+                    .arg("--input-root")
+                    .arg(root)
+                    .arg("--asset-root")
+                    .arg(root)
+                    .arg("--output-dir")
+                    .arg(root.join(name))
+                    .output()
+                    .unwrap();
+                assert!(!o.status.success());
+                assert!(
+                    String::from_utf8_lossy(&o.stderr).contains("exact selected policy evidence")
+                );
+                assert!(!root.join(name).exists());
+            }
+        }
         // Independent oracle: decode the whole source, then slice raw bytes
         // in the test. Do not reuse the production trim filters.
         for picture in [true, false] {
