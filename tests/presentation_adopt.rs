@@ -77,8 +77,7 @@ fn opening_fixture(
         gapped,
         audio_gap,
         repair,
-        origin,
-        None,
+        (origin, None),
     );
 }
 
@@ -89,9 +88,9 @@ fn opening_fixture_with_reset(
     gapped: bool,
     audio_gap: bool,
     repair: bool,
-    origin: bool,
-    reset_sample: Option<u32>,
+    clock: (bool, Option<u32>),
 ) {
+    let (origin, reset_sample) = clock;
     let prerange_reset = reset_sample.is_some();
     let filter = if audio_gap {
         "pan=stereo|c0=c0|c1=c0,asetpts=PTS+if(gte(N\\,24000)\\,0.1/TB\\,0)".to_string()
@@ -697,8 +696,7 @@ fn decoded_origin_maps_a_prerange_audio_reset_to_local_samples() {
         false,
         false,
         true,
-        true,
-        Some(12000),
+        (true, Some(12000)),
     );
 }
 
@@ -711,8 +709,7 @@ fn decoded_origin_rejects_an_overlap_at_the_selected_anchor() {
         false,
         false,
         true,
-        true,
-        Some(28672),
+        (true, Some(28672)),
     );
 }
 
@@ -725,7 +722,6 @@ fn decoded_origin_rejects_a_reset_inside_the_selected_range() {
         false,
         false,
         true,
-        true,
-        Some(48000),
+        (true, Some(48000)),
     );
 }
