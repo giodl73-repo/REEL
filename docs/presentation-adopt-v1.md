@@ -73,3 +73,30 @@ Bind the adopted output master separately from the original source: container
 normalization changes file hashes even when decoded content is identical.
 An excerpt retains the original film's cast/text/rights state. Its verified
 bytes are technical evidence, not new creative or publication approval.
+
+### Explicit repair of inherited audio timestamps
+
+The default retains source timestamps and rejects discontinuities. When the
+producer has diagnosed an inherited audio timestamp fault, an excerpt may opt
+into a sample-count clock without changing decoded sample content:
+
+```json
+{
+  "audio_clock_repair": {
+    "policy": "decoded-sample-count",
+    "evidence_pointer": "/poem/audio_clock_policy"
+  }
+}
+```
+
+The exact hash-bound selection evidence must contain `"decoded-sample-count"`
+at that pointer. This policy requires an evidenced source range. REEL selects
+the same frame-derived audio samples, in the same order, then assigns audio
+timestamps from sample count (`asetpts=N/SR/TB`). It does not shift, resample,
+stretch, pad or replace samples. The output must still match the independently
+decoded source picture and PCM bytes. Picture timestamps retain their separate
+validation: audio repair cannot hide missing picture frames or gaps. The repair
+policy and evidence pointer are recorded in the receipt and rechecked by
+`check` and episode conform. Selection of this clock repair does not establish
+that the inherited performance, mix or picture/audio synchronization was
+creatively approved; review the repaired excerpt in episode context.
