@@ -33,6 +33,32 @@ pub struct AudioClockRepair {
     pub evidence_pointer: String,
 }
 
+/// Select samples by the source picture's decoded PTS, rather than assuming
+/// that both streams begin at sample/frame zero. No caller-authored offset.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AudioRangeOrigin {
+    pub policy: String,
+    pub evidence_pointer: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SourcePts {
+    pub ticks: i64,
+    pub time_base_numerator: u64,
+    pub time_base_denominator: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AudioSampleWindow {
+    pub selected_video_pts: SourcePts,
+    pub first_audio_pts: SourcePts,
+    pub start_sample: u64,
+    pub end_sample: u64,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
@@ -60,6 +86,8 @@ pub struct Manifest {
     pub evidence_range_pointer: Option<String>,
     #[serde(default)]
     pub audio_clock_repair: Option<AudioClockRepair>,
+    #[serde(default)]
+    pub audio_range_origin: Option<AudioRangeOrigin>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -100,6 +128,10 @@ pub struct Receipt {
     pub evidence_range_pointer: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio_clock_repair: Option<AudioClockRepair>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_range_origin: Option<AudioRangeOrigin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_sample_window: Option<AudioSampleWindow>,
     pub selection_evidence_sha256: Option<String>,
     pub evidence_hash_pointer: Option<String>,
     pub master_sha256: String,
@@ -132,12 +164,286 @@ fn range_clocks(range: &SourceRange, definition: &Template) -> Result<(u64, u64,
         .context("source frame range overflow")?;
     let sample = |frame: u64| -> Result<u64> {
         let n = u128::from(frame)
-            * u128::from(definition.sample_rate)
-            * u128::from(definition.fps_denominator)
-            / u128::from(definition.fps_numerator);
+            .checked_mul(u128::from(definition.sample_rate))
+            .and_then(|v| v.checked_mul(u128::from(definition.fps_denominator)))
+            .context("source sample range overflow")?
+            .checked_div(u128::from(definition.fps_numerator))
+            .context("invalid source frame clock")?;
         u64::try_from(n).context("source sample range overflow")
     };
     Ok((end_frame, sample(range.start_frame)?, sample(end_frame)?))
+}
+
+fn pts_difference(a: &SourcePts, b: &SourcePts) -> Result<(i128, i128)> {
+    if a.time_base_numerator == 0
+        || b.time_base_numerator == 0
+        || a.time_base_denominator == 0
+        || b.time_base_denominator == 0
+    {
+        bail!("invalid decoded source time base");
+    }
+    let product = |ticks: i64, n: u64, d: u64| {
+        i128::from(ticks)
+            .checked_mul(i128::from(n))
+            .and_then(|v| v.checked_mul(i128::from(d)))
+            .context("decoded source PTS overflow")
+    };
+    let numerator = product(a.ticks, a.time_base_numerator, b.time_base_denominator)?
+        .checked_sub(product(
+            b.ticks,
+            b.time_base_numerator,
+            a.time_base_denominator,
+        )?)
+        .context("decoded source PTS overflow")?;
+    let denominator = i128::from(a.time_base_denominator)
+        .checked_mul(i128::from(b.time_base_denominator))
+        .context("decoded source PTS overflow")?;
+    Ok((numerator, denominator))
+}
+
+fn sample_window(
+    video: SourcePts,
+    audio: SourcePts,
+    range: &SourceRange,
+    definition: &Template,
+) -> Result<AudioSampleWindow> {
+    range_clocks(range, definition)?;
+    let (n, d) = pts_difference(&video, &audio)?;
+    let rate = i128::from(definition.sample_rate);
+    let start = n
+        .checked_mul(rate)
+        .context("decoded sample window overflow")?
+        .div_euclid(d);
+    let fps = i128::from(definition.fps_numerator);
+    let duration = i128::from(range.frame_count)
+        .checked_mul(i128::from(definition.fps_denominator))
+        .and_then(|v| v.checked_mul(d))
+        .context("decoded sample window overflow")?;
+    let end_n = n
+        .checked_mul(fps)
+        .and_then(|v| v.checked_add(duration))
+        .and_then(|v| v.checked_mul(rate))
+        .context("decoded sample window overflow")?;
+    let end_d = d
+        .checked_mul(fps)
+        .context("decoded sample window overflow")?;
+    let end = end_n.div_euclid(end_d);
+    let start_sample =
+        u64::try_from(start).context("decoded sample window starts before source audio")?;
+    let end_sample = u64::try_from(end).context("decoded sample window overflow")?;
+    if end_sample <= start_sample {
+        bail!("empty decoded sample window");
+    }
+    Ok(AudioSampleWindow {
+        selected_video_pts: video,
+        first_audio_pts: audio,
+        start_sample,
+        end_sample,
+    })
+}
+
+fn nominal_end_seconds(range: &SourceRange, definition: &Template) -> Result<u128> {
+    let (end, _, _) = range_clocks(range, definition)?;
+    Ok(u128::from(end)
+        .checked_mul(u128::from(definition.fps_denominator))
+        .context("source read boundary overflow")?
+        .div_ceil(u128::from(definition.fps_numerator)))
+}
+
+fn timestamp_tolerance(pts: &SourcePts, denominator: i128, scale: u64) -> Result<u128> {
+    let tolerance = (denominator / i128::from(pts.time_base_denominator))
+        .checked_mul(i128::from(pts.time_base_numerator))
+        .and_then(|v| v.checked_mul(i128::from(scale)))
+        .context("source clock tolerance overflow")?;
+    Ok(u128::try_from(tolerance)?)
+}
+
+fn probe_sample_window(
+    source: &Path,
+    range: &SourceRange,
+    definition: &Template,
+) -> Result<AudioSampleWindow> {
+    let (end, _, _) = range_clocks(range, definition)?;
+    let metadata = episode_conform::command("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type,time_base,start_pts",
+            "-of",
+            "json",
+        ])
+        .arg(source)
+        .output()?;
+    if !metadata.status.success() {
+        bail!("source start clock probe failed");
+    }
+    let metadata: serde_json::Value = serde_json::from_slice(&metadata.stdout)?;
+    let stream = metadata["streams"]
+        .as_array()
+        .context("missing source streams")?
+        .iter()
+        .find(|s| s["codec_type"] == "video")
+        .context("missing source video")?;
+    let (n, d) = stream["time_base"]
+        .as_str()
+        .context("missing source video time base")?
+        .split_once('/')
+        .context("invalid source video time base")?;
+    let n: i128 = n.parse()?;
+    let d: i128 = d.parse()?;
+    if n <= 0 || d <= 0 {
+        bail!("invalid source video time base");
+    }
+    let start = i128::from(
+        stream["start_pts"]
+            .as_i64()
+            .context("missing source start PTS")?,
+    )
+    .checked_mul(n)
+    .context("source read boundary overflow")?;
+    let leading = u128::try_from(
+        start
+            .max(0)
+            .checked_add(d - 1)
+            .context("source read boundary overflow")?
+            / d,
+    )?;
+    let seconds = nominal_end_seconds(range, definition)?
+        .checked_add(leading)
+        .and_then(|v| v.checked_add(2))
+        .context("source read boundary overflow")?;
+    let output = episode_conform::command("ffprobe")
+        .args(["-v", "error", "-read_intervals"]).arg(format!("%+{seconds}"))
+        .args(["-show_frames", "-show_entries", "frame=media_type,stream_index,best_effort_timestamp,nb_samples:stream=index,codec_type,time_base", "-of", "json"])
+        .arg(source).output()?;
+    if !output.status.success() {
+        bail!("decoded source clock probe failed");
+    }
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let streams = value["streams"]
+        .as_array()
+        .context("missing decoded source streams")?;
+    let pts = |kind: &str, ticks: i64| -> Result<SourcePts> {
+        let stream = streams
+            .iter()
+            .find(|s| s["codec_type"] == kind)
+            .context("missing source stream")?;
+        let time_base = stream["time_base"]
+            .as_str()
+            .context("missing source time base")?;
+        let (n, d) = time_base
+            .split_once('/')
+            .context("invalid source time base")?;
+        Ok(SourcePts {
+            ticks,
+            time_base_numerator: n.parse()?,
+            time_base_denominator: d.parse()?,
+        })
+    };
+    let frames = value["frames"]
+        .as_array()
+        .context("missing decoded source frames")?;
+    let stream_index = |kind: &str| -> Result<u64> {
+        streams
+            .iter()
+            .find(|s| s["codec_type"] == kind)
+            .context("missing source stream")?["index"]
+            .as_u64()
+            .context("missing source stream index")
+    };
+    let video_index = stream_index("video")?;
+    let audio_index = stream_index("audio")?;
+    let videos = frames
+        .iter()
+        .filter(|f| f["stream_index"].as_u64() == Some(video_index))
+        .collect::<Vec<_>>();
+    let audios = frames
+        .iter()
+        .filter(|f| f["stream_index"].as_u64() == Some(audio_index))
+        .collect::<Vec<_>>();
+    let tick = |f: &serde_json::Value| {
+        f["best_effort_timestamp"]
+            .as_i64()
+            .context("missing decoded source PTS")
+    };
+    let start = usize::try_from(range.start_frame).context("source frame index overflow")?;
+    let end = usize::try_from(end).context("source frame index overflow")?;
+    let selected = videos
+        .get(start..end)
+        .context("decoded source range exceeds available video")?;
+    let video = pts("video", tick(selected[0])?)?;
+    let first_video = pts("video", tick(videos[0])?)?;
+    // Reject pre-range gaps too: a missing source frame must not silently
+    // change frame-index semantics or invalidate the bounded source read.
+    for (i, f) in videos[..end].iter().enumerate() {
+        let current = pts("video", tick(f)?)?;
+        let (n, d) = pts_difference(&current, &first_video)?;
+        let observed = n
+            .checked_mul(i128::from(definition.fps_numerator))
+            .context("source clock overflow")?;
+        let expected = i128::try_from(i)?
+            .checked_mul(i128::from(definition.fps_denominator))
+            .and_then(|v| v.checked_mul(d))
+            .context("source clock overflow")?;
+        if observed.abs_diff(expected)
+            > timestamp_tolerance(&first_video, d, definition.fps_numerator)?
+        {
+            bail!("decoded source picture timestamp gap");
+        }
+    }
+    let audio = pts(
+        "audio",
+        tick(audios.first().context("missing decoded source audio")?)?,
+    )?;
+    let window = sample_window(video, audio.clone(), range, definition)?;
+    let mut samples = 0u64;
+    for f in audios {
+        if samples >= window.end_sample {
+            break;
+        }
+        let current = pts("audio", tick(f)?)?;
+        let (n, d) = pts_difference(&current, &audio)?;
+        let observed = n
+            .checked_mul(i128::from(definition.sample_rate))
+            .context("source clock overflow")?;
+        let expected = i128::from(samples)
+            .checked_mul(d)
+            .context("source clock overflow")?;
+        if observed.abs_diff(expected)
+            > timestamp_tolerance(&audio, d, u64::from(definition.sample_rate))?
+        {
+            bail!("decoded source audio timestamp gap");
+        }
+        let count = f["nb_samples"]
+            .as_u64()
+            .filter(|v| *v > 0)
+            .context("missing decoded audio sample count")?;
+        samples = samples
+            .checked_add(count)
+            .context("decoded source sample overflow")?;
+    }
+    if samples < window.end_sample {
+        bail!("decoded source range exceeds available audio");
+    }
+    Ok(window)
+}
+
+fn resolved_range_filter(
+    range: &SourceRange,
+    definition: &Template,
+    picture: bool,
+    window: Option<&AudioSampleWindow>,
+) -> Result<String> {
+    if !picture {
+        if let Some(w) = window {
+            return Ok(format!(
+                "atrim=start_sample={}:end_sample={},asetpts=PTS-STARTPTS",
+                w.start_sample, w.end_sample
+            ));
+        }
+    }
+    range_filter(range, definition, picture)
 }
 
 fn range_filter(range: &SourceRange, definition: &Template, picture: bool) -> Result<String> {
@@ -156,14 +462,37 @@ fn bound_source_read(
     command: &mut std::process::Command,
     range: Option<&SourceRange>,
     definition: &Template,
+    window: Option<&AudioSampleWindow>,
 ) -> Result<()> {
     if let Some(range) = range {
-        let (end_frame, _, _) = range_clocks(range, definition)?;
         // Decode from the beginning for exact frame/sample indexing, but do
         // not scan the rest of a feature film after the selected excerpt.
-        let seconds = (u128::from(end_frame) * u128::from(definition.fps_denominator))
-            .div_ceil(u128::from(definition.fps_numerator))
-            + 1;
+        let mut seconds = nominal_end_seconds(range, definition)?;
+        if let Some(w) = window {
+            let p = &w.selected_video_pts;
+            let n = i128::from(p.ticks)
+                .checked_mul(i128::from(p.time_base_numerator))
+                .and_then(|v| v.checked_mul(i128::from(definition.fps_numerator)))
+                .and_then(|v| {
+                    i128::from(range.frame_count)
+                        .checked_mul(i128::from(definition.fps_denominator))
+                        .and_then(|dt| dt.checked_mul(i128::from(p.time_base_denominator)))
+                        .and_then(|dt| v.checked_add(dt))
+                })
+                .context("source read boundary overflow")?;
+            let d = i128::from(p.time_base_denominator)
+                .checked_mul(i128::from(definition.fps_numerator))
+                .context("source read boundary overflow")?;
+            let end = n
+                .max(0)
+                .checked_add(d - 1)
+                .context("source read boundary overflow")?
+                / d;
+            seconds = seconds.max(u128::try_from(end)?);
+        }
+        let seconds = seconds
+            .checked_add(1)
+            .context("source read boundary overflow")?;
         command.arg("-t").arg(seconds.to_string());
     }
     Ok(())
@@ -174,17 +503,18 @@ fn source_digest(
     picture: bool,
     range: Option<&SourceRange>,
     definition: &Template,
+    window: Option<&AudioSampleWindow>,
 ) -> Result<(String, u64)> {
     let Some(range) = range else {
         return episode_conform::decoded_digest(path, picture);
     };
     let mut cmd = episode_conform::command("ffmpeg");
     cmd.args(["-v", "error", "-nostdin"]);
-    bound_source_read(&mut cmd, Some(range), definition)?;
+    bound_source_read(&mut cmd, Some(range), definition, window)?;
     cmd.arg("-i").arg(path);
     if picture {
         cmd.args(["-map", "0:v:0", "-vf"])
-            .arg(range_filter(range, definition, true)?);
+            .arg(resolved_range_filter(range, definition, true, window)?);
         cmd.args([
             "-fps_mode",
             "passthrough",
@@ -195,7 +525,7 @@ fn source_digest(
         ]);
     } else {
         cmd.args(["-map", "0:a:0", "-af"])
-            .arg(range_filter(range, definition, false)?);
+            .arg(resolved_range_filter(range, definition, false, window)?);
         cmd.args(["-c:a", "pcm_s24le", "-f", "s24le"]);
     }
     let errors = tempfile::tempfile()?;
@@ -417,12 +747,26 @@ pub fn build(
                     );
                 }
             }
+            if let Some(origin) = &manifest.audio_range_origin {
+                if manifest.source_range.is_none()
+                    || origin.policy != "selected-decoded-video-pts"
+                    || value
+                        .pointer(&origin.evidence_pointer)
+                        .and_then(|v| v.as_str())
+                        != Some(origin.policy.as_str())
+                {
+                    bail!(
+                        "audio range origin requires a source range and exact selected policy evidence"
+                    );
+                }
+            }
             Some(evidence.sha256.clone())
         }
         (None, None)
             if manifest.source_range.is_none()
                 && manifest.evidence_range_pointer.is_none()
-                && manifest.audio_clock_repair.is_none() =>
+                && manifest.audio_clock_repair.is_none()
+                && manifest.audio_range_origin.is_none() =>
         {
             None
         }
@@ -444,6 +788,18 @@ pub fn build(
     {
         bail!("presentation source differs from selected template media policy");
     }
+    let audio_sample_window = if manifest.audio_range_origin.is_some() {
+        Some(probe_sample_window(
+            &source,
+            manifest
+                .source_range
+                .as_ref()
+                .context("audio range origin lacks source range")?,
+            &definition,
+        )?)
+    } else {
+        None
+    };
     let parent = output
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
@@ -458,19 +814,31 @@ pub fn build(
     } else {
         let mut command = episode_conform::command("ffmpeg");
         command.args(["-v", "error", "-nostdin"]);
-        bound_source_read(&mut command, manifest.source_range.as_ref(), &definition)?;
+        bound_source_read(
+            &mut command,
+            manifest.source_range.as_ref(),
+            &definition,
+            audio_sample_window.as_ref(),
+        )?;
         command.arg("-i").arg(&source);
         if let Some(range) = &manifest.source_range {
-            command
-                .arg("-vf")
-                .arg(range_filter(range, &definition, true)?);
+            command.arg("-vf").arg(resolved_range_filter(
+                range,
+                &definition,
+                true,
+                audio_sample_window.as_ref(),
+            )?);
             command
                 .arg("-af")
                 .arg(if manifest.audio_clock_repair.is_some() {
-                    let (_, start, end) = range_clocks(range, &definition)?;
+                    let (_, mut start, mut end) = range_clocks(range, &definition)?;
+                    if let Some(w) = &audio_sample_window {
+                        start = w.start_sample;
+                        end = w.end_sample;
+                    }
                     format!("atrim=start_sample={start}:end_sample={end},asetpts=N/SR/TB")
                 } else {
-                    range_filter(range, &definition, false)?
+                    resolved_range_filter(range, &definition, false, audio_sample_window.as_ref())?
                 });
         }
         let status = command
@@ -513,10 +881,20 @@ pub fn build(
     ) {
         bail!("converted presentation media policy mismatch");
     }
-    let (source_picture_sha, source_picture_bytes) =
-        source_digest(&source, true, manifest.source_range.as_ref(), &definition)?;
-    let (source_audio_sha, source_audio_bytes) =
-        source_digest(&source, false, manifest.source_range.as_ref(), &definition)?;
+    let (source_picture_sha, source_picture_bytes) = source_digest(
+        &source,
+        true,
+        manifest.source_range.as_ref(),
+        &definition,
+        audio_sample_window.as_ref(),
+    )?;
+    let (source_audio_sha, source_audio_bytes) = source_digest(
+        &source,
+        false,
+        manifest.source_range.as_ref(),
+        &definition,
+        audio_sample_window.as_ref(),
+    )?;
     let (picture_sha, picture_bytes) = episode_conform::decoded_digest(&master, true)?;
     let (audio_sha, audio_bytes) = episode_conform::decoded_digest(&master, false)?;
     let frame_bytes = definition.width * definition.height * 3;
@@ -532,7 +910,11 @@ pub fn build(
     let frames = picture_bytes / frame_bytes;
     let samples = audio_bytes / 6;
     if let Some(range) = &manifest.source_range {
-        let (_, start, end) = range_clocks(range, &definition)?;
+        let (_, mut start, mut end) = range_clocks(range, &definition)?;
+        if let Some(w) = &audio_sample_window {
+            start = w.start_sample;
+            end = w.end_sample;
+        }
         if frames != range.frame_count || samples != end - start {
             bail!("source range extends beyond available picture or audio");
         }
@@ -571,6 +953,8 @@ pub fn build(
         source_range: manifest.source_range,
         evidence_range_pointer: manifest.evidence_range_pointer,
         audio_clock_repair: manifest.audio_clock_repair,
+        audio_range_origin: manifest.audio_range_origin,
+        audio_sample_window,
         selection_evidence_sha256,
         evidence_hash_pointer: manifest.evidence_hash_pointer,
         master_sha256: episode_conform::file_sha(&master)?,
@@ -828,6 +1212,64 @@ pub fn check_cached(
 #[cfg(test)]
 mod verification_cache_tests {
     use super::*;
+
+    #[test]
+    fn decoded_pts_window_preserves_phase_and_fractional_sample_carry() {
+        let mut definition: Template = serde_json::from_value(serde_json::json!({
+            "schema":"reel.selected-presentation-master-template.v1", "template_id":"test",
+            "kind":"narrative-scene", "width":64, "height":64,
+            "fps_numerator":24, "fps_denominator":1, "sample_rate":48000, "duration_frames":1961
+        }))
+        .unwrap();
+        let video = SourcePts {
+            ticks: 3483 * 512 + 262,
+            time_base_numerator: 1,
+            time_base_denominator: 12288,
+        };
+        let audio = SourcePts {
+            ticks: 0,
+            time_base_numerator: 1,
+            time_base_denominator: 48000,
+        };
+        let range = SourceRange {
+            start_frame: 3483,
+            frame_count: 1961,
+        };
+        let w = sample_window(video.clone(), audio.clone(), &range, &definition).unwrap();
+        assert_eq!((w.start_sample, w.end_sample), (6_967_023, 10_889_023));
+        assert_ne!(w.start_sample, range_clocks(&range, &definition).unwrap().1);
+        definition.fps_numerator = 3;
+        definition.sample_rate = 10;
+        definition.duration_frames = 1;
+        let range = SourceRange {
+            start_frame: 0,
+            frame_count: 1,
+        };
+        let fractional = SourcePts {
+            ticks: 2,
+            time_base_numerator: 1,
+            time_base_denominator: 30,
+        };
+        let w = sample_window(fractional, audio.clone(), &range, &definition).unwrap();
+        assert_eq!((w.start_sample, w.end_sample), (0, 4)); // floor each term separately would lose one sample.
+        for bad in [
+            SourcePts {
+                ticks: -1,
+                ..video.clone()
+            },
+            SourcePts {
+                time_base_denominator: 0,
+                ..video.clone()
+            },
+            SourcePts {
+                ticks: i64::MAX,
+                time_base_numerator: u64::MAX,
+                time_base_denominator: u64::MAX,
+            },
+        ] {
+            assert!(sample_window(bad, audio.clone(), &range, &definition).is_err());
+        }
+    }
 
     #[test]
     fn excerpt_clocks_reject_empty_overflow_and_wrong_duration() {

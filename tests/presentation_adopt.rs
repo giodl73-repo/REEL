@@ -28,37 +28,37 @@ fn ffmpeg() -> Command {
 
 #[test]
 fn selected_existing_opening_becomes_verified_lossless_presentation_master() {
-    opening_fixture("libx264", "yuv420p", false, false, false, false);
+    opening_fixture("libx264", "yuv420p", false, false, false, false, false);
 }
 
 #[test]
 fn selected_native_opening_preserves_exact_bytes_and_rechecks_timing() {
-    opening_fixture("ffv1", "yuv444p", false, false, false, false);
+    opening_fixture("ffv1", "yuv444p", false, false, false, false, false);
 }
 
 #[test]
 fn source_excerpt_preserves_exact_selected_frames_and_samples() {
-    opening_fixture("libx264", "yuv420p", true, false, false, false);
+    opening_fixture("libx264", "yuv420p", true, false, false, false, false);
 }
 
 #[test]
 fn excerpt_rejects_inherited_picture_timestamp_gaps() {
-    opening_fixture("ffv1", "yuv444p", true, true, false, false);
+    opening_fixture("ffv1", "yuv444p", true, true, false, false, false);
 }
 
 #[test]
 fn excerpt_rejects_audio_timestamp_fault_without_explicit_repair() {
-    opening_fixture("ffv1", "yuv444p", true, false, true, false);
+    opening_fixture("ffv1", "yuv444p", true, false, true, false, false);
 }
 
 #[test]
 fn evidenced_audio_clock_repair_preserves_exact_samples_and_conform_consumption() {
-    opening_fixture("ffv1", "yuv444p", true, false, true, true);
+    opening_fixture("ffv1", "yuv444p", true, false, true, true, false);
 }
 
 #[test]
 fn audio_clock_repair_does_not_hide_picture_timestamp_gaps() {
-    opening_fixture("ffv1", "yuv444p", true, true, true, true);
+    opening_fixture("ffv1", "yuv444p", true, true, true, true, false);
 }
 
 fn opening_fixture(
@@ -68,6 +68,7 @@ fn opening_fixture(
     gapped: bool,
     audio_gap: bool,
     repair: bool,
+    origin: bool,
 ) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
@@ -98,11 +99,20 @@ fn opening_fixture(
             "-pix_fmt",
             pixel_format,
             "-c:a",
-            "pcm_s24le",
+            if origin { "aac" } else { "pcm_s24le" },
             "-shortest",
         ])
-        .args(if gapped {
+        .args(if gapped && origin {
+            vec![
+                "-vf",
+                "select=not(eq(n\\,8)),setpts=PTS+2/(24*TB)",
+                "-fps_mode",
+                "passthrough",
+            ]
+        } else if gapped {
             vec!["-vf", "select=not(eq(n\\,24))", "-fps_mode", "passthrough"]
+        } else if origin {
+            vec!["-vf", "setpts=PTS+2/(24*TB)", "-fps_mode", "passthrough"]
         } else {
             vec![]
         })
@@ -154,7 +164,8 @@ fn opening_fixture(
             "schema":"source.private-opening.v1",
             "series_opening":{"cache_uri":format!("cache://sha256/{hash}")},
             "source_range":{"start_frame":12,"frame_count":24},
-            "audio_clock_policy":"decoded-sample-count"
+            "audio_clock_policy":"decoded-sample-count",
+            "audio_range_origin_policy":"selected-decoded-video-pts"
         }),
     );
     let mut manifest = json!({
@@ -176,6 +187,9 @@ fn opening_fixture(
         manifest["audio_clock_repair"] =
             json!({"policy":"decoded-sample-count", "evidence_pointer":"/audio_clock_policy"});
     }
+    if origin {
+        manifest["audio_range_origin"] = json!({"policy":"selected-decoded-video-pts","evidence_pointer":"/audio_range_origin_policy"});
+    }
     write(&root.join("manifest.json"), &manifest);
     let output = Command::new(env!("CARGO_BIN_EXE_reel-presentation-adopt"))
         .arg("build")
@@ -188,9 +202,9 @@ fn opening_fixture(
         .arg(root.join("adopted"))
         .output()
         .unwrap();
-    if gapped || (audio_gap && !repair) {
+    if gapped || (audio_gap && (!repair || origin)) {
         assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("timestamp gap/offset"));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("timestamp gap"));
         assert!(!root.join("adopted").exists());
         return;
     }
@@ -206,6 +220,49 @@ fn opening_fixture(
     assert_eq!(receipt["samples"], if excerpt { 48000 } else { 96000 });
     assert_eq!(receipt["source_content_matches_lossless_master"], true);
     assert_eq!(receipt["publication"], "not-authorized");
+    if origin {
+        assert_eq!(receipt["audio_sample_window"]["start_sample"], 27984);
+        assert_eq!(receipt["audio_sample_window"]["end_sample"], 75984);
+        assert_eq!(
+            receipt["audio_sample_window"]["selected_video_pts"]["ticks"],
+            583
+        );
+        assert_eq!(
+            receipt["audio_sample_window"]["first_audio_pts"]["ticks"],
+            0
+        );
+        // Timestamp normalization can pass while selecting the wrong source
+        // window. Demonstrate that the legacy policy is distinct, not silently
+        // changed to the new source-origin policy.
+        let mut repair_only = manifest.clone();
+        repair_only
+            .as_object_mut()
+            .unwrap()
+            .remove("audio_range_origin");
+        write(&root.join("repair-only.json"), &repair_only);
+        let output = Command::new(env!("CARGO_BIN_EXE_reel-presentation-adopt"))
+            .arg("build")
+            .arg(root.join("repair-only.json"))
+            .arg("--input-root")
+            .arg(root)
+            .arg("--asset-root")
+            .arg(root)
+            .arg("--output-dir")
+            .arg(root.join("repair-only"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let old: Value =
+            serde_json::from_slice(&fs::read(root.join("repair-only/receipt.json")).unwrap())
+                .unwrap();
+        assert_eq!(old["timestamps_verified"], true);
+        assert!(old.get("audio_sample_window").is_none());
+        assert_ne!(old["decoded_audio_sha256"], receipt["decoded_audio_sha256"]);
+    }
     if codec == "ffv1" && !excerpt {
         assert_eq!(receipt["source_sha256"], receipt["master_sha256"]);
         assert_eq!(receipt["source_bytes"], receipt["master_bytes"]);
@@ -255,7 +312,16 @@ fn opening_fixture(
                 let mut c = ffmpeg();
                 c.args(["-v", "error", "-i"]).arg(root.join(file));
                 if picture {
-                    c.args(["-map", "0:v:0", "-pix_fmt", "yuv444p", "-f", "rawvideo"]);
+                    c.args([
+                        "-map",
+                        "0:v:0",
+                        "-fps_mode",
+                        "passthrough",
+                        "-pix_fmt",
+                        "yuv444p",
+                        "-f",
+                        "rawvideo",
+                    ]);
                 } else {
                     c.args(["-map", "0:a:0", "-c:a", "pcm_s24le", "-f", "s24le"]);
                 }
@@ -268,9 +334,18 @@ fn opening_fixture(
             let (start, end) = if picture {
                 (12 * 64 * 64 * 3, 36 * 64 * 64 * 3)
             } else {
-                (24000 * 6, 72000 * 6)
+                if origin {
+                    (27984 * 6, 75984 * 6)
+                } else {
+                    (24000 * 6, 72000 * 6)
+                }
             };
-            assert_eq!(adopted, source[start..end]);
+            assert_eq!(adopted.len(), end - start, "picture={picture}");
+            assert_eq!(
+                Sha256::digest(&adopted),
+                Sha256::digest(&source[start..end]),
+                "picture={picture}; source PCM/frame slice differs"
+            );
         }
         for (name, range, pointer) in [
             (
@@ -312,6 +387,43 @@ fn opening_fixture(
         receipt["technical_validation_state"],
         "decoded-source-equivalent"
     );
+
+    if origin {
+        assert_eq!(receipt["audio_sample_window"]["start_sample"], 27984);
+        assert_eq!(receipt["audio_sample_window"]["end_sample"], 75984);
+        assert_eq!(
+            receipt["audio_range_origin"],
+            manifest["audio_range_origin"]
+        );
+        for (name, policy) in [
+            (
+                "missing-origin-evidence",
+                json!({"policy":"selected-decoded-video-pts","evidence_pointer":"/missing"}),
+            ),
+            (
+                "unknown-origin",
+                json!({"policy":"manual-offset","evidence_pointer":"/audio_range_origin_policy"}),
+            ),
+        ] {
+            let mut bad = manifest.clone();
+            bad["audio_range_origin"] = policy;
+            write(&root.join(format!("{name}.json")), &bad);
+            let o = Command::new(env!("CARGO_BIN_EXE_reel-presentation-adopt"))
+                .args(["build"])
+                .arg(root.join(format!("{name}.json")))
+                .arg("--input-root")
+                .arg(root)
+                .arg("--asset-root")
+                .arg(root)
+                .arg("--output-dir")
+                .arg(root.join(name))
+                .output()
+                .unwrap();
+            assert!(!o.status.success());
+            assert!(String::from_utf8_lossy(&o.stderr).contains("exact selected policy evidence"));
+            assert!(!root.join(name).exists());
+        }
+    }
 
     // Consume the actual adopted master and receipt through the generic
     // episode conform, beside one independent scene master.
@@ -505,4 +617,19 @@ fn opening_fixture(
         .unwrap();
     assert!(!rejected.status.success());
     assert!(!root.join("rejected").exists());
+}
+
+#[test]
+fn h264_aac_excerpt_uses_decoded_picture_origin_and_continuous_sample_clock() {
+    opening_fixture("libx264", "yuv420p", true, false, false, true, true);
+}
+
+#[test]
+fn decoded_origin_rejects_a_picture_gap_before_the_selected_range() {
+    opening_fixture("libx264", "yuv420p", true, true, false, true, true);
+}
+
+#[test]
+fn decoded_origin_rejects_audio_gaps_despite_output_clock_repair() {
+    opening_fixture("libx264", "yuv420p", true, false, true, true, true);
 }

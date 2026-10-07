@@ -100,3 +100,35 @@ policy and evidence pointer are recorded in the receipt and rechecked by
 `check` and episode conform. Selection of this clock repair does not establish
 that the inherited performance, mix or picture/audio synchronization was
 creatively approved; review the repaired excerpt in episode context.
+
+### Source picture and audio have different origins
+
+An excerpt normally indexes both streams from zero. When the original source
+picture starts after its audio, select an evidenced clock policy instead of
+authoring a manual offset:
+
+```json
+{
+  "audio_range_origin": {
+    "policy": "selected-decoded-video-pts",
+    "evidence_pointer": "/audio_range_origin_policy"
+  }
+}
+```
+
+The hash-bound selection evidence must contain `"selected-decoded-video-pts"`
+at that pointer. REEL probes the actual selected picture frame and first decoded
+audio PTS, validates continuous source clocks through the excerpt, and computes
+the native audio sample window with checked rational math. The end boundary is
+computed before rounding; fractional sample carry is retained. Missing clocks,
+negative windows, overflow, unavailable media, and source timestamp gaps fail.
+Rendering and independent decoded-source verification use the same resolved
+window. The receipt records both PTS/time bases and sample boundaries; `check`
+and episode conform independently resolve them again.
+
+This policy chooses samples. `audio_clock_repair` independently controls output
+timestamps; an inherited packet timestamp fault may require both evidenced
+policies. A timestamp pass alone does not prove that the correct source window
+was selected. Neither policy resamples, rewrites a performance, or authorizes
+creative selection or publication. Without either policy, existing behavior
+remains unchanged.
