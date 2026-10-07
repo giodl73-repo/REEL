@@ -609,7 +609,70 @@ fn selected_ass_layer_changes_rendered_pixels_and_is_checked() {
     );
     assert!(output.join("clean-picture.mkv").exists());
     assert!(output.join("presentation.ass").exists());
+    for name in ["clean-picture.mkv", "picture.mkv", "master.mkv"] {
+        let probe = Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name",
+                "-of",
+                "default=nw=1:nk=1",
+            ])
+            .arg(output.join(name))
+            .output()
+            .unwrap();
+        assert!(probe.status.success());
+        assert_eq!(
+            String::from_utf8(probe.stdout).unwrap().trim(),
+            "h264",
+            "compact ASS output {name}"
+        );
+    }
     scene_delivery::check(&root.join("job.json"), root, &output).unwrap();
+    job.as_object_mut()
+        .unwrap()
+        .remove("still_sequence_encoding");
+    write_json(&root.join("default-job.json"), &job);
+    let default_output = root.join("default-rendered");
+    let default_receipt =
+        scene_delivery::render(&root.join("default-job.json"), root, &default_output).unwrap();
+    assert_eq!(receipt.plan.frame_count, default_receipt.plan.frame_count);
+    assert_eq!(
+        receipt.plan.duration_samples,
+        default_receipt.plan.duration_samples
+    );
+    for name in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
+        assert_eq!(
+            fs::read(output.join(name)).unwrap(),
+            fs::read(default_output.join(name)).unwrap(),
+            "encoding must preserve {name}"
+        );
+    }
+    let frame_hashes = |directory: &Path| {
+        let decoded = Command::new("ffmpeg")
+            .args(["-v", "error", "-i"])
+            .arg(directory.join("picture.mkv"))
+            .args([
+                "-map", "0:v:0", "-pix_fmt", "yuv444p", "-f", "framemd5", "-",
+            ])
+            .output()
+            .unwrap();
+        assert!(decoded.status.success());
+        String::from_utf8(decoded.stdout)
+            .unwrap()
+            .lines()
+            .filter(|line| !line.starts_with('#') && !line.trim().is_empty())
+            .map(|line| line.rsplit(',').next().unwrap().trim().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        frame_hashes(&output),
+        frame_hashes(&default_output),
+        "compact title pixels must remain lossless"
+    );
     fs::write(output.join("presentation.ass"), b"tampered").unwrap();
     assert!(scene_delivery::check(&root.join("job.json"), root, &output).is_err());
 }

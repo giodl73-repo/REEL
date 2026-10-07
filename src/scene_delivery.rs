@@ -950,13 +950,14 @@ fn arg(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-fn render_ass_overlay(root: &Path, fps: &str, font_bound: bool) -> Result<()> {
+fn render_ass_overlay(root: &Path, fps: &str, font_bound: bool, compact: bool) -> Result<()> {
     let filter = if font_bound {
         "ass=presentation.ass:fontsdir=fonts"
     } else {
         "ass=presentation.ass"
     };
-    let output = Command::new("ffmpeg")
+    let mut command = Command::new("ffmpeg");
+    command
         .current_dir(root)
         .args([
             "-hide_banner",
@@ -972,13 +973,13 @@ fn render_ass_overlay(root: &Path, fps: &str, font_bound: bool) -> Result<()> {
             filter,
             "-an",
             "-c:v",
-            "ffv1",
-            "-pix_fmt",
-            "yuv444p",
-            "-r",
-            fps,
-            "picture.mkv",
-        ])
+            if compact { "libx264" } else { "ffv1" },
+        ]);
+    if compact {
+        command.args(["-crf", "0", "-preset", "veryfast"]);
+    }
+    let output = command
+        .args(["-pix_fmt", "yuv444p", "-r", fps, "picture.mkv"])
         .output()?;
     if !output.status.success() {
         bail!(
@@ -1548,7 +1549,12 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                         root.join("fonts").join(name),
                     )?;
                 }
-                render_ass_overlay(root, &fps, layer.font.is_some())?;
+                render_ass_overlay(
+                    root,
+                    &fps,
+                    layer.font.is_some(),
+                    job.still_sequence_encoding.as_deref() == Some("h264-lossless"),
+                )?;
             }
             ExternalLayerRenderMode::TimedVideoOverlay => {
                 let span = plan
@@ -2150,7 +2156,9 @@ fn check_impl(
         let (rn, rd) = rate.split_once('/').context("invalid video frame rate")?;
         let (rn, rd) = (rn.parse::<u64>()?, rd.parse::<u64>()?);
         let codec = if name == "review.mp4"
-            || (overlays.is_empty()
+            || ((overlays.is_empty()
+                || (overlays.len() == 1
+                    && matches!(overlays[0].render_mode, ExternalLayerRenderMode::AssOverlay)))
                 && job.post_compose_camera.is_none()
                 && job.still_sequence_encoding.as_deref() == Some("h264-lossless"))
         {
