@@ -6,9 +6,23 @@ use anyhow::{Context, Result, bail};
 use reel_assembly::scene_authoring::{ScopedBindings, TemplateCatalog};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{fs, io::Write, path::Path, process::Stdio};
+use std::{
+    fs,
+    io::{Read, Write},
+    path::Path,
+    process::Stdio,
+};
 
 pub const SCHEMA: &str = "reel.presentation-adopt.v1";
+
+/// A frame-exact excerpt of a hash-bound source. Audio uses the same rational
+/// frame clock; callers cannot independently shift the spoken performance.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SourceRange {
+    pub start_frame: u64,
+    pub frame_count: u64,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -31,6 +45,10 @@ pub struct Manifest {
     pub selection_evidence: Option<scene_delivery::FileRef>,
     #[serde(default)]
     pub evidence_hash_pointer: Option<String>,
+    #[serde(default)]
+    pub source_range: Option<SourceRange>,
+    #[serde(default)]
+    pub evidence_range_pointer: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -65,6 +83,10 @@ pub struct Receipt {
     pub source_cache_uri: String,
     pub source_sha256: String,
     pub source_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_range: Option<SourceRange>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_range_pointer: Option<String>,
     pub selection_evidence_sha256: Option<String>,
     pub evidence_hash_pointer: Option<String>,
     pub master_sha256: String,
@@ -85,6 +107,111 @@ fn sha(bytes: &[u8]) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+fn range_clocks(range: &SourceRange, definition: &Template) -> Result<(u64, u64, u64)> {
+    if range.frame_count == 0 || range.frame_count != definition.duration_frames {
+        bail!("source range must cover exactly the selected template duration");
+    }
+    let end_frame = range
+        .start_frame
+        .checked_add(range.frame_count)
+        .context("source frame range overflow")?;
+    let sample = |frame: u64| -> Result<u64> {
+        let n = u128::from(frame)
+            * u128::from(definition.sample_rate)
+            * u128::from(definition.fps_denominator)
+            / u128::from(definition.fps_numerator);
+        u64::try_from(n).context("source sample range overflow")
+    };
+    Ok((end_frame, sample(range.start_frame)?, sample(end_frame)?))
+}
+
+fn range_filter(range: &SourceRange, definition: &Template, picture: bool) -> Result<String> {
+    let (end_frame, start_sample, end_sample) = range_clocks(range, definition)?;
+    Ok(if picture {
+        format!(
+            "trim=start_frame={}:end_frame={end_frame},setpts=PTS-STARTPTS",
+            range.start_frame
+        )
+    } else {
+        format!("atrim=start_sample={start_sample}:end_sample={end_sample},asetpts=PTS-STARTPTS")
+    })
+}
+
+fn bound_source_read(
+    command: &mut std::process::Command,
+    range: Option<&SourceRange>,
+    definition: &Template,
+) -> Result<()> {
+    if let Some(range) = range {
+        let (end_frame, _, _) = range_clocks(range, definition)?;
+        // Decode from the beginning for exact frame/sample indexing, but do
+        // not scan the rest of a feature film after the selected excerpt.
+        let seconds = (u128::from(end_frame) * u128::from(definition.fps_denominator))
+            .div_ceil(u128::from(definition.fps_numerator))
+            + 1;
+        command.arg("-t").arg(seconds.to_string());
+    }
+    Ok(())
+}
+
+fn source_digest(
+    path: &Path,
+    picture: bool,
+    range: Option<&SourceRange>,
+    definition: &Template,
+) -> Result<(String, u64)> {
+    let Some(range) = range else {
+        return episode_conform::decoded_digest(path, picture);
+    };
+    let mut cmd = episode_conform::command("ffmpeg");
+    cmd.args(["-v", "error", "-nostdin"]);
+    bound_source_read(&mut cmd, Some(range), definition)?;
+    cmd.arg("-i").arg(path);
+    if picture {
+        cmd.args(["-map", "0:v:0", "-vf"])
+            .arg(range_filter(range, definition, true)?);
+        cmd.args([
+            "-fps_mode",
+            "passthrough",
+            "-pix_fmt",
+            "yuv444p",
+            "-f",
+            "rawvideo",
+        ]);
+    } else {
+        cmd.args(["-map", "0:a:0", "-af"])
+            .arg(range_filter(range, definition, false)?);
+        cmd.args(["-c:a", "pcm_s24le", "-f", "s24le"]);
+    }
+    let errors = tempfile::tempfile()?;
+    let mut child = cmd.arg("-").stdout(Stdio::piped()).stderr(errors).spawn()?;
+    let mut pipe = child.stdout.take().context("source range decoder pipe")?;
+    let mut digest = Sha256::new();
+    let mut count = 0u64;
+    let mut buffer = [0u8; 65536];
+    loop {
+        let n = pipe.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        digest.update(&buffer[..n]);
+        count = count
+            .checked_add(n as u64)
+            .context("source range byte count overflow")?;
+    }
+    if !child.wait()?.success() {
+        bail!("source range decode failed");
+    }
+    Ok((
+        digest
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect(),
+        count,
+    ))
 }
 
 fn source_facts(path: &Path) -> Result<(u64, u64, String, u32)> {
@@ -248,9 +375,29 @@ pub fn build(
             if selected_hash != selected.sha256 {
                 bail!("selection evidence differs from selected source binding");
             }
+            match (&manifest.source_range, &manifest.evidence_range_pointer) {
+                (Some(range), Some(pointer)) => {
+                    let evidenced: SourceRange = serde_json::from_value(
+                        value
+                            .pointer(pointer)
+                            .context("selection evidence lacks source range")?
+                            .clone(),
+                    )?;
+                    if evidenced != *range {
+                        bail!("source range differs from selected evidence");
+                    }
+                    range_clocks(range, &definition)?;
+                }
+                (None, None) => {}
+                _ => bail!("source range and its evidence pointer must be supplied together"),
+            }
             Some(evidence.sha256.clone())
         }
-        (None, None) => None,
+        (None, None)
+            if manifest.source_range.is_none() && manifest.evidence_range_pointer.is_none() =>
+        {
+            None
+        }
         _ => bail!("selection evidence and hash pointer must be supplied together"),
     };
     let source = scene_delivery::checked_file(asset_root, &manifest.source)?;
@@ -278,12 +425,22 @@ pub fn build(
         .prefix(".presentation-adopt-")
         .tempdir_in(parent)?;
     let master = stage.path().join("master.mkv");
-    if is_native_lossless(&source)? {
+    if manifest.source_range.is_none() && is_native_lossless(&source)? {
         fs::copy(&source, &master)?;
     } else {
-        let status = episode_conform::command("ffmpeg")
-            .args(["-v", "error", "-nostdin", "-i"])
-            .arg(&source)
+        let mut command = episode_conform::command("ffmpeg");
+        command.args(["-v", "error", "-nostdin"]);
+        bound_source_read(&mut command, manifest.source_range.as_ref(), &definition)?;
+        command.arg("-i").arg(&source);
+        if let Some(range) = &manifest.source_range {
+            command
+                .arg("-vf")
+                .arg(range_filter(range, &definition, true)?);
+            command
+                .arg("-af")
+                .arg(range_filter(range, &definition, false)?);
+        }
+        let status = command
             .args([
                 "-map",
                 "0:v:0",
@@ -324,8 +481,9 @@ pub fn build(
         bail!("converted presentation media policy mismatch");
     }
     let (source_picture_sha, source_picture_bytes) =
-        episode_conform::decoded_digest(&source, true)?;
-    let (source_audio_sha, source_audio_bytes) = episode_conform::decoded_digest(&source, false)?;
+        source_digest(&source, true, manifest.source_range.as_ref(), &definition)?;
+    let (source_audio_sha, source_audio_bytes) =
+        source_digest(&source, false, manifest.source_range.as_ref(), &definition)?;
     let (picture_sha, picture_bytes) = episode_conform::decoded_digest(&master, true)?;
     let (audio_sha, audio_bytes) = episode_conform::decoded_digest(&master, false)?;
     let frame_bytes = definition.width * definition.height * 3;
@@ -340,6 +498,12 @@ pub fn build(
     }
     let frames = picture_bytes / frame_bytes;
     let samples = audio_bytes / 6;
+    if let Some(range) = &manifest.source_range {
+        let (_, start, end) = range_clocks(range, &definition)?;
+        if frames != range.frame_count || samples != end - start {
+            bail!("source range extends beyond available picture or audio");
+        }
+    }
     let expected_samples = (u128::from(definition.duration_frames)
         * u128::from(definition.sample_rate)
         * u128::from(definition.fps_denominator))
@@ -371,6 +535,8 @@ pub fn build(
         source_cache_uri: selected.cache_uri.clone(),
         source_sha256: selected.sha256.clone(),
         source_bytes: selected.bytes,
+        source_range: manifest.source_range,
+        evidence_range_pointer: manifest.evidence_range_pointer,
         selection_evidence_sha256,
         evidence_hash_pointer: manifest.evidence_hash_pointer,
         master_sha256: episode_conform::file_sha(&master)?,
@@ -628,6 +794,43 @@ pub fn check_cached(
 #[cfg(test)]
 mod verification_cache_tests {
     use super::*;
+
+    #[test]
+    fn excerpt_clocks_reject_empty_overflow_and_wrong_duration() {
+        let definition: Template = serde_json::from_value(serde_json::json!({
+            "schema":"reel.selected-presentation-master-template.v1", "template_id":"test",
+            "kind":"opening-poem", "width":64, "height":64,
+            "fps_numerator":24, "fps_denominator":1, "sample_rate":44100, "duration_frames":1
+        }))
+        .unwrap();
+        assert_eq!(
+            range_clocks(
+                &SourceRange {
+                    start_frame: 1,
+                    frame_count: 1
+                },
+                &definition
+            )
+            .unwrap(),
+            (2, 1837, 3675)
+        );
+        for range in [
+            SourceRange {
+                start_frame: 0,
+                frame_count: 0,
+            },
+            SourceRange {
+                start_frame: 0,
+                frame_count: 2,
+            },
+            SourceRange {
+                start_frame: u64::MAX,
+                frame_count: 1,
+            },
+        ] {
+            assert!(range_clocks(&range, &definition).is_err());
+        }
+    }
 
     #[test]
     fn only_complete_exact_success_records_can_be_reused() {

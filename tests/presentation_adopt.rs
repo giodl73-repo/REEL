@@ -28,15 +28,20 @@ fn ffmpeg() -> Command {
 
 #[test]
 fn selected_existing_opening_becomes_verified_lossless_presentation_master() {
-    opening_fixture("libx264", "yuv420p");
+    opening_fixture("libx264", "yuv420p", false);
 }
 
 #[test]
 fn selected_native_opening_preserves_exact_bytes_and_rechecks_timing() {
-    opening_fixture("ffv1", "yuv444p");
+    opening_fixture("ffv1", "yuv444p", false);
 }
 
-fn opening_fixture(codec: &str, pixel_format: &str) {
+#[test]
+fn source_excerpt_preserves_exact_selected_frames_and_samples() {
+    opening_fixture("libx264", "yuv420p", true);
+}
+
+fn opening_fixture(codec: &str, pixel_format: &str, excerpt: bool) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let status = ffmpeg()
@@ -46,7 +51,7 @@ fn opening_fixture(codec: &str, pixel_format: &str) {
             "-f",
             "lavfi",
             "-i",
-            "color=c=blue:s=64x64:r=24:d=2",
+            "testsrc2=s=64x64:r=24:d=2",
         ])
         .args([
             "-f",
@@ -74,7 +79,7 @@ fn opening_fixture(codec: &str, pixel_format: &str) {
         &json!({
             "schema":"reel.selected-presentation-master-template.v1",
             "template_id":"opening","kind":"series-opening","width":64,"height":64,
-            "fps_numerator":24,"fps_denominator":1,"sample_rate":48000,"duration_frames":48
+            "fps_numerator":24,"fps_denominator":1,"sample_rate":48000,"duration_frames":if excerpt {24} else {48}
         }),
     );
     write(
@@ -111,7 +116,8 @@ fn opening_fixture(codec: &str, pixel_format: &str) {
         &root.join("legacy-receipt.json"),
         &json!({
             "schema":"source.private-opening.v1",
-            "series_opening":{"cache_uri":format!("cache://sha256/{hash}")}
+            "series_opening":{"cache_uri":format!("cache://sha256/{hash}")},
+            "source_range":{"start_frame":12,"frame_count":24}
         }),
     );
     let mut manifest = json!({
@@ -125,6 +131,10 @@ fn opening_fixture(codec: &str, pixel_format: &str) {
         "selection_evidence":reference(root,"legacy-receipt.json"),
         "evidence_hash_pointer":"/series_opening/cache_uri"
     });
+    if excerpt {
+        manifest["source_range"] = json!({"start_frame":12,"frame_count":24});
+        manifest["evidence_range_pointer"] = "/source_range".into();
+    }
     write(&root.join("manifest.json"), &manifest);
     let output = Command::new(env!("CARGO_BIN_EXE_reel-presentation-adopt"))
         .arg("build")
@@ -145,13 +155,75 @@ fn opening_fixture(codec: &str, pixel_format: &str) {
     let receipt: Value =
         serde_json::from_slice(&fs::read(root.join("adopted/receipt.json")).unwrap()).unwrap();
     assert_eq!(receipt["schema"], "reel.presentation-master-receipt.v1");
-    assert_eq!(receipt["frames"], 48);
-    assert_eq!(receipt["samples"], 96000);
+    assert_eq!(receipt["frames"], if excerpt { 24 } else { 48 });
+    assert_eq!(receipt["samples"], if excerpt { 48000 } else { 96000 });
     assert_eq!(receipt["source_content_matches_lossless_master"], true);
     assert_eq!(receipt["publication"], "not-authorized");
-    if codec == "ffv1" {
+    if codec == "ffv1" && !excerpt {
         assert_eq!(receipt["source_sha256"], receipt["master_sha256"]);
         assert_eq!(receipt["source_bytes"], receipt["master_bytes"]);
+    }
+    if excerpt {
+        assert_eq!(receipt["source_range"], manifest["source_range"]);
+        // Independent oracle: decode the whole source, then slice raw bytes
+        // in the test. Do not reuse the production trim filters.
+        for picture in [true, false] {
+            let raw = |file: &str| {
+                let mut c = ffmpeg();
+                c.args(["-v", "error", "-i"]).arg(root.join(file));
+                if picture {
+                    c.args(["-map", "0:v:0", "-pix_fmt", "yuv444p", "-f", "rawvideo"]);
+                } else {
+                    c.args(["-map", "0:a:0", "-c:a", "pcm_s24le", "-f", "s24le"]);
+                }
+                let o = c.arg("-").output().unwrap();
+                assert!(o.status.success());
+                o.stdout
+            };
+            let source = raw("opening.mkv");
+            let adopted = raw("adopted/master.mkv");
+            let (start, end) = if picture {
+                (12 * 64 * 64 * 3, 36 * 64 * 64 * 3)
+            } else {
+                (24000 * 6, 72000 * 6)
+            };
+            assert_eq!(adopted, source[start..end]);
+        }
+        for (name, range, pointer) in [
+            (
+                "missing-range-evidence",
+                json!({"start_frame":12,"frame_count":24}),
+                Value::Null,
+            ),
+            (
+                "changed-range",
+                json!({"start_frame":13,"frame_count":24}),
+                json!("/source_range"),
+            ),
+            (
+                "zero-range",
+                json!({"start_frame":12,"frame_count":0}),
+                json!("/source_range"),
+            ),
+        ] {
+            let mut bad = manifest.clone();
+            bad["source_range"] = range;
+            bad["evidence_range_pointer"] = pointer;
+            write(&root.join(format!("{name}.json")), &bad);
+            let o = Command::new(env!("CARGO_BIN_EXE_reel-presentation-adopt"))
+                .arg("build")
+                .arg(root.join(format!("{name}.json")))
+                .arg("--input-root")
+                .arg(root)
+                .arg("--asset-root")
+                .arg(root)
+                .arg("--output-dir")
+                .arg(root.join(name))
+                .output()
+                .unwrap();
+            assert!(!o.status.success());
+            assert!(!root.join(name).exists());
+        }
     }
     assert_eq!(
         receipt["technical_validation_state"],
@@ -269,8 +341,14 @@ fn opening_fixture(codec: &str, pixel_format: &str) {
     let conformed_receipt: Value =
         serde_json::from_slice(&fs::read(root.join("episode-output/receipt.json")).unwrap())
             .unwrap();
-    assert_eq!(conformed_receipt["total_frames"], 72);
-    assert_eq!(conformed_receipt["total_samples"], 144000);
+    assert_eq!(
+        conformed_receipt["total_frames"],
+        if excerpt { 48 } else { 72 }
+    );
+    assert_eq!(
+        conformed_receipt["total_samples"],
+        if excerpt { 96000 } else { 144000 }
+    );
     assert_eq!(
         conformed_receipt["upstream_presentation_recheck_state"],
         "verified-for-all-presentation-segments"
@@ -302,6 +380,32 @@ fn opening_fixture(codec: &str, pixel_format: &str) {
         .output()
         .unwrap();
     assert!(!rejected_timing.status.success());
+
+    if excerpt {
+        // A range can match evidence yet exceed source availability. The
+        // failed build must leave no adopted output or successful receipt.
+        let mut evidence: Value =
+            serde_json::from_slice(&fs::read(root.join("legacy-receipt.json")).unwrap()).unwrap();
+        evidence["source_range"] = json!({"start_frame":40,"frame_count":24});
+        write(&root.join("past-end-evidence.json"), &evidence);
+        let mut past_end = manifest.clone();
+        past_end["source_range"] = evidence["source_range"].clone();
+        past_end["selection_evidence"] = reference(root, "past-end-evidence.json");
+        write(&root.join("past-end.json"), &past_end);
+        let o = Command::new(env!("CARGO_BIN_EXE_reel-presentation-adopt"))
+            .arg("build")
+            .arg(root.join("past-end.json"))
+            .arg("--input-root")
+            .arg(root)
+            .arg("--asset-root")
+            .arg(root)
+            .arg("--output-dir")
+            .arg(root.join("past-end-output"))
+            .output()
+            .unwrap();
+        assert!(!o.status.success());
+        assert!(!root.join("past-end-output").exists());
+    }
 
     manifest["evidence_hash_pointer"] = "/wrong/hash".into();
     write(&root.join("bad-manifest.json"), &manifest);
