@@ -41,3 +41,62 @@ When episode conform consumes this receipt, its segment must name the exact
 adoption manifest. Conform reruns the adoption and compares selected source,
 template, evidence and decoded master content. A receipt without that manifest
 cannot claim this route's upstream verification.
+
+## Reuse a presentation excerpt from an existing film
+
+When a presentation exists only inside a selected film, add an optional
+`source_range` and bind that exact range to the selection evidence:
+
+```json
+{
+  "source_range": { "start_frame": 2880, "frame_count": 605 },
+  "evidence_range_pointer": "/poem/source_range"
+}
+```
+
+The source binding and hash evidence still identify the entire original film.
+The range pointer must identify an equal `start_frame`/`frame_count` object in
+the exact evidence JSON. Both range fields require selection evidence. The
+frame count must equal the selected presentation template's duration. The
+producer establishes the actual boundaries from the original composition or
+verified playback; this facility does not infer them from a filename or title.
+
+REEL decodes from the beginning, selects those frames, and selects audio from
+`floor(start_frame * sample_rate * fps_denominator / fps_numerator)` through
+the corresponding exclusive end sample. No independent audio shift, retiming,
+new performance, crop or picture change is applied. The lossless output must
+match the decoded source excerpt byte for byte. Empty, overflowing, stale,
+wrong-duration and unavailable ranges fail. The receipt records the range and
+its evidence pointer; `check` and downstream conform recheck them.
+
+Bind the adopted output master separately from the original source: container
+normalization changes file hashes even when decoded content is identical.
+An excerpt retains the original film's cast/text/rights state. Its verified
+bytes are technical evidence, not new creative or publication approval.
+
+### Explicit repair of inherited audio timestamps
+
+The default retains source timestamps and rejects discontinuities. When the
+producer has diagnosed an inherited audio timestamp fault, an excerpt may opt
+into a sample-count clock without changing decoded sample content:
+
+```json
+{
+  "audio_clock_repair": {
+    "policy": "decoded-sample-count",
+    "evidence_pointer": "/poem/audio_clock_policy"
+  }
+}
+```
+
+The exact hash-bound selection evidence must contain `"decoded-sample-count"`
+at that pointer. This policy requires an evidenced source range. REEL selects
+the same frame-derived audio samples, in the same order, then assigns audio
+timestamps from sample count (`asetpts=N/SR/TB`). It does not shift, resample,
+stretch, pad or replace samples. The output must still match the independently
+decoded source picture and PCM bytes. Picture timestamps retain their separate
+validation: audio repair cannot hide missing picture frames or gaps. The repair
+policy and evidence pointer are recorded in the receipt and rechecked by
+`check` and episode conform. Selection of this clock repair does not establish
+that the inherited performance, mix or picture/audio synchronization was
+creatively approved; review the repaired excerpt in episode context.

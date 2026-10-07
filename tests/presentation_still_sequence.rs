@@ -30,15 +30,20 @@ fn run(root: &Path, action: &str) -> std::process::Output {
 
 #[test]
 fn two_stills_render_exact_picture_and_audio_clocks() {
-    still_fixture(false);
+    still_fixture(false, false);
 }
 
 #[test]
 fn selected_audio_envelope_fades_actual_samples_and_rejects_font_tampering() {
-    still_fixture(true);
+    still_fixture(true, false);
 }
 
-fn still_fixture(with_audio: bool) {
+#[test]
+fn semantic_song_clock_renders_variable_picture_boundaries_without_restarting_audio() {
+    still_fixture(true, true);
+}
+
+fn still_fixture(with_audio: bool, song_clock: bool) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     for (name, color) in [("red.png", "red"), ("blue.png", "blue")] {
@@ -98,6 +103,8 @@ fn still_fixture(with_audio: bool) {
                     "lavfi",
                     "-i",
                     "sine=frequency=440:sample_rate=48000:duration=2",
+                    "-ac",
+                    "2",
                     "-c:a",
                     "pcm_s24le"
                 ])
@@ -111,6 +118,57 @@ fn still_fixture(with_audio: bool) {
         manifest["audio"] = reference(root, "audio.wav");
         manifest["audio_treatment"] =
             json!({"gain_db":-6.0,"fade_in_samples":24000,"fade_out_samples":24000});
+        fs::write(
+            root.join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+    }
+    if with_audio {
+        let mut template: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("template.json")).unwrap()).unwrap();
+        template["audio_required"] = json!(true);
+        fs::write(
+            root.join("template.json"),
+            serde_json::to_vec(&template).unwrap(),
+        )
+        .unwrap();
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("manifest.json")).unwrap()).unwrap();
+        manifest["template"] = reference(root, "template.json");
+        let mut silent = manifest.clone();
+        silent.as_object_mut().unwrap().remove("audio");
+        silent.as_object_mut().unwrap().remove("audio_treatment");
+        fs::write(
+            root.join("manifest.json"),
+            serde_json::to_vec(&silent).unwrap(),
+        )
+        .unwrap();
+        let rejected = run(root, "build");
+        assert!(!rejected.status.success());
+        assert!(String::from_utf8_lossy(&rejected.stderr).contains("requires a selected audio"));
+        assert!(!root.join("render").exists());
+        fs::write(
+            root.join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+    }
+    if song_clock {
+        fs::write(
+            root.join("anchor-evidence.json"),
+            b"fixture measured source anchors",
+        )
+        .unwrap();
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("manifest.json")).unwrap()).unwrap();
+        fs::write(root.join("clock.json"),serde_json::to_vec(&json!({"schema":"reel.presentation-source-clock.v1","source_sha256":manifest["audio"]["sha256"],"sample_rate":48000,"total_samples":96000,"evidence":reference(root,"anchor-evidence.json"),"anchors":[{"id":"intro","sample":0},{"id":"word","sample":12000},{"id":"outro","sample":96000}]})).unwrap()).unwrap();
+        fs::write(root.join("timing.json"),serde_json::to_vec(&json!({"schema":"reel.presentation-picture-timing.v1","clock":reference(root,"clock.json"),"spans":[{"start_anchor":"intro","end_anchor":"word"},{"start_anchor":"word","end_anchor":"outro"}]})).unwrap()).unwrap();
+        fs::write(root.join("template.json"),serde_json::to_vec(&json!({"schema":"reel.presentation-still-template.v2","template_id":"fixture","width":64,"height":64,"frame_rate":24,"sample_rate":48000,"picture_count":2,"total_frames":48})).unwrap()).unwrap();
+        manifest["schema"] = json!("reel.presentation-still-sequence.v2");
+        manifest.as_object_mut().unwrap().remove("audio_treatment");
+        manifest["template"] = reference(root, "template.json");
+        manifest["picture_timing"] = reference(root, "timing.json");
         fs::write(
             root.join("manifest.json"),
             serde_json::to_vec(&manifest).unwrap(),
@@ -133,7 +191,53 @@ fn still_fixture(with_audio: bool) {
         serde_json::from_slice(&fs::read(root.join("render/receipt.json")).unwrap()).unwrap();
     assert_eq!(receipt["frames"], 48);
     assert_eq!(receipt["samples"], 96_000);
-    if with_audio {
+    if song_clock {
+        assert_eq!(receipt["picture_frames"], json!([6, 42]));
+        // Sample both sides of the semantic cut, away from the bottom caption.
+        let decoded = Command::new("ffmpeg")
+            .args(["-v", "error", "-i"])
+            .arg(root.join("render/master.mkv"))
+            .args([
+                "-vf",
+                "crop=8:8:0:0",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "-",
+            ])
+            .output()
+            .unwrap();
+        assert!(decoded.status.success());
+        let frame_bytes = 8 * 8 * 3;
+        let red = &decoded.stdout[5 * frame_bytes..6 * frame_bytes];
+        let blue = &decoded.stdout[6 * frame_bytes..7 * frame_bytes];
+        assert!(red[0] > 200 && red[2] < 30);
+        assert!(blue[2] > 200 && blue[0] < 30);
+        let pcm = |path: &Path| {
+            let output = Command::new("ffmpeg")
+                .args(["-v", "error", "-i"])
+                .arg(path)
+                .args(["-map", "0:a:0", "-f", "s24le", "-acodec", "pcm_s24le", "-"])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            output.stdout
+        };
+        assert_eq!(
+            pcm(&root.join("audio.wav")),
+            pcm(&root.join("render/master.mkv")),
+            "picture cuts must preserve one continuous selected source recording"
+        );
+        fs::write(root.join("anchor-evidence.json"), b"tampered anchors").unwrap();
+        assert!(!run(root, "check").status.success());
+        fs::write(
+            root.join("anchor-evidence.json"),
+            b"fixture measured source anchors",
+        )
+        .unwrap();
+    }
+    if with_audio && !song_clock {
         let decoded = Command::new("ffmpeg")
             .args(["-v", "error", "-i"])
             .arg(root.join("render/master.mkv"))

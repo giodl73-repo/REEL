@@ -4,6 +4,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -28,7 +29,12 @@ struct Template {
     frame_rate: u32,
     sample_rate: u32,
     picture_count: u32,
+    #[serde(default)]
     frames_per_picture: u32,
+    #[serde(default)]
+    total_frames: Option<u64>,
+    #[serde(default)]
+    audio_required: bool,
 }
 
 #[derive(Deserialize)]
@@ -40,6 +46,8 @@ struct Manifest {
     role: String,
     template: FileRef,
     pictures: Vec<FileRef>,
+    #[serde(default)]
+    picture_timing: Option<FileRef>,
     editable_layer: FileRef,
     #[serde(default)]
     audio: Option<FileRef>,
@@ -47,6 +55,104 @@ struct Manifest {
     audio_treatment: Option<AudioTreatment>,
     #[serde(default)]
     fonts: Vec<FileRef>,
+}
+
+/// Shared picture cuts refer to semantic IDs on one continuous source clock.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PictureTiming {
+    schema: String,
+    clock: FileRef,
+    spans: Vec<PictureSpan>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PictureSpan {
+    start_anchor: String,
+    end_anchor: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceClock {
+    schema: String,
+    source_sha256: String,
+    sample_rate: u32,
+    total_samples: u64,
+    /// Evidence is retained and hashed, not interpreted as human approval.
+    evidence: FileRef,
+    anchors: Vec<ClockAnchor>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClockAnchor {
+    id: String,
+    sample: u64,
+}
+
+impl Template {
+    fn frames(&self) -> u64 {
+        self.total_frames
+            .unwrap_or(self.picture_count as u64 * self.frames_per_picture as u64)
+    }
+}
+
+fn compile_picture_frames(
+    timing: &PictureTiming,
+    clock: &SourceClock,
+    template: &Template,
+    source_sha256: &str,
+) -> Result<Vec<u64>> {
+    let frames = template.frames();
+    let samples = frames * template.sample_rate as u64 / template.frame_rate as u64;
+    if timing.schema != "reel.presentation-picture-timing.v1"
+        || clock.schema != "reel.presentation-source-clock.v1"
+        || clock.source_sha256 != source_sha256
+        || clock.sample_rate != template.sample_rate
+        || clock.total_samples != samples
+        || timing.spans.len() != template.picture_count as usize
+    {
+        bail!("picture timing/source clock does not match selected audio and template");
+    }
+    let mut anchors = BTreeMap::new();
+    for anchor in &clock.anchors {
+        if anchor.id.trim().is_empty()
+            || anchor.sample > samples
+            || anchors.insert(anchor.id.as_str(), anchor.sample).is_some()
+        {
+            bail!("invalid or duplicate source clock anchor");
+        }
+    }
+    let mut cursor = 0;
+    let mut previous_sample = 0;
+    let mut counts = Vec::new();
+    for span in &timing.spans {
+        let start = *anchors
+            .get(span.start_anchor.as_str())
+            .context("unknown picture start anchor")?;
+        let end = *anchors
+            .get(span.end_anchor.as_str())
+            .context("unknown picture end anchor")?;
+        if start != previous_sample || end <= start {
+            bail!("picture source spans must be ordered, positive and gapless");
+        }
+        // One rounding of shared boundaries prevents independent-duration drift.
+        let end_frame = ((end as u128 * template.frame_rate as u128
+            + template.sample_rate as u128 / 2)
+            / template.sample_rate as u128) as u64;
+        if end_frame <= cursor {
+            bail!("picture span collapses at the selected frame rate");
+        }
+        counts.push(end_frame - cursor);
+        cursor = end_frame;
+        previous_sample = end;
+    }
+    if previous_sample != samples || cursor != frames {
+        bail!("picture source spans must close the entire selected audio clock");
+    }
+    Ok(counts)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -108,10 +214,21 @@ struct Receipt {
     review_bytes: u64,
     frames: u64,
     samples: u64,
+    #[serde(default)]
+    picture_frames: Vec<u64>,
+    #[serde(default)]
+    picture_timing_sha256: Option<String>,
     publication: String,
 }
 
-type LoadedPresentation = (Manifest, Template, Vec<PathBuf>, Option<PathBuf>, Vec<u8>);
+type LoadedPresentation = (
+    Manifest,
+    Template,
+    Vec<PathBuf>,
+    Option<PathBuf>,
+    Vec<u8>,
+    Vec<u64>,
+);
 
 fn hash(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
@@ -179,7 +296,7 @@ fn check_media(path: &Path, template: &Template) -> Result<(u64, u64)> {
         .iter()
         .find(|s| s["codec_type"] == "audio")
         .context("missing audio")?;
-    let frames = template.picture_count as u64 * template.frames_per_picture as u64;
+    let frames = template.frames();
     let samples = frames * template.sample_rate as u64 / template.frame_rate as u64;
     if video["codec_name"] != "ffv1"
         || video["width"] != template.width
@@ -218,8 +335,10 @@ fn check_media(path: &Path, template: &Template) -> Result<(u64, u64)> {
 fn load(manifest_path: &Path, root: &Path) -> Result<LoadedPresentation> {
     let manifest_bytes = fs::read(manifest_path)?;
     let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
-    if manifest.schema != "reel.presentation-still-sequence.v1"
-        || !matches!(manifest.language.as_str(), "es" | "en")
+    if !matches!(
+        manifest.schema.as_str(),
+        "reel.presentation-still-sequence.v1" | "reel.presentation-still-sequence.v2"
+    ) || !matches!(manifest.language.as_str(), "es" | "en")
         || manifest.episode_id.is_empty()
         || manifest.role.is_empty()
     {
@@ -227,22 +346,32 @@ fn load(manifest_path: &Path, root: &Path) -> Result<LoadedPresentation> {
     }
     let (_, template_bytes) = verified(root, &manifest.template)?;
     let template: Template = serde_json::from_slice(&template_bytes)?;
-    if template.schema != "reel.presentation-still-template.v1"
+    let v2 = manifest.schema == "reel.presentation-still-sequence.v2";
+    if template.schema
+        != if v2 {
+            "reel.presentation-still-template.v2"
+        } else {
+            "reel.presentation-still-template.v1"
+        }
         || template.template_id.is_empty()
         || template.width == 0
         || template.height == 0
         || !(1..=120).contains(&template.frame_rate)
         || !(8_000..=192_000).contains(&template.sample_rate)
         || !(1..=120).contains(&template.picture_count)
-        || template.frames_per_picture == 0
+        || (v2
+            && (template.total_frames.is_none()
+                || template.frames_per_picture != 0
+                || manifest.picture_timing.is_none()
+                || manifest.audio.is_none()))
+        || (!v2
+            && (template.frames_per_picture == 0
+                || template.total_frames.is_some()
+                || manifest.picture_timing.is_some()))
         || manifest.pictures.len() != template.picture_count as usize
-        || template.picture_count as u64 * template.frames_per_picture as u64
-            > 120 * template.frame_rate as u64
-        || (template.picture_count as u64
-            * template.frames_per_picture as u64
-            * template.sample_rate as u64)
-            % template.frame_rate as u64
-            != 0
+        || template.frames() == 0
+        || template.frames() > 120 * template.frame_rate as u64
+        || (template.frames() * template.sample_rate as u64) % template.frame_rate as u64 != 0
     {
         bail!("invalid presentation still template or picture count");
     }
@@ -253,10 +382,10 @@ fn load(manifest_path: &Path, root: &Path) -> Result<LoadedPresentation> {
     if manifest.audio_treatment.is_some() && manifest.audio.is_none() {
         bail!("audio treatment requires a selected audio source");
     }
-    let samples = template.picture_count as u64
-        * template.frames_per_picture as u64
-        * template.sample_rate as u64
-        / template.frame_rate as u64;
+    if template.audio_required && manifest.audio.is_none() {
+        bail!("presentation template requires a selected audio source");
+    }
+    let samples = template.frames() * template.sample_rate as u64 / template.frame_rate as u64;
     audio_envelope(manifest.audio_treatment.as_ref(), samples)?;
     let pictures = manifest
         .pictures
@@ -268,7 +397,52 @@ fn load(manifest_path: &Path, root: &Path) -> Result<LoadedPresentation> {
         .as_ref()
         .map(|item| verified(root, item).map(|x| x.0))
         .transpose()?;
-    Ok((manifest, template, pictures, audio, manifest_bytes))
+    let picture_frames = if let Some(timing_ref) = &manifest.picture_timing {
+        let (_, bytes) = verified(root, timing_ref)?;
+        let timing: PictureTiming = serde_json::from_slice(&bytes)?;
+        let (_, clock_bytes) = verified(root, &timing.clock)?;
+        let clock: SourceClock = serde_json::from_slice(&clock_bytes)?;
+        verified(root, &clock.evidence)?;
+        let audio_ref = manifest
+            .audio
+            .as_ref()
+            .context("source clock requires selected audio")?;
+        let source = audio.as_ref().context("missing source audio")?;
+        let source_facts = facts(source)?;
+        let stream = source_facts["streams"]
+            .as_array()
+            .context("missing audio streams")?
+            .iter()
+            .find(|s| s["codec_type"] == "audio")
+            .context("missing audio source stream")?;
+        if stream["sample_rate"]
+            .as_str()
+            .and_then(|s| s.parse::<u32>().ok())
+            != Some(template.sample_rate)
+            || stream["channels"] != 2
+        {
+            bail!("source-clock audio must have the selected sample rate and stereo channels");
+        }
+        let decoded = Command::new("ffmpeg")
+            .args(["-v", "error", "-i"])
+            .arg(source)
+            .args(["-map", "0:a:0", "-f", "s24le", "-acodec", "pcm_s24le", "-"])
+            .output()?;
+        if !decoded.status.success() || decoded.stdout.len() as u64 != samples * 6 {
+            bail!("source-clock audio decoded length differs from the complete clock");
+        }
+        compile_picture_frames(&timing, &clock, &template, &audio_ref.sha256)?
+    } else {
+        vec![template.frames_per_picture as u64; pictures.len()]
+    };
+    Ok((
+        manifest,
+        template,
+        pictures,
+        audio,
+        manifest_bytes,
+        picture_frames,
+    ))
 }
 
 fn build(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
@@ -276,7 +450,8 @@ fn build(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
         bail!("output directory already exists");
     }
     let root = fs::canonicalize(root)?;
-    let (manifest, template, pictures, audio, manifest_bytes) = load(manifest_path, &root)?;
+    let (manifest, template, pictures, audio, manifest_bytes, picture_frames) =
+        load(manifest_path, &root)?;
     fs::create_dir_all(output_dir)?;
     let output_dir = fs::canonicalize(output_dir)?;
     fs::copy(
@@ -292,11 +467,11 @@ fn build(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
             )?;
         }
     }
-    let seconds_each = template.frames_per_picture as f64 / template.frame_rate as f64;
-    let total_seconds = template.picture_count as f64 * seconds_each;
+    let total_seconds = template.frames() as f64 / template.frame_rate as f64;
     let mut cmd = Command::new("ffmpeg");
     cmd.current_dir(&output_dir).args(["-y", "-v", "error"]);
-    for picture in &pictures {
+    for (picture, frames) in pictures.iter().zip(&picture_frames) {
+        let seconds_each = *frames as f64 / template.frame_rate as f64;
         cmd.args([
             "-loop",
             "1",
@@ -315,9 +490,9 @@ fn build(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
             .arg(format!("anullsrc=r={}:cl=stereo", template.sample_rate));
     }
     let mut filter = String::new();
-    for i in 0..pictures.len() {
+    for (i, frames) in picture_frames.iter().enumerate() {
         filter.push_str(&format!(
-            "[{i}:v]scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,format=yuv444p,trim=duration={seconds_each:.9},setpts=PTS-STARTPTS[v{i}];",
+            "[{i}:v]scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,format=yuv444p,trim=end_frame={frames},setpts=PTS-STARTPTS[v{i}];",
             template.width, template.height, template.width, template.height
         ));
     }
@@ -333,10 +508,7 @@ fn build(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
             ":fontsdir=fonts"
         }
     ));
-    let samples = template.picture_count as u64
-        * template.frames_per_picture as u64
-        * template.sample_rate as u64
-        / template.frame_rate as u64;
+    let samples = template.frames() * template.sample_rate as u64 / template.frame_rate as u64;
     let envelope = audio_envelope(manifest.audio_treatment.as_ref(), samples)?;
     filter.push_str(&format!(
         "[{}:a]aresample={},aformat=channel_layouts=stereo,apad,atrim=duration={total_seconds:.9},asetpts=PTS-STARTPTS{envelope}[a]",
@@ -350,7 +522,7 @@ fn build(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
         "-map",
         "[a]",
         "-frames:v",
-        &(template.picture_count * template.frames_per_picture).to_string(),
+        &template.frames().to_string(),
         "-c:v",
         "ffv1",
         "-pix_fmt",
@@ -415,6 +587,8 @@ fn build(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
         review_bytes: review.len() as u64,
         frames,
         samples,
+        picture_frames,
+        picture_timing_sha256: manifest.picture_timing.map(|t| t.sha256),
         publication: "not-authorized".into(),
     };
     fs::write(
@@ -427,7 +601,7 @@ fn build(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
 
 fn check(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
     let root = fs::canonicalize(root)?;
-    let (manifest, template, _, _, manifest_bytes) = load(manifest_path, &root)?;
+    let (manifest, template, _, _, manifest_bytes, picture_frames) = load(manifest_path, &root)?;
     let receipt: Receipt = serde_json::from_slice(&fs::read(output_dir.join("receipt.json"))?)?;
     let master = fs::read(output_dir.join("master.mkv"))?;
     let review = fs::read(output_dir.join("review.mp4"))?;
@@ -463,6 +637,10 @@ fn check(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
         || receipt.review_bytes != review.len() as u64
         || receipt.frames != frames
         || receipt.samples != samples
+        || ((manifest.schema == "reel.presentation-still-sequence.v2"
+            || !receipt.picture_frames.is_empty())
+            && receipt.picture_frames != picture_frames)
+        || receipt.picture_timing_sha256 != manifest.picture_timing.map(|t| t.sha256)
     {
         bail!("presentation still receipt/output mismatch");
     }
@@ -498,5 +676,113 @@ fn main() {
     if let Err(error) = result {
         eprintln!("{error:#}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod timing_tests {
+    use super::*;
+
+    fn fixture() -> (Template, PictureTiming, SourceClock) {
+        let file = || FileRef {
+            path: "evidence.json".into(),
+            sha256: "a".repeat(64),
+            bytes: 1,
+            cache_uri: format!("cache://sha256/{}", "a".repeat(64)),
+        };
+        let template = Template {
+            schema: "reel.presentation-still-template.v2".into(),
+            template_id: "test".into(),
+            width: 64,
+            height: 64,
+            frame_rate: 24,
+            sample_rate: 48000,
+            picture_count: 2,
+            frames_per_picture: 0,
+            total_frames: Some(48),
+            audio_required: true,
+        };
+        let timing = PictureTiming {
+            schema: "reel.presentation-picture-timing.v1".into(),
+            clock: file(),
+            spans: vec![
+                PictureSpan {
+                    start_anchor: "intro".into(),
+                    end_anchor: "word".into(),
+                },
+                PictureSpan {
+                    start_anchor: "word".into(),
+                    end_anchor: "outro".into(),
+                },
+            ],
+        };
+        let clock = SourceClock {
+            schema: "reel.presentation-source-clock.v1".into(),
+            source_sha256: "source".into(),
+            sample_rate: 48000,
+            total_samples: 96000,
+            evidence: file(),
+            anchors: vec![
+                ClockAnchor {
+                    id: "intro".into(),
+                    sample: 0,
+                },
+                ClockAnchor {
+                    id: "word".into(),
+                    sample: 12000,
+                },
+                ClockAnchor {
+                    id: "outro".into(),
+                    sample: 96000,
+                },
+            ],
+        };
+        (template, timing, clock)
+    }
+
+    #[test]
+    fn semantic_boundaries_compile_to_variable_gapless_frames() {
+        let (t, p, c) = fixture();
+        assert_eq!(
+            compile_picture_frames(&p, &c, &t, "source").unwrap(),
+            vec![6, 42]
+        );
+    }
+
+    #[test]
+    fn shared_rounding_closes_non_frame_aligned_source_anchors() {
+        let (t, p, mut c) = fixture();
+        c.anchors[1].sample = 13001;
+        assert_eq!(
+            compile_picture_frames(&p, &c, &t, "source").unwrap(),
+            vec![7, 41]
+        );
+    }
+
+    #[test]
+    fn rejects_wrong_source_unknown_duplicate_and_unclosed_anchors() {
+        let (t, mut p, mut c) = fixture();
+        assert!(compile_picture_frames(&p, &c, &t, "other").is_err());
+        p.spans[0].end_anchor = "absent".into();
+        assert!(compile_picture_frames(&p, &c, &t, "source").is_err());
+        let (_, p, _) = fixture();
+        c.anchors.push(ClockAnchor {
+            id: "word".into(),
+            sample: 20000,
+        });
+        assert!(compile_picture_frames(&p, &c, &t, "source").is_err());
+        let (_, p, mut c) = fixture();
+        c.anchors[2].sample = 90000;
+        assert!(compile_picture_frames(&p, &c, &t, "source").is_err());
+    }
+
+    #[test]
+    fn rejects_clock_gaps_and_sub_frame_spans() {
+        let (t, mut p, mut c) = fixture();
+        p.spans[1].start_anchor = "intro".into();
+        assert!(compile_picture_frames(&p, &c, &t, "source").is_err());
+        let (_, p, _) = fixture();
+        c.anchors[1].sample = 1;
+        assert!(compile_picture_frames(&p, &c, &t, "source").is_err());
     }
 }
