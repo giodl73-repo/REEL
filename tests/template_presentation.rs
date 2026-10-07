@@ -138,6 +138,38 @@ fn title_prelude_rejects_missing_duration_bad_panel_and_mismatched_credit() {
     assert!(compile_layer(&title, &text, &[], &BTreeMap::new()).is_err());
 }
 
+#[test]
+fn title_prelude_source_rejects_changed_title_credit_and_missing_credit() {
+    let mut invocation = poem();
+    invocation.lines.clear();
+    invocation.byline = Some("por Andrés Alarcón García".into());
+    let source = PresentationSourceText {
+        schema: SOURCE_TEXT_SCHEMA.into(),
+        source_authority_id: "manuscript".into(),
+        source_document_sha256: "a".repeat(64),
+        source_scope_ids: vec!["poem-title".into(), "poet-credit".into()],
+        language: "es".into(),
+        text_state: "canonical-original".into(),
+        title: invocation.title.clone(),
+        byline: invocation.byline.clone(),
+        chapter_number: None,
+        lines: vec![],
+        display_units: vec![],
+    };
+    let verify = |text: &EditableTextInvocation| {
+        verify_source_text(text, &source, "manuscript", &source.source_scope_ids, &[])
+    };
+    assert!(verify(&invocation).is_ok());
+    let mut changed = invocation.clone();
+    changed.title = "Other poem".into();
+    assert!(verify(&changed).is_err());
+    changed = invocation.clone();
+    changed.byline = Some("Other poet".into());
+    assert!(verify(&changed).is_err());
+    changed.byline = None;
+    assert!(verify(&changed).is_err());
+}
+
 fn clocks() -> BTreeMap<String, NativeAlignment> {
     BTreeMap::from([
         (
