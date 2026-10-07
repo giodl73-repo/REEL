@@ -328,3 +328,11 @@ presentation contract before the poem scene. Give each occurrence its own
 presentation role and selected template/binding, including repeated poems.
 Episode conform requires every presentation role exactly once. Compilation
 alone does not insert a prelude, play its score or establish creative approval.
+
+For soundtrack-required presentation units, set `audio_required: true` on the
+`reel.presentation-still-template.v1` rendering definition. Build and check
+then reject a missing selected audio source. Omission defaults to false for
+intentional silent presentations. The audio file still needs its exact hash,
+bytes and cache locator; this requirement does not certify musical continuity
+into the next unit. Choose the prelude excerpt and poem score handoff together
+so the score introduction is not replayed unintentionally.

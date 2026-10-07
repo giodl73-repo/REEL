@@ -29,6 +29,8 @@ struct Template {
     sample_rate: u32,
     picture_count: u32,
     frames_per_picture: u32,
+    #[serde(default)]
+    audio_required: bool,
 }
 
 #[derive(Deserialize)]
@@ -249,6 +251,9 @@ fn load(manifest_path: &Path, root: &Path) -> Result<LoadedPresentation> {
     verified(root, &manifest.editable_layer)?;
     for font in &manifest.fonts {
         verified(root, font)?;
+    }
+    if template.audio_required && manifest.audio.is_none() {
+        bail!("presentation template requires a selected audio source");
     }
     if manifest.audio_treatment.is_some() && manifest.audio.is_none() {
         bail!("audio treatment requires a selected audio source");
