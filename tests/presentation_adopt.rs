@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path, process::Command};
 
@@ -70,12 +70,27 @@ fn opening_fixture(
     repair: bool,
     origin: bool,
 ) {
-    opening_fixture_with_reset(codec, pixel_format, excerpt, gapped, audio_gap, repair, origin, None);
+    opening_fixture_with_reset(
+        codec,
+        pixel_format,
+        excerpt,
+        gapped,
+        audio_gap,
+        repair,
+        origin,
+        None,
+    );
 }
 
 fn opening_fixture_with_reset(
-    codec: &str, pixel_format: &str, excerpt: bool, gapped: bool,
-    audio_gap: bool, repair: bool, origin: bool, reset_sample: Option<u32>,
+    codec: &str,
+    pixel_format: &str,
+    excerpt: bool,
+    gapped: bool,
+    audio_gap: bool,
+    repair: bool,
+    origin: bool,
+    reset_sample: Option<u32>,
 ) {
     let prerange_reset = reset_sample.is_some();
     let filter = if audio_gap {
@@ -215,7 +230,12 @@ fn opening_fixture_with_reset(
         .unwrap();
     if gapped || (audio_gap && (!repair || origin)) || matches!(reset_sample, Some(28672 | 48000)) {
         assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("timestamp gap") || String::from_utf8_lossy(&output.stderr).contains("timestamp overlap"), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("timestamp gap")
+                || String::from_utf8_lossy(&output.stderr).contains("timestamp overlap"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         assert!(!root.join("adopted").exists());
         return;
     }
@@ -232,10 +252,22 @@ fn opening_fixture_with_reset(
     assert_eq!(receipt["source_content_matches_lossless_master"], true);
     assert_eq!(receipt["publication"], "not-authorized");
     if origin {
-        assert_eq!(receipt["audio_sample_window"]["audio_anchor_sample"], if prerange_reset { 28672 } else { 27648 });
-        assert_eq!(receipt["audio_sample_window"]["selected_audio_anchor_pts"]["ticks"], 576);
-        assert_eq!(receipt["audio_sample_window"]["start_sample"], if prerange_reset { 29008 } else { 27984 });
-        assert_eq!(receipt["audio_sample_window"]["end_sample"], if prerange_reset { 77008 } else { 75984 });
+        assert_eq!(
+            receipt["audio_sample_window"]["audio_anchor_sample"],
+            if prerange_reset { 28672 } else { 27648 }
+        );
+        assert_eq!(
+            receipt["audio_sample_window"]["selected_audio_anchor_pts"]["ticks"],
+            576
+        );
+        assert_eq!(
+            receipt["audio_sample_window"]["start_sample"],
+            if prerange_reset { 29008 } else { 27984 }
+        );
+        assert_eq!(
+            receipt["audio_sample_window"]["end_sample"],
+            if prerange_reset { 77008 } else { 75984 }
+        );
         assert_eq!(
             receipt["audio_sample_window"]["selected_video_pts"]["ticks"],
             583
@@ -348,7 +380,10 @@ fn opening_fixture_with_reset(
                 (12 * 64 * 64 * 3, 36 * 64 * 64 * 3)
             } else {
                 if origin {
-                    (if prerange_reset { 29008 * 6 } else { 27984 * 6 }, if prerange_reset { 77008 * 6 } else { 75984 * 6 })
+                    (
+                        if prerange_reset { 29008 * 6 } else { 27984 * 6 },
+                        if prerange_reset { 77008 * 6 } else { 75984 * 6 },
+                    )
                 } else {
                     (24000 * 6, 72000 * 6)
                 }
@@ -402,8 +437,14 @@ fn opening_fixture_with_reset(
     );
 
     if origin {
-        assert_eq!(receipt["audio_sample_window"]["start_sample"], if prerange_reset { 29008 } else { 27984 });
-        assert_eq!(receipt["audio_sample_window"]["end_sample"], if prerange_reset { 77008 } else { 75984 });
+        assert_eq!(
+            receipt["audio_sample_window"]["start_sample"],
+            if prerange_reset { 29008 } else { 27984 }
+        );
+        assert_eq!(
+            receipt["audio_sample_window"]["end_sample"],
+            if prerange_reset { 77008 } else { 75984 }
+        );
         assert_eq!(
             receipt["audio_range_origin"],
             manifest["audio_range_origin"]
@@ -649,15 +690,42 @@ fn decoded_origin_rejects_audio_gaps_despite_output_clock_repair() {
 
 #[test]
 fn decoded_origin_maps_a_prerange_audio_reset_to_local_samples() {
-    opening_fixture_with_reset("libx264", "yuv420p", true, false, false, true, true, Some(12000));
+    opening_fixture_with_reset(
+        "libx264",
+        "yuv420p",
+        true,
+        false,
+        false,
+        true,
+        true,
+        Some(12000),
+    );
 }
 
 #[test]
 fn decoded_origin_rejects_an_overlap_at_the_selected_anchor() {
-    opening_fixture_with_reset("libx264", "yuv420p", true, false, false, true, true, Some(28672));
+    opening_fixture_with_reset(
+        "libx264",
+        "yuv420p",
+        true,
+        false,
+        false,
+        true,
+        true,
+        Some(28672),
+    );
 }
 
 #[test]
 fn decoded_origin_rejects_a_reset_inside_the_selected_range() {
-    opening_fixture_with_reset("libx264", "yuv420p", true, false, false, true, true, Some(48000));
+    opening_fixture_with_reset(
+        "libx264",
+        "yuv420p",
+        true,
+        false,
+        false,
+        true,
+        true,
+        Some(48000),
+    );
 }

@@ -2,7 +2,7 @@
 //! a decoded-content-equivalent lossless segment for episode conform.
 
 use crate::{episode_conform, episode_delivery, scene_delivery};
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use reel_assembly::scene_authoring::{ScopedBindings, TemplateCatalog};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -242,11 +242,14 @@ fn anchored_sample_window(
         .checked_mul(fps)
         .context("decoded sample window overflow")?;
     let end = end_n.div_euclid(end_d);
-    let start_sample =
-        u64::try_from(start).context("decoded sample window starts before source audio")?
-            .checked_add(anchor_sample).context("decoded sample window overflow")?;
-    let end_sample = u64::try_from(end).context("decoded sample window overflow")?
-        .checked_add(anchor_sample).context("decoded sample window overflow")?;
+    let start_sample = u64::try_from(start)
+        .context("decoded sample window starts before source audio")?
+        .checked_add(anchor_sample)
+        .context("decoded sample window overflow")?;
+    let end_sample = u64::try_from(end)
+        .context("decoded sample window overflow")?
+        .checked_add(anchor_sample)
+        .context("decoded sample window overflow")?;
     if end_sample <= start_sample {
         bail!("empty decoded sample window");
     }
@@ -374,41 +377,62 @@ fn probe_sample_window(
     let mut anchor = None;
     for (index, f) in audios.iter().enumerate() {
         let current = pts("audio", tick(f)?)?;
-        let count = f["nb_samples"].as_u64().filter(|v| *v > 0)
+        let count = f["nb_samples"]
+            .as_u64()
+            .filter(|v| *v > 0)
             .context("missing decoded audio sample count")?;
         let (n, d) = pts_difference(&video, &current)?;
-        let offset = n.checked_mul(i128::from(definition.sample_rate))
+        let offset = n
+            .checked_mul(i128::from(definition.sample_rate))
             .context("source clock overflow")?;
-        let span = i128::from(count).checked_mul(d).context("source clock overflow")?;
+        let span = i128::from(count)
+            .checked_mul(d)
+            .context("source clock overflow")?;
         if offset >= 0 && offset < span {
             if anchor.is_some() {
                 bail!("ambiguous decoded source audio timestamp overlap");
             }
             anchor = Some((index, current, samples));
         }
-        samples = samples.checked_add(count).context("decoded source sample overflow")?;
+        samples = samples
+            .checked_add(count)
+            .context("decoded source sample overflow")?;
     }
-    let (index, anchor_pts, anchor_sample) = anchor
-        .context("decoded source audio timestamp gap at selected picture")?;
+    let (index, anchor_pts, anchor_sample) =
+        anchor.context("decoded source audio timestamp gap at selected picture")?;
     let window = anchored_sample_window(
-        video, audio, anchor_pts.clone(), anchor_sample, range, definition,
+        video,
+        audio,
+        anchor_pts.clone(),
+        anchor_sample,
+        range,
+        definition,
     )?;
     samples = anchor_sample;
     for f in &audios[index..] {
-        if samples >= window.end_sample { break; }
+        if samples >= window.end_sample {
+            break;
+        }
         let current = pts("audio", tick(f)?)?;
         let (n, d) = pts_difference(&current, &anchor_pts)?;
-        let observed = n.checked_mul(i128::from(definition.sample_rate))
+        let observed = n
+            .checked_mul(i128::from(definition.sample_rate))
             .context("source clock overflow")?;
-        let expected = i128::from(samples - anchor_sample).checked_mul(d)
+        let expected = i128::from(samples - anchor_sample)
+            .checked_mul(d)
             .context("source clock overflow")?;
         if observed.abs_diff(expected)
-            > timestamp_tolerance(&anchor_pts, d, u64::from(definition.sample_rate))? {
+            > timestamp_tolerance(&anchor_pts, d, u64::from(definition.sample_rate))?
+        {
             bail!("decoded source audio timestamp gap");
         }
-        let count = f["nb_samples"].as_u64().filter(|v| *v > 0)
+        let count = f["nb_samples"]
+            .as_u64()
+            .filter(|v| *v > 0)
             .context("missing decoded audio sample count")?;
-        samples = samples.checked_add(count).context("decoded source sample overflow")?;
+        samples = samples
+            .checked_add(count)
+            .context("decoded source sample overflow")?;
     }
     if samples < window.end_sample {
         bail!("decoded source range exceeds available audio");
@@ -476,8 +500,8 @@ fn bound_source_read(
                 .context("source read boundary overflow")?
                 / d;
             seconds = seconds.max(u128::try_from(end)?);
-            seconds = seconds.max(u128::from(w.end_sample)
-                .div_ceil(u128::from(definition.sample_rate)));
+            seconds =
+                seconds.max(u128::from(w.end_sample).div_ceil(u128::from(definition.sample_rate)));
         }
         let seconds = seconds
             .checked_add(1)
@@ -1227,10 +1251,23 @@ mod verification_cache_tests {
         let w = sample_window(video.clone(), audio.clone(), &range, &definition).unwrap();
         assert_eq!((w.start_sample, w.end_sample), (6_967_023, 10_889_023));
         assert_ne!(w.start_sample, range_clocks(&range, &definition).unwrap().1);
-        let anchor = SourcePts { ticks: 6_966_272, ..audio.clone() };
-        let local = anchored_sample_window(video.clone(), audio.clone(), anchor,
-            6_967_296, &range, &definition).unwrap();
-        assert_eq!((local.start_sample, local.end_sample), (6_968_047, 10_890_047));
+        let anchor = SourcePts {
+            ticks: 6_966_272,
+            ..audio.clone()
+        };
+        let local = anchored_sample_window(
+            video.clone(),
+            audio.clone(),
+            anchor,
+            6_967_296,
+            &range,
+            &definition,
+        )
+        .unwrap();
+        assert_eq!(
+            (local.start_sample, local.end_sample),
+            (6_968_047, 10_890_047)
+        );
         definition.fps_numerator = 3;
         definition.sample_rate = 10;
         definition.duration_frames = 1;
