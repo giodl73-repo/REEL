@@ -146,9 +146,14 @@ fn fixture(root: &Path) -> Value {
 fn granular_import_checks_render_and_episode_consumption() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
-    let manifest = fixture(root);
+    let mut manifest = fixture(root);
     let output = root.join("delivery");
     let native = scene_delivery::render(&root.join("job.json"), root, &output).unwrap();
+    manifest["source_evidence"] = json!([
+        reference(root, "semantic.json"),
+        reference(root, "delivery/receipt.json")
+    ]);
+    write(root, "import.json", &manifest);
     assert_eq!(native.plan.rendered_external_layers, vec!["overlay"]);
     let proof =
         imported_scene_proof::verify_render(root, &parsed_ref(root, "import.json"), root, &output)
@@ -220,6 +225,7 @@ fn granular_import_checks_render_and_episode_consumption() {
     assert_eq!(episode.total_samples, 96000);
     assert!(episode.decoded_master_matches_ordered_segments);
     let accepted_conform = conform.clone();
+    exercise_encoding_successor(root, &manifest, &accepted_conform);
     conform["segments"][0]
         .as_object_mut()
         .unwrap()
@@ -315,6 +321,212 @@ fn granular_import_checks_render_and_episode_consumption() {
             root,
             &output,
             &selected
+        )
+        .is_err()
+    );
+}
+
+fn exercise_encoding_successor(root: &Path, original_manifest: &Value, original_conform: &Value) {
+    let original_job: Value =
+        serde_json::from_slice(&fs::read(root.join("job.json")).unwrap()).unwrap();
+    let original_semantic: Value =
+        serde_json::from_slice(&fs::read(root.join("semantic.json")).unwrap()).unwrap();
+    let mut derived = original_job.clone();
+    derived["still_sequence_encoding"] = json!("h264-lossless");
+    write(root, "derived-job.json", &derived);
+    let mut semantic = original_semantic.clone();
+    semantic["scene_delivery_job"] = reference(root, "derived-job.json");
+    write(root, "derived-semantic.json", &semantic);
+    let descriptor = json!({"schema":"reel.imported-scene-encoding-successor.v1",
+        "original_manifest":reference(root,"import.json"),
+        "original_receipt":reference(root,"delivery/receipt.json"),
+        "original_cached_semantic":reference(root,"semantic.json")});
+    write(root, "encoding.json", &descriptor);
+    let mut manifest = original_manifest.clone();
+    manifest["schema"] = json!(imported_scene_proof::ENCODING_MANIFEST_SCHEMA);
+    manifest["encoding_successor"] = reference(root, "encoding.json");
+    manifest["job"] = reference(root, "derived-job.json");
+    manifest["semantic_delivery"] = reference(root, "derived-semantic.json");
+    write(root, "encoding-import.json", &manifest);
+    imported_scene_proof::verify_inputs(root, &parsed_ref(root, "encoding-import.json")).unwrap();
+    imported_scene_proof::check_inputs(root, &parsed_ref(root, "encoding-import.json"), root)
+        .unwrap();
+    let output = root.join("derived-delivery");
+    scene_delivery::render(&root.join("derived-job.json"), root, &output).unwrap();
+    let proof = imported_scene_proof::verify_render(
+        root,
+        &parsed_ref(root, "encoding-import.json"),
+        root,
+        &output,
+    )
+    .unwrap();
+    assert_eq!(
+        proof.original_selected_job_sha256.as_deref(),
+        reference(root, "job.json")["sha256"].as_str()
+    );
+    assert_eq!(
+        proof.derived_render_job_sha256.as_deref(),
+        reference(root, "derived-job.json")["sha256"].as_str()
+    );
+    assert!(proof.encoding_successor_sha256.is_some());
+    let selected = serde_json::to_value(proof).unwrap();
+    imported_scene_proof::recheck(
+        root,
+        &parsed_ref(root, "encoding-import.json"),
+        root,
+        &output,
+        &selected,
+    )
+    .unwrap();
+    let mut partial = selected.clone();
+    partial
+        .as_object_mut()
+        .unwrap()
+        .remove("original_selected_job_sha256");
+    assert!(
+        imported_scene_proof::recheck(
+            root,
+            &parsed_ref(root, "encoding-import.json"),
+            root,
+            &output,
+            &partial
+        )
+        .is_err()
+    );
+    let mut conform = original_conform.clone();
+    conform["segments"][0]["master"] = reference(root, "derived-delivery/master.mkv");
+    conform["segments"][0]["source_receipt"] =
+        reference(root, "derived-delivery/imported-scene-source-proof.json");
+    conform["segments"][0]["delivery_job"] = reference(root, "derived-job.json");
+    conform["segments"][0]["delivery_receipt"] = reference(root, "derived-delivery/receipt.json");
+    conform["segments"][0]["imported_source_manifest"] = reference(root, "encoding-import.json");
+    write(root, "derived-conform.json", &conform);
+    let film = reel::episode_conform::build(
+        &root.join("derived-conform.json"),
+        root,
+        root,
+        &root.join("derived-episode"),
+    )
+    .unwrap();
+    assert_eq!(film.total_frames, 48);
+    assert!(film.decoded_master_matches_ordered_segments);
+
+    for (index, pointer, value) in [
+        (0, "/audio/0/gain_db", json!(-6)),
+        (1, "/audio/3/source_start_sample", json!(100)),
+        (2, "/audio/2/bus", json!("E")),
+        (3, "/pictures/0/source/sha256", json!("b".repeat(64))),
+        (4, "/contract/sha256", json!("b".repeat(64))),
+        (5, "/production_manifest_sha256", json!("b".repeat(64))),
+    ] {
+        let mut changed = derived.clone();
+        if let Some(target) = changed.pointer_mut(pointer) {
+            *target = value;
+        } else {
+            changed["audio"][0]["gain_db"] = value;
+        }
+        let job_name = format!("bad-encoding-job-{index}.json");
+        write(root, &job_name, &changed);
+        let mut bad_semantic = semantic.clone();
+        bad_semantic["scene_delivery_job"] = reference(root, &job_name);
+        let semantic_name = format!("bad-encoding-semantic-{index}.json");
+        write(root, &semantic_name, &bad_semantic);
+        let mut bad = manifest.clone();
+        bad["job"] = reference(root, &job_name);
+        bad["semantic_delivery"] = reference(root, &semantic_name);
+        let name = format!("bad-encoding-import-{index}.json");
+        write(root, &name, &bad);
+        assert!(imported_scene_proof::verify_inputs(root, &parsed_ref(root, &name)).is_err());
+    }
+    for field in ["language", "scene_id"] {
+        let mut bad = manifest.clone();
+        bad[field] = json!("foreign");
+        write(root, "foreign-encoding.json", &bad);
+        assert!(
+            imported_scene_proof::verify_inputs(root, &parsed_ref(root, "foreign-encoding.json"))
+                .is_err()
+        );
+    }
+    let mut stale_semantic = original_semantic.clone();
+    let mut fabricated_semantic = original_semantic.clone();
+    fabricated_semantic["id"] = json!("unretained-historical-semantic");
+    write(
+        root,
+        "unretained-original-semantic.json",
+        &fabricated_semantic,
+    );
+    let mut fabricated_receipt: Value =
+        serde_json::from_slice(&fs::read(root.join("delivery/receipt.json")).unwrap()).unwrap();
+    fabricated_receipt["tool_version"] = json!("unretained-history");
+    write(
+        root,
+        "unretained-original-receipt.json",
+        &fabricated_receipt,
+    );
+    for (key, name) in [
+        (
+            "original_cached_semantic",
+            "unretained-original-semantic.json",
+        ),
+        ("original_receipt", "unretained-original-receipt.json"),
+    ] {
+        let mut d = descriptor.clone();
+        d[key] = reference(root, name);
+        write(root, "unretained-encoding.json", &d);
+        let mut bad = manifest.clone();
+        bad["encoding_successor"] = reference(root, "unretained-encoding.json");
+        write(root, "unretained-encoding-import.json", &bad);
+        let error = imported_scene_proof::verify_inputs(
+            root,
+            &parsed_ref(root, "unretained-encoding-import.json"),
+        )
+        .err()
+        .unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("not pinned by original manifest")
+        );
+    }
+    stale_semantic["event_bindings"][0]["audio_attachment_ids"] = json!([]);
+    write(root, "stale-original-semantic.json", &stale_semantic);
+    let mut stale_receipt: Value =
+        serde_json::from_slice(&fs::read(root.join("delivery/receipt.json")).unwrap()).unwrap();
+    stale_receipt["plan"]["job_sha256"] = json!("b".repeat(64));
+    write(root, "stale-original-receipt.json", &stale_receipt);
+    for (key, name) in [
+        ("original_cached_semantic", "stale-original-semantic.json"),
+        ("original_receipt", "stale-original-receipt.json"),
+    ] {
+        let mut bad_descriptor = descriptor.clone();
+        bad_descriptor[key] = reference(root, name);
+        write(root, "stale-encoding.json", &bad_descriptor);
+        let mut bad = manifest.clone();
+        bad["encoding_successor"] = reference(root, "stale-encoding.json");
+        write(root, "stale-encoding-import.json", &bad);
+        assert!(
+            imported_scene_proof::verify_inputs(
+                root,
+                &parsed_ref(root, "stale-encoding-import.json")
+            )
+            .is_err()
+        );
+    }
+    stale_receipt["plan"]["job_sha256"] = reference(root, "job.json")["sha256"].clone();
+    stale_receipt["plan"]["compiled_sha256"] = json!("b".repeat(64));
+    write(root, "stale-compiled-receipt.json", &stale_receipt);
+    let mut bad_descriptor = descriptor.clone();
+    bad_descriptor["original_receipt"] = reference(root, "stale-compiled-receipt.json");
+    write(root, "stale-compiled-encoding.json", &bad_descriptor);
+    let mut bad = manifest.clone();
+    bad["encoding_successor"] = reference(root, "stale-compiled-encoding.json");
+    write(root, "stale-compiled-import.json", &bad);
+    assert!(
+        imported_scene_proof::verify_render(
+            root,
+            &parsed_ref(root, "stale-compiled-import.json"),
+            root,
+            &output
         )
         .is_err()
     );

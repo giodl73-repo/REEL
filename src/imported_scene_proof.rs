@@ -9,6 +9,7 @@ use std::{fs, path::Path};
 
 pub const MANIFEST_SCHEMA: &str = "reel.imported-scene-proof-manifest.v1";
 pub const RECEIPT_SCHEMA: &str = "reel.imported-scene-source-proof.v1";
+pub const ENCODING_MANIFEST_SCHEMA: &str = "reel.imported-scene-encoding-successor-manifest.v1";
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -30,6 +31,17 @@ pub struct Manifest {
     pub source_evidence: Vec<scene_delivery::FileRef>,
     #[serde(default)]
     pub presentation_role: Option<String>,
+    #[serde(default)]
+    pub encoding_successor: Option<scene_delivery::FileRef>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EncodingSuccessor {
+    pub schema: String,
+    pub original_manifest: scene_delivery::FileRef,
+    pub original_receipt: scene_delivery::FileRef,
+    pub original_cached_semantic: scene_delivery::FileRef,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
@@ -53,6 +65,12 @@ pub struct Receipt {
     pub frames: u64,
     pub samples: u64,
     pub presentation_role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_selected_job_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived_render_job_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encoding_successor_sha256: Option<String>,
 }
 
 fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
@@ -102,7 +120,10 @@ fn validate_source(
     {
         bail!("imported source selection does not bind the exact graph and identity");
     }
-    if semantic.scene_id.as_deref() != Some(manifest.scene_id.as_str())
+    if semantic
+        .scene_id
+        .as_deref()
+        .is_some_and(|id| id != manifest.scene_id)
         || semantic.language.as_deref() != Some(manifest.language.as_str())
         || semantic.target != manifest.source_target
         || manifest.source_target != manifest.scene_id
@@ -124,6 +145,13 @@ fn validate_source(
 /// successor grammar. Also verify that the source phrases actually lie inside
 /// their selected native D and primary-picture spans.
 fn validate_native_timeline(inputs: &VerifiedInputs, asset_root: &Path) -> Result<()> {
+    if let Some(encoding) = &inputs.encoding {
+        let (_, original_plan) = scene_delivery::plan(&encoding.original_job_path, asset_root)?;
+        let original_receipt: scene_delivery::Receipt = read(&encoding.original_receipt_path)?;
+        if serde_json::to_value(original_plan)? != serde_json::to_value(original_receipt.plan)? {
+            bail!("encoding successor original receipt has a stale compiled plan");
+        }
+    }
     let root = &inputs.input_root;
     let semantic_path = scene_delivery::checked_file(root, &inputs.manifest.semantic_delivery)?;
     let semantic: semantic_delivery::SemanticDelivery = read(&semantic_path)?;
@@ -247,11 +275,68 @@ pub struct VerifiedInputs {
     pub job_path: std::path::PathBuf,
     pub contract_sha256: String,
     pub manifest_sha256: String,
+    pub encoding: Option<VerifiedEncoding>,
+}
+
+pub struct VerifiedEncoding {
+    pub original_job_path: std::path::PathBuf,
+    pub original_job_sha256: String,
+    pub original_receipt_path: std::path::PathBuf,
+    pub descriptor_sha256: String,
+}
+
+fn encoding_only_job(original: &serde_json::Value, derived: &serde_json::Value) -> Result<()> {
+    let mut original = original
+        .as_object()
+        .context("original job is not an object")?
+        .clone();
+    let mut derived = derived
+        .as_object()
+        .context("derived job is not an object")?
+        .clone();
+    if original
+        .remove("still_sequence_encoding")
+        .is_some_and(|v| !v.is_null())
+        || derived.remove("still_sequence_encoding") != Some(serde_json::json!("h264-lossless"))
+        || original != derived
+    {
+        bail!("encoding successor changes more than the allowed lossless encoding field");
+    }
+    Ok(())
+}
+
+fn scene_projection(graph: &Graph, scene: &str) -> Result<serde_json::Value> {
+    let node = graph
+        .nodes
+        .iter()
+        .find(|n| n.id == scene)
+        .context("original semantic lacks scene")?;
+    let events: std::collections::BTreeMap<_, _> = graph
+        .events
+        .iter()
+        .filter(|e| node.events.contains(&e.event_id))
+        .map(|e| (&e.event_id, e))
+        .collect();
+    let slots: std::collections::BTreeMap<_, _> = graph
+        .slots
+        .iter()
+        .filter(|s| node.slots.contains(&s.slot_id))
+        .map(|s| (&s.slot_id, s))
+        .collect();
+    Ok(serde_json::json!({"node":node,"events":events,"slots":slots}))
 }
 
 pub fn verify_inputs(
     input_root: &Path,
     manifest_ref: &scene_delivery::FileRef,
+) -> Result<VerifiedInputs> {
+    verify_inputs_inner(input_root, manifest_ref, true)
+}
+
+fn verify_inputs_inner(
+    input_root: &Path,
+    manifest_ref: &scene_delivery::FileRef,
+    allow_successor: bool,
 ) -> Result<VerifiedInputs> {
     let manifest_path = scene_delivery::checked_file(input_root, manifest_ref)?;
     let manifest: Manifest = read(&manifest_path)?;
@@ -263,7 +348,91 @@ pub fn verify_inputs(
     let capture: serde_json::Value = read(&capture_path)?;
     let semantic_path = scene_delivery::checked_file(input_root, &manifest.semantic_delivery)?;
     let semantic: semantic_delivery::SemanticDelivery = read(&semantic_path)?;
-    validate_source(&manifest, &source, &selection, &capture, &semantic)?;
+    let encoding = if let Some(descriptor_ref) = &manifest.encoding_successor {
+        if !allow_successor || manifest.schema != ENCODING_MANIFEST_SCHEMA {
+            bail!("encoding successor must reference one unchanged original import");
+        }
+        let descriptor_path = scene_delivery::checked_file(input_root, descriptor_ref)?;
+        let descriptor: EncodingSuccessor = read(&descriptor_path)?;
+        if descriptor.schema != "reel.imported-scene-encoding-successor.v1" {
+            bail!("unsupported encoding successor descriptor");
+        }
+        let original = verify_inputs_inner(input_root, &descriptor.original_manifest, false)?;
+        let old = &original.manifest;
+        for evidence in [
+            &descriptor.original_receipt,
+            &descriptor.original_cached_semantic,
+        ] {
+            if !old.source_evidence.iter().any(|p| {
+                p.path == evidence.path && p.sha256 == evidence.sha256 && p.bytes == evidence.bytes
+            }) {
+                bail!("encoding successor historical evidence is not pinned by original manifest");
+            }
+        }
+        if manifest.episode_id != old.episode_id
+            || manifest.scene_id != old.scene_id
+            || manifest.language != old.language
+            || manifest.source_target != old.source_target
+            || manifest.presentation_role != old.presentation_role
+            || manifest.source_graph.sha256 != old.source_graph.sha256
+            || manifest.source_selection.sha256 != old.source_selection.sha256
+            || manifest.source_capture.sha256 != old.source_capture.sha256
+            || manifest.production.sha256 != old.production.sha256
+        {
+            bail!("encoding successor changes original scene identity or source pins");
+        }
+        let original_semantic_path =
+            scene_delivery::checked_file(input_root, &old.semantic_delivery)?;
+        let original_semantic: semantic_delivery::SemanticDelivery = read(&original_semantic_path)?;
+        let mut before = serde_json::to_value(&original_semantic)?;
+        let mut after = serde_json::to_value(&semantic)?;
+        before.as_object_mut().unwrap().remove("scene_delivery_job");
+        after.as_object_mut().unwrap().remove("scene_delivery_job");
+        if before != after {
+            bail!("encoding successor changes original semantic bindings");
+        }
+        let derived_job_path = scene_delivery::checked_file(input_root, &manifest.job)?;
+        encoding_only_job(&read(&original.job_path)?, &read(&derived_job_path)?)?;
+        let original_receipt_path =
+            scene_delivery::checked_file(input_root, &descriptor.original_receipt)?;
+        let original_receipt: scene_delivery::Receipt = read(&original_receipt_path)?;
+        if original_receipt.schema != "reel.scene-delivery-receipt.v0.1"
+            || original_receipt.plan.job_sha256 != old.job.sha256
+            || original_receipt.plan.contract_sha256 != original.contract_sha256
+            || original_receipt.plan.production_sha256 != old.production.sha256
+        {
+            bail!("encoding successor original receipt does not bind original job");
+        }
+        let cached_path =
+            scene_delivery::checked_file(input_root, &descriptor.original_cached_semantic)?;
+        let cached: semantic_delivery::SemanticDelivery = read(&cached_path)?;
+        if cached.schema != "reel.semantic-delivery.v1"
+            || cached
+                .scene_id
+                .as_deref()
+                .is_some_and(|id| id != old.scene_id)
+            || cached.target != old.source_target
+            || cached.language != original_semantic.language
+            || cached.scene_delivery_job.sha256 != old.job.sha256
+            || serde_json::to_value(&cached.event_bindings)?
+                != serde_json::to_value(&original_semantic.event_bindings)?
+            || scene_projection(&cached.graph, &old.scene_id)?
+                != scene_projection(&source, &old.scene_id)?
+            || serde_json::to_value(&cached.pointer.selected_lock)?
+                != serde_json::to_value(&cached.graph.lock)?
+        {
+            bail!("encoding successor original cached semantic differs from source");
+        }
+        Some(VerifiedEncoding {
+            original_job_path: original.job_path,
+            original_job_sha256: old.job.sha256.clone(),
+            original_receipt_path,
+            descriptor_sha256: descriptor_ref.sha256.clone(),
+        })
+    } else {
+        validate_source(&manifest, &source, &selection, &capture, &semantic)?;
+        None
+    };
     let semantic_base = semantic_path
         .parent()
         .context("semantic delivery lacks parent")?;
@@ -295,6 +464,7 @@ pub fn verify_inputs(
         job_path,
         contract_sha256: job.contract.sha256,
         manifest_sha256: manifest_ref.sha256.clone(),
+        encoding,
     })
 }
 
@@ -327,7 +497,26 @@ fn receipt(
         frames: native.delivery_frames,
         samples: native.content_samples,
         presentation_role: m.presentation_role.clone(),
+        original_selected_job_sha256: inputs
+            .encoding
+            .as_ref()
+            .map(|e| e.original_job_sha256.clone()),
+        derived_render_job_sha256: inputs.encoding.as_ref().map(|_| m.job.sha256.clone()),
+        encoding_successor_sha256: inputs
+            .encoding
+            .as_ref()
+            .map(|e| e.descriptor_sha256.clone()),
     })
+}
+
+/// Checks source bindings and compiled clocks without producing media or a proof.
+pub fn check_inputs(
+    input_root: &Path,
+    manifest_ref: &scene_delivery::FileRef,
+    asset_root: &Path,
+) -> Result<()> {
+    let inputs = verify_inputs(input_root, manifest_ref)?;
+    validate_native_timeline(&inputs, asset_root)
 }
 
 /// Issues a distinct proof only after actual source checks and full native
@@ -418,6 +607,31 @@ mod tests {
     fn identity_accepts_exact_source_pointer_and_capture() {
         let (m, g, p, c, s) = fixture();
         validate_source(&m, &g, &p, &c, &s).unwrap();
+    }
+
+    #[test]
+    fn legacy_semantic_optional_scene_id_still_requires_exact_target() {
+        let (m, g, p, c, mut s) = fixture();
+        s.scene_id = None;
+        validate_source(&m, &g, &p, &c, &s).unwrap();
+        s.target = "foreign".into();
+        assert!(validate_source(&m, &g, &p, &c, &s).is_err());
+    }
+
+    #[test]
+    fn encoding_job_rejects_content_and_unsupported_encoding_changes() {
+        let original = json!({"audio":[{"gain_db":-12}],"pictures":[{"source":"original"}]});
+        let mut derived = original.clone();
+        derived["still_sequence_encoding"] = json!("h264-lossless");
+        encoding_only_job(&original, &derived).unwrap();
+        let mut nullable = original.clone();
+        nullable["still_sequence_encoding"] = serde_json::Value::Null;
+        encoding_only_job(&nullable, &derived).unwrap();
+        derived["audio"][0]["gain_db"] = json!(-6);
+        assert!(encoding_only_job(&original, &derived).is_err());
+        derived = original.clone();
+        derived["still_sequence_encoding"] = json!("h264");
+        assert!(encoding_only_job(&original, &derived).is_err());
     }
 
     #[test]
