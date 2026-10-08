@@ -34,8 +34,8 @@ transformation proof. They must fail this unchanged-import route.
 
 ## Remaining validation before production use
 
-Identity and phrase arithmetic unit fixtures exist. Complete real FFmpeg
-source/render fixtures, imported-proof conform consumption fixtures, stale
-source/capture/binding negatives, independent source capture reconciliation and
-final bounded review are still required. No production runtime is selected
-from this development branch yet.
+Identity and phrase arithmetic fixtures and a real FFmpeg scene/conform fixture
+exercise D/M/E, two cels, an overlay spanning both, and stale job/binding/output
+rejections. Independent source capture reconciliation and final bounded review
+are still required for each historical source. No production runtime is
+selected from this development branch yet.

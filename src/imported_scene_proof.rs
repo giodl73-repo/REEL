@@ -383,7 +383,7 @@ mod tests {
         let hash = "a".repeat(64);
         let file = json!({"path":"source.json","sha256":hash,"bytes":1});
         let graph: Graph = serde_json::from_value(json!({
-            "schema":"reel.assembly-graph.v1",
+            "schema":"reel.semantic-assembly.v1",
             "lock":{"logical_id":"selected","sha256":hash},
             "slots":[], "events":[],
             "nodes":[{"id":"scene-1","inputs":[],"slots":[],"events":[]}]
