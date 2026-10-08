@@ -33,6 +33,8 @@ pub struct Manifest {
     pub presentation_role: Option<String>,
     #[serde(default)]
     pub encoding_successor: Option<scene_delivery::FileRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presentation_successor: Option<scene_delivery::FileRef>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -71,6 +73,8 @@ pub struct Receipt {
     pub derived_render_job_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub encoding_successor_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presentation_successor_sha256: Option<String>,
 }
 
 fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
@@ -145,6 +149,10 @@ fn validate_source(
 /// successor grammar. Also verify that the source phrases actually lie inside
 /// their selected native D and primary-picture spans.
 fn validate_native_timeline(inputs: &VerifiedInputs, asset_root: &Path) -> Result<()> {
+    if let Some(overlay) = &inputs.overlay {
+        validate_native_timeline(&overlay.original, asset_root)?;
+        return crate::imported_presentation_overlay::verify_native(inputs, asset_root);
+    }
     if let Some(encoding) = &inputs.encoding {
         let (_, original_plan) = scene_delivery::plan(&encoding.original_job_path, asset_root)?;
         let original_receipt: scene_delivery::Receipt = read(&encoding.original_receipt_path)?;
@@ -276,6 +284,7 @@ pub struct VerifiedInputs {
     pub contract_sha256: String,
     pub manifest_sha256: String,
     pub encoding: Option<VerifiedEncoding>,
+    pub overlay: Option<crate::imported_presentation_overlay::VerifiedOverlay>,
 }
 
 pub struct VerifiedEncoding {
@@ -305,7 +314,7 @@ fn encoding_only_job(original: &serde_json::Value, derived: &serde_json::Value) 
     Ok(())
 }
 
-fn scene_projection(graph: &Graph, scene: &str) -> Result<serde_json::Value> {
+pub(crate) fn scene_projection(graph: &Graph, scene: &str) -> Result<serde_json::Value> {
     let node = graph
         .nodes
         .iter()
@@ -333,13 +342,23 @@ pub fn verify_inputs(
     verify_inputs_inner(input_root, manifest_ref, true)
 }
 
-fn verify_inputs_inner(
+pub(crate) fn verify_inputs_inner(
     input_root: &Path,
     manifest_ref: &scene_delivery::FileRef,
     allow_successor: bool,
 ) -> Result<VerifiedInputs> {
     let manifest_path = scene_delivery::checked_file(input_root, manifest_ref)?;
     let manifest: Manifest = read(&manifest_path)?;
+    if manifest.presentation_successor.is_some() {
+        if !allow_successor {
+            bail!("nested presentation successors are not supported");
+        }
+        return crate::imported_presentation_overlay::verify_inputs(
+            input_root,
+            manifest_ref,
+            manifest,
+        );
+    }
     let graph_path = scene_delivery::checked_file(input_root, &manifest.source_graph)?;
     let source: Graph = read(&graph_path)?;
     let selection_path = scene_delivery::checked_file(input_root, &manifest.source_selection)?;
@@ -465,6 +484,7 @@ fn verify_inputs_inner(
         contract_sha256: job.contract.sha256,
         manifest_sha256: manifest_ref.sha256.clone(),
         encoding,
+        overlay: None,
     })
 }
 
@@ -500,12 +520,20 @@ fn receipt(
         original_selected_job_sha256: inputs
             .encoding
             .as_ref()
-            .map(|e| e.original_job_sha256.clone()),
-        derived_render_job_sha256: inputs.encoding.as_ref().map(|_| m.job.sha256.clone()),
+            .map(|e| e.original_job_sha256.clone())
+            .or_else(|| {
+                inputs
+                    .overlay
+                    .as_ref()
+                    .map(|o| o.original.manifest.job.sha256.clone())
+            }),
+        derived_render_job_sha256: (inputs.encoding.is_some() || inputs.overlay.is_some())
+            .then(|| m.job.sha256.clone()),
         encoding_successor_sha256: inputs
             .encoding
             .as_ref()
             .map(|e| e.descriptor_sha256.clone()),
+        presentation_successor_sha256: inputs.overlay.as_ref().map(|o| o.descriptor_sha256.clone()),
     })
 }
 

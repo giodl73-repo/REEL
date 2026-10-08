@@ -226,6 +226,7 @@ fn granular_import_checks_render_and_episode_consumption() {
     assert!(episode.decoded_master_matches_ordered_segments);
     let accepted_conform = conform.clone();
     exercise_encoding_successor(root, &manifest, &accepted_conform);
+    exercise_presentation_successor(root, &manifest, &accepted_conform);
     conform["segments"][0]
         .as_object_mut()
         .unwrap()
@@ -527,6 +528,293 @@ fn exercise_encoding_successor(root: &Path, original_manifest: &Value, original_
             &parsed_ref(root, "stale-compiled-import.json"),
             root,
             &output
+        )
+        .is_err()
+    );
+}
+
+fn exercise_presentation_successor(root: &Path, original: &Value, conform: &Value) {
+    use reel_assembly::scene_authoring::NativeAlignment;
+    use reel_assembly::template_presentation::{
+        EditableTextInvocation, EditableTextTemplate, compile_layer,
+    };
+    use std::collections::BTreeMap;
+    // Keep the pre-existing VFX fixture intact; create an independent original
+    // with no rendered layer for this ASS successor case.
+    let scope = root.join("presentation-case");
+    fs::create_dir(&scope).unwrap();
+    for item in fs::read_dir(root).unwrap() {
+        let item = item.unwrap();
+        if item.file_type().unwrap().is_file() {
+            fs::copy(item.path(), scope.join(item.file_name())).unwrap();
+        }
+    }
+    let root = scope.as_path();
+    let mut base_contract: Value =
+        serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
+    base_contract["attachments"].as_array_mut().unwrap().pop();
+    write(root, "contract.json", &base_contract);
+    let mut base_job: Value =
+        serde_json::from_slice(&fs::read(root.join("job.json")).unwrap()).unwrap();
+    base_job["external_layers"] = json!([]);
+    base_job["contract"] = reference(root, "contract.json");
+    write(root, "job.json", &base_job);
+    let mut base_semantic: Value =
+        serde_json::from_slice(&fs::read(root.join("semantic.json")).unwrap()).unwrap();
+    base_semantic["scene_delivery_job"] = reference(root, "job.json");
+    for event in base_semantic["event_bindings"].as_array_mut().unwrap() {
+        event["external_layer_attachment_ids"] = json!([]);
+    }
+    write(root, "semantic.json", &base_semantic);
+    let mut base_capture: Value =
+        serde_json::from_slice(&fs::read(root.join("capture.json")).unwrap()).unwrap();
+    base_capture["selected_delivery_jobs"]["es"] = reference(root, "job.json");
+    base_capture["selected_semantic_deliveries"]["es"] = reference(root, "semantic.json");
+    write(root, "capture.json", &base_capture);
+    scene_delivery::render(&root.join("job.json"), root, &root.join("delivery")).unwrap();
+    let mut base_import = original.clone();
+    base_import["job"] = reference(root, "job.json");
+    base_import["semantic_delivery"] = reference(root, "semantic.json");
+    base_import["source_capture"] = reference(root, "capture.json");
+    base_import["source_evidence"] = json!([
+        reference(root, "semantic.json"),
+        reference(root, "delivery/receipt.json")
+    ]);
+    write(root, "import.json", &base_import);
+    let original = &base_import;
+    let font_path = [
+        "C:/Windows/Fonts/arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    .into_iter()
+    .map(Path::new)
+    .find(|p| p.is_file())
+    .expect("fixture needs a font");
+    fs::copy(font_path, root.join("selected-font.ttf")).unwrap();
+    let template = json!({"schema":"reel.editable-text-template.v1","template_id":"date",
+        "kind":"semantic-label","canvas_width":64,"canvas_height":64,"font_name":"Arial",
+        "title_size":16,"body_size":12,"title_x":32,"title_y":56,"body_x":2,"body_y":48,
+        "line_spacing":16,"future_rgb":[255,255,255],"active_rgb":[255,255,255],
+        "completed_rgb":[255,255,255],"panel":null,"fixed_duration_seconds":1});
+    let invocation = json!({"schema":"reel.editable-text-invocation.v1","template_id":"date",
+        "language":"es","title":"1924","lines":[{"text":"1924","cue_id":"b",
+        "semantic_trigger_id":"line-entry","stanza_break_before":false}]});
+    let source = json!({"schema":"reel.presentation-source-text.v1","source_authority_id":"chronology",
+        "source_document_sha256":"e".repeat(64),"source_scope_ids":["b"],"language":"es",
+        "text_state":"project-draft-review-held","title":"1924","chapter_number":null,
+        "lines":[{"text":"1924","cue_id":"b","stanza_break_before":false}]});
+    write(root, "date-template.json", &template);
+    write(root, "date-source.json", &source);
+    let clock = |id: &str, take: &str| NativeAlignment {
+        schema: "reel.scene-native-alignment.v1".into(),
+        language: "es".into(),
+        cue_id: id.into(),
+        selected_take_sha256: reference(root, take)["sha256"].as_str().unwrap().into(),
+        sample_rate: 48000,
+        cue_end_sample: 48000,
+        semantic_markers: BTreeMap::from([("line-entry".into(), 0)]),
+    };
+    let compiled = compile_layer(
+        &serde_json::from_value::<EditableTextTemplate>(template.clone()).unwrap(),
+        &serde_json::from_value::<EditableTextInvocation>(invocation.clone()).unwrap(),
+        &["a".into(), "b".into()],
+        &BTreeMap::from([
+            ("a".into(), clock("a", "a.wav")),
+            ("b".into(), clock("b", "b.wav")),
+        ]),
+    )
+    .unwrap();
+    fs::write(root.join("date.ass"), compiled.ass.as_bytes()).unwrap();
+    write(
+        root,
+        "date-compile.json",
+        &json!({"schema":"reel.editable-layer-compile-receipt.v1",
+        "scene_id":"scene","language":"es","template_id":"date",
+        "template_definition_sha256":reference(root,"date-template.json")["sha256"],
+        "source_text_sha256":reference(root,"date-source.json")["sha256"],"source_text_state":"project-draft-review-held",
+        "ass_sha256":reference(root,"date.ass")["sha256"],"ass_bytes":reference(root,"date.ass")["bytes"],
+        "sample_rate":48000,"duration_samples":96000}),
+    );
+    let mut contract: Value =
+        serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
+    contract["attachments"].as_array_mut().unwrap().push(
+        json!({"id":"date","target":{"kind":"title","title_id":"date"},
+        "start":{"kind":"cue-start","cue_id":"a"},"end":{"kind":"cue-end","cue_id":"b"}}),
+    );
+    write(root, "date-contract.json", &contract);
+    let mut job: Value = serde_json::from_slice(&fs::read(root.join("job.json")).unwrap()).unwrap();
+    job["contract"] = reference(root, "date-contract.json");
+    job["still_sequence_encoding"] = json!("h264-lossless");
+    job["external_layers"].as_array_mut().unwrap().push(json!({"attachment_id":"date","reason":"Source date overlay",
+        "render_mode":"ass-overlay","evidence":reference(root,"date.ass"),"font":reference(root,"selected-font.ttf")}));
+    write(root, "date-job.json", &job);
+    write(
+        root,
+        "date-catalog.json",
+        &json!({"schema":"reel.scene-template-catalog.v1","templates":[
+        {"template_id":"date","kind":"semantic-label","definition_sha256":reference(root,"date-template.json")["sha256"],"required_content_keys":[]}]}),
+    );
+    let asset = |name: &str| {
+        let r = reference(root, name);
+        json!({"logical_id":name,"sha256":r["sha256"],"bytes":r["bytes"],
+        "cache_uri":format!("cache://sha256/{}",r["sha256"].as_str().unwrap()),"selection_state":"selected-private-production"})
+    };
+    write(
+        root,
+        "date-bindings.json",
+        &json!({"schema":"reel.scene-asset-bindings.v1","scope_id":"scene",
+        "assets":{"source":asset("date-source.json"),"font":asset("selected-font.ttf")}}),
+    );
+    let descriptor = json!({"schema":reel::imported_presentation_overlay::DESCRIPTOR_SCHEMA,
+        "template_catalog":reference(root,"date-catalog.json"),"presentation_bindings":[reference(root,"date-bindings.json")],
+        "original_manifest":reference(root,"import.json"),"original_receipt":reference(root,"delivery/receipt.json"),
+        "original_cached_semantic":reference(root,"semantic.json"),"template_definition":reference(root,"date-template.json"),
+        "source_text":reference(root,"date-source.json"),"compile_receipt":reference(root,"date-compile.json"),
+        "ass":reference(root,"date.ass"),"font":reference(root,"selected-font.ttf"),"attachment_id":"date",
+        "presentation_scene_id":"scene","source_authority_id":"chronology","source_scope_ids":["b"],
+        "invocation":invocation,"cue_bindings":[
+        {"source_cue_id":"a","native_cue_id":"a","narration_logical_id":"a.wav"},
+        {"source_cue_id":"b","native_cue_id":"b","narration_logical_id":"b.wav"}]});
+    write(root, "date-descriptor.json", &descriptor);
+    let mut manifest = original.clone();
+    manifest["schema"] = json!(reel::imported_presentation_overlay::MANIFEST_SCHEMA);
+    manifest["job"] = reference(root, "date-job.json");
+    manifest["presentation_successor"] = reference(root, "date-descriptor.json");
+    write(root, "date-import.json", &manifest);
+    imported_scene_proof::check_inputs(root, &parsed_ref(root, "date-import.json"), root).unwrap();
+    let output = root.join("date-delivery");
+    scene_delivery::render(&root.join("date-job.json"), root, &output).unwrap();
+    let proof = imported_scene_proof::verify_render(
+        root,
+        &parsed_ref(root, "date-import.json"),
+        root,
+        &output,
+    )
+    .unwrap();
+    assert!(proof.presentation_successor_sha256.is_some());
+    assert!(proof.encoding_successor_sha256.is_none());
+    let mut new_conform = conform.clone();
+    let segment = &mut new_conform["segments"][0];
+    segment["master"] = reference(root, "date-delivery/master.mkv");
+    segment["delivery_job"] = reference(root, "date-job.json");
+    segment["delivery_receipt"] = reference(root, "date-delivery/receipt.json");
+    segment["source_receipt"] = reference(root, "date-delivery/imported-scene-source-proof.json");
+    segment["imported_source_manifest"] = reference(root, "date-import.json");
+    write(root, "date-conform.json", &new_conform);
+    let rebuilt = reel::episode_conform::build(
+        &root.join("date-conform.json"),
+        root,
+        root,
+        &root.join("date-episode"),
+    )
+    .unwrap();
+    assert!(rebuilt.decoded_master_matches_ordered_segments);
+    assert_eq!(rebuilt.total_frames, 48);
+    // Changed content must fail even with correctly repinned candidate bytes.
+    for pointer in [
+        "/audio/0/gain_db",
+        "/audio/2/source_start_sample",
+        "/audio/3/bus",
+        "/pictures/0/attention",
+        "/production_manifest_sha256",
+    ] {
+        let mut bad_job = job.clone();
+        if let Some(slot) = bad_job.pointer_mut(pointer) {
+            *slot = json!("changed");
+        } else {
+            let (base, key) = pointer.rsplit_once('/').unwrap();
+            bad_job
+                .pointer_mut(base)
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .insert(key.into(), json!(123));
+        }
+        write(root, "bad-date-job.json", &bad_job);
+        let mut bad = manifest.clone();
+        bad["job"] = reference(root, "bad-date-job.json");
+        write(root, "bad-date-import.json", &bad);
+        assert!(
+            imported_scene_proof::check_inputs(
+                root,
+                &parsed_ref(root, "bad-date-import.json"),
+                root
+            )
+            .is_err(),
+            "accepted {pointer}"
+        );
+    }
+    for pointer in [
+        "/invocation/language",
+        "/cue_bindings/1/native_cue_id",
+        "/cue_bindings/1/narration_logical_id",
+        "/invocation/lines/0/semantic_trigger_id",
+        "/invocation/title",
+    ] {
+        let mut bad_descriptor = descriptor.clone();
+        *bad_descriptor.pointer_mut(pointer).unwrap() = json!("wrong");
+        write(root, "bad-date-descriptor.json", &bad_descriptor);
+        let mut bad = manifest.clone();
+        bad["presentation_successor"] = reference(root, "bad-date-descriptor.json");
+        write(root, "bad-date-import.json", &bad);
+        assert!(
+            imported_scene_proof::check_inputs(
+                root,
+                &parsed_ref(root, "bad-date-import.json"),
+                root
+            )
+            .is_err(),
+            "accepted {pointer}"
+        );
+    }
+    let mut unselected: Value =
+        serde_json::from_slice(&fs::read(root.join("date-bindings.json")).unwrap()).unwrap();
+    unselected["assets"]["source"]["selection_state"] = json!("candidate");
+    write(root, "unselected-date-bindings.json", &unselected);
+    let mut bad_descriptor = descriptor.clone();
+    bad_descriptor["presentation_bindings"] =
+        json!([reference(root, "unselected-date-bindings.json")]);
+    write(root, "unselected-date-descriptor.json", &bad_descriptor);
+    let mut bad = manifest.clone();
+    bad["presentation_successor"] = reference(root, "unselected-date-descriptor.json");
+    write(root, "unselected-date-import.json", &bad);
+    assert!(
+        imported_scene_proof::check_inputs(
+            root,
+            &parsed_ref(root, "unselected-date-import.json"),
+            root
+        )
+        .is_err()
+    );
+    let mut second_layer = job.clone();
+    second_layer["external_layers"]
+        .as_array_mut()
+        .unwrap()
+        .push(job["external_layers"][0].clone());
+    write(root, "second-date-job.json", &second_layer);
+    let mut bad = manifest.clone();
+    bad["job"] = reference(root, "second-date-job.json");
+    write(root, "second-date-import.json", &bad);
+    assert!(
+        imported_scene_proof::check_inputs(
+            root,
+            &parsed_ref(root, "second-date-import.json"),
+            root
+        )
+        .is_err()
+    );
+    let mut partial = serde_json::to_value(proof).unwrap();
+    partial
+        .as_object_mut()
+        .unwrap()
+        .remove("presentation_successor_sha256");
+    assert!(
+        imported_scene_proof::recheck(
+            root,
+            &parsed_ref(root, "date-import.json"),
+            root,
+            &output,
+            &partial
         )
         .is_err()
     );
