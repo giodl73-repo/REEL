@@ -54,6 +54,39 @@ still undergoes ordered picture/audio comparison, timestamp verification and
 full compact-output decoding. Scene receipt checks and creative approval remain
 independent.
 
+### Explicit delivery geometry
+
+By default, every selected source must have the same picture dimensions and
+frame rate. To join different resolutions, declare an output size explicitly:
+
+```json
+"output_geometry": {
+  "width": 1280,
+  "height": 720,
+  "policy": "preserve-aspect-lanczos"
+}
+```
+
+This policy accepts square-pixel sources with the same aspect ratio as the
+target. It rejects cropping, stretching, non-square pixels, unsupported
+policies, and frame-rate changes. Dimensions must be 1–16384. Sources already
+at the target size are retained at that size. Other sources are scaled with
+Lanczos as part of lossless normalization; the declared transformation is
+independently decoded from the original and must match normalized picture
+bytes exactly. Original source hashes, receipts, frame counts and audio
+checks remain authoritative. Upscaling does not add source detail.
+
+The original frame and audio timestamps are checked before any episode clock
+rewrite. Sources must have consistent color range, matrix, transfer and primaries
+metadata; normalization and the conformed master must preserve these values and
+square pixel aspect ratio. Unknown color tags remain unknown; this policy does
+not infer or invent color calibration.
+
+The receipt records the output policy and, for each segment, original and
+output dimensions, original decoded picture hash, whether scaling occurred,
+and successful transformed-source comparison. These fields are omitted when
+no output geometry is declared, preserving the legacy receipt shape.
+
 A scene segment may also supply `delivery_job` (an exact authoring-root file
 reference) and `delivery_receipt` (an exact media-root file reference beside the
 hydrated scene outputs). They must be supplied together. The selected scene
