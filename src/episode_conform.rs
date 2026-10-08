@@ -36,6 +36,42 @@ fn verify_native_delivery_proof(
 mod native_proof_tests {
     use super::*;
     #[test]
+    fn imported_roots_reject_outside_symlink_targets() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        assert_eq!(scoped_import_root(root.path(), None).unwrap(), root.path());
+        let inside = root.path().join("inside");
+        fs::create_dir(&inside).unwrap();
+        assert_eq!(
+            scoped_import_root(root.path(), Some(Path::new("inside"))).unwrap(),
+            fs::canonicalize(&inside).unwrap()
+        );
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(outside.path(), root.path().join("escape")).unwrap();
+            assert!(scoped_import_root(root.path(), Some(Path::new("escape"))).is_err());
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // Junction creation requires no Developer Mode or symlink privilege.
+            let status = Command::new("cmd")
+                .creation_flags(0x08000000)
+                .args(["/c", "mklink", "/J"])
+                .arg(root.path().join("escape"))
+                .arg(outside.path())
+                .output()
+                .unwrap();
+            assert!(
+                status.status.success(),
+                "{}",
+                String::from_utf8_lossy(&status.stderr)
+            );
+            assert!(scoped_import_root(root.path(), Some(Path::new("escape"))).is_err());
+        }
+    }
+
+    #[test]
     fn repinned_job_or_receipt_cannot_reuse_an_old_native_proof() {
         let mut job = scene_delivery::FileRef {
             path: "job.json".into(),
@@ -116,6 +152,26 @@ fn is_false(value: &bool) -> bool {
     !value
 }
 
+fn scoped_import_root(input_root: &Path, scope: Option<&Path>) -> Result<PathBuf> {
+    let Some(scope) = scope else {
+        return Ok(input_root.to_path_buf());
+    };
+    if scope.as_os_str().is_empty()
+        || scope.is_absolute()
+        || scope
+            .components()
+            .any(|part| !matches!(part, std::path::Component::Normal(_)))
+    {
+        bail!("imported source root must be a nonempty relative directory without traversal");
+    }
+    let root = fs::canonicalize(input_root)?;
+    let selected = fs::canonicalize(input_root.join(scope))?;
+    if !selected.is_dir() || !selected.starts_with(&root) {
+        bail!("imported source root escapes its authoring directory");
+    }
+    Ok(selected)
+}
+
 #[derive(Debug, Serialize)]
 pub struct GeometryVerification {
     pub input_width: u64,
@@ -174,6 +230,11 @@ pub struct Segment {
     /// This cannot substitute for a scene-authoring build receipt implicitly.
     #[serde(default)]
     pub imported_source_manifest: Option<scene_delivery::FileRef>,
+    /// Relative authoring directory of an independently rebuildable imported
+    /// scene package. Its job and import refs are local to this directory.
+    /// Hash-bound source evidence remains unchanged when packages are hydrated.
+    #[serde(default)]
+    pub imported_source_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -629,6 +690,11 @@ fn decoded_digest_with_pixel_format(
 }
 
 fn selected_receipt(segment: &Segment, language: &str, receipt: &serde_json::Value) -> Result<()> {
+    if segment.imported_source_root.is_some()
+        && (segment.kind != SegmentKind::Scene || segment.imported_source_manifest.is_none())
+    {
+        bail!("scoped imported source root requires an imported scene manifest");
+    }
     let expected = match segment.kind {
         SegmentKind::Scene if segment.imported_source_manifest.is_some() => {
             imported_scene_proof::RECEIPT_SCHEMA
@@ -1090,7 +1156,9 @@ pub fn build(
             &segment.delivery_receipt,
         ) {
             (SegmentKind::Scene, Some(job_ref), Some(delivery_ref)) => {
-                let job_path = scene_delivery::checked_file(input_root, job_ref)?;
+                let source_root =
+                    scoped_import_root(input_root, segment.imported_source_root.as_deref())?;
+                let job_path = scene_delivery::checked_file(&source_root, job_ref)?;
                 let delivery_path = scene_delivery::checked_file(asset_root, delivery_ref)?;
                 if delivery_path
                     .file_name()
@@ -1107,7 +1175,7 @@ pub fn build(
                 verify_native_delivery_proof(&receipt, job_ref, delivery_ref)?;
                 let checked = if let Some(imported) = &segment.imported_source_manifest {
                     imported_scene_proof::recheck(
-                        input_root,
+                        &source_root,
                         imported,
                         asset_root,
                         delivery_root,
