@@ -18,7 +18,14 @@ fn reference(root: &Path, name: &str) -> Value {
     json!({"path":name,"sha256":digest(&bytes),"bytes":bytes.len()})
 }
 
-fn source_geometry(root: &Path, name: &str, color: &str, changed_properties: bool, small: bool) {
+fn source_geometry(
+    root: &Path,
+    name: &str,
+    color: &str,
+    changed_properties: bool,
+    small: bool,
+    unspecified: bool,
+) {
     let mut cmd = Command::new("ffmpeg");
     #[cfg(windows)]
     {
@@ -32,7 +39,9 @@ fn source_geometry(root: &Path, name: &str, color: &str, changed_properties: boo
             format!("color=c={color}:s=64x64:r=24:d=1")
         })
         .args(["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo:d=1"]);
-    if changed_properties {
+    if unspecified {
+        cmd.args(["-vf", "setsar=0"]);
+    } else if changed_properties {
         if name.starts_with("non-square") {
             cmd.args(["-vf", "setsar=2/1"]);
         } else {
@@ -102,15 +111,26 @@ fn verified_presentation_reuse_rehashes_inputs_and_checks_new_full_episode() {
 }
 
 fn ordered_fixture(adopt: bool, clock_transition: bool, reuse_cache: bool) {
-    ordered_geometry_fixture(adopt, clock_transition, reuse_cache, false);
+    ordered_geometry_fixture(adopt, clock_transition, reuse_cache, false, false);
 }
 
 #[test]
 fn mixed_geometry_requires_explicit_aspect_preserving_delivery_policy() {
-    ordered_geometry_fixture(true, false, false, true);
+    ordered_geometry_fixture(true, false, false, true, false);
 }
 
-fn ordered_geometry_fixture(adopt: bool, clock_transition: bool, reuse_cache: bool, mixed: bool) {
+#[test]
+fn unspecified_pixel_aspect_requires_explicit_declaration_and_preserves_content() {
+    ordered_geometry_fixture(true, false, false, true, true);
+}
+
+fn ordered_geometry_fixture(
+    adopt: bool,
+    clock_transition: bool,
+    reuse_cache: bool,
+    mixed: bool,
+    unspecified: bool,
+) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     fs::write(root.join("clean-picture.bin"), b"selected clean background").unwrap();
@@ -215,6 +235,7 @@ fn ordered_geometry_fixture(adopt: bool, clock_transition: bool, reuse_cache: bo
                 color,
                 clock_transition && id.starts_with("display"),
                 mixed && id == "scene-a",
+                unspecified && id == "display-a",
             );
             let selected = reference(root, &media_name);
             if id.starts_with("display") {
@@ -407,6 +428,16 @@ fn ordered_geometry_fixture(adopt: bool, clock_transition: bool, reuse_cache: bo
                     .contains("invalid explicit output geometry")
             );
             manifest["output_geometry"]["policy"] = "preserve-aspect-lanczos".into();
+            if unspecified {
+                write(&root.join(&manifest_name), &manifest);
+                let rejected = run(root, &manifest_name, &format!("undeclared-sar-{lang}"));
+                assert!(!rejected.status.success());
+                assert!(
+                    String::from_utf8_lossy(&rejected.stderr)
+                        .contains("requires square source pixels")
+                );
+                manifest["output_geometry"]["assume_square_for_unspecified_sar"] = true.into();
+            }
         }
         write(&root.join(&manifest_name), &manifest);
         let output = run(root, &manifest_name, &format!("output-{lang}"));
@@ -428,6 +459,18 @@ fn ordered_geometry_fixture(adopt: bool, clock_transition: bool, reuse_cache: bo
         assert_eq!(receipt["timestamps_verified"], true);
         if mixed {
             assert_eq!(receipt["output_geometry"], manifest["output_geometry"]);
+            if unspecified {
+                let verification = &receipt["segments"][1]["geometry_verification"];
+                assert_eq!(verification["sample_aspect_ratio_assumed_square"], true);
+                assert_eq!(verification["scaling_applied"], false);
+                assert_eq!(verification["transformed_source_matches_selected"], true);
+                assert_eq!(receipt["segments"][1]["input_frames"], 24);
+                assert_eq!(receipt["segments"][1]["input_samples"], 48_000);
+                assert_eq!(
+                    receipt["segments"][1]["selected_master_sha256"],
+                    manifest["segments"][1]["master"]["sha256"]
+                );
+            }
             let transformed = &receipt["segments"][0];
             assert_eq!(transformed["input_frames"], 24);
             assert_eq!(transformed["frames"], 24);
@@ -474,7 +517,7 @@ fn ordered_geometry_fixture(adopt: bool, clock_transition: bool, reuse_cache: bo
                 digest(&expected.stdout)
             );
             let non_square_media = format!("non-square-{lang}.mkv");
-            source_geometry(root, &non_square_media, "red", true, false);
+            source_geometry(root, &non_square_media, "red", true, false, false);
             let mut non_square = manifest.clone();
             let selected = reference(root, &non_square_media);
             let mut original_receipt: Value = serde_json::from_slice(

@@ -104,6 +104,13 @@ pub struct OutputGeometry {
     pub height: u32,
     /// Only aspect-preserving Lanczos scaling is supported; no crop or stretch.
     pub policy: String,
+    /// Explicit author declaration for legacy streams with no usable SAR tag.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub assume_square_for_unspecified_sar: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Debug, Serialize)]
@@ -111,6 +118,8 @@ pub struct GeometryVerification {
     pub input_width: u64,
     pub input_height: u64,
     pub input_sample_aspect_ratio: String,
+    #[serde(skip_serializing_if = "is_false")]
+    pub sample_aspect_ratio_assumed_square: bool,
     pub color_properties: BTreeMap<String, String>,
     pub output_width: u64,
     pub output_height: u64,
@@ -1149,8 +1158,15 @@ pub fn build(
     for (index, (segment, source)) in manifest.segments.iter().zip(&sources).enumerate() {
         let facts = probe(source)?;
         let mut output_facts = facts.clone();
+        let assumed_square = manifest.output_geometry.as_ref().is_some_and(|geometry| {
+            geometry.assume_square_for_unspecified_sar
+                && matches!(
+                    facts.sample_aspect_ratio.as_str(),
+                    "unknown" | "N/A" | "0:1"
+                )
+        });
         let scale_filter = if let Some(geometry) = &manifest.output_geometry {
-            if facts.sample_aspect_ratio != "1:1" {
+            if facts.sample_aspect_ratio != "1:1" && !assumed_square {
                 bail!("explicit output geometry requires square source pixels");
             }
             if geometry.width == 0
@@ -1168,8 +1184,19 @@ pub fn build(
             }
             output_facts.width = u64::from(geometry.width);
             output_facts.height = u64::from(geometry.height);
-            ((facts.width, facts.height) != (output_facts.width, output_facts.height))
-                .then(|| format!("scale={}:{}:flags=lanczos", geometry.width, geometry.height))
+            let resized = (facts.width, facts.height) != (output_facts.width, output_facts.height);
+            match (resized, assumed_square) {
+                (true, true) => Some(format!(
+                    "scale={}:{}:flags=lanczos,setsar=1",
+                    geometry.width, geometry.height
+                )),
+                (true, false) => Some(format!(
+                    "scale={}:{}:flags=lanczos",
+                    geometry.width, geometry.height
+                )),
+                (false, true) => Some("setsar=1".to_owned()),
+                (false, false) => None,
+            }
         } else {
             None
         };
@@ -1325,10 +1352,12 @@ pub fn build(
                     input_width: facts.width,
                     input_height: facts.height,
                     input_sample_aspect_ratio: facts.sample_aspect_ratio.clone(),
+                    sample_aspect_ratio_assumed_square: assumed_square,
                     color_properties: facts.color_properties.clone(),
                     output_width: selected_facts.width,
                     output_height: selected_facts.height,
-                    scaling_applied: scale_filter.is_some(),
+                    scaling_applied: (facts.width, facts.height)
+                        != (selected_facts.width, selected_facts.height),
                     decoded_source_picture_sha256: source_picture_hash,
                     transformed_source_matches_selected: true,
                 });
@@ -1340,6 +1369,7 @@ pub fn build(
                 input_width: facts.width,
                 input_height: facts.height,
                 input_sample_aspect_ratio: facts.sample_aspect_ratio.clone(),
+                sample_aspect_ratio_assumed_square: assumed_square,
                 color_properties: facts.color_properties.clone(),
                 output_width: selected_facts.width,
                 output_height: selected_facts.height,
