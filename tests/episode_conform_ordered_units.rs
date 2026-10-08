@@ -25,6 +25,7 @@ fn source_geometry(
     changed_properties: bool,
     small: bool,
     unspecified: bool,
+    known_matrix: bool,
 ) {
     let mut cmd = Command::new("ffmpeg");
     #[cfg(windows)]
@@ -52,6 +53,9 @@ fn source_geometry(
                 "bt470bg",
             ]);
         }
+    }
+    if known_matrix {
+        cmd.args(["-colorspace", "bt470bg"]);
     }
     let status = cmd
         .args([
@@ -111,17 +115,22 @@ fn verified_presentation_reuse_rehashes_inputs_and_checks_new_full_episode() {
 }
 
 fn ordered_fixture(adopt: bool, clock_transition: bool, reuse_cache: bool) {
-    ordered_geometry_fixture(adopt, clock_transition, reuse_cache, false, false);
+    ordered_geometry_fixture(adopt, clock_transition, reuse_cache, false, false, false);
 }
 
 #[test]
 fn mixed_geometry_requires_explicit_aspect_preserving_delivery_policy() {
-    ordered_geometry_fixture(true, false, false, true, false);
+    ordered_geometry_fixture(true, false, false, true, false, false);
 }
 
 #[test]
 fn unspecified_pixel_aspect_requires_explicit_declaration_and_preserves_content() {
-    ordered_geometry_fixture(true, false, false, true, true);
+    ordered_geometry_fixture(true, false, false, true, true, false);
+}
+
+#[test]
+fn unknown_matrix_declaration_requires_matching_decoded_colors() {
+    ordered_geometry_fixture(true, false, false, true, false, true);
 }
 
 fn ordered_geometry_fixture(
@@ -130,6 +139,7 @@ fn ordered_geometry_fixture(
     reuse_cache: bool,
     mixed: bool,
     unspecified: bool,
+    color_declaration: bool,
 ) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
@@ -236,6 +246,7 @@ fn ordered_geometry_fixture(
                 clock_transition && id.starts_with("display"),
                 mixed && id == "scene-a",
                 unspecified && id == "display-a",
+                color_declaration && id == "display-b",
             );
             let selected = reference(root, &media_name);
             if id.starts_with("display") {
@@ -438,6 +449,25 @@ fn ordered_geometry_fixture(
                 );
                 manifest["output_geometry"]["assume_square_for_unspecified_sar"] = true.into();
             }
+            if color_declaration {
+                write(&root.join(&manifest_name), &manifest);
+                let rejected = run(root, &manifest_name, &format!("undeclared-matrix-{lang}"));
+                assert!(!rejected.status.success());
+                assert!(
+                    String::from_utf8_lossy(&rejected.stderr)
+                        .contains("consistent source color properties")
+                );
+                manifest["output_geometry"]["assume_color_space_for_unspecified"] = "bt709".into();
+                write(&root.join(&manifest_name), &manifest);
+                let rejected = run(root, &manifest_name, &format!("unsupported-matrix-{lang}"));
+                assert!(!rejected.status.success());
+                assert!(
+                    String::from_utf8_lossy(&rejected.stderr)
+                        .contains("unsupported unspecified color-space declaration")
+                );
+                manifest["output_geometry"]["assume_color_space_for_unspecified"] =
+                    "bt470bg".into();
+            }
         }
         write(&root.join(&manifest_name), &manifest);
         let output = run(root, &manifest_name, &format!("output-{lang}"));
@@ -459,6 +489,21 @@ fn ordered_geometry_fixture(
         assert_eq!(receipt["timestamps_verified"], true);
         if mixed {
             assert_eq!(receipt["output_geometry"], manifest["output_geometry"]);
+            if color_declaration {
+                assert_eq!(
+                    receipt["segments"][0]["geometry_verification"]["assumed_color_space"],
+                    "bt470bg"
+                );
+                assert_eq!(
+                    receipt["segments"][0]["geometry_verification"]["color_properties"]["color_space"],
+                    "unknown"
+                );
+                assert!(
+                    receipt["segments"][2]["geometry_verification"]
+                        .get("assumed_color_space")
+                        .is_none()
+                );
+            }
             if unspecified {
                 let verification = &receipt["segments"][1]["geometry_verification"];
                 assert_eq!(verification["sample_aspect_ratio_assumed_square"], true);
@@ -517,7 +562,7 @@ fn ordered_geometry_fixture(
                 digest(&expected.stdout)
             );
             let non_square_media = format!("non-square-{lang}.mkv");
-            source_geometry(root, &non_square_media, "red", true, false, false);
+            source_geometry(root, &non_square_media, "red", true, false, false, false);
             let mut non_square = manifest.clone();
             let selected = reference(root, &non_square_media);
             let mut original_receipt: Value = serde_json::from_slice(

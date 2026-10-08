@@ -107,6 +107,9 @@ pub struct OutputGeometry {
     /// Explicit author declaration for legacy streams with no usable SAR tag.
     #[serde(default, skip_serializing_if = "is_false")]
     pub assume_square_for_unspecified_sar: bool,
+    /// Resolve an unspecified matrix only when independent decoded RGB agrees.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assume_color_space_for_unspecified: Option<String>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -120,6 +123,8 @@ pub struct GeometryVerification {
     pub input_sample_aspect_ratio: String,
     #[serde(skip_serializing_if = "is_false")]
     pub sample_aspect_ratio_assumed_square: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assumed_color_space: Option<String>,
     pub color_properties: BTreeMap<String, String>,
     pub output_width: u64,
     pub output_height: u64,
@@ -496,6 +501,71 @@ fn decoded_digest_with_filter(
     padding_samples: u64,
     video_filter: Option<&str>,
 ) -> Result<(String, u64)> {
+    decoded_digest_with_pixel_format(path, video, padding_samples, video_filter, "yuv444p")
+}
+
+fn verify_color_space_declaration(source: &Path, space: &str) -> Result<()> {
+    let original = decoded_digest_with_pixel_format(source, true, 0, None, "rgb24")?;
+    let declared = decoded_digest_with_pixel_format(
+        source,
+        true,
+        0,
+        Some(&format!("setparams=colorspace={space}")),
+        "rgb24",
+    )?;
+    if declared != original {
+        bail!("unspecified color-space declaration changes decoded source colors");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod color_declaration_tests {
+    use super::*;
+
+    #[test]
+    fn declaration_rejects_equal_yuv_planes_with_different_displayed_rgb() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("known709.mkv");
+        assert!(
+            command("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc2=s=32x32:r=24:d=1",
+                    "-colorspace",
+                    "bt709",
+                    "-c:v",
+                    "ffv1",
+                    "-pix_fmt",
+                    "yuv444p"
+                ])
+                .arg(&path)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let yuv = decoded_digest(&path, true).unwrap();
+        let retagged_yuv =
+            decoded_digest_with_filter(&path, true, 0, Some("setparams=colorspace=bt470bg"))
+                .unwrap();
+        assert_eq!(yuv, retagged_yuv);
+        let error = verify_color_space_declaration(&path, "bt470bg").unwrap_err();
+        assert!(error.to_string().contains("changes decoded source colors"));
+        verify_color_space_declaration(&path, "bt709").unwrap();
+    }
+}
+
+fn decoded_digest_with_pixel_format(
+    path: &Path,
+    video: bool,
+    padding_samples: u64,
+    video_filter: Option<&str>,
+    pixel_format: &str,
+) -> Result<(String, u64)> {
     let mut cmd = command("ffmpeg");
     cmd.args(["-v", "error", "-nostdin", "-i"]).arg(path);
     if video {
@@ -508,7 +578,7 @@ fn decoded_digest_with_filter(
             "-fps_mode",
             "passthrough",
             "-pix_fmt",
-            "yuv444p",
+            pixel_format,
             "-f",
             "rawvideo",
         ]);
@@ -1158,6 +1228,23 @@ pub fn build(
     for (index, (segment, source)) in manifest.segments.iter().zip(&sources).enumerate() {
         let facts = probe(source)?;
         let mut output_facts = facts.clone();
+        let assumed_color_space = if let Some(space) = manifest
+            .output_geometry
+            .as_ref()
+            .and_then(|geometry| geometry.assume_color_space_for_unspecified.as_ref())
+        {
+            if space != "bt470bg" {
+                bail!("unsupported unspecified color-space declaration");
+            }
+            (facts.color_properties["color_space"] == "unknown").then(|| space.clone())
+        } else {
+            None
+        };
+        if let Some(space) = &assumed_color_space {
+            output_facts
+                .color_properties
+                .insert("color_space".into(), space.clone());
+        }
         let assumed_square = manifest.output_geometry.as_ref().is_some_and(|geometry| {
             geometry.assume_square_for_unspecified_sar
                 && matches!(
@@ -1165,7 +1252,7 @@ pub fn build(
                     "unknown" | "N/A" | "0:1"
                 )
         });
-        let scale_filter = if let Some(geometry) = &manifest.output_geometry {
+        let mut scale_filter = if let Some(geometry) = &manifest.output_geometry {
             if facts.sample_aspect_ratio != "1:1" && !assumed_square {
                 bail!("explicit output geometry requires square source pixels");
             }
@@ -1200,6 +1287,13 @@ pub fn build(
         } else {
             None
         };
+        if let Some(space) = &assumed_color_space {
+            let declaration = format!("setparams=colorspace={space}");
+            scale_filter = Some(match scale_filter {
+                Some(filter) => format!("{filter},{declaration}"),
+                None => declaration,
+            });
+        }
         if segment.kind == SegmentKind::Scene
             && facts.video_codec == "h264"
             && (segment.delivery_job.is_none() || segment.delivery_receipt.is_none())
@@ -1208,7 +1302,7 @@ pub fn build(
         }
         if let Some(first) = &common {
             if manifest.output_geometry.is_some()
-                && facts.color_properties != first.color_properties
+                && output_facts.color_properties != first.color_properties
             {
                 bail!("explicit output geometry requires consistent source color properties");
             }
@@ -1254,7 +1348,7 @@ pub fn build(
                     ("color_transfer", "-color_trc"),
                     ("color_primaries", "-color_primaries"),
                 ] {
-                    let value = &facts.color_properties[key];
+                    let value = &output_facts.color_properties[key];
                     if value != "unknown" {
                         encoder.args([flag, value]);
                     }
@@ -1291,7 +1385,7 @@ pub fn build(
         let selected_facts = probe(&selected)?;
         if manifest.output_geometry.is_some()
             && (selected_facts.sample_aspect_ratio != "1:1"
-                || selected_facts.color_properties != facts.color_properties)
+                || selected_facts.color_properties != output_facts.color_properties)
         {
             bail!("geometry normalization changed sample aspect ratio or color properties");
         }
@@ -1323,6 +1417,9 @@ pub fn build(
             (frames, samples)
         } else {
             let (source_picture_hash, source_picture_bytes) = decoded_digest(source, true)?;
+            if let Some(space) = &assumed_color_space {
+                verify_color_space_declaration(source, space)?;
+            }
             let (source_audio_hash, source_audio_bytes) = decoded_digest(source, false)?;
             let expected_picture = if let Some(filter) = &scale_filter {
                 decoded_digest_with_filter(source, true, 0, Some(filter))?
@@ -1353,6 +1450,7 @@ pub fn build(
                     input_height: facts.height,
                     input_sample_aspect_ratio: facts.sample_aspect_ratio.clone(),
                     sample_aspect_ratio_assumed_square: assumed_square,
+                    assumed_color_space: assumed_color_space.clone(),
                     color_properties: facts.color_properties.clone(),
                     output_width: selected_facts.width,
                     output_height: selected_facts.height,
@@ -1370,6 +1468,7 @@ pub fn build(
                 input_height: facts.height,
                 input_sample_aspect_ratio: facts.sample_aspect_ratio.clone(),
                 sample_aspect_ratio_assumed_square: assumed_square,
+                assumed_color_space: assumed_color_space.clone(),
                 color_properties: facts.color_properties.clone(),
                 output_width: selected_facts.width,
                 output_height: selected_facts.height,

@@ -43,13 +43,35 @@ fn semantic_song_clock_renders_variable_picture_boundaries_without_restarting_au
     still_fixture(true, true);
 }
 
+#[test]
+fn portrait_fit_keeps_square_canvas_pixels() {
+    still_geometry_fixture(false, false, true, false);
+}
+
+#[test]
+fn non_square_source_is_fit_by_display_aspect_before_square_canvas() {
+    still_geometry_fixture(false, false, true, true);
+}
+
 fn still_fixture(with_audio: bool, song_clock: bool) {
+    still_geometry_fixture(with_audio, song_clock, false, false);
+}
+
+fn still_geometry_fixture(with_audio: bool, song_clock: bool, portrait: bool, non_square: bool) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     for (name, color) in [("red.png", "red"), ("blue.png", "blue")] {
         let status = Command::new("ffmpeg")
             .args(["-v", "error", "-f", "lavfi", "-i"])
-            .arg(format!("color=c={color}:s=64x64:r=24:d=1"))
+            .arg(format!(
+                "color=c={color}:s={}:r=24:d=1",
+                if portrait { "84x124" } else { "64x64" }
+            ))
+            .args(if non_square {
+                vec!["-vf", "setsar=2/1"]
+            } else {
+                vec![]
+            })
             .args(["-frames:v", "1"])
             .arg(root.join(name))
             .status()
@@ -191,6 +213,42 @@ fn still_fixture(with_audio: bool, song_clock: bool) {
         serde_json::from_slice(&fs::read(root.join("render/receipt.json")).unwrap()).unwrap();
     assert_eq!(receipt["frames"], 48);
     assert_eq!(receipt["samples"], 96_000);
+    if portrait {
+        let probe = Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height,sample_aspect_ratio",
+                "-of",
+                "json",
+            ])
+            .arg(root.join("render/master.mkv"))
+            .output()
+            .unwrap();
+        assert!(probe.status.success());
+        let facts: serde_json::Value = serde_json::from_slice(&probe.stdout).unwrap();
+        assert_eq!(facts["streams"][0]["width"], 64);
+        assert_eq!(facts["streams"][0]["height"], 64);
+        assert_eq!(facts["streams"][0]["sample_aspect_ratio"], "1:1");
+        let pixels = Command::new("ffmpeg")
+            .args(["-v", "error", "-i"])
+            .arg(root.join("render/master.mkv"))
+            .args(["-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"])
+            .output()
+            .unwrap();
+        assert!(pixels.status.success());
+        let border = if non_square { 32 * 3 } else { (10 * 64) * 3 };
+        let center = (20 * 64 + 32) * 3;
+        assert!(
+            pixels.stdout[border..border + 3]
+                .iter()
+                .all(|value| *value < 5)
+        );
+        assert!(pixels.stdout[center] > 200);
+    }
     if song_clock {
         assert_eq!(receipt["picture_frames"], json!([6, 42]));
         // Sample both sides of the semantic cut, away from the bottom caption.

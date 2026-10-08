@@ -1,5 +1,12 @@
 # Editable still presentation sequence
 
+The template owns a square-pixel output canvas. Each source image is fitted
+using its displayed aspect ratio (including any source pixel aspect), rounded
+to integer dimensions, then padded to the canvas. The renderer assigns SAR1
+to this newly fitted canvas; it never patches an existing master. Portrait
+images therefore retain their shape without leaking resize compensation into
+the finished video's pixel aspect. Native picture and audio clocks are unchanged.
+
 `reel-presentation-still-sequence` builds a bounded, language-local still sequence from exact hash-bound pictures and a separate ASS layer. A reusable `reel.presentation-still-template.v1` sets width, height, frame rate, audio rate, number of pictures and frames per picture. The render manifest supplies only selected picture references, the editable layer and optional audio. Each reference includes a root-relative path, SHA-256, byte count and matching `cache://sha256/` URI.
 
 ```text
