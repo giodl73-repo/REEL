@@ -76,6 +76,16 @@ independently decoded from the original and must match normalized picture
 bytes exactly. Original source hashes, receipts, frame counts and audio
 checks remain authoritative. Upscaling does not add source detail.
 
+Legacy streams with no usable pixel-aspect tag remain rejected unless the
+author explicitly adds `"assume_square_for_unspecified_sar": true` to
+`output_geometry`. Only absent/unknown, `N/A`, or `0:1` tags qualify. A known
+non-square value still fails. Normalization writes `setsar=1` and independently
+checks decoded content against that declared transform; original source bytes
+and the original tag stay recorded. The segment receipt adds
+`sample_aspect_ratio_assumed_square: true` only when this assumption was used.
+Writing the tag alone is not reported as scaling. This declaration does not
+resolve inconsistent color metadata or authorize reinterpretation of known SAR.
+
 The original frame and audio timestamps are checked before any episode clock
 rewrite. Sources must have consistent color range, matrix, transfer and primaries
 metadata; normalization and the conformed master must preserve these values and
