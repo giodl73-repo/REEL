@@ -18,7 +18,7 @@ fn reference(root: &Path, name: &str) -> Value {
     json!({"path":name,"sha256":digest(&bytes),"bytes":bytes.len()})
 }
 
-fn source(root: &Path, name: &str, color: &str, changed_properties: bool) {
+fn source_geometry(root: &Path, name: &str, color: &str, changed_properties: bool, small: bool) {
     let mut cmd = Command::new("ffmpeg");
     #[cfg(windows)]
     {
@@ -26,15 +26,23 @@ fn source(root: &Path, name: &str, color: &str, changed_properties: bool) {
         cmd.creation_flags(0x0800_0000);
     }
     cmd.args(["-v", "error", "-f", "lavfi", "-i"])
-        .arg(format!("color=c={color}:s=64x64:r=24:d=1"))
+        .arg(if small {
+            "testsrc2=s=32x32:r=24:d=1".to_owned()
+        } else {
+            format!("color=c={color}:s=64x64:r=24:d=1")
+        })
         .args(["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo:d=1"]);
     if changed_properties {
-        cmd.args([
-            "-vf",
-            "setsar=1744/1743:max=10000",
-            "-colorspace",
-            "bt470bg",
-        ]);
+        if name.starts_with("non-square") {
+            cmd.args(["-vf", "setsar=2/1"]);
+        } else {
+            cmd.args([
+                "-vf",
+                "setsar=1744/1743:max=10000",
+                "-colorspace",
+                "bt470bg",
+            ]);
+        }
     }
     let status = cmd
         .args([
@@ -94,6 +102,15 @@ fn verified_presentation_reuse_rehashes_inputs_and_checks_new_full_episode() {
 }
 
 fn ordered_fixture(adopt: bool, clock_transition: bool, reuse_cache: bool) {
+    ordered_geometry_fixture(adopt, clock_transition, reuse_cache, false);
+}
+
+#[test]
+fn mixed_geometry_requires_explicit_aspect_preserving_delivery_policy() {
+    ordered_geometry_fixture(true, false, false, true);
+}
+
+fn ordered_geometry_fixture(adopt: bool, clock_transition: bool, reuse_cache: bool, mixed: bool) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     fs::write(root.join("clean-picture.bin"), b"selected clean background").unwrap();
@@ -192,11 +209,12 @@ fn ordered_fixture(adopt: bool, clock_transition: bool, reuse_cache: bool) {
             ("scene-b", "blue"),
         ] {
             let media_name = format!("{id}-{lang}.mkv");
-            source(
+            source_geometry(
                 root,
                 &media_name,
                 color,
                 clock_transition && id.starts_with("display"),
+                mixed && id == "scene-a",
             );
             let selected = reference(root, &media_name);
             if id.starts_with("display") {
@@ -364,6 +382,32 @@ fn ordered_fixture(adopt: bool, clock_transition: bool, reuse_cache: bool) {
             manifest["reuse_verified_presentations"] = true.into();
         }
         let manifest_name = format!("manifest-{lang}.json");
+        if mixed {
+            manifest["audio_frame_conform"] = "pad-silence-to-picture-boundaries".into();
+            manifest["compact_delivery"] = json!({"crf":18,"audio_bitrate_kbps":320,
+                "retain_lossless_master":false,"intermediate_video_encoding":"h264-lossless"});
+            write(&root.join(&manifest_name), &manifest);
+            let rejected = run(root, &manifest_name, &format!("no-policy-{lang}"));
+            assert!(!rejected.status.success());
+            assert!(String::from_utf8_lossy(&rejected.stderr).contains("differ in geometry"));
+            manifest["output_geometry"] =
+                json!({"width":64,"height":48,"policy":"preserve-aspect-lanczos"});
+            write(&root.join(&manifest_name), &manifest);
+            let rejected = run(root, &manifest_name, &format!("aspect-change-{lang}"));
+            assert!(!rejected.status.success());
+            assert!(
+                String::from_utf8_lossy(&rejected.stderr).contains("change source aspect ratio")
+            );
+            manifest["output_geometry"] = json!({"width":64,"height":64,"policy":"stretch"});
+            write(&root.join(&manifest_name), &manifest);
+            let rejected = run(root, &manifest_name, &format!("bad-policy-{lang}"));
+            assert!(!rejected.status.success());
+            assert!(
+                String::from_utf8_lossy(&rejected.stderr)
+                    .contains("invalid explicit output geometry")
+            );
+            manifest["output_geometry"]["policy"] = "preserve-aspect-lanczos".into();
+        }
         write(&root.join(&manifest_name), &manifest);
         let output = run(root, &manifest_name, &format!("output-{lang}"));
         assert!(
@@ -382,6 +426,87 @@ fn ordered_fixture(adopt: bool, clock_transition: bool, reuse_cache: bool) {
         );
         assert_eq!(receipt["decoded_master_matches_ordered_segments"], true);
         assert_eq!(receipt["timestamps_verified"], true);
+        if mixed {
+            assert_eq!(receipt["output_geometry"], manifest["output_geometry"]);
+            let transformed = &receipt["segments"][0];
+            assert_eq!(transformed["input_frames"], 24);
+            assert_eq!(transformed["frames"], 24);
+            assert_eq!(transformed["input_samples"], 48_000);
+            assert_eq!(transformed["samples"], 48_000);
+            assert_eq!(transformed["geometry_verification"]["input_width"], 32);
+            assert_eq!(transformed["geometry_verification"]["output_width"], 64);
+            assert_eq!(
+                transformed["geometry_verification"]["scaling_applied"],
+                true
+            );
+            assert_eq!(
+                transformed["geometry_verification"]["transformed_source_matches_selected"],
+                true
+            );
+            assert_eq!(
+                transformed["selected_master_sha256"],
+                manifest["segments"][0]["master"]["sha256"]
+            );
+            assert_eq!(
+                receipt["segments"][1]["geometry_verification"]["scaling_applied"],
+                false
+            );
+            let expected = Command::new("ffmpeg")
+                .args(["-v", "error", "-i"])
+                .arg(root.join(format!("scene-a-{lang}.mkv")))
+                .args([
+                    "-vf",
+                    "scale=64:64:flags=lanczos",
+                    "-map",
+                    "0:v:0",
+                    "-pix_fmt",
+                    "yuv444p",
+                    "-f",
+                    "rawvideo",
+                    "-",
+                ])
+                .output()
+                .unwrap();
+            assert!(expected.status.success());
+            assert_eq!(expected.stdout.len(), 24 * 64 * 64 * 3);
+            assert_eq!(
+                transformed["decoded_picture_sha256"],
+                digest(&expected.stdout)
+            );
+            let non_square_media = format!("non-square-{lang}.mkv");
+            source_geometry(root, &non_square_media, "red", true, false);
+            let mut non_square = manifest.clone();
+            let selected = reference(root, &non_square_media);
+            let mut original_receipt: Value = serde_json::from_slice(
+                &fs::read(root.join(format!("scene-a-{lang}-receipt.json"))).unwrap(),
+            )
+            .unwrap();
+            original_receipt["master_sha256"] = selected["sha256"].clone();
+            original_receipt["master_bytes"] = selected["bytes"].clone();
+            write(&root.join("non-square-receipt.json"), &original_receipt);
+            non_square["segments"][0]["master"] = selected;
+            non_square["segments"][0]["source_receipt"] =
+                reference(root, "non-square-receipt.json");
+            write(&root.join("non-square-manifest.json"), &non_square);
+            let rejected = run(
+                root,
+                "non-square-manifest.json",
+                &format!("non-square-{lang}"),
+            );
+            assert!(!rejected.status.success());
+            assert!(
+                String::from_utf8_lossy(&rejected.stderr).contains("requires square source pixels"),
+                "{}",
+                String::from_utf8_lossy(&rejected.stderr)
+            );
+        } else {
+            assert!(receipt.get("output_geometry").is_none());
+            assert!(
+                receipt["segments"][0]
+                    .get("geometry_verification")
+                    .is_none()
+            );
+        }
         if reuse_cache {
             assert_eq!(
                 receipt["presentation_verification_cache"]["reused_verified_checks"],

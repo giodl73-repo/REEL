@@ -65,6 +65,9 @@ pub struct Manifest {
     pub episode_id: String,
     pub language: String,
     pub output_sample_rate: u32,
+    /// Explicit delivery geometry. Without this, sources must have identical sizes.
+    #[serde(default)]
+    pub output_geometry: Option<OutputGeometry>,
     pub catalog: scene_delivery::FileRef,
     pub master_template_definition: scene_delivery::FileRef,
     #[serde(default)]
@@ -92,6 +95,28 @@ pub struct CompactDelivery {
     pub retain_lossless_master: bool,
     #[serde(default)]
     pub intermediate_video_encoding: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OutputGeometry {
+    pub width: u32,
+    pub height: u32,
+    /// Only aspect-preserving Lanczos scaling is supported; no crop or stretch.
+    pub policy: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GeometryVerification {
+    pub input_width: u64,
+    pub input_height: u64,
+    pub input_sample_aspect_ratio: String,
+    pub color_properties: BTreeMap<String, String>,
+    pub output_width: u64,
+    pub output_height: u64,
+    pub scaling_applied: bool,
+    pub decoded_source_picture_sha256: String,
+    pub transformed_source_matches_selected: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -211,6 +236,8 @@ pub struct SegmentReceipt {
     pub start_sample: u64,
     pub decoded_picture_sha256: String,
     pub decoded_audio_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub geometry_verification: Option<GeometryVerification>,
 }
 
 #[derive(Debug, Serialize)]
@@ -222,6 +249,8 @@ pub struct Receipt {
     pub episode_presentation_fingerprint_sha256: String,
     pub ffmpeg_version: String,
     pub output_sample_rate: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_geometry: Option<OutputGeometry>,
     pub total_frames: u64,
     pub total_samples: u64,
     pub master_sha256: String,
@@ -253,6 +282,8 @@ pub struct PresentationVerificationCache {
 pub(crate) struct MediaFacts {
     pub width: u64,
     pub height: u64,
+    pub sample_aspect_ratio: String,
+    pub color_properties: BTreeMap<String, String>,
     pub fps: String,
     pub sample_rate: u32,
     pub video_codec: String,
@@ -415,6 +446,24 @@ pub(crate) fn probe(path: &Path) -> Result<MediaFacts> {
             .to_owned(),
         width,
         height,
+        sample_aspect_ratio: v["sample_aspect_ratio"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_owned(),
+        color_properties: [
+            "color_range",
+            "color_space",
+            "color_transfer",
+            "color_primaries",
+        ]
+        .into_iter()
+        .map(|key| {
+            (
+                key.to_owned(),
+                v[key].as_str().unwrap_or("unknown").to_owned(),
+            )
+        })
+        .collect(),
         fps,
         sample_rate,
     })
@@ -429,9 +478,21 @@ fn decoded_digest_with_padding(
     video: bool,
     padding_samples: u64,
 ) -> Result<(String, u64)> {
+    decoded_digest_with_filter(path, video, padding_samples, None)
+}
+
+fn decoded_digest_with_filter(
+    path: &Path,
+    video: bool,
+    padding_samples: u64,
+    video_filter: Option<&str>,
+) -> Result<(String, u64)> {
     let mut cmd = command("ffmpeg");
     cmd.args(["-v", "error", "-nostdin", "-i"]).arg(path);
     if video {
+        if let Some(filter) = video_filter {
+            cmd.args(["-vf", filter]);
+        }
         cmd.args([
             "-map",
             "0:v:0",
@@ -1087,6 +1148,31 @@ pub fn build(
     let mut sample_cursor = 0u64;
     for (index, (segment, source)) in manifest.segments.iter().zip(&sources).enumerate() {
         let facts = probe(source)?;
+        let mut output_facts = facts.clone();
+        let scale_filter = if let Some(geometry) = &manifest.output_geometry {
+            if facts.sample_aspect_ratio != "1:1" {
+                bail!("explicit output geometry requires square source pixels");
+            }
+            if geometry.width == 0
+                || geometry.height == 0
+                || geometry.width > 16384
+                || geometry.height > 16384
+                || geometry.policy != "preserve-aspect-lanczos"
+            {
+                bail!("invalid explicit output geometry or scaling policy");
+            }
+            if u128::from(facts.width) * u128::from(geometry.height)
+                != u128::from(facts.height) * u128::from(geometry.width)
+            {
+                bail!("output geometry would change source aspect ratio");
+            }
+            output_facts.width = u64::from(geometry.width);
+            output_facts.height = u64::from(geometry.height);
+            ((facts.width, facts.height) != (output_facts.width, output_facts.height))
+                .then(|| format!("scale={}:{}:flags=lanczos", geometry.width, geometry.height))
+        } else {
+            None
+        };
         if segment.kind == SegmentKind::Scene
             && facts.video_codec == "h264"
             && (segment.delivery_job.is_none() || segment.delivery_receipt.is_none())
@@ -1094,11 +1180,18 @@ pub fn build(
             bail!("H264 scene requires its verified lossless delivery job and receipt");
         }
         if let Some(first) = &common {
-            if (facts.width, facts.height, &facts.fps) != (first.width, first.height, &first.fps) {
+            if manifest.output_geometry.is_some()
+                && facts.color_properties != first.color_properties
+            {
+                bail!("explicit output geometry requires consistent source color properties");
+            }
+            if (output_facts.width, output_facts.height, &output_facts.fps)
+                != (first.width, first.height, &first.fps)
+            {
                 bail!("episode segments differ in geometry or frame rate");
             }
         } else {
-            common = Some(facts.clone());
+            common = Some(output_facts.clone());
         }
         let target_codec = if manifest
             .compact_delivery
@@ -1110,7 +1203,8 @@ pub fn build(
         } else {
             "ffv1"
         };
-        let needs_video_normalization = facts.video_codec != target_codec
+        let needs_video_normalization = scale_filter.is_some()
+            || facts.video_codec != target_codec
             || (target_codec == "h264" && facts.reordered_video_frames != 0);
         let needs_normalization =
             facts.sample_rate != manifest.output_sample_rate || needs_video_normalization;
@@ -1123,6 +1217,22 @@ pub fn build(
                 .args(["-v", "error", "-nostdin", "-i"])
                 .arg(source)
                 .args(["-map", "0:v:0", "-map", "0:a:0"]);
+            if let Some(filter) = &scale_filter {
+                encoder.args(["-vf", filter]);
+            }
+            if manifest.output_geometry.is_some() {
+                for (key, flag) in [
+                    ("color_range", "-color_range"),
+                    ("color_space", "-colorspace"),
+                    ("color_transfer", "-color_trc"),
+                    ("color_primaries", "-color_primaries"),
+                ] {
+                    let value = &facts.color_properties[key];
+                    if value != "unknown" {
+                        encoder.args([flag, value]);
+                    }
+                }
+            }
             if !needs_video_normalization {
                 encoder.args(["-c:v", "copy"]);
             } else if target_codec == "h264" {
@@ -1152,6 +1262,20 @@ pub fn build(
             path
         };
         let selected_facts = probe(&selected)?;
+        if manifest.output_geometry.is_some()
+            && (selected_facts.sample_aspect_ratio != "1:1"
+                || selected_facts.color_properties != facts.color_properties)
+        {
+            bail!("geometry normalization changed sample aspect ratio or color properties");
+        }
+        if (
+            selected_facts.width,
+            selected_facts.height,
+            &selected_facts.fps,
+        ) != (output_facts.width, output_facts.height, &output_facts.fps)
+        {
+            bail!("normalization geometry or frame rate mismatch");
+        }
         if selected_facts.sample_rate != manifest.output_sample_rate {
             bail!("normalization sample rate mismatch");
         }
@@ -1167,18 +1291,27 @@ pub fn build(
         }
         let frames = picture_bytes / frame_bytes;
         let mut samples = audio_bytes / 6;
+        let mut geometry_verification = None;
         let (input_frames, input_samples) = if !needs_normalization {
             (frames, samples)
         } else {
             let (source_picture_hash, source_picture_bytes) = decoded_digest(source, true)?;
             let (source_audio_hash, source_audio_bytes) = decoded_digest(source, false)?;
-            if source_picture_hash != picture_hash
-                || source_picture_bytes != picture_bytes
+            let expected_picture = if let Some(filter) = &scale_filter {
+                decoded_digest_with_filter(source, true, 0, Some(filter))?
+            } else {
+                (source_picture_hash.clone(), source_picture_bytes)
+            };
+            let source_frame_bytes = facts.width * facts.height * 3;
+            if source_picture_bytes == 0
+                || source_picture_bytes % source_frame_bytes != 0
+                || source_picture_bytes / source_frame_bytes != frames
+                || expected_picture != (picture_hash.clone(), picture_bytes)
                 || source_audio_bytes % 6 != 0
                 || (facts.sample_rate == manifest.output_sample_rate
                     && source_audio_hash != audio_hash)
             {
-                bail!("audio normalization changed picture or input sample packing");
+                bail!("normalization changed declared picture transform or input sample packing");
             }
             let input_samples = source_audio_bytes / 6;
             let expected = ((input_samples as u128 * manifest.output_sample_rate as u128)
@@ -1187,12 +1320,42 @@ pub fn build(
             if (samples as i128 - expected as i128).abs() > 2 {
                 bail!("audio normalization inserted or removed more than two samples");
             }
-            (source_picture_bytes / frame_bytes, input_samples)
+            if manifest.output_geometry.is_some() {
+                geometry_verification = Some(GeometryVerification {
+                    input_width: facts.width,
+                    input_height: facts.height,
+                    input_sample_aspect_ratio: facts.sample_aspect_ratio.clone(),
+                    color_properties: facts.color_properties.clone(),
+                    output_width: selected_facts.width,
+                    output_height: selected_facts.height,
+                    scaling_applied: scale_filter.is_some(),
+                    decoded_source_picture_sha256: source_picture_hash,
+                    transformed_source_matches_selected: true,
+                });
+            }
+            (source_picture_bytes / source_frame_bytes, input_samples)
         };
+        if manifest.output_geometry.is_some() && geometry_verification.is_none() {
+            geometry_verification = Some(GeometryVerification {
+                input_width: facts.width,
+                input_height: facts.height,
+                input_sample_aspect_ratio: facts.sample_aspect_ratio.clone(),
+                color_properties: facts.color_properties.clone(),
+                output_width: selected_facts.width,
+                output_height: selected_facts.height,
+                scaling_applied: false,
+                decoded_source_picture_sha256: picture_hash.clone(),
+                transformed_source_matches_selected: true,
+            });
+        }
         if let Some((expected_frames, expected_samples)) = presentation_counts[index] {
             if input_frames != expected_frames || input_samples != expected_samples {
                 bail!("presentation decoded media differs from its source receipt");
             }
+        }
+        if manifest.output_geometry.is_some() {
+            let (num, den) = fps_parts(&facts.fps)?;
+            episode_delivery::verify_timestamps(source, facts.sample_rate, num, den)?;
         }
         let mut audio_padding_samples = 0;
         if manifest.audio_frame_conform.as_deref() == Some("pad-silence-to-picture-boundaries") {
@@ -1269,6 +1432,7 @@ pub fn build(
             start_sample: sample_cursor,
             decoded_picture_sha256: picture_hash,
             decoded_audio_sha256: audio_hash,
+            geometry_verification,
         });
         frame_cursor += frames;
         sample_cursor += samples;
@@ -1350,6 +1514,14 @@ pub fn build(
         bail!("episode lossless concat failed");
     }
     let first = common.context("no episode media")?;
+    if manifest.output_geometry.is_some() {
+        let final_facts = probe(&master)?;
+        if final_facts.sample_aspect_ratio != "1:1"
+            || final_facts.color_properties != first.color_properties
+        {
+            bail!("conformed master changed declared sample aspect ratio or color properties");
+        }
+    }
     let video_lengths = records
         .iter()
         .map(|r| r.frames * first.width * first.height * 3)
@@ -1435,16 +1607,40 @@ pub fn build(
             bail!("invalid compact episode encoding profile");
         }
         let target = work.join("episode.mp4");
-        let status = command("ffmpeg")
+        let mut compact_encoder = command("ffmpeg");
+        compact_encoder
             .args(["-v", "error", "-nostdin", "-i"])
             .arg(&master)
             .args(["-map", "0:v:0", "-map", "0:a:0", "-c:v", "libx264", "-crf"])
             .arg(profile.crf.to_string())
             .args(["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a"])
             .arg(format!("{}k", profile.audio_bitrate_kbps))
-            .args(["-movflags", "+faststart"])
-            .arg(&target)
-            .status()?;
+            .args(["-movflags", "+faststart"]);
+        if manifest.output_geometry.is_some() {
+            for (key, flag) in [
+                ("color_range", "-color_range"),
+                ("color_space", "-colorspace"),
+                ("color_transfer", "-color_trc"),
+                ("color_primaries", "-color_primaries"),
+            ] {
+                let value = &first.color_properties[key];
+                if value != "unknown" {
+                    compact_encoder.args([flag, value]);
+                }
+            }
+            // libx264 may omit its default limited-range VUI flag. MP4 does not
+            // retain Matroska's range tag, so pin known range in the bitstream.
+            match first.color_properties["color_range"].as_str() {
+                "tv" => {
+                    compact_encoder.args(["-bsf:v", "h264_metadata=video_full_range_flag=0"]);
+                }
+                "pc" => {
+                    compact_encoder.args(["-bsf:v", "h264_metadata=video_full_range_flag=1"]);
+                }
+                _ => {}
+            }
+        }
+        let status = compact_encoder.arg(&target).status()?;
         if !status.success() {
             bail!("compact episode encoding failed");
         }
@@ -1482,6 +1678,19 @@ pub fn build(
             .iter()
             .find(|s| s["codec_type"] == "audio")
             .context("compact audio missing")?;
+        if manifest.output_geometry.is_some()
+            && (video["sample_aspect_ratio"] != "1:1"
+                || first
+                    .color_properties
+                    .iter()
+                    .any(|(key, expected)| video[key].as_str().unwrap_or("unknown") != expected))
+        {
+            bail!(
+                "compact delivery changed declared sample aspect ratio or color properties: expected {:?}, actual {:?}",
+                first.color_properties,
+                video
+            );
+        }
         let (encoded_num, encoded_den) = fps_parts(
             video["r_frame_rate"]
                 .as_str()
@@ -1540,6 +1749,7 @@ pub fn build(
         episode_presentation_fingerprint_sha256: presentation.fingerprint_sha256,
         ffmpeg_version,
         output_sample_rate: manifest.output_sample_rate,
+        output_geometry: manifest.output_geometry.clone(),
         total_frames: frame_cursor,
         total_samples: sample_cursor,
         master_sha256: file_sha(&master)?,
