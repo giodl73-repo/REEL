@@ -202,9 +202,11 @@ fn run() -> Result<()> {
         .iter()
         .find(|entry| entry.template_id == use_.template_id)
         .context("template missing from catalog")?;
-    if template_entry.kind != use_.role
-        && !(template_entry.kind == "opening-poem" && use_.role == "internal-poem")
-    {
+    if !reel_assembly::scene_authoring::presentation_template_kind_matches(
+        &use_.role,
+        use_.template_kind.as_deref(),
+        &template_entry.kind,
+    ) {
         bail!("template role mismatch");
     }
     let definition_bytes = fs::read(definition_path)?;

@@ -21,6 +21,14 @@ the selected season or episode asset bindings and have a cache URI, byte count,
 matching SHA-256, and selected production state. The selected presentation
 master remains separately bound and decoded by the existing conform checks.
 
+Repeated presentations may share a template ID and layout. Give each ordered
+unit and presentation invocation a unique occurrence role, and set the
+invocation's `template_kind` to the shared kind (for example, `poem-title`). The
+adoption manifest uses that same occurrence role and `template_kind`. Bind each
+occurrence's master, picture and source-text evidence separately. The source
+evidence role must match its occurrence, not the shared kind. Existing manifests
+that omit `template_kind` keep their original role-as-kind behavior and hashes.
+
 This is a selection-time contract. Source-draft `scene.json` files and episode
 contexts can be prepared without a selected picture, caption render or master.
 They cannot pass full episode conform until the presentation and scene inputs

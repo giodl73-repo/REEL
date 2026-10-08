@@ -15,6 +15,14 @@ selected hash or `cache://sha256/` URI. The two evidence fields must appear
 together. A source-template reference is required when the selected template
 pins an upstream owner template hash.
 
+For repeated uses of one template, set `template_kind` to its reusable kind
+(for example, `poem-title`) and give each occurrence a distinct `role` such as
+`poem-title-opening` and `poem-title-second-chapter`. Use the same pair in the
+episode's presentation invocation. Each occurrence retains its own scoped asset
+binding and source-text evidence; geometry stays in the shared template. Omitted
+`template_kind` preserves the existing role-as-kind behavior. Empty or mismatched
+kinds are rejected. The occurrence role remains pinned in the adoption receipt.
+
 The JSON Pointer proves that the named evidence file contains the selected
 hash. When that file is a graph of candidates and selections, the producer must
 also inspect its slot disposition and selected revision; the pointer alone does

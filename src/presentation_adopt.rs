@@ -66,6 +66,9 @@ pub struct AudioSampleWindow {
 pub struct Manifest {
     pub schema: String,
     pub role: String,
+    /// Optional reusable template kind; `role` remains the occurrence identity.
+    #[serde(default)]
+    pub template_kind: Option<String>,
     pub language: String,
     pub season_id: String,
     pub episode_id: String,
@@ -671,13 +674,19 @@ pub fn build(
         .iter()
         .find(|template| template.template_id == manifest.template_id)
         .context("presentation template is not selected")?;
-    let poem_role_matches = manifest.role == "internal-poem" && definition.kind == "opening-poem";
     if catalog.schema != "reel.scene-template-catalog.v1"
         || definition.schema != "reel.selected-presentation-master-template.v1"
         || definition.template_id != manifest.template_id
-        || !(definition.kind == manifest.role || poem_role_matches)
-        || !(selected_template.kind == manifest.role
-            || (manifest.role == "internal-poem" && selected_template.kind == "opening-poem"))
+        || !reel_assembly::scene_authoring::presentation_template_kind_matches(
+            &manifest.role,
+            manifest.template_kind.as_deref(),
+            &definition.kind,
+        )
+        || !reel_assembly::scene_authoring::presentation_template_kind_matches(
+            &manifest.role,
+            manifest.template_kind.as_deref(),
+            &selected_template.kind,
+        )
         || selected_template.definition_sha256 != sha(&definition_bytes)
         || definition.width == 0
         || definition.height == 0
