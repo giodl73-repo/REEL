@@ -27,6 +27,7 @@ pub struct Descriptor {
     pub template_definition: scene_delivery::FileRef,
     pub template_catalog: scene_delivery::FileRef,
     pub presentation_bindings: Vec<scene_delivery::FileRef>,
+    pub source_text_binding: String,
     pub source_text: scene_delivery::FileRef,
     pub compile_receipt: scene_delivery::FileRef,
     pub ass: scene_delivery::FileRef,
@@ -366,9 +367,14 @@ pub(crate) fn verify_native(
         {
             bail!("invalid selected presentation scope");
         }
-        selections.extend(scope.assets.into_values());
+        if scope.scope_id == d.presentation_scene_id {
+            if let Some(asset) = scope.assets.get(&d.source_text_binding) {
+                selections.push(asset.clone());
+            }
+        }
     }
-    for selected in [&d.source_text] {
+    {
+        let selected = &d.source_text;
         if selections
             .iter()
             .filter(|asset| {
@@ -388,7 +394,7 @@ pub(crate) fn verify_native(
     }
     if !matches!(template.kind.as_str(), "chapter-title" | "semantic-label")
         || d.invocation.language != inputs.manifest.language
-        || d.presentation_scene_id.trim().is_empty()
+        || d.presentation_scene_id != inputs.manifest.scene_id
         || template.canvas_width != original_job.width
         || template.canvas_height != original_job.height
     {

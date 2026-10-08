@@ -666,7 +666,7 @@ fn exercise_presentation_successor(root: &Path, original: &Value, conform: &Valu
         "assets":{"source":asset("date-source.json"),"font":asset("selected-font.ttf")}}),
     );
     let descriptor = json!({"schema":reel::imported_presentation_overlay::DESCRIPTOR_SCHEMA,
-        "template_catalog":reference(root,"date-catalog.json"),"presentation_bindings":[reference(root,"date-bindings.json")],
+        "template_catalog":reference(root,"date-catalog.json"),"presentation_bindings":[reference(root,"date-bindings.json")],"source_text_binding":"source",
         "original_manifest":reference(root,"import.json"),"original_receipt":reference(root,"delivery/receipt.json"),
         "original_cached_semantic":reference(root,"semantic.json"),"template_definition":reference(root,"date-template.json"),
         "source_text":reference(root,"date-source.json"),"compile_receipt":reference(root,"date-compile.json"),
