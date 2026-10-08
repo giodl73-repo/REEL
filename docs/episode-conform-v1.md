@@ -92,6 +92,17 @@ metadata; normalization and the conformed master must preserve these values and
 square pixel aspect ratio. Unknown color tags remain unknown; this policy does
 not infer or invent color calibration.
 
+For legacy streams with an unspecified matrix, the author may explicitly set
+`"assume_color_space_for_unspecified": "bt470bg"` in `output_geometry`.
+Only this supported declaration is accepted. It does not replace a known matrix
+or fill unknown range, primaries, or transfer tags. Before resizing, the conform
+independently decodes the original with and without that matrix declaration and
+requires identical RGB bytes. A declaration that changes displayed colors fails.
+Normalized streams, the full master, and compact output must retain the declared
+matrix; the segment receipt preserves original color tags and records the
+assumption. This is a verified interpretation of untagged decoded content, not
+permission to relabel known color spaces or claim source color calibration.
+
 The receipt records the output policy and, for each segment, original and
 output dimensions, original decoded picture hash, whether scaling occurred,
 and successful transformed-source comparison. These fields are omitted when

@@ -492,8 +492,8 @@ fn build(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
     let mut filter = String::new();
     for (i, frames) in picture_frames.iter().enumerate() {
         filter.push_str(&format!(
-            "[{i}:v]scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,format=yuv444p,trim=end_frame={frames},setpts=PTS-STARTPTS[v{i}];",
-            template.width, template.height, template.width, template.height
+            "[{i}:v]scale=w='round(min({},{}*dar))':h='round(min({},{} / dar))',setsar=1,pad={}:{}:(ow-iw)/2:(oh-ih)/2,format=yuv444p,trim=end_frame={frames},setpts=PTS-STARTPTS[v{i}];",
+            template.width, template.height, template.height, template.width, template.width, template.height
         ));
     }
     for i in 0..pictures.len() {
