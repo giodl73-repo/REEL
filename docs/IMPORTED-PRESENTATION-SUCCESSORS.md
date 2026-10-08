@@ -49,3 +49,17 @@ The resulting source proof retains original and derived job hashes plus
 Episode conform rechecks all source inputs, recompilation and actual native
 output and compares the complete proof. Missing or partial successor fields
 cannot pass by renaming a native receipt.
+
+## Independent scene source directories
+
+An episode conform segment may set `imported_source_root` to a relative
+subdirectory of the conform authoring root. The `delivery_job` and
+`imported_source_manifest` references then resolve inside that directory.
+Their bytes, original selection pins and nested references stay unchanged.
+Master and receipt references still resolve from the asset root.
+
+The directory must be nonempty, contain no traversal and resolve inside the
+canonical authoring root; junctions and symlinks cannot escape it. This field
+is valid only for an imported scene segment. Omit it for existing manifests
+that already share one authoring root. Hydrate each source directory before
+conform; this does not waive any original source or native-output check.

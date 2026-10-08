@@ -225,6 +225,47 @@ fn granular_import_checks_render_and_episode_consumption() {
     assert_eq!(episode.total_samples, 96000);
     assert!(episode.decoded_master_matches_ordered_segments);
     let accepted_conform = conform.clone();
+    // A full episode can consume scene packages with independent metadata
+    // roots without rewriting their source manifest or original hash pins.
+    let scope = root.join("scoped-import");
+    fs::create_dir(&scope).unwrap();
+    for item in fs::read_dir(root).unwrap() {
+        let item = item.unwrap();
+        if item.file_type().unwrap().is_file() {
+            fs::copy(item.path(), scope.join(item.file_name())).unwrap();
+        }
+    }
+    fs::create_dir(scope.join("delivery")).unwrap();
+    fs::copy(
+        root.join("delivery/receipt.json"),
+        scope.join("delivery/receipt.json"),
+    )
+    .unwrap();
+    let mut scoped_conform = conform.clone();
+    scoped_conform["segments"][0]["imported_source_root"] = json!("scoped-import");
+    write(root, "scoped-conform.json", &scoped_conform);
+    let scoped = reel::episode_conform::build(
+        &root.join("scoped-conform.json"),
+        root,
+        root,
+        &root.join("scoped-output"),
+    )
+    .unwrap();
+    assert!(scoped.decoded_master_matches_ordered_segments);
+    assert_eq!(scoped.total_frames, 48);
+    for bad_scope in ["", "../outside", "/absolute"] {
+        scoped_conform["segments"][0]["imported_source_root"] = json!(bad_scope);
+        write(root, "bad-scoped-conform.json", &scoped_conform);
+        assert!(
+            reel::episode_conform::build(
+                &root.join("bad-scoped-conform.json"),
+                root,
+                root,
+                &root.join("bad-scoped-output")
+            )
+            .is_err()
+        );
+    }
     exercise_encoding_successor(root, &manifest, &accepted_conform);
     exercise_presentation_successor(root, &manifest, &accepted_conform);
     conform["segments"][0]
