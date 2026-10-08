@@ -1,7 +1,7 @@
 //! Hash-bound, language-local lossless episode conform from selected scene and
 //! presentation masters. Source selection belongs to the authoring bindings.
 
-use crate::{episode_delivery, presentation_adopt, scene_delivery};
+use crate::{episode_delivery, imported_scene_proof, presentation_adopt, scene_delivery};
 use anyhow::{Context, Result, bail};
 use reel_assembly::scene_authoring::{
     Episode, ScopedBindings, TemplateCatalog, resolve_episode_presentation,
@@ -170,6 +170,10 @@ pub struct Segment {
     /// V2 source-text selection evidence for an editable episode display.
     #[serde(default)]
     pub source_text_evidence: Option<scene_delivery::FileRef>,
+    /// Exact original-graph scene verifier inputs for an imported native scene.
+    /// This cannot substitute for a scene-authoring build receipt implicitly.
+    #[serde(default)]
+    pub imported_source_manifest: Option<scene_delivery::FileRef>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -626,6 +630,9 @@ fn decoded_digest_with_pixel_format(
 
 fn selected_receipt(segment: &Segment, language: &str, receipt: &serde_json::Value) -> Result<()> {
     let expected = match segment.kind {
+        SegmentKind::Scene if segment.imported_source_manifest.is_some() => {
+            imported_scene_proof::RECEIPT_SCHEMA
+        }
         SegmentKind::Scene => "reel.scene-build-receipt.v1",
         SegmentKind::EpisodePresentation => "reel.presentation-master-receipt.v1",
     };
@@ -645,10 +652,20 @@ fn selected_receipt(segment: &Segment, language: &str, receipt: &serde_json::Val
         bail!("segment source receipt identity mismatch");
     }
     if segment.kind == SegmentKind::Scene {
+        if let Some(imported) = &segment.imported_source_manifest {
+            if receipt["imported_manifest_sha256"] != imported.sha256
+                || segment.delivery_job.is_none()
+                || segment.delivery_receipt.is_none()
+            {
+                bail!(
+                    "imported source proof requires its exact manifest and native delivery recheck"
+                );
+            }
+        }
         if receipt["presentation_role"].as_str() != segment.role.as_deref() {
             bail!("scene presentation role differs from source receipt");
         }
-    } else if segment.role.is_some() {
+    } else if segment.role.is_some() || segment.imported_source_manifest.is_some() {
         bail!("episode presentation role is the segment ID");
     }
     Ok(())
@@ -1014,6 +1031,11 @@ pub fn build(
         let receipt_path = scene_delivery::checked_file(asset_root, &segment.source_receipt)?;
         let receipt: serde_json::Value = serde_json::from_slice(&fs::read(&receipt_path)?)?;
         selected_receipt(segment, &manifest.language, &receipt)?;
+        if segment.imported_source_manifest.is_some()
+            && receipt["episode_id"] != manifest.episode_id
+        {
+            bail!("imported scene source proof belongs to another episode");
+        }
         let presentation_rechecked = match (segment.kind, &segment.adoption_manifest) {
             (SegmentKind::Scene, None) => false,
             (SegmentKind::Scene, Some(_)) => {
@@ -1083,7 +1105,15 @@ pub fn build(
                     bail!("selected scene master is outside rechecked delivery directory");
                 }
                 verify_native_delivery_proof(&receipt, job_ref, delivery_ref)?;
-                let checked = if receipt["schema"] == "reel.scene-build-receipt.v1" {
+                let checked = if let Some(imported) = &segment.imported_source_manifest {
+                    imported_scene_proof::recheck(
+                        input_root,
+                        imported,
+                        asset_root,
+                        delivery_root,
+                        &receipt,
+                    )?
+                } else if receipt["schema"] == "reel.scene-build-receipt.v1" {
                     // The exact native proof above binds a successful full check.
                     // Rehash all current source/output bytes and compare the plan;
                     // final conform still decodes and compares every ordered frame.
