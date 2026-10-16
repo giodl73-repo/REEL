@@ -12,6 +12,26 @@ An optional `audio_cue_id` resolves a source cue in a combined performance.
 These are the same line/marker fields used by poem invocations; a label has
 no panel, stanza, chapter number, byline or post-poem title phase.
 
+For contrast over bright or detailed pictures, a template may opt into
+`text_effects` on the shared ASS Text style:
+
+```json
+"text_effects": {
+  "outline_rgb": [11, 16, 22],
+  "outline_alpha": 0,
+  "outline_width": 1.5,
+  "shadow_rgb": [0, 0, 0],
+  "shadow_alpha": 128,
+  "shadow_depth": 1.0
+}
+```
+
+Widths and depths are finite, nonnegative ASS canvas units. Alpha follows
+ASS convention: 0 is opaque and 255 is transparent. Effects change only
+typography, never the source text, semantic anchor or scene clock. Omitting
+the field preserves the original ASS output byte for byte. Chapter-specific
+number/title styles continue to own their own typography.
+
 The compiler sums the ordered native cue clocks, then resolves the marker
 in the selected language's take. No authored timestamp is accepted. ES/EN
 may enter at different times. The display ends at the template duration or

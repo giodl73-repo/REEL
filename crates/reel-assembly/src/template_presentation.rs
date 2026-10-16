@@ -76,6 +76,10 @@ pub struct EditableTextTemplate {
     pub future_rgb: [u8; 3],
     pub active_rgb: [u8; 3],
     pub completed_rgb: [u8; 3],
+    /// Optional contrast treatment for the shared Text style; absent preserves
+    /// the original ASS bytes. Alpha uses ASS convention: 0 is opaque.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_effects: Option<TextEffects>,
     pub panel: Option<Panel>,
     #[serde(default)]
     pub byline: Option<BylineStyle>,
@@ -85,6 +89,17 @@ pub struct EditableTextTemplate {
     pub post_poem_title_duration_ms: Option<u32>,
     #[serde(default)]
     pub chapter: Option<ChapterStyle>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TextEffects {
+    pub outline_rgb: [u8; 3],
+    pub outline_alpha: u8,
+    pub outline_width: f32,
+    pub shadow_rgb: [u8; 3],
+    pub shadow_alpha: u8,
+    pub shadow_depth: f32,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -359,6 +374,15 @@ pub fn compile_layer(
     {
         bail!("invalid editable presentation template or invocation");
     }
+    if let Some(effects) = &template.text_effects {
+        if !effects.outline_width.is_finite()
+            || !effects.shadow_depth.is_finite()
+            || effects.outline_width < 0.0
+            || effects.shadow_depth < 0.0
+        {
+            bail!("invalid editable text effects");
+        }
+    }
     let mut ass = format!(
         "[Script Info]\nScriptType: v4.00+\nPlayResX: {}\nPlayResY: {}\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Text,{},{},{},&H00000000,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\nStyle: Panel,Arial,1,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n",
         template.canvas_width,
@@ -367,6 +391,27 @@ pub fn compile_layer(
         template.body_size,
         color(template.completed_rgb)
     );
+    if let Some(effects) = &template.text_effects {
+        // Replace only this style's effects. Content, event positions, semantic
+        // anchors and clocks remain identical to the unstyled compilation.
+        let original = format!(
+            "Style: Text,{},{},{},&H00000000,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1",
+            template.font_name,
+            template.body_size,
+            color(template.completed_rgb)
+        );
+        let styled = format!(
+            "Style: Text,{},{},{},&H00000000,{},{},0,0,0,0,100,100,0,0,1,{},{},7,0,0,0,1",
+            template.font_name,
+            template.body_size,
+            color(template.completed_rgb),
+            alpha_color(effects.outline_rgb, effects.outline_alpha),
+            alpha_color(effects.shadow_rgb, effects.shadow_alpha),
+            effects.outline_width,
+            effects.shadow_depth,
+        );
+        ass = ass.replacen(&original, &styled, 1);
+    }
     if template.kind == "poem-title" {
         if !invocation.lines.is_empty()
             || !ordered_cues.is_empty()

@@ -5,8 +5,8 @@ use reel_assembly::scene_authoring::{NATIVE_ALIGNMENT_SCHEMA, NativeAlignment};
 use reel_assembly::template_presentation::{
     BylineStyle, ChapterLineStyle, ChapterStyle, DisplaySourceUnit, EditableTextInvocation,
     EditableTextTemplate, INVOCATION_SCHEMA, Panel, PoemLine, PresentationSourceText,
-    SCENE_SOURCE_TEXT_SCHEMA_V2, SOURCE_TEXT_SCHEMA, SourceLine, TEMPLATE_SCHEMA, compile_layer,
-    verify_native_line_ownership, verify_source_text,
+    SCENE_SOURCE_TEXT_SCHEMA_V2, SOURCE_TEXT_SCHEMA, SourceLine, TEMPLATE_SCHEMA, TextEffects,
+    compile_layer, verify_native_line_ownership, verify_source_text,
 };
 
 fn chapter_line(font_size: u32, margin_left: u32, margin_vertical: u32) -> ChapterLineStyle {
@@ -44,6 +44,7 @@ fn template(kind: &str) -> EditableTextTemplate {
         future_rgb: [120, 127, 133],
         active_rgb: [216, 227, 232],
         completed_rgb: [255, 255, 255],
+        text_effects: None,
         panel: matches!(kind, "opening-poem" | "internal-poem").then_some(Panel {
             x: 853,
             width: 427,
@@ -214,6 +215,56 @@ fn label() -> (EditableTextTemplate, EditableTextInvocation) {
         stanza_break_before: false,
     }];
     (definition, invocation)
+}
+
+#[test]
+fn optional_text_effects_preserve_label_content_and_native_clocks() {
+    let (mut definition, invocation) = label();
+    let cues = ["a".into(), "b".into()];
+    let baseline = compile_layer(&definition, &invocation, &cues, &clocks()).unwrap();
+    let json = serde_json::to_value(&definition).unwrap();
+    assert!(json.get("text_effects").is_none());
+    let restored: EditableTextTemplate = serde_json::from_value(json).unwrap();
+    assert_eq!(
+        baseline.ass,
+        compile_layer(&restored, &invocation, &cues, &clocks())
+            .unwrap()
+            .ass
+    );
+    definition.text_effects = Some(TextEffects {
+        outline_rgb: [11, 16, 22],
+        outline_alpha: 0,
+        outline_width: 1.5,
+        shadow_rgb: [0, 0, 0],
+        shadow_alpha: 128,
+        shadow_depth: 1.0,
+    });
+    let styled = compile_layer(&definition, &invocation, &cues, &clocks()).unwrap();
+    assert_eq!(styled.duration_samples, baseline.duration_samples);
+    assert_eq!(styled.sample_rate, baseline.sample_rate);
+    let without_text_style = |ass: &str| {
+        ass.lines()
+            .filter(|line| !line.starts_with("Style: Text,"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert_eq!(
+        without_text_style(&styled.ass),
+        without_text_style(&baseline.ass)
+    );
+    assert!(
+        styled
+            .ass
+            .contains("&H0016100B,&H80000000,0,0,0,0,100,100,0,0,1,1.5,1,7")
+    );
+    for invalid in [-1.0, f32::NAN, f32::INFINITY] {
+        definition.text_effects.as_mut().unwrap().outline_width = invalid;
+        assert!(compile_layer(&definition, &invocation, &cues, &clocks()).is_err());
+        definition.text_effects.as_mut().unwrap().outline_width = 1.5;
+        definition.text_effects.as_mut().unwrap().shadow_depth = invalid;
+        assert!(compile_layer(&definition, &invocation, &cues, &clocks()).is_err());
+        definition.text_effects.as_mut().unwrap().shadow_depth = 1.0;
+    }
 }
 
 #[test]
