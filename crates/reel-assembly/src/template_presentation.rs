@@ -168,6 +168,27 @@ pub struct CompiledLayer {
     pub ass: String,
 }
 
+/// Reject a source line anchored to an unrelated selected native performance.
+pub fn verify_native_line_ownership(
+    invocation: &EditableTextInvocation,
+    cues: &[crate::scene_authoring::Cue],
+) -> Result<()> {
+    for line in &invocation.lines {
+        if line.cue_id.trim().is_empty() || line.semantic_trigger_id.trim().is_empty() {
+            bail!("source line needs a cue identity and semantic trigger");
+        }
+        let audio_id = line.audio_cue_id.as_deref().unwrap_or(&line.cue_id);
+        let cue = cues
+            .iter()
+            .find(|cue| cue.cue_id == audio_id)
+            .context("source line native performance missing")?;
+        if line.cue_id != cue.cue_id && !cue.source_cue_ids.contains(&line.cue_id) {
+            bail!("source line is outside its native performance source scope");
+        }
+    }
+    Ok(())
+}
+
 /// A selected source-text file is the wording authority for an invocation.
 /// This checks exact text and stanza structure; it does not grant human review.
 pub fn verify_source_text(
@@ -326,7 +347,7 @@ pub fn compile_layer(
         || template.template_id != invocation.template_id
         || !matches!(
             template.kind.as_str(),
-            "opening-poem" | "internal-poem" | "chapter-title"
+            "opening-poem" | "internal-poem" | "poem-title" | "chapter-title" | "semantic-label"
         )
         || template.canvas_width == 0
         || template.canvas_height == 0
@@ -346,6 +367,180 @@ pub fn compile_layer(
         template.body_size,
         color(template.completed_rgb)
     );
+    if template.kind == "poem-title" {
+        if !invocation.lines.is_empty()
+            || !ordered_cues.is_empty()
+            || !alignments.is_empty()
+            || invocation.chapter_number.is_some()
+            || template.chapter.is_some()
+            || template.post_poem_title_duration_ms.is_some()
+            || invocation.byline.is_some() != template.byline.is_some()
+        {
+            bail!("poem title is a separate title-only unit, without native verse clocks");
+        }
+        let seconds = template
+            .fixed_duration_seconds
+            .filter(|seconds| (1..=30).contains(seconds))
+            .context("poem title requires a bounded template duration")?;
+        let panel = template
+            .panel
+            .as_ref()
+            .context("poem title panel missing")?;
+        if panel.width == 0
+            || panel.x.checked_add(panel.width) != Some(template.canvas_width)
+            || template.title_x < panel.x
+            || template.title_x >= template.canvas_width
+            || template.title_y >= template.canvas_height
+        {
+            bail!("poem title geometry does not fit canvas");
+        }
+        let end = u64::from(seconds) * 100;
+        for (left, right, rgb) in [
+            (panel.x, template.canvas_width, color(panel.background_rgb)),
+            (
+                panel.x,
+                panel.x + 2,
+                alpha_color(panel.divider_rgb, panel.divider_alpha),
+            ),
+        ] {
+            ass.push_str(&event(0, end, 100, "Panel", &format!(
+                "{{\\an7\\pos(0,0)\\p1\\1c{rgb}}}m {left} 0 l {right} 0 {right} {} {left} {}{{\\p0}}",
+                template.canvas_height, template.canvas_height,
+            )));
+        }
+        ass.push_str(&event(
+            0,
+            end,
+            100,
+            "Text",
+            &format!(
+                "{{\\pos({},{})\\fs{}\\1c{}}}{}",
+                template.title_x,
+                template.title_y,
+                template.title_size,
+                color(template.completed_rgb),
+                escape(&invocation.title)?,
+            ),
+        ));
+        if let (Some(byline), Some(style)) = (&invocation.byline, &template.byline) {
+            if style.font_size == 0
+                || style.x < panel.x
+                || style.x >= template.canvas_width
+                || style.y >= template.canvas_height
+            {
+                bail!("poem title byline does not fit canvas");
+            }
+            ass.push_str(&event(
+                0,
+                end,
+                100,
+                "Text",
+                &format!(
+                    "{{\\pos({},{})\\fs{}\\1c{}}}{}",
+                    style.x,
+                    style.y,
+                    style.font_size,
+                    color(style.rgb),
+                    escape(byline)?,
+                ),
+            ));
+        }
+        return Ok(CompiledLayer {
+            schema: "reel.compiled-editable-layer.v1".into(),
+            template_id: template.template_id.clone(),
+            language: invocation.language.clone(),
+            duration_samples: end,
+            sample_rate: 100,
+            ass,
+        });
+    }
+    if template.kind == "semantic-label" {
+        if invocation.lines.len() != 1
+            || invocation.lines[0].text != invocation.title
+            || invocation.chapter_number.is_some()
+            || invocation.byline.is_some()
+            || template.panel.is_some()
+            || template.chapter.is_some()
+            || template.byline.is_some()
+            || template.post_poem_title_duration_ms.is_some()
+            || template.title_x >= template.canvas_width
+            || template.title_y >= template.canvas_height
+        {
+            bail!("semantic label requires one source-bound label and no poem/chapter layout");
+        }
+        let seconds = template
+            .fixed_duration_seconds
+            .filter(|seconds| (1..=30).contains(seconds))
+            .context("semantic label needs a bounded template duration")?;
+        let line = &invocation.lines[0];
+        if line.stanza_break_before || line.semantic_trigger_id.trim().is_empty() {
+            bail!("semantic label cannot declare a poem stanza");
+        }
+        let audio_id = line.audio_cue_id.as_deref().unwrap_or(&line.cue_id);
+        let mut cursor = 0u64;
+        let mut rate = None;
+        let mut start = None;
+        let mut used = BTreeSet::new();
+        for cue_id in ordered_cues {
+            let alignment = alignments
+                .get(cue_id)
+                .with_context(|| format!("missing label native alignment for {cue_id}"))?;
+            if alignment.schema != NATIVE_ALIGNMENT_SCHEMA
+                || alignment.language != invocation.language
+                || alignment.cue_id != *cue_id
+                || alignment.sample_rate == 0
+                || alignment.cue_end_sample == 0
+                || rate.is_some_and(|old| old != alignment.sample_rate)
+                || !used.insert(cue_id)
+            {
+                bail!("invalid or duplicate label native alignment");
+            }
+            rate = Some(alignment.sample_rate);
+            if cue_id == audio_id {
+                let marker = *alignment
+                    .semantic_markers
+                    .get(&line.semantic_trigger_id)
+                    .context("label semantic marker missing")?;
+                if marker >= alignment.cue_end_sample {
+                    bail!("label semantic marker outside native cue");
+                }
+                start = Some(cursor.checked_add(marker).context("label clock overflow")?);
+            }
+            cursor = cursor
+                .checked_add(alignment.cue_end_sample)
+                .context("label clock overflow")?;
+        }
+        let rate = rate.context("semantic label has no native clock")?;
+        let start = start.context("label references a cue outside the scene")?;
+        let end = start
+            .checked_add(u64::from(seconds) * u64::from(rate))
+            .context("label duration overflow")?
+            .min(cursor);
+        if centiseconds(start, rate) >= centiseconds(end, rate) {
+            bail!("semantic label has no visible duration");
+        }
+        ass.push_str(&event(
+            start,
+            end,
+            rate,
+            "Text",
+            &format!(
+                "{{\\an2\\pos({},{})\\fs{}}}{}",
+                template.title_x,
+                template.title_y,
+                template.title_size,
+                escape(&invocation.title)?
+            ),
+        ));
+        return Ok(CompiledLayer {
+            schema: "reel.compiled-editable-layer.v1".into(),
+            template_id: template.template_id.clone(),
+            language: invocation.language.clone(),
+            duration_samples: cursor,
+            sample_rate: rate,
+            ass,
+        });
+    }
     if template.kind == "chapter-title" {
         if invocation.byline.is_some() || template.byline.is_some() {
             bail!("chapter card cannot carry a poem byline");
