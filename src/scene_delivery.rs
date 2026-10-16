@@ -950,7 +950,20 @@ fn arg(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-fn render_ass_overlay(root: &Path, fps: &str, font_bound: bool) -> Result<()> {
+fn lossless_video_encoding(encoding: Option<&str>) -> Vec<&'static str> {
+    if encoding == Some("h264-lossless") {
+        vec!["-c:v", "libx264", "-crf", "0", "-preset", "veryfast"]
+    } else {
+        vec!["-c:v", "ffv1"]
+    }
+}
+
+fn render_ass_overlay(
+    root: &Path,
+    fps: &str,
+    font_bound: bool,
+    encoding: Option<&str>,
+) -> Result<()> {
     let filter = if font_bound {
         "ass=presentation.ass:fontsdir=fonts"
     } else {
@@ -967,18 +980,9 @@ fn render_ass_overlay(root: &Path, fps: &str, font_bound: bool) -> Result<()> {
             "-i",
             "clean-picture.mkv",
         ])
-        .args([
-            "-vf",
-            filter,
-            "-an",
-            "-c:v",
-            "ffv1",
-            "-pix_fmt",
-            "yuv444p",
-            "-r",
-            fps,
-            "picture.mkv",
-        ])
+        .args(["-vf", filter, "-an"])
+        .args(lossless_video_encoding(encoding))
+        .args(["-pix_fmt", "yuv444p", "-r", fps, "picture.mkv"])
         .output()?;
     if !output.status.success() {
         bail!(
@@ -996,6 +1000,7 @@ fn render_timed_video_overlay(
     picture_input: &str,
     overlay_input: &str,
     picture_output: &str,
+    encoding: Option<&str>,
 ) -> Result<()> {
     let count = span.end_frame - span.start_frame;
     let graph = format!(
@@ -1009,15 +1014,8 @@ fn render_timed_video_overlay(
         .current_dir(root)
         .args(["-hide_banner", "-v", "error", "-nostdin", "-n"])
         .args(["-i", picture_input, "-i", overlay_input])
-        .args([
-            "-filter_complex",
-            &graph,
-            "-map",
-            "[v]",
-            "-an",
-            "-c:v",
-            "ffv1",
-        ])
+        .args(["-filter_complex", &graph, "-map", "[v]", "-an"])
+        .args(lossless_video_encoding(encoding))
         .args([
             "-pix_fmt",
             "yuv444p",
@@ -1035,7 +1033,12 @@ fn render_timed_video_overlay(
     Ok(())
 }
 
-fn render_post_compose_camera(root: &Path, plan: &Plan, camera: &PostComposeCamera) -> Result<()> {
+fn render_post_compose_camera(
+    root: &Path,
+    plan: &Plan,
+    camera: &PostComposeCamera,
+    encoding: Option<&str>,
+) -> Result<()> {
     let before = root.join("pre-camera-picture.mkv");
     fs::rename(root.join("picture.mkv"), &before)?;
     let mut zoom = "1".to_string();
@@ -1094,7 +1097,7 @@ fn render_post_compose_camera(root: &Path, plan: &Plan, camera: &PostComposeCame
     let filter = format!(
         "zoompan=z='{zoom}':x='max(0,min(iw-iw/zoom,iw/2-iw/zoom/2+{offset_x}))':y='max(0,min(ih-ih/zoom,ih/2-ih/zoom/2+{offset_y}))':d=1:s={width}x{height}:fps={fps},format=yuv444p"
     );
-    ffmpeg(&[
+    let mut arguments = vec![
         "-i".into(),
         arg(&before),
         "-vf".into(),
@@ -1102,10 +1105,14 @@ fn render_post_compose_camera(root: &Path, plan: &Plan, camera: &PostComposeCame
         "-frames:v".into(),
         plan.frame_count.to_string(),
         "-an".into(),
-        "-c:v".into(),
-        "ffv1".into(),
-        arg(&root.join("picture.mkv")),
-    ])?;
+    ];
+    arguments.extend(
+        lossless_video_encoding(encoding)
+            .into_iter()
+            .map(str::to_owned),
+    );
+    arguments.push(arg(&root.join("picture.mkv")));
+    ffmpeg(&arguments)?;
     Ok(())
 }
 
@@ -1473,27 +1480,19 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
             .collect::<String>(),
         groups.len()
     ));
-    if job.still_sequence_encoding.as_deref() == Some("h264-lossless") {
-        inputs.extend([
-            "-crf".into(),
-            "0".into(),
-            "-preset".into(),
-            "veryfast".into(),
-        ]);
-    }
     inputs.extend([
         "-filter_complex".into(),
         filters.join(";"),
         "-map".into(),
         "[v]".into(),
         "-an".into(),
-        "-c:v".into(),
-        if job.still_sequence_encoding.as_deref() == Some("h264-lossless") {
-            "libx264"
-        } else {
-            "ffv1"
-        }
-        .into(),
+    ]);
+    inputs.extend(
+        lossless_video_encoding(job.still_sequence_encoding.as_deref())
+            .into_iter()
+            .map(str::to_owned),
+    );
+    inputs.extend([
         "-pix_fmt".into(),
         "yuv444p".into(),
         "-r".into(),
@@ -1528,7 +1527,15 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                 format!("layered-picture-{index:03}.mkv")
             };
             fs::copy(source, root.join(&selected))?;
-            render_timed_video_overlay(root, &plan, span, &input, &selected, &output)?;
+            render_timed_video_overlay(
+                root,
+                &plan,
+                span,
+                &input,
+                &selected,
+                &output,
+                job.still_sequence_encoding.as_deref(),
+            )?;
         }
     } else if let Some(layer) = overlay {
         match layer.render_mode {
@@ -1548,7 +1555,12 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                         root.join("fonts").join(name),
                     )?;
                 }
-                render_ass_overlay(root, &fps, layer.font.is_some())?;
+                render_ass_overlay(
+                    root,
+                    &fps,
+                    layer.font.is_some(),
+                    job.still_sequence_encoding.as_deref(),
+                )?;
             }
             ExternalLayerRenderMode::TimedVideoOverlay => {
                 let span = plan
@@ -1568,6 +1580,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                     "clean-picture.mkv",
                     "selected-overlay.mkv",
                     "picture.mkv",
+                    job.still_sequence_encoding.as_deref(),
                 )?;
             }
             ExternalLayerRenderMode::EvidenceOnly
@@ -1575,7 +1588,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         }
     }
     if let Some(camera) = &job.post_compose_camera {
-        render_post_compose_camera(root, &plan, camera)?;
+        render_post_compose_camera(root, &plan, camera, job.still_sequence_encoding.as_deref())?;
     }
     for bus in ["D", "M", "E"] {
         let mut inputs = Vec::new();
@@ -2150,9 +2163,7 @@ fn check_impl(
         let (rn, rd) = rate.split_once('/').context("invalid video frame rate")?;
         let (rn, rd) = (rn.parse::<u64>()?, rd.parse::<u64>()?);
         let codec = if name == "review.mp4"
-            || (overlays.is_empty()
-                && job.post_compose_camera.is_none()
-                && job.still_sequence_encoding.as_deref() == Some("h264-lossless"))
+            || job.still_sequence_encoding.as_deref() == Some("h264-lossless")
         {
             "h264"
         } else {
