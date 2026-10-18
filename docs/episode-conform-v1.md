@@ -54,6 +54,60 @@ still undergoes ordered picture/audio comparison, timestamp verification and
 full compact-output decoding. Scene receipt checks and creative approval remain
 independent.
 
+### Explicit delivery geometry
+
+By default, every selected source must have the same picture dimensions and
+frame rate. To join different resolutions, declare an output size explicitly:
+
+```json
+"output_geometry": {
+  "width": 1280,
+  "height": 720,
+  "policy": "preserve-aspect-lanczos"
+}
+```
+
+This policy accepts square-pixel sources with the same aspect ratio as the
+target. It rejects cropping, stretching, non-square pixels, unsupported
+policies, and frame-rate changes. Dimensions must be 1–16384. Sources already
+at the target size are retained at that size. Other sources are scaled with
+Lanczos as part of lossless normalization; the declared transformation is
+independently decoded from the original and must match normalized picture
+bytes exactly. Original source hashes, receipts, frame counts and audio
+checks remain authoritative. Upscaling does not add source detail.
+
+Legacy streams with no usable pixel-aspect tag remain rejected unless the
+author explicitly adds `"assume_square_for_unspecified_sar": true` to
+`output_geometry`. Only absent/unknown, `N/A`, or `0:1` tags qualify. A known
+non-square value still fails. Normalization writes `setsar=1` and independently
+checks decoded content against that declared transform; original source bytes
+and the original tag stay recorded. The segment receipt adds
+`sample_aspect_ratio_assumed_square: true` only when this assumption was used.
+Writing the tag alone is not reported as scaling. This declaration does not
+resolve inconsistent color metadata or authorize reinterpretation of known SAR.
+
+The original frame and audio timestamps are checked before any episode clock
+rewrite. Sources must have consistent color range, matrix, transfer and primaries
+metadata; normalization and the conformed master must preserve these values and
+square pixel aspect ratio. Unknown color tags remain unknown; this policy does
+not infer or invent color calibration.
+
+For legacy streams with an unspecified matrix, the author may explicitly set
+`"assume_color_space_for_unspecified": "bt470bg"` in `output_geometry`.
+Only this supported declaration is accepted. It does not replace a known matrix
+or fill unknown range, primaries, or transfer tags. Before resizing, the conform
+independently decodes the original with and without that matrix declaration and
+requires identical RGB bytes. A declaration that changes displayed colors fails.
+Normalized streams, the full master, and compact output must retain the declared
+matrix; the segment receipt preserves original color tags and records the
+assumption. This is a verified interpretation of untagged decoded content, not
+permission to relabel known color spaces or claim source color calibration.
+
+The receipt records the output policy and, for each segment, original and
+output dimensions, original decoded picture hash, whether scaling occurred,
+and successful transformed-source comparison. These fields are omitted when
+no output geometry is declared, preserving the legacy receipt shape.
+
 A scene segment may also supply `delivery_job` (an exact authoring-root file
 reference) and `delivery_receipt` (an exact media-root file reference beside the
 hydrated scene outputs). They must be supplied together. The selected scene

@@ -79,12 +79,27 @@ pub struct TemplateCatalog {
 #[serde(deny_unknown_fields)]
 pub struct PresentationUse {
     pub role: String,
+    /// Reusable template type when `role` identifies a particular occurrence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template_kind: Option<String>,
     pub template_id: String,
     pub content: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placement: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset_binding: Option<String>,
+}
+
+/// Keep occurrence identity separate from template type, preserving legacy roles.
+pub fn presentation_template_kind_matches(
+    role: &str,
+    explicit_kind: Option<&str>,
+    selected_kind: &str,
+) -> bool {
+    let kind = explicit_kind.unwrap_or(role);
+    !role.is_empty()
+        && !kind.is_empty()
+        && (selected_kind == kind || (selected_kind == "opening-poem" && kind == "internal-poem"))
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1548,9 +1563,11 @@ fn use_template<'a>(use_: &PresentationUse, catalog: &'a TemplateCatalog) -> Res
         .iter()
         .find(|item| item.template_id == use_.template_id)
         .ok_or_else(|| anyhow::anyhow!("unknown template {}", use_.template_id))?;
-    if template.kind != use_.role
-        && !(template.kind == "opening-poem" && use_.role == "internal-poem")
-    {
+    if !presentation_template_kind_matches(
+        &use_.role,
+        use_.template_kind.as_deref(),
+        &template.kind,
+    ) {
         bail!(
             "template {} has kind {}, not {}",
             template.template_id,

@@ -306,3 +306,33 @@ windows, invalid numeric bounds and a separately authored camera are rejected.
 The selected recipe remains hashed VFX evidence in the semantic closure. Clean
 source cels are unchanged. Neither a render check nor a selected binding grants
 creative approval.
+
+## Separate poem-title preludes
+
+A `poem-title` template compiles an editable title-and-byline layer before a
+poem reading. Its invocation has no lines or native cue clocks. The definition
+requires a `fixed_duration_seconds` between 1 and 30 and the same panel geometry
+as the corresponding poem template. Chapter content and a post-poem title tail
+are rejected. The main poem reading retains its native alignment unchanged.
+
+The scene-template CLI verifies the title and byline against selected
+language-local source text. If the template requires `selected-episode-score`,
+the invocation must identify a poem-matched episode score role with a selected
+asset. A title-only unit has no narration events; this check validates the
+selected score identity, not audible playback.
+
+Render the layer as a separate presentation using the generic
+`reel-presentation-still-sequence` tool, with the selected picture and score.
+Then adopt and include that exact rendered unit in the episode's ordered
+presentation contract before the poem scene. Give each occurrence its own
+presentation role and selected template/binding, including repeated poems.
+Episode conform requires every presentation role exactly once. Compilation
+alone does not insert a prelude, play its score or establish creative approval.
+
+For soundtrack-required presentation units, set `audio_required: true` on the
+`reel.presentation-still-template.v1` rendering definition. Build and check
+then reject a missing selected audio source. Omission defaults to false for
+intentional silent presentations. The audio file still needs its exact hash,
+bytes and cache locator; this requirement does not certify musical continuity
+into the next unit. Choose the prelude excerpt and poem score handoff together
+so the score introduction is not replayed unintentionally.

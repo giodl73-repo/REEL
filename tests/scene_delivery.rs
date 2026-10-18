@@ -164,6 +164,66 @@ fn write_json(path: &Path, v: &Value) {
     fs::write(path, serde_json::to_vec_pretty(v).unwrap()).unwrap();
 }
 
+// Compare every final decoded pixel and PCM sample after the real compositor,
+// not merely the codec label or an initial clean-picture intermediate.
+fn assert_compositor_encoding_parity(root: &Path, job: &Value, original: &Path) {
+    let mut alternate = job.clone();
+    let original_compact = job["still_sequence_encoding"] == "h264-lossless";
+    if original_compact {
+        alternate
+            .as_object_mut()
+            .unwrap()
+            .remove("still_sequence_encoding");
+    } else {
+        alternate["still_sequence_encoding"] = json!("h264-lossless");
+    }
+    let manifest = root.join("alternate-encoding.json");
+    write_json(&manifest, &alternate);
+    let output = root.join("alternate-encoding");
+    scene_delivery::render(&manifest, root, &output).unwrap();
+    scene_delivery::check(&manifest, root, &output).unwrap();
+    for (folder, codec) in [
+        (original, if original_compact { "h264" } else { "ffv1" }),
+        (
+            output.as_path(),
+            if original_compact { "ffv1" } else { "h264" },
+        ),
+    ] {
+        let probe = Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name",
+                "-of",
+                "csv=p=0",
+            ])
+            .arg(folder.join("master.mkv"))
+            .output()
+            .unwrap();
+        assert!(probe.status.success());
+        assert_eq!(String::from_utf8(probe.stdout).unwrap().trim(), codec);
+    }
+    for (stream, format) in [("0:v:0", "rawvideo"), ("0:a:0", "s24le")] {
+        let decode = |folder: &Path| {
+            let mut command = Command::new("ffmpeg");
+            command
+                .args(["-v", "error", "-i"])
+                .arg(folder.join("master.mkv"))
+                .args(["-map", stream]);
+            if format == "rawvideo" {
+                command.args(["-pix_fmt", "yuv444p"]);
+            }
+            let result = command.args(["-f", format, "-"]).output().unwrap();
+            assert!(result.status.success());
+            result.stdout
+        };
+        assert_eq!(decode(original), decode(&output));
+    }
+}
+
 #[test]
 fn temporal_lossless_scene_encoding_preserves_every_decoded_pixel_and_sample() {
     let t = tempfile::tempdir().unwrap();
@@ -609,7 +669,71 @@ fn selected_ass_layer_changes_rendered_pixels_and_is_checked() {
     );
     assert!(output.join("clean-picture.mkv").exists());
     assert!(output.join("presentation.ass").exists());
+    for name in ["clean-picture.mkv", "picture.mkv", "master.mkv"] {
+        let probe = Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name",
+                "-of",
+                "default=nw=1:nk=1",
+            ])
+            .arg(output.join(name))
+            .output()
+            .unwrap();
+        assert!(probe.status.success());
+        assert_eq!(
+            String::from_utf8(probe.stdout).unwrap().trim(),
+            "h264",
+            "compact ASS output {name}"
+        );
+    }
     scene_delivery::check(&root.join("job.json"), root, &output).unwrap();
+    assert_compositor_encoding_parity(root, &job, &output);
+    job.as_object_mut()
+        .unwrap()
+        .remove("still_sequence_encoding");
+    write_json(&root.join("default-job.json"), &job);
+    let default_output = root.join("default-rendered");
+    let default_receipt =
+        scene_delivery::render(&root.join("default-job.json"), root, &default_output).unwrap();
+    assert_eq!(receipt.plan.frame_count, default_receipt.plan.frame_count);
+    assert_eq!(
+        receipt.plan.duration_samples,
+        default_receipt.plan.duration_samples
+    );
+    for name in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
+        assert_eq!(
+            fs::read(output.join(name)).unwrap(),
+            fs::read(default_output.join(name)).unwrap(),
+            "encoding must preserve {name}"
+        );
+    }
+    let frame_hashes = |directory: &Path| {
+        let decoded = Command::new("ffmpeg")
+            .args(["-v", "error", "-i"])
+            .arg(directory.join("picture.mkv"))
+            .args([
+                "-map", "0:v:0", "-pix_fmt", "yuv444p", "-f", "framemd5", "-",
+            ])
+            .output()
+            .unwrap();
+        assert!(decoded.status.success());
+        String::from_utf8(decoded.stdout)
+            .unwrap()
+            .lines()
+            .filter(|line| !line.starts_with('#') && !line.trim().is_empty())
+            .map(|line| line.rsplit(',').next().unwrap().trim().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        frame_hashes(&output),
+        frame_hashes(&default_output),
+        "compact title pixels must remain lossless"
+    );
     fs::write(output.join("presentation.ass"), b"tampered").unwrap();
     assert!(scene_delivery::check(&root.join("job.json"), root, &output).is_err());
 }
@@ -767,6 +891,7 @@ fn timed_alpha_effect_changes_only_its_selected_frames() {
     assert!(receipt.plan.external_layer_spans[0].start_frame < receipt.plan.pictures[0].end_frame);
     assert!(receipt.plan.external_layer_spans[0].end_frame > receipt.plan.pictures[1].start_frame);
     scene_delivery::check(&root.join("job.json"), root, &output).unwrap();
+    assert_compositor_encoding_parity(root, &job, &output);
     fs::write(output.join("selected-overlay.mkv"), b"tampered").unwrap();
     assert!(scene_delivery::check(&root.join("job.json"), root, &output).is_err());
 
@@ -865,6 +990,7 @@ fn two_timed_overlays_render_and_check_as_independent_semantic_layers() {
     assert!(receipt.outputs.contains_key("selected-overlay-001.mkv"));
     assert!(receipt.outputs.contains_key("layered-picture-000.mkv"));
     scene_delivery::check(&root.join("job.json"), root, &output).unwrap();
+    assert_compositor_encoding_parity(root, &job, &output);
     fs::write(output.join("selected-overlay-001.mkv"), b"tampered").unwrap();
     assert!(scene_delivery::check(&root.join("job.json"), root, &output).is_err());
 }
@@ -999,6 +1125,7 @@ fn post_compose_camera_is_scoped_to_selected_frames_and_checked() {
     scene_delivery::render(&root.join("job.json"), root, &out).unwrap();
     scene_delivery::check(&root.join("job.json"), root, &out).unwrap();
     assert!(out.join("pre-camera-picture.mkv").exists());
+    assert_compositor_encoding_parity(root, &job, &out);
     job["post_compose_camera"]["windows"][0]["end_frame"] = json!(49);
     write_json(&root.join("job.json"), &job);
     assert!(scene_delivery::plan(&root.join("job.json"), root).is_err());
