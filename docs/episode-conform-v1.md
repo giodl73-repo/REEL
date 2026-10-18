@@ -118,6 +118,20 @@ outputs and current assets. Each segment records `upstream_delivery_verified`.
 The episode receipt says `verified-for-all-scene-segments` only when every scene
 passed this recheck; otherwise it leaves that gate open.
 
+For scenes authored directly through `reel.semantic-delivery.v1`, a scene
+segment can instead supply `semantic_delivery`, a hash/byte-bound reference in
+the authoring root, and use the original `reel.scene-delivery-receipt.v0.1` as
+`source_receipt`. Both `delivery_job` and `delivery_receipt` remain required;
+the latter must bind exactly the same receipt bytes as `source_receipt`.
+The semantic manifest must explicitly scope the segment's scene ID and language.
+REEL resolves its selected graph, checks every semantic attachment, verifies the
+selected job's canonical path/hash/bytes and the rendered job/master hashes,
+then performs the full scene-delivery media check. A broader graph target is
+allowed when its explicitly scoped scene/language events pass semantic planning.
+This route accepts ordinary scene segments without a presentation role. It does
+not issue a scene-authoring build receipt, skip media validation, or establish
+creative approval. Existing scene-authoring receipt behavior is unchanged.
+
 The generic master-order definition has schema `reel.episode-master-template.v1`,
 `template_id`, `ordered_roles`, and optional `optional_roles`. `chapter-scenes`
 is the one required scene-sequence marker. An optional

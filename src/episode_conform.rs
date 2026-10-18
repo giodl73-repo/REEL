@@ -1,7 +1,9 @@
 //! Hash-bound, language-local lossless episode conform from selected scene and
 //! presentation masters. Source selection belongs to the authoring bindings.
 
-use crate::{episode_delivery, imported_scene_proof, presentation_adopt, scene_delivery};
+use crate::{
+    episode_delivery, imported_scene_proof, presentation_adopt, scene_delivery, semantic_delivery,
+};
 use anyhow::{Context, Result, bail};
 use reel_assembly::scene_authoring::{
     Episode, ScopedBindings, TemplateCatalog, resolve_episode_presentation,
@@ -220,6 +222,10 @@ pub struct Segment {
     /// Receipt beside the hydrated scene-delivery output files.
     #[serde(default)]
     pub delivery_receipt: Option<scene_delivery::FileRef>,
+    /// Selected semantic scene scope for a direct scene-delivery receipt.
+    /// This route always performs the full upstream delivery check.
+    #[serde(default)]
+    pub semantic_delivery: Option<scene_delivery::FileRef>,
     /// Exact source-adoption manifest for an inherited presentation master.
     #[serde(default)]
     pub adoption_manifest: Option<scene_delivery::FileRef>,
@@ -690,6 +696,32 @@ fn decoded_digest_with_pixel_format(
 }
 
 fn selected_receipt(segment: &Segment, language: &str, receipt: &serde_json::Value) -> Result<()> {
+    if receipt["schema"] == "reel.scene-delivery-receipt.v0.1" {
+        if segment.kind != SegmentKind::Scene
+            || segment.semantic_delivery.is_none()
+            || segment.delivery_job.is_none()
+            || segment.role.is_some()
+            || segment.imported_source_manifest.is_some()
+            || segment.imported_source_root.is_some()
+        {
+            bail!("direct scene delivery requires a semantic scene scope and native recheck");
+        }
+        let delivery = segment
+            .delivery_receipt
+            .as_ref()
+            .context("direct scene delivery requires its selected receipt")?;
+        if delivery.sha256 != segment.source_receipt.sha256
+            || delivery.bytes != segment.source_receipt.bytes
+            || receipt["outputs"]["master.mkv"]["sha256"] != segment.master.sha256
+            || receipt["outputs"]["master.mkv"]["bytes"] != segment.master.bytes
+        {
+            bail!("direct scene delivery does not bind selected receipt/master");
+        }
+        return Ok(());
+    }
+    if segment.semantic_delivery.is_some() {
+        bail!("semantic delivery scope requires a direct scene-delivery receipt");
+    }
     if segment.imported_source_root.is_some()
         && (segment.kind != SegmentKind::Scene || segment.imported_source_manifest.is_none())
     {
@@ -735,6 +767,178 @@ fn selected_receipt(segment: &Segment, language: &str, receipt: &serde_json::Val
         bail!("episode presentation role is the segment ID");
     }
     Ok(())
+}
+
+fn verify_semantic_scene_scope(
+    segment: &Segment,
+    language: &str,
+    receipt: &serde_json::Value,
+    input_root: &Path,
+) -> Result<()> {
+    let reference = segment
+        .semantic_delivery
+        .as_ref()
+        .context("direct scene delivery lacks semantic selection")?;
+    let path = scene_delivery::checked_file(input_root, reference)?;
+    let semantic: semantic_delivery::SemanticDelivery = serde_yaml::from_slice(&fs::read(&path)?)?;
+    let job = segment
+        .delivery_job
+        .as_ref()
+        .context("semantic scene lacks delivery job")?;
+    if semantic.scene_id.as_deref() != Some(segment.id.as_str())
+        || semantic.language.as_deref() != Some(language)
+        || semantic.scene_delivery_job.sha256 != job.sha256
+        || semantic.scene_delivery_job.bytes != job.bytes
+    {
+        bail!("semantic selection differs from scene/language/delivery job");
+    }
+    let semantic_job = scene_delivery::checked_file(
+        path.parent().context("semantic manifest lacks parent")?,
+        &semantic.scene_delivery_job,
+    )?;
+    if semantic_job.canonicalize()?
+        != scene_delivery::checked_file(input_root, job)?.canonicalize()?
+    {
+        bail!("semantic selection differs from selected delivery job path");
+    }
+    let planned = semantic_delivery::plan(&path)?;
+    if planned.scene_delivery_job_sha256 != job.sha256
+        || receipt["plan"]["job_sha256"] != job.sha256
+    {
+        bail!("semantic selection differs from rendered job");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod semantic_receipt_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn segment() -> Segment {
+        serde_json::from_value(json!({
+            "kind":"scene","id":"scene-a",
+            "master":{"path":"out/master.mkv","sha256":"a".repeat(64),"bytes":7},
+            "source_receipt":{"path":"out/receipt.json","sha256":"b".repeat(64),"bytes":8},
+            "delivery_receipt":{"path":"out/receipt.json","sha256":"b".repeat(64),"bytes":8},
+            "delivery_job":{"path":"job.json","sha256":"c".repeat(64),"bytes":9},
+            "semantic_delivery":{"path":"semantic.json","sha256":"d".repeat(64),"bytes":10}
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn direct_receipt_requires_semantic_scope_native_recheck_and_exact_master() {
+        let receipt = json!({"schema":"reel.scene-delivery-receipt.v0.1",
+            "outputs":{"master.mkv":{"sha256":"a".repeat(64),"bytes":7}}});
+        selected_receipt(&segment(), "es", &receipt).unwrap();
+        for variant in 0..10 {
+            let mut s = segment();
+            match variant {
+                0 => s.semantic_delivery = None,
+                1 => s.delivery_job = None,
+                2 => s.delivery_receipt = None,
+                3 => s.master.sha256 = "e".repeat(64),
+                4 => s.master.bytes += 1,
+                5 => s.source_receipt.bytes += 1,
+                6 => s.source_receipt.sha256 = "e".repeat(64),
+                7 => s.role = Some("opening-poem".into()),
+                8 => s.imported_source_manifest = s.delivery_job.clone(),
+                _ => s.imported_source_root = Some("other-source".into()),
+            }
+            assert!(
+                selected_receipt(&s, "es", &receipt).is_err(),
+                "variant {variant}"
+            );
+        }
+        let mut s = segment();
+        s.kind = SegmentKind::EpisodePresentation;
+        assert!(selected_receipt(&s, "es", &receipt).is_err());
+    }
+
+    #[test]
+    fn semantic_scope_cannot_upgrade_an_authoring_receipt() {
+        let receipt = json!({"schema":"reel.scene-build-receipt.v1",
+            "scene_id":"scene-a","language":"es","master_sha256":"a".repeat(64),"master_bytes":7});
+        assert!(selected_receipt(&segment(), "es", &receipt).is_err());
+        let mut s = segment();
+        s.semantic_delivery = None;
+        selected_receipt(&s, "es", &receipt).unwrap();
+        assert!(selected_receipt(&s, "en", &receipt).is_err());
+    }
+
+    #[test]
+    fn semantic_scope_checks_identity_job_path_and_current_graph() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let h = "a".repeat(64);
+        let job = json!({"schema":"reel.scene-delivery.v0.1","id":"scene-a",
+            "contract":{"path":"contract.json","sha256":h,"bytes":1},
+            "production_manifest_sha256":h,"width":64,"height":64,
+            "max_composition_samples":480000,
+            "pictures":[{"attachment_id":"picture","source":{"path":"cel.png","sha256":h,"bytes":1},"kind":"still","attention":"beat"}],
+            "audio":[{"attachment_id":"narration","source":{"path":"voice.wav","sha256":h,"bytes":1},"bus":"D","cue_id":"cue"}],
+            "buses":{"D":{"state":"intentional-silence","reason":"fixture"},
+                     "M":{"state":"intentional-silence","reason":"fixture"},
+                     "E":{"state":"intentional-silence","reason":"fixture"}}});
+        let job_bytes = serde_json::to_vec(&job).unwrap();
+        fs::write(root.join("job.json"), &job_bytes).unwrap();
+        fs::write(root.join("other-job.json"), &job_bytes).unwrap();
+        let job_ref = json!({"path":"job.json","sha256":sha(&job_bytes),"bytes":job_bytes.len()});
+        let lock = json!({"logical_id":"lock","sha256":h});
+        let mut semantic = json!({"schema":"reel.semantic-delivery.v1","id":"selected-scene",
+            "target":"scene-a","scene_id":"scene-a","language":"es",
+            "pointer":{"schema":"reel.selected-pointer.v1","logical_id":"current","selected_lock":lock},
+            "graph":{"schema":"reel.semantic-assembly.v1","lock":lock,
+                "slots":[
+                    {"slot_id":"picture","beat_id":"beat","lane":"picture","disposition":"selected","selected_revision_id":"r1",
+                     "revisions":[{"revision_id":"r1","asset":{"logical_id":"cel","cache_uri":format!("cache://sha256/{h}"),"sha256":h}}]},
+                    {"slot_id":"narration","beat_id":"beat","lane":"narration","disposition":"selected","selected_revision_id":"r1",
+                     "revisions":[{"revision_id":"r1","asset":{"logical_id":"voice","cache_uri":format!("cache://sha256/{h}"),"sha256":h}}]}],
+                "events":[{"event_id":"event.es","scene_id":"scene-a","language":"es",
+                    "narration":{"logical_id":"voice","sha256":h},"picture":{"logical_id":"cel","sha256":h},
+                    "phrase_start_seconds":0.0,"phrase_end_seconds":1.0}],
+                "nodes":[{"id":"scene-a","inputs":[],"slots":["picture","narration"],"events":["event.es"]}],"presentation_targets":[]},
+            "scene_delivery_job":job_ref,"event_bindings":[{"event_id":"event.es","narration_attachment_id":"narration","picture_attachment_id":"picture"}]});
+        let mut s = segment();
+        s.delivery_job = Some(serde_json::from_value(job_ref).unwrap());
+        let receipt = json!({"plan":{"job_sha256":sha(&job_bytes)}});
+        let mut check = |value: &serde_json::Value, language: &str| {
+            let bytes = serde_json::to_vec(value).unwrap();
+            fs::write(root.join("semantic.json"), &bytes).unwrap();
+            s.semantic_delivery = Some(scene_delivery::FileRef {
+                path: "semantic.json".into(),
+                sha256: sha(&bytes),
+                bytes: bytes.len() as u64,
+            });
+            verify_semantic_scene_scope(&s, language, &receipt, root)
+        };
+        check(&semantic, "es").unwrap();
+        // A selected episode graph can supply shared media while only this
+        // scene's language-local events are rendered.
+        semantic["target"] = json!("episode");
+        let mut other_event = semantic["graph"]["events"][0].clone();
+        other_event["event_id"] = json!("other.es");
+        other_event["scene_id"] = json!("other-scene");
+        semantic["graph"]["events"]
+            .as_array_mut()
+            .unwrap()
+            .push(other_event);
+        semantic["graph"]["nodes"].as_array_mut().unwrap().extend([
+            json!({"id":"other-scene","inputs":[],"slots":["picture","narration"],"events":["other.es"]}),
+            json!({"id":"episode","inputs":["scene-a","other-scene"],"slots":[],"events":[]}),
+        ]);
+        check(&semantic, "es").unwrap();
+        assert!(check(&semantic, "en").is_err());
+        semantic["scene_id"] = json!("other-scene");
+        assert!(check(&semantic, "es").is_err());
+        semantic["scene_id"] = json!("scene-a");
+        semantic["scene_delivery_job"]["path"] = json!("other-job.json");
+        assert!(check(&semantic, "es").is_err());
+        semantic["scene_delivery_job"]["path"] = json!("job.json");
+        semantic["graph"]["lock"]["sha256"] = json!("b".repeat(64));
+        assert!(check(&semantic, "es").is_err());
+    }
 }
 
 fn valid_sha(value: &str) -> bool {
@@ -1172,7 +1376,11 @@ pub fn build(
                 if master != delivery_root.join("master.mkv") {
                     bail!("selected scene master is outside rechecked delivery directory");
                 }
-                verify_native_delivery_proof(&receipt, job_ref, delivery_ref)?;
+                if segment.semantic_delivery.is_some() {
+                    verify_semantic_scene_scope(segment, &manifest.language, &receipt, input_root)?;
+                } else {
+                    verify_native_delivery_proof(&receipt, job_ref, delivery_ref)?;
+                }
                 let checked = if let Some(imported) = &segment.imported_source_manifest {
                     imported_scene_proof::recheck(
                         &source_root,
