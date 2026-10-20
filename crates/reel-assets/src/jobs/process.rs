@@ -4,6 +4,7 @@ use std::{
     ffi::{OsStr, OsString},
     os::windows::{ffi::OsStrExt, io::AsRawHandle},
     ptr,
+    time::Instant,
 };
 use windows_sys::Win32::{
     Foundation::*,

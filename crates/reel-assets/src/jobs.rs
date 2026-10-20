@@ -11,7 +11,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 #[derive(Deserialize)]
