@@ -19,6 +19,14 @@ or creating a consumer runtime dependency on REEL internals.
 
 ## Invariants
 
+### 2026-10-20 project-configured asset custody and accounting
+
+Extracted the shared local custody/version/LFS/job implementation into the
+`reel-assets` crate, with synthetic compatibility fixtures and project-configured
+read-only accounting. Private consumer data remains upstream. See
+`docs/asset-project-v1.md` and the matching dated handoff for scope and validation.
+The report never authorizes deletion, archive probing or creative selection.
+
 ### 2026-09-09 episode consumption and comparative review
 
 Added exact decoded scene-to-episode picture/audio verification, D/M/E
