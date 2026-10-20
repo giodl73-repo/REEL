@@ -20,6 +20,10 @@ than something REEL rewrites.
 repository-local review panels. The founding panel checks story, animation style,
 edit rhythm, sound, and platform fit before renderer work starts.
 
+The shared Rust [asset custody and cache accounting tools](docs/asset-project-v1.md)
+use a versioned project profile while keeping private media, catalogues and
+reports in their producing asset repository/cache.
+
 ---
 
 ## What REEL is for
