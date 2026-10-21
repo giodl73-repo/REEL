@@ -7,8 +7,10 @@ pub mod cli;
 pub mod demotion;
 pub mod goldens;
 pub mod jobs;
+pub mod manager_review;
 pub mod registry;
 pub mod scenes;
+pub mod tier_review;
 pub mod tiering;
 pub mod versions;
 use serde_json::{Value, json};
@@ -293,9 +295,8 @@ pub fn recover(root: &Path, source: &Path, cache: &Path, oid: &str, size: u64) -
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => verify(&destination, oid, size)?,
         Err(e) => return Err(e.into()),
     }
-    // Publication is already immutable/atomic and covered by the caller's
-    // admission. The journal belongs to this project checkout, so unrelated
-    // projects' metadata locks must not invalidate a completed publication.
+    // Serialize this producer receipt with its own metadata only.
+    let _lock = admission::worktree_lock(root)?;
     let mut receipt = OpenOptions::new()
         .read(true)
         .create(true)

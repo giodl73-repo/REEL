@@ -17,6 +17,19 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
             .ok_or_else(|| "Missing argument".into())
     };
     match command {
+        "manager-review" => {
+            if args.len()!=3 { return Err("Usage: manager-review <repository-relative-project.json> <new-review-name>".into()); }
+            let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+            crate::manager_review::run(root,arg(1)?,arg(2)?,now)
+        },
+        "tier-review" | "tier-request" => {
+            let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+            if command=="tier-review" && args.len()==3 {
+                crate::tier_review::render(root,Path::new(arg(1)?),Path::new(arg(2)?),now)
+            } else if command=="tier-request" && args.len()==4 {
+                crate::tier_review::request(root,Path::new(arg(1)?),Path::new(arg(2)?),Path::new(arg(3)?),now)
+            } else {Err("Usage: tier-review <consumer-scope-request.json> <new-private.html> | tier-request <consumer-scope-request.json> <block-choice.json> <new-request.json>".into())}
+        },
         "consumer-protections" => {
             if args.len()!=3 {return Err("Usage: consumer-protections <request.json> <new-private-export.json>".into());}
             let mut export=crate::demotion::export_protections(root,Path::new(arg(1)?))?;

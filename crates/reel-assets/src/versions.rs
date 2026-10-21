@@ -290,9 +290,7 @@ pub fn compact(root: &Path) -> Result<serde_json::Value> {
         )?,
     )?;
     crate::registry::register(root, &manifest)?;
-    let cfg = config(root)?;
-    let dir = admission::control(root, &cfg)?;
-    let _lock = admission::lock(&dir)?;
+    let _lock = admission::worktree_lock(root)?;
     if fs::read(&path)? != before {
         return Err(
             "Version index changed during compaction; verified baseline retained, index unchanged"
@@ -476,14 +474,12 @@ pub fn payload_closure(state: &State, dependency: &Dependency) -> Result<BTreeSe
 }
 
 pub fn transact<T>(root: &Path, operation: impl FnOnce(&mut State) -> Result<T>) -> Result<T> {
-    let config = config(root)?;
-    let dir = admission::control(root, &config)?;
-    let _lock = admission::lock(&dir)?;
+    let _lock = admission::worktree_lock(root)?;
     let path = root.join("registry/versions.json");
     let mut state = read(root)?;
     let result = operation(&mut state)?;
     fs::create_dir_all(path.parent().ok_or("Invalid state path")?)?;
-    // Persist a complete replacement while holding the common short metadata lock.
+    // Persist a complete replacement while holding the worktree metadata lock.
     let tmp = tempfile_path(&path);
     let mut staged = fs::File::create(&tmp)?;
     staged.write_all(&encode(root, &state)?)?;
