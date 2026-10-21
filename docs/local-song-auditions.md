@@ -23,6 +23,14 @@ initialization (0 starts from noise; 1 stays closest to the source). Omission
 preserves the historical zero setting. Both are recorded with the same-source
 proof; judge actual lyric coverage and musical variation, not the knob values.
 
+`--brief-asset` adopts a pinned `reel.song-musical-briefs.v1` payload whose `slots`
+map binds each replacement `caption` to the exact original `source` and
+`source_lock`. Its descriptor includes an immutable `version_lock`. Adopt after
+draining a complete take, never by editing the frozen campaign or old requests.
+New brief revisions cannot target already-qualified slots; resuming the same
+revision preserves candidates qualified under it. Future take packages retain
+the brief payload/dependency as well as the exact submitted caption.
+
 `tools/local_song_campaign.py` coordinates explicit project campaigns through
 `reel-assets`: ingestion, registration, pinned immutable versions and `run-job`.
 `tools/local_song_backend.py` is the trusted offline ACE/Whisper/Demucs adapter

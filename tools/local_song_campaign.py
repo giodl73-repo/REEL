@@ -30,6 +30,18 @@ def guide_targets(slots, request, targets):
     return selected
 
 
+def revised_caption(slot, briefs):
+    revision=briefs.get(slot['id'])
+    if revision is None:return slot['caption']
+    if not isinstance(revision,dict):raise ValueError('Musical brief revision must be an object')
+    if revision.get('source')!=slot['source'] or revision.get('source_lock')!=slot['source_lock']:
+        raise ValueError('Musical brief revision belongs to another source/version')
+    caption=revision.get('caption')
+    if not isinstance(caption,str) or not caption.strip() or len(caption.encode('utf-8'))>4096:
+        raise ValueError('Musical brief revision must contain a bounded caption')
+    return caption
+
+
 class Campaign:
     def __init__(self, root, assets, work, metadata_retries=0):
         self.root=Path(root).resolve()
@@ -46,6 +58,8 @@ class Campaign:
         self.lyric_focus=None
         self.ctc_runtime=None
         self.audio_guide=None
+        self.brief_asset=None
+        self.briefs={}
 
     def call(self, command, *args, env=None):
         for attempt in range(self.metadata_retries+1):
@@ -160,8 +174,9 @@ class Campaign:
         ceiling=slot.get('max_duration_seconds')
         if ceiling is not None and (isinstance(ceiling,bool) or not isinstance(ceiling,(int,float)) or not slot['duration_seconds'] <= ceiling <= 480):
             raise ValueError('Duration ceiling must be between the initial duration and 480 seconds')
-        caption=slot['caption']
+        caption=revised_caption(slot,self.briefs)
         repetition={}
+        if slot['id'] in self.briefs:repetition['musical_brief_revision']=dict(asset=self.brief_asset,slot_id=slot['id'])
         if self.asr_dtype:repetition['recognition_dtype']=self.asr_dtype
         if self.ctc_runtime:repetition['independent_ctc_check']=dict(component=self.ctc_runtime['component'],version_lock=self.ctc_runtime['version_lock'],max_failed_lines=3,canonical_prompt=False)
         if attempt>1 or self.timing_reference:
@@ -296,6 +311,9 @@ class Campaign:
             package['assets'].update({'guide-recording':self.audio_guide['recording'],'guide-request':self.audio_guide['request'],
                 'guide-generation':self.audio_guide['generation']})
             package['dependencies'].append(self.audio_guide['version_lock'])
+        if request.get('musical_brief_revision'):
+            package['assets']['musical-brief-revision']=self.brief_asset
+            package['dependencies'].append(self.brief_asset['version_lock'])
         package['dependencies']=list({(d['logical_id'],d['version_id'],d['manifest_sha256']):d for d in package['dependencies']}.values())
         package_asset=self.asset_json(f'{rid}/package.json',package,'Immutable song audition package for '+rid)
         version=dict(logical_id=package['artifact_id'],version_id=package['version_id'],manifest_sha256=package_asset['sha256'],
@@ -330,7 +348,7 @@ class Campaign:
         print('DONE',rid,'PASS' if analysis['passed'] else 'RETRY',f"{analysis['qualifying_lines']}/{analysis['total_lines']} lines",flush=True)
         return summary
 
-    def run(self, campaign_path, runtime_asset_path, backend, adopt_backend_revision=None,repeat_after_failures=None,planner_asset_path=None,generation_route=None,repeat_section_lines=None,phrase_max_words=None,asr_dtype=None,timing_reference_slot=None,focus_missing_lines=None,ctc_runtime_asset_path=None,audio_guide_slot=None,audio_guide_strength=None,audio_guide_target_slots=None,takes_per_slot=None,audio_guide_noise_strength=None):
+    def run(self, campaign_path, runtime_asset_path, backend, adopt_backend_revision=None,repeat_after_failures=None,planner_asset_path=None,generation_route=None,repeat_section_lines=None,phrase_max_words=None,asr_dtype=None,timing_reference_slot=None,focus_missing_lines=None,ctc_runtime_asset_path=None,audio_guide_slot=None,audio_guide_strength=None,audio_guide_target_slots=None,takes_per_slot=None,audio_guide_noise_strength=None,brief_asset_path=None):
         if takes_per_slot is not None and (type(takes_per_slot) is not int or not 1<=takes_per_slot<=10):
             raise ValueError('Takes per slot must be between 1 and 10')
         campaign=read(campaign_path)
@@ -374,6 +392,26 @@ class Campaign:
         elif audio_guide_strength is not None or audio_guide_target_slots is not None or audio_guide_noise_strength is not None:
             raise ValueError('Guide strength/targets require an explicit guide slot')
         self.audio_guide=state.get('audio_guide')
+        brief_changed=False
+        if brief_asset_path:
+            proposed=read(brief_asset_path)
+            if state.get('brief_asset')!=proposed:
+                brief_changed=True
+                state.setdefault('brief_revisions',[]).append(dict(previous=state.get('brief_asset'),replacement=proposed,after_retained_takes=len(state['attempts']),qualified_slots_preserved=sorted(state['qualified'])))
+                state['brief_asset']=proposed
+        self.brief_asset=state.get('brief_asset')
+        self.briefs={}
+        if self.brief_asset:
+            lock=self.brief_asset.get('version_lock',{})
+            if not all(isinstance(lock.get(key),str) and lock[key] for key in ['logical_id','version_id','manifest_sha256']) or not re.fullmatch(r'[0-9a-f]{64}',lock['manifest_sha256']):
+                raise ValueError('Musical brief revision requires a complete immutable version lock')
+            briefs=read(self.locate(self.brief_asset))
+            if briefs.get('schema')!='reel.song-musical-briefs.v1' or not isinstance(briefs.get('slots'),dict) or set(briefs['slots'])-set(ids):
+                raise ValueError('Musical brief revision must name campaign slots')
+            self.briefs=briefs['slots']
+            if brief_changed and set(self.briefs)&set(state['qualified']):raise ValueError('Musical brief revision cannot change a qualified candidate')
+            for slot in campaign['slots']:
+                revised_caption(slot,self.briefs)
         if timing_reference_slot and not state.get('timing_reference'):
             if timing_reference_slot not in state['qualified']:raise ValueError('Timing reference must already qualify')
             donor=state['qualified'][timing_reference_slot];req=read(self.locate(donor['request']))
@@ -553,13 +591,14 @@ def main():
     run.add_argument('--audio-guide-target-slot',action='append',help='Restrict a generated guide to explicitly named same-source slots; repeat for multiple targets')
     run.add_argument('--takes-per-slot',type=int,choices=range(1,11),help='Complete a bounded serial round before returning; pending slots remain pending and qualified slots stay fixed')
     run.add_argument('--audio-guide-noise-strength',type=float,help='Explicit installed ACE source initialization: 0 starts from noise, 1 stays closest to the generated guide; separate from conditioning strength')
+    run.add_argument('--brief-asset',help='Explicit frozen, source-scoped musical caption revision for pending slots; prior requests and qualified takes stay immutable')
     restore=sub.add_parser('restore');restore.add_argument('--state',required=True);restore.add_argument('--lfs-executable',required=True)
     restore.add_argument('--all-attempts',action='store_true',help='Verify retained failed takes as well as qualifying candidates')
     review=sub.add_parser('review');review.add_argument('--campaign',required=True);review.add_argument('--state',required=True)
     stop=sub.add_parser('request-stop');stop.add_argument('--clear',action='store_true')
     args=p.parse_args();c=Campaign(args.root,args.assets,args.work,args.metadata_retries)
     if args.operation=='snapshot':c.freeze_runtime(args)
-    elif args.operation=='run':c.run(args.campaign,args.runtime_asset,args.backend,args.adopt_backend_revision,args.repeat_after_failures,args.planner_asset,args.generation_route,args.repeat_section_lines,args.phrase_max_words,args.asr_dtype,args.timing_reference_slot,args.focus_missing_lines,args.ctc_runtime_asset,args.audio_guide_slot,args.audio_guide_strength,args.audio_guide_target_slot,args.takes_per_slot,args.audio_guide_noise_strength)
+    elif args.operation=='run':c.run(args.campaign,args.runtime_asset,args.backend,args.adopt_backend_revision,args.repeat_after_failures,args.planner_asset,args.generation_route,args.repeat_section_lines,args.phrase_max_words,args.asr_dtype,args.timing_reference_slot,args.focus_missing_lines,args.ctc_runtime_asset,args.audio_guide_slot,args.audio_guide_strength,args.audio_guide_target_slot,args.takes_per_slot,args.audio_guide_noise_strength,args.brief_asset)
     elif args.operation=='restore':c.restore(args.state,args.lfs_executable,args.all_attempts)
     elif args.operation=='review':c.review(read(args.campaign),read(args.state))
     else:c.save('stop-after-current.json',dict(requested=not args.clear))

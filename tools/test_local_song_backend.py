@@ -14,6 +14,14 @@ def evidence(text):
 
 
 class LyricGateTests(unittest.TestCase):
+    def test_musical_brief_revisions_keep_source_scope_and_bounded_text(self):
+        slot=dict(id='synthetic',caption='Original invented brief',source={'sha256':'one'},source_lock={'version_id':'v1'})
+        self.assertEqual(local_song_campaign.revised_caption(slot,{}),slot['caption'])
+        revised=dict(source=slot['source'],source_lock=slot['source_lock'],caption='A different invented musical brief')
+        self.assertEqual(local_song_campaign.revised_caption(slot,{'synthetic':revised}),revised['caption'])
+        for invalid in [dict(revised,source={'sha256':'two'}),dict(revised,caption=''),dict(revised,caption='x'*4097),'wrong-type']:
+            with self.assertRaises(ValueError):local_song_campaign.revised_caption(slot,{'synthetic':invalid})
+
     def test_cover_source_noise_is_bounded_and_requires_verified_guide_mode(self):
         with tempfile.TemporaryDirectory() as folder:
             source=Path(folder)/'source.txt';source.write_bytes(b'Alpha beta gamma\n')
@@ -34,20 +42,25 @@ class LyricGateTests(unittest.TestCase):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);work=root/'work';campaign=local_song_campaign.Campaign(root,root/'unused.exe',work)
-            path=campaign.save('campaign.json',dict(schema='reel.song-audition-campaign.v1',slots=[dict(id='first'),dict(id='second')]))
+            path=campaign.save('campaign.json',dict(schema='reel.song-audition-campaign.v1',slots=[dict(id=name,caption='Invented original',source={},source_lock={}) for name in ['first','second']]))
             runtime=campaign.save('runtime.json',dict(sha256='synthetic',bytes=0))
+            brief=dict(sha256='synthetic-brief',bytes=0,version_lock=dict(logical_id='synthetic-brief',version_id='v1',manifest_sha256='a'*64))
+            brief_path=campaign.save('brief-asset.json',brief)
+            brief_payload=campaign.save('brief.json',dict(schema='reel.song-musical-briefs.v1',slots={'first':dict(source={},source_lock={},caption='Invented revised musical brief')}))
             def result(slot,attempt,*runtime_and_backend):return dict(id=slot['id']+'-'+str(attempt),slot_id=slot['id'],attempt=attempt,qualified=slot['id']=='second' or attempt>1)
-            with patch.object(campaign,'ingest',return_value=dict(sha256='synthetic',bytes=0)),patch.object(campaign,'locate',return_value=runtime),patch.object(campaign,'review'),patch.object(campaign,'run_take',side_effect=result) as take:
+            with patch.object(campaign,'ingest',return_value=dict(sha256='synthetic',bytes=0)),patch.object(campaign,'locate',side_effect=lambda asset:brief_payload if asset==brief else runtime),patch.object(campaign,'review'),patch.object(campaign,'run_take',side_effect=result) as take:
                 campaign.run(path,runtime,root/'backend.py',takes_per_slot=1)
                 active=json.loads((work/'active.json').read_text(encoding='utf-8'))
                 self.assertEqual(active,dict(stage='round-complete',qualified=1,target=2))
                 self.assertEqual([x.args[0]['id'] for x in take.call_args_list],['first','second'])
-                campaign.run(path,runtime,root/'backend.py',takes_per_slot=1)
+                campaign.run(path,runtime,root/'backend.py',takes_per_slot=1,brief_asset_path=brief_path)
                 active=json.loads((work/'active.json').read_text(encoding='utf-8'))
                 self.assertEqual(active,dict(stage='complete',qualified=2,target=2))
                 state=json.loads((work/'state.json').read_text(encoding='utf-8'))
                 self.assertEqual(state['qualified']['second']['attempt'],1)
                 self.assertEqual(len(state['attempts']),3)
+                campaign.run(path,runtime,root/'backend.py',takes_per_slot=1,brief_asset_path=brief_path)
+                self.assertEqual(take.call_count,3)
 
     def test_scoped_guide_cannot_target_another_source_or_unknown_slot(self):
         request=dict(source={'sha256':'synthetic-one'},source_lock={'version_id':'v1'})
