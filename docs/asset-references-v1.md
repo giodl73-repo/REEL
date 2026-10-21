@@ -1,0 +1,122 @@
+# Asset schema and reference inspection
+
+`reel-assets` can export its inspection contracts, inspect an explicit metadata
+closure, answer direct incoming/outgoing-reference questions and render a private
+offline browser view. The engine is Rust. It uses the existing project registry
+and configured active caches. Opening the view starts no service.
+
+```powershell
+reel-assets --root . schema-catalogue .local/schema-catalogue.json
+reel-assets --root . reference-inspect operations/asset-inspection.json .local/references.json
+reel-assets --root . reference-query .local/references.json 'cache://sha256/<full-sha256>'
+reel-assets --root . reference-review .local/references.json .local/references.html
+```
+
+Output paths must be new. `reference-check` takes the same arguments as
+`reference-inspect`, writes the report, and exits unsuccessfully if there are any
+findings, including unsupported schemas or uninspected fields. Inspection exits
+successfully when it has produced an honest report; that does not mean its
+findings passed. Budget overruns or a changing metadata snapshot abort publication.
+
+The repository-relative profile has no machine paths:
+
+```json
+{
+  "schema": "reel.asset-inspection-project.v1",
+  "project_id": "example-film",
+  "roots": ["episodes/pilot/episode.json", "episodes/pilot/artifact.json"],
+  "documents": {
+    "pilot": "episodes/pilot/episode.json",
+    "pilot-scene-01": "episodes/pilot/scenes/01/scene.json",
+    "series-policy": "policies/scene-policy.json",
+    "episode-master": "templates/catalog.json"
+  }
+}
+```
+
+`documents` explicitly resolves native logical identifiers to repository
+documents. The target must have the expected schema and declare that identifier.
+There is no directory search or guessed sibling-file lookup. Missing bindings
+remain unresolved findings. A template identifier binds to its native template
+catalogue. Native scene V2 and episode structures are parsed with `reel-assembly`;
+the inspector does not introduce another authoring grammar.
+
+## Relationship meanings
+
+| Relationship | Meaning |
+|---|---|
+| `requires-version` | Exact immutable dependency in the native version registry. |
+| `retains-asset` | Payload custody for a version; does not establish creative selection. |
+| `current-selection` / `historical-version` | The record's pointers; registry current state is separately reported and disagreements are findings. |
+| `manifest` | A record's exact cache-addressed package document. |
+| `declares-asset` | A package role points to bytes; specialized role meaning is not inferred. |
+| `inventory-member` | An inventory or input part observes bytes; not a required build input. |
+| `inventory-part` / `inventory-snapshot` | An inventory's declared component or a record's current inventory. |
+| `describes-version` | The Golden/version an inventory or package describes. |
+| `declared-dependency` | A package's declaration, checked against the native registry. |
+| `record-link` | An explicit repository record reference. |
+| `requires-scene` / `requires-policy` / `requires-template` | Native episode references, resolved through the explicit profile. |
+| `episode-context` | A scene's contextual backlink; not a dependency cycle. |
+| `bound-asset` | An asset descriptor in a native scoped binding document. |
+
+Only `requires-version` edges participate in immutable dependency-cycle checks.
+Queries show direct relationships, not a complete transitive rebuild analysis.
+Shared inventory membership must never be used as evidence that an episode
+consumed an asset or that it is safe to remove that asset.
+
+## Contract coverage
+
+The schema catalogue exports JSON Schema generated from the Rust inspection
+types, including profile/report and compatibility reference projections for
+`caminos.artifact-record.v1`, `caminos.artifact-package.v1`,
+`caminos.episode-input-inventory.v1` and `caminos.episode-input-index.v1`.
+These legacy schema names remain compatibility identifiers: their shapes and
+engine are reusable and contain no project names, storage paths or creative
+data. They do not require a CAMINOS checkout.
+
+Projection schemas preserve additional fields. Their keys are reported as
+uninspected; their contents are never searched for hashes. Inventory row probe
+results, old hash readbacks, source-path labels and unknown ancestral references
+are evidence, not freshly verified dependencies. JSON payloads remain opaque
+unless a supported contract explicitly declares them as metadata documents.
+The special `inventory` role is opened only for an `episode-input-inventory`
+package; arbitrary reports using that role are not traversed.
+
+Native episode, scene, scoped binding, policy and template catalogue structures
+use the existing Rust parsers. Exported JSON Schemas are not yet available for
+those native structures; the catalogue reports `null` and states extraction
+coverage. Episode presentation content, motion, cue/source authority, score and
+binding resolution still require native authoring/build validation. Rights,
+approval, delivery mirrors, generic family indexes and other schema families
+remain explicit coverage gaps. No inspection pass supplies human approval,
+voice consent or a build certificate. JSON Schemas describe structure; Rust
+also enforces identifiers, exact locks, budgets and cross-document invariants.
+
+## Bounds, freshness and privacy
+
+Defaults are 1,000 documents, 20,000 nodes, 100,000 edges, depth 64, 16 MiB per
+document and 64 MiB of metadata reads. The `limits` object can lower or raise
+these within explicit hard caps. Existing registry authorization is read through
+the bounded native registry APIs, independently of traversal budgets.
+
+Named metadata bytes are freshly hashed and registered descriptors checked.
+Media is never opened: active-cache existence/regular-file/size checks are
+reported as `present-size-only`. Unsafe, wrong-size, corrupt or unreadable first
+active copies hold inspection of that target; they do not silently fall through
+to a lower tier. There is no archive access, hydration or cache census. Explicit
+metadata paths reject traversal and symlink/reparse ancestors. Before return,
+opened documents, storage controls, version state and object authorization are
+rechecked. Concurrent producers need no global lock; a changed snapshot retries.
+Media presence can subsequently change and is never an execution authorization.
+
+The saved report has a reproducible SHA-256 integrity digest, checked by query
+and HTML generation. This is an integrity check, not a signature or freshness
+certificate. The browser uses literal text, embedded data and a network-denying
+content policy. Search, typed-edge filters, bounded node pagination and clickable
+incoming/outgoing links work without Node, a daemon or a web server. Node is used
+only by development interaction tests. Browser layout acceptance is separate.
+
+Keep the compact project profile in Git. Retained graph reports, schema exports,
+HTML and review evidence belong in the producing project's private cache/LFS.
+Do not commit real inventories or producer metadata to public REEL. The graph
+never authorizes removal or changes creative/version selections.

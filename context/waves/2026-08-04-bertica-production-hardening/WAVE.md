@@ -73,6 +73,15 @@ See `docs/scene-delivery-v0.1.md`, `docs/reviews/2026-09-09-scene-delivery.md`, 
 
 ## Validation
 
+### 2026-10-21 bounded asset schema and reference inspection
+
+Added a Rust schema catalogue, root-scoped reference inspector, strict check,
+direct-reference query and private offline graph view. Native authoring parsers
+are reused. Inventory membership, version custody and exact dependencies retain
+different meanings; unsupported contracts and uninspected fields are findings.
+See `docs/asset-references-v1.md` and the dated handoff/review. No cache mutation,
+archive crawl, daemon or inferred creative/build approval is introduced.
+
 ### 2026-10-21 generic asset-manager review workflow
 
 Added explicit inventory refresh with immutable private review inputs, generic

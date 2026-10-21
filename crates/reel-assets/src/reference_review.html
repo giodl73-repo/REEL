@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Asset references</title><style>
+body{font:16px system-ui,sans-serif;max-width:1200px;margin:2rem auto;padding:0 1rem;color:#182b38;background:#f8fafb}h1{margin-bottom:.5rem}input,select,button{font:inherit;padding:.5rem;margin:.3rem;border:1px solid #8b9ca8;border-radius:4px}input{width:min(90%,35rem)}button{background:white;color:#164c65;cursor:pointer;text-align:left}button:focus-visible{outline:3px solid #1b82bb}main{display:grid;grid-template-columns:minmax(220px,1fr) minmax(260px,2fr);gap:1rem}section{background:white;padding:1rem;border:1px solid #d6e0e6;border-radius:6px;min-width:0}#nodes{max-height:65vh;overflow:auto}#nodes button{display:block;width:100%;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px ui-monospace,monospace}p,li{line-height:1.5}.muted{color:#526571}#summary{font-weight:600}@media(max-width:750px){main{grid-template-columns:1fr}}
+</style></head><body><h1>Asset references</h1><p id="summary"></p><p id="scope" class="muted"></p>
+<label>Search <input id="search" type="search" placeholder="ID, schema or status"></label>
+<label>Relationship <select id="kind"><option value="">All relationships</option></select></label>
+<p id="count" aria-live="polite"></p><main><section><h2>Nodes</h2><div id="nodes"></div><button id="more" hidden>Show 200 more</button></section>
+<section><h2 id="selection">Choose a node</h2><p id="meaning"></p><pre id="details"></pre><h3>Incoming relationships</h3><div id="incoming"></div><h3>Outgoing relationships</h3><div id="outgoing"></div><h3>Findings</h3><pre id="findings"></pre></section></main>
+<script id="data" type="application/json">__DATA__</script><script>__SCRIPT__</script></body></html>

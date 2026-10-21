@@ -17,6 +17,25 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
             .ok_or_else(|| "Missing argument".into())
     };
     match command {
+        "schema-catalogue" => {
+            if args.len()!=2 {return Err("Usage: schema-catalogue <new-output.json>".into());}
+            let value=crate::references::catalogue()?;
+            crate::tiering::write_plan(Path::new(arg(1)?),&value)?;
+            Ok(json!({"schema":"reel.asset-schema-export.v1","contracts":value["contracts"].as_array().unwrap().len(),"output":arg(1)?}))
+        },
+        "reference-inspect" | "reference-check" => {
+            if args.len()!=3 {return Err("Usage: reference-inspect|reference-check <repository-relative-profile.json> <new-private-report.json>".into());}
+            let report=crate::references::inspect(root,arg(1)?)?;
+            crate::tiering::write_plan(Path::new(arg(2)?),&serde_json::to_value(&report)?)?;
+            if command=="reference-check" && !report.findings.is_empty() {return Err(format!("Reference check has {} findings; private report written to {}",report.findings.len(),arg(2)?).into());}
+            Ok(json!({"schema":report.schema,"nodes":report.nodes.len(),"edges":report.edges.len(),"findings":report.findings.len(),"report_sha256":report.report_sha256,"private_report":arg(2)?}))
+        },
+        "reference-query" | "reference-review" => {
+            if args.len()!=3 {return Err("Usage: reference-query <private-report.json> <node-id> | reference-review <private-report.json> <new-private.html>".into());}
+            let report:crate::references::Report=serde_json::from_slice(&crate::tiering::read_bounded(Path::new(arg(1)?),128*1024*1024)?)?;
+            if command=="reference-query" {crate::references::query(&report,arg(2)?)}
+            else {crate::references::review(&report,Path::new(arg(2)?))}
+        },
         "manager-review" => {
             if args.len()!=3 && !(args.len()==4 && arg(3)?=="--refresh-inventory") { return Err("Usage: manager-review <repository-relative-project.json> <new-review-name> [--refresh-inventory]".into()); }
             let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
