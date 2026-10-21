@@ -19,6 +19,12 @@ or creating a consumer runtime dependency on REEL internals.
 
 ## Invariants
 
+### 2026-10-20 advisory configurable tier planning
+
+Pulse 07 adds read-only baseline/delta tier proposals and metadata freshness
+checks in reel-assets. See docs/asset-tiering-v1.md. There is no apply or deletion
+API in this slice; private consumer inventory remains upstream.
+
 ### 2026-10-20 project-configured asset custody and accounting
 
 Extracted the shared local custody/version/LFS/job implementation into the
