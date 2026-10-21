@@ -345,3 +345,13 @@ intentional silent presentations. The audio file still needs its exact hash,
 bytes and cache locator; this requirement does not certify musical continuity
 into the next unit. Choose the prelude excerpt and poem score handoff together
 so the score introduction is not replayed unintentionally.
+Optional delivery-profile `sonic_channel_mappings_by_binding` maps exact used
+Sonic keys to `duplicate-mono` or `downmix-mono-duplicate`. The latter is the
+explicit stereo-to-mono-and-duplicate E compatibility route; absent keys retain
+legacy conversion. `sonic_placement_offsets_by_binding` maps a used key to
+`{samples: 8, evidence_binding: "sonic-placement-evidence", reason: "Measured
+selected historical offset"}`. The evidence binding must resolve to a selected,
+hash-verified cache object and joins the selected delivery closure. Unused keys,
+missing/stale evidence, empty reasons and out-of-scene placement reject before
+delivery output. The generated native job retains source/gain/semantic anchors
+and carries explicit channel/placement intent to the shared scene mixer.

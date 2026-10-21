@@ -3,6 +3,52 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path, process::Command};
 
+fn assert_picture_frames_match(before: &Path, after: &Path, pictures: &[&str]) {
+    for name in pictures {
+        for format in ["yuv444p", "rgb24"] {
+            let decode = |folder: &Path| {
+                let output = Command::new("ffmpeg")
+                    .args(["-v", "error", "-nostdin", "-i"])
+                    .arg(folder.join(name))
+                    .args([
+                        "-map",
+                        "0:v:0",
+                        "-fps_mode",
+                        "passthrough",
+                        "-pix_fmt",
+                        format,
+                        "-f",
+                        "rawvideo",
+                        "-",
+                    ])
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                output.stdout
+            };
+            assert_eq!(
+                decode(before),
+                decode(after),
+                "decoded {format} differs for {name}"
+            );
+        }
+    }
+}
+
+fn assert_lossless_composition_matches(before: &Path, after: &Path, pictures: &[&str]) {
+    assert_picture_frames_match(before, after, pictures);
+    for name in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
+        assert!(
+            fs::read(before.join(name)).unwrap() == fs::read(after.join(name)).unwrap(),
+            "stem differs: {name}"
+        );
+    }
+}
+
 #[test]
 #[ignore = "requires native FFmpeg; focal and pan camera execution"]
 fn focal_and_pan_camera_render_real_pixels_and_preserve_native_audio() {
@@ -323,6 +369,162 @@ fn real_episode_consumption_boundaries_and_controlled_review() {
     assert!(!root.join("invalid-review").exists());
 }
 
+#[test]
+#[ignore = "requires native FFmpeg; complete compact episode consumption"]
+fn compact_lossless_episode_preserves_content_and_rejects_lossy_or_retimed_masters() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    for name in ["a", "b"] {
+        let dir = root.join(name);
+        fs::create_dir(&dir).unwrap();
+        let mut job = fixture(&dir);
+        let mut contract: Value =
+            serde_json::from_slice(&fs::read(dir.join("contract.json")).unwrap()).unwrap();
+        contract["id"] = json!(name);
+        write_json(&dir.join("contract.json"), &contract);
+        job["id"] = json!(name);
+        job["contract"] = file(&dir, "contract.json");
+        job["still_sequence_encoding"] = json!("h264-lossless");
+        let pixels: Vec<u8> = (0..64 * 64 * 3)
+            .map(|i| ((i * 37 + i / 17 + usize::from(name == "b") * 53) % 256) as u8)
+            .collect();
+        fs::write(
+            dir.join("pattern.ppm"),
+            [b"P6\n64 64\n255\n".as_slice(), &pixels].concat(),
+        )
+        .unwrap();
+        job["pictures"][0]["source"] = file(&dir, "pattern.ppm");
+        write_json(&dir.join("job.json"), &job);
+        scene_delivery::render(&dir.join("job.json"), &dir, &dir.join("delivery")).unwrap();
+    }
+    let result = Command::new("ffmpeg")
+        .args(["-v", "error", "-nostdin", "-i"])
+        .arg(root.join("a/delivery/master.mkv"))
+        .arg("-i")
+        .arg(root.join("b/delivery/master.mkv"))
+        .args([
+            "-filter_complex",
+            "[0:v][1:v]concat=n=2:v=1:a=0[v];[0:a][1:a]concat=n=2:v=0:a=1[a]",
+            "-map",
+            "[v]",
+            "-map",
+            "[a]",
+            "-c:v",
+            "ffv1",
+            "-pix_fmt",
+            "yuv444p",
+            "-c:a",
+            "pcm_s24le",
+        ])
+        .arg(root.join("legacy.mkv"))
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let scene = |name: &str| {
+        json!({"id":name,"job":file(root,&format!("{name}/job.json")),
+        "asset_root":name,"receipt":file(root,&format!("{name}/delivery/receipt.json"))})
+    };
+    let mut contract = json!({"schema":"reel.episode-delivery.v0.1","id":"episode",
+        "scenes":[scene("a"),scene("b")],"master":file(root,"legacy.mkv"),"layers":[],"boundary_decisions":[]});
+    let path = root.join("episode.json");
+    write_json(&path, &contract);
+    let legacy = reel::episode_delivery::check(&path, root).unwrap();
+    assert!(legacy.content_verified);
+    assert!(legacy.master_encoding.is_none());
+    let encode = |name: &str, crf: &str, format: &str, muted: bool| {
+        let mut command = Command::new("ffmpeg");
+        command
+            .args(["-v", "error", "-nostdin", "-i"])
+            .arg(root.join("legacy.mkv"));
+        command.args([
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            crf,
+            "-pix_fmt",
+            "yuv444p",
+            "-c:a",
+            "flac",
+            "-sample_fmt",
+            format,
+        ]);
+        if format == "s32" {
+            command.args(["-bits_per_raw_sample", "24"]);
+        }
+        if muted {
+            command.args(["-af", "volume=0"]);
+        }
+        let result = command.arg(root.join(name)).output().unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    };
+    encode("compact.mkv", "0", "s32", false);
+    contract["master"] = file(root, "compact.mkv");
+    write_json(&path, &contract);
+    assert!(
+        reel::episode_delivery::check(&path, root)
+            .unwrap_err()
+            .to_string()
+            .contains("declared episode encoding")
+    );
+    contract["master_encoding"] = json!("h264-lossless-flac");
+    write_json(&path, &contract);
+    let compact = reel::episode_delivery::check(&path, root).unwrap();
+    assert!(compact.content_verified);
+    assert!(compact.master_encoding.is_some());
+    assert_eq!(
+        serde_json::to_value(&compact.scenes).unwrap(),
+        serde_json::to_value(&legacy.scenes).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(&compact.boundary_findings).unwrap(),
+        serde_json::to_value(&legacy.boundary_findings).unwrap()
+    );
+    assert_eq!(compact.scenes[1].start_frame, 48);
+    assert_eq!(compact.scenes[1].start_sample, 96000);
+    for (name, crf, format, muted, diagnostic) in [
+        ("lossy.mkv", "20", "s32", false, "does not consume"),
+        ("muted.mkv", "0", "s32", true, "does not consume"),
+        ("pcm16.mkv", "0", "s16", false, "declared episode encoding"),
+    ] {
+        encode(name, crf, format, muted);
+        contract["master"] = file(root, name);
+        write_json(&path, &contract);
+        assert!(
+            reel::episode_delivery::check(&path, root)
+                .unwrap_err()
+                .to_string()
+                .contains(diagnostic),
+            "{name}"
+        );
+    }
+    let result = Command::new("ffmpeg")
+        .args(["-v", "error", "-nostdin", "-itsoffset", "0.25", "-i"])
+        .arg(root.join("compact.mkv"))
+        .args(["-c", "copy", "-copyts"])
+        .arg(root.join("late.mkv"))
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    contract["master"] = file(root, "late.mkv");
+    write_json(&path, &contract);
+    assert!(
+        reel::episode_delivery::check(&path, root)
+            .unwrap_err()
+            .to_string()
+            .contains("timestamp gap/offset")
+    );
+}
+
 fn write_json(path: &Path, v: &Value) {
     fs::write(path, serde_json::to_vec_pretty(v).unwrap()).unwrap();
 }
@@ -417,6 +619,353 @@ fn file(root: &Path, name: &str) -> Value {
     let b = fs::read(root.join(name)).unwrap();
     json!({"path":name,"sha256":Sha256::digest(&b).iter().map(|b| format!("{b:02x}")).collect::<String>(),"bytes":b.len()})
 }
+
+#[test]
+#[ignore = "requires native FFmpeg; explicit mono channel mapping"]
+fn duplicate_mono_preserves_source_level_and_rejects_stereo() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let mut job = fixture(root);
+    for (name, samples) in [("a.wav", 48001u32), ("b.wav", 47999)] {
+        let size = samples * 3;
+        let mut bytes = Vec::new();
+        bytes.extend(b"RIFF");
+        bytes.extend((36 + size).to_le_bytes());
+        bytes.extend(b"WAVEfmt ");
+        bytes.extend(16u32.to_le_bytes());
+        bytes.extend(1u16.to_le_bytes());
+        bytes.extend(1u16.to_le_bytes());
+        bytes.extend(48000u32.to_le_bytes());
+        bytes.extend(144000u32.to_le_bytes());
+        bytes.extend(3u16.to_le_bytes());
+        bytes.extend(24u16.to_le_bytes());
+        bytes.extend(b"data");
+        bytes.extend(size.to_le_bytes());
+        for _ in 0..samples {
+            bytes.extend(&1_000_000i32.to_le_bytes()[..3]);
+        }
+        fs::write(root.join(name), bytes).unwrap();
+    }
+    job["audio"][0]["source"] = file(root, "a.wav");
+    job["audio"][1]["source"] = file(root, "b.wav");
+    write_json(&root.join("legacy.json"), &job);
+    scene_delivery::render(&root.join("legacy.json"), root, &root.join("legacy")).unwrap();
+    for event in job["audio"].as_array_mut().unwrap().iter_mut().take(2) {
+        event["channel_mapping"] = json!("duplicate-mono");
+    }
+    write_json(&root.join("duplicate.json"), &job);
+    scene_delivery::render(&root.join("duplicate.json"), root, &root.join("duplicate")).unwrap();
+    scene_delivery::render_audio(
+        &root.join("duplicate.json"),
+        root,
+        &root.join("duplicate-audio"),
+    )
+    .unwrap();
+    for name in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
+        assert_eq!(
+            fs::read(root.join("duplicate").join(name)).unwrap(),
+            fs::read(root.join("duplicate-audio").join(name)).unwrap()
+        );
+    }
+    let samples = |folder: &str| {
+        let output = Command::new("ffmpeg")
+            .args(["-v", "error", "-i"])
+            .arg(root.join(folder).join("D.wav"))
+            .args(["-f", "s32le", "-"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        output
+            .stdout
+            .chunks_exact(4)
+            .map(|bytes| i32::from_le_bytes(bytes.try_into().unwrap()) / 256)
+            .collect::<Vec<_>>()
+    };
+    let legacy = samples("legacy");
+    let duplicate = samples("duplicate");
+    assert_eq!(duplicate.len(), 96000 * 2);
+    assert!(duplicate.iter().all(|sample| *sample == 1_000_000));
+    assert!(
+        legacy
+            .iter()
+            .all(|sample| (707105..=707108).contains(sample))
+    );
+    for stem in ["M.wav", "E.wav"] {
+        assert_eq!(
+            fs::read(root.join("legacy").join(stem)).unwrap(),
+            fs::read(root.join("duplicate").join(stem)).unwrap()
+        );
+    }
+    job["audio"][2]["channel_mapping"] = json!("duplicate-mono");
+    write_json(&root.join("stereo.json"), &job);
+    assert!(
+        scene_delivery::render(&root.join("stereo.json"), root, &root.join("stereo"))
+            .unwrap_err()
+            .to_string()
+            .contains("requires a mono source")
+    );
+    job["audio"][0]["channel_mapping"] = json!("unknown");
+    write_json(&root.join("unknown.json"), &job);
+    assert!(scene_delivery::plan(&root.join("unknown.json"), root).is_err());
+}
+
+#[test]
+#[ignore = "requires native FFmpeg; signed PCM rails and overload rejection"]
+fn signed_pcm_rails_preserve_exact_sources_and_reject_overload_before_publication() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let mut job = fixture(root);
+    wav(&root.join("a.wav"), 48001, -8_388_608);
+    wav(&root.join("b.wav"), 47999, 8_388_607);
+    job["audio"][0]["source"] = file(root, "a.wav");
+    job["audio"][1]["source"] = file(root, "b.wav");
+    write_json(&root.join("rails.json"), &job);
+    let audio = root.join("rails-audio");
+    let full = root.join("rails-full");
+    scene_delivery::render_audio(&root.join("rails.json"), root, &audio).unwrap();
+    scene_delivery::check_audio(&root.join("rails.json"), root, &audio).unwrap();
+    scene_delivery::render(&root.join("rails.json"), root, &full).unwrap();
+    scene_delivery::check(&root.join("rails.json"), root, &full).unwrap();
+    for stem in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
+        assert_eq!(
+            fs::read(audio.join(stem)).unwrap(),
+            fs::read(full.join(stem)).unwrap()
+        );
+    }
+    let decoded = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(audio.join("D.wav"))
+        .args(["-c:a", "pcm_s24le", "-f", "s24le", "pipe:1"])
+        .output()
+        .unwrap();
+    assert!(decoded.status.success());
+    let expected = [
+        (-8_388_608_i32).to_le_bytes()[..3].repeat(48001 * 2),
+        8_388_607_i32.to_le_bytes()[..3].repeat(47999 * 2),
+    ]
+    .concat();
+    assert!(
+        decoded.stdout == expected,
+        "source samples changed at signed PCM rails"
+    );
+    for index in [0, 1] {
+        let mut overloaded = job.clone();
+        overloaded["audio"][index]["gain_db"] = json!(6.0);
+        let path = root.join(format!("overload-{index}.json"));
+        let output = root.join(format!("overload-{index}"));
+        write_json(&path, &overloaded);
+        assert!(
+            scene_delivery::render_audio(&path, root, &output)
+                .unwrap_err()
+                .to_string()
+                .contains("overload")
+        );
+        assert!(
+            !output.exists(),
+            "overload must not publish a result directory"
+        );
+    }
+}
+#[test]
+#[ignore = "requires native FFmpeg; independent audio qualification"]
+fn audio_only_matches_full_scene_and_rejects_tamper_stale_job_and_overwrite() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let mut job = fixture(root);
+    wav(&root.join("a.wav"), 48001, 900000);
+    wav(&root.join("b.wav"), 47999, -700000);
+    wav(&root.join("effect.wav"), 32, 2000000);
+    for (index, name) in [(0, "a.wav"), (1, "b.wav"), (2, "effect.wav")] {
+        job["audio"][index]["source"] = file(root, name);
+    }
+    job["audio"][0]["gain_db"] = json!(-1.25);
+    job["audio"][0]["fade_in_samples"] = json!(128);
+    job["audio"][0]["fade_out_samples"] = json!(256);
+    job["audio"][2]["source_start_sample"] = json!(4);
+    job["audio"][2]["fade_out_samples"] = json!(4);
+    let mut production: Value =
+        serde_json::from_slice(&fs::read(root.join("production.json")).unwrap()).unwrap();
+    production["audio_events"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id":"m","role":"music","source":"a.wav","start_seconds":0}));
+    write_json(&root.join("production.json"), &production);
+    let mut contract: Value =
+        serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
+    contract["attachments"].as_array_mut().unwrap().push(json!({"id":"m","target":{"kind":"audio","audio_event_id":"m"},"start":{"kind":"cue-start","cue_id":"a"},"end":{"kind":"cue-end","cue_id":"a"}}));
+    write_json(&root.join("contract.json"), &contract);
+    job["production_manifest_sha256"] = file(root, "production.json")["sha256"].clone();
+    job["contract"] = file(root, "contract.json");
+    job["buses"]["M"] = json!({"state":"present","reason":"Bounded selected music window"});
+    job["audio"].as_array_mut().unwrap().push(json!({"attachment_id":"m","bus":"M","source":file(root,"a.wav"),"gain_db":-18,"fade_in_samples":64,"fade_out_samples":128}));
+    let path = root.join("job.json");
+    write_json(&path, &job);
+    scene_delivery::render(&path, root, &root.join("full")).unwrap();
+    let receipt = scene_delivery::render_audio(&path, root, &root.join("audio")).unwrap();
+    assert_eq!(receipt.content_samples, 96000);
+    assert_eq!(receipt.outputs.len(), 4);
+    assert_eq!(receipt.schema, "reel.scene-audio-receipt.v0.1");
+    assert!(!root.join("audio/picture.mkv").exists());
+    assert!(!root.join("audio/receipt.json").exists());
+    assert!(scene_delivery::check(&path, root, &root.join("audio")).is_err());
+    for name in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
+        assert_eq!(
+            fs::read(root.join("full").join(name)).unwrap(),
+            fs::read(root.join("audio").join(name)).unwrap()
+        );
+    }
+    scene_delivery::check_audio(&path, root, &root.join("audio")).unwrap();
+    assert!(scene_delivery::render_audio(&path, root, &root.join("audio")).is_err());
+    let original = fs::read(root.join("audio/D.wav")).unwrap();
+    fs::write(root.join("audio/D.wav"), b"tampered").unwrap();
+    assert!(scene_delivery::check_audio(&path, root, &root.join("audio")).is_err());
+    fs::write(root.join("audio/D.wav"), original).unwrap();
+    job["audio"][0]["gain_db"] = json!(-2);
+    write_json(&path, &job);
+    assert!(scene_delivery::check_audio(&path, root, &root.join("audio")).is_err());
+    job["audio"][0]["channel_mapping"] = json!("duplicate-mono");
+    write_json(&path, &job);
+    assert!(scene_delivery::render_audio(&path, root, &root.join("rejected")).is_err());
+    assert!(!root.join("rejected").exists());
+}
+
+#[test]
+fn effect_placement_preserves_semantic_anchors_and_rejects_invalid_evidence_and_bounds() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let original = fixture(root);
+    let (_, baseline) = scene_delivery::plan(&root.join("job.json"), root).unwrap();
+    assert!(baseline.audio_anchor_spans.is_empty());
+    let offset = json!({"samples":8,"reason":"Measured historical millisecond placement","evidence":file(root,"contract.json")});
+    let mut job = original.clone();
+    job["audio"][2]["placement_offset"] = offset.clone();
+    write_json(&root.join("placed.json"), &job);
+    let (_, placed) = scene_delivery::plan(&root.join("placed.json"), root).unwrap();
+    assert_eq!(
+        serde_json::to_value(&placed.audio_anchor_spans).unwrap(),
+        serde_json::to_value(&baseline.audio).unwrap()
+    );
+    assert_eq!(placed.audio[2].start_sample, 131);
+    assert_eq!(placed.audio[2].end_sample, 147);
+    assert_eq!(placed.duration_samples, baseline.duration_samples);
+    assert_eq!(placed.compiled_sha256, baseline.compiled_sha256);
+    for bad in [json!(-124), json!(96000), json!(i64::MIN), json!(i64::MAX)] {
+        job["audio"][2]["placement_offset"]["samples"] = bad;
+        write_json(&root.join("bad.json"), &job);
+        assert!(scene_delivery::plan(&root.join("bad.json"), root).is_err());
+    }
+    job["audio"][2]["placement_offset"] = offset.clone();
+    job["audio"][2]["placement_offset"]["evidence"]["sha256"] = json!("0".repeat(64));
+    write_json(&root.join("bad.json"), &job);
+    assert!(scene_delivery::plan(&root.join("bad.json"), root).is_err());
+    job["audio"][2]["placement_offset"] = offset.clone();
+    job["audio"][2]["placement_offset"]["reason"] = json!(" ");
+    write_json(&root.join("bad.json"), &job);
+    assert!(scene_delivery::plan(&root.join("bad.json"), root).is_err());
+    job = original;
+    job["audio"][0]["placement_offset"] = offset;
+    write_json(&root.join("bad.json"), &job);
+    assert!(scene_delivery::plan(&root.join("bad.json"), root).is_err());
+    job["audio"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("placement_offset");
+    job["audio"][0]["channel_mapping"] = json!("downmix-mono-duplicate");
+    write_json(&root.join("bad.json"), &job);
+    assert!(scene_delivery::plan(&root.join("bad.json"), root).is_err());
+}
+
+#[test]
+#[ignore = "requires native FFmpeg; selected Sonic channel and placement compatibility"]
+fn explicit_sonic_mono_and_placement_match_historical_mix_without_changing_pictures_or_dialogue() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let mut job = fixture(root);
+    wav(&root.join("effect.wav"), 32, 2000000);
+    let mut effect = fs::read(root.join("effect.wav")).unwrap();
+    for sample in 0..32usize {
+        effect[44 + sample * 6..47 + sample * 6]
+            .copy_from_slice(&(2000000i32 + sample as i32 * 1000).to_le_bytes()[..3]);
+        effect[47 + sample * 6..50 + sample * 6]
+            .copy_from_slice(&(500000i32 - sample as i32 * 4000).to_le_bytes()[..3]);
+    }
+    fs::write(root.join("effect.wav"), effect).unwrap();
+    job["audio"][2]["source"] = file(root, "effect.wav");
+    job["audio"][2]["gain_db"] = json!(-18);
+    job["audio"][2]["fade_out_samples"] = json!(4);
+    job["audio"][2]["source_start_sample"] = json!(4);
+    write_json(&root.join("legacy.json"), &job);
+    scene_delivery::render(&root.join("legacy.json"), root, &root.join("legacy")).unwrap();
+    job["audio"][2]["channel_mapping"] = json!("downmix-mono-duplicate");
+    job["audio"][2]["placement_offset"] = json!({"samples":8,"reason":"Explicit selected historical placement","evidence":file(root,"contract.json")});
+    let path = root.join("mapped.json");
+    write_json(&path, &job);
+    let full = scene_delivery::render(&path, root, &root.join("mapped")).unwrap();
+    let audio = scene_delivery::render_audio(&path, root, &root.join("audio")).unwrap();
+    assert_eq!(full.plan.audio[2].start_sample, 131);
+    assert_eq!(audio.plan.audio_anchor_spans[2].start_sample, 123);
+    for name in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
+        assert_eq!(
+            fs::read(root.join("mapped").join(name)).unwrap(),
+            fs::read(root.join("audio").join(name)).unwrap()
+        );
+    }
+    for name in ["D.wav", "M.wav"] {
+        assert_eq!(
+            fs::read(root.join("mapped").join(name)).unwrap(),
+            fs::read(root.join("legacy").join(name)).unwrap()
+        );
+    }
+    assert_picture_frames_match(&root.join("legacy"), &root.join("mapped"), &["picture.mkv"]);
+    let status = Command::new("ffmpeg").args(["-v","error","-f","lavfi","-i","anullsrc=r=48000:cl=mono","-i"]).arg(root.join("effect.wav"))
+        .args(["-filter_complex","[1:a]atrim=start_sample=4:end_sample=20,asetpts=PTS-STARTPTS,volume=-18dB,afade=t=out:ss=12:ns=4,adelay=131S:all=1[e];[0:a][e]amix=inputs=2:duration=first:normalize=0,atrim=end_sample=96000,pan=stereo|c0=c0|c1=c0[out]","-map","[out]","-c:a","pcm_s24le"])
+        .arg(root.join("historical.wav")).status().unwrap();
+    assert!(status.success());
+    let pcm = |path: &Path| {
+        let decoded = Command::new("ffmpeg")
+            .args(["-v", "error", "-i"])
+            .arg(path)
+            .args(["-f", "s32le", "-"])
+            .output()
+            .unwrap();
+        assert!(decoded.status.success());
+        decoded
+            .stdout
+            .chunks_exact(4)
+            .map(|b| i32::from_le_bytes(b.try_into().unwrap()) / 256)
+            .collect::<Vec<_>>()
+    };
+    let expected = pcm(&root.join("historical.wav"));
+    let actual = pcm(&root.join("mapped/mix.wav"));
+    assert_eq!(actual.len(), expected.len());
+    assert!(
+        actual
+            .iter()
+            .zip(&expected)
+            .all(|(a, b)| (a - b).abs() <= 1)
+    );
+    assert!(actual[..131 * 2].iter().all(|v| *v == 0));
+    assert_ne!(actual[131 * 2], 0);
+    assert!(actual.chunks_exact(2).all(|pair| pair[0] == pair[1]));
+    scene_delivery::check_audio(&path, root, &root.join("audio")).unwrap();
+    job["audio"][2]["placement_offset"]["samples"] = json!(-3);
+    write_json(&path, &job);
+    let negative = scene_delivery::render_audio(&path, root, &root.join("negative")).unwrap();
+    assert_eq!(negative.plan.audio[2].start_sample, 120);
+    assert!(scene_delivery::check_audio(&path, root, &root.join("audio")).is_err());
+    let mut mono = fs::read(root.join("effect.wav")).unwrap();
+    // A valid existing mono take must not silently enter the stereo-only route.
+    mono[22..24].copy_from_slice(&1u16.to_le_bytes());
+    mono[28..32].copy_from_slice(&144000u32.to_le_bytes());
+    mono[32..34].copy_from_slice(&3u16.to_le_bytes());
+    fs::write(root.join("mono.wav"), mono).unwrap();
+    job["audio"][2]["source"] = file(root, "mono.wav");
+    write_json(&path, &job);
+    let error = scene_delivery::render_audio(&path, root, &root.join("rejected")).unwrap_err();
+    assert!(error.to_string().contains("requires a stereo source"));
+    assert!(!root.join("rejected").exists());
+}
+
 fn wav(path: &Path, samples: u32, signal: i32) {
     let size = samples * 6;
     let mut b = Vec::new();
@@ -1751,6 +2300,81 @@ fn semantic_picture_transform_crosses_distinct_cels_and_rejects_invalid_recipes(
     job["external_layers"][0]["evidence"] = file(root, "recipe.json");
     write_json(&root.join("job.json"), &job);
     assert!(scene_delivery::plan(&root.join("job.json"), root).is_err()); // Unsafe bounds.
+}
+
+#[test]
+fn semantic_transform_conforms_terminal_frame_without_changing_native_samples() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path();
+    let mut job = fixture(root);
+    wav(&root.join("b.wav"), 48000, 0);
+    job["audio"][1]["source"] = file(root, "b.wav");
+    let mut contract: Value =
+        serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
+    contract["cues"][1]["duration_samples"] = json!(48000);
+    contract["attachments"].as_array_mut().unwrap().push(json!({
+        "id":"terminal-transform", "target":{"kind":"overlay","shot_id":"shot","overlay_id":"terminal-transform"},
+        "start":{"kind":"cue-start","cue_id":"a","offset_samples":0},
+        "end":{"kind":"cue-end","cue_id":"b","offset_samples":0}
+    }));
+    write_json(&root.join("contract.json"), &contract);
+    write_json(
+        &root.join("recipe.json"),
+        &json!({"schema":"reel.timed-picture-transform.v1",
+        "zoom_step":0.001,"zoom_max":1.015,
+        "translation":{"amplitude_x_pixels":2.0,"amplitude_y_pixels":1.0,"period_frames":24}}),
+    );
+    job["contract"] = file(root, "contract.json");
+    job["external_layers"] = json!([{"attachment_id":"terminal-transform","reason":"Synthetic semantic terminal transform",
+        "evidence":file(root,"recipe.json"),"render_mode":"timed-picture-transform"}]);
+    write_json(&root.join("original.json"), &job);
+    let (_, original) = scene_delivery::plan(&root.join("original.json"), root).unwrap();
+    assert_eq!(original.duration_samples, 96001);
+    assert_eq!(original.frame_count, 49);
+    assert_eq!(original.external_layer_spans[0].end_frame, 49);
+    job["pictures"][0]["delivery_frame_count"] = json!(24);
+    job["pictures"][1]["delivery_frame_count"] = json!(24);
+    write_json(&root.join("conformed.json"), &job);
+    let (resolved, conformed) = scene_delivery::plan(&root.join("conformed.json"), root).unwrap();
+    assert_eq!(conformed.duration_samples, original.duration_samples);
+    assert_eq!(conformed.compiled_sha256, original.compiled_sha256);
+    assert_eq!(conformed.frame_count, 48);
+    assert_eq!(conformed.external_layer_spans[0].end_sample, 96001);
+    assert_eq!(conformed.external_layer_spans[0].end_frame, 48);
+    assert_eq!(
+        resolved.post_compose_camera.unwrap().windows[0].end_frame,
+        48
+    );
+    for count in [23, 1] {
+        job["pictures"][1]["delivery_frame_count"] = json!(count);
+        write_json(&root.join("rejected.json"), &job);
+        assert!(scene_delivery::plan(&root.join("rejected.json"), root).is_err());
+    }
+    job["pictures"][1]["delivery_frame_count"] = json!(24);
+    let last = contract["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap();
+    last["start"] = json!({"kind":"cue-end","cue_id":"b","offset_samples":-1});
+    write_json(&root.join("contract.json"), &contract);
+    job["contract"] = file(root, "contract.json");
+    write_json(&root.join("empty-terminal.json"), &job);
+    assert!(scene_delivery::plan(&root.join("empty-terminal.json"), root).is_err());
+    let last = contract["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap();
+    last["start"] = json!({"kind":"cue-start","cue_id":"b","offset_samples":0});
+    write_json(&root.join("contract.json"), &contract);
+    job["contract"] = file(root, "contract.json");
+    job["pictures"][0]["delivery_frame_count"] = json!(26);
+    job["pictures"][1]["delivery_frame_count"] = json!(23);
+    write_json(&root.join("picture-aligned.json"), &job);
+    let (_, aligned) = scene_delivery::plan(&root.join("picture-aligned.json"), root).unwrap();
+    assert_eq!(aligned.external_layer_spans[0].start_sample, 48001);
+    assert_eq!(aligned.external_layer_spans[0].start_frame, 26);
 }
 #[test]
 fn continuous_motion_group_requires_the_same_adjacent_still() {

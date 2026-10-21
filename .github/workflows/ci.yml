@@ -29,14 +29,26 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test --all-targets --all-features
+      - name: Check shared authoring and camera contracts
+        run: cargo test -p reel-assembly --all-targets --locked
       - name: Check shared asset custody and accounting on synthetic caches
         run: |
           cargo clippy -p reel-assets --all-targets --locked -- -D warnings
           cargo test -p reel-assets --all-targets --locked
       - name: Verify compiled scene delivery samples, stems, frames and tamper rejection
         run: cargo test --test scene_delivery real_delivery_preserves_sample_offset_stems_frames_and_rejects_tamper -- --ignored --exact
+      - name: Verify explicit mono duplication preserves source level and rejects stereo
+        run: cargo test --test scene_delivery duplicate_mono_preserves_source_level_and_rejects_stereo -- --ignored --exact
+      - name: Verify independent native audio matches full-scene stems and rejects stale evidence
+        run: cargo test --test scene_delivery audio_only_matches_full_scene_and_rejects_tamper_stale_job_and_overwrite -- --ignored --exact
+      - name: Verify explicit selected Sonic channel and placement compatibility
+        run: cargo test --test scene_delivery explicit_sonic_mono_and_placement_match_historical_mix_without_changing_pictures_or_dialogue -- --ignored --exact
+      - name: Verify signed PCM rails preserve sources and reject overload before publication
+        run: cargo test --test scene_delivery signed_pcm_rails_preserve_exact_sources_and_reject_overload_before_publication -- --ignored --exact
       - name: Verify episode consumption, boundaries and controlled scene comparisons
         run: cargo test --test scene_delivery real_episode_consumption_boundaries_and_controlled_review -- --ignored --exact
+      - name: Verify compact lossless episodes preserve every frame and PCM24 sample
+        run: cargo test --test scene_delivery compact_lossless_episode_preserves_content_and_rejects_lossy_or_retimed_masters -- --ignored --exact
       - name: Verify native cadence rejects a frozen moving interval
         run: cargo test --lib motioncraft_cadence::tests::native_metrics_reject_a_frozen_moving_interval -- --ignored --exact
       - name: Verify portable matched Motioncraft comparisons

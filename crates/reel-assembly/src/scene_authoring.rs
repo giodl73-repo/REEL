@@ -20,6 +20,13 @@ pub const SCENE_SCHEMA_V2: &str = "reel.scene-authoring.v2";
 pub const BINDINGS_SCHEMA: &str = "reel.scene-asset-bindings.v1";
 pub const POLICY_SCHEMA: &str = "reel.scene-policy.v1";
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DialogueChannelMapping {
+    Automatic,
+    DuplicateMono,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScenePolicy {
@@ -126,6 +133,8 @@ pub struct Episode {
     pub scene_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub motion_direction: Option<crate::motioncraft::Direction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dialogue_channel_mapping: Option<DialogueChannelMapping>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1134,6 +1143,8 @@ pub struct Scene {
     pub holds: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub motion_direction: Option<crate::motioncraft::SceneDirection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dialogue_channel_mapping: Option<DialogueChannelMapping>,
 }
 
 /// Resolve explicit direction without changing source, selected assets or clocks.
@@ -1899,12 +1910,20 @@ pub fn resolve_scene(
             &template_definitions,
             &policy,
         ))?;
+        let fingerprint = if motion.is_empty() {
+            legacy_fingerprint
+        } else {
+            digest(&(legacy_fingerprint, motion))?
+        };
+        let mapping = scene
+            .dialogue_channel_mapping
+            .or(episode.dialogue_channel_mapping);
         language_fingerprints.insert(
             language_id.clone(),
-            if motion.is_empty() {
-                legacy_fingerprint
+            if mapping == Some(DialogueChannelMapping::DuplicateMono) {
+                digest(&(fingerprint, mapping))?
             } else {
-                digest(&(legacy_fingerprint, motion))?
+                fingerprint
             },
         );
     }
@@ -2035,6 +2054,7 @@ mod tests {
             score_palette: vec![],
             scene_ids: vec!["montage".into()],
             motion_direction: None,
+            dialogue_channel_mapping: None,
         };
         let scene = Scene {
             schema: SCENE_SCHEMA.into(),
@@ -2056,6 +2076,7 @@ mod tests {
             continuity_tags: vec![],
             holds: vec![],
             motion_direction: None,
+            dialogue_channel_mapping: None,
         };
         assert_eq!(
             scene
