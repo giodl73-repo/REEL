@@ -73,6 +73,10 @@ def validate_request(request, source):
         noise=request.get('cover_noise_strength',0.0)
         if type(noise) not in (int,float) or not 0<=noise<=1:
             raise ValueError('Unsupported generated-guide source-noise strength')
+        if 'guide_short_edit' in request and (not isinstance(request['guide_short_edit'],dict) or set(request['guide_short_edit'])!={'recipe','receipt'}):
+            raise ValueError('Cover short edition requires exact recipe and receipt references')
+    elif 'guide_short_edit' in request:
+        raise ValueError('Short edition guide requires cover mode')
     elif 'cover_noise_strength' in request:
         raise ValueError('Source-noise strength requires a verified generated cover guide')
     if not 30 <= request['duration_seconds'] <= 600 or not isinstance(request['seed'], int):
@@ -113,11 +117,36 @@ def validate_generated_guide(request,source):
         raise ValueError('Guide must be a generated text2music take of the same source version')
     if original['canonical_lyrics']!=request['canonical_lyrics'] or original['permissions']!=request['permissions']:
         raise ValueError('Guide source or private permission scope differs')
-    if original['duration_seconds']!=request['duration_seconds']:
+    recording=descriptor('guide.wav')
+    edition=request.get('guide_short_edit')
+    if edition:
+        checked('guide-edit.json',edition['recipe'])
+        checked('guide-edit-receipt.json',edition['receipt'])
+        recipe=read('guide-edit.json');edited=read('guide-edit-receipt.json')
+        if recipe.get('schema')!='reel.song-short-edit.v1' or edited.get('schema')!='reel.song-short-edit-receipt.v1':
+            raise ValueError('Unsupported generated guide edition')
+        if recipe['source']!=original['source'] or recipe['source_lock']!=original['source_lock'] or recipe['permissions']!=original['permissions']:
+            raise ValueError('Guide edition source/private scope differs')
+        if recipe['source_request']!={**request['guide_request']} or recipe['source_generation']!={**request['guide_generation']}:
+            raise ValueError('Guide edition origin differs')
+        for key in ['source_recording','source_request','source_generation','source_analysis']:
+            if edited[key]!={k:recipe[key][k] for k in ['sha256','bytes']}:
+                raise ValueError('Guide edition receipt source binding differs')
+        if edited['recipe']!=descriptor('guide-edit.json') or edited['recording']!=recording:
+            raise ValueError('Guide edition receipt output binding differs')
+        if edited.get('evidence_core_sample_equality') is not True or any(edited.get(k) is not False for k in ['new_recognition','tempo_changed','pitch_changed','new_performance','new_human_approval']):
+            raise ValueError('Guide edition is not a verified sample-preserving edit')
+        duration=edited['output_frames']/edited['sample_rate']
+        if abs(duration-recipe['duration_seconds'])>1/edited['sample_rate'] or abs(duration-request['duration_seconds'])>1/edited['sample_rate']:
+            raise ValueError('Cover duration must match its edited guide')
+        recording={k:recipe['source_recording'][k] for k in ['sha256','bytes']}
+    elif original['duration_seconds']!=request['duration_seconds']:
         raise ValueError('Cover duration must match its generated guide')
-    if receipt['request']!=descriptor('guide-request.json') or receipt['recording']!=descriptor('guide.wav'):
+    if receipt['request']!=descriptor('guide-request.json') or receipt['recording']!=recording:
         raise ValueError('Generated guide receipt binding differs')
-    return dict(recording=descriptor('guide.wav'),request=descriptor('guide-request.json'),generation=descriptor('guide-generation.json'))
+    result=dict(recording=descriptor('guide.wav'),request=descriptor('guide-request.json'),generation=descriptor('guide-generation.json'))
+    if edition:result['short_edit']=dict(recipe=descriptor('guide-edit.json'),receipt=descriptor('guide-edit-receipt.json'))
+    return result
 
 
 def plan(request, runtime, source):

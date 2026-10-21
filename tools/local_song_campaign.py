@@ -240,6 +240,13 @@ class Campaign:
             repetition.update(guide_audio=guide['recording'],guide_request=guide['request'],guide_generation=guide['generation'],
                 guide_version_lock=guide['version_lock'],guide_label=guide['label'],audio_cover_strength=guide['strength'],
                 render_format='Exact supplied render layout of the generated same-poem guide; source words unchanged')
+            if guide.get('short_edit'):
+                edition=read(self.locate(guide['short_edit']['recipe']))
+                render=format_lyrics(lyrics,join_single_word_continuations=True,max_phrase_words=phrase_words)
+                duration=edition['duration_seconds']
+                for key in ['performance_repetitions','repeat_section_lines','repeat_authority']:
+                    repetition.pop(key,None)
+                repetition.update(guide_short_edit=guide['short_edit'],render_format='Single unchanged poem pass guided by an explicitly verified short edition')
             if 'noise_strength' in guide:repetition['cover_noise_strength']=guide['noise_strength']
         if ceiling is not None:
             if (guide or self.timing_reference) and duration>ceiling:
@@ -271,6 +278,9 @@ class Campaign:
         if request['task']=='cover':
             inputs.update({'guide.wav':a(self.audio_guide['recording']),'guide-request.json':a(self.audio_guide['request']),
                 'guide-generation.json':a(self.audio_guide['generation'])})
+            if self.audio_guide.get('short_edit'):
+                inputs.update({'guide-edit.json':a(self.audio_guide['short_edit']['recipe']),
+                    'guide-edit-receipt.json':a(self.audio_guide['short_edit']['receipt'])})
         operations=['generate','analyze']
         if self.planner_asset:
             inputs['planner.json']=a(self.planner_asset)
@@ -320,6 +330,9 @@ class Campaign:
             package['assets'].update({'guide-recording':self.audio_guide['recording'],'guide-request':self.audio_guide['request'],
                 'guide-generation':self.audio_guide['generation']})
             package['dependencies'].append(self.audio_guide['version_lock'])
+            if self.audio_guide.get('short_edit'):
+                package['assets'].update({'guide-edit-recipe':self.audio_guide['short_edit']['recipe'],
+                    'guide-edit-receipt':self.audio_guide['short_edit']['receipt']})
         if request.get('musical_brief_revision'):
             package['assets']['musical-brief-revision']=self.brief_asset
             package['dependencies'].append(self.brief_asset['version_lock'])
@@ -384,10 +397,17 @@ class Campaign:
         if audio_guide_slot:
             if audio_guide_slot not in state['qualified']:raise ValueError('Audio guide must already qualify')
             donor=state['qualified'][audio_guide_slot];req=read(self.locate(donor['request']))
-            if req['task']!='text2music':raise ValueError('Only generated text2music takes may supply this guide')
+            edition=None
+            if req['task']=='short-edit':
+                edition=req
+                req=read(self.locate(edition['source_request']))
+            if req['task']!='text2music':raise ValueError('Only generated text2music takes or verified short editions may supply this guide')
             proposed=dict(slot_id=audio_guide_slot,label=next(slot['label'] for slot in campaign['slots'] if slot['id']==audio_guide_slot),
-                recording=donor['outputs']['recording'],request=donor['request'],generation=donor['outputs']['generation'],
+                recording=donor['outputs']['recording'],request=donor['request'],generation=edition['source_generation'] if edition else donor['outputs']['generation'],
                 version_lock=donor['version_lock'],strength=.75 if audio_guide_strength is None else audio_guide_strength)
+            if edition:
+                proposed.update(request=edition['source_request'],generation=edition['source_generation'],
+                    label='short edition '+proposed['label'],short_edit=dict(recipe=donor['request'],receipt=donor['outputs']['edit-receipt']))
             if audio_guide_target_slots is not None:
                 proposed['target_slot_ids']=guide_targets(campaign['slots'],req,audio_guide_target_slots)
             if audio_guide_noise_strength is not None:

@@ -206,6 +206,15 @@ The new output is labelled an audio-guided variation, with guide assets and
 dependency locks; it still requires fresh unprompted coverage and human musical
 review. Fixed candidates and original guide bytes remain unchanged.
 
+A qualified sample-preserving short edition may also supply that guide. Retain
+its explicit recipe and native edit receipt in addition to the original
+text2music request/generation receipt. The adapter verifies every hash binding,
+identical source/private scope, unchanged-sample evidence, unchanged tempo/pitch
+and the exact edited duration before generation. The cover receives one unchanged
+poem pass and the edited duration; it is a new guided performance and needs fresh
+recognition. The edition remains labelled as an edit, with no new recognition or
+human approval claimed for its source-derived evidence.
+
 The backend's `recount` operation takes a hash-bound prior report, recording,
 request and source through a Rust job. It revises only line accounting from the
 retained unprompted token/timestamp passes, retaining the prior report and a

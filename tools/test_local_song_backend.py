@@ -15,6 +15,59 @@ def evidence(text):
 
 
 class LyricGateTests(unittest.TestCase):
+    def test_short_guide_binds_original_generation_and_unchanged_sample_receipt(self):
+        import copy
+        with tempfile.TemporaryDirectory() as folder:
+            previous=Path.cwd()
+            try:
+                os.chdir(folder);source=Path('source.txt');source.write_bytes(b'Alpha beta gamma\n')
+                original=dict(schema='reel.local-song-request.v1',task='text2music',language='es',duration_seconds=90,seed=1,
+                    canonical_lyrics='Alpha beta gamma\n',render_lyrics='[Verse]\nAlpha beta gamma',source=backend.descriptor(source),source_lock={},
+                    permissions=dict(private_only=True,external_upload=False,identifiable_imitation=False,public_release=False))
+                backend.write('guide-request.json',original);Path('guide.wav').write_bytes(b'invented edited recording binding')
+                origin=dict(sha256='a'*64,bytes=100)
+                backend.write('guide-generation.json',dict(request=backend.descriptor('guide-request.json'),recording=origin))
+                recipe=dict(schema='reel.song-short-edit.v1',source=original['source'],source_lock={},permissions=original['permissions'],
+                    source_request=backend.descriptor('guide-request.json'),source_generation=backend.descriptor('guide-generation.json'),
+                    source_recording=origin,source_analysis=dict(sha256='b'*64,bytes=50),duration_seconds=45)
+                backend.write('guide-edit.json',recipe)
+                receipt=dict(schema='reel.song-short-edit-receipt.v1',recipe=backend.descriptor('guide-edit.json'),recording=backend.descriptor('guide.wav'),
+                    **{k:recipe[k] for k in ['source_recording','source_request','source_generation','source_analysis']},
+                    evidence_core_sample_equality=True,new_recognition=False,tempo_changed=False,pitch_changed=False,new_performance=False,new_human_approval=False,
+                    sample_rate=100,output_frames=4500)
+                def install(value):
+                    Path('guide-edit-receipt.json').write_text(json.dumps(value),encoding='utf-8')
+                    return dict(recipe=backend.descriptor('guide-edit.json'),receipt=backend.descriptor('guide-edit-receipt.json'))
+                request=dict(original,task='cover',duration_seconds=45,guide_audio=backend.descriptor('guide.wav'),guide_request=backend.descriptor('guide-request.json'),
+                    guide_generation=backend.descriptor('guide-generation.json'),guide_version_lock={},audio_cover_strength=.75,guide_short_edit=install(receipt))
+                backend.validate_request(request,source);backend.validate_generated_guide(request,source)
+                for key,value in [('new_performance',True),('tempo_changed',True),('new_recognition',True),('evidence_core_sample_equality',False),
+                                  ('output_frames',4400),('source_recording',dict(sha256='c'*64,bytes=100)),('recipe',dict(sha256='c'*64,bytes=100))]:
+                    changed=copy.deepcopy(receipt);changed[key]=value;request['guide_short_edit']=install(changed)
+                    with self.assertRaises(ValueError):backend.validate_generated_guide(request,source)
+                request['guide_short_edit']=install(receipt);Path('guide.wav').write_bytes(b'tampered')
+                with self.assertRaises(ValueError):backend.validate_generated_guide(request,source)
+            finally:os.chdir(previous)
+
+    def test_short_guide_uses_one_source_pass_with_edited_duration(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/'source.txt';source.write_bytes(b'Alpha beta gamma\nDelta echo foxtrot\n')
+            original=dict(task='text2music',canonical_lyrics=source.read_bytes().decode(),source_lock={},duration_seconds=120,
+                render_lyrics=backend.format_repeated_sections(source.read_text(),2,12),performance_repetitions=2,repeat_section_lines=2)
+            proof=Path(folder)/'original.json';backend.write(proof,original)
+            edit=Path(folder)/'edit.json';backend.write(edit,dict(duration_seconds=55.5))
+            campaign=local_song_campaign.Campaign(folder,Path(folder)/'unused.exe',Path(folder)/'work')
+            campaign.audio_guide=dict(recording={},request={'kind':'original'},generation={},version_lock={},label='edition',strength=.75,
+                short_edit=dict(recipe={'kind':'edition'},receipt={}))
+            slot=dict(id='synthetic',title='Synthetic',source={},source_lock={},duration_seconds=60,max_duration_seconds=60,caption='An invented female lead',seed_base=100)
+            with patch.object(campaign,'locate',side_effect=lambda a:source if a=={} else edit if a.get('kind')=='edition' else proof):
+                request=campaign.request(slot,2)
+            self.assertEqual(request['duration_seconds'],55.5);self.assertNotIn('performance_repetitions',request)
+            import re
+            rendered=re.sub(r'^\s*\[[^\]\n]+\]\s*$','',request['render_lyrics'],flags=re.M)
+            self.assertEqual(backend.words(rendered),backend.words(request['canonical_lyrics']))
+
     def test_short_edition_bounds_exclude_changed_edges_and_obey_ceiling(self):
         plan,frames=local_song_edit.segment_plan([[1,3],[5,8]],10,100,.1,.1,.1,5)
         self.assertEqual(frames,49);self.assertEqual(plan[1]['output_start'],19)
