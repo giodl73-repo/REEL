@@ -54,9 +54,13 @@ plan is atomic and refuses an existing output; reports contain private local pat
 
 ## Explicit implementation boundary
 
-This slice has no apply, move, cold census/registry or permanent-retirement API.
+The planner has no apply, move, cold census/registry or permanent-retirement API.
 It performs no media changes, archive probing, daemon startup or network access.
 Future application must add fresh physical/hash checks, consumer coordination,
 admission, durable journaling, safe path/handle operations and interruption
 tests. Last-copy retirement remains separate from redundant-copy removal.
 Ordinary LFS lookup and existing project accounting behavior remain unchanged.
+
+The subsequent [explicit redundant-copy command](asset-demotion-v1.md) has its
+own request, verification, concurrency and journal gates. A plan alone remains
+non-executable and grants no removal authorization.
