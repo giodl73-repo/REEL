@@ -20,6 +20,17 @@ struct Asset {
     sha256: String,
     bytes: u64,
 }
+
+/// Installed runtimes need their neighboring DLLs and environment. Execute an
+/// explicitly registered, hash-pinned installation instead of copying its EXE.
+/// This remains a trusted-job contract, not a sandbox for arbitrary commands.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InstalledTool {
+    path: PathBuf,
+    sha256: String,
+    bytes: u64,
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Output {
@@ -40,6 +51,8 @@ struct Job {
     scratch_bytes: u64,
     inputs: BTreeMap<String, Asset>,
     tools: BTreeMap<String, Asset>,
+    #[serde(default)]
+    installed_tools: BTreeMap<String, InstalledTool>,
     #[serde(default)]
     files: BTreeMap<String, String>,
     steps: Vec<Step>,
@@ -99,6 +112,16 @@ fn validate(job: &Job) -> Result<()> {
         }
         add(&mut total, asset.bytes)?;
     }
+    for (name, tool) in &job.installed_tools {
+        relative(name)?;
+        if !paths.insert(name.to_ascii_lowercase())
+            || !tool.path.is_absolute()
+            || !valid_oid(&tool.sha256)
+            || tool.bytes == 0
+        {
+            return Err("Invalid or conflicting installed tool".into());
+        }
+    }
     for (name, text) in &job.files {
         relative(name)?;
         if !paths.insert(name.to_ascii_lowercase()) || text.len() > 64 * 1024 {
@@ -126,7 +149,7 @@ fn validate(job: &Job) -> Result<()> {
         );
     }
     for step in &job.steps {
-        if !job.tools.contains_key(&step.tool)
+        if !(job.tools.contains_key(&step.tool) || job.installed_tools.contains_key(&step.tool))
             || step.timeout_seconds == 0
             || step.timeout_seconds > 3600
             || step.args.len() > 256
@@ -191,6 +214,12 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
     validate(&job)?;
     let cfg = config(root)?;
     let index = selected(root)?;
+    for tool in job.installed_tools.values() {
+        if index.get(&tool.sha256) != Some(&tool.bytes) {
+            return Err("Installed tool must be exactly registered".into());
+        }
+        verify(&tool.path, &tool.sha256, tool.bytes)?;
+    }
     let mut sources = BTreeMap::new();
     for (name, asset) in job.inputs.iter().chain(job.tools.iter()) {
         if index.get(&asset.sha256) != Some(&asset.bytes) {
@@ -214,7 +243,8 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
             found.ok_or("Named job input absent from active caches; no archive access")?,
         );
     }
-    let reservation = admission::reserve(root, &cfg, job.budget_bytes)?;
+    let reservation = admission::reserve(root, &cfg, job.budget_bytes)
+        .map_err(|e| format!("Job not started; admission: {e}"))?;
     let workspace = reservation
         .cache_root
         .join("staging/caminos")
@@ -269,8 +299,15 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
             Ok(())
         };
         check()?;
+        let executable = if let Some(tool) = job.installed_tools.get(&step.tool) {
+            // Recheck immediately before execution in case installation changed.
+            verify(&tool.path, &tool.sha256, tool.bytes)?;
+            tool.path.clone()
+        } else {
+            workspace.join(relative(&step.tool)?)
+        };
         process::run(
-            &workspace.join(relative(&step.tool)?),
+            &executable,
             &step.args,
             &workspace,
             &workspace.join(format!("step-{n}.log")),
@@ -397,6 +434,9 @@ pub fn discard(root: &Path, id: &str, manifest_oid: &str, incomplete: bool) -> R
         .chain(job.tools.values())
         .map(|a| (a.sha256.clone(), a.bytes))
         .collect();
+    for tool in job.installed_tools.values() {
+        required.insert(tool.sha256.clone(), tool.bytes);
+    }
     let result_path = workspace.join("result.json");
     let completed = result_path.exists();
     if completed {
@@ -497,6 +537,25 @@ mod tests {
         job.budget_bytes = 200;
         assert!(validate(&job).is_ok());
         job.outputs.get_mut("movie").unwrap().path = "tool.exe".into();
+        assert!(validate(&job).is_err());
+    }
+
+    #[test]
+    fn installed_tools_require_absolute_paths_and_cannot_alias_inputs() {
+        let mut job: Job = serde_json::from_value(json!({"budget_bytes":100,"scratch_bytes":0,
+            "inputs":{},"tools":{},"installed_tools":{"python":{"path":"relative.exe","sha256":"a".repeat(64),"bytes":10}},
+            "steps":[{"tool":"python","args":[],"timeout_seconds":10}],
+            "outputs":{"report":{"path":"report.json","max_bytes":20}}})).unwrap();
+        assert!(validate(&job).is_err());
+        job.installed_tools.get_mut("python").unwrap().path = std::env::current_exe().unwrap();
+        assert!(validate(&job).is_ok()); // installed bytes aren't copied into scratch
+        job.inputs.insert(
+            "PYTHON".into(),
+            Asset {
+                sha256: "b".repeat(64),
+                bytes: 1,
+            },
+        );
         assert!(validate(&job).is_err());
     }
 }

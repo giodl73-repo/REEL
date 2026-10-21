@@ -280,13 +280,15 @@ pub fn recover(root: &Path, source: &Path, cache: &Path, oid: &str, size: u64) -
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => verify(&destination, oid, size)?,
         Err(e) => return Err(e.into()),
     }
-    let cfg = config(root)?;
-    let control = admission::control(root, &cfg)?;
-    let _lock = admission::lock(&control)?;
+    // Publication is already immutable/atomic and covered by the caller's
+    // admission. The journal belongs to this project checkout, so unrelated
+    // projects' metadata locks must not invalidate a completed publication.
     let mut receipt = OpenOptions::new()
+        .read(true)
         .create(true)
         .append(true)
         .open(root.join(".local/cache-promotions.jsonl"))?;
+    fs2::FileExt::lock_exclusive(&receipt)?;
     let mut line = serde_json::to_vec(
         &json!({"sha256": oid, "bytes": size, "source": source, "destination": destination, "sha256_verified": true, "creative_authority": "not-granted-by-this-receipt"}),
     )?;

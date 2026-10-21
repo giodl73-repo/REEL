@@ -57,6 +57,87 @@ struct Fixture {
     oid: String,
 }
 
+#[test]
+fn publication_receipt_is_independent_of_another_metadata_operation() {
+    let f = Fixture::new();
+    let root = f.dir.path();
+    fs::create_dir_all(&f.config.cache_roots[0]).unwrap();
+    let source = root.join("completed-output.bin");
+    fs::write(&source, b"cel").unwrap();
+    let control = admission::control(root, &f.config).unwrap();
+    let _metadata_guard = admission::lock(&control).unwrap();
+    let target = recover(root, &source, &f.config.cache_roots[0], &f.oid, 3).unwrap();
+    verify(&target, &f.oid, 3).unwrap();
+    let journal = fs::read_to_string(root.join(".local/cache-promotions.jsonl")).unwrap();
+    let row: Value = serde_json::from_str(journal.trim()).unwrap();
+    assert_eq!(row["sha256"], f.oid);
+    assert_eq!(row["sha256_verified"], true);
+}
+
+#[cfg(windows)]
+#[test]
+fn installed_runtime_job_retains_output_and_rejects_changed_tools_and_failures() {
+    let f = Fixture::new();
+    let root = f.dir.path();
+    for cache in &f.config.cache_roots {
+        fs::create_dir_all(cache).unwrap();
+    }
+    let tool = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+        .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+    let asset = ingest(root, &tool).unwrap();
+    let register = root.join("registration.json");
+    let mut row = asset.clone();
+    row["provenance"] = json!("Synthetic installed-runtime fixture");
+    row["rights"] = json!("Local test executable; no distribution");
+    row["selection_state"] = json!("synthetic-test");
+    fs::write(&register, json!({"assets":[row]}).to_string()).unwrap();
+    registry::register(root, &register).unwrap();
+    let mut job = json!({"budget_bytes":1048576,"scratch_bytes":65536,
+        "inputs":{},"tools":{},"installed_tools":{"runtime":{"path":tool,"sha256":asset["sha256"],"bytes":asset["bytes"]}},
+        "steps":[{"tool":"runtime","args":["-NoProfile","-Command","Write-Output synthetic"],"timeout_seconds":5}],
+        "outputs":{"log":{"path":"step-0.log","max_bytes":4096}}});
+    let manifest = root.join("job.json");
+    fs::write(&manifest, job.to_string()).unwrap();
+    {
+        let control = admission::control(root, &f.config).unwrap();
+        let _guard = admission::lock(&control).unwrap();
+        assert!(
+            jobs::run(root, &manifest)
+                .unwrap_err()
+                .to_string()
+                .contains("Job not started; admission:")
+        );
+    }
+    let result = jobs::run(root, &manifest).unwrap();
+    let log = PathBuf::from(result["outputs"]["log"]["path"].as_str().unwrap());
+    assert!(fs::read_to_string(log).unwrap().contains("synthetic"));
+    job["installed_tools"]["runtime"]["sha256"] = json!("0".repeat(64));
+    fs::write(&manifest, job.to_string()).unwrap();
+    assert!(
+        jobs::run(root, &manifest)
+            .unwrap_err()
+            .to_string()
+            .contains("registered")
+    );
+    job["installed_tools"]["runtime"]["sha256"] = asset["sha256"].clone();
+    job["installed_tools"]["runtime"]["path"] = json!(root.join("absent.exe"));
+    fs::write(&manifest, job.to_string()).unwrap();
+    assert!(jobs::run(root, &manifest).is_err());
+    job["installed_tools"]["runtime"]["path"] = json!(tool);
+    job["steps"][0]["args"] = json!(["-NoProfile", "-Command", "exit 7"]);
+    fs::write(&manifest, job.to_string()).unwrap();
+    assert!(jobs::run(root, &manifest).is_err());
+    job["steps"][0]["args"] = json!(["-NoProfile", "-Command", "Start-Sleep -Seconds 10"]);
+    job["steps"][0]["timeout_seconds"] = json!(1);
+    fs::write(&manifest, job.to_string()).unwrap();
+    assert!(
+        jobs::run(root, &manifest)
+            .unwrap_err()
+            .to_string()
+            .contains("timed out")
+    );
+}
+
 fn scene_fixture(f: &Fixture) -> PathBuf {
     let root = f.dir.path();
     let scene = json!({"schema":"reel.scene-authoring.v2","scene_id":"one","episode_id":"video-one","authoring_state":"imported-evidence","source_authority_id":"original","languages":{},"holds":["Imported source only"]});
