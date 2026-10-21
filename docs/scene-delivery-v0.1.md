@@ -61,6 +61,26 @@ intentional silence, but cannot be called an accepted performance or final episo
 Audio events may additionally set `source_start_sample`, `gain_db`,
 `fade_in_samples`, and `fade_out_samples`. Only M/E may take excerpts. Sources
 must already have the contract sample rate. No duration or pitch scaling occurs.
+An optional `channel_mapping: duplicate-mono` copies a mono source at its native
+level into both stereo channels before gain, fades and placement. Rendering
+rejects this option for a source with more than one channel. Omitting the field
+preserves the existing automatic FFmpeg channel conversion, including its mono
+upmix attenuation. Use the explicit mapping only when the selected soundtrack
+requires duplication; it changes neither source samples nor authored gain.
+For an explicitly selected historical effect mix, E events may instead use
+`channel_mapping: downmix-mono-duplicate`. It requires a stereo source and uses
+FFmpeg's mono conversion followed by duplication. It is distinct from averaging
+the stereo channels; D/M use of this compatibility mapping rejects.
+
+An E event may declare `placement_offset: {samples: 8, evidence: <FileRef>,
+reason: <nonempty explanation>}`. The signed offset moves the rendered effect
+without editing its source excerpt, duration, fades or compiled semantic anchor.
+Hash-bound evidence is mandatory. D/M offsets and placements outside the scene
+reject. `plan.audio` records actual rendered positions; when an offset is
+declared, `plan.audio_anchor_spans` separately preserves every contract audio
+anchor. With no offset, that field is omitted and legacy plan/output behavior
+remains unchanged. This is explicit compatibility intent, not inferred timing
+or authority to select a mix.
 Fades use sample counts and placement uses FFmpeg's `adelay=<samples>S`, avoiding
 the loss introduced by rounding to milliseconds. Short sources fail; no looping
 or padding of a missing performance is inferred. Authored ambience loops and room
@@ -187,8 +207,12 @@ picture.
 - `receipt.json`: source/compiled identities, integer timing, FFmpeg version,
   exact output hashes/bytes, external-layer limitations and no publication grant.
 
-Float buses and their sum are checked for overload before PCM quantization; a
-clipping mix fails and must receive explicit gain/mix changes. This does not replace
+Float buses and their sum are checked sample by sample before PCM quantization.
+Every value must be finite and lie in the signed PCM domain `[-1, 1)`; the valid
+negative full-scale rail is preserved without attenuation. Empty or partial
+decoded evidence and actual overload fail before output publication. Existing
+source saturation remains an audio-quality finding. A clipping mix fails and
+must receive explicit gain/mix changes. This does not replace
 `audio-check` loudness, true-peak, stem-margin or listening review. Decoded PCM
 content length is verified separately from frame duration and AAC codec padding.
 The `check` command rejects changed jobs, production/contract/media/evidence hashes,
