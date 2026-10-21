@@ -54,6 +54,35 @@ still undergoes ordered picture/audio comparison, timestamp verification and
 full compact-output decoding. Scene receipt checks and creative approval remain
 independent.
 
+### Consume only a verified native scene master
+
+A semantic-scoped direct scene segment may use the exact
+`reel.scene-delivery-receipt.v0.1` as both `source_receipt` and
+`delivery_receipt`, with `semantic_delivery` and `delivery_job` pinned. By
+default, conform freshly checks the complete scene output directory.
+
+For bounded assembly, first issue a native proof while all scene outputs are
+available:
+
+```text
+reel-episode-conform prove-scene <delivery.json> --asset-root <assets> --output-dir <complete-scene-output> --proof-path <new-proof.json>
+```
+
+This performs the full scene check, including every stem, picture, review,
+overlay and master. It writes `reel.scene-master-proof.v1` only on success.
+Retain the complete checked outputs and receipt in asset management. Then add
+`master_proof` as an exact FileRef to the semantic-scoped scene segment. The
+assembly workspace needs only `master.mkv` and `receipt.json` from that output
+set, alongside the exact source inputs, job, semantic selection and proof.
+
+Conform replans and rehashes all current scene inputs, rehashes the selected
+master and receipt, and requires the same validator, FFmpeg and FFprobe hashes
+as the full proof. It still decodes and compares every ordered episode frame
+and audio sample. A changed job, input, plan, master, receipt or tool invalidates
+the proof. This route is unavailable for unscoped, imported, presentation or
+legacy scene-build receipts. It avoids copying unconsumed outputs; it does not
+remove them, approve the movie, or replace the standalone full scene check.
+
 ### Explicit delivery geometry
 
 By default, every selected source must have the same picture dimensions and

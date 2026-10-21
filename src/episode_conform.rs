@@ -408,6 +408,10 @@ pub struct Segment {
     /// Receipt beside the hydrated scene-delivery output files.
     #[serde(default)]
     pub delivery_receipt: Option<scene_delivery::FileRef>,
+    /// Prior complete scene check, permitting master-only output staging.
+    /// Restricted to the semantic-scoped direct native delivery route.
+    #[serde(default)]
+    pub master_proof: Option<scene_delivery::FileRef>,
     /// Selected semantic scene scope for a direct scene-delivery receipt.
     /// This route always performs the full upstream delivery check.
     #[serde(default)]
@@ -1115,6 +1119,9 @@ fn selected_receipt(segment: &Segment, language: &str, receipt: &serde_json::Val
         }
         return Ok(());
     }
+    if segment.master_proof.is_some() {
+        bail!("scene master proof requires a semantic-scoped direct delivery receipt");
+    }
     if segment.semantic_delivery.is_some() {
         bail!("semantic delivery scope requires a direct scene-delivery receipt");
     }
@@ -1784,7 +1791,15 @@ pub fn build(
                 } else {
                     verify_native_delivery_proof(&receipt, job_ref, delivery_ref)?;
                 }
-                let checked = if let Some(imported) = &segment.imported_source_manifest {
+                let checked = if let Some(proof) = &segment.master_proof {
+                    let proof_path = scene_delivery::checked_file(input_root, proof)?;
+                    scene_delivery::recheck_master_proof(
+                        &job_path,
+                        asset_root,
+                        delivery_root,
+                        &proof_path,
+                    )?
+                } else if let Some(imported) = &segment.imported_source_manifest {
                     imported_scene_proof::recheck(
                         &source_root,
                         imported,

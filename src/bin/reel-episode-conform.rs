@@ -3,6 +3,35 @@ use std::{env, path::Path};
 
 fn run() -> Result<()> {
     let args: Vec<String> = env::args().collect();
+    if let [
+        _,
+        command,
+        job,
+        asset_flag,
+        asset_root,
+        output_flag,
+        output,
+        proof_flag,
+        proof,
+    ] = args.as_slice()
+    {
+        if command == "prove-scene" {
+            if asset_flag != "--asset-root"
+                || output_flag != "--output-dir"
+                || proof_flag != "--proof-path"
+            {
+                bail!("invalid scene proof arguments");
+            }
+            reel::scene_delivery::prove_master(
+                Path::new(job),
+                Path::new(asset_root),
+                Path::new(output),
+                Path::new(proof),
+            )?;
+            println!("complete scene check verified; selected master proof written");
+            return Ok(());
+        }
+    }
     let [
         _,
         command,
