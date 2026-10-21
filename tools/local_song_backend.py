@@ -70,6 +70,11 @@ def validate_request(request, source):
         strength=request.get('audio_cover_strength')
         if type(strength) not in (int,float) or not .2<=strength<=1 or request.get('semantic_planner'):
             raise ValueError('Unsupported generated-guide conditioning')
+        noise=request.get('cover_noise_strength',0.0)
+        if type(noise) not in (int,float) or not 0<=noise<=1:
+            raise ValueError('Unsupported generated-guide source-noise strength')
+    elif 'cover_noise_strength' in request:
+        raise ValueError('Source-noise strength requires a verified generated cover guide')
     if not 30 <= request['duration_seconds'] <= 600 or not isinstance(request['seed'], int):
         raise ValueError('Invalid bounded duration or seed')
     if source.read_bytes().decode('utf-8') != request['canonical_lyrics']:
@@ -190,6 +195,7 @@ def generate(request, runtime, source):
     if guide:
         params.src_audio='guide.wav'
         params.audio_cover_strength=request['audio_cover_strength']
+        params.cover_noise_strength=request.get('cover_noise_strength',0.0)
     if request.get('semantic_planner'):
         planned=read('plan.json')
         if planned['request']!=descriptor('request.json'):raise ValueError('Plan request binding changed')

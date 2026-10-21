@@ -14,6 +14,22 @@ def evidence(text):
 
 
 class LyricGateTests(unittest.TestCase):
+    def test_cover_source_noise_is_bounded_and_requires_verified_guide_mode(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/'source.txt';source.write_bytes(b'Alpha beta gamma\n')
+            request=dict(schema='reel.local-song-request.v1',task='cover',language='es',duration_seconds=60,seed=1,
+                canonical_lyrics='Alpha beta gamma\n',render_lyrics='[Verse]\nAlpha beta gamma',source=backend.descriptor(source),source_lock={},
+                permissions=dict(private_only=True,external_upload=False,identifiable_imitation=False,public_release=False),
+                guide_audio={},guide_request={},guide_generation={},guide_version_lock={},audio_cover_strength=.75)
+            backend.validate_request(request,source)
+            for noise in [0,.6,1]:
+                request['cover_noise_strength']=noise;backend.validate_request(request,source)
+            for noise in [-.1,1.1,True,float('nan')]:
+                request['cover_noise_strength']=noise
+                with self.assertRaises(ValueError):backend.validate_request(request,source)
+            request.update(task='text2music',cover_noise_strength=.6)
+            with self.assertRaises(ValueError):backend.validate_request(request,source)
+
     def test_bounded_serial_round_advances_other_slots_without_claiming_completion(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as folder:

@@ -16,6 +16,13 @@ pending slot). A failed brief does not hold the rest of the campaign indefinitel
 Unqualified slots remain pending; `round-complete` is distinct from campaign
 completion. Resume another explicit round to continue; qualified takes stay fixed.
 
+Generated-guide covers expose two separate installed ACE controls.
+`--audio-guide-strength` blends cover conditioning; it does not preserve waveform
+initialization by itself. `--audio-guide-noise-strength` explicitly sets source
+initialization (0 starts from noise; 1 stays closest to the source). Omission
+preserves the historical zero setting. Both are recorded with the same-source
+proof; judge actual lyric coverage and musical variation, not the knob values.
+
 `tools/local_song_campaign.py` coordinates explicit project campaigns through
 `reel-assets`: ingestion, registration, pinned immutable versions and `run-job`.
 `tools/local_song_backend.py` is the trusted offline ACE/Whisper/Demucs adapter
