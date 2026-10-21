@@ -2711,6 +2711,7 @@ mod timed_overlay_end_frame_tests {
             frame_count: 132,
             pictures: vec![],
             audio: vec![],
+            audio_anchor_spans: vec![],
             external_layers: vec![],
             external_layer_spans: vec![],
             rendered_external_layers: vec![],
