@@ -1,0 +1,10 @@
+{
+  "schema": "reel.asset-project.v1",
+  "project_id": "example-project",
+  "storage_config": ".local/storage-rust.json",
+  "selections": [],
+  "scan_cas": true,
+  "measure_unregistered_physical": false,
+  "max_inventory_objects": 500000,
+  "lfs_namespaces": []
+}

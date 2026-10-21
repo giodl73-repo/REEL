@@ -18,9 +18,9 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
     };
     match command {
         "manager-review" => {
-            if args.len()!=3 { return Err("Usage: manager-review <repository-relative-project.json> <new-review-name>".into()); }
+            if args.len()!=3 && !(args.len()==4 && arg(3)?=="--refresh-inventory") { return Err("Usage: manager-review <repository-relative-project.json> <new-review-name> [--refresh-inventory]".into()); }
             let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
-            crate::manager_review::run(root,arg(1)?,arg(2)?,now)
+            crate::manager_review::run_with_refresh(root,arg(1)?,arg(2)?,now,args.len()==4)
         },
         "tier-review" | "tier-request" => {
             let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();

@@ -26,8 +26,20 @@ use std::{
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Deserialize, Clone, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum PathPolicy {
+    /// Compatibility for existing consumers that have not adopted a generic profile.
+    #[default]
+    LegacyCaminos,
+    /// Tier roles and explicit configured roots define placement, independent of drive letters.
+    ConfiguredLocalRoots,
+}
+
+#[derive(Deserialize, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
+    pub path_policy: PathPolicy,
     pub cache_roots: Vec<PathBuf>,
     #[serde(default)]
     pub archive_roots: Vec<PathBuf>,
@@ -197,13 +209,13 @@ pub fn config(root: &Path) -> Result<Config> {
         for path in roots {
             let text = path.to_string_lossy().replace('/', "\\").to_uppercase();
             let text = text.strip_prefix("\\\\?\\").unwrap_or(&text);
-            if !path.is_absolute()
-                || text.starts_with("UNC\\")
-                || text.starts_with("\\\\")
-                || text.starts_with("G:")
-                || (!archive && text.starts_with("M:"))
+            if !path.is_absolute() || text.starts_with("UNC\\") || text.starts_with("\\\\") {
+                return Err("Cache roots must be absolute local paths".into());
+            }
+            if matches!(config.path_policy, PathPolicy::LegacyCaminos)
+                && (text.starts_with("G:") || (!archive && text.starts_with("M:")))
             {
-                return Err("Cache roots must be absolute local paths; G is forbidden and M is archive-only".into());
+                return Err("Legacy cache policy: G is forbidden and M is archive-only; other projects can explicitly select configured-local-roots".into());
             }
         }
     }

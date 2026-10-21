@@ -35,6 +35,8 @@ jobs:
         run: |
           cargo clippy -p reel-assets --all-targets --locked -- -D warnings
           cargo test -p reel-assets --all-targets --locked
+      - name: Check offline cache review interactions
+        run: node --test crates/reel-assets/tests/tier_review_ui.test.cjs
       - name: Verify compiled scene delivery samples, stems, frames and tamper rejection
         run: cargo test --test scene_delivery real_delivery_preserves_sample_offset_stems_frames_and_rejects_tamper -- --ignored --exact
       - name: Verify explicit mono duplication preserves source level and rejects stereo

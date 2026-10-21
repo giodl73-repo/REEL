@@ -22,7 +22,7 @@ struct Inventory {
 struct Project {
     schema: String,
     policy: String,
-    inventory: Inventory,
+    inventory: Option<Inventory>,
     active_branches: BTreeSet<String>,
     #[serde(default)]
     inactive_branches: BTreeSet<String>,
@@ -104,6 +104,35 @@ fn new_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 pub fn run(root: &Path, project_name: &str, review_name: &str, now: u64) -> Result<Value> {
+    run_with_refresh(root, project_name, review_name, now, false)
+}
+
+// A new census is an explicit operation, never a side effect of viewing a review.
+fn snapshot(root: &Path, path: &Path) -> Result<Inventory> {
+    let report = accounting::report_with_progress(root, |done, total| {
+        eprintln!("Cache metadata: {done}/{total} objects")
+    })?;
+    let bytes = serde_json::to_vec(&report)?;
+    if bytes.len() > 512 * 1024 * 1024 {
+        return Err("Fresh inventory exceeds the 512 MiB input budget".into());
+    }
+    let sha256 = tiering::digest(&bytes);
+    new_bytes(path, &bytes)?;
+    Ok(Inventory {
+        cache_uri: format!("cache://sha256/{sha256}"),
+        sha256,
+        bytes: bytes.len() as u64,
+    })
+}
+
+pub fn run_with_refresh(
+    root: &Path,
+    project_name: &str,
+    review_name: &str,
+    now: u64,
+    refresh: bool,
+) -> Result<Value> {
+    let started = std::time::Instant::now();
     if review_name.is_empty()
         || review_name.len() > 80
         || !review_name
@@ -119,21 +148,31 @@ pub fn run(root: &Path, project_name: &str, review_name: &str, now: u64) -> Resu
     if p.schema != "reel.asset-manager-project.v1"
         || p.max_verify_seconds == 0
         || p.max_verify_seconds > 3600
-        || !crate::valid_oid(&p.inventory.sha256)
-        || p.inventory.bytes > 512 * 1024 * 1024
-        || p.inventory.cache_uri != format!("cache://sha256/{}", p.inventory.sha256)
+        || p.inventory.as_ref().is_some_and(|i| {
+            !crate::valid_oid(&i.sha256)
+                || i.bytes > 512 * 1024 * 1024
+                || i.cache_uri != format!("cache://sha256/{}", i.sha256)
+        })
     {
         return Err("Invalid asset-manager project/inventory/budget".into());
     }
     let policy_file = accounting::relative(&root, &p.policy)?;
     let policy_bytes = tiering::read_bounded(&policy_file, 256 * 1024)?;
     let (active, inactive, legacy) = consumers(&root, &p)?;
-    if selected(&root)?.get(&p.inventory.sha256) != Some(&p.inventory.bytes) {
-        return Err("Manager inventory asset must be registered with exact bytes".into());
-    }
-    let cfg = config(&root)?;
-    let inventory = active_existing(&cfg, &p.inventory.sha256, p.inventory.bytes)?
-        .ok_or("Manager inventory absent from active caches; archive not probed")?;
+    let cached = if refresh {
+        None
+    } else {
+        let i = p.inventory.as_ref().ok_or(
+            "No retained inventory configured; explicitly use --refresh-inventory for a new census",
+        )?;
+        if selected(&root)?.get(&i.sha256) != Some(&i.bytes) {
+            return Err("Manager inventory asset must be registered with exact bytes".into());
+        }
+        Some(
+            active_existing(&config(&root)?, &i.sha256, i.bytes)?
+                .ok_or("Manager inventory absent from active caches; archive not probed")?,
+        )
+    };
     let parent = root.join(".local/asset-reviews");
     for path in [root.join(".local"), parent.clone()] {
         if let Ok(m) = fs::symlink_metadata(path) {
@@ -156,7 +195,25 @@ pub fn run(root: &Path, project_name: &str, review_name: &str, now: u64) -> Resu
     let plan_path = dir.join("plan.json");
     let scope_path = dir.join("scope.json");
     let html_path = dir.join("review.html");
-    new_bytes(&policy_path, &policy_bytes)?;
+    let (inventory, identity) = if let Some(path) = cached {
+        (path, p.inventory.as_ref().unwrap().sha256.clone())
+    } else {
+        let path = dir.join("inventory.json");
+        let i = snapshot(&root, &path)?;
+        let mut policy: tiering::Policy = serde_json::from_slice(&policy_bytes)?;
+        policy.baseline = tiering::Descriptor {
+            sha256: i.sha256.clone(),
+            bytes: i.bytes,
+        };
+        new_bytes(&policy_path, &serde_json::to_vec(&policy)?)?;
+        (path, i.sha256)
+    };
+    if !refresh {
+        new_bytes(&policy_path, &policy_bytes)?;
+    }
+    let now = now
+        .checked_add(started.elapsed().as_secs())
+        .ok_or("Review time overflow")?;
     let plan = tiering::plan(&root, &policy_path, &inventory, now)?;
     tiering::write_plan(&plan_path, &plan)?;
     let scope = json!({"schema":"reel.asset-demotion-request.v1","policy":policy_path,"plan":plan_path,
@@ -168,7 +225,9 @@ pub fn run(root: &Path, project_name: &str, review_name: &str, now: u64) -> Resu
     let view = tier_review::render(&root, &scope_path, &html_path, now)?;
     Ok(
         json!({"schema":"reel.asset-manager-review-result.v1","review":view,"scope_path":scope_path,
-        "inventory_sha256":p.inventory.sha256,"inventory_copied":false,"archive_probed":false,
+        "inventory_sha256":identity,"inventory_bytes":fs::metadata(&inventory)?.len(),
+        "inventory_cache_uri":format!("cache://sha256/{identity}"),"inventory_path":inventory,"inventory_refreshed":refresh,
+        "inventory_retention_required":refresh,"inventory_copied":false,"archive_probed":false,
         "daemon_started":false,"payloads_removed":0,"next":"Save a block choice in the private review, then use tier-request; apply remains separate"}),
     )
 }
@@ -239,5 +298,72 @@ mod tests {
         assert!(q.status.success());
         assert!(run(f.root(), &p, "held", 1000).is_err());
         assert!(!f.root().join(".local/asset-reviews/review-held").exists());
+    }
+
+    #[test]
+    fn explicit_snapshot_observes_additions_and_removals_without_touching_payloads() {
+        let (f, _) = fixture();
+        let removed = f.put(b"temporary unregistered fixture", false);
+        let first = f.root().join("first-census.json");
+        snapshot(f.root(), &first).unwrap();
+        fs::remove_file(crate::object(&f.root().join("fast"), &removed)).unwrap();
+        fs::remove_file(crate::object(&f.root().join("history"), &removed)).unwrap();
+        let added = f.put(b"new unregistered fixture", false);
+        let second = f.root().join("second-census.json");
+        let identity = snapshot(f.root(), &second).unwrap();
+        let bytes = fs::read(&second).unwrap();
+        assert_eq!(identity.sha256, tiering::digest(&bytes));
+        assert_eq!(identity.bytes, bytes.len() as u64);
+        let report: Value = serde_json::from_slice(&bytes).unwrap();
+        let hashes: BTreeSet<_> = report["objects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["sha256"].as_str().unwrap())
+            .collect();
+        assert!(hashes.contains(added.as_str()));
+        assert!(!hashes.contains(removed.as_str()));
+        assert_eq!(report["archive_probed"], false);
+        assert_eq!(report["media_deleted"], false);
+        assert!(snapshot(f.root(), &second).is_err());
+        assert!(crate::object(&f.root().join("fast"), &added).exists());
+        assert!(!f.root().join("offline-cold").exists());
+    }
+
+    #[test]
+    fn new_project_requires_explicit_refresh_and_rejects_same_volume_retention() {
+        let (f, p) = fixture();
+        let project_file = f.root().join(&p);
+        let mut project = crate::load(&project_file).unwrap();
+        project.as_object_mut().unwrap().remove("inventory");
+        fs::write(&project_file, project.to_string()).unwrap();
+        assert!(
+            run(f.root(), &p, "no-refresh", 1000)
+                .unwrap_err()
+                .to_string()
+                .contains("--refresh-inventory")
+        );
+        assert!(
+            !f.root()
+                .join(".local/asset-reviews/review-no-refresh")
+                .exists()
+        );
+        let original_policy = fs::read(f.root().join("policy.json")).unwrap();
+        let original_project = fs::read(&project_file).unwrap();
+        let err = run_with_refresh(f.root(), &p, "fresh", 1000, true).unwrap_err();
+        assert!(err.to_string().contains("one volume"), "{err}");
+        let dir = f.root().join(".local/asset-reviews/review-fresh");
+        assert!(dir.join("inventory.json").exists());
+        assert!(!dir.join("review.html").exists());
+        assert_eq!(
+            fs::read(f.root().join("policy.json")).unwrap(),
+            original_policy
+        );
+        assert_eq!(fs::read(&project_file).unwrap(), original_project);
+        let copied: Value = crate::load(&dir.join("policy.json")).unwrap();
+        assert_eq!(
+            copied["baseline"]["sha256"],
+            tiering::digest(&fs::read(dir.join("inventory.json")).unwrap())
+        );
     }
 }

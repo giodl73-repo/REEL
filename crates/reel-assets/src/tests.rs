@@ -57,6 +57,38 @@ struct Fixture {
     oid: String,
 }
 
+#[test]
+fn generic_path_policy_is_explicit_and_rejects_unknown_policy_names() {
+    let f = Fixture::new();
+    let path = f.dir.path().join(".local/storage-rust.json");
+    let mut cfg = load(&path).unwrap();
+    cfg["path_policy"] = json!("configured-local-roots");
+    fs::write(&path, cfg.to_string()).unwrap();
+    assert!(matches!(
+        config(f.dir.path()).unwrap().path_policy,
+        PathPolicy::ConfiguredLocalRoots
+    ));
+    cfg["path_policy"] = json!("allow-anything");
+    fs::write(&path, cfg.to_string()).unwrap();
+    assert!(config(f.dir.path()).is_err());
+}
+
+#[cfg(windows)]
+#[test]
+fn generic_project_can_use_any_local_drive_letter_without_changing_legacy_consumers() {
+    let f = Fixture::new();
+    let path = f.dir.path().join(".local/storage-rust.json");
+    let mut cfg = json!({"cache_roots":["G:/example-assets","M:/example-history"],"archive_roots":["X:/example-archive"]});
+    fs::write(&path, cfg.to_string()).unwrap();
+    assert!(config(f.dir.path()).is_err());
+    cfg["path_policy"] = json!("configured-local-roots");
+    fs::write(&path, cfg.to_string()).unwrap();
+    assert!(config(f.dir.path()).is_ok());
+    cfg["cache_roots"] = json!(["//server/share"]);
+    fs::write(&path, cfg.to_string()).unwrap();
+    assert!(config(f.dir.path()).is_err());
+}
+
 fn scene_fixture(f: &Fixture) -> PathBuf {
     let root = f.dir.path();
     let scene = json!({"schema":"reel.scene-authoring.v2","scene_id":"one","episode_id":"video-one","authoring_state":"imported-evidence","source_authority_id":"original","languages":{},"holds":["Imported source only"]});
