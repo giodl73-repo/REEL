@@ -28,6 +28,8 @@ class Campaign:
         self.repeat_after_failures=None
         self.planner_asset=None
         self.repeat_section_lines=None
+        self.phrase_max_words=None
+        self.asr_dtype=None
 
     def call(self, command, *args, env=None):
         for attempt in range(self.metadata_retries+1):
@@ -137,17 +139,20 @@ class Campaign:
         source=self.locate(slot['source'])
         lyrics=source.read_bytes().decode('utf-8')
         # Canonical words stay immutable under every explicit rendering policy.
-        render=format_lyrics(lyrics,join_single_word_continuations=attempt>1)
+        render=format_lyrics(lyrics,join_single_word_continuations=attempt>1,max_phrase_words=self.phrase_max_words)
         duration=min(480,slot['duration_seconds']+15*((attempt-1)//3))
         caption=slot['caption']
         repetition={}
+        if self.asr_dtype:repetition['recognition_dtype']=self.asr_dtype
         if attempt>1:
-            caption+=' Clear natural articulation of every supplied word, including gentle but distinct final consonants and plural s; keep the melody expressive.'
+            caption+=(' Syllabic melody, clear Spanish diction and final consonants; minimal melisma.' if self.phrase_max_words else ' Clear natural articulation of every supplied word, including gentle but distinct final consonants and plural s; keep the melody expressive.')
             repetition['render_format']='Single-word continuations joined to their preceding phrase within each original stanza; source words and canonical line breaks unchanged'
+        if self.phrase_max_words:
+            repetition.update(phrase_max_words=self.phrase_max_words,render_format='Consecutive source fragments joined into bounded sung phrases; original stanza boundaries, source words and canonical lines unchanged')
         if self.repeat_section_lines:
-            render=format_repeated_sections(lyrics,self.repeat_section_lines)
+            render=format_repeated_sections(lyrics,self.repeat_section_lines,self.phrase_max_words)
             duration=min(480,max(duration,5*round(slot['duration_seconds']*1.75/5)))
-            caption+=' Sing each supplied short stanza twice before continuing to the next stanza. Both copies are supplied; keep every original word, melodic phrasing and clear diction. No invented chorus.'
+            caption+=(' Sing each supplied stanza copy verbatim; no invented chorus.' if self.phrase_max_words else ' Sing each supplied short stanza twice before continuing to the next stanza. Both copies are supplied; keep every original word, melodic phrasing and clear diction. No invented chorus.')
             repetition.update(performance_repetitions=2,repeat_section_lines=self.repeat_section_lines,
                 repeat_authority='Owner-authorized repeated lines; each unchanged consecutive source section supplied twice')
         if self.planner_asset:
@@ -245,7 +250,7 @@ class Campaign:
         print('DONE',rid,'PASS' if analysis['passed'] else 'RETRY',f"{analysis['qualifying_lines']}/{analysis['total_lines']} lines",flush=True)
         return summary
 
-    def run(self, campaign_path, runtime_asset_path, backend, adopt_backend_revision=None,repeat_after_failures=None,planner_asset_path=None,generation_route=None,repeat_section_lines=None):
+    def run(self, campaign_path, runtime_asset_path, backend, adopt_backend_revision=None,repeat_after_failures=None,planner_asset_path=None,generation_route=None,repeat_section_lines=None,phrase_max_words=None,asr_dtype=None):
         campaign=read(campaign_path)
         if campaign['schema']!='reel.song-audition-campaign.v1':raise ValueError('Unsupported campaign')
         ids=[slot['id'] for slot in campaign['slots']]
@@ -282,10 +287,18 @@ class Campaign:
             state.setdefault('generation_route_revisions',[]).append(dict(previous=state.get('generation_route'),replacement=route,after_retained_takes=len(state['attempts'])))
         state['generation_route']=route
         if route=='direct':self.planner_asset=None
-        self.repeat_section_lines=repeat_section_lines or state.get('repeat_section_lines')
-        if repeat_section_lines and state.get('repeat_section_lines')!=repeat_section_lines:
+        self.repeat_section_lines=repeat_section_lines if repeat_section_lines is not None else state.get('repeat_section_lines')
+        if repeat_section_lines is not None and state.get('repeat_section_lines')!=repeat_section_lines:
             state.setdefault('section_policy_revisions',[]).append(dict(previous=state.get('repeat_section_lines'),replacement=repeat_section_lines,after_retained_takes=len(state['attempts'])))
             state['repeat_section_lines']=repeat_section_lines
+        self.phrase_max_words=phrase_max_words or state.get('phrase_max_words')
+        if phrase_max_words and state.get('phrase_max_words')!=phrase_max_words:
+            state.setdefault('phrase_policy_revisions',[]).append(dict(previous=state.get('phrase_max_words'),replacement=phrase_max_words,after_retained_takes=len(state['attempts'])))
+            state['phrase_max_words']=phrase_max_words
+        self.asr_dtype=asr_dtype or state.get('asr_dtype')
+        if asr_dtype and state.get('asr_dtype')!=asr_dtype:
+            state.setdefault('asr_policy_revisions',[]).append(dict(previous=state.get('asr_dtype','float32'),replacement=asr_dtype,after_retained_takes=len(state['attempts'])))
+            state['asr_dtype']=asr_dtype
         previous_policy=state.get('retry_policy',{})
         self.repeat_after_failures=previous_policy.get('repeat_complete_poem_after_failures') if repeat_after_failures is None else repeat_after_failures
         if repeat_after_failures is not None:
@@ -389,14 +402,16 @@ def main():
     run.add_argument('--repeat-after-failures',type=int,choices=range(1,31),help='Explicitly authorize two unchanged full-poem passes after N failed takes; preserves the line gate')
     run.add_argument('--planner-asset',help='Explicitly adopt a frozen local planner component for future takes; one unchanged source pass')
     run.add_argument('--generation-route',choices=['direct','planned'],help='Explicit route revision for future takes; planner component history stays retained')
-    run.add_argument('--repeat-section-lines',type=int,choices=range(2,9),help='Supply each consecutive unchanged source section twice; preserves canonical line gate')
+    run.add_argument('--repeat-section-lines',type=int,choices=[0,*range(2,9)],help='Supply each unchanged source section twice; 0 explicitly disables section repetition')
+    run.add_argument('--phrase-max-words',type=int,choices=range(4,17),help='Join short source fragments into bounded sung phrases without crossing original stanzas or changing words')
+    run.add_argument('--asr-dtype',choices=['float32','float16'],help='Explicit GPU recognition precision; model, three passes and line gate stay fixed')
     restore=sub.add_parser('restore');restore.add_argument('--state',required=True);restore.add_argument('--lfs-executable',required=True)
     restore.add_argument('--all-attempts',action='store_true',help='Verify retained failed takes as well as qualifying candidates')
     review=sub.add_parser('review');review.add_argument('--campaign',required=True);review.add_argument('--state',required=True)
     stop=sub.add_parser('request-stop');stop.add_argument('--clear',action='store_true')
     args=p.parse_args();c=Campaign(args.root,args.assets,args.work,args.metadata_retries)
     if args.operation=='snapshot':c.freeze_runtime(args)
-    elif args.operation=='run':c.run(args.campaign,args.runtime_asset,args.backend,args.adopt_backend_revision,args.repeat_after_failures,args.planner_asset,args.generation_route,args.repeat_section_lines)
+    elif args.operation=='run':c.run(args.campaign,args.runtime_asset,args.backend,args.adopt_backend_revision,args.repeat_after_failures,args.planner_asset,args.generation_route,args.repeat_section_lines,args.phrase_max_words,args.asr_dtype)
     elif args.operation=='restore':c.restore(args.state,args.lfs_executable,args.all_attempts)
     elif args.operation=='review':c.review(read(args.campaign),read(args.state))
     else:c.save('stop-after-current.json',dict(requested=not args.clear))

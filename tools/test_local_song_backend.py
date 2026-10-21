@@ -11,6 +11,15 @@ def evidence(text):
 
 
 class LyricGateTests(unittest.TestCase):
+    def test_phrase_wrapping_preserves_words_and_sentence_boundaries(self):
+        source='Amber lamps\nshine above us.\nSilver bells\nring softly\n\nCopper wheels turn\n'
+        rendered=backend.format_lyrics(source,True,12)
+        self.assertIn('Amber lamps shine above us.\nSilver bells ring softly',rendered)
+        self.assertIn('[Verse]\nCopper wheels turn',rendered)
+        repeated=backend.format_repeated_sections(source,2,12)
+        self.assertEqual(repeated.count('Amber lamps shine above us.'),2)
+        self.assertEqual(repeated.count('Silver bells ring softly'),2)
+
     def test_repeated_sections_validate_exact_words_and_reject_rewrites(self):
         import re
         from unittest.mock import patch
@@ -105,6 +114,10 @@ class LyricGateTests(unittest.TestCase):
                 permissions=dict(private_only=True,external_upload=False,identifiable_imitation=False,public_release=False))
             with self.assertRaises(ValueError):backend.validate_request(request,p)
             request['task']='text2music';backend.validate_request(request,p)
+            request['recognition_dtype']='float16';backend.validate_request(request,p)
+            request['recognition_dtype']='unsupported'
+            with self.assertRaises(ValueError):backend.validate_request(request,p)
+            request['recognition_dtype']='float32'
             request['render_lyrics']='Alpha beta delta'
             with self.assertRaises(ValueError):backend.validate_request(request,p)
             request['render_lyrics']='Alpha beta gamma';request['permissions']['external_upload']=True

@@ -113,6 +113,20 @@ words. Original stanza boundaries remain separate. Render validation checks the
 exact expected word sequence; canonical source lines and acceptance do not
 change. This uses the same owner permission for performed repetitions.
 
+`--phrase-max-words N` joins consecutive short source fragments into fuller
+sung phrases, respecting original stanza and sentence boundaries. It changes
+rendered wrapping only. Exact-word validation, canonical line accounting and
+retained source bytes remain unchanged. The accompanying shorter diction
+caption requests syllabic phrasing and minimal melisma; its musical outcome
+still needs the same full recording analysis and owner listening.
+
+`--asr-dtype float16` explicitly selects GPU recognition precision for future
+requests; the default remains float32. The request, raw passes and report record
+the actual precision. Model weights, three unprompted conditions, beam count,
+canonical source and acceptance remain fixed. Verify an actual retained private
+fixture before adopting a precision change; preserve its old report alongside
+the new analysis. Generation precision is a separate setting.
+
 The backend's `recount` operation takes a hash-bound prior report, recording,
 request and source through a Rust job. It revises only line accounting from the
 retained unprompted token/timestamp passes, retaining the prior report and a

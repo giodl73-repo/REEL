@@ -83,6 +83,8 @@ def validate_request(request, source):
         raise ValueError('Engine formatting changes lyric words')
     if request['permissions'] != dict(private_only=True, external_upload=False, identifiable_imitation=False, public_release=False):
         raise ValueError('Unsupported permission scope')
+    if request.get('recognition_dtype','float32') not in ('float32','float16'):
+        raise ValueError('Unsupported explicit recognition dtype')
 
 
 def runtime_files(runtime, group):
@@ -199,15 +201,15 @@ def lyric_sections(lyrics,section_lines):
     return sections
 
 
-def format_repeated_sections(lyrics,section_lines):
+def format_repeated_sections(lyrics,section_lines,max_phrase_words=None):
     parts=[]
     for section in lyric_sections(lyrics,section_lines):
-        rendered=format_lyrics(section,True).removesuffix('\n[Outro - instrumental]')
+        rendered=format_lyrics(section,True,max_phrase_words).removesuffix('\n[Outro - instrumental]')
         parts.extend([rendered,rendered])
     return '\n'.join(parts)+'\n[Outro - instrumental]'
 
 
-def format_lyrics(lyrics,join_single_word_continuations=False):
+def format_lyrics(lyrics,join_single_word_continuations=False,max_phrase_words=None):
     """Musical line wrapping only; canonical bytes and word order stay separate."""
     stanzas=[]
     for stanza in re.split(r'\r?\n[ \t]*\r?\n',lyrics.strip()):
@@ -215,7 +217,8 @@ def format_lyrics(lyrics,join_single_word_continuations=False):
         lines=[]
         for line in stanza.splitlines():
             text=line.strip()
-            if join_single_word_continuations and len(words(text))==1 and lines and not re.search(r'[.!?;:]$',lines[-1]):
+            join_short=max_phrase_words is not None and lines and len(words(lines[-1]))+len(words(text))<=max_phrase_words
+            if lines and not re.search(r'[.!?;:]$',lines[-1]) and (join_short or (join_single_word_continuations and len(words(text))==1)):
                 lines[-1]+=' '+text
             else:lines.append(text)
         stanzas.append('[Verse]\n'+'\n'.join(lines))
@@ -409,7 +412,9 @@ def analyze(request, runtime, source):
     asrm.is_torchcodec_available = lambda: False
     from transformers import pipeline
     print('Load explicit offline Whisper; no canonical prompt', flush=True)
-    asr = pipeline('automatic-speech-recognition', model=runtime['whisper_root'], device=0, torch_dtype=torch.float32, batch_size=ASR_BATCH_SIZE)
+    recognition_dtype=request.get('recognition_dtype','float32')
+    asr = pipeline('automatic-speech-recognition', model=runtime['whisper_root'], device=0,
+        torch_dtype=getattr(torch,recognition_dtype), batch_size=ASR_BATCH_SIZE)
     mixed, vocals = decode('recording.wav'), decode('vocals.wav')
     energy = np.array([np.sqrt(np.mean(vocals[i:i+8000]**2)) for i in range(0,len(vocals),8000)])
     active = np.flatnonzero(energy > max(.0001,float(energy.max())*.04))
@@ -426,14 +431,14 @@ def analyze(request, runtime, source):
             row['timestamp'] = [t+offset if t is not None else None for t in row['timestamp']]
             tokens.extend(dict(word=w,span=row['timestamp']) for w in words(row['text']))
         write(Path('transcripts')/(name+'.json'), dict(raw,source_clock_offset_seconds=offset,canonical_prompt=False,
-            batch_size=ASR_BATCH_SIZE,chunk_length_s=chunk,stride_length_s=stride))
+            batch_size=ASR_BATCH_SIZE,dtype=recognition_dtype,chunk_length_s=chunk,stride_length_s=stride))
         passes.append(dict(name=name, text=raw['text'], tokens=tokens))
     report = line_report(request['canonical_lyrics'], passes)
     report.update(schema='reel.song-lyric-diagnostic.v1',candidate_id=request['candidate_id'],
         request=descriptor('request.json'),recording=descriptor('recording.wav'),runtime=descriptor('runtime.json'),
         technical=dict(seconds=seconds,sample_rate=rate,channels=samples.shape[1],peak=peak,rms=rms,complete_decode=True),
         vocal_estimate='Demucs derivative; not an original stem',passes=passes)
-    report['recognition_settings']=dict(batch_size=ASR_BATCH_SIZE,dtype='float32',num_beams=3,
+    report['recognition_settings']=dict(batch_size=ASR_BATCH_SIZE,dtype=recognition_dtype,num_beams=3,
         conditions=['mix30/5','mix20/3','vocals20/3'],canonical_prompt=False)
     report['requested_complete_poem_passes']=None if request.get('repeat_section_lines') else request.get('performance_repetitions',1)
     report['requested_section_repeat_lines']=request.get('repeat_section_lines')
