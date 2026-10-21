@@ -28,12 +28,18 @@ Run the worker with the supplied interpreter and the staged relative request:
 python tools/local_tts_worker.py request.json
 ```
 
-Within an admitted Windows job, a pinned `cmd.exe` can invoke the explicitly
-supplied installed Python runtime with `/d /c`; the job's bounded process tree
-still contains the interpreter. Keep machine-specific paths and private request
-data in the producer's cache-backed job, never this repository. Pin and verify
-that installed runtime before submission. Declare both WAV and receipt outputs.
-The job budget must cover private model copies, scratch and output publication.
+Within an admitted Windows job, stage the exact Python executable and its core
+DLLs together under `tools/`. A declared `tools/python312._pth` control file can
+name the explicitly supplied existing standard library, extension directory and
+compatible environment's site-packages, followed by `import site`. Declare
+`tools/python.exe` as the tool and use `-I worker.py request.json` as its arguments.
+This uses the runner's ordinary executable argument contract without shell
+quoting. First test that runtime layout with a small synthetic admitted job.
+Keep machine-specific paths and private requests in the producer's cache-backed
+job, never this repository. Pin the runtime files and package inventory; this
+layout is not environment installation or isolation from trusted packages.
+Declare both WAV and receipt outputs. The job budget must cover private model
+copies, runtime files, scratch and output publication.
 
 The worker sets offline flags and refuses socket connections before importing
 the model backend. This prevents accidental downloads; it is not a sandbox for
