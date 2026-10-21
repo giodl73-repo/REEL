@@ -30,3 +30,10 @@ source/history pairs without removing links; active admissions remained reported
 Tier planning also reads the retained gzip inventory directly, binding decoded
 policy identity and recording encoded identity. Two synthetic cases cover exact
 decoding, damaged gzip rejection and the decoded-length budget.
+
+Linux CI exposed a transient metadata-lock failure during parallel tests.
+Metadata guards now explicitly unlock before closing their file, preventing a
+surviving duplicated/inherited Unix descriptor from retaining flock ownership.
+A Unix-only regression holds such a descriptor across guard release and checks
+that the next owner can acquire while mutual exclusion remains enforced.
+Windows still executes 82 scoped tests; the Unix case requires Linux CI evidence.
