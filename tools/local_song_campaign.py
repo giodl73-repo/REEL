@@ -34,11 +34,17 @@ def revised_caption(slot, briefs):
     revision=briefs.get(slot['id'])
     if revision is None:return slot['caption']
     if not isinstance(revision,dict):raise ValueError('Musical brief revision must be an object')
+    if set(revision)-{'source','source_lock','caption','repeat_section_lines','phrase_max_words'}:
+        raise ValueError('Unknown musical brief revision field')
     if revision.get('source')!=slot['source'] or revision.get('source_lock')!=slot['source_lock']:
         raise ValueError('Musical brief revision belongs to another source/version')
     caption=revision.get('caption')
     if not isinstance(caption,str) or not caption.strip() or len(caption.encode('utf-8'))>4096:
         raise ValueError('Musical brief revision must contain a bounded caption')
+    if 'repeat_section_lines' in revision and (type(revision['repeat_section_lines']) is not int or revision['repeat_section_lines'] not in [0,*range(2,9)]):
+        raise ValueError('Unsupported scoped repeated-section layout')
+    if 'phrase_max_words' in revision and (type(revision['phrase_max_words']) is not int or not 4<=revision['phrase_max_words']<=16):
+        raise ValueError('Unsupported scoped phrase size')
     return caption
 
 
@@ -168,32 +174,35 @@ class Campaign:
     def request(self, slot, attempt):
         source=self.locate(slot['source'])
         lyrics=source.read_bytes().decode('utf-8')
+        caption=revised_caption(slot,self.briefs)
+        brief=self.briefs.get(slot['id'],{})
+        phrase_words=brief.get('phrase_max_words',self.phrase_max_words)
+        section_lines=brief.get('repeat_section_lines',self.repeat_section_lines)
         # Canonical words stay immutable under every explicit rendering policy.
-        render=format_lyrics(lyrics,join_single_word_continuations=attempt>1,max_phrase_words=self.phrase_max_words)
+        render=format_lyrics(lyrics,join_single_word_continuations=attempt>1,max_phrase_words=phrase_words)
         duration=min(480,slot['duration_seconds']+15*((attempt-1)//3))
         ceiling=slot.get('max_duration_seconds')
         if ceiling is not None and (isinstance(ceiling,bool) or not isinstance(ceiling,(int,float)) or not slot['duration_seconds'] <= ceiling <= 480):
             raise ValueError('Duration ceiling must be between the initial duration and 480 seconds')
-        caption=revised_caption(slot,self.briefs)
         repetition={}
         if slot['id'] in self.briefs:repetition['musical_brief_revision']=dict(asset=self.brief_asset,slot_id=slot['id'])
         if self.asr_dtype:repetition['recognition_dtype']=self.asr_dtype
         if self.ctc_runtime:repetition['independent_ctc_check']=dict(component=self.ctc_runtime['component'],version_lock=self.ctc_runtime['version_lock'],max_failed_lines=3,canonical_prompt=False)
         if attempt>1 or self.timing_reference:
-            caption+=(' Syllabic melody, clear Spanish diction and final consonants; minimal melisma.' if self.phrase_max_words else ' Clear natural articulation of every supplied word, including gentle but distinct final consonants and plural s; keep the melody expressive.')
+            caption+=(' Syllabic melody, clear Spanish diction and final consonants; minimal melisma.' if phrase_words else ' Clear natural articulation of every supplied word, including gentle but distinct final consonants and plural s; keep the melody expressive.')
             repetition['render_format']='Single-word continuations joined to their preceding phrase within each original stanza; source words and canonical line breaks unchanged'
-        if self.phrase_max_words:
-            repetition.update(phrase_max_words=self.phrase_max_words,render_format='Consecutive source fragments joined into bounded sung phrases; original stanza boundaries, source words and canonical lines unchanged')
-        if self.repeat_section_lines:
-            render=format_repeated_sections(lyrics,self.repeat_section_lines,self.phrase_max_words)
+        if phrase_words:
+            repetition.update(phrase_max_words=phrase_words,render_format='Consecutive source fragments joined into bounded sung phrases; original stanza boundaries, source words and canonical lines unchanged')
+        if section_lines:
+            render=format_repeated_sections(lyrics,section_lines,phrase_words)
             duration=min(480,max(duration,5*round(slot['duration_seconds']*1.75/5)))
-            caption+=(' Sing each supplied stanza copy verbatim; no invented chorus.' if self.phrase_max_words else ' Sing each supplied short stanza twice before continuing to the next stanza. Both copies are supplied; keep every original word, melodic phrasing and clear diction. No invented chorus.')
-            repetition.update(performance_repetitions=2,repeat_section_lines=self.repeat_section_lines,
+            caption+=(' Sing each supplied stanza copy verbatim; no invented chorus.' if phrase_words else ' Sing each supplied short stanza twice before continuing to the next stanza. Both copies are supplied; keep every original word, melodic phrasing and clear diction. No invented chorus.')
+            repetition.update(performance_repetitions=2,repeat_section_lines=section_lines,
                 repeat_authority='Owner-authorized repeated lines; each unchanged consecutive source section supplied twice')
         if self.planner_asset:
             repetition['semantic_planner']=self.planner_asset
-            repetition['render_format']='Unchanged source sections repeated twice' if self.repeat_section_lines else 'Single unchanged source pass, single-word continuations joined; optional frozen local semantic plan'
-        elif not self.repeat_section_lines and self.repeat_after_failures is not None and attempt>self.repeat_after_failures:
+            repetition['render_format']='Unchanged source sections repeated twice' if section_lines else 'Single unchanged source pass, single-word continuations joined; optional frozen local semantic plan'
+        elif not section_lines and self.repeat_after_failures is not None and attempt>self.repeat_after_failures:
             # The operator must explicitly authorize repetitions. Repeat exact
             # complete source text, never synthesize replacement lyric lines.
             body=render.removesuffix('\n[Outro - instrumental]')

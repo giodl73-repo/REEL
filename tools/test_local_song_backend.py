@@ -19,8 +19,20 @@ class LyricGateTests(unittest.TestCase):
         self.assertEqual(local_song_campaign.revised_caption(slot,{}),slot['caption'])
         revised=dict(source=slot['source'],source_lock=slot['source_lock'],caption='A different invented musical brief')
         self.assertEqual(local_song_campaign.revised_caption(slot,{'synthetic':revised}),revised['caption'])
-        for invalid in [dict(revised,source={'sha256':'two'}),dict(revised,caption=''),dict(revised,caption='x'*4097),'wrong-type']:
+        for invalid in [dict(revised,source={'sha256':'two'}),dict(revised,caption=''),dict(revised,caption='x'*4097),dict(revised,repeat_section_lines=1),dict(revised,phrase_max_words=100),dict(revised,duration_seconds=999),'wrong-type']:
             with self.assertRaises(ValueError):local_song_campaign.revised_caption(slot,{'synthetic':invalid})
+
+    def test_scoped_render_revision_preserves_canonical_words_and_hard_duration(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/'source.txt';source.write_bytes(b'Alpha beta gamma\nDelta echo foxtrot\nGolf hotel india\n')
+            campaign=local_song_campaign.Campaign(folder,Path(folder)/'unused.exe',Path(folder)/'work')
+            slot=dict(id='synthetic',title='Synthetic',source=backend.descriptor(source),source_lock={},duration_seconds=90,max_duration_seconds=90,caption='Original brief',seed_base=100)
+            campaign.briefs={'synthetic':dict(source=slot['source'],source_lock={},caption='Revised musical brief with supplied repeats',repeat_section_lines=2,phrase_max_words=8)};campaign.brief_asset={'sha256':'synthetic'}
+            with patch.object(campaign,'locate',return_value=source):request=campaign.request(slot,4)
+            self.assertEqual(request['duration_seconds'],90);self.assertEqual(request['performance_repetitions'],2)
+            self.assertEqual(request['canonical_lyrics'],source.read_bytes().decode('utf-8'))
+            backend.validate_request(request,source)
 
     def test_cover_source_noise_is_bounded_and_requires_verified_guide_mode(self):
         with tempfile.TemporaryDirectory() as folder:

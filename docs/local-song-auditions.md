@@ -30,6 +30,10 @@ draining a complete take, never by editing the frozen campaign or old requests.
 New brief revisions cannot target already-qualified slots; resuming the same
 revision preserves candidates qualified under it. Future take packages retain
 the brief payload/dependency as well as the exact submitted caption.
+Entries may also scope the existing `repeat_section_lines` (0 or 2–8) and
+`phrase_max_words` (4–16) options. These preserve canonical words and cannot alter
+the slot's hard duration ceiling. This allows a close take to keep one pass while
+other pending voices try denser supplied repetitions at their original lengths.
 
 `tools/local_song_campaign.py` coordinates explicit project campaigns through
 `reel-assets`: ingestion, registration, pinned immutable versions and `run-job`.
