@@ -368,7 +368,7 @@ mod tests {
         let dry = demotion::run(
             f.root(),
             &output,
-            &f.root().join(".local/journal"),
+            &f.root().canonicalize().unwrap().join(".local/journal"),
             false,
             1000,
         )
