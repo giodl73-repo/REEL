@@ -4,6 +4,7 @@ pub mod accounting;
 pub mod admission;
 pub mod artifacts;
 pub mod cli;
+pub mod demotion;
 pub mod goldens;
 pub mod jobs;
 pub mod registry;

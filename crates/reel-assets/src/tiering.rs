@@ -11,20 +11,20 @@ use std::{
     path::Path,
 };
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Descriptor {
     pub sha256: String,
     pub bytes: u64,
 }
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Tier {
     pub id: String,
     pub storage: String,
     pub index: usize,
 }
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Policy {
     pub schema: String,
@@ -83,10 +83,10 @@ struct Copy {
     other_hard_links: Option<u64>,
 }
 
-fn digest(bytes: &[u8]) -> String {
+pub(crate) fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
-fn read_bounded(path: &Path, max: u64) -> Result<Vec<u8>> {
+pub(crate) fn read_bounded(path: &Path, max: u64) -> Result<Vec<u8>> {
     let f = fs::File::open(path)?;
     if f.metadata()?.len() > max {
         return Err("Tier input exceeds byte budget".into());
@@ -99,17 +99,17 @@ fn read_bounded(path: &Path, max: u64) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-struct Live {
+pub(crate) struct Live {
     generation: u64,
-    fingerprint: String,
+    pub(crate) fingerprint: String,
     profile_hash: String,
     project_id: String,
-    registered: BTreeMap<String, u64>,
-    selected: BTreeSet<String>,
-    current: BTreeSet<String>,
-    leased: BTreeSet<String>,
-    controls: BTreeSet<String>,
-    history: BTreeSet<String>,
+    pub(crate) registered: BTreeMap<String, u64>,
+    pub(crate) selected: BTreeSet<String>,
+    pub(crate) current: BTreeSet<String>,
+    pub(crate) leased: BTreeSet<String>,
+    pub(crate) controls: BTreeSet<String>,
+    pub(crate) history: BTreeSet<String>,
     coverage_complete: bool,
 }
 
@@ -155,7 +155,7 @@ fn validate_graph(state: &versions::State, limit: usize) -> Result<()> {
     }
     Ok(())
 }
-fn live(root: &Path, policy: &Policy) -> Result<Live> {
+pub(crate) fn live(root: &Path, policy: &Policy) -> Result<Live> {
     let p = accounting::project(root)?;
     let cfg = config(root)?;
     let profile = fs::read(root.join("asset-project.json"))?;
@@ -223,7 +223,7 @@ fn live(root: &Path, policy: &Policy) -> Result<Live> {
 }
 
 impl Policy {
-    fn validate(&self, cfg: &crate::Config) -> Result<()> {
+    pub(crate) fn validate(&self, cfg: &crate::Config) -> Result<()> {
         if self.schema != "reel.asset-tier-policy.v1"
             || self.project_id.is_empty()
             || !valid_oid(&self.baseline.sha256)
@@ -305,7 +305,7 @@ impl Policy {
         }
         Ok(())
     }
-    fn tier(&self, id: &str) -> &Tier {
+    pub(crate) fn tier(&self, id: &str) -> &Tier {
         self.tiers.iter().find(|t| t.id == id).unwrap()
     }
 }
@@ -588,15 +588,15 @@ pub fn check_plan(root: &Path, policy_path: &Path, plan_path: &Path, now: u64) -
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    struct Fixture {
+    pub(crate) struct Fixture {
         dir: tempfile::TempDir,
-        state: versions::State,
-        policy: Value,
+        pub(crate) state: versions::State,
+        pub(crate) policy: Value,
     }
     impl Fixture {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             let dir = tempfile::tempdir().unwrap();
             let root = dir.path().canonicalize().unwrap();
             for name in [".local", "registry", "fast", "history"] {
@@ -614,17 +614,17 @@ mod tests {
             f.save();
             f
         }
-        fn root(&self) -> &Path {
+        pub(crate) fn root(&self) -> &Path {
             self.dir.path()
         }
-        fn save(&mut self) {
+        pub(crate) fn save(&mut self) {
             fs::write(
                 self.root().join("registry/versions.json"),
                 serde_json::to_vec(&self.state).unwrap(),
             )
             .unwrap();
         }
-        fn put(&self, data: &[u8], registered: bool) -> String {
+        pub(crate) fn put(&self, data: &[u8], registered: bool) -> String {
             let h = digest(data);
             for tier in ["fast", "history"] {
                 let p = crate::object(&self.root().join(tier), &h);
@@ -641,7 +641,7 @@ mod tests {
             }
             h
         }
-        fn version(&mut self, id: &str, h: &str) -> versions::Dependency {
+        pub(crate) fn version(&mut self, id: &str, h: &str) -> versions::Dependency {
             self.state
                 .register(versions::Version {
                     logical_id: id.into(),
@@ -660,7 +660,7 @@ mod tests {
                 manifest_sha256: h.into(),
             }
         }
-        fn baseline(&mut self) {
+        pub(crate) fn baseline(&mut self) {
             let mut census = accounting::report(self.root()).unwrap();
             // Model distinct configured volumes in this read-only fixture. Real
             // apply-time volume/identity verification is a later implementation gate.
@@ -676,7 +676,7 @@ mod tests {
             fs::write(self.root().join("baseline.json"), &bytes).unwrap();
             self.policy["baseline"] = json!({"sha256":digest(&bytes),"bytes":bytes.len()});
         }
-        fn run(&self) -> Result<Value> {
+        pub(crate) fn run(&self) -> Result<Value> {
             let p = self.root().join("policy.json");
             fs::write(&p, self.policy.to_string()).unwrap();
             plan(self.root(), &p, &self.root().join("baseline.json"), 1000)

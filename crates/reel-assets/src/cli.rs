@@ -17,6 +17,11 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
             .ok_or_else(|| "Missing argument".into())
     };
     match command {
+        "tier-demote" => {
+            if args.len()!=3 && !(args.len()==4 && arg(3)?=="--apply") { return Err("Usage: tier-demote <request.json> <absolute-owned-journal> [--apply]".into()); }
+            let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+            crate::demotion::run(root,Path::new(arg(1)?),Path::new(arg(2)?),args.len()==4,now)
+        },
         "tier-plan-check" => {
             if args.len()!=3 { return Err("Usage: tier-plan-check <policy.json> <plan.json>".into()); }
             let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
