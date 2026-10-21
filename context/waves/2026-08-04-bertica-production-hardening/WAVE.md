@@ -73,6 +73,15 @@ See `docs/scene-delivery-v0.1.md`, `docs/reviews/2026-09-09-scene-delivery.md`, 
 
 ## Validation
 
+### 2026-10-21 generic asset-manager review workflow
+
+Added explicit inventory refresh with immutable private review inputs, generic
+project templates and configured local root policy. The offline UI supports tier
+filters, size sorting, chosen-block inspection, hold reasons and bounded hash
+previews. Native dry-run/application retains ownership of cache changes. See
+`docs/handoff/2026-10-21-generic-asset-manager-ui.md` for validation and adoption
+limits. Private assets and reports remain in the producing repository/cache.
+
 ```powershell
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings

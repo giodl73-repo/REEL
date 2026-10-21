@@ -1,5 +1,17 @@
 # Private inventory block review
 
+For new projects and a complete register/review/dry-run/restore workflow, see
+[project-configured asset management](asset-manager-workflow-v1.md).
+`manager-review ... --refresh-inventory` explicitly creates a fresh active-cache
+census and binds its exact hash in a private policy copy; the tracked declaration
+and original policy remain unchanged. Without the flag, the saved inventory is
+used. New projects may omit the saved inventory and must request a refresh.
+
+The UI supports observed-tier filters, size/reclaim sorting, a chosen-only view,
+per-block hold reasons and bounded content-hash previews. Project policy names
+the placement roles. Only the exact native block membership enters a request;
+the preview is not an editable hash list.
+
 For repeatable project entry, keep a small `reel.asset-manager-project.v1`
 declaration in the consumer repository and run:
 

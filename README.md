@@ -23,6 +23,9 @@ edit rhythm, sound, and platform fit before renderer work starts.
 The shared Rust [asset custody and cache accounting tools](docs/asset-project-v1.md)
 use a versioned project profile while keeping private media, catalogues and
 reports in their producing asset repository/cache.
+The [asset-manager workflow](docs/asset-manager-workflow-v1.md) includes generic
+project templates, explicit inventory refresh, an offline block-review UI and
+the separate dry-run/application steps.
 
 ---
 

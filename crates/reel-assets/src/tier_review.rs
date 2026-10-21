@@ -19,6 +19,8 @@ struct Block {
     target_tier: Option<String>,
     protected: bool,
     eligible: bool,
+    disposition_reason: String,
+    member_preview: Vec<String>,
     objects: usize,
     logical_bytes: u64,
     observed_copy_bytes: BTreeMap<String, u64>,
@@ -128,13 +130,26 @@ fn build(root: &Path, scope_path: &Path, now: u64) -> Result<Review> {
             && size <= policy.max_batch_bytes
             && locations.contains(&policy.selected_tier)
             && locations.contains(&policy.history_tier);
+        let disposition_reason = if is_protected {
+            "Required or protected by a managed consumer".to_owned()
+        } else if size > policy.max_batch_bytes {
+            "Object exceeds the configured operation budget".to_owned()
+        } else if class == "previously-used" && !locations.contains(&policy.history_tier) {
+            "No history-tier copy was observed; establish retained custody first".to_owned()
+        } else {
+            row["reason"]
+                .as_str()
+                .unwrap_or("Separate action required")
+                .to_owned()
+        };
         let key = serde_json::to_string(&json!([
             class,
             owner,
             locations,
             proposal,
             is_protected,
-            eligible
+            eligible,
+            disposition_reason
         ]))?;
         let chunks = grouped.entry(key).or_default();
         let new_chunk = chunks.last().is_none_or(|b| {
@@ -153,6 +168,8 @@ fn build(root: &Path, scope_path: &Path, now: u64) -> Result<Review> {
                 target_tier: row["target_tier"].as_str().map(str::to_owned),
                 protected: is_protected,
                 eligible,
+                disposition_reason,
+                member_preview: vec![],
                 objects: 0,
                 logical_bytes: 0,
                 observed_copy_bytes: BTreeMap::new(),
@@ -174,6 +191,9 @@ fn build(root: &Path, scope_path: &Path, now: u64) -> Result<Review> {
             .zip(row["estimated_hot_reclaim_bytes"].as_u64())
             .and_then(|(a, b)| a.checked_add(b));
         b.objects += 1;
+        if b.member_preview.len() < 8 {
+            b.member_preview.push(h.into());
+        }
         b.members.push(h.into());
     }
     let mut blocks: Vec<Block> = grouped.into_values().flatten().collect();
@@ -187,6 +207,7 @@ fn build(root: &Path, scope_path: &Path, now: u64) -> Result<Review> {
             b.observed_tiers,
             b.proposal,
             b.protected,
+            b.disposition_reason,
             b.members
         ]))?);
     }
@@ -198,6 +219,8 @@ fn build(root: &Path, scope_path: &Path, now: u64) -> Result<Review> {
         "live_generation":plan["live_generation"],"created_unix_seconds":plan["created_unix_seconds"],
         "expires_unix_seconds":plan["expires_unix_seconds"],"inventory_scope":plan["inventory_scope"],
         "tiers":plan["tiers"],"tier_observations":plan["tier_observations"],"summary":plan["summary"],"blocks":blocks,
+        "selected_tier":policy.selected_tier,"history_tier":policy.history_tier,"cold_tier":policy.cold_tier,
+        "delta":plan["delta"],
         "consumers":protections["consumers"],"max_batch_bytes":policy.max_batch_bytes,
         "max_batch_objects":policy.max_batch_objects,"archive_probed":false,"removal_authorized":false,
         "copy_proof":"Baseline observations only. Every retained copy must be freshly hash/byte verified before removal.",
@@ -231,7 +254,9 @@ pub fn render(root: &Path, scope: &Path, output: &Path, now: u64) -> Result<Valu
     }
     let review = build(root, scope, now)?;
     let data = embedded_data(&review.document)?;
-    let html = include_str!("tier_review.html").replacen("__REVIEW_DATA__", &data, 1);
+    let html = include_str!("tier_review.html")
+        .replacen("__REVIEW_SCRIPT__", include_str!("tier_review.js"), 1)
+        .replacen("__REVIEW_DATA__", &data, 1);
     if html.len() > 16 * 1024 * 1024 {
         return Err("Private review exceeds the 16 MiB rendering budget".into());
     }
@@ -392,6 +417,27 @@ pub(crate) mod tests {
             assert!(request(f.root(), &scope, &d, &f.root().join("request.json"), 1000).is_err());
             assert!(!f.root().join("request.json").exists());
         }
+    }
+    #[test]
+    fn review_explains_holds_and_exposes_only_bounded_private_hash_previews() {
+        let (f, scope, h) = fixture();
+        let review = build(f.root(), &scope, 1000).unwrap();
+        assert_eq!(review.document["selected_tier"], "hot");
+        assert_eq!(review.document["history_tier"], "warm");
+        for block in &review.blocks {
+            assert!(!block.disposition_reason.is_empty());
+            assert!(block.member_preview.len() <= 8);
+            assert!(
+                block
+                    .member_preview
+                    .iter()
+                    .all(|hash| block.members.contains(hash))
+            );
+        }
+        let history = review.blocks.iter().find(|b| b.eligible).unwrap();
+        assert_eq!(history.member_preview, vec![h]);
+        let doc = serde_json::to_value(history).unwrap();
+        assert!(doc.get("members").is_none());
     }
     #[test]
     fn choices_bind_scope_protections_plan_identity_and_expiry() {
