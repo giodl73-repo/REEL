@@ -39,3 +39,9 @@ Explicit verified-index reuse adds hash-bound prior cold verification and an
 optional exact unchanged source identity/mtime proof. It does not equate a
 census with integrity evidence. Default full hashing remains unchanged.
 101 Windows tests pass (100 unit plus executable), Clippy and release build.
+
+Exact hash-indexed aliases in explicitly requested cache namespaces preserve
+physical identity checks and unknown-link holds. A bounded two-second cold
+transaction wait avoids aborting on unrelated short writers; reservations are
+untouched. 103 Windows tests pass (102 unit plus executable), scoped Clippy and
+release build. Interruption tests retain original CAS-first unlink order.

@@ -127,3 +127,18 @@ version. The currently opened source must match its prior volume/file ID,
 byte count and exact modification time. A mismatch or absent proof falls back
 to a fresh source hash. Results distinguish source and retained verification
 methods. All selection/registration/lease and unlink guards remain in effect.
+
+Verified cold indexes may additionally list bounded `source_aliases` as normal
+relative paths. A request must explicitly name `source_alias_namespaces` to
+admit any of these paths. This is exact indexed-path handling, not a directory
+sweep. Each alias must be inside the configured source cache and the requested
+namespace, have guarded non-reparse ancestry, and identify the same physical
+file as the CAS/LFS source. Unknown links and independent copies still hold.
+This supports removal of redundant historical job hard links without counting
+their bytes twice. Omitted namespaces preserve the original CAS/LFS-only scope.
+
+Cold application waits at most two seconds for a short metadata transaction;
+it never waits for job reservations to finish. Any intervening cold-consumer
+metadata change is re-evaluated for the exact object under the final guards.
+Changed relevant protection holds; unrelated additions do not invalidate the
+entire batch solely for having changed. Ordinary lock entry stays immediate.

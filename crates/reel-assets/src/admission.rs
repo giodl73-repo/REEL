@@ -65,6 +65,15 @@ impl Drop for MetadataLock {
 }
 
 pub fn lock(dir: &Path) -> Result<MetadataLock> {
+    lock_for(dir, std::time::Duration::ZERO)
+}
+
+/// Explicit bounded transaction wait. This never waits for a job's lifetime
+/// reservation and never releases another process's lock.
+pub fn lock_for(dir: &Path, timeout: std::time::Duration) -> Result<MetadataLock> {
+    if timeout > std::time::Duration::from_secs(2) {
+        return Err("Metadata transaction wait exceeds two-second bound".into());
+    }
     fs::create_dir_all(dir)?;
     let file = OpenOptions::new()
         .read(true)
@@ -72,8 +81,24 @@ pub fn lock(dir: &Path) -> Result<MetadataLock> {
         .create(true)
         .truncate(false)
         .open(dir.join("state.lock"))?;
-    fs2::FileExt::try_lock_exclusive(&file)
-        .map_err(|e| format!("Storage metadata is in use; no automatic retry: {e}"))?;
+    let started = std::time::Instant::now();
+    loop {
+        match fs2::FileExt::try_lock_exclusive(&file) {
+            Ok(()) => break,
+            Err(e)
+                if (e.kind() == std::io::ErrorKind::WouldBlock || e.raw_os_error() == Some(33))
+                    && started.elapsed() < timeout =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(10))
+            }
+            Err(e) => {
+                return Err(format!(
+                    "Storage metadata is in use; explicit transaction wait budget exhausted: {e}"
+                )
+                .into());
+            }
+        }
+    }
     Ok(MetadataLock(file))
 }
 
@@ -258,6 +283,18 @@ pub fn release_stale(root: &Path, config: &Config, id: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn explicit_transaction_wait_is_bounded_and_never_breaks_another_lock() {
+        let t = tempfile::tempdir().unwrap();
+        let guard = lock(t.path()).unwrap();
+        let started = std::time::Instant::now();
+        assert!(lock_for(t.path(), std::time::Duration::from_millis(30)).is_err());
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        assert!(lock(t.path()).is_err());
+        drop(guard);
+        assert!(lock_for(t.path(), std::time::Duration::from_millis(30)).is_ok());
+        assert!(lock_for(t.path(), std::time::Duration::from_secs(3)).is_err());
+    }
     #[cfg(unix)]
     #[test]
     fn metadata_guard_releases_ownership_even_with_a_surviving_descriptor() {

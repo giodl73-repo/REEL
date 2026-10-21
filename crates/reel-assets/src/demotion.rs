@@ -40,6 +40,10 @@ pub struct Request {
     /// backups. Ordinary execution still hashes retained payloads freshly.
     #[serde(default)]
     pub verified_cold_index: Option<ColdIndexRef>,
+    /// Explicit cache-owned disposable namespaces; exact alias paths must also
+    /// occur in the hash-bound verified index. Worktree paths are never inferred.
+    #[serde(default)]
+    pub source_alias_namespaces: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -68,6 +72,8 @@ struct ColdProof {
     manifest_sha256: String,
     #[serde(default)]
     source: Option<SourceProof>,
+    #[serde(default)]
+    source_aliases: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -591,6 +597,24 @@ pub fn run(
     if !cold && req.verified_cold_index.is_some() {
         return Err("Verified cold index is valid only for explicit cold custody".into());
     }
+    let normal_relative = |s: &str| {
+        !s.is_empty()
+            && Path::new(s)
+                .components()
+                .all(|c| matches!(c, std::path::Component::Normal(_)))
+    };
+    if req.source_alias_namespaces.len() > 16
+        || req
+            .source_alias_namespaces
+            .iter()
+            .any(|s| !normal_relative(s))
+        || (!req.source_alias_namespaces.is_empty() && (!cold || req.verified_cold_index.is_none()))
+    {
+        return Err(
+            "Cold alias namespaces require an explicit verified index and normal relative paths"
+                .into(),
+        );
+    }
     if apply && !cold {
         let _guard = admission::lock(&control)?;
         ensure_no_admissions(&control)?;
@@ -686,10 +710,10 @@ pub fn run(
             }
             let before = metadata_token(consumer)?;
             let protected = legacy_protection(consumer, &cfg)?;
-            if req.sha256s.iter().any(|h| protected.contains(h)) {
-                return Err("Object protected by legacy managed consumer".into());
+            if let Some(h) = req.sha256s.iter().find(|h| protected.contains(*h)) {
+                return Err(format!("Object protected by legacy managed consumer: {h}").into());
             }
-            if metadata_token(consumer)? != before {
+            if metadata_token(consumer)? != before && !cold {
                 return Err("Legacy consumer changed during reconciliation".into());
             }
             consumer_tokens.insert(consumer.clone(), before);
@@ -713,7 +737,7 @@ pub fn run(
                 return Err(format!("Object protected by managed consumer: {h}").into());
             }
         }
-        if metadata_token(consumer)? != before {
+        if metadata_token(consumer)? != before && !cold {
             return Err("Consumer changed during protection reconciliation".into());
         }
         consumer_tokens.insert(consumer.clone(), before);
@@ -834,6 +858,25 @@ pub fn run(
                     .join(h),
             );
         }
+        if let Some(proof) = trusted.as_ref().and_then(|index| index.objects.get(h)) {
+            if proof.source_aliases.len() > 128 {
+                return Err("Verified source alias list exceeds budget".into());
+            }
+            for alias in &proof.source_aliases {
+                if !normal_relative(alias) {
+                    return Err("Verified source alias is not a normal relative cache path".into());
+                }
+                if req
+                    .source_alias_namespaces
+                    .iter()
+                    .any(|ns| Path::new(alias).starts_with(ns))
+                {
+                    paths.push(hot.join(alias));
+                }
+            }
+        }
+        let mut seen_paths = BTreeSet::new();
+        paths.retain(|p| seen_paths.insert(p.clone()));
         let mut guards = vec![];
         let mut links = vec![];
         let mut source_id: Option<Identity> = None;
@@ -896,7 +939,11 @@ pub fn run(
         }
         checkpoint("before-lock")?;
         let _state_lock = if apply {
-            Some(admission::lock(&control)?)
+            Some(if cold {
+                admission::lock_for(&control, std::time::Duration::from_secs(2))?
+            } else {
+                admission::lock(&control)?
+            })
         } else {
             None
         };
@@ -952,6 +999,9 @@ pub fn run(
                 }
             }
             control_guards.extend(held);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("Demotion time budget exceeded before removal".into());
         }
         if now.saturating_add(started.elapsed().as_secs())
             >= saved["expires_unix_seconds"]
@@ -1273,6 +1323,47 @@ mod tests {
         );
         fs::write(c.e(), b"different same-length bytes").unwrap();
         assert!(run(c.f.root(), &c.request, &journal, false, 1001).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn exact_indexed_job_aliases_require_explicit_namespace_and_matching_physical_file() {
+        for independent in [false, true] {
+            let c = indexed_cold_case();
+            let alias = c.f.root().join("fast/jobs/prior/output.mkv");
+            fs::create_dir_all(alias.parent().unwrap()).unwrap();
+            if independent {
+                fs::copy(c.e(), &alias).unwrap();
+            } else {
+                fs::hard_link(c.e(), &alias).unwrap();
+            }
+            let path = c.f.root().join("cold-index.json");
+            let mut index = crate::load(&path).unwrap();
+            index["objects"][&c.h]["source_aliases"] = json!(["jobs/prior/output.mkv"]);
+            let raw = serde_json::to_vec(&index).unwrap();
+            fs::write(&path, &raw).unwrap();
+            let mut req = crate::load(&c.request).unwrap();
+            req["verified_cold_index"]["sha256"] = json!(tiering::digest(&raw));
+            fs::write(&c.request, req.to_string()).unwrap();
+            if !independent {
+                assert!(c.run(false).is_err());
+            }
+            req["source_alias_namespaces"] = json!(["jobs"]);
+            fs::write(&c.request, req.to_string()).unwrap();
+            let journal =
+                c.f.root()
+                    .canonicalize()
+                    .unwrap()
+                    .join(".local/job-alias-apply");
+            let result = run(c.f.root(), &c.request, &journal, true, 1001);
+            if independent {
+                assert!(result.is_err());
+                assert!(c.e().is_file() && alias.is_file());
+            } else {
+                assert_eq!(result.unwrap()["objects"][0]["hot_links_removed"], 2);
+                assert!(!c.e().exists() && !alias.exists());
+            }
+        }
     }
 
     #[cfg(windows)]
