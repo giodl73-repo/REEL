@@ -53,7 +53,18 @@ pub fn control(root: &Path, config: &Config) -> Result<PathBuf> {
     Ok(dir)
 }
 
-pub fn lock(dir: &Path) -> Result<File> {
+pub struct MetadataLock(File);
+
+impl Drop for MetadataLock {
+    fn drop(&mut self) {
+        // Unix flock survives closing one descriptor when a clone (including a
+        // briefly inherited pre-exec child descriptor) still references it.
+        // Release ownership explicitly before closing our descriptor.
+        let _ = fs2::FileExt::unlock(&self.0);
+    }
+}
+
+pub fn lock(dir: &Path) -> Result<MetadataLock> {
     fs::create_dir_all(dir)?;
     let file = OpenOptions::new()
         .read(true)
@@ -63,7 +74,7 @@ pub fn lock(dir: &Path) -> Result<File> {
         .open(dir.join("state.lock"))?;
     fs2::FileExt::try_lock_exclusive(&file)
         .map_err(|e| format!("Storage metadata is in use; no automatic retry: {e}"))?;
-    Ok(file)
+    Ok(MetadataLock(file))
 }
 
 #[cfg(windows)]
@@ -247,6 +258,20 @@ pub fn release_stale(root: &Path, config: &Config, id: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn metadata_guard_releases_ownership_even_with_a_surviving_descriptor() {
+        let t = tempfile::tempdir().unwrap();
+        let guard = lock(t.path()).unwrap();
+        let inherited = guard.0.try_clone().unwrap();
+        assert!(lock(t.path()).is_err());
+        drop(guard);
+        let next = lock(t.path()).unwrap();
+        assert!(lock(t.path()).is_err());
+        drop(next);
+        drop(inherited);
+        assert!(lock(t.path()).is_ok());
+    }
     #[test]
     fn capacity_preserves_reserve_and_other_jobs() {
         let p = Policy {
