@@ -11,6 +11,23 @@ def evidence(text):
 
 
 class LyricGateTests(unittest.TestCase):
+    def test_repeated_sections_validate_exact_words_and_reject_rewrites(self):
+        import re
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/'source.txt';source.write_text('Amber lamps\nshine\nSilver bells\nring\nCopper wheels turn\n',encoding='utf-8')
+            campaign=local_song_campaign.Campaign(folder,Path(folder)/'unused.exe',Path(folder)/'work')
+            campaign.repeat_section_lines=4;campaign.repeat_after_failures=1
+            slot=dict(id='synthetic-a',title='Synthetic',source=backend.descriptor(source),source_lock={},
+                duration_seconds=120,caption='An invented test brief',seed_base=100)
+            with patch.object(campaign,'locate',return_value=source):request=campaign.request(slot,6)
+            backend.validate_request(request,source)
+            self.assertEqual(request['duration_seconds'],210)
+            body=re.sub(r'^\s*\[[^\]\n]+\]\s*$','',request['render_lyrics'],flags=re.M)
+            self.assertEqual(backend.words(body),backend.words('Amber lamps shine Silver bells ring')*2+backend.words('Copper wheels turn')*2)
+            request['render_lyrics']=request['render_lyrics'].replace('Amber','Changed',1)
+            with self.assertRaises(ValueError):backend.validate_request(request,source)
+
     def test_explicit_planner_preserves_single_source_pass(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as folder:

@@ -106,6 +106,13 @@ policy supplies one unchanged full-poem pass, preserves qualified candidates,
 and keeps the same unprompted line gate. It does not download models or rewrite
 lyrics. Planning must be evaluated on actual recording evidence.
 
+`--generation-route direct|planned` explicitly records a route change for future
+takes, retaining the old component and results. `--repeat-section-lines N`
+supplies each consecutive source section twice, in order, with no replacement
+words. Original stanza boundaries remain separate. Render validation checks the
+exact expected word sequence; canonical source lines and acceptance do not
+change. This uses the same owner permission for performed repetitions.
+
 The backend's `recount` operation takes a hash-bound prior report, recording,
 request and source through a Rust job. It revises only line accounting from the
 retained unprompted token/timestamp passes, retaining the prior report and a

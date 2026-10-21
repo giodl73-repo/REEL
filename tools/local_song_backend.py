@@ -73,7 +73,13 @@ def validate_request(request, source):
     repetitions=request.get('performance_repetitions',1)
     if type(repetitions) is not int or repetitions not in (1,2):
         raise ValueError('Unsupported bounded lyric repetition count')
-    if words(rendered) != words(request['canonical_lyrics'])*repetitions:
+    section_lines=request.get('repeat_section_lines')
+    if section_lines is not None:
+        if type(section_lines) is not int or not 2<=section_lines<=8 or repetitions!=2:
+            raise ValueError('Unsupported repeated section layout')
+        expected=[w for section in lyric_sections(request['canonical_lyrics'],section_lines) for _ in range(2) for w in words(section)]
+    else:expected=words(request['canonical_lyrics'])*repetitions
+    if words(rendered) != expected:
         raise ValueError('Engine formatting changes lyric words')
     if request['permissions'] != dict(private_only=True, external_upload=False, identifiable_imitation=False, public_release=False):
         raise ValueError('Unsupported permission scope')
@@ -183,6 +189,22 @@ def generate(request, runtime, source):
 def words(text):
     normalized = ''.join(c for c in unicodedata.normalize('NFKD', text.lower()) if not unicodedata.combining(c))
     return re.findall(r'[a-z]+', normalized)
+
+
+def lyric_sections(lyrics,section_lines):
+    sections=[]
+    for stanza in re.split(r'\r?\n[ \t]*\r?\n',lyrics.strip()):
+        lines=[line.strip() for line in stanza.splitlines() if line.strip()]
+        sections.extend('\n'.join(lines[i:i+section_lines]) for i in range(0,len(lines),section_lines))
+    return sections
+
+
+def format_repeated_sections(lyrics,section_lines):
+    parts=[]
+    for section in lyric_sections(lyrics,section_lines):
+        rendered=format_lyrics(section,True).removesuffix('\n[Outro - instrumental]')
+        parts.extend([rendered,rendered])
+    return '\n'.join(parts)+'\n[Outro - instrumental]'
 
 
 def format_lyrics(lyrics,join_single_word_continuations=False):
@@ -413,7 +435,8 @@ def analyze(request, runtime, source):
         vocal_estimate='Demucs derivative; not an original stem',passes=passes)
     report['recognition_settings']=dict(batch_size=ASR_BATCH_SIZE,dtype='float32',num_beams=3,
         conditions=['mix30/5','mix20/3','vocals20/3'],canonical_prompt=False)
-    report['requested_complete_poem_passes']=request.get('performance_repetitions',1)
+    report['requested_complete_poem_passes']=None if request.get('repeat_section_lines') else request.get('performance_repetitions',1)
+    report['requested_section_repeat_lines']=request.get('repeat_section_lines')
     write('analysis.json', report)
     with zipfile.ZipFile('transcripts.zip','x',zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(Path('transcripts').glob('*.json')):

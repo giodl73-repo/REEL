@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-from local_song_backend import read, digest, descriptor, checked, format_lyrics
+from local_song_backend import read, digest, descriptor, checked, format_lyrics, format_repeated_sections
 
 
 class Campaign:
@@ -27,6 +27,7 @@ class Campaign:
         self.metadata_retries=metadata_retries
         self.repeat_after_failures=None
         self.planner_asset=None
+        self.repeat_section_lines=None
 
     def call(self, command, *args, env=None):
         for attempt in range(self.metadata_retries+1):
@@ -143,10 +144,16 @@ class Campaign:
         if attempt>1:
             caption+=' Clear natural articulation of every supplied word, including gentle but distinct final consonants and plural s; keep the melody expressive.'
             repetition['render_format']='Single-word continuations joined to their preceding phrase within each original stanza; source words and canonical line breaks unchanged'
+        if self.repeat_section_lines:
+            render=format_repeated_sections(lyrics,self.repeat_section_lines)
+            duration=min(480,max(duration,5*round(slot['duration_seconds']*1.75/5)))
+            caption+=' Sing each supplied short stanza twice before continuing to the next stanza. Both copies are supplied; keep every original word, melodic phrasing and clear diction. No invented chorus.'
+            repetition.update(performance_repetitions=2,repeat_section_lines=self.repeat_section_lines,
+                repeat_authority='Owner-authorized repeated lines; each unchanged consecutive source section supplied twice')
         if self.planner_asset:
             repetition['semantic_planner']=self.planner_asset
-            repetition['render_format']='Single unchanged source pass, single-word continuations joined; optional frozen local semantic plan'
-        elif self.repeat_after_failures is not None and attempt>self.repeat_after_failures:
+            repetition['render_format']='Unchanged source sections repeated twice' if self.repeat_section_lines else 'Single unchanged source pass, single-word continuations joined; optional frozen local semantic plan'
+        elif not self.repeat_section_lines and self.repeat_after_failures is not None and attempt>self.repeat_after_failures:
             # The operator must explicitly authorize repetitions. Repeat exact
             # complete source text, never synthesize replacement lyric lines.
             body=render.removesuffix('\n[Outro - instrumental]')
@@ -238,7 +245,7 @@ class Campaign:
         print('DONE',rid,'PASS' if analysis['passed'] else 'RETRY',f"{analysis['qualifying_lines']}/{analysis['total_lines']} lines",flush=True)
         return summary
 
-    def run(self, campaign_path, runtime_asset_path, backend, adopt_backend_revision=None,repeat_after_failures=None,planner_asset_path=None):
+    def run(self, campaign_path, runtime_asset_path, backend, adopt_backend_revision=None,repeat_after_failures=None,planner_asset_path=None,generation_route=None,repeat_section_lines=None):
         campaign=read(campaign_path)
         if campaign['schema']!='reel.song-audition-campaign.v1':raise ValueError('Unsupported campaign')
         ids=[slot['id'] for slot in campaign['slots']]
@@ -269,6 +276,16 @@ class Campaign:
             state['planner']=proposed
             state.setdefault('planner_adoption',dict(after_retained_takes=len(state['attempts']),qualified_slots_preserved=sorted(state['qualified']),
                 policy='One unchanged full-poem pass with optional installed local 5Hz planner; original line gate unchanged'))
+        route=generation_route or state.get('generation_route', 'planned' if self.planner_asset else 'direct')
+        if route=='planned' and not self.planner_asset:raise ValueError('Planned route requires frozen planner component')
+        if generation_route and state.get('generation_route')!=route:
+            state.setdefault('generation_route_revisions',[]).append(dict(previous=state.get('generation_route'),replacement=route,after_retained_takes=len(state['attempts'])))
+        state['generation_route']=route
+        if route=='direct':self.planner_asset=None
+        self.repeat_section_lines=repeat_section_lines or state.get('repeat_section_lines')
+        if repeat_section_lines and state.get('repeat_section_lines')!=repeat_section_lines:
+            state.setdefault('section_policy_revisions',[]).append(dict(previous=state.get('repeat_section_lines'),replacement=repeat_section_lines,after_retained_takes=len(state['attempts'])))
+            state['repeat_section_lines']=repeat_section_lines
         previous_policy=state.get('retry_policy',{})
         self.repeat_after_failures=previous_policy.get('repeat_complete_poem_after_failures') if repeat_after_failures is None else repeat_after_failures
         if repeat_after_failures is not None:
@@ -319,10 +336,15 @@ class Campaign:
             audio=media_view(result['outputs']['listening'],slot['id'],'mp3')
             raw=media_view(result['outputs']['recording'],slot['id'],'wav')
             analysis=read(self.locate(result['outputs']['lyric-analysis']))
-            rows=''.join('<tr><td>'+str(row['line'])+'</td><td>'+html.escape(row['canonical'])+'</td><td>'+html.escape(', '.join(row['missing_words']) or 'All words recognized')+'</td></tr>' for row in analysis['lines'])
+            request=read(self.locate(result['request']))
+            def timing(row):
+                span=row.get('recognized_span')
+                return '—' if not span or any(t is None for t in span) else '–'.join(f'{int(t)//60}:{int(t)%60:02d}' for t in span)
+            rows='<tr><th>Line</th><th>Original Spanish</th><th>Recognition</th><th>Time</th></tr>'+''.join('<tr><td>'+str(row['line'])+'</td><td>'+html.escape(row['canonical'])+'</td><td>'+html.escape(', '.join(row['missing_words']) or 'All words recognized')+'</td><td>'+timing(row)+'</td></tr>' for row in analysis['lines'])
+            prompt='<details><summary>Submitted music prompt</summary><p>'+html.escape(request['caption'])+'</p><p>Requested duration: '+str(request['duration_seconds'])+' seconds. Seed: '+str(request['seed'])+'.</p></details>'
             ordered=analysis.get('continuous_order_qualifying_lines',analysis['qualifying_lines'])
             order_note='<p>Continuous source-order screen: '+str(ordered)+'/'+str(analysis['total_lines'])+' lines. '+('Listen to the ordering; coverage can use different repeated occurrences.' if ordered<analysis['total_lines'] else 'All lines also qualify in source order.')+'</p>'
-            sections.append('<section><h2>'+html.escape(slot['title']+' — '+slot['label'])+'</h2><p>'+html.escape(slot['style'])+'</p><audio controls preload="none" src="'+html.escape(audio,quote=True)+'"></audio><p>'+str(result['qualifying_lines'])+'/'+str(result['total_lines'])+' source lines qualify; '+str(result['one_word_gap_lines'])+' with one unrecognized word. Take '+str(result['attempt'])+'.</p>'+order_note+'<p><a href="'+html.escape(raw,quote=True)+'">Original WAV</a></p><details><summary>Line analysis</summary><table>'+rows+'</table></details></section>')
+            sections.append('<section><h2>'+html.escape(slot['title']+' — '+slot['label'])+'</h2><p>'+html.escape(slot['style'])+'</p><audio controls preload="none" src="'+html.escape(audio,quote=True)+'"></audio><p>'+str(result['qualifying_lines'])+'/'+str(result['total_lines'])+' source lines qualify; '+str(result['one_word_gap_lines'])+' with one unrecognized word. Take '+str(result['attempt'])+'.</p>'+order_note+'<p><a href="'+html.escape(raw,quote=True)+'">Original WAV</a></p>'+prompt+'<details><summary>Line analysis</summary><table>'+rows+'</table></details></section>')
         page='<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Song auditions A / B / C</title><style>body{font:18px/1.5 system-ui;max-width:960px;margin:2rem auto;padding:1rem;background:#faf7ed;color:#243b32}section{background:white;padding:1.5rem;margin:1.5rem 0;border:1px solid #ccc;border-radius:12px}audio{width:100%}td{padding:.4rem;border-bottom:1px solid #ddd}</style><h1>Song auditions A / B / C</h1><p>Private listening. Every source line has at most one unrecognized word and at least one recognized word in its best diagnostic pass. Repeated lines are allowed. Recognition is evidence; listening and Golden selection remain yours.</p>'+''.join(sections)+'</html>'
         path=self.work/'review.html';path.write_text(page,encoding='utf-8',newline='\n')
         asset=self.ingest(path,'Private static A/B/C audition listening page')
@@ -366,13 +388,15 @@ def main():
     run.add_argument('--adopt-backend-revision',help='Explicit reason to adopt a new adapter hash; past requests/evidence and qualified slots stay immutable')
     run.add_argument('--repeat-after-failures',type=int,choices=range(1,31),help='Explicitly authorize two unchanged full-poem passes after N failed takes; preserves the line gate')
     run.add_argument('--planner-asset',help='Explicitly adopt a frozen local planner component for future takes; one unchanged source pass')
+    run.add_argument('--generation-route',choices=['direct','planned'],help='Explicit route revision for future takes; planner component history stays retained')
+    run.add_argument('--repeat-section-lines',type=int,choices=range(2,9),help='Supply each consecutive unchanged source section twice; preserves canonical line gate')
     restore=sub.add_parser('restore');restore.add_argument('--state',required=True);restore.add_argument('--lfs-executable',required=True)
     restore.add_argument('--all-attempts',action='store_true',help='Verify retained failed takes as well as qualifying candidates')
     review=sub.add_parser('review');review.add_argument('--campaign',required=True);review.add_argument('--state',required=True)
     stop=sub.add_parser('request-stop');stop.add_argument('--clear',action='store_true')
     args=p.parse_args();c=Campaign(args.root,args.assets,args.work,args.metadata_retries)
     if args.operation=='snapshot':c.freeze_runtime(args)
-    elif args.operation=='run':c.run(args.campaign,args.runtime_asset,args.backend,args.adopt_backend_revision,args.repeat_after_failures,args.planner_asset)
+    elif args.operation=='run':c.run(args.campaign,args.runtime_asset,args.backend,args.adopt_backend_revision,args.repeat_after_failures,args.planner_asset,args.generation_route,args.repeat_section_lines)
     elif args.operation=='restore':c.restore(args.state,args.lfs_executable,args.all_attempts)
     elif args.operation=='review':c.review(read(args.campaign),read(args.state))
     else:c.save('stop-after-current.json',dict(requested=not args.clear))
