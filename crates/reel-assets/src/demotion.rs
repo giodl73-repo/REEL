@@ -192,7 +192,9 @@ fn verify(file: &mut fs::File, hash: &str, bytes: u64, deadline: std::time::Inst
     }
     file.seek(SeekFrom::Start(0))?;
     let mut sha = Sha256::new();
-    let mut buffer = [0u8; 1024 * 1024];
+    // Windows executable main threads can have a 1-MiB stack. Keep the streaming
+    // buffer on the heap; unit-test worker stacks must not hide CLI overflows.
+    let mut buffer = vec![0u8; 256 * 1024];
     loop {
         if std::time::Instant::now() >= deadline {
             return Err("Verification time budget exceeded".into());
