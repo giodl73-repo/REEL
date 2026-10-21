@@ -47,6 +47,7 @@ struct Review {
 fn build(root: &Path, scope_path: &Path, now: u64) -> Result<Review> {
     let bytes = tiering::read_bounded(scope_path, 256 * 1024)?;
     let req: demotion::Request = serde_json::from_slice(&bytes)?;
+    demotion::check_source_controls(root, &req, false)?;
     if req.schema != "reel.asset-demotion-request.v1"
         || req.max_seconds == 0
         || req.max_seconds > 3600
@@ -203,6 +204,7 @@ fn build(root: &Path, scope_path: &Path, now: u64) -> Result<Review> {
         "limits":"Only redundant hot copies of proven history with an observed history-tier copy can enter a removal request. Promotions, archive-first custody and last-copy retirement require separate implementations/decisions. Shared hashes are counted once; owner labels show one reference, not exclusive ownership."});
     document["review_sha256"] = json!(tiering::digest(&serde_json::to_vec(&document)?));
     tiering::check_plan(root, &req.policy, &req.plan, now)?;
+    demotion::check_source_controls(root, &req, false)?;
     if fs::read(scope_path)? != bytes {
         return Err("Consumer scope changed during review".into());
     }
@@ -316,7 +318,7 @@ pub fn request(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::tiering::tests::Fixture;
     #[test]
@@ -327,7 +329,7 @@ mod tests {
         assert_eq!(serde_json::from_str::<Value>(&encoded).unwrap(), hostile);
     }
 
-    fn fixture() -> (Fixture, std::path::PathBuf, String) {
+    pub(crate) fn fixture() -> (Fixture, std::path::PathBuf, String) {
         let mut f = Fixture::new();
         let h = f.put(b"previously used synthetic payload", true);
         let dep = f.version("old", &h);

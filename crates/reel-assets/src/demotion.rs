@@ -28,6 +28,9 @@ pub struct Request {
     pub sha256s: BTreeSet<String>,
     pub max_verify_bytes: u64,
     pub max_seconds: u64,
+    /// Optional repository-relative declarations frozen by an owner review.
+    #[serde(default)]
+    pub source_controls: BTreeMap<String, String>,
     #[serde(default)]
     pub allow_same_volume_copies: bool,
 }
@@ -221,6 +224,39 @@ fn ensure_no_admissions(control: &Path) -> Result<()> {
 fn admissions_present(control: &Path) -> Result<bool> {
     let dir = control.join("admissions");
     Ok(dir.exists() && fs::read_dir(dir)?.next().is_some())
+}
+
+pub(crate) fn check_source_controls(
+    root: &Path,
+    req: &Request,
+    hold: bool,
+) -> Result<Vec<fs::File>> {
+    if req.source_controls.len() > 16 {
+        return Err("Too many review source controls".into());
+    }
+    let mut guards = vec![];
+    for (name, expected) in &req.source_controls {
+        if !crate::valid_oid(expected) {
+            return Err("Invalid source control identity".into());
+        }
+        crate::accounting::relative(root, name)?;
+        let path = root.join(name);
+        if !fs::symlink_metadata(&path)?.file_type().is_file() {
+            return Err("Review source control must be a regular file".into());
+        }
+        guards.extend(platform::guard_dirs(&path)?);
+        let file = platform::open(&path, false)?;
+        if tiering::digest(&tiering::read_bounded(&path, 256 * 1024)?) != *expected {
+            return Err("Project review declarations changed; generate a new review".into());
+        }
+        if hold {
+            guards.push(file);
+        }
+    }
+    if !hold {
+        guards.clear();
+    }
+    Ok(guards)
 }
 
 fn consumer_registration(
@@ -702,6 +738,7 @@ pub fn run(
         if fs::read(request_path)? != request_bytes || fs::read(&req.policy)? != policy_bytes {
             return Err("Demotion request/policy changed".into());
         }
+        let _source_controls = check_source_controls(root, &req, apply)?;
         let mut control_guards = vec![];
         for (consumer, token) in &consumer_tokens {
             let (fresh, held) = metadata_snapshot(consumer, apply)?;
@@ -871,6 +908,26 @@ pub fn export_protections(root: &Path, request_path: &Path) -> Result<Value> {
 mod tests {
     use super::*;
     use crate::tiering::tests::Fixture;
+    #[cfg(windows)]
+    #[test]
+    fn reviewed_project_controls_exclude_writers_and_reject_new_declarations() {
+        let c = Case::new();
+        let path = c.f.root().join("manager.json");
+        fs::write(&path, b"original owner policy").unwrap();
+        let mut v: Value = crate::load(&c.request).unwrap();
+        v["source_controls"] = json!({"manager.json":tiering::digest(b"original owner policy")});
+        let req: Request = serde_json::from_value(v).unwrap();
+        let writer = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        assert!(check_source_controls(c.f.root(), &req, true).is_err());
+        drop(writer);
+        let guards = check_source_controls(c.f.root(), &req, true).unwrap();
+        assert!(fs::write(&path, b"new owner policy").is_err());
+        assert!(fs::rename(&path, path.with_extension("moved")).is_err());
+        drop(guards);
+        fs::write(&path, b"new owner policy").unwrap();
+        assert!(check_source_controls(c.f.root(), &req, true).is_err());
+        assert!(crate::object(&c.f.root().join("fast"), &c.h).exists());
+    }
     struct Case {
         f: Fixture,
         h: String,

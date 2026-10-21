@@ -7,6 +7,7 @@ pub mod cli;
 pub mod demotion;
 pub mod goldens;
 pub mod jobs;
+pub mod manager_review;
 pub mod registry;
 pub mod scenes;
 pub mod tier_review;

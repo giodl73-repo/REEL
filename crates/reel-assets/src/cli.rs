@@ -17,6 +17,11 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
             .ok_or_else(|| "Missing argument".into())
     };
     match command {
+        "manager-review" => {
+            if args.len()!=3 { return Err("Usage: manager-review <repository-relative-project.json> <new-review-name>".into()); }
+            let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+            crate::manager_review::run(root,arg(1)?,arg(2)?,now)
+        },
         "tier-review" | "tier-request" => {
             let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
             if command=="tier-review" && args.len()==3 {

@@ -8,6 +8,6 @@ New inventory timestamps distinguish acquisition from plan reconciliation.
 Validation: `cargo fmt --all -- --check`,
 `cargo test -p reel-assets --all-targets --locked`,
 `cargo clippy -p reel-assets --all-targets --locked -- -D warnings`, roles and
-`git diff --check`. Local Windows: 87 unit + 1 real CLI tests pass. Private real
+`git diff --check`. Local Windows: 90 unit + 1 real CLI tests pass. Private real
 inventory and browser round-trip evidence stay upstream. Promotions, cold custody
 and last-copy retirement remain separate work, never enabled by this pulse.

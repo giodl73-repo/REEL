@@ -1,5 +1,28 @@
 # Private inventory block review
 
+For repeatable project entry, keep a small `reel.asset-manager-project.v1`
+declaration in the consumer repository and run:
+
+```text
+reel-assets --root <project> manager-review asset-manager.json <new-review-name>
+```
+
+The declaration contains a relative `policy` file, an exact registered inventory
+asset (`sha256`, `bytes`, `cache_uri`), `active_branches`, explicit
+`inactive_branches` / `legacy_branches`, and `max_verify_seconds`. It contains no
+machine cache/worktree paths. Git resolves actual registered worktrees; unknown
+branches and detached/bare consumers hold. Absent declarations create no worktree.
+The inventory resolves only through configured active caches, with fresh hash
+verification and no copy/archive fallback. Outputs go to a new explicitly owned
+`.local/asset-reviews/review-<name>` directory; existing reviews never overwrite.
+There is no setup, ingestion, session-entry maintenance or server side effect.
+
+The generated scope starts with an empty hash set, so it cannot accidentally be
+applied as an existing selection. Optional `source_controls` freeze relative
+project/policy file hashes. Review and request preparation check them again;
+Windows application also guards the exact regular files against replacement and
+writers before every unlink. A changed declaration requires a new review.
+
 The existing Rust asset manager produces an offline, self-contained HTML view
 from an explicit saved tier plan and consumer-scope request:
 
@@ -52,4 +75,5 @@ The HTML and raw reports are retained assets, not ordinary Git documents.
 
 Fixtures cover a real native decision-to-verification round trip without
 removal, held/forged blocks, stale/expired choices, cross-consumer protection
-changes, script-element escape prevention and private networkless rendering.
+changes, script-element escape prevention, private networkless rendering,
+portable project recreation, undeclared worktree holds and frozen source controls.
