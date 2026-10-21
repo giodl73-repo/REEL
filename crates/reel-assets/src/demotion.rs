@@ -353,6 +353,17 @@ fn metadata_snapshot(root: &Path, hold: bool) -> Result<(String, Vec<fs::File>)>
 }
 
 fn metadata_snapshot_kind(root: &Path, hold: bool, cold: bool) -> Result<(String, Vec<fs::File>)> {
+    let snapshot = control_snapshot(root, hold, cold)?;
+    Ok((snapshot.token, snapshot.guards))
+}
+
+struct ControlSnapshot {
+    token: String,
+    paths: BTreeSet<PathBuf>,
+    guards: Vec<fs::File>,
+}
+
+fn metadata_paths(root: &Path, cold: bool) -> Result<BTreeSet<PathBuf>> {
     let mut paths = BTreeSet::from([
         PathBuf::from("registry/versions.json"),
         PathBuf::from("registry/object-index.json"),
@@ -422,12 +433,16 @@ fn metadata_snapshot_kind(root: &Path, hold: bool, cold: bool) -> Result<(String
             }
         }
     }
+    paths
+        .retain(|path| path != Path::new("registry/object-index.json") || root.join(path).exists());
+    Ok(paths)
+}
+
+fn control_snapshot(root: &Path, hold: bool, cold: bool) -> Result<ControlSnapshot> {
+    let paths = metadata_paths(root, cold)?;
     let mut hashes = BTreeMap::new();
     let mut guards = vec![];
-    for path in paths {
-        if !root.join(&path).exists() && path == Path::new("registry/object-index.json") {
-            continue;
-        }
+    for path in &paths {
         let s = path
             .to_str()
             .ok_or("Non-UTF8 control path")?
@@ -453,7 +468,11 @@ fn metadata_snapshot_kind(root: &Path, hold: bool, cold: bool) -> Result<(String
             guards.push(file);
         }
     }
-    Ok((tiering::digest(&serde_json::to_vec(&hashes)?), guards))
+    Ok(ControlSnapshot {
+        token: tiering::digest(&serde_json::to_vec(&hashes)?),
+        paths,
+        guards,
+    })
 }
 
 fn legacy_protection(root: &Path, cfg: &crate::Config) -> Result<BTreeSet<String>> {
@@ -999,7 +1018,64 @@ pub fn run(
         {
             return Err("Unmanaged aliases or identical retained file; held".into());
         }
+        // Durable archive writes can be arbitrarily slow. They are additive:
+        // a valid custody receipt is useful even if the final removal is held.
+        // Never keep the shared metadata lock while waiting for that storage.
+        let proof = json!({"sha256":h,"bytes":size,"retained_path":destination,"retained_identity":retained_id,"verified":true,
+            "retained_verification":retained_verification,
+            "verified_cold_index_sha256":req.verified_cold_index.as_ref().map(|r|&r.sha256)});
+        stamp(journal, &format!("{h}-retained.json"), &proof)?;
+        let _cold_custody = if cold && apply {
+            Some(register_cold(warm, h, size, &destination)?)
+        } else {
+            None
+        };
+        checkpoint("after-cold-registration")?;
         checkpoint("before-lock")?;
+        let _request_guard = platform::open(request_path, false)?;
+        let _policy_guard = platform::open(&req.policy, false)?;
+        if fs::read(request_path)? != request_bytes || fs::read(&req.policy)? != policy_bytes {
+            return Err("Demotion request/policy changed".into());
+        }
+        let _source_controls = check_source_controls(root, &req, apply)?;
+        let mut prepared_controls = BTreeMap::new();
+        if cold {
+            for (consumer, token) in &mut consumer_tokens {
+                let before = metadata_snapshot_kind(consumer, false, true)?.0;
+                if before != *token {
+                    // Refresh expensive registry graphs without serializing
+                    // capacity admission or unrelated producers' metadata.
+                    let protected = if consumer.join("asset-project.json").is_file() {
+                        let other_cfg = config(consumer)?;
+                        if other_cfg.cache_roots != cfg.cache_roots
+                            || admission::control(consumer, &other_cfg)?.canonicalize()? != control
+                        {
+                            return Err("Consumer cache/coordination changed".into());
+                        }
+                        cold_protection(consumer, policy.max_objects)?
+                    } else if legacy.contains(consumer) {
+                        legacy_protection(consumer, &cfg)?
+                    } else {
+                        return Err("Cold consumer compatibility changed".into());
+                    };
+                    if req.sha256s.iter().any(|hash| protected.contains(hash)) {
+                        return Err(
+                            "Cold object became protected or registered before removal".into()
+                        );
+                    }
+                }
+                // On Windows these handles deny writes and path replacement.
+                // The final transaction checks the *set* as well, so a newly
+                // created authorization shard cannot evade the held handles.
+                let snapshot = control_snapshot(consumer, apply, true)?;
+                if snapshot.token != before {
+                    return Err("Consumer changed during cold protection preparation".into());
+                }
+                *token = before;
+                prepared_controls.insert(consumer.clone(), snapshot);
+            }
+        }
+        checkpoint("after-protection-preparation")?;
         let _state_lock = if apply {
             Some(if cold {
                 admission::lock_for(&control, std::time::Duration::from_secs(2))?
@@ -1024,44 +1100,20 @@ pub fn run(
         if consumer_registration(root, &consumers, &inactive)? != registration {
             return Err("Registered worktree set changed; discard stale request".into());
         }
-        let _request_guard = platform::open(request_path, false)?;
-        let _policy_guard = platform::open(&req.policy, false)?;
-        if fs::read(request_path)? != request_bytes || fs::read(&req.policy)? != policy_bytes {
-            return Err("Demotion request/policy changed".into());
-        }
-        let _source_controls = check_source_controls(root, &req, apply)?;
         let mut control_guards = vec![];
         for (consumer, token) in &consumer_tokens {
+            if cold && apply {
+                let prepared = &prepared_controls[consumer];
+                if metadata_paths(consumer, true)? != prepared.paths {
+                    return Err("Consumer control set changed before removal".into());
+                }
+                continue;
+            }
             let (fresh, held) = metadata_snapshot_kind(consumer, apply, cold)?;
             if fresh != *token {
-                if !cold {
-                    return Err(
-                        "Managed consumer changed before removal; discard stale request".into(),
-                    );
-                }
-                // New unrelated registrations must not stop cold cleanup. The
-                // exact current metadata is held here: re-evaluate this object,
-                // including every registered hash, instead of waiving freshness.
-                if consumer.join("asset-project.json").is_file() {
-                    let other_cfg = config(consumer)?;
-                    if other_cfg.cache_roots != cfg.cache_roots
-                        || admission::control(consumer, &other_cfg)?.canonicalize()? != control
-                    {
-                        return Err("Consumer cache/coordination changed".into());
-                    }
-                    if cold_protection(consumer, policy.max_objects)?.contains(h) {
-                        return Err(
-                            "Cold object became protected or registered before removal".into()
-                        );
-                    }
-                } else if !legacy.contains(consumer)
-                    || legacy_protection(consumer, &cfg)?.contains(h)
-                {
-                    return Err("Cold object became protected by legacy consumer".into());
-                }
-                if metadata_snapshot_kind(consumer, false, cold)?.0 != fresh {
-                    return Err("Consumer changed during exact cold protection refresh".into());
-                }
+                return Err(
+                    "Managed consumer changed before removal; discard stale request".into(),
+                );
             }
             control_guards.extend(held);
         }
@@ -1075,19 +1127,6 @@ pub fn run(
         {
             return Err("Plan expired before removal".into());
         }
-        let proof = json!({"sha256":h,"bytes":size,"retained_path":destination,"retained_identity":retained_id,"verified":true,
-            "retained_verification":retained_verification,
-            "verified_cold_index_sha256":req.verified_cold_index.as_ref().map(|r|&r.sha256)});
-        stamp(journal, &format!("{h}-retained.json"), &proof)?;
-        // Cold custody is separate from the active registry. Publish it before
-        // the first source unlink, while the exact independently verified cold
-        // object and all selection metadata remain locked against replacement.
-        let _cold_custody = if cold && apply {
-            Some(register_cold(warm, h, size, &destination)?)
-        } else {
-            None
-        };
-        checkpoint("after-cold-registration")?;
         // Recover a crash between handle deletion and the completion stamp.
         // Absence is observed, not attributed to this process or counted twice.
         for path in &paths {
@@ -1566,6 +1605,101 @@ mod tests {
             drop(reservation);
         }
     }
+    #[cfg(windows)]
+    #[test]
+    fn cold_custody_preparation_allows_parallel_admission_and_registration() {
+        let c = cold_case();
+        let root = c.f.root().to_path_buf();
+        TEST_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move |stage| {
+                if stage == "after-cold-registration" {
+                    let root = root.clone();
+                    std::thread::spawn(move || {
+                        (|| -> Result<()> {
+                            let cfg = config(&root)?;
+                            let _reservation = admission::reserve(&root, &cfg, 8)?;
+                            let request = root.join("parallel-registration.json");
+                            fs::write(
+                                &request,
+                                json!({"assets":[{"sha256":"e".repeat(64),"bytes":1,
+                                    "provenance":"synthetic parallel producer",
+                                    "rights":"synthetic fixture",
+                                    "selection_state":"unselected"}]})
+                                .to_string(),
+                            )?;
+                            crate::registry::register(&root, &request)?;
+                            Ok(())
+                        })()
+                        .map_err(|error| error.to_string())
+                    })
+                    .join()
+                    .expect("parallel producer panicked")?;
+                }
+                Ok(())
+            }));
+        });
+        let result = c.run(true);
+        TEST_HOOK.with(|hook| *hook.borrow_mut() = None);
+        assert!(result.is_ok(), "{result:?}");
+        assert!(!c.e().exists());
+        assert!(
+            crate::selected(c.f.root())
+                .unwrap()
+                .contains_key(&"e".repeat(64))
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cold_commit_rejects_new_authorization_shard_after_guard_preparation() {
+        let c = cold_case();
+        let root = c.f.root().to_path_buf();
+        let hash = c.h.clone();
+        TEST_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move |stage| {
+                if stage == "after-protection-preparation" {
+                    let dir = root.join("registry/objects");
+                    fs::create_dir_all(&dir)?;
+                    fs::write(
+                        dir.join(format!("{}.tsv", &hash[..2])),
+                        format!("{hash}\t26\n"),
+                    )?;
+                }
+                Ok(())
+            }));
+        });
+        let result = c.run(true);
+        TEST_HOOK.with(|hook| *hook.borrow_mut() = None);
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("control set changed")
+        );
+        assert!(c.e().exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cold_prepared_controls_exclude_existing_control_replacement() {
+        let c = cold_case();
+        let root = c.f.root().to_path_buf();
+        TEST_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move |stage| {
+                if stage == "after-protection-preparation" {
+                    let path = root.join("registry/versions.json");
+                    assert!(fs::write(&path, b"changed").is_err());
+                    assert!(fs::rename(&path, path.with_extension("moved")).is_err());
+                }
+                Ok(())
+            }));
+        });
+        let result = c.run(true);
+        TEST_HOOK.with(|hook| *hook.borrow_mut() = None);
+        assert!(result.is_ok(), "{result:?}");
+        assert!(!c.e().exists());
+    }
+
     #[cfg(windows)]
     #[test]
     fn reviewed_project_controls_exclude_writers_and_reject_new_declarations() {
