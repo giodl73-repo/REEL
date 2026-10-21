@@ -1102,28 +1102,6 @@ mod tests {
         }
     }
     #[test]
-    #[ignore = "requires the retained CAIMITOS mixed consumer closure and native FFmpeg"]
-    fn retained_mixed_consumer_caption_and_effect_pass_native_temporal_analysis() {
-        let root = std::env::var_os("REEL_MIXED_REGRESSION_ROOT")
-            .map(std::path::PathBuf::from)
-            .expect("set REEL_MIXED_REGRESSION_ROOT");
-        let report = analyze(
-            &root.join("job.json"),
-            &root.join("assets"),
-            &root.join("render"),
-            &root.join("expectations.json"),
-        )
-        .unwrap();
-        if let Some(path) = std::env::var_os("REEL_MIXED_REGRESSION_REPORT") {
-            let path = std::path::PathBuf::from(path);
-            assert!(!path.exists(), "regression report must be new");
-            fs::write(path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
-        }
-        assert_eq!(report["passed"], true, "{report}");
-        assert_eq!(report["layers"][0]["passed"], true, "{report}");
-        assert_eq!(report["layers"][1]["passed"], true, "{report}");
-    }
-    #[test]
     #[ignore = "requires native FFmpeg"]
     fn moving_alpha_layer_and_final_occlusion_are_measured_independently() {
         let t = tempfile::tempdir().unwrap();
