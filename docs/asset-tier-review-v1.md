@@ -149,3 +149,33 @@ legacy catalogue, binding and cel authorization channel), registry indexes and
 configuration. Other authoring selections need not be read or locked: they
 cannot become valid new inputs without authorization, which is rechecked.
 Independent physical copies of one hash remain separate explicit actions.
+
+## Concurrent producers
+
+Registration, version transactions/compaction and promotion receipts use the
+producer's `.local/metadata-control/state.lock`. Independent worktrees sharing
+the same caches do not take each other's metadata lock. Each worktree remains
+a single authoring lane; simultaneous CLI metadata writes in that worktree
+serialize briefly to prevent lost authorization rows and version updates.
+Payload copies and SHA verification stay outside these metadata transactions;
+publication atomically creates the hash path and verifies an existing winner.
+
+Capacity admission retains a bounded two-second transaction on the existing
+shared ledger for compatibility with running older clients and to prevent
+concurrent jobs overcommitting free space. It is released before hashing,
+copying or rendering; a job's lifetime reservation does not exclude new jobs.
+Reservation release also tolerates short ledger contention. No foreign lease
+or lock is broken, and no running process is replaced.
+
+Reclamation acquires producer metadata guards in canonical order before its
+final protection check, alongside the legacy-client coordination guard. Thus
+moving writers into separate domains does not introduce a late-registration
+race with removal. This does not remove the historical-mode admission gate or
+make cache removal fully independent of legacy clients. Reclamation is explicit
+and must remain stopped when only concurrent asset creation is requested.
+
+The actual CLI concurrency fixture starts eight independent processes over two
+producer roots and one shared cache. It checks duplicate and unique publication,
+all authorization rows, valid receipts and released reservations. A separate
+fixture holds one producer's metadata domain and the shared legacy ledger while
+another producer registers assets and updates versions successfully.

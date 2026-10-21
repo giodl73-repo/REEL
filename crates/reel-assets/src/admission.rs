@@ -64,6 +64,21 @@ impl Drop for MetadataLock {
     }
 }
 
+/// Serialize only metadata in this producer worktree, never other cache consumers.
+/// Registry, version and receipt writers share this domain with reclamation.
+pub fn worktree_lock(root: &Path) -> Result<MetadataLock> {
+    lock_for(
+        &root.join(".local/metadata-control"),
+        std::time::Duration::from_secs(2),
+    )
+}
+
+/// Backward-compatible capacity ledger transaction. Never hold this guard while
+/// hashing, copying, rendering, or updating a worktree registry.
+fn capacity_lock(dir: &Path) -> Result<MetadataLock> {
+    lock_for(dir, std::time::Duration::from_secs(2))
+}
+
 pub fn lock(dir: &Path) -> Result<MetadataLock> {
     lock_for(dir, std::time::Duration::ZERO)
 }
@@ -154,7 +169,7 @@ impl Drop for Reservation {
     fn drop(&mut self) {
         // If the short metadata lock is unavailable, retain a conservative stale
         // reservation for explicit recovery rather than pretending it expired.
-        if let Ok(_lock) = lock(&self.dir) {
+        if let Ok(_lock) = capacity_lock(&self.dir) {
             self.lease.take();
             let _ = fs::remove_file(
                 self.dir
@@ -195,7 +210,7 @@ fn reserve_candidates(
         return Err("Operation exceeds configured byte budget".into());
     }
     let dir = control(root, config)?;
-    let _lock = lock(&dir)?;
+    let _lock = capacity_lock(&dir)?;
     let admissions = dir.join("admissions");
     fs::create_dir_all(&admissions)?;
     let mut reasons = Vec::new();
@@ -266,7 +281,7 @@ pub fn release_stale(root: &Path, config: &Config, id: &str) -> Result<()> {
         return Err("Invalid reservation ID".into());
     }
     let dir = control(root, config)?;
-    let _lock = lock(&dir)?;
+    let _lock = capacity_lock(&dir)?;
     let base = dir.join("admissions");
     let lease = OpenOptions::new()
         .read(true)

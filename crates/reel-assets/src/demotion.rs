@@ -1009,6 +1009,15 @@ pub fn run(
         } else {
             None
         };
+        // Compatibility: the existing state lock still excludes old clients.
+        // New registry/version writers use only their own worktree domain.
+        // Acquire in canonical order, without payload I/O under these guards.
+        let mut _writer_guards = Vec::new();
+        if apply {
+            for consumer in &consumers {
+                _writer_guards.push(admission::worktree_lock(consumer)?);
+            }
+        }
         if apply && !cold {
             ensure_no_admissions(&control)?;
         }

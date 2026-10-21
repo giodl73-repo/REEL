@@ -1,7 +1,5 @@
 //! Compact per-hash authorization index. Payload metadata stays in LFS manifests.
-use crate::{
-    Result, admission, config, generic_objects, load, selected, unique, valid_oid, versions,
-};
+use crate::{Result, admission, generic_objects, load, selected, unique, valid_oid, versions};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, fs, path::Path};
 
@@ -19,9 +17,7 @@ pub fn register(root: &Path, manifest: &Path) -> Result<Value> {
     let assets = doc["assets"]
         .as_array()
         .ok_or("Manifest requires assets array")?;
-    let cfg = config(root)?;
-    let dir = admission::control(root, &cfg)?;
-    let _lock = admission::lock(&dir)?;
+    let _lock = admission::worktree_lock(root)?;
     let mut index = selected(root)?;
     let mut generic = generic_objects(root)?;
     let mut touched: BTreeMap<String, BTreeMap<String, u64>> = BTreeMap::new();
@@ -114,9 +110,7 @@ pub fn compact(root: &Path) -> Result<Value> {
     fs::write(&staging, &bytes)?;
     // Admission has its own lock. Freeze first, then compare under the writer lock.
     let asset = crate::ingest(root, &staging)?;
-    let cfg = config(root)?;
-    let control = admission::control(root, &cfg)?;
-    let _lock = admission::lock(&control)?;
+    let _lock = admission::worktree_lock(root)?;
     if generic_objects(root)? != before {
         return Err("Object registry changed during compaction; no index replaced".into());
     }
