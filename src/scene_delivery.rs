@@ -696,6 +696,12 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                 {
                     bail!("ASS overlay must be a full-scene .ass attachment");
                 }
+                // Full-scene ASS covers the delivered picture, including an
+                // explicitly retained local frame partition. Its semantic
+                // sample end may ceil to a frame that is not in that picture.
+                if explicit_picture_frames {
+                    layer_span.end_frame = picture_frame_cursor;
+                }
                 rendered_external_layers.push(layer.attachment_id.clone());
             }
             ExternalLayerRenderMode::TimedPictureTransform => {
@@ -795,14 +801,33 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         external_layers.push(layer.attachment_id.clone());
         external_layer_spans.push(layer_span);
     }
-    if rendered_external_layers.len() > 1
-        && job.external_layers.iter().any(|layer| {
-            layer.render_mode != ExternalLayerRenderMode::EvidenceOnly
-                && layer.render_mode != ExternalLayerRenderMode::TimedPictureTransform
-                && layer.render_mode != ExternalLayerRenderMode::TimedVideoOverlay
-        })
+    let rendered: Vec<_> = job
+        .external_layers
+        .iter()
+        .filter(|layer| layer.render_mode != ExternalLayerRenderMode::EvidenceOnly)
+        .collect();
+    let ass_indices: Vec<_> = rendered
+        .iter()
+        .enumerate()
+        .filter(|(_, layer)| layer.render_mode == ExternalLayerRenderMode::AssOverlay)
+        .map(|(index, _)| index)
+        .collect();
+    if ass_indices.len() > 1 {
+        bail!("combine text presentations into one selected ASS layer");
+    }
+    if !ass_indices.is_empty()
+        && rendered
+            .iter()
+            .any(|layer| layer.render_mode == ExternalLayerRenderMode::TimedPictureTransform)
     {
-        bail!("multiple rendered layers require timed video overlays");
+        bail!(
+            "ASS presentation with semantic picture transforms requires explicit composition migration"
+        );
+    }
+    if let Some(&index) = ass_indices.first()
+        && index + 1 != rendered.len()
+    {
+        bail!("ASS presentation must follow all timed overlays");
     }
     if used.len() != attached.len() {
         bail!("unconsumed compiled attachments; declare external layers explicitly");
@@ -961,31 +986,52 @@ fn lossless_video_encoding(encoding: Option<&str>) -> Vec<&'static str> {
     }
 }
 
+fn indexed_layer_source_name(layer: &ExternalLayer, index: usize) -> String {
+    match layer.render_mode {
+        ExternalLayerRenderMode::AssOverlay => format!("presentation-{index:03}.ass"),
+        ExternalLayerRenderMode::TimedVideoOverlay => format!("selected-overlay-{index:03}.mkv"),
+        ExternalLayerRenderMode::EvidenceOnly | ExternalLayerRenderMode::TimedPictureTransform => {
+            unreachable!()
+        }
+    }
+}
+
+fn copy_ass_layer(root: &Path, asset_root: &Path, layer: &ExternalLayer, name: &str) -> Result<()> {
+    fs::copy(checked_file(asset_root, &layer.evidence)?, root.join(name))?;
+    if let Some(font) = &layer.font {
+        fs::create_dir(root.join("fonts"))?;
+        let name = font
+            .path
+            .file_name()
+            .context("selected font has no file name")?;
+        fs::copy(
+            checked_file(asset_root, font)?,
+            root.join("fonts").join(name),
+        )?;
+    }
+    Ok(())
+}
+
 fn render_ass_overlay(
     root: &Path,
     fps: &str,
     font_bound: bool,
+    input: &str,
+    ass: &str,
+    output_name: &str,
     encoding: Option<&str>,
 ) -> Result<()> {
     let filter = if font_bound {
-        "ass=presentation.ass:fontsdir=fonts"
+        format!("ass={ass}:fontsdir=fonts")
     } else {
-        "ass=presentation.ass"
+        format!("ass={ass}")
     };
     let output = Command::new("ffmpeg")
         .current_dir(root)
-        .args([
-            "-hide_banner",
-            "-v",
-            "error",
-            "-nostdin",
-            "-n",
-            "-i",
-            "clean-picture.mkv",
-        ])
-        .args(["-vf", filter, "-an"])
+        .args(["-hide_banner", "-v", "error", "-nostdin", "-n", "-i", input])
+        .args(["-vf", &filter, "-an"])
         .args(lossless_video_encoding(encoding))
-        .args(["-pix_fmt", "yuv444p", "-r", fps, "picture.mkv"])
+        .args(["-pix_fmt", "yuv444p", "-r", fps, output_name])
         .output()?;
     if !output.status.success() {
         bail!(
@@ -1511,16 +1557,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
     ffmpeg(&inputs)?;
     if overlays.len() > 1 {
         for (index, layer) in overlays.iter().enumerate() {
-            let span = plan
-                .external_layer_spans
-                .iter()
-                .find(|span| span.attachment_id == layer.attachment_id)
-                .context("timed overlay span missing")?;
-            let source = checked_file(asset_root, timed_overlay_source(asset_root, layer)?)?;
-            if decoded_video_frames(&source)? < span.end_frame - span.start_frame {
-                bail!("timed overlay lacks frames for its selected span");
-            }
-            let selected = format!("selected-overlay-{index:03}.mkv");
+            let selected = indexed_layer_source_name(layer, index);
             let input = if index == 0 {
                 "clean-picture.mkv".to_string()
             } else {
@@ -1531,39 +1568,56 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
             } else {
                 format!("layered-picture-{index:03}.mkv")
             };
-            fs::copy(source, root.join(&selected))?;
-            render_timed_video_overlay(
-                root,
-                &plan,
-                span,
-                &input,
-                &selected,
-                &output,
-                job.still_sequence_encoding.as_deref(),
-            )?;
+            match layer.render_mode {
+                ExternalLayerRenderMode::AssOverlay => {
+                    copy_ass_layer(root, asset_root, layer, &selected)?;
+                    render_ass_overlay(
+                        root,
+                        &fps,
+                        layer.font.is_some(),
+                        &input,
+                        &selected,
+                        &output,
+                        job.still_sequence_encoding.as_deref(),
+                    )?;
+                }
+                ExternalLayerRenderMode::TimedVideoOverlay => {
+                    let span = plan
+                        .external_layer_spans
+                        .iter()
+                        .find(|span| span.attachment_id == layer.attachment_id)
+                        .context("timed overlay span missing")?;
+                    let source =
+                        checked_file(asset_root, timed_overlay_source(asset_root, layer)?)?;
+                    if decoded_video_frames(&source)? < span.end_frame - span.start_frame {
+                        bail!("timed overlay lacks frames for its selected span");
+                    }
+                    fs::copy(source, root.join(&selected))?;
+                    render_timed_video_overlay(
+                        root,
+                        &plan,
+                        span,
+                        &input,
+                        &selected,
+                        &output,
+                        job.still_sequence_encoding.as_deref(),
+                    )?;
+                }
+                ExternalLayerRenderMode::EvidenceOnly
+                | ExternalLayerRenderMode::TimedPictureTransform => unreachable!(),
+            }
         }
     } else if let Some(layer) = overlay {
         match layer.render_mode {
             ExternalLayerRenderMode::AssOverlay => {
-                fs::copy(
-                    checked_file(asset_root, &layer.evidence)?,
-                    root.join("presentation.ass"),
-                )?;
-                if let Some(font) = &layer.font {
-                    fs::create_dir(root.join("fonts"))?;
-                    let name = font
-                        .path
-                        .file_name()
-                        .context("selected font has no file name")?;
-                    fs::copy(
-                        checked_file(asset_root, font)?,
-                        root.join("fonts").join(name),
-                    )?;
-                }
+                copy_ass_layer(root, asset_root, layer, "presentation.ass")?;
                 render_ass_overlay(
                     root,
                     &fps,
                     layer.font.is_some(),
+                    "clean-picture.mkv",
+                    "presentation.ass",
+                    "picture.mkv",
                     job.still_sequence_encoding.as_deref(),
                 )?;
             }
@@ -1753,8 +1807,8 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
     .collect();
     if overlays.len() > 1 {
         names.push("clean-picture.mkv".into());
-        for index in 0..overlays.len() {
-            names.push(format!("selected-overlay-{index:03}.mkv"));
+        for (index, layer) in overlays.iter().enumerate() {
+            names.push(indexed_layer_source_name(layer, index));
             if index + 1 < overlays.len() {
                 names.push(format!("layered-picture-{index:03}.mkv"));
             }
@@ -1788,7 +1842,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
             },
         );
     }
-    if let Some(layer) = overlay.and_then(|layer| layer.font.as_ref()) {
+    if let Some(layer) = overlays.iter().find_map(|layer| layer.font.as_ref()) {
         let name = layer
             .path
             .file_name()
@@ -1887,8 +1941,8 @@ fn check_impl(
     let overlay = overlays.first().copied();
     if overlays.len() > 1 {
         expected.insert("clean-picture.mkv".into());
-        for index in 0..overlays.len() {
-            expected.insert(format!("selected-overlay-{index:03}.mkv"));
+        for (index, layer) in overlays.iter().enumerate() {
+            expected.insert(indexed_layer_source_name(layer, index));
             if index + 1 < overlays.len() {
                 expected.insert(format!("layered-picture-{index:03}.mkv"));
             }
@@ -1909,12 +1963,15 @@ fn check_impl(
         expected.insert("pre-camera-picture.mkv".into());
     }
     expected.extend(crate::motioncraft_review::output_names(&job, &plan)?);
-    let font_name = overlay.and_then(|layer| layer.font.as_ref()).map(|font| {
-        format!(
-            "fonts/{}",
-            font.path.file_name().unwrap_or_default().to_string_lossy()
-        )
-    });
+    let font_name = overlays
+        .iter()
+        .find_map(|layer| layer.font.as_ref())
+        .map(|font| {
+            format!(
+                "fonts/{}",
+                font.path.file_name().unwrap_or_default().to_string_lossy()
+            )
+        });
     if let Some(name) = font_name.as_deref() {
         expected.insert(name.to_string());
     }
@@ -1976,10 +2033,14 @@ fn check_impl(
     }
     if overlays.len() > 1 {
         for (index, layer) in overlays.iter().enumerate() {
-            let selected = format!("selected-overlay-{index:03}.mkv");
-            if receipt.outputs[&selected].sha256 != timed_overlay_source(asset_root, layer)?.sha256
-            {
-                bail!("rendered timed-overlay source differs from selected evidence");
+            let selected = indexed_layer_source_name(layer, index);
+            let source = if layer.render_mode == ExternalLayerRenderMode::AssOverlay {
+                &layer.evidence
+            } else {
+                timed_overlay_source(asset_root, layer)?
+            };
+            if receipt.outputs[&selected].sha256 != source.sha256 {
+                bail!("rendered layer source differs from selected evidence");
             }
             let before = output.join(if index == 0 {
                 "clean-picture.mkv".to_string()
@@ -1998,7 +2059,36 @@ fn check_impl(
             if decoded_video_frames(&before)? != plan.frame_count
                 || decoded_video_frames(&after)? != plan.frame_count
             {
-                bail!("timed overlay changed scene frame count");
+                bail!("rendered layer changed scene frame count");
+            }
+            if layer.render_mode == ExternalLayerRenderMode::AssOverlay {
+                if let (Some(font), Some(name)) = (&layer.font, font_name.as_deref())
+                    && receipt.outputs[name].sha256 != font.sha256
+                {
+                    bail!("rendered presentation font differs from selected font");
+                }
+                let ass = fs::read_to_string(checked_file(asset_root, &layer.evidence)?)?;
+                let frames = ass_visibility_frames(
+                    &ass,
+                    plan.fps_numerator,
+                    plan.fps_denominator,
+                    plan.frame_count,
+                )?;
+                let mut visible = false;
+                for frame in frames {
+                    let before_pixels = rgb_frame_at_index(&before, &plan, frame)?;
+                    let after_pixels = rgb_frame_at_index(&after, &plan, frame)?;
+                    if before_pixels.len() != after_pixels.len() {
+                        bail!("ASS layer changed picture geometry");
+                    }
+                    visible |= before_pixels != after_pixels;
+                }
+                if !visible {
+                    bail!(
+                        "selected ASS layer made no visible change during its dialogue intervals"
+                    );
+                }
+                continue;
             }
             let span = plan
                 .external_layer_spans
