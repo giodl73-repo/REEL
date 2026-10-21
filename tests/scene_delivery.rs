@@ -4,6 +4,60 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::Path, process::Command};
 
 #[test]
+fn full_check_master_proof_rejects_stale_inputs_and_needs_no_unused_stems() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let job = fixture(root);
+    write_json(&root.join("job.json"), &job);
+    let job_path = root.join("job.json");
+    let output = root.join("delivery");
+    scene_delivery::render(&job_path, root, &output).unwrap();
+    let proof = root.join("proof.json");
+    // Issuance must fail when an unconsumed review/stem is corrupt too.
+    let review = fs::read(output.join("review.mp4")).unwrap();
+    fs::write(output.join("review.mp4"), b"bad review").unwrap();
+    assert!(scene_delivery::prove_master(&job_path, root, &output, &proof).is_err());
+    assert!(!proof.exists());
+    fs::write(output.join("review.mp4"), review).unwrap();
+    scene_delivery::prove_master(&job_path, root, &output, &proof).unwrap();
+    let receipt: Value =
+        serde_json::from_slice(&fs::read(output.join("receipt.json")).unwrap()).unwrap();
+    for name in receipt["outputs"].as_object().unwrap().keys() {
+        if name != "master.mkv" {
+            fs::remove_file(output.join(name)).unwrap();
+        }
+    }
+    scene_delivery::recheck_master_proof(&job_path, root, &output, &proof).unwrap();
+    assert!(scene_delivery::check(&job_path, root, &output).is_err());
+    let master = fs::read(output.join("master.mkv")).unwrap();
+    fs::write(output.join("master.mkv"), b"changed master").unwrap();
+    assert!(scene_delivery::recheck_master_proof(&job_path, root, &output, &proof).is_err());
+    fs::write(output.join("master.mkv"), master).unwrap();
+    let proof_bytes = fs::read(&proof).unwrap();
+    let mut bad: Value = serde_json::from_slice(&proof_bytes).unwrap();
+    bad["full_check_passed"] = json!(false);
+    write_json(&proof, &bad);
+    assert!(scene_delivery::recheck_master_proof(&job_path, root, &output, &proof).is_err());
+    fs::write(&proof, proof_bytes).unwrap();
+    let receipt_bytes = fs::read(output.join("receipt.json")).unwrap();
+    let mut changed: Value = serde_json::from_slice(&receipt_bytes).unwrap();
+    changed["publication"] = json!("changed");
+    write_json(&output.join("receipt.json"), &changed);
+    assert!(scene_delivery::recheck_master_proof(&job_path, root, &output, &proof).is_err());
+    fs::write(output.join("receipt.json"), receipt_bytes).unwrap();
+    let mut changed_job = job.clone();
+    changed_job["id"] = json!("other-scene");
+    write_json(&job_path, &changed_job);
+    assert!(scene_delivery::recheck_master_proof(&job_path, root, &output, &proof).is_err());
+    write_json(&job_path, &job);
+    let audio = fs::read(root.join("a.wav")).unwrap();
+    fs::write(root.join("a.wav"), b"changed take").unwrap();
+    assert!(scene_delivery::recheck_master_proof(&job_path, root, &output, &proof).is_err());
+    fs::write(root.join("a.wav"), audio).unwrap();
+    scene_delivery::recheck_master_proof(&job_path, root, &output, &proof).unwrap();
+}
+
+#[test]
 #[ignore = "requires FFmpeg; synthetic episode and review integration"]
 fn real_episode_consumption_boundaries_and_controlled_review() {
     let t = tempfile::tempdir().unwrap();

@@ -1836,6 +1836,105 @@ pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receip
     check_impl(job_path, asset_root, output, true)
 }
 
+/// Full-check evidence for a consumer which needs only the selected master.
+/// Other outputs remain pinned by the exact receipt; consumers need not stage
+/// stems/reviews they do not consume. This is technical evidence, not approval.
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct MasterProof {
+    schema: String,
+    full_check_passed: bool,
+    validator_sha256: String,
+    ffmpeg_sha256: String,
+    ffprobe_sha256: String,
+    job_sha256: String,
+    plan_sha256: String,
+    delivery_receipt_sha256: String,
+    delivery_receipt_bytes: u64,
+    master_sha256: String,
+    master_bytes: u64,
+}
+
+fn master_proof_facts(receipt: &Receipt, output: &Path) -> Result<MasterProof> {
+    use sha2::Digest;
+    let master = receipt
+        .outputs
+        .get("master.mkv")
+        .context("receipt lacks master")?;
+    let receipt_path = output.join("receipt.json");
+    Ok(MasterProof {
+        schema: "reel.scene-master-proof.v1".into(),
+        full_check_passed: true,
+        validator_sha256: crate::sha256_file(&std::env::current_exe()?)?,
+        ffmpeg_sha256: crate::sha256_file(&crate::episode_conform::media_tool_path("ffmpeg")?)?,
+        ffprobe_sha256: crate::sha256_file(&crate::episode_conform::media_tool_path("ffprobe")?)?,
+        job_sha256: receipt.plan.job_sha256.clone(),
+        plan_sha256: sha2::Sha256::digest(serde_json::to_vec(&receipt.plan)?)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect(),
+        delivery_receipt_sha256: crate::sha256_file(&receipt_path)?,
+        delivery_receipt_bytes: fs::metadata(receipt_path)?.len(),
+        master_sha256: master.sha256.clone(),
+        master_bytes: master.bytes,
+    })
+}
+
+/// Issue a new proof only after the complete scene output set passes `check`.
+pub fn prove_master(
+    job_path: &Path,
+    asset_root: &Path,
+    output: &Path,
+    proof_path: &Path,
+) -> Result<()> {
+    if proof_path.exists() {
+        bail!("scene master proof output must be new");
+    }
+    let receipt = check(job_path, asset_root, output)?;
+    let proof = master_proof_facts(&receipt, output)?;
+    let parent = proof_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    fs::create_dir_all(parent)?;
+    let mut staged = tempfile::NamedTempFile::new_in(parent)?;
+    std::io::Write::write_all(&mut staged, &serde_json::to_vec_pretty(&proof)?)?;
+    staged.as_file().sync_all()?;
+    staged.persist_noclobber(proof_path)?;
+    Ok(())
+}
+
+/// Rehash/replan all source inputs, rehash the consumed master, and require the
+/// exact full-check proof, receipt and validator/media tools. Final conform
+/// still decodes and compares every consumed frame and audio sample.
+pub fn recheck_master_proof(
+    job_path: &Path,
+    asset_root: &Path,
+    output: &Path,
+    proof_path: &Path,
+) -> Result<Receipt> {
+    let (_, current_plan) = plan(job_path, asset_root)?;
+    let receipt: Receipt = serde_json::from_slice(&fs::read(output.join("receipt.json"))?)?;
+    let proof: MasterProof = serde_json::from_slice(&fs::read(proof_path)?)?;
+    if receipt.schema != "reel.scene-delivery-receipt.v0.1"
+        || serde_json::to_value(&receipt.plan)? != serde_json::to_value(&current_plan)?
+        || receipt.content_samples != current_plan.duration_samples
+        || receipt.delivery_frames != current_plan.frame_count
+        || proof != master_proof_facts(&receipt, output)?
+    {
+        bail!("scene master proof differs from current inputs, receipt or tools");
+    }
+    let master = receipt
+        .outputs
+        .get("master.mkv")
+        .context("receipt lacks master")?;
+    if master.path != Path::new("master.mkv") {
+        bail!("scene master proof has unexpected master path");
+    }
+    checked_file(output, master)?;
+    Ok(receipt)
+}
+
 /// Recheck immutable bytes after the caller verifies the exact native scene
 /// build proof's job and delivery-receipt hashes. That native proof is issued
 /// only after `check` succeeds. Standalone checks always decode all media.
