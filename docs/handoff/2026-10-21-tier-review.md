@@ -45,3 +45,8 @@ physical identity checks and unknown-link holds. A bounded two-second cold
 transaction wait avoids aborting on unrelated short writers; reservations are
 untouched. 103 Windows tests pass (102 unit plus executable), scoped Clippy and
 release build. Interruption tests retain original CAS-first unlink order.
+
+Cold guard narrows held files to authorization/control sources while preserving
+legacy catalogue/binding/cel authorization. Every authorized hash and version
+reference is excluded. New unrelated authoring can remain in progress.
+104 Windows tests pass (103 unit plus executable), Clippy and release build.

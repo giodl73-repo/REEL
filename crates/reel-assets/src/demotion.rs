@@ -349,6 +349,10 @@ fn consumer_registration(
 }
 
 fn metadata_snapshot(root: &Path, hold: bool) -> Result<(String, Vec<fs::File>)> {
+    metadata_snapshot_kind(root, hold, false)
+}
+
+fn metadata_snapshot_kind(root: &Path, hold: bool, cold: bool) -> Result<(String, Vec<fs::File>)> {
     let mut paths = BTreeSet::from([
         PathBuf::from("registry/versions.json"),
         PathBuf::from("registry/object-index.json"),
@@ -358,7 +362,20 @@ fn metadata_snapshot(root: &Path, hold: bool) -> Result<(String, Vec<fs::File>)>
         let p = crate::accounting::project(root)?;
         paths.insert(PathBuf::from("asset-project.json"));
         paths.insert(PathBuf::from(&p.storage_config));
-        p.selections
+        // Cold custody excludes *all* authorized hashes, not merely selected
+        // ones. Valid new inputs therefore must change authorization first.
+        // Do not lock unrelated authoring files for this stronger exclusion.
+        if cold {
+            vec![crate::accounting::Selection {
+                index: "catalog.json".into(),
+                entries: "/videos".into(),
+                record_field: "bindings".into(),
+                format: "bindings".into(),
+                role_prefixes: vec![],
+            }]
+        } else {
+            p.selections
+        }
     } else {
         vec![crate::accounting::Selection {
             index: "catalog.json".into(),
@@ -380,7 +397,7 @@ fn metadata_snapshot(root: &Path, hold: bool) -> Result<(String, Vec<fs::File>)>
             for key in [&rule.record_field, "scene", "bindings", "record"] {
                 if let Some(s) = row.get(key).and_then(Value::as_str) {
                     paths.insert(PathBuf::from(s));
-                    if !modern {
+                    if !modern || cold {
                         let cel = Path::new(s)
                             .parent()
                             .ok_or("Missing legacy record parent")?
@@ -506,6 +523,41 @@ fn legacy_protection(root: &Path, cfg: &crate::Config) -> Result<BTreeSet<String
 }
 fn metadata_token(root: &Path) -> Result<String> {
     Ok(metadata_snapshot(root, false)?.0)
+}
+
+/// Cold exclusion is stronger than selection: every authorized object and
+/// every version reference is retained. Unrelated authoring files need not be
+/// read or locked. Cached registry controls remain independently protected.
+fn cold_protection(root: &Path, limit: usize) -> Result<BTreeSet<String>> {
+    let mut protected: BTreeSet<String> = crate::selected(root)?.into_keys().collect();
+    let state = crate::versions::read(root)?;
+    if state.versions.len() > limit {
+        return Err("Cold protection version budget exceeded".into());
+    }
+    protected.extend(state.metadata_roots);
+    for version in state.versions.values() {
+        protected.insert(version.manifest_sha256.clone());
+        protected.extend(version.payloads.iter().cloned());
+    }
+    let doc = crate::load(&root.join("registry/versions.json"))?;
+    if let Some(records) = doc["version_records"].as_object() {
+        protected.extend(
+            records
+                .values()
+                .filter_map(Value::as_str)
+                .map(str::to_owned),
+        );
+    }
+    let path = root.join("registry/object-index.json");
+    if path.exists() {
+        protected.insert(
+            crate::load(&path)?["asset"]["sha256"]
+                .as_str()
+                .ok_or("Missing authorization control hash")?
+                .to_owned(),
+        );
+    }
+    Ok(protected)
 }
 
 fn stamp(journal: &Path, name: &str, value: &Value) -> Result<()> {
@@ -713,7 +765,7 @@ pub fn run(
             if let Some(h) = req.sha256s.iter().find(|h| protected.contains(*h)) {
                 return Err(format!("Object protected by legacy managed consumer: {h}").into());
             }
-            if metadata_token(consumer)? != before && !cold {
+            if !cold && metadata_token(consumer)? != before {
                 return Err("Legacy consumer changed during reconciliation".into());
             }
             consumer_tokens.insert(consumer.clone(), before);
@@ -725,7 +777,17 @@ pub fn run(
         {
             return Err("Consumer cache/coordination bindings differ".into());
         }
-        let before = metadata_token(consumer)?;
+        let before = metadata_snapshot_kind(consumer, false, cold)?.0;
+        if cold {
+            let protected = cold_protection(consumer, policy.max_objects)?;
+            if let Some(h) = req.sha256s.iter().find(|h| protected.contains(*h)) {
+                return Err(
+                    format!("Object protected or registered by managed consumer: {h}").into(),
+                );
+            }
+            consumer_tokens.insert(consumer.clone(), before);
+            continue;
+        }
         let state = tiering::live(consumer, &protection_policy)?;
         for h in &req.sha256s {
             if state.selected.contains(h)
@@ -737,7 +799,7 @@ pub fn run(
                 return Err(format!("Object protected by managed consumer: {h}").into());
             }
         }
-        if metadata_token(consumer)? != before && !cold {
+        if !cold && metadata_snapshot_kind(consumer, false, cold)?.0 != before {
             return Err("Consumer changed during protection reconciliation".into());
         }
         consumer_tokens.insert(consumer.clone(), before);
@@ -961,7 +1023,7 @@ pub fn run(
         let _source_controls = check_source_controls(root, &req, apply)?;
         let mut control_guards = vec![];
         for (consumer, token) in &consumer_tokens {
-            let (fresh, held) = metadata_snapshot(consumer, apply)?;
+            let (fresh, held) = metadata_snapshot_kind(consumer, apply, cold)?;
             if fresh != *token {
                 if !cold {
                     return Err(
@@ -978,13 +1040,7 @@ pub fn run(
                     {
                         return Err("Consumer cache/coordination changed".into());
                     }
-                    let state = tiering::live(consumer, &protection_policy)?;
-                    if state.registered.contains_key(h)
-                        || state.selected.contains(h)
-                        || state.current.contains(h)
-                        || state.leased.contains(h)
-                        || state.controls.contains(h)
-                    {
+                    if cold_protection(consumer, policy.max_objects)?.contains(h) {
                         return Err(
                             "Cold object became protected or registered before removal".into()
                         );
@@ -994,7 +1050,7 @@ pub fn run(
                 {
                     return Err("Cold object became protected by legacy consumer".into());
                 }
-                if metadata_token(consumer)? != fresh {
+                if metadata_snapshot_kind(consumer, false, cold)?.0 != fresh {
                     return Err("Consumer changed during exact cold protection refresh".into());
                 }
             }
@@ -1176,6 +1232,38 @@ pub fn export_protections(root: &Path, request_path: &Path) -> Result<Value> {
 mod tests {
     use super::*;
     use crate::tiering::tests::Fixture;
+
+    #[test]
+    fn cold_guard_protects_all_authorization_and_version_refs_without_reading_unrelated_authoring()
+    {
+        let mut f = Fixture::new();
+        let h = f.put(b"registered input", true);
+        f.version("prior", &h);
+        let profile = f.root().join("asset-project.json");
+        let mut p = crate::load(&profile).unwrap();
+        p["selections"] = json!([{"index":"unrelated.json","entries":"/videos","record_field":"bindings","format":"bindings","role_prefixes":["delivery/"]}]);
+        fs::write(f.root().join("unrelated.json"), b"{\"videos\":[]}").unwrap();
+        fs::write(profile, p.to_string()).unwrap();
+        let before = metadata_snapshot_kind(f.root(), false, true).unwrap().0;
+        let (_, guards) = metadata_snapshot_kind(f.root(), true, true).unwrap();
+        fs::write(
+            f.root().join("unrelated.json"),
+            b"unrelated authoring in progress",
+        )
+        .unwrap();
+        assert!(cold_protection(f.root(), 100).unwrap().contains(&h));
+        assert_eq!(
+            metadata_snapshot_kind(f.root(), false, true).unwrap().0,
+            before
+        );
+        drop(guards);
+        fs::write(f.root().join("registry/objects.tsv"), b"").unwrap();
+        assert!(cold_protection(f.root(), 100).unwrap().contains(&h));
+        assert_ne!(
+            metadata_snapshot_kind(f.root(), false, true).unwrap().0,
+            before
+        );
+    }
 
     fn cold_case() -> Case {
         let mut f = Fixture::new();

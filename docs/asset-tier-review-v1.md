@@ -142,3 +142,10 @@ it never waits for job reservations to finish. Any intervening cold-consumer
 metadata change is re-evaluated for the exact object under the final guards.
 Changed relevant protection holds; unrelated additions do not invalidate the
 entire batch solely for having changed. Ordinary lock entry stays immediate.
+
+Cold protection excludes all authorization and all version references, including
+metadata controls. Its final guards cover authorization sources (including the
+legacy catalogue, binding and cel authorization channel), registry indexes and
+configuration. Other authoring selections need not be read or locked: they
+cannot become valid new inputs without authorization, which is rechecked.
+Independent physical copies of one hash remain separate explicit actions.
