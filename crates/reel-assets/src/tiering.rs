@@ -50,15 +50,25 @@ struct Census {
     project_id: String,
     registry_generation: u64,
     profile_sha256: String,
+    #[serde(default)]
+    census_started_unix_seconds: Option<u64>,
+    #[serde(default)]
+    census_completed_unix_seconds: Option<u64>,
     tiers: Vec<CensusTier>,
     objects: Vec<Observed>,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct CensusTier {
     tier: usize,
     root: String,
     #[serde(default)]
     volume_id: Option<String>,
+    #[serde(default)]
+    free_bytes: Option<u64>,
+    #[serde(default)]
+    total_bytes: Option<u64>,
+    #[serde(default)]
+    reserve_bytes: Option<u64>,
 }
 #[derive(Deserialize)]
 struct Observed {
@@ -529,6 +539,9 @@ pub fn plan(root: &Path, policy_path: &Path, census_path: &Path, now: u64) -> Re
         "dry_run":true,"executable":false,"removal_authorized":false,"archive_probed":false,
         "payload_hashes_verified":false,"payload_bytes_copied":0,"media_deleted":false,
         "limits":"Physical observations/capacity are baseline-only. Estimates are not guaranteed free space. Current-working and unproven history stay held. No permanent-retirement actions."});
+    plan["census_started_unix_seconds"] = json!(census.census_started_unix_seconds);
+    plan["census_completed_unix_seconds"] = json!(census.census_completed_unix_seconds);
+    plan["tier_observations"] = json!(census.tiers);
     plan["plan_sha256"] = json!(digest(&serde_json::to_vec(&plan)?));
     Ok(plan)
 }
