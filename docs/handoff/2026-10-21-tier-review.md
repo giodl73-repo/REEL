@@ -34,3 +34,8 @@ Cold concurrency regression: unrelated live reservations and newly registered
 other objects allow removal; registering the exact candidate immediately before
 unlink holds it. 97 Windows tests pass (96 unit plus one executable), scoped
 Clippy and release build. Metadata transaction locking remains short and exact.
+
+Explicit verified-index reuse adds hash-bound prior cold verification and an
+optional exact unchanged source identity/mtime proof. It does not equate a
+census with integrity evidence. Default full hashing remains unchanged.
+101 Windows tests pass (100 unit plus executable), Clippy and release build.

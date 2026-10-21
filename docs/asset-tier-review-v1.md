@@ -103,3 +103,27 @@ registered or selected input holds; unrelated new assets can proceed. The short
 metadata transaction lock remains; no reservation is removed or job stopped.
 History mode retains its existing job coordination gate. Browser block
 choices remain history-only; cold requests are explicit native operator batches.
+
+## Explicit reuse of verified immutable-backup indexes
+
+A cold request can name `verified_cold_index` with an absolute `path`, exact
+`sha256` and `owner_attests_append_only_archive: true`. This is an explicit
+owner-authorized alternative to rehashing an already verified retained payload.
+The bounded, hash-locked `reel.verified-cold-index.v1` input binds `archive_root`
+and an `objects` map: hash to `bytes`, `verified_unix_ns`, `manifest_sha256`.
+Only derive this input from completed hash-verified backup receipts; a census
+or path listing is insufficient. Retain those exact origins with the index.
+
+The exact archive object must still exist, have the declared byte count and
+have no modification later than prior verification. Its independent identity,
+non-reparse ancestry and replacement/writer exclusion still apply. Missing,
+changed, future-dated or unindexed evidence holds. This reuses a prior digest;
+it is not a new media integrity scrub and relies on the stated immutable,
+append-only backup contract. Ordinary execution still hashes both payloads.
+
+Optional `reuse_unchanged_source_proofs: true` also permits a prior source
+proof, `source: {identity, modified_unix_ns}`, from the exact verified source
+version. The currently opened source must match its prior volume/file ID,
+byte count and exact modification time. A mismatch or absent proof falls back
+to a fresh source hash. Results distinguish source and retained verification
+methods. All selection/registration/lease and unlink guards remain in effect.
