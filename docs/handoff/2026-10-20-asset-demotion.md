@@ -6,7 +6,7 @@ protections, refuses live/unreconciled admissions, holds control files against
 changes, deletes exact opened source links, and journals intent/completion/recovery.
 The job runner now reserves before resolving source paths. See asset-demotion-v1.
 
-Local validation: 72 asset-crate tests (including 17 new cases), Clippy with
+Local validation: 73 asset-crate tests (including 18 new cases), Clippy with
 warnings denied, release build, formatting, role structure and whitespace.
 The prior pulse's full root suite and Windows/Linux/FFmpeg CI also completed
 successfully. This slice's new CI is a separate gate. Public fixtures remain

@@ -18,6 +18,9 @@ pub struct Request {
     pub plan_sha256: String,
     /// Explicit managed consumers, including the invoking root. Not global discovery.
     pub consumer_roots: Vec<PathBuf>,
+    /// Explicit completed/quiescent worktrees, not silently omitted live lanes.
+    #[serde(default)]
+    pub inactive_consumer_roots: Vec<PathBuf>,
     pub consumer_scope: String,
     pub sha256s: BTreeSet<String>,
     pub max_verify_bytes: u64,
@@ -211,6 +214,44 @@ fn ensure_no_admissions(control: &Path) -> Result<()> {
     Ok(())
 }
 
+fn consumer_registration(
+    root: &Path,
+    active: &BTreeSet<PathBuf>,
+    inactive: &BTreeSet<PathBuf>,
+) -> Result<String> {
+    if !root.join(".git").exists() {
+        return Ok(tiering::digest(&serde_json::to_vec(&(active, inactive))?));
+    }
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["worktree", "list", "--porcelain", "-z"])
+        .output()?;
+    if !out.status.success() || out.stdout.len() > 4 * 1024 * 1024 {
+        return Err("Cannot reconcile registered Git consumers".into());
+    }
+    let text = std::str::from_utf8(&out.stdout)?;
+    let mut registered = BTreeSet::new();
+    for field in text.split('\0') {
+        if let Some(path) = field.strip_prefix("worktree ") {
+            registered.insert(Path::new(path).canonicalize()?);
+        }
+    }
+    if registered.is_empty()
+        || registered
+            .iter()
+            .any(|r| !active.contains(r) && !inactive.contains(r))
+        || inactive
+            .iter()
+            .any(|r| !registered.contains(r) || active.contains(r))
+    {
+        return Err(
+            "Registered worktree missing from active or explicit inactive consumer scope".into(),
+        );
+    }
+    Ok(tiering::digest(&serde_json::to_vec(&registered)?))
+}
+
 fn metadata_snapshot(root: &Path, hold: bool) -> Result<(String, Vec<fs::File>)> {
     let p = crate::accounting::project(root)?;
     let mut paths = BTreeSet::from([
@@ -342,6 +383,7 @@ pub fn run(
         || req.consumer_scope != "all-managed-cache-consumers"
         || req.consumer_roots.is_empty()
         || req.consumer_roots.len() > 32
+        || req.inactive_consumer_roots.len() > 32
         || req.sha256s.is_empty()
         || req.sha256s.len() > policy.max_batch_objects
         || req.sha256s.iter().any(|h| !crate::valid_oid(h))
@@ -390,6 +432,15 @@ pub fn run(
     if consumers.len() != req.consumer_roots.len() || !consumers.contains(&root.canonicalize()?) {
         return Err("Consumer coverage must include invoking root without aliases".into());
     }
+    let inactive: BTreeSet<PathBuf> = req
+        .inactive_consumer_roots
+        .iter()
+        .map(|r| r.canonicalize())
+        .collect::<std::io::Result<_>>()?;
+    if inactive.len() != req.inactive_consumer_roots.len() {
+        return Err("Inactive consumer aliases rejected".into());
+    }
+    let registration = consumer_registration(root, &consumers, &inactive)?;
     let mut protection_policy = policy.clone();
     protection_policy.history_versions.clear();
     let mut consumer_tokens = BTreeMap::new();
@@ -513,6 +564,9 @@ pub fn run(
         checkpoint("before-lock")?;
         let _state_lock = admission::lock(&control)?;
         ensure_no_admissions(&control)?;
+        if consumer_registration(root, &consumers, &inactive)? != registration {
+            return Err("Registered worktree set changed; discard stale request".into());
+        }
         let _request_guard = platform::open(request_path, false)?;
         let _policy_guard = platform::open(&req.policy, false)?;
         if fs::read(request_path)? != request_bytes || fs::read(&req.policy)? != policy_bytes {
@@ -688,6 +742,55 @@ mod tests {
         let a = metadata_token(c.f.root()).unwrap();
         fs::write(dir.join("ff.tsv"), format!("{}\t2\n", "f".repeat(64))).unwrap();
         assert_ne!(a, metadata_token(c.f.root()).unwrap());
+    }
+    #[test]
+    fn git_consumer_inventory_requires_new_worktrees_to_be_declared() {
+        let c = Case::new();
+        let hooks = c.f.root().join(".local/no-hooks");
+        fs::create_dir_all(&hooks).unwrap();
+        let git = |args: &[&str]| {
+            let o = std::process::Command::new("git")
+                .arg("-C")
+                .arg(c.f.root())
+                .args([
+                    "-c",
+                    "user.name=fixture",
+                    "-c",
+                    "user.email=fixture@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "-c",
+                ])
+                .arg(format!("core.hooksPath={}", hooks.display()))
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        };
+        git(&["init", "--quiet"]);
+        git(&[
+            "commit",
+            "--allow-empty",
+            "--quiet",
+            "-m",
+            "synthetic consumer",
+        ]);
+        let active = BTreeSet::from([c.f.root().canonicalize().unwrap()]);
+        let before = consumer_registration(c.f.root(), &active, &BTreeSet::new()).unwrap();
+        let extra = c.f.root().join(".local/extra-consumer");
+        git(&[
+            "worktree",
+            "add",
+            "--quiet",
+            "-b",
+            "extra",
+            extra.to_str().unwrap(),
+        ]);
+        assert!(consumer_registration(c.f.root(), &active, &BTreeSet::new()).is_err());
+        let inactive = BTreeSet::from([extra.canonicalize().unwrap()]);
+        let after = consumer_registration(c.f.root(), &active, &inactive).unwrap();
+        assert_ne!(before, after);
+        assert!(consumer_registration(c.f.root(), &active, &active).is_err());
     }
     #[test]
     fn active_or_unreconciled_job_admission_holds_removal() {

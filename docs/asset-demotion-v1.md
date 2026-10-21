@@ -28,8 +28,11 @@ All declared consumers must have a supported asset project profile and matching
 active-cache/shared-coordination bindings. Selected closures, other current work,
 leases and registry control objects protect a hash in any consumer. Missing or
 unsupported consumer metadata holds the operation, not just that consumer.
-The caller must enumerate all managed active consumers; the command does not
-claim global discovery. Legacy consumers require a compatible protection export
+The caller must enumerate all managed active consumers. In a Git worktree, local
+worktree registration is reconciled and rechecked before unlink: each registered
+worktree must be active or explicitly listed in `inactive_consumer_roots` as
+completed/quiescent. A newly created undeclared worktree holds maintenance.
+This is not global discovery of unrelated repositories. Legacy consumers require a compatible protection export
 or scoped reader before inclusion can succeed. Do not silently omit a live lane.
 
 Apply refuses any live or unreconciled admission entries. The shared job runner
