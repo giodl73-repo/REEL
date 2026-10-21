@@ -6,6 +6,11 @@ references fail rather than overriding this ceiling. For compact new recordings,
 use one source pass, explicit singer/tempo/phrasing briefs and a fixed ceiling;
 lyric qualification alone does not establish musical pacing or voice delivery.
 
+Use repeated `--audio-guide-target-slot ID` options to restrict a generated guide
+to named same-source candidate slots in a multi-poem campaign. Other slots stay
+original text2music and carry no guide audio inputs/dependencies. Unknown targets
+and mismatched source/version locks fail before any recording starts.
+
 `tools/local_song_campaign.py` coordinates explicit project campaigns through
 `reel-assets`: ingestion, registration, pinned immutable versions and `run-job`.
 `tools/local_song_backend.py` is the trusted offline ACE/Whisper/Demucs adapter

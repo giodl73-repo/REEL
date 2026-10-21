@@ -13,6 +13,26 @@ def evidence(text):
 
 
 class LyricGateTests(unittest.TestCase):
+    def test_scoped_guide_cannot_target_another_source_or_unknown_slot(self):
+        request=dict(source={'sha256':'synthetic-one'},source_lock={'version_id':'v1'})
+        same=dict(id='same',**request)
+        other=dict(id='other',source={'sha256':'synthetic-two'},source_lock={'version_id':'v1'})
+        self.assertEqual(local_song_campaign.guide_targets([same,other],request,['same','same']),['same'])
+        for targets in [[],['unknown'],['other']]:
+            with self.assertRaises(ValueError):local_song_campaign.guide_targets([same,other],request,targets)
+
+    def test_scoped_guide_leaves_unrelated_slot_as_original_text2music(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/'source.txt';source.write_text('Alpha beta gamma\n')
+            campaign=local_song_campaign.Campaign(folder,Path(folder)/'unused.exe',Path(folder)/'work')
+            campaign.audio_guide=dict(target_slot_ids=['other'],request={'not':'resolved'},recording={},generation={},version_lock={},label='A',strength=.75)
+            slot=dict(id='synthetic-short',title='Synthetic',source={},source_lock={'different':'version'},duration_seconds=90,max_duration_seconds=90,caption='Invented brief',seed_base=100)
+            with patch.object(campaign,'locate',return_value=source) as locate:request=campaign.request(slot,1)
+            locate.assert_called_once_with(slot['source'])
+            self.assertEqual(request['task'],'text2music');self.assertNotIn('guide_audio',request)
+            self.assertEqual(request['duration_seconds'],90)
+
     def test_duration_ceiling_survives_retries_and_explicit_repetition(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as folder:

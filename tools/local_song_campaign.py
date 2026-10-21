@@ -18,6 +18,18 @@ import time
 from local_song_backend import read, digest, descriptor, checked, format_lyrics, format_repeated_sections
 
 
+def guide_targets(slots, request, targets):
+    selected=sorted(set(targets))
+    by_id={slot['id']:slot for slot in slots}
+    if not selected or any(target not in by_id for target in selected):
+        raise ValueError('Audio guide targets must name campaign slots')
+    for target in selected:
+        slot=by_id[target]
+        if slot['source']!=request['source'] or slot['source_lock']!=request['source_lock']:
+            raise ValueError('Audio guide target belongs to another source/version')
+    return selected
+
+
 class Campaign:
     def __init__(self, root, assets, work, metadata_retries=0):
         self.root=Path(root).resolve()
@@ -189,8 +201,11 @@ class Campaign:
             caption="Clearly sing this supplied lyric phrase: '"+focused+"'. "+caption
             repetition['lyric_focus']=self.lyric_focus
         task='text2music'
-        if self.audio_guide:
-            guide=self.audio_guide;original=read(self.locate(guide['request']))
+        guide=self.audio_guide
+        if guide and guide.get('target_slot_ids') and slot['id'] not in guide['target_slot_ids']:
+            guide=None
+        if guide:
+            original=read(self.locate(guide['request']))
             if original['task']!='text2music' or original['canonical_lyrics']!=lyrics or original['source_lock']!=slot['source_lock']:
                 raise ValueError('Audio guide must be generated from the identical poem version')
             if self.planner_asset:raise ValueError('Generated-guide cover does not combine with optional planning')
@@ -202,7 +217,7 @@ class Campaign:
                 guide_version_lock=guide['version_lock'],guide_label=guide['label'],audio_cover_strength=guide['strength'],
                 render_format='Exact supplied render layout of the generated same-poem guide; source words unchanged')
         if ceiling is not None:
-            if (self.audio_guide or self.timing_reference) and duration>ceiling:
+            if (guide or self.timing_reference) and duration>ceiling:
                 raise ValueError('Reference duration exceeds the candidate duration ceiling')
             duration=min(duration,ceiling)
             repetition['max_duration_seconds']=ceiling
@@ -228,7 +243,7 @@ class Campaign:
             ('listening','preview.mp3',24*1024**2),('vocal-estimate','vocals.wav',192*1024**2),
             ('lyric-analysis','analysis.json',8*1024**2),('transcripts','transcripts.zip',8*1024**2)]}
         inputs={'backend.py':a(backend_asset),'runtime.json':a(runtime_asset),'request.json':a(request_asset),'source.txt':a(slot['source'])}
-        if self.audio_guide:
+        if request['task']=='cover':
             inputs.update({'guide.wav':a(self.audio_guide['recording']),'guide-request.json':a(self.audio_guide['request']),
                 'guide-generation.json':a(self.audio_guide['generation'])})
         operations=['generate','analyze']
@@ -276,7 +291,7 @@ class Campaign:
         if self.ctc_runtime:
             package['assets'].update({'ctc-component':self.ctc_runtime['component'],'ctc-script':self.ctc_runtime['script']})
             package['dependencies'].append(self.ctc_runtime['version_lock'])
-        if self.audio_guide:
+        if request['task']=='cover':
             package['assets'].update({'guide-recording':self.audio_guide['recording'],'guide-request':self.audio_guide['request'],
                 'guide-generation':self.audio_guide['generation']})
             package['dependencies'].append(self.audio_guide['version_lock'])
@@ -314,7 +329,7 @@ class Campaign:
         print('DONE',rid,'PASS' if analysis['passed'] else 'RETRY',f"{analysis['qualifying_lines']}/{analysis['total_lines']} lines",flush=True)
         return summary
 
-    def run(self, campaign_path, runtime_asset_path, backend, adopt_backend_revision=None,repeat_after_failures=None,planner_asset_path=None,generation_route=None,repeat_section_lines=None,phrase_max_words=None,asr_dtype=None,timing_reference_slot=None,focus_missing_lines=None,ctc_runtime_asset_path=None,audio_guide_slot=None,audio_guide_strength=None):
+    def run(self, campaign_path, runtime_asset_path, backend, adopt_backend_revision=None,repeat_after_failures=None,planner_asset_path=None,generation_route=None,repeat_section_lines=None,phrase_max_words=None,asr_dtype=None,timing_reference_slot=None,focus_missing_lines=None,ctc_runtime_asset_path=None,audio_guide_slot=None,audio_guide_strength=None,audio_guide_target_slots=None):
         campaign=read(campaign_path)
         if campaign['schema']!='reel.song-audition-campaign.v1':raise ValueError('Unsupported campaign')
         ids=[slot['id'] for slot in campaign['slots']]
@@ -343,12 +358,14 @@ class Campaign:
             proposed=dict(slot_id=audio_guide_slot,label=next(slot['label'] for slot in campaign['slots'] if slot['id']==audio_guide_slot),
                 recording=donor['outputs']['recording'],request=donor['request'],generation=donor['outputs']['generation'],
                 version_lock=donor['version_lock'],strength=.75 if audio_guide_strength is None else audio_guide_strength)
+            if audio_guide_target_slots is not None:
+                proposed['target_slot_ids']=guide_targets(campaign['slots'],req,audio_guide_target_slots)
             if state.get('audio_guide')!=proposed:
                 state.setdefault('audio_guide_revisions',[]).append(dict(previous=state.get('audio_guide'),replacement=proposed,
                     after_retained_takes=len(state['attempts']),qualified_slots_preserved=sorted(state['qualified'])))
                 state['audio_guide']=proposed
-        elif audio_guide_strength is not None:
-            raise ValueError('Guide strength requires an explicit guide slot')
+        elif audio_guide_strength is not None or audio_guide_target_slots is not None:
+            raise ValueError('Guide strength/targets require an explicit guide slot')
         self.audio_guide=state.get('audio_guide')
         if timing_reference_slot and not state.get('timing_reference'):
             if timing_reference_slot not in state['qualified']:raise ValueError('Timing reference must already qualify')
@@ -522,13 +539,14 @@ def main():
     run.add_argument('--ctc-runtime-asset',help='Explicit frozen independent Spanish CTC component for bounded near-pass rechecks; no downloads or lyric prompt')
     run.add_argument('--audio-guide-slot',help='Explicit generated same-poem qualified text2music recording as a cover guide; private scope and receipt verified')
     run.add_argument('--audio-guide-strength',type=float,help='Explicit cover influence from 0.2 to 1.0; default 0.75 with a guide')
+    run.add_argument('--audio-guide-target-slot',action='append',help='Restrict a generated guide to explicitly named same-source slots; repeat for multiple targets')
     restore=sub.add_parser('restore');restore.add_argument('--state',required=True);restore.add_argument('--lfs-executable',required=True)
     restore.add_argument('--all-attempts',action='store_true',help='Verify retained failed takes as well as qualifying candidates')
     review=sub.add_parser('review');review.add_argument('--campaign',required=True);review.add_argument('--state',required=True)
     stop=sub.add_parser('request-stop');stop.add_argument('--clear',action='store_true')
     args=p.parse_args();c=Campaign(args.root,args.assets,args.work,args.metadata_retries)
     if args.operation=='snapshot':c.freeze_runtime(args)
-    elif args.operation=='run':c.run(args.campaign,args.runtime_asset,args.backend,args.adopt_backend_revision,args.repeat_after_failures,args.planner_asset,args.generation_route,args.repeat_section_lines,args.phrase_max_words,args.asr_dtype,args.timing_reference_slot,args.focus_missing_lines,args.ctc_runtime_asset,args.audio_guide_slot,args.audio_guide_strength)
+    elif args.operation=='run':c.run(args.campaign,args.runtime_asset,args.backend,args.adopt_backend_revision,args.repeat_after_failures,args.planner_asset,args.generation_route,args.repeat_section_lines,args.phrase_max_words,args.asr_dtype,args.timing_reference_slot,args.focus_missing_lines,args.ctc_runtime_asset,args.audio_guide_slot,args.audio_guide_strength,args.audio_guide_target_slot)
     elif args.operation=='restore':c.restore(args.state,args.lfs_executable,args.all_attempts)
     elif args.operation=='review':c.review(read(args.campaign),read(args.state))
     else:c.save('stop-after-current.json',dict(requested=not args.clear))
