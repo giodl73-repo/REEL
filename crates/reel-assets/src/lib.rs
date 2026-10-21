@@ -9,6 +9,7 @@ pub mod goldens;
 pub mod jobs;
 pub mod registry;
 pub mod scenes;
+pub mod tier_review;
 pub mod tiering;
 pub mod versions;
 use serde_json::{Value, json};

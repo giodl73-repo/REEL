@@ -295,6 +295,9 @@ pub fn report(root: &Path) -> Result<Value> {
     report_with_progress(root, |_, _| {})
 }
 pub fn report_with_progress(root: &Path, mut progress: impl FnMut(usize, usize)) -> Result<Value> {
+    let census_started_unix_seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
     use sha2::{Digest, Sha256};
     let profile_bytes = fs::read(root.join("asset-project.json"))?;
     let p = project(root)?;
@@ -589,6 +592,12 @@ pub fn report_with_progress(root: &Path, mut progress: impl FnMut(usize, usize))
     let overlaps = json!({"current_and_noncurrent_objects":current.intersection(&noncurrent).count(),"current_and_deprecated_objects":current.intersection(&deprecated).count(),"noncurrent_only_objects":noncurrent.difference(&current).count(),"deprecated_only_of_current_objects":deprecated.difference(&current).count()});
     let mut result = json!({"schema":"reel.asset-cache-report.v1","project_id":p.project_id,"registry_generation":state.generation,"scope":if p.scan_cas{"registered plus canonical active-cache CAS census"}else{"registered only"},"archive_probed":false,"payload_hashes_verified":false,"payload_bytes_copied":0,"media_deleted":false,"removal_authorized":false,"creative_approval_inferred":false,"coverage_complete":state.coverage_complete,"safe_reclaimable_bytes":null,"reclaimability_reason":"Project usage is not global consumer or backup proof; hard links and other cache content may retain storage. No deletion is authorized.","categories":categories,"registered_objects":registered.len(),"inventoried_objects":rows.len(),"registered_objects_missing_or_wrong_size":missing,"wrong_size_copies":mismatches,"observed_unique_physical_files":physical_files.len(),"observed_unique_allocated_bytes":physical_files.values().map(|f|f.allocated).sum::<u64>(),"extra_canonical_tier_copy_allocated_bytes":duplicate_tier_bytes,"tiers":tiers,"objects":rows,"limits":"Canonical CAS and named LFS object paths only; payload statistics are metadata-only, not byte integrity or full-volume attribution. Logical categories are exclusive; reference flags overlap."});
     result["profile_sha256"] = json!(profile_sha256);
+    result["census_started_unix_seconds"] = json!(census_started_unix_seconds);
+    result["census_completed_unix_seconds"] = json!(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs()
+    );
     result["overlaps"] = overlaps;
     result["unmeasured_physical_objects"] = json!(unmeasured_by_class.values().sum::<u64>());
     result["unregistered_physical_measurement_enabled"] = json!(p.measure_unregistered_physical);
