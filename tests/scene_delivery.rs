@@ -39,16 +39,6 @@ fn assert_picture_frames_match(before: &Path, after: &Path, pictures: &[&str]) {
     }
 }
 
-fn assert_lossless_composition_matches(before: &Path, after: &Path, pictures: &[&str]) {
-    assert_picture_frames_match(before, after, pictures);
-    for name in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
-        assert!(
-            fs::read(before.join(name)).unwrap() == fs::read(after.join(name)).unwrap(),
-            "stem differs: {name}"
-        );
-    }
-}
-
 #[test]
 #[ignore = "requires native FFmpeg; focal and pan camera execution"]
 fn focal_and_pan_camera_render_real_pixels_and_preserve_native_audio() {
