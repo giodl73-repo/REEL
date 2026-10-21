@@ -1853,6 +1853,12 @@ pub fn build(
                 if actual != expected {
                     bail!("frame conform changed native audio prefix or nonzero padded tail");
                 }
+                if needs_normalization {
+                    // This exact file was created above in our private temp
+                    // directory. The checked padded replacement is now the
+                    // only consumed copy; original selected sources remain.
+                    fs::remove_file(&selected)?;
+                }
                 selected = padded;
                 audio_hash = actual.0;
                 samples = actual.1 / 6;
