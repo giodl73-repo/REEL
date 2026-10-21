@@ -41,6 +41,48 @@ remain unresolved findings. A template identifier binds to its native template
 catalogue. Native scene V2 and episode structures are parsed with `reel-assembly`;
 the inspector does not introduce another authoring grammar.
 
+## Resolve an authored scene's selected bindings
+
+An optional `scene_contexts` array names the native resolver's seven metadata
+inputs. It invokes the existing `reel-assembly::scene_authoring::resolve_scene`;
+there is no parallel implementation of scene semantics.
+
+```json
+{
+  "id": "pilot-scene-01",
+  "scene": "episodes/pilot/scenes/01/scene.json",
+  "episode": "episodes/pilot/episode.json",
+  "templates": "templates/catalog.json",
+  "policy": "policies/scene-policy.json",
+  "season_bindings": "seasons/one/bindings.json",
+  "episode_bindings": "episodes/pilot/bindings.json",
+  "scene_bindings": "episodes/pilot/scenes/01/scene-bindings.json"
+}
+```
+
+Each field and each `documents` value accepts a repository-relative string or a
+strict cache descriptor containing exactly `sha256`, `bytes` and `cache_uri`.
+Cached metadata must already be registered at that exact byte count. It is read
+only by its declared digest, checked freshly in active-cache order and included
+in the same metadata budgets and snapshot rechecks. No repository copy or media
+hydration is needed. Contexts have unique, bounded IDs and a hard limit of 64.
+
+Each context records its document hashes, native scene/language fingerprints,
+template-definition declarations and selected binding map. Native scope, cue
+coverage, template use, policy, selection-state and ambiguous/missing-slot
+failures hold that context. Only the resolver's selected inputs get
+`requires-asset` edges. Additional entries in binding files keep `bound-asset`
+edges; they are not promoted to required inputs. A symbolic resolution can pass
+while selected bytes are absent: that context is `inputs-held`, with separate
+`native_resolution_valid` and `input_presence_valid` flags.
+
+This is native symbolic selected-binding resolution. It does not decode media,
+verify source-text/alignment or template-definition payload contents, validate
+rendered timing, produce a build certificate or supply human approval. Existing
+standalone coverage findings remain visible; a successful context does not make
+an incomplete whole-episode graph pass `reference-check`. Explicit scene policy
+overrides and presentation-template references are also extracted.
+
 ## Relationship meanings
 
 | Relationship | Meaning |
@@ -58,6 +100,8 @@ the inspector does not introduce another authoring grammar.
 | `requires-scene` / `requires-policy` / `requires-template` | Native episode references, resolved through the explicit profile. |
 | `episode-context` | A scene's contextual backlink; not a dependency cycle. |
 | `bound-asset` | An asset descriptor in a native scoped binding document. |
+| `authoring-document` | One explicitly supplied metadata document for a native scene context. |
+| `requires-asset` | An exact selected input returned by the native scene resolver; media presence remains size-only. |
 
 Only `requires-version` edges participate in immutable dependency-cycle checks.
 Queries show direct relationships, not a complete transitive rebuild analysis.
@@ -85,8 +129,9 @@ package; arbitrary reports using that role are not traversed.
 Native episode, scene, scoped binding, policy and template catalogue structures
 use the existing Rust parsers. Exported JSON Schemas are not yet available for
 those native structures; the catalogue reports `null` and states extraction
-coverage. Episode presentation content, motion, cue/source authority, score and
-binding resolution still require native authoring/build validation. Rights,
+coverage. Explicit scene contexts perform native symbolic selected-binding
+resolution. Whole-episode presentation, rendered motion, cue/source evidence
+and complete build/delivery validation remain separate. Rights,
 approval, delivery mirrors, generic family indexes and other schema families
 remain explicit coverage gaps. No inspection pass supplies human approval,
 voice consent or a build certificate. JSON Schemas describe structure; Rust

@@ -11,7 +11,7 @@ class Element {
   addEventListener(name,handler) { this.events[name]=handler; }
 }
 function fixture(extra={}) {
-  const graph={project_id:'independent-project',scope:'Scoped; no removal authorization',nodes:{
+  const graph={project_id:'independent-project',registry_generation:7,scope:'Scoped; no removal authorization',nodes:{
     inventory:{kind:'document',schema:'inventory.v1',status:'inspected',details:{}},
     media:{kind:'asset',schema:null,status:'present-size-only',details:{bytes:42}},
     version:{kind:'version',schema:null,status:'registered',details:{}}},
@@ -48,4 +48,11 @@ test('large graphs have bounded initial node rendering and expandable results',(
   assert.equal(get('nodes').children.length,200);assert.equal(get('more').hidden,false);
   get('more').events.click();assert.equal(get('nodes').children.length,400);
   get('more').events.click();assert.equal(get('nodes').children.length,430);assert.equal(get('more').hidden,true);
+});
+test('native required input links are distinct from inventory observations and show snapshot generation',()=>{
+  const {get}=fixture({edges:[{from:'version',to:'media',kind:'requires-asset',field:'selected_inputs/picture'}]});
+  assert.match(get('summary').textContent,/registry snapshot 7/);
+  get('nodes').children[1].events.click();
+  assert.match(get('incoming').children[0].children[1].textContent,/Required selected input returned by the native scene resolver/);
+  assert.match(get('incoming').children[0].children[1].textContent,/size-only/);
 });

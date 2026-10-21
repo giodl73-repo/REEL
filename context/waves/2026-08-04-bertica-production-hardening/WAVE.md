@@ -73,6 +73,14 @@ See `docs/scene-delivery-v0.1.md`, `docs/reviews/2026-09-09-scene-delivery.md`, 
 
 ## Validation
 
+### 2026-10-21 native scene selected-binding reference contexts
+
+Explicit scene contexts now reuse the existing native authoring resolver over
+seven declared metadata documents, including registered cache-backed sources.
+Only its selected inputs become required-asset edges. Presence holds, document
+hashes and native fingerprints remain explicit; no render or approval is
+implied. See `docs/handoff/2026-10-21-native-scene-reference-bindings.md`.
+
 ### 2026-10-21 bounded asset schema and reference inspection
 
 Added a Rust schema catalogue, root-scoped reference inspector, strict check,
