@@ -319,7 +319,19 @@ pub fn plan(root: &Path, policy_path: &Path, census_path: &Path, now: u64) -> Re
     let policy: Policy = serde_json::from_slice(&policy_bytes)?;
     let cfg = config(root)?;
     policy.validate(&cfg)?;
-    let baseline = read_bounded(census_path, 512 * 1024 * 1024)?;
+    let encoded = read_bounded(census_path, 512 * 1024 * 1024)?;
+    let encoded_hash = digest(&encoded);
+    let encoded_bytes = encoded.len();
+    let compressed = encoded.starts_with(&[0x1f, 0x8b]);
+    let baseline = if compressed {
+        let mut decoded = vec![];
+        flate2::read::MultiGzDecoder::new(encoded.as_slice())
+            .take(policy.baseline.bytes + 1)
+            .read_to_end(&mut decoded)?;
+        decoded
+    } else {
+        encoded
+    };
     if baseline.len() as u64 != policy.baseline.bytes || digest(&baseline) != policy.baseline.sha256
     {
         return Err("Baseline inventory hash/byte mismatch".into());
@@ -507,6 +519,7 @@ pub fn plan(root: &Path, policy_path: &Path, census_path: &Path, now: u64) -> Re
     let mut plan = json!({"schema":"reel.asset-tier-plan.v1","project_id":policy.project_id,
         "created_unix_seconds":now,"expires_unix_seconds":expires,"policy_sha256":digest(&policy_bytes),
         "baseline":policy.baseline,"baseline_generation":census.registry_generation,
+        "baseline_input_sha256":encoded_hash,"baseline_input_bytes":encoded_bytes,"baseline_encoding":if compressed{"gzip"}else{"json"},
         "live_generation":before.generation,"live_fingerprint_sha256":before.fingerprint,
         "baseline_profile_sha256":census.profile_sha256,"live_profile_sha256":before.profile_hash,
         "delta":{"new_registered_objects":new_registered,"baseline_unknown_now_registered":newly_registered},
@@ -811,6 +824,40 @@ pub(crate) mod tests {
         assert!(f.run().is_err());
         f.policy["project_id"] = json!("fixture");
         fs::write(f.root().join("baseline.json"), b"{}").unwrap();
+        assert!(f.run().is_err());
+    }
+    #[test]
+    fn retained_gzip_inventory_is_read_directly_with_decoded_identity_checks() {
+        use std::io::Write;
+        let mut f = Fixture::new();
+        f.put(b"registered", true);
+        f.baseline();
+        let path = f.root().join("baseline.json");
+        let raw = fs::read(&path).unwrap();
+        let mut gzip = flate2::write::GzEncoder::new(vec![], flate2::Compression::fast());
+        gzip.write_all(&raw).unwrap();
+        let packed = gzip.finish().unwrap();
+        fs::write(&path, &packed).unwrap();
+        let p = f.run().unwrap();
+        assert_eq!(p["baseline_encoding"], "gzip");
+        assert_eq!(p["baseline_input_bytes"], packed.len());
+        assert_eq!(p["baseline"]["sha256"], digest(&raw));
+        let mut corrupt = packed;
+        let last = corrupt.len() - 1;
+        corrupt[last] ^= 1;
+        fs::write(path, corrupt).unwrap();
+        assert!(f.run().is_err());
+    }
+    #[test]
+    fn gzip_decoding_cannot_exceed_the_expected_raw_inventory_budget() {
+        use std::io::Write;
+        let mut f = Fixture::new();
+        f.baseline();
+        let raw = fs::read(f.root().join("baseline.json")).unwrap();
+        let mut gzip = flate2::write::GzEncoder::new(vec![], flate2::Compression::fast());
+        gzip.write_all(&raw).unwrap();
+        gzip.write_all(&vec![b' '; 4096]).unwrap();
+        fs::write(f.root().join("baseline.json"), gzip.finish().unwrap()).unwrap();
         assert!(f.run().is_err());
     }
     #[test]

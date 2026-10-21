@@ -64,3 +64,8 @@ control; source pin updates and ignored binaries are separate operations.
 Fixtures cover exact state preservation, small transactions, corrupt/fallback
 bases, unauthorized and recursive imports, required/unknown patch fields,
 metadata-root protection and read-only explicit legacy consumers.
+
+The actual executable is also exercised as a subprocess: copy verification runs
+on its real main-thread stack, with bounded heap hashing buffers, and Windows
+apply preserves the verified history copy. This guards against stack failures
+hidden by the larger stacks of unit-test worker threads.

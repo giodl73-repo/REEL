@@ -9,6 +9,9 @@ Explicit read-only legacy consumers can export current/lease/metadata/catalogue
 protections without configuring or editing their checkout. Default copy
 verification can report live admissions without blocking jobs; apply still holds.
 
+Retained gzip inventories now decode under their exact raw length/hash budget;
+82 scoped tests pass, including the real-executable stack regression.
+
 Validation:
 
 ```text

@@ -6,7 +6,7 @@ metadata-root protection, read-only explicit legacy consumer scope and
 contracts remain readable. Default redundant-copy verification can run with
 active jobs; actual apply still refuses live/unreconciled admissions.
 
-Executed locally: 80 asset-crate tests (79 unit plus one real-executable CLI regression), Clippy with warnings denied, release build,
+Executed locally: 82 asset-crate tests (81 unit plus one real-executable CLI regression), Clippy with warnings denied, release build,
 formatting, roles and whitespace. Six new cases cover representation/state
 preservation, corrupt/unauthorized/recursive bases, invalid patches, protected
 metadata roots and read-only legacy consumer behavior. Public inputs are synthetic.
@@ -24,4 +24,9 @@ admission behavior or quiescence before destructive maintenance.
 The CLI regression covers the executable main-thread stack boundary. A streaming
 hash buffer is heap allocated so Windows main stacks do not overflow even when
 library test-worker stacks are larger. No real apply was requested by the failing
-private verification case; the fixed command must be rechecked before adoption.
+private verification case. The fixed command subsequently verified three private
+source/history pairs without removing links; active admissions remained reported.
+
+Tier planning also reads the retained gzip inventory directly, binding decoded
+policy identity and recording encoded identity. Two synthetic cases cover exact
+decoding, damaged gzip rejection and the decoded-length budget.
