@@ -20,7 +20,7 @@ class LyricGateTests(unittest.TestCase):
             root=Path(folder);work=root/'work';campaign=local_song_campaign.Campaign(root,root/'unused.exe',work)
             path=campaign.save('campaign.json',dict(schema='reel.song-audition-campaign.v1',slots=[dict(id='first'),dict(id='second')]))
             runtime=campaign.save('runtime.json',dict(sha256='synthetic',bytes=0))
-            def result(slot,attempt):return dict(id=slot['id']+'-'+str(attempt),slot_id=slot['id'],attempt=attempt,qualified=slot['id']=='second' or attempt>1)
+            def result(slot,attempt,*runtime_and_backend):return dict(id=slot['id']+'-'+str(attempt),slot_id=slot['id'],attempt=attempt,qualified=slot['id']=='second' or attempt>1)
             with patch.object(campaign,'ingest',return_value=dict(sha256='synthetic',bytes=0)),patch.object(campaign,'locate',return_value=runtime),patch.object(campaign,'review'),patch.object(campaign,'run_take',side_effect=result) as take:
                 campaign.run(path,runtime,root/'backend.py',takes_per_slot=1)
                 active=json.loads((work/'active.json').read_text(encoding='utf-8'))
