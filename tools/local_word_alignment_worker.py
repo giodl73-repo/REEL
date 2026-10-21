@@ -180,7 +180,7 @@ class WhisperXBackend:
         result = self.alignment.align(
             [{"start": 0.0, "end": item["cue_end_sample"] / item["sample_rate"], "text": item["text"]}],
             model, metadata, self.load_audio(str(audio)), device,
-            interpolate_method="nearest", return_char_alignments=False, print_progress=False)
+            interpolate_method="ignore", return_char_alignments=False, print_progress=False)
         return result["word_segments"]
 
 

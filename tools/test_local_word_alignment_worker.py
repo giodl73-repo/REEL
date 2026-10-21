@@ -8,6 +8,7 @@ import struct
 import tempfile
 import unittest
 from unittest.mock import patch
+from unittest.mock import Mock
 import wave
 
 import local_word_alignment_worker as worker
@@ -107,6 +108,14 @@ class LocalWords(unittest.TestCase):
         self.assertEqual(result["held_count"],1)
         self.assertNotIn("evidence",result["results"][0])
         self.assertEqual(json.loads((self.root/"result.json").read_bytes())["candidate_count"],0)
+
+    def test_backend_does_not_interpolate_unmeasured_word_clocks(self):
+        backend=worker.WhisperXBackend.__new__(worker.WhisperXBackend)
+        backend.request={'device':'cpu'};backend.loaded={'es':('model','metadata')}
+        backend.alignment=Mock();backend.alignment.align.return_value={'word_segments':self.words}
+        backend.load_audio=Mock(return_value='audio')
+        self.assertEqual(backend(self.item,self.root/'input.wav'),self.words)
+        self.assertEqual(backend.alignment.align.call_args.kwargs['interpolate_method'],'ignore')
 
 
 if __name__=="__main__":unittest.main()
