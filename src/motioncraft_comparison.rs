@@ -392,7 +392,10 @@ pub fn check(root: &Path) -> Result<Value> {
     }
     let (source, source_plan) =
         scene_delivery::plan(&root.join("jobs/source.json"), &root.join("assets"))?;
-    let original: Job = serde_json::from_slice(&fs::read(root.join("original-job.json"))?)?;
+    // Use the same JSON/YAML reader as native scene planning. Serde's tagged
+    // enum buffering cannot deserialize arbitrary-precision JSON float maps
+    // when a consumer enables that serde_json feature.
+    let original: Job = serde_yaml::from_slice(&fs::read(root.join("original-job.json"))?)?;
     if serde_json::to_value(&original)? != serde_json::to_value(&source)? {
         bail!("portable source differs from original selection");
     }
