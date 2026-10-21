@@ -329,7 +329,9 @@ class Campaign:
         print('DONE',rid,'PASS' if analysis['passed'] else 'RETRY',f"{analysis['qualifying_lines']}/{analysis['total_lines']} lines",flush=True)
         return summary
 
-    def run(self, campaign_path, runtime_asset_path, backend, adopt_backend_revision=None,repeat_after_failures=None,planner_asset_path=None,generation_route=None,repeat_section_lines=None,phrase_max_words=None,asr_dtype=None,timing_reference_slot=None,focus_missing_lines=None,ctc_runtime_asset_path=None,audio_guide_slot=None,audio_guide_strength=None,audio_guide_target_slots=None):
+    def run(self, campaign_path, runtime_asset_path, backend, adopt_backend_revision=None,repeat_after_failures=None,planner_asset_path=None,generation_route=None,repeat_section_lines=None,phrase_max_words=None,asr_dtype=None,timing_reference_slot=None,focus_missing_lines=None,ctc_runtime_asset_path=None,audio_guide_slot=None,audio_guide_strength=None,audio_guide_target_slots=None,takes_per_slot=None):
+        if takes_per_slot is not None and (type(takes_per_slot) is not int or not 1<=takes_per_slot<=10):
+            raise ValueError('Takes per slot must be between 1 and 10')
         campaign=read(campaign_path)
         if campaign['schema']!='reel.song-audition-campaign.v1':raise ValueError('Unsupported campaign')
         ids=[slot['id'] for slot in campaign['slots']]
@@ -430,7 +432,9 @@ class Campaign:
             print('STOP REQUESTED; retained campaign can resume after explicit request clear',flush=True)
             return
         for slot in campaign['slots']:
+            completed_in_round=0
             while slot['id'] not in state['qualified']:
+                if takes_per_slot is not None and completed_in_round>=takes_per_slot:break
                 attempt=1+max([a['attempt'] for a in state['attempts'] if a['slot_id']==slot['id']],default=0)
                 self.lyric_focus=None
                 prior=[a for a in state['attempts'] if a['slot_id']==slot['id']]
@@ -445,6 +449,7 @@ class Campaign:
                             numbers.append(row['line']);word_count+=row['total_words']
                     if numbers:self.lyric_focus=dict(line_numbers=numbers,analysis=best['outputs']['lyric-analysis'],version_lock=best['version_lock'],recognition_prompt=False)
                 result=self.run_take(slot,attempt,runtime_asset,backend_asset)
+                completed_in_round+=1
                 state['attempts'].append(result)
                 if result['qualified']:state['qualified'][slot['id']]=result
                 self.save('state.json',state)
@@ -454,9 +459,10 @@ class Campaign:
                 if stop_requested():
                     print('DRAINED after completed recording and analysis; all results retained',flush=True)
                     return
-        self.save('active.json',dict(stage='complete',qualified=len(ids),target=len(ids)))
+        complete=len(state['qualified'])==len(ids)
+        self.save('active.json',dict(stage='complete' if complete else 'round-complete',qualified=len(state['qualified']),target=len(ids)))
         self.review(campaign,state)
-        print('COMPLETE',len(ids),'qualified slots',len(state['attempts']),'retained takes',flush=True)
+        print('COMPLETE' if complete else 'ROUND COMPLETE',len(state['qualified']),'qualified slots of',len(ids),len(state['attempts']),'retained takes',flush=True)
 
     def review(self,campaign,state):
         def media_view(asset,name,extension):
@@ -540,13 +546,14 @@ def main():
     run.add_argument('--audio-guide-slot',help='Explicit generated same-poem qualified text2music recording as a cover guide; private scope and receipt verified')
     run.add_argument('--audio-guide-strength',type=float,help='Explicit cover influence from 0.2 to 1.0; default 0.75 with a guide')
     run.add_argument('--audio-guide-target-slot',action='append',help='Restrict a generated guide to explicitly named same-source slots; repeat for multiple targets')
+    run.add_argument('--takes-per-slot',type=int,choices=range(1,11),help='Complete a bounded serial round before returning; pending slots remain pending and qualified slots stay fixed')
     restore=sub.add_parser('restore');restore.add_argument('--state',required=True);restore.add_argument('--lfs-executable',required=True)
     restore.add_argument('--all-attempts',action='store_true',help='Verify retained failed takes as well as qualifying candidates')
     review=sub.add_parser('review');review.add_argument('--campaign',required=True);review.add_argument('--state',required=True)
     stop=sub.add_parser('request-stop');stop.add_argument('--clear',action='store_true')
     args=p.parse_args();c=Campaign(args.root,args.assets,args.work,args.metadata_retries)
     if args.operation=='snapshot':c.freeze_runtime(args)
-    elif args.operation=='run':c.run(args.campaign,args.runtime_asset,args.backend,args.adopt_backend_revision,args.repeat_after_failures,args.planner_asset,args.generation_route,args.repeat_section_lines,args.phrase_max_words,args.asr_dtype,args.timing_reference_slot,args.focus_missing_lines,args.ctc_runtime_asset,args.audio_guide_slot,args.audio_guide_strength,args.audio_guide_target_slot)
+    elif args.operation=='run':c.run(args.campaign,args.runtime_asset,args.backend,args.adopt_backend_revision,args.repeat_after_failures,args.planner_asset,args.generation_route,args.repeat_section_lines,args.phrase_max_words,args.asr_dtype,args.timing_reference_slot,args.focus_missing_lines,args.ctc_runtime_asset,args.audio_guide_slot,args.audio_guide_strength,args.audio_guide_target_slot,args.takes_per_slot)
     elif args.operation=='restore':c.restore(args.state,args.lfs_executable,args.all_attempts)
     elif args.operation=='review':c.review(read(args.campaign),read(args.state))
     else:c.save('stop-after-current.json',dict(requested=not args.clear))

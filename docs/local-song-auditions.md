@@ -11,6 +11,11 @@ to named same-source candidate slots in a multi-poem campaign. Other slots stay
 original text2music and carry no guide audio inputs/dependencies. Unknown targets
 and mismatched source/version locks fail before any recording starts.
 
+`--takes-per-slot N` runs a bounded serial round (1–10 completed takes for each
+pending slot). A failed brief does not hold the rest of the campaign indefinitely.
+Unqualified slots remain pending; `round-complete` is distinct from campaign
+completion. Resume another explicit round to continue; qualified takes stay fixed.
+
 `tools/local_song_campaign.py` coordinates explicit project campaigns through
 `reel-assets`: ingestion, registration, pinned immutable versions and `run-job`.
 `tools/local_song_backend.py` is the trusted offline ACE/Whisper/Demucs adapter

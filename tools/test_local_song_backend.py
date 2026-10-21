@@ -6,6 +6,7 @@ import unittest
 import local_song_backend as backend
 import local_song_campaign  # Campaign syntax/import must remain dependency-free.
 import local_song_ctc
+import json
 
 
 def evidence(text):
@@ -13,6 +14,25 @@ def evidence(text):
 
 
 class LyricGateTests(unittest.TestCase):
+    def test_bounded_serial_round_advances_other_slots_without_claiming_completion(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);work=root/'work';campaign=local_song_campaign.Campaign(root,root/'unused.exe',work)
+            path=campaign.save('campaign.json',dict(schema='reel.song-audition-campaign.v1',slots=[dict(id='first'),dict(id='second')]))
+            runtime=campaign.save('runtime.json',dict(sha256='synthetic',bytes=0))
+            def result(slot,attempt):return dict(id=slot['id']+'-'+str(attempt),slot_id=slot['id'],attempt=attempt,qualified=slot['id']=='second' or attempt>1)
+            with patch.object(campaign,'ingest',return_value=dict(sha256='synthetic',bytes=0)),patch.object(campaign,'locate',return_value=runtime),patch.object(campaign,'review'),patch.object(campaign,'run_take',side_effect=result) as take:
+                campaign.run(path,runtime,root/'backend.py',takes_per_slot=1)
+                active=json.loads((work/'active.json').read_text(encoding='utf-8'))
+                self.assertEqual(active,dict(stage='round-complete',qualified=1,target=2))
+                self.assertEqual([x.args[0]['id'] for x in take.call_args_list],['first','second'])
+                campaign.run(path,runtime,root/'backend.py',takes_per_slot=1)
+                active=json.loads((work/'active.json').read_text(encoding='utf-8'))
+                self.assertEqual(active,dict(stage='complete',qualified=2,target=2))
+                state=json.loads((work/'state.json').read_text(encoding='utf-8'))
+                self.assertEqual(state['qualified']['second']['attempt'],1)
+                self.assertEqual(len(state['attempts']),3)
+
     def test_scoped_guide_cannot_target_another_source_or_unknown_slot(self):
         request=dict(source={'sha256':'synthetic-one'},source_lock={'version_id':'v1'})
         same=dict(id='same',**request)
