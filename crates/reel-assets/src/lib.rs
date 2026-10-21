@@ -109,6 +109,12 @@ pub fn selected(root: &Path) -> Result<HashMap<String, u64>> {
 }
 
 pub fn generic_objects(root: &Path) -> Result<HashMap<String, u64>> {
+    generic_objects_with(root, None)
+}
+pub(crate) fn generic_objects_with(
+    root: &Path,
+    storage: Option<&Config>,
+) -> Result<HashMap<String, u64>> {
     let mut map = HashMap::new();
     let mut registries = Vec::new();
     let archive = root.join("registry/object-index.json");
@@ -129,7 +135,12 @@ pub fn generic_objects(root: &Path) -> Result<HashMap<String, u64>> {
         {
             return Err("Invalid cache-backed object index".into());
         }
-        let path = active_existing(&config(root)?, oid, size)?
+        let cfg = if let Some(c) = storage {
+            c.clone()
+        } else {
+            config(root)?
+        };
+        let path = active_existing(&cfg, oid, size)?
             .ok_or("Object index absent from active caches; archive not probed")?;
         // The index authorizes its own LFS pointer without a circular lookup.
         add_asset(&mut map, asset)?;

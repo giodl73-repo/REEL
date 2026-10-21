@@ -16,6 +16,12 @@ unknowns that became registered are reclassified. New unregistered files still
 require an explicit later census. Baseline copy observations and capacity are
 not refreshed, so byte-saving estimates are advisory, not deletion eligibility.
 
+The retained baseline may be JSON or gzip (detected by its magic bytes). Policy
+identity always binds the decoded JSON SHA-256 and byte count. Decoding is
+bounded by that expected length, rejects damaged gzip data, and never writes an
+uncompressed temporary file. Plans also record the encoded input identity and
+encoding so the exact retained asset remains traceable.
+
 Policy schema: `reel.asset-tier-policy.v1`, with project ID, exact baseline
 SHA-256/bytes; named `tiers` bound by `storage` (`active` or `archive`) and index
 into ignored machine storage configuration; distinct `selected_tier`,

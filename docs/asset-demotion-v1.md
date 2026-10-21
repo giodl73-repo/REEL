@@ -13,6 +13,10 @@ and removes only redundant hot CAS/configured LFS links. It never moves a last
 copy, copies new payloads, accesses archive roots or permanently retires history.
 There is no path-based deletion fallback on unsupported platforms.
 
+Compatible read-only older consumers, protection exports and compacted control
+indexes are described in [version index v2](asset-version-index-v2.md). Default
+verification reports admission presence; actual apply still holds on admissions.
+
 The strict `reel.asset-demotion-request.v1` record contains `policy` and `plan`
 paths, exact `plan_sha256`, absolute `consumer_roots` including the invoking
 project, `consumer_scope: all-managed-cache-consumers`, `sha256s`, positive
