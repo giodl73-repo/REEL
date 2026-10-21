@@ -9,7 +9,7 @@ use std::{
     path::Path,
 };
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Dependency {
     pub logical_id: String,

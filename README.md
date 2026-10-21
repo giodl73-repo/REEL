@@ -26,6 +26,9 @@ reports in their producing asset repository/cache.
 The [asset-manager workflow](docs/asset-manager-workflow-v1.md) includes generic
 project templates, explicit inventory refresh, an offline block-review UI and
 the separate dry-run/application steps.
+The [schema and reference inspector](docs/asset-references-v1.md) exports typed
+contracts and builds a bounded, private offline graph with explicit gaps,
+distinguishing dependencies, inventory membership and historical versions.
 
 ---
 
