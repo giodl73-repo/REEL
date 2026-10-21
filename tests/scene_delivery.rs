@@ -1662,7 +1662,7 @@ fn selected_ass_layer_changes_rendered_pixels_and_is_checked() {
     );
     for name in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
         assert_eq!(
-            fs::read(compact.join(name)).unwrap(),
+            fs::read(output.join(name)).unwrap(),
             fs::read(retained.join(name)).unwrap()
         );
     }
