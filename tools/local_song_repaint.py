@@ -88,8 +88,14 @@ def main():
     results=[]
     for i,patch in enumerate(plan['patches']):
         source=f'patch-source-{i}.wav'
-        sf.write(source,working,rate,subtype='FLOAT')
-        params=GenerationParams(task_type='repaint',src_audio=source,repainting_start=patch['start'],repainting_end=patch['end'],chunk_mask_mode='explicit',repaint_mode='aggressive',repaint_wav_crossfade_sec=0,caption=plan['caption'],lyrics=patch['lyrics'],instrumental=False,vocal_language='es',duration=len(working)/rate,inference_steps=8,guidance_scale=7.5,seed=plan['seed']+i,thinking=False,use_cot_metas=False,use_cot_caption=False,use_cot_language=False,use_cot_lyrics=False)
+        # Bound source encoding to the patch plus actual neighboring music.
+        # The full master never passes through a generative reconstruction.
+        context_start=max(0,round((patch['start']-5)*rate))
+        context_end=min(len(working),round((patch['end']+5)*rate))
+        context=working[context_start:context_end]
+        offset=context_start/rate
+        sf.write(source,context,rate,subtype='FLOAT')
+        params=GenerationParams(task_type='repaint',src_audio=source,repainting_start=patch['start']-offset,repainting_end=patch['end']-offset,chunk_mask_mode='explicit',repaint_mode='aggressive',repaint_wav_crossfade_sec=0,caption=plan['caption'],lyrics=patch['lyrics'],instrumental=False,vocal_language='es',duration=len(context)/rate,inference_steps=8,guidance_scale=7.5,seed=plan['seed']+i,thinking=False,use_cot_metas=False,use_cot_caption=False,use_cot_language=False,use_cot_lyrics=False)
         print('Repaint bounded patch',i,patch['start'],patch['end'],flush=True)
         result=generate_music(handler,None,params,GenerationConfig(batch_size=1,use_random_seed=False,seeds=[params.seed],audio_format='wav'),save_dir=f'generated-{i}')
         if not result.success or len(result.audios)!=1:
@@ -98,8 +104,18 @@ def main():
         generated,sr=sf.read(result.audios[0]['path'],dtype='float32',always_2d=True)
         if sr!=rate or not np.isfinite(generated).all():
             raise ValueError('Invalid generated audio')
-        working=splice(working,generated,rate,patch['start'],patch['end'])
-        results.append(dict(patch=patch,raw_generated=descriptor(result.audios[0]['path'])))
+        # ACE's latent grid can add or remove a final partial frame. Require
+        # the entire patch and retain the original context outside its mask.
+        if abs(len(generated)-len(context))>round(.1*rate):
+            raise ValueError('Generated context duration changed materially')
+        required=round((patch['end']-offset)*rate)
+        if len(generated)<required:
+            raise ValueError('Generated patch is incomplete')
+        bounded=context.copy()
+        count=min(len(generated),len(context))
+        bounded[:count]=generated[:count]
+        working[context_start:context_end]=splice(context,bounded,rate,patch['start']-offset,patch['end']-offset)
+        results.append(dict(patch=patch,context_start=offset,context_end=context_end/rate,raw_generated=descriptor(result.audios[0]['path'])))
     mask=np.ones(len(working),dtype=bool)
     for patch in plan['patches']:mask[round(patch['start']*rate):round(patch['end']*rate)]=False
     if not np.array_equal(working[mask],baseline[mask]):
