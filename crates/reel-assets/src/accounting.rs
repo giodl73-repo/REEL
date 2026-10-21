@@ -339,6 +339,7 @@ pub fn report_with_progress(root: &Path, mut progress: impl FnMut(usize, usize))
         }
     }
     let mut controls = BTreeSet::new();
+    controls.extend(state.metadata_roots.iter().cloned());
     let raw: Value = serde_json::from_slice(&before)?;
     if let Some(records) = raw["version_records"].as_object() {
         controls.extend(

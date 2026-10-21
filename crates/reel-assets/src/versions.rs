@@ -33,6 +33,8 @@ pub struct Version {
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct State {
+    #[serde(skip)]
+    pub metadata_roots: BTreeSet<String>,
     pub generation: u64,
     pub versions: BTreeMap<String, Version>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -138,6 +140,7 @@ impl State {
         let protected_hashes: BTreeSet<_> = protected
             .iter()
             .flat_map(|k| self.versions[k].payloads.iter().cloned())
+            .chain(self.metadata_roots.iter().cloned())
             .collect();
         let shared: Vec<_> = v.payloads.intersection(&protected_hashes).collect();
         Ok(
@@ -152,7 +155,176 @@ impl State {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Index {
+    schema: String,
+    base_sha256: String,
+    base_bytes: u64,
+    patch: serde_json::Value,
+}
+
+fn baseline(
+    root: &Path,
+    index: &Index,
+    storage: Option<&crate::Config>,
+) -> Result<serde_json::Value> {
+    if index.schema != "caminos.version-index.v2"
+        || !valid_oid(&index.base_sha256)
+        || index.base_bytes > 256 * 1024
+        || !index.patch.is_object()
+    {
+        return Err("Invalid version-index baseline".into());
+    }
+    let registered = crate::generic_objects_with(root, storage)?;
+    if registered.get(&index.base_sha256) != Some(&index.base_bytes) {
+        return Err("Version-index baseline is not authorized".into());
+    }
+    let cfg = if let Some(c) = storage {
+        c.clone()
+    } else {
+        config(root)?
+    };
+    let path = crate::active_existing(&cfg, &index.base_sha256, index.base_bytes)?
+        .ok_or("Version baseline absent from active caches; archive not probed")?;
+    let value = load(&path)?;
+    let _: State = serde_json::from_value(value.clone())?; // A single typed base, never a recursive import.
+    Ok(value)
+}
+fn merge(value: &mut serde_json::Value, patch: &serde_json::Value) {
+    if let Some(changes) = patch.as_object() {
+        if !value.is_object() {
+            *value = serde_json::json!({});
+        }
+        let target = value.as_object_mut().unwrap();
+        for (key, change) in changes {
+            if change.is_null() {
+                target.remove(key);
+            } else {
+                merge(
+                    target.entry(key.clone()).or_insert(serde_json::Value::Null),
+                    change,
+                );
+            }
+        }
+    } else {
+        *value = patch.clone();
+    }
+}
+fn difference(old: &serde_json::Value, new: &serde_json::Value) -> serde_json::Value {
+    if let (Some(a), Some(b)) = (old.as_object(), new.as_object()) {
+        let mut out = serde_json::Map::new();
+        for (key, value) in b {
+            if a.get(key) != Some(value) {
+                out.insert(
+                    key.clone(),
+                    difference(a.get(key).unwrap_or(&serde_json::Value::Null), value),
+                );
+            }
+        }
+        for key in a.keys().filter(|k| !b.contains_key(*k)) {
+            out.insert(key.clone(), serde_json::Value::Null);
+        }
+        serde_json::Value::Object(out)
+    } else {
+        new.clone()
+    }
+}
+fn control(
+    root: &Path,
+    value: serde_json::Value,
+    storage: Option<&crate::Config>,
+) -> Result<(serde_json::Value, Option<String>)> {
+    if value.get("schema").is_none() {
+        return Ok((value, None));
+    }
+    let index: Index = serde_json::from_value(value)?;
+    let mut base = baseline(root, &index, storage)?;
+    merge(&mut base, &index.patch);
+    if serde_json::to_vec(&base)?.len() > 256 * 1024 {
+        return Err("Expanded version index exceeds budget".into());
+    }
+    let _: State = serde_json::from_value(base.clone())?;
+    Ok((base, Some(index.base_sha256)))
+}
+fn encode_control(root: &Path, control: serde_json::Value) -> Result<Vec<u8>> {
+    let path = root.join("registry/versions.json");
+    let previous = if path.exists() {
+        load(&path)?
+    } else {
+        serde_json::Value::Null
+    };
+    let bytes = if previous.get("schema").is_some() {
+        let mut index: Index = serde_json::from_value(previous)?;
+        index.patch = difference(&baseline(root, &index, None)?, &control);
+        serde_json::to_vec(&index)?
+    } else {
+        serde_json::to_vec(&control)?
+    };
+    if bytes.len() > 256 * 1024 {
+        return Err("Version control index exceeds budget".into());
+    }
+    Ok(bytes)
+}
+
+/// Explicit representation-only compaction. All immutable versions and selections stay identical.
+pub fn compact(root: &Path) -> Result<serde_json::Value> {
+    let path = root.join("registry/versions.json");
+    let before = fs::read(&path)?;
+    if before.len() > 256 * 1024 {
+        return Err("Version control index exceeds budget".into());
+    }
+    let old = read(root)?;
+    let (expanded, _) = control(root, serde_json::from_slice(&before)?, None)?;
+    let bytes = serde_json::to_vec(&expanded)?;
+    let local = root.join(".local/version-index-staging");
+    fs::create_dir_all(&local)?;
+    let stage = tempfile_path(&local.join("base.json"));
+    fs::write(&stage, &bytes)?;
+    let asset = crate::ingest(root, &stage)?;
+    let manifest = tempfile_path(&local.join("registration.json"));
+    fs::write(
+        &manifest,
+        serde_json::to_vec(
+            &serde_json::json!({"assets":[{"sha256":asset["sha256"],"bytes":asset["bytes"],"provenance":"Explicit immutable version-index baseline; locks, pins and selections unchanged","rights":"Private technical metadata; no creative/publication authority","selection_state":"retained-control-metadata"}]}),
+        )?,
+    )?;
+    crate::registry::register(root, &manifest)?;
+    let cfg = config(root)?;
+    let dir = admission::control(root, &cfg)?;
+    let _lock = admission::lock(&dir)?;
+    if fs::read(&path)? != before {
+        return Err(
+            "Version index changed during compaction; verified baseline retained, index unchanged"
+                .into(),
+        );
+    }
+    let index = Index {
+        schema: "caminos.version-index.v2".into(),
+        base_sha256: asset["sha256"]
+            .as_str()
+            .ok_or("Missing baseline hash")?
+            .into(),
+        base_bytes: bytes.len() as u64,
+        patch: serde_json::json!({}),
+    };
+    baseline(root, &index, None)?;
+    let encoded = serde_json::to_vec(&index)?;
+    let tmp = tempfile_path(&path);
+    let mut file = fs::File::create(&tmp)?;
+    file.write_all(&encoded)?;
+    file.sync_all()?;
+    drop(file);
+    replace(&tmp, &path)?;
+    Ok(
+        serde_json::json!({"baseline":asset,"index_bytes_before":before.len(),"index_bytes_after":encoded.len(),"generation":old.generation,"versions":old.versions.len(),"selections":old.current.len(),"archive_probed":false,"media_deleted":false}),
+    )
+}
+
 pub fn read(root: &Path) -> Result<State> {
+    read_with(root, None)
+}
+pub(crate) fn read_with(root: &Path, storage: Option<&crate::Config>) -> Result<State> {
     let path = root.join("registry/versions.json");
     if !path.exists() {
         return Ok(State::default());
@@ -160,7 +332,9 @@ pub fn read(root: &Path) -> Result<State> {
     if fs::metadata(&path)?.len() > 256 * 1024 {
         return Err("Version control file exceeds budget".into());
     }
-    let mut state: State = serde_json::from_value(load(&path)?)?;
+    let (control, base) = control(root, load(&path)?, storage)?;
+    let mut state: State = serde_json::from_value(control)?;
+    state.metadata_roots.extend(base);
     let mut registered = None;
     for (key, oid) in std::mem::take(&mut state.version_records) {
         if !valid_oid(&oid) {
@@ -177,14 +351,19 @@ pub fn read(root: &Path) -> Result<State> {
             Ok(_) => (),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 if registered.is_none() {
-                    registered = Some(crate::generic_objects(root)?);
+                    registered = Some(crate::generic_objects_with(root, storage)?);
                 }
                 let index = registered.as_ref().unwrap();
                 let size = *index.get(&oid).ok_or("Version record is not registered")?;
                 if size > 256 * 1024 {
                     return Err("Version record exceeds budget".into());
                 }
-                path = crate::active_existing(&config(root)?, &oid, size)?
+                let cfg = if let Some(c) = storage {
+                    c.clone()
+                } else {
+                    config(root)?
+                };
+                path = crate::active_existing(&cfg, &oid, size)?
                     .ok_or("Version record absent from active caches; archive not probed")?;
             }
             Err(e) => return Err(e.into()),
@@ -202,6 +381,7 @@ pub fn read(root: &Path) -> Result<State> {
         {
             return Err("Duplicate or mismatched version record identity".into());
         }
+        state.metadata_roots.insert(oid);
     }
     Ok(state)
 }
@@ -209,7 +389,7 @@ pub fn read(root: &Path) -> Result<State> {
 fn encode(root: &Path, state: &State) -> Result<Vec<u8>> {
     let bytes = serde_json::to_vec(state)?;
     if bytes.len() <= 128 * 1024 {
-        return Ok(bytes);
+        return encode_control(root, serde_json::from_slice(&bytes)?);
     }
     let mut control = serde_json::to_value(state)?;
     let mut records = BTreeMap::new();
@@ -258,7 +438,7 @@ fn encode(root: &Path, state: &State) -> Result<Vec<u8>> {
     }
     control["versions"] = serde_json::json!({});
     control["version_records"] = serde_json::to_value(records)?;
-    let bytes = serde_json::to_vec(&control)?;
+    let bytes = encode_control(root, control)?;
     if bytes.len() > 256 * 1024 {
         return Err("Version control index exceeds budget".into());
     }
@@ -375,6 +555,132 @@ mod tests {
             s.retirement_plan("cel", "v1").unwrap()["removal_authorized"],
             false
         );
+    }
+    #[test]
+    fn version_index_compaction_preserves_state_and_small_transaction_patches() {
+        let mut f = crate::tiering::tests::Fixture::new();
+        let h = f.put(b"version metadata fixture", true);
+        for n in 0..30 {
+            f.version(&format!("item-{n}"), &h);
+        }
+        let before = serde_json::to_value(read(f.root()).unwrap()).unwrap();
+        let size = fs::metadata(f.root().join("registry/versions.json"))
+            .unwrap()
+            .len();
+        let receipt = compact(f.root()).unwrap();
+        assert!(receipt["index_bytes_after"].as_u64().unwrap() < size);
+        assert_eq!(
+            serde_json::to_value(read(f.root()).unwrap()).unwrap(),
+            before
+        );
+        let control = load(&f.root().join("registry/versions.json")).unwrap();
+        let base = control["base_sha256"].as_str().unwrap();
+        assert!(read(f.root()).unwrap().metadata_roots.contains(base));
+        transact(f.root(), |s| {
+            s.select("item-0", "v1")?;
+            Ok(())
+        })
+        .unwrap();
+        let changed = load(&f.root().join("registry/versions.json")).unwrap();
+        assert_eq!(changed["base_sha256"], base);
+        assert!(
+            fs::metadata(f.root().join("registry/versions.json"))
+                .unwrap()
+                .len()
+                < 1024
+        );
+        let after = read(f.root()).unwrap();
+        assert_eq!(after.current["item-0"], "v1");
+        assert_eq!(after.versions.len(), 30);
+        let again = compact(f.root()).unwrap();
+        assert_eq!(again["generation"], after.generation);
+    }
+    #[test]
+    fn version_baseline_corruption_stops_and_explicit_storage_is_read_only() {
+        let mut f = crate::tiering::tests::Fixture::new();
+        let h = f.put(b"payload", true);
+        f.version("a", &h);
+        compact(f.root()).unwrap();
+        let cfg = config(f.root()).unwrap();
+        let index = load(&f.root().join("registry/versions.json")).unwrap();
+        let oid = index["base_sha256"].as_str().unwrap();
+        let source = crate::object(&cfg.cache_roots[0], oid);
+        let other = crate::object(&cfg.cache_roots[1], oid);
+        fs::create_dir_all(other.parent().unwrap()).unwrap();
+        fs::copy(&source, &other).unwrap();
+        fs::write(&source, b"corrupt").unwrap();
+        assert!(read(f.root()).is_err());
+        fs::remove_file(source).unwrap();
+        assert!(read(f.root()).is_ok());
+        fs::remove_file(f.root().join("asset-project.json")).unwrap();
+        fs::remove_file(f.root().join(".local/storage-rust.json")).unwrap();
+        assert!(read(f.root()).is_err());
+        assert_eq!(read_with(f.root(), Some(&cfg)).unwrap().versions.len(), 1);
+        assert!(!f.root().join(".local/storage-rust.json").exists());
+    }
+    #[test]
+    fn version_index_rejects_unauthorized_and_recursive_bases() {
+        let mut f = crate::tiering::tests::Fixture::new();
+        let h = f.put(b"payload", true);
+        f.version("a", &h);
+        compact(f.root()).unwrap();
+        let path = f.root().join("registry/versions.json");
+        let original = load(&path).unwrap();
+        let mut invalid = original.clone();
+        invalid["base_sha256"] = serde_json::json!("f".repeat(64));
+        fs::write(&path, invalid.to_string()).unwrap();
+        assert!(read(f.root()).is_err());
+        let bytes = serde_json::to_vec(&original).unwrap();
+        let recursive = f.put(&bytes, true);
+        invalid = original;
+        invalid["base_sha256"] = serde_json::json!(recursive);
+        invalid["base_bytes"] = serde_json::json!(bytes.len());
+        fs::write(path, invalid.to_string()).unwrap();
+        assert!(read(f.root()).is_err());
+    }
+    #[test]
+    fn compact_version_base_is_protected_in_accounting_and_tiering() {
+        let mut f = crate::tiering::tests::Fixture::new();
+        let h = f.put(b"payload", true);
+        f.version("a", &h);
+        f.baseline();
+        let receipt = compact(f.root()).unwrap();
+        let hash = receipt["baseline"]["sha256"].as_str().unwrap();
+        let report = crate::accounting::report(f.root()).unwrap();
+        let row = report["objects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["sha256"] == hash)
+            .unwrap();
+        assert_eq!(row["category"], "registry-control");
+        let plan = f.run().unwrap();
+        let row = plan["objects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["sha256"] == hash)
+            .unwrap();
+        assert_eq!(row["class"], "registry-control");
+        assert_eq!(row["proposal"], "hold");
+    }
+    #[test]
+    fn index_patch_rejects_missing_required_state_and_unknown_fields() {
+        let mut f = crate::tiering::tests::Fixture::new();
+        let h = f.put(b"payload", true);
+        f.version("a", &h);
+        compact(f.root()).unwrap();
+        let path = f.root().join("registry/versions.json");
+        let original = load(&path).unwrap();
+        for patch in [
+            serde_json::json!({"generation":null}),
+            serde_json::json!({"unexpected":true}),
+        ] {
+            let mut changed = original.clone();
+            changed["patch"] = patch;
+            fs::write(&path, changed.to_string()).unwrap();
+            assert!(read(f.root()).is_err());
+        }
     }
     #[test]
     fn exact_dependency_hash_and_transitive_pin_protect_old_payloads() {

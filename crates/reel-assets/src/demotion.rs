@@ -21,6 +21,9 @@ pub struct Request {
     /// Explicit completed/quiescent worktrees, not silently omitted live lanes.
     #[serde(default)]
     pub inactive_consumer_roots: Vec<PathBuf>,
+    /// Explicit read-only legacy consumers resolved through this project's caches.
+    #[serde(default)]
+    pub legacy_consumer_roots: Vec<PathBuf>,
     pub consumer_scope: String,
     pub sha256s: BTreeSet<String>,
     pub max_verify_bytes: u64,
@@ -207,11 +210,15 @@ fn verify(file: &mut fs::File, hash: &str, bytes: u64, deadline: std::time::Inst
 }
 
 fn ensure_no_admissions(control: &Path) -> Result<()> {
-    let dir = control.join("admissions");
-    if dir.exists() && fs::read_dir(dir)?.next().is_some() {
+    if admissions_present(control)? {
         return Err("Live or unreconciled admissions present; redundant-copy removal held".into());
     }
     Ok(())
+}
+
+fn admissions_present(control: &Path) -> Result<bool> {
+    let dir = control.join("admissions");
+    Ok(dir.exists() && fs::read_dir(dir)?.next().is_some())
 }
 
 fn consumer_registration(
@@ -219,6 +226,9 @@ fn consumer_registration(
     active: &BTreeSet<PathBuf>,
     inactive: &BTreeSet<PathBuf>,
 ) -> Result<String> {
+    if !active.is_disjoint(inactive) {
+        return Err("Active/inactive consumer scopes overlap".into());
+    }
     if !root.join(".git").exists() {
         return Ok(tiering::digest(&serde_json::to_vec(&(active, inactive))?));
     }
@@ -253,14 +263,26 @@ fn consumer_registration(
 }
 
 fn metadata_snapshot(root: &Path, hold: bool) -> Result<(String, Vec<fs::File>)> {
-    let p = crate::accounting::project(root)?;
     let mut paths = BTreeSet::from([
-        PathBuf::from("asset-project.json"),
         PathBuf::from("registry/versions.json"),
         PathBuf::from("registry/object-index.json"),
-        PathBuf::from(&p.storage_config),
     ]);
-    for rule in p.selections {
+    let modern = root.join("asset-project.json").exists();
+    let rules = if modern {
+        let p = crate::accounting::project(root)?;
+        paths.insert(PathBuf::from("asset-project.json"));
+        paths.insert(PathBuf::from(&p.storage_config));
+        p.selections
+    } else {
+        vec![crate::accounting::Selection {
+            index: "catalog.json".into(),
+            entries: "/videos".into(),
+            record_field: "bindings".into(),
+            format: "bindings".into(),
+            role_prefixes: vec!["delivery/".into()],
+        }]
+    };
+    for rule in rules {
         let index = crate::accounting::relative(root, &rule.index)?;
         paths.insert(PathBuf::from(&rule.index));
         let doc = crate::load(&index)?;
@@ -269,9 +291,18 @@ fn metadata_snapshot(root: &Path, hold: bool) -> Result<(String, Vec<fs::File>)>
             .and_then(Value::as_array)
             .ok_or("Selection index invalid")?
         {
-            for key in [&rule.record_field, "scene", "bindings"] {
+            for key in [&rule.record_field, "scene", "bindings", "record"] {
                 if let Some(s) = row.get(key).and_then(Value::as_str) {
                     paths.insert(PathBuf::from(s));
+                    if !modern {
+                        let cel = Path::new(s)
+                            .parent()
+                            .ok_or("Missing legacy record parent")?
+                            .join("cels.jsonl");
+                        if root.join(&cel).exists() {
+                            paths.insert(cel);
+                        }
+                    }
                 }
             }
         }
@@ -320,6 +351,72 @@ fn metadata_snapshot(root: &Path, hold: bool) -> Result<(String, Vec<fs::File>)>
         }
     }
     Ok((tiering::digest(&serde_json::to_vec(&hashes)?), guards))
+}
+
+fn legacy_protection(root: &Path, cfg: &crate::Config) -> Result<BTreeSet<String>> {
+    let state = crate::versions::read_with(root, Some(cfg))?;
+    tiering::validate_graph(&state, 1_000_000)?;
+    let mut protected = crate::accounting::expand(
+        &state,
+        state
+            .current
+            .iter()
+            .map(|(id, v)| format!("{id}@{v}"))
+            .chain(state.leases.values().flatten().cloned()),
+    )?;
+    protected.extend(state.metadata_roots);
+    if root.join("registry/object-index.json").exists() {
+        let d = crate::load(&root.join("registry/object-index.json"))?;
+        protected.insert(
+            d["asset"]["sha256"]
+                .as_str()
+                .ok_or("Missing legacy authorization root")?
+                .into(),
+        );
+    }
+    let catalog: Value = serde_json::from_slice(&tiering::read_bounded(
+        &root.join("catalog.json"),
+        256 * 1024,
+    )?)?;
+    for row in catalog["videos"]
+        .as_array()
+        .ok_or("Missing legacy catalogue videos")?
+    {
+        let record = row["bindings"]
+            .as_str()
+            .or_else(|| row["record"].as_str())
+            .ok_or("Missing legacy bindings")?;
+        let path = crate::accounting::relative(root, record)?;
+        let bindings: Value = serde_json::from_slice(&tiering::read_bounded(&path, 256 * 1024)?)?;
+        let mut retain = |a: &Value| -> Result<()> {
+            let h = a["sha256"].as_str().ok_or("Missing legacy asset hash")?;
+            if !crate::valid_oid(h) || a["bytes"].as_u64().is_none() {
+                return Err("Invalid legacy asset descriptor".into());
+            }
+            protected.insert(h.into());
+            Ok(())
+        };
+        for a in bindings["assets"]
+            .as_object()
+            .ok_or("Missing legacy assets")?
+            .values()
+        {
+            retain(a)?;
+        }
+        let cels = path
+            .parent()
+            .ok_or("Missing legacy parent")?
+            .join("cels.jsonl");
+        if cels.exists() {
+            for line in std::str::from_utf8(&tiering::read_bounded(&cels, 512 * 1024)?)?
+                .lines()
+                .filter(|s| !s.is_empty())
+            {
+                retain(&serde_json::from_str(line)?)?;
+            }
+        }
+    }
+    Ok(protected)
 }
 fn metadata_token(root: &Path) -> Result<String> {
     Ok(metadata_snapshot(root, false)?.0)
@@ -384,6 +481,7 @@ pub fn run(
         || req.consumer_roots.is_empty()
         || req.consumer_roots.len() > 32
         || req.inactive_consumer_roots.len() > 32
+        || req.legacy_consumer_roots.len() > 32
         || req.sha256s.is_empty()
         || req.sha256s.len() > policy.max_batch_objects
         || req.sha256s.iter().any(|h| !crate::valid_oid(h))
@@ -441,12 +539,36 @@ pub fn run(
         return Err("Inactive consumer aliases rejected".into());
     }
     let registration = consumer_registration(root, &consumers, &inactive)?;
+    let legacy: BTreeSet<PathBuf> = req
+        .legacy_consumer_roots
+        .iter()
+        .map(|r| r.canonicalize())
+        .collect::<std::io::Result<_>>()?;
+    if legacy.len() != req.legacy_consumer_roots.len() || !legacy.is_subset(&consumers) {
+        return Err("Legacy consumer scope invalid".into());
+    }
     let mut protection_policy = policy.clone();
     protection_policy.history_versions.clear();
     let mut consumer_tokens = BTreeMap::new();
     for consumer in &consumers {
         if !consumer.join("asset-project.json").is_file() {
-            return Err(format!("Managed consumer needs a compatible protection export (project profile absent): {}",consumer.display()).into());
+            if !legacy.contains(consumer) {
+                return Err(format!(
+                    "Managed consumer needs an explicit compatible legacy scope: {}",
+                    consumer.display()
+                )
+                .into());
+            }
+            let before = metadata_token(consumer)?;
+            let protected = legacy_protection(consumer, &cfg)?;
+            if req.sha256s.iter().any(|h| protected.contains(h)) {
+                return Err("Object protected by legacy managed consumer".into());
+            }
+            if metadata_token(consumer)? != before {
+                return Err("Legacy consumer changed during reconciliation".into());
+            }
+            consumer_tokens.insert(consumer.clone(), before);
+            continue;
         }
         let other_cfg = config(consumer)?;
         if other_cfg.cache_roots != cfg.cache_roots
@@ -562,8 +684,14 @@ pub fn run(
             return Err("Unmanaged aliases or identical retained file; held".into());
         }
         checkpoint("before-lock")?;
-        let _state_lock = admission::lock(&control)?;
-        ensure_no_admissions(&control)?;
+        let _state_lock = if apply {
+            Some(admission::lock(&control)?)
+        } else {
+            None
+        };
+        if apply {
+            ensure_no_admissions(&control)?;
+        }
         if consumer_registration(root, &consumers, &inactive)? != registration {
             return Err("Registered worktree set changed; discard stale request".into());
         }
@@ -643,10 +771,98 @@ pub fn run(
         "objects":results,"free_bytes_before":free_before,"free_bytes_after":free_after,
         "observed_free_space_delta":i128::from(free_after)-i128::from(free_before),
         "free_space_delta_is_exclusively_attributed":false,"archive_probed":false,"last_copy_retired":false});
+    let mut result = result;
+    result["admissions_present_at_completion"] = json!(admissions_present(&control)?);
+    result["removal_authorized"] = json!(apply);
     // Resume may observe fewer links/free-space changes; keep earlier receipts intact.
     let out = crate::unique(journal, "result");
     tiering::write_plan(&out, &result)?;
     Ok(result)
+}
+
+/// Read-only protection export, including explicitly declared older State/index consumers.
+/// Consumers' files/configuration are never written or synthesized by this operation.
+pub fn export_protections(root: &Path, request_path: &Path) -> Result<Value> {
+    let raw = tiering::read_bounded(request_path, 256 * 1024)?;
+    let req: Request = serde_json::from_slice(&raw)?;
+    let cfg = config(root)?;
+    let policy_raw = tiering::read_bounded(&req.policy, 256 * 1024)?;
+    let mut policy: tiering::Policy = serde_json::from_slice(&policy_raw)?;
+    policy.validate(&cfg)?;
+    policy.history_versions.clear();
+    if req.schema != "reel.asset-demotion-request.v1"
+        || req.consumer_scope != "all-managed-cache-consumers"
+        || req.consumer_roots.is_empty()
+        || req.consumer_roots.len() > 32
+        || req.legacy_consumer_roots.len() > 32
+        || req.inactive_consumer_roots.len() > 32
+    {
+        return Err("Invalid protection export scope".into());
+    }
+    let paths = |r: &Vec<PathBuf>| -> Result<BTreeSet<PathBuf>> {
+        Ok(r.iter()
+            .map(|p| p.canonicalize())
+            .collect::<std::io::Result<_>>()?)
+    };
+    let active = paths(&req.consumer_roots)?;
+    let legacy = paths(&req.legacy_consumer_roots)?;
+    let inactive = paths(&req.inactive_consumer_roots)?;
+    if !active.contains(&root.canonicalize()?)
+        || !legacy.is_subset(&active)
+        || active.len() != req.consumer_roots.len()
+        || legacy.len() != req.legacy_consumer_roots.len()
+        || inactive.len() != req.inactive_consumer_roots.len()
+    {
+        return Err("Protection export coverage invalid".into());
+    }
+    let registration = consumer_registration(root, &active, &inactive)?;
+    let mut hashes: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    let mut consumers = vec![];
+    for (n, path) in active.iter().enumerate() {
+        let before = metadata_token(path)?;
+        let protected = if path.join("asset-project.json").exists() {
+            let other = config(path)?;
+            if other.cache_roots != cfg.cache_roots {
+                return Err("Consumer cache bindings differ".into());
+            }
+            let view = tiering::live(path, &policy)?;
+            view.current
+                .into_iter()
+                .chain(view.selected)
+                .chain(view.leased)
+                .chain(view.controls)
+                .collect::<BTreeSet<_>>()
+        } else {
+            if !legacy.contains(path) {
+                return Err("Legacy consumer must be explicitly declared".into());
+            }
+            legacy_protection(path, &cfg)?
+        };
+        for h in protected {
+            hashes.entry(h).or_default().push(n);
+        }
+        if metadata_token(path)? != before {
+            return Err("Consumer changed during protection export".into());
+        }
+        consumers
+            .push(json!({"root":path,"fingerprint_sha256":before,"legacy":legacy.contains(path)}));
+    }
+    if consumer_registration(root, &active, &inactive)? != registration
+        || fs::read(request_path)? != raw
+        || fs::read(&req.policy)? != policy_raw
+    {
+        return Err("Protection scope changed during export".into());
+    }
+    for (path, row) in active.iter().zip(&consumers) {
+        if metadata_token(path)? != row["fingerprint_sha256"] {
+            return Err("Consumer changed before protection export completed".into());
+        }
+    }
+    Ok(
+        json!({"schema":"reel.asset-protection-export.v1","consumer_registration_sha256":registration,
+        "consumers":consumers,"protected_hashes":hashes,"archive_probed":false,"files_changed":false,
+        "removal_authorized":false,"scope":"Declared active consumers only; revalidate at apply time"}),
+    )
 }
 
 #[cfg(test)]
@@ -744,6 +960,50 @@ mod tests {
         assert_ne!(a, metadata_token(c.f.root()).unwrap());
     }
     #[test]
+    fn explicit_legacy_consumer_exports_and_protects_current_assets_without_setup() {
+        let c = Case::new();
+        let legacy = c.f.root().join(".local/legacy-consumer");
+        fs::create_dir_all(legacy.join("registry")).unwrap();
+        let mut state = crate::versions::State::default();
+        state
+            .register(crate::versions::Version {
+                logical_id: "old".into(),
+                version_id: "v1".into(),
+                manifest_sha256: c.h.clone(),
+                payloads: BTreeSet::from([c.h.clone()]),
+                dependencies: vec![],
+                supersedes: None,
+                deprecated: false,
+            })
+            .unwrap();
+        state.select("old", "v1").unwrap();
+        fs::write(
+            legacy.join("registry/versions.json"),
+            serde_json::to_vec(&state).unwrap(),
+        )
+        .unwrap();
+        fs::write(legacy.join("catalog.json"), r#"{"videos":[]}"#).unwrap();
+        let mut req = crate::load(&c.request).unwrap();
+        req["consumer_roots"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!(legacy));
+        req["legacy_consumer_roots"] = json!([legacy]);
+        fs::write(&c.request, req.to_string()).unwrap();
+        let export = export_protections(c.f.root(), &c.request).unwrap();
+        assert!(export["protected_hashes"].get(&c.h).is_some());
+        assert!(!legacy.join(".local").exists());
+        assert!(
+            c.run(false)
+                .unwrap_err()
+                .to_string()
+                .contains("protected by legacy")
+        );
+        req["legacy_consumer_roots"] = json!([]);
+        fs::write(&c.request, req.to_string()).unwrap();
+        assert!(export_protections(c.f.root(), &c.request).is_err());
+    }
+    #[test]
     fn git_consumer_inventory_requires_new_worktrees_to_be_declared() {
         let c = Case::new();
         let hooks = c.f.root().join(".local/no-hooks");
@@ -798,7 +1058,11 @@ mod tests {
         let dir = c.f.root().join(".local/control/admissions");
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("job.lease"), b"").unwrap();
-        assert!(c.run(cfg!(windows)).is_err());
+        assert_eq!(
+            c.run(false).unwrap()["admissions_present_at_completion"],
+            true
+        );
+        assert!(c.run(true).is_err());
         assert!(c.e().exists());
     }
     #[test]

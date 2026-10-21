@@ -113,7 +113,7 @@ pub(crate) struct Live {
     coverage_complete: bool,
 }
 
-fn validate_graph(state: &versions::State, limit: usize) -> Result<()> {
+pub(crate) fn validate_graph(state: &versions::State, limit: usize) -> Result<()> {
     if state.versions.len() > limit {
         return Err("Version graph exceeds object budget".into());
     }
@@ -188,6 +188,7 @@ pub(crate) fn live(root: &Path, policy: &Policy) -> Result<Live> {
         .filter_map(Value::as_str)
         .map(str::to_owned)
         .collect();
+    controls.extend(state.metadata_roots.iter().cloned());
     let index_path = root.join("registry/object-index.json");
     let index_bytes = if index_path.exists() {
         read_bounded(&index_path, 256 * 1024)?

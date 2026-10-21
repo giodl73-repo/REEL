@@ -17,6 +17,13 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
             .ok_or_else(|| "Missing argument".into())
     };
     match command {
+        "consumer-protections" => {
+            if args.len()!=3 {return Err("Usage: consumer-protections <request.json> <new-private-export.json>".into());}
+            let mut export=crate::demotion::export_protections(root,Path::new(arg(1)?))?;
+            crate::tiering::write_plan(Path::new(arg(2)?),&export)?;
+            let count=export["protected_hashes"].as_object().unwrap().len();
+            export.as_object_mut().unwrap().remove("protected_hashes");export["protected_objects"]=json!(count);Ok(export)
+        },
         "tier-demote" => {
             if args.len()!=3 && !(args.len()==4 && arg(3)?=="--apply") { return Err("Usage: tier-demote <request.json> <absolute-owned-journal> [--apply]".into()); }
             let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
@@ -60,6 +67,7 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
         "ingest" => ingest(root,Path::new(arg(1)?)),
         "register" => registry::register(root,Path::new(arg(1)?)),
         "compact-objects" => registry::compact(root),
+        "compact-versions" => versions::compact(root),
         "run-job" => crate::jobs::run(root,Path::new(arg(1)?)),
         "discard-job-scratch" => crate::jobs::discard(root,arg(1)?,arg(2)?,args.get(3).is_some_and(|a|a=="--discard-incomplete")),
         "verify-active" => {
