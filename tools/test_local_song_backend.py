@@ -4,6 +4,7 @@ from pathlib import Path
 import unittest
 import local_song_backend as backend
 import local_song_campaign  # Campaign syntax/import must remain dependency-free.
+import local_song_ctc
 
 
 def evidence(text):
@@ -11,6 +12,56 @@ def evidence(text):
 
 
 class LyricGateTests(unittest.TestCase):
+    def test_independent_ctc_uses_bounded_neighboring_time_windows(self):
+        report=dict(passed=False,technical=dict(seconds=100),lines=[
+            dict(passes_gate=True,recognized_span=[10,15]),dict(passes_gate=False,recognized_span=None),
+            dict(passes_gate=True,recognized_span=[24,28])])
+        self.assertEqual(local_song_ctc.uncertain_windows(report),[[6,32]])
+
+    def test_independent_ctc_skips_qualified_or_far_from_pass_reports(self):
+        self.assertEqual(local_song_ctc.uncertain_windows(dict(passed=True,lines=[])),[])
+        self.assertEqual(local_song_ctc.uncertain_windows(dict(passed=False,lines=[dict(passes_gate=False)]*4)),[])
+
+    def test_independent_ctc_keeps_real_repeats_and_word_times(self):
+        tokens=local_song_ctc.decode_ids([0,2,2,0,2,1,3,0,4,0],['-','|','A','B','C'],.1,10)
+        self.assertEqual([t['word'] for t in tokens],['aa','bc'])
+        self.assertAlmostEqual(tokens[0]['span'][0],10.1)
+        self.assertAlmostEqual(tokens[0]['span'][1],10.5)
+        self.assertAlmostEqual(tokens[1]['span'][1],10.9)
+
+    def test_independent_ctc_blank_audio_invents_no_words(self):
+        self.assertEqual(local_song_ctc.decode_ids([0,0,1,1,0],['-','|','A'],.1,0),[])
+
+    def test_generation_focus_quotes_only_original_source_line(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/'source.txt';source.write_text('Amber lamps shine\nSilver bells ring\n',encoding='utf-8')
+            campaign=local_song_campaign.Campaign(folder,Path(folder)/'unused.exe',Path(folder)/'work')
+            campaign.lyric_focus=dict(line_numbers=[2],analysis={},version_lock={},recognition_prompt=False)
+            slot=dict(id='synthetic-b',title='Synthetic',source=backend.descriptor(source),source_lock={},duration_seconds=120,caption='An invented musical brief',seed_base=100)
+            with patch.object(campaign,'locate',return_value=source):request=campaign.request(slot,2)
+            self.assertIn("'Silver bells ring'",request['caption'])
+            self.assertFalse(request['lyric_focus']['recognition_prompt'])
+            self.assertEqual(request['canonical_lyrics'],source.read_bytes().decode('utf-8'))
+            backend.validate_request(request,source)
+
+    def test_timing_reference_keeps_brief_and_advances_retry_seed(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/'source.txt';source.write_text('Amber lamps shine\n',encoding='utf-8')
+            campaign=local_song_campaign.Campaign(folder,Path(folder)/'unused.exe',Path(folder)/'work')
+            desc=backend.descriptor(source);slot=dict(id='synthetic-b',title='Synthetic',source=desc,source_lock={},duration_seconds=120,caption='A different invented musical brief',seed_base=100)
+            campaign.timing_reference=dict(source=desc,source_lock={},seed=700,duration_seconds=180,attempt_starts={'synthetic-b':3},request={},version_lock={})
+            with patch.object(campaign,'locate',return_value=source):
+                first=campaign.request(slot,3);second=campaign.request(slot,4)
+                self.assertEqual((first['seed'],second['seed']),(700,701))
+                self.assertEqual(first['duration_seconds'],180)
+                self.assertTrue(first['caption'].startswith(slot['caption']))
+                self.assertFalse(first['timing_seed_reference']['audio_conditioning'])
+                backend.validate_request(first,source)
+                slot['source_lock']={'wrong':'version'}
+                with self.assertRaises(ValueError):campaign.request(slot,5)
+
     def test_phrase_wrapping_preserves_words_and_sentence_boundaries(self):
         source='Amber lamps\nshine above us.\nSilver bells\nring softly\n\nCopper wheels turn\n'
         rendered=backend.format_lyrics(source,True,12)

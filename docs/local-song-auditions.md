@@ -127,6 +127,31 @@ canonical source and acceptance remain fixed. Verify an actual retained private
 fixture before adopting a precision change; preserve its old report alongside
 the new analysis. Generation precision is a separate setting.
 
+`--timing-reference-slot ID` explicitly reuses a qualified same-source request's
+duration and starting seed for future distinct musical briefs. Subsequent retries
+advance the seed, so a failed take is never regenerated identically. The frozen
+reference request/version and per-slot adoption attempt are retained and checked
+on resume. Packages lock the reference dependency. This supplies no reference
+audio, changes no source words, and makes no quality guarantee for another brief.
+
+`--focus-missing-lines` adds a bounded exact-source phrase reminder to generation
+from the best prior take's missing lines. The report must match every canonical
+source line. The request/package retain the prior report and version dependency;
+the reminder cannot rewrite source or rendered words. Recognition receives no
+lyric cue or canonical prompt, and the same line criterion still decides whether
+the new recording qualifies. `--no-focus-missing-lines` disables this policy.
+
+The optional `--ctc-runtime-asset` adds a separately frozen, already installed
+Spanish acoustic recognizer for near-pass uncertainty. After the primary three
+passes, up to three failed lines may receive bounded CPU checks around neighboring
+recognized spans. Each window is a separate pass: words are never joined across
+windows to fill a line. The decoder has no language model, source prompt or
+canonical lexicon. Retain the original primary report, new acoustic transcript,
+exact windows/model hashes and merged analysis. Qualifying or distant-from-pass
+takes skip loading the extra model. No model is downloaded. A private analysis
+revision recovered two lines on an unchanged 35/37 take, yielding 37/37; its
+original report remains immutable. This is machine evidence, not human approval.
+
 The backend's `recount` operation takes a hash-bound prior report, recording,
 request and source through a Rust job. It revises only line accounting from the
 retained unprompted token/timestamp passes, retaining the prior report and a

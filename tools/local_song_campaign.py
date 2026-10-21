@@ -30,6 +30,9 @@ class Campaign:
         self.repeat_section_lines=None
         self.phrase_max_words=None
         self.asr_dtype=None
+        self.timing_reference=None
+        self.lyric_focus=None
+        self.ctc_runtime=None
 
     def call(self, command, *args, env=None):
         for attempt in range(self.metadata_retries+1):
@@ -144,7 +147,8 @@ class Campaign:
         caption=slot['caption']
         repetition={}
         if self.asr_dtype:repetition['recognition_dtype']=self.asr_dtype
-        if attempt>1:
+        if self.ctc_runtime:repetition['independent_ctc_check']=dict(component=self.ctc_runtime['component'],version_lock=self.ctc_runtime['version_lock'],max_failed_lines=3,canonical_prompt=False)
+        if attempt>1 or self.timing_reference:
             caption+=(' Syllabic melody, clear Spanish diction and final consonants; minimal melisma.' if self.phrase_max_words else ' Clear natural articulation of every supplied word, including gentle but distinct final consonants and plural s; keep the melody expressive.')
             repetition['render_format']='Single-word continuations joined to their preceding phrase within each original stanza; source words and canonical line breaks unchanged'
         if self.phrase_max_words:
@@ -166,10 +170,24 @@ class Campaign:
             duration=min(480,max(duration,5*round(slot['duration_seconds']*1.75/5)))
             caption+=' Sing the complete supplied poem, then its supplied second complete pass. Keep both passes melodic and clear; no invented words.'
             repetition.update(performance_repetitions=2,repeat_authority='Explicit campaign permission for repeated lines; unchanged complete poem supplied twice')
+        seed=slot['seed_base']+attempt
+        if self.timing_reference:
+            ref=self.timing_reference
+            if ref['source']!=slot['source'] or ref['source_lock']!=slot['source_lock']:
+                raise ValueError('Timing reference belongs to another source/version')
+            offset=attempt-ref['attempt_starts'][slot['id']]
+            if offset<0:raise ValueError('Timing reference cannot rewrite prior requests')
+            seed=ref['seed']+offset;duration=ref['duration_seconds']
+            repetition['timing_seed_reference']=dict(request=ref['request'],version_lock=ref['version_lock'],seed_offset=offset,audio_conditioning=False)
+        if self.lyric_focus:
+            lines=[line for line in lyrics.splitlines() if line.strip()]
+            focused=' / '.join(lines[i-1].strip() for i in self.lyric_focus['line_numbers'])
+            caption="Clearly sing this supplied lyric phrase: '"+focused+"'. "+caption
+            repetition['lyric_focus']=self.lyric_focus
         return dict(schema='reel.local-song-request.v1',candidate_id=f"{slot['id']}-take-{attempt:03d}",
             slot_id=slot['id'],title=slot['title'],source=slot['source'],source_lock=slot['source_lock'],
             canonical_lyrics=lyrics,render_lyrics=render,caption=caption,duration_seconds=duration,
-            seed=slot['seed_base']+attempt,task='text2music',language='es',
+            seed=seed,task='text2music',language='es',
             permissions=dict(private_only=True,external_upload=False,identifiable_imitation=False,public_release=False),**repetition)
 
     def run_take(self, slot, attempt, runtime_asset, backend_asset):
@@ -196,10 +214,17 @@ class Campaign:
             outputs['generation-log']['path']='step-1.log'
             outputs['analysis-log']['path']='step-2.log'
             operations.insert(0,'plan')
+        if self.ctc_runtime:
+            if a(self.ctc_runtime['backend'])!=a(backend_asset):raise ValueError('CTC and primary line-accounting backends differ')
+            inputs.update({'ctc.py':a(self.ctc_runtime['script']),'local_song_backend.py':a(backend_asset),'component.json':a(self.ctc_runtime['component'])})
+            outputs.update({'primary-lyric-analysis':dict(path='prior-analysis.json',max_bytes=8*1024**2),
+                'ctc-transcript':dict(path='ctc-transcript.json',max_bytes=8*1024**2),'ctc-request':dict(path='ctc.json',max_bytes=2*1024**2),
+                'ctc-log':dict(path=f'step-{len(operations)}.log',max_bytes=8*1024**2)})
         job=dict(budget_bytes=3*1024**3,scratch_bytes=1536*1024**2,
             inputs=inputs,
             tools={},installed_tools={'python':runtime['python']},
             steps=[dict(tool='python',args=['backend.py',operation],timeout_seconds=1800) for operation in operations],outputs=outputs)
+        if self.ctc_runtime:job['steps'].append(dict(tool='python',args=['ctc.py','--automatic'],timeout_seconds=600))
         manifest=self.save(f'{rid}/job.json',job)
         manifest_asset=self.ingest(manifest,'Trusted Rust recording/analysis job for '+rid)
         self.save('active.json',dict(candidate_id=rid,stage='rust-job-running',manifest=manifest_asset,started=time.time()))
@@ -217,6 +242,15 @@ class Campaign:
         if self.planner_asset:
             package['assets']['planner']=self.planner_asset
             package['dependencies'].append(self.planner_asset['version_lock'])
+        if self.timing_reference:
+            package['assets']['timing-reference-request']=self.timing_reference['request']
+            package['dependencies'].append(self.timing_reference['version_lock'])
+        if self.lyric_focus:
+            package['assets']['prior-lyric-analysis']=self.lyric_focus['analysis']
+            package['dependencies'].append(self.lyric_focus['version_lock'])
+        if self.ctc_runtime:
+            package['assets'].update({'ctc-component':self.ctc_runtime['component'],'ctc-script':self.ctc_runtime['script']})
+            package['dependencies'].append(self.ctc_runtime['version_lock'])
         package_asset=self.asset_json(f'{rid}/package.json',package,'Immutable song audition package for '+rid)
         version=dict(logical_id=package['artifact_id'],version_id=package['version_id'],manifest_sha256=package_asset['sha256'],
             payloads=sorted({row['sha256'] for row in package['assets'].values()}),dependencies=package['dependencies'])
@@ -250,7 +284,7 @@ class Campaign:
         print('DONE',rid,'PASS' if analysis['passed'] else 'RETRY',f"{analysis['qualifying_lines']}/{analysis['total_lines']} lines",flush=True)
         return summary
 
-    def run(self, campaign_path, runtime_asset_path, backend, adopt_backend_revision=None,repeat_after_failures=None,planner_asset_path=None,generation_route=None,repeat_section_lines=None,phrase_max_words=None,asr_dtype=None):
+    def run(self, campaign_path, runtime_asset_path, backend, adopt_backend_revision=None,repeat_after_failures=None,planner_asset_path=None,generation_route=None,repeat_section_lines=None,phrase_max_words=None,asr_dtype=None,timing_reference_slot=None,focus_missing_lines=None,ctc_runtime_asset_path=None):
         campaign=read(campaign_path)
         if campaign['schema']!='reel.song-audition-campaign.v1':raise ValueError('Unsupported campaign')
         ids=[slot['id'] for slot in campaign['slots']]
@@ -272,7 +306,27 @@ class Campaign:
                     reason=adopt_backend_revision,qualified_slots_preserved=sorted(state['qualified'])))
                 state['backend']=backend_asset
         else:state=dict(campaign=campaign_asset,runtime=runtime_asset,backend=backend_asset,attempts=[],qualified={})
+        if timing_reference_slot and not state.get('timing_reference'):
+            if timing_reference_slot not in state['qualified']:raise ValueError('Timing reference must already qualify')
+            donor=state['qualified'][timing_reference_slot];req=read(self.locate(donor['request']))
+            state['timing_reference']=dict(slot_id=timing_reference_slot,request=donor['request'],version_lock=donor['version_lock'],
+                source=req['source'],source_lock=req['source_lock'],seed=req['seed'],duration_seconds=req['duration_seconds'],
+                attempt_starts={slot['id']:1+max([a['attempt'] for a in state['attempts'] if a['slot_id']==slot['id']],default=0) for slot in campaign['slots'] if slot['id'] not in state['qualified']},
+                after_retained_takes=len(state['attempts']),audio_conditioning=False)
+        self.timing_reference=state.get('timing_reference')
+        if self.timing_reference:
+            if timing_reference_slot and timing_reference_slot!=self.timing_reference['slot_id']:raise ValueError('Frozen timing reference changed')
+            req=read(self.locate(self.timing_reference['request']))
+            if any(req[k]!=self.timing_reference[k] for k in ['source','source_lock','seed','duration_seconds']):raise ValueError('Timing reference differs from frozen request')
         self.planner_asset=state.get('planner')
+        if ctc_runtime_asset_path:
+            proposed=read(ctc_runtime_asset_path)
+            for key in ['component','script','backend']:self.locate(proposed[key])
+            if state.get('ctc_runtime')!=proposed:
+                state.setdefault('ctc_runtime_revisions',[]).append(dict(previous=state.get('ctc_runtime'),replacement=proposed,
+                    after_retained_takes=len(state['attempts']),qualified_slots_preserved=sorted(state['qualified'])))
+                state['ctc_runtime']=proposed
+        self.ctc_runtime=state.get('ctc_runtime')
         if planner_asset_path:
             proposed=read(planner_asset_path)
             self.locate(proposed)
@@ -300,6 +354,7 @@ class Campaign:
             state.setdefault('asr_policy_revisions',[]).append(dict(previous=state.get('asr_dtype','float32'),replacement=asr_dtype,after_retained_takes=len(state['attempts'])))
             state['asr_dtype']=asr_dtype
         previous_policy=state.get('retry_policy',{})
+        if focus_missing_lines is not None:state['focus_missing_lines']=focus_missing_lines
         self.repeat_after_failures=previous_policy.get('repeat_complete_poem_after_failures') if repeat_after_failures is None else repeat_after_failures
         if repeat_after_failures is not None:
             policy=dict(repeat_complete_poem_after_failures=repeat_after_failures,render_passes=2,duration_factor=1.75,
@@ -316,6 +371,18 @@ class Campaign:
         for slot in campaign['slots']:
             while slot['id'] not in state['qualified']:
                 attempt=1+max([a['attempt'] for a in state['attempts'] if a['slot_id']==slot['id']],default=0)
+                self.lyric_focus=None
+                prior=[a for a in state['attempts'] if a['slot_id']==slot['id']]
+                if state.get('focus_missing_lines') and prior:
+                    best=max(prior,key=lambda a:(a['qualifying_lines'],a['exact_lines']))
+                    report=read(self.locate(best['outputs']['lyric-analysis']))
+                    source_lines=[line for line in self.locate(slot['source']).read_text(encoding='utf-8').splitlines() if line.strip()]
+                    if [row['canonical'] for row in report['lines']]!=source_lines:raise ValueError('Focus report source differs from frozen canonical lines')
+                    numbers=[];word_count=0
+                    for row in report['lines']:
+                        if not row['passes_gate'] and word_count+row['total_words']<=16:
+                            numbers.append(row['line']);word_count+=row['total_words']
+                    if numbers:self.lyric_focus=dict(line_numbers=numbers,analysis=best['outputs']['lyric-analysis'],version_lock=best['version_lock'],recognition_prompt=False)
                 result=self.run_take(slot,attempt,runtime_asset,backend_asset)
                 state['attempts'].append(result)
                 if result['qualified']:state['qualified'][slot['id']]=result
@@ -405,13 +472,16 @@ def main():
     run.add_argument('--repeat-section-lines',type=int,choices=[0,*range(2,9)],help='Supply each unchanged source section twice; 0 explicitly disables section repetition')
     run.add_argument('--phrase-max-words',type=int,choices=range(4,17),help='Join short source fragments into bounded sung phrases without crossing original stanzas or changing words')
     run.add_argument('--asr-dtype',choices=['float32','float16'],help='Explicit GPU recognition precision; model, three passes and line gate stay fixed')
+    run.add_argument('--timing-reference-slot',help='Use a qualified same-source request duration and seed neighborhood for future distinct musical briefs; no audio conditioning')
+    run.add_argument('--focus-missing-lines',action=argparse.BooleanOptionalAction,default=None,help='Remind generation of bounded exact source phrases missed by the best prior take; ASR stays unprompted')
+    run.add_argument('--ctc-runtime-asset',help='Explicit frozen independent Spanish CTC component for bounded near-pass rechecks; no downloads or lyric prompt')
     restore=sub.add_parser('restore');restore.add_argument('--state',required=True);restore.add_argument('--lfs-executable',required=True)
     restore.add_argument('--all-attempts',action='store_true',help='Verify retained failed takes as well as qualifying candidates')
     review=sub.add_parser('review');review.add_argument('--campaign',required=True);review.add_argument('--state',required=True)
     stop=sub.add_parser('request-stop');stop.add_argument('--clear',action='store_true')
     args=p.parse_args();c=Campaign(args.root,args.assets,args.work,args.metadata_retries)
     if args.operation=='snapshot':c.freeze_runtime(args)
-    elif args.operation=='run':c.run(args.campaign,args.runtime_asset,args.backend,args.adopt_backend_revision,args.repeat_after_failures,args.planner_asset,args.generation_route,args.repeat_section_lines,args.phrase_max_words,args.asr_dtype)
+    elif args.operation=='run':c.run(args.campaign,args.runtime_asset,args.backend,args.adopt_backend_revision,args.repeat_after_failures,args.planner_asset,args.generation_route,args.repeat_section_lines,args.phrase_max_words,args.asr_dtype,args.timing_reference_slot,args.focus_missing_lines,args.ctc_runtime_asset)
     elif args.operation=='restore':c.restore(args.state,args.lfs_executable,args.all_attempts)
     elif args.operation=='review':c.review(read(args.campaign),read(args.state))
     else:c.save('stop-after-current.json',dict(requested=not args.clear))
