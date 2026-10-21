@@ -33,6 +33,7 @@ class Campaign:
         self.timing_reference=None
         self.lyric_focus=None
         self.ctc_runtime=None
+        self.audio_guide=None
 
     def call(self, command, *args, env=None):
         for attempt in range(self.metadata_retries+1):
@@ -184,10 +185,23 @@ class Campaign:
             focused=' / '.join(lines[i-1].strip() for i in self.lyric_focus['line_numbers'])
             caption="Clearly sing this supplied lyric phrase: '"+focused+"'. "+caption
             repetition['lyric_focus']=self.lyric_focus
+        task='text2music'
+        if self.audio_guide:
+            guide=self.audio_guide;original=read(self.locate(guide['request']))
+            if original['task']!='text2music' or original['canonical_lyrics']!=lyrics or original['source_lock']!=slot['source_lock']:
+                raise ValueError('Audio guide must be generated from the identical poem version')
+            if self.planner_asset:raise ValueError('Generated-guide cover does not combine with optional planning')
+            render=original['render_lyrics'];duration=original['duration_seconds'];task='cover'
+            for key in ['performance_repetitions','repeat_section_lines','phrase_max_words','repeat_authority']:
+                repetition.pop(key,None)
+                if key in original:repetition[key]=original[key]
+            repetition.update(guide_audio=guide['recording'],guide_request=guide['request'],guide_generation=guide['generation'],
+                guide_version_lock=guide['version_lock'],guide_label=guide['label'],audio_cover_strength=guide['strength'],
+                render_format='Exact supplied render layout of the generated same-poem guide; source words unchanged')
         return dict(schema='reel.local-song-request.v1',candidate_id=f"{slot['id']}-take-{attempt:03d}",
             slot_id=slot['id'],title=slot['title'],source=slot['source'],source_lock=slot['source_lock'],
             canonical_lyrics=lyrics,render_lyrics=render,caption=caption,duration_seconds=duration,
-            seed=seed,task='text2music',language='es',
+            seed=seed,task=task,language='es',
             permissions=dict(private_only=True,external_upload=False,identifiable_imitation=False,public_release=False),**repetition)
 
     def run_take(self, slot, attempt, runtime_asset, backend_asset):
@@ -206,6 +220,9 @@ class Campaign:
             ('listening','preview.mp3',24*1024**2),('vocal-estimate','vocals.wav',192*1024**2),
             ('lyric-analysis','analysis.json',8*1024**2),('transcripts','transcripts.zip',8*1024**2)]}
         inputs={'backend.py':a(backend_asset),'runtime.json':a(runtime_asset),'request.json':a(request_asset),'source.txt':a(slot['source'])}
+        if self.audio_guide:
+            inputs.update({'guide.wav':a(self.audio_guide['recording']),'guide-request.json':a(self.audio_guide['request']),
+                'guide-generation.json':a(self.audio_guide['generation'])})
         operations=['generate','analyze']
         if self.planner_asset:
             inputs['planner.json']=a(self.planner_asset)
@@ -251,6 +268,11 @@ class Campaign:
         if self.ctc_runtime:
             package['assets'].update({'ctc-component':self.ctc_runtime['component'],'ctc-script':self.ctc_runtime['script']})
             package['dependencies'].append(self.ctc_runtime['version_lock'])
+        if self.audio_guide:
+            package['assets'].update({'guide-recording':self.audio_guide['recording'],'guide-request':self.audio_guide['request'],
+                'guide-generation':self.audio_guide['generation']})
+            package['dependencies'].append(self.audio_guide['version_lock'])
+        package['dependencies']=list({(d['logical_id'],d['version_id'],d['manifest_sha256']):d for d in package['dependencies']}.values())
         package_asset=self.asset_json(f'{rid}/package.json',package,'Immutable song audition package for '+rid)
         version=dict(logical_id=package['artifact_id'],version_id=package['version_id'],manifest_sha256=package_asset['sha256'],
             payloads=sorted({row['sha256'] for row in package['assets'].values()}),dependencies=package['dependencies'])
@@ -284,7 +306,7 @@ class Campaign:
         print('DONE',rid,'PASS' if analysis['passed'] else 'RETRY',f"{analysis['qualifying_lines']}/{analysis['total_lines']} lines",flush=True)
         return summary
 
-    def run(self, campaign_path, runtime_asset_path, backend, adopt_backend_revision=None,repeat_after_failures=None,planner_asset_path=None,generation_route=None,repeat_section_lines=None,phrase_max_words=None,asr_dtype=None,timing_reference_slot=None,focus_missing_lines=None,ctc_runtime_asset_path=None):
+    def run(self, campaign_path, runtime_asset_path, backend, adopt_backend_revision=None,repeat_after_failures=None,planner_asset_path=None,generation_route=None,repeat_section_lines=None,phrase_max_words=None,asr_dtype=None,timing_reference_slot=None,focus_missing_lines=None,ctc_runtime_asset_path=None,audio_guide_slot=None,audio_guide_strength=None):
         campaign=read(campaign_path)
         if campaign['schema']!='reel.song-audition-campaign.v1':raise ValueError('Unsupported campaign')
         ids=[slot['id'] for slot in campaign['slots']]
@@ -306,6 +328,20 @@ class Campaign:
                     reason=adopt_backend_revision,qualified_slots_preserved=sorted(state['qualified'])))
                 state['backend']=backend_asset
         else:state=dict(campaign=campaign_asset,runtime=runtime_asset,backend=backend_asset,attempts=[],qualified={})
+        if audio_guide_slot:
+            if audio_guide_slot not in state['qualified']:raise ValueError('Audio guide must already qualify')
+            donor=state['qualified'][audio_guide_slot];req=read(self.locate(donor['request']))
+            if req['task']!='text2music':raise ValueError('Only generated text2music takes may supply this guide')
+            proposed=dict(slot_id=audio_guide_slot,label=next(slot['label'] for slot in campaign['slots'] if slot['id']==audio_guide_slot),
+                recording=donor['outputs']['recording'],request=donor['request'],generation=donor['outputs']['generation'],
+                version_lock=donor['version_lock'],strength=.75 if audio_guide_strength is None else audio_guide_strength)
+            if state.get('audio_guide')!=proposed:
+                state.setdefault('audio_guide_revisions',[]).append(dict(previous=state.get('audio_guide'),replacement=proposed,
+                    after_retained_takes=len(state['attempts']),qualified_slots_preserved=sorted(state['qualified'])))
+                state['audio_guide']=proposed
+        elif audio_guide_strength is not None:
+            raise ValueError('Guide strength requires an explicit guide slot')
+        self.audio_guide=state.get('audio_guide')
         if timing_reference_slot and not state.get('timing_reference'):
             if timing_reference_slot not in state['qualified']:raise ValueError('Timing reference must already qualify')
             donor=state['qualified'][timing_reference_slot];req=read(self.locate(donor['request']))
@@ -417,6 +453,7 @@ class Campaign:
             raw=media_view(result['outputs']['recording'],slot['id'],'wav')
             analysis=read(self.locate(result['outputs']['lyric-analysis']))
             request=read(self.locate(result['request']))
+            guide_note='<p>Audio-guided variation from the generated '+html.escape(request['guide_label'])+' recording.</p>' if request['task']=='cover' else ''
             def timing(row):
                 span=row.get('recognized_span')
                 return '—' if not span or any(t is None for t in span) else '–'.join(f'{int(t)//60}:{int(t)%60:02d}' for t in span)
@@ -424,7 +461,7 @@ class Campaign:
             prompt='<details><summary>Submitted music prompt</summary><p>'+html.escape(request['caption'])+'</p><p>Requested duration: '+str(request['duration_seconds'])+' seconds. Seed: '+str(request['seed'])+'.</p></details>'
             ordered=analysis.get('continuous_order_qualifying_lines',analysis['qualifying_lines'])
             order_note='<p>Continuous source-order screen: '+str(ordered)+'/'+str(analysis['total_lines'])+' lines. '+('Listen to the ordering; coverage can use different repeated occurrences.' if ordered<analysis['total_lines'] else 'All lines also qualify in source order.')+'</p>'
-            sections.append('<section><h2>'+html.escape(slot['title']+' — '+slot['label'])+'</h2><p>'+html.escape(slot['style'])+'</p><audio controls preload="none" src="'+html.escape(audio,quote=True)+'"></audio><p>'+str(result['qualifying_lines'])+'/'+str(result['total_lines'])+' source lines qualify; '+str(result['one_word_gap_lines'])+' with one unrecognized word. Take '+str(result['attempt'])+'.</p>'+order_note+'<p><a href="'+html.escape(raw,quote=True)+'">Original WAV</a></p>'+prompt+'<details><summary>Line analysis</summary><table>'+rows+'</table></details></section>')
+            sections.append('<section><h2>'+html.escape(slot['title']+' — '+slot['label'])+'</h2><p>'+html.escape(slot['style'])+'</p>'+guide_note+'<audio controls preload="none" src="'+html.escape(audio,quote=True)+'"></audio><p>'+str(result['qualifying_lines'])+'/'+str(result['total_lines'])+' source lines qualify; '+str(result['one_word_gap_lines'])+' with one unrecognized word. Take '+str(result['attempt'])+'.</p>'+order_note+'<p><a href="'+html.escape(raw,quote=True)+'">Original WAV</a></p>'+prompt+'<details><summary>Line analysis</summary><table>'+rows+'</table></details></section>')
         page='<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Song auditions A / B / C</title><style>body{font:18px/1.5 system-ui;max-width:960px;margin:2rem auto;padding:1rem;background:#faf7ed;color:#243b32}section{background:white;padding:1.5rem;margin:1.5rem 0;border:1px solid #ccc;border-radius:12px}audio{width:100%}td{padding:.4rem;border-bottom:1px solid #ddd}</style><h1>Song auditions A / B / C</h1><p>Private listening. Every source line has at most one unrecognized word and at least one recognized word in its best diagnostic pass. Repeated lines are allowed. Recognition is evidence; listening and Golden selection remain yours.</p>'+''.join(sections)+'</html>'
         path=self.work/'review.html';path.write_text(page,encoding='utf-8',newline='\n')
         asset=self.ingest(path,'Private static A/B/C audition listening page')
@@ -475,13 +512,15 @@ def main():
     run.add_argument('--timing-reference-slot',help='Use a qualified same-source request duration and seed neighborhood for future distinct musical briefs; no audio conditioning')
     run.add_argument('--focus-missing-lines',action=argparse.BooleanOptionalAction,default=None,help='Remind generation of bounded exact source phrases missed by the best prior take; ASR stays unprompted')
     run.add_argument('--ctc-runtime-asset',help='Explicit frozen independent Spanish CTC component for bounded near-pass rechecks; no downloads or lyric prompt')
+    run.add_argument('--audio-guide-slot',help='Explicit generated same-poem qualified text2music recording as a cover guide; private scope and receipt verified')
+    run.add_argument('--audio-guide-strength',type=float,help='Explicit cover influence from 0.2 to 1.0; default 0.75 with a guide')
     restore=sub.add_parser('restore');restore.add_argument('--state',required=True);restore.add_argument('--lfs-executable',required=True)
     restore.add_argument('--all-attempts',action='store_true',help='Verify retained failed takes as well as qualifying candidates')
     review=sub.add_parser('review');review.add_argument('--campaign',required=True);review.add_argument('--state',required=True)
     stop=sub.add_parser('request-stop');stop.add_argument('--clear',action='store_true')
     args=p.parse_args();c=Campaign(args.root,args.assets,args.work,args.metadata_retries)
     if args.operation=='snapshot':c.freeze_runtime(args)
-    elif args.operation=='run':c.run(args.campaign,args.runtime_asset,args.backend,args.adopt_backend_revision,args.repeat_after_failures,args.planner_asset,args.generation_route,args.repeat_section_lines,args.phrase_max_words,args.asr_dtype,args.timing_reference_slot,args.focus_missing_lines,args.ctc_runtime_asset)
+    elif args.operation=='run':c.run(args.campaign,args.runtime_asset,args.backend,args.adopt_backend_revision,args.repeat_after_failures,args.planner_asset,args.generation_route,args.repeat_section_lines,args.phrase_max_words,args.asr_dtype,args.timing_reference_slot,args.focus_missing_lines,args.ctc_runtime_asset,args.audio_guide_slot,args.audio_guide_strength)
     elif args.operation=='restore':c.restore(args.state,args.lfs_executable,args.all_attempts)
     elif args.operation=='review':c.review(read(args.campaign),read(args.state))
     else:c.save('stop-after-current.json',dict(requested=not args.clear))

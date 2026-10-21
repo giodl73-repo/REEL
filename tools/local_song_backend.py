@@ -62,8 +62,14 @@ def offline():
 def validate_request(request, source):
     if request['schema'] != 'reel.local-song-request.v1':
         raise ValueError('Unsupported song request')
-    if request['task'] != 'text2music' or request['language'] != 'es':
-        raise ValueError('This adapter supports Spanish original text2music only')
+    if request['task'] not in ('text2music','cover') or request['language'] != 'es':
+        raise ValueError('Unsupported Spanish generation task')
+    if request['task']=='cover':
+        if not all(isinstance(request.get(key),dict) for key in ['guide_audio','guide_request','guide_generation','guide_version_lock']):
+            raise ValueError('Cover requires declared generated-guide proof')
+        strength=request.get('audio_cover_strength')
+        if type(strength) not in (int,float) or not .2<=strength<=1 or request.get('semantic_planner'):
+            raise ValueError('Unsupported generated-guide conditioning')
     if not 30 <= request['duration_seconds'] <= 600 or not isinstance(request['seed'], int):
         raise ValueError('Invalid bounded duration or seed')
     if source.read_bytes().decode('utf-8') != request['canonical_lyrics']:
@@ -90,6 +96,23 @@ def validate_request(request, source):
 def runtime_files(runtime, group):
     for item in runtime[group]:
         checked(item['path'], item)
+
+
+def validate_generated_guide(request,source):
+    checked('guide.wav',request['guide_audio'])
+    checked('guide-request.json',request['guide_request'])
+    checked('guide-generation.json',request['guide_generation'])
+    original=read('guide-request.json');receipt=read('guide-generation.json')
+    validate_request(original,source)
+    if original['task']!='text2music' or original['source_lock']!=request['source_lock']:
+        raise ValueError('Guide must be a generated text2music take of the same source version')
+    if original['canonical_lyrics']!=request['canonical_lyrics'] or original['permissions']!=request['permissions']:
+        raise ValueError('Guide source or private permission scope differs')
+    if original['duration_seconds']!=request['duration_seconds']:
+        raise ValueError('Cover duration must match its generated guide')
+    if receipt['request']!=descriptor('guide-request.json') or receipt['recording']!=descriptor('guide.wav'):
+        raise ValueError('Generated guide receipt binding differs')
+    return dict(recording=descriptor('guide.wav'),request=descriptor('guide-request.json'),generation=descriptor('guide-generation.json'))
 
 
 def plan(request, runtime, source):
@@ -132,6 +155,7 @@ def plan(request, runtime, source):
 
 def generate(request, runtime, source):
     validate_request(request, source)
+    guide=validate_generated_guide(request,source) if request['task']=='cover' else None
     runtime_files(runtime, 'generation_files')
     checked(runtime['python']['path'], runtime['python'])
     actual = subprocess.check_output(['git', '-C', runtime['ace_root'], 'rev-parse', 'HEAD'], text=True).strip()
@@ -157,12 +181,15 @@ def generate(request, runtime, source):
     if not ok or handler.dtype is not torch.float32:
         raise RuntimeError(f'ACE initialization failed: {status}')
     params = GenerationParams(
-        task_type='text2music', caption=request['caption'], lyrics=request['render_lyrics'],
+        task_type=request['task'], caption=request['caption'], lyrics=request['render_lyrics'],
         instrumental=False, vocal_language='es', bpm=None, keyscale='', timesignature='',
         duration=request['duration_seconds'], inference_steps=8, guidance_scale=7.5,
         seed=request['seed'], thinking=False, use_cot_metas=False,
         use_cot_caption=False, use_cot_language=False, use_cot_lyrics=False,
     )
+    if guide:
+        params.src_audio='guide.wav'
+        params.audio_cover_strength=request['audio_cover_strength']
     if request.get('semantic_planner'):
         planned=read('plan.json')
         if planned['request']!=descriptor('request.json'):raise ValueError('Plan request binding changed')
@@ -183,6 +210,10 @@ def generate(request, runtime, source):
         initialization=str(status), dtype=str(handler.dtype),
         quantization='w8a8_dynamic', compile_model=False, semantic_planner=bool(request.get('semantic_planner')),
         plan=descriptor('plan.json') if request.get('semantic_planner') else None,
+        task_type=request['task'],audio_conditioning=guide,
+        audio_cover_strength=params.audio_cover_strength if guide else None,
+        cover_noise_strength=params.cover_noise_strength if guide else None,
+        duration_locked_to_guide=bool(guide),
         external_upload=False, human_listening='pending', selected=False,
     ))
     print('Recording retained for technical and lyric analysis', flush=True)

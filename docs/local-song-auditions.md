@@ -152,6 +152,16 @@ takes skip loading the extra model. No model is downloaded. A private analysis
 revision recovered two lines on an unchanged 35/37 take, yielding 37/37; its
 original report remains immutable. This is machine evidence, not human approval.
 
+`--audio-guide-slot ID` explicitly uses an already qualified, generated
+same-poem text2music recording as a cover guide for a distinct musical brief.
+The adapter verifies source/version, private permissions, original request and
+generation-receipt/audio hashes before loading the engine. It retains the exact
+guide render and source duration. `--audio-guide-strength` declares influence
+(0.2–1.0; default 0.75). No living-person source or named voice is inferred.
+The new output is labelled an audio-guided variation, with guide assets and
+dependency locks; it still requires fresh unprompted coverage and human musical
+review. Fixed candidates and original guide bytes remain unchanged.
+
 The backend's `recount` operation takes a hash-bound prior report, recording,
 request and source through a Rust job. It revises only line accounting from the
 retained unprompted token/timestamp passes, retaining the prior report and a

@@ -1,5 +1,6 @@
 """Synthetic opaque-token contract fixtures; no private lyrics or model/audio."""
 import tempfile
+import os
 from pathlib import Path
 import unittest
 import local_song_backend as backend
@@ -12,6 +13,40 @@ def evidence(text):
 
 
 class LyricGateTests(unittest.TestCase):
+    def test_generated_guide_is_hash_bound_and_rejects_another_source_version(self):
+        with tempfile.TemporaryDirectory() as folder:
+            previous=Path.cwd()
+            try:
+                os.chdir(folder);source=Path('source.txt');source.write_bytes(b'Alpha beta gamma\n')
+                original=dict(schema='reel.local-song-request.v1',task='text2music',language='es',duration_seconds=60,seed=1,
+                    canonical_lyrics='Alpha beta gamma\n',render_lyrics='[Verse]\nAlpha beta gamma',source=backend.descriptor(source),source_lock={},
+                    permissions=dict(private_only=True,external_upload=False,identifiable_imitation=False,public_release=False))
+                backend.write('guide-request.json',original);Path('guide.wav').write_bytes(b'synthetic proof-binding fixture, not audio')
+                backend.write('guide-generation.json',dict(request=backend.descriptor('guide-request.json'),recording=backend.descriptor('guide.wav')))
+                request=dict(original,task='cover',guide_audio=backend.descriptor('guide.wav'),guide_request=backend.descriptor('guide-request.json'),
+                    guide_generation=backend.descriptor('guide-generation.json'),guide_version_lock={},audio_cover_strength=.75)
+                backend.validate_request(request,source)
+                self.assertEqual(backend.validate_generated_guide(request,source)['recording'],backend.descriptor('guide.wav'))
+                request['source_lock']={'wrong':'version'}
+                with self.assertRaises(ValueError):backend.validate_generated_guide(request,source)
+            finally:os.chdir(previous)
+
+    def test_guided_candidate_preserves_source_render_and_distinct_brief(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/'source.txt';source.write_bytes(b'Alpha beta gamma\nDelta echo foxtrot\n')
+            original=dict(task='text2music',canonical_lyrics=source.read_bytes().decode(),source_lock={},duration_seconds=60,
+                render_lyrics=backend.format_repeated_sections(source.read_text(),2,12),performance_repetitions=2,repeat_section_lines=2,phrase_max_words=12)
+            proof=Path(folder)/'original.json';backend.write(proof,original);proof_desc=backend.descriptor(proof)
+            campaign=local_song_campaign.Campaign(folder,Path(folder)/'unused.exe',Path(folder)/'work')
+            campaign.repeat_section_lines=4;campaign.phrase_max_words=12
+            campaign.audio_guide=dict(request=proof_desc,recording={},generation={},version_lock={},label='A',strength=.75)
+            slot=dict(id='synthetic-c',title='Synthetic',source=backend.descriptor(source),source_lock={},duration_seconds=120,caption='A distinct invented musical brief',seed_base=100)
+            with patch.object(campaign,'locate',side_effect=lambda asset:proof if asset==proof_desc else source):request=campaign.request(slot,3)
+            self.assertEqual(request['task'],'cover');self.assertEqual(request['duration_seconds'],60)
+            self.assertEqual(request['render_lyrics'],original['render_lyrics']);self.assertEqual(request['repeat_section_lines'],2)
+            self.assertTrue(request['caption'].startswith(slot['caption']));backend.validate_request(request,source)
+
     def test_independent_ctc_uses_bounded_neighboring_time_windows(self):
         report=dict(passed=False,technical=dict(seconds=100),lines=[
             dict(passes_gate=True,recognized_span=[10,15]),dict(passes_gate=False,recognized_span=None),
