@@ -17,6 +17,20 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
             .ok_or_else(|| "Missing argument".into())
     };
     match command {
+        "tier-plan-check" => {
+            if args.len()!=3 { return Err("Usage: tier-plan-check <policy.json> <plan.json>".into()); }
+            let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+            crate::tiering::check_plan(root,Path::new(arg(1)?),Path::new(arg(2)?),now)
+        },
+        "tier-plan" => {
+            if args.len()!=4 { return Err("Usage: tier-plan <policy.json> <baseline.json> <new-private-plan.json>".into()); }
+            let destination=Path::new(arg(3)?);
+            if destination.exists() { return Err("Plan output already exists".into()); }
+            let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+            let mut plan=crate::tiering::plan(root,Path::new(arg(1)?),Path::new(arg(2)?),now)?;
+            crate::tiering::write_plan(destination,&plan)?;
+            plan.as_object_mut().unwrap().remove("objects");plan["private_plan_path"]=json!(destination);Ok(plan)
+        },
         "cache-report" => {
             if args.get(1).is_some_and(|p|Path::new(p).exists()) {return Err("Report output already exists; choose a new private report path".into());}
             let report=crate::accounting::report_with_progress(root,|done,total|eprintln!("Cache metadata: {done}/{total} objects"))?;

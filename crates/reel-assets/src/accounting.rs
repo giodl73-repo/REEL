@@ -77,7 +77,7 @@ pub fn project(root: &Path) -> Result<Project> {
 fn version_key(lock: &versions::Dependency) -> String {
     format!("{}@{}", lock.logical_id, lock.version_id)
 }
-fn expand(
+pub(crate) fn expand(
     s: &versions::State,
     roots: impl IntoIterator<Item = String>,
 ) -> Result<BTreeSet<String>> {
@@ -102,7 +102,7 @@ fn expand(
     }
     Ok(found)
 }
-fn selected_roots(
+pub(crate) fn selected_roots(
     root: &Path,
     p: &Project,
     s: &versions::State,

@@ -8,6 +8,7 @@ pub mod goldens;
 pub mod jobs;
 pub mod registry;
 pub mod scenes;
+pub mod tiering;
 pub mod versions;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
