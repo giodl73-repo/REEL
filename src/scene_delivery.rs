@@ -30,6 +30,10 @@ pub struct Job {
     pub height: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption_picture_layout: Option<crate::caption_presentation::CaptionPictureLayoutConfig>,
+    /// Explicit output-space viewport for side panels or portrait reflow.
+    /// Source/protection coordinates remain local to the fitted picture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture_region: Option<crate::caption_presentation::PixelRect>,
     #[serde(default)]
     pub still_sequence_encoding: Option<String>,
     pub max_composition_samples: u64,
@@ -321,13 +325,12 @@ fn nonempty(s: &str) -> bool {
 pub fn picture_layout(
     job: &Job,
 ) -> Result<Option<crate::caption_presentation::CaptionPictureLayoutReport>> {
-    job.caption_picture_layout
-        .as_ref()
-        .map(|config| {
-            crate::caption_presentation::resolve_picture_layout(config, job.width, job.height)
-        })
-        .transpose()
-        .map(Option::flatten)
+    crate::caption_presentation::resolve_scene_picture_layout(
+        job.caption_picture_layout.as_ref(),
+        job.picture_region.as_ref(),
+        job.width,
+        job.height,
+    )
 }
 
 pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
@@ -356,7 +359,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
             }))
     {
         bail!(
-            "reserved caption band requires contained picture motion; legacy or post-compose cameras are unsupported"
+            "reserved caption band or explicit picture region requires contained picture motion; legacy or post-compose cameras are unsupported"
         );
     }
     let base = job_path.parent().unwrap_or(Path::new("."));
@@ -534,7 +537,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                 bail!("phased camera requires an uncropped still at its first frame");
             }
             reel_assembly::motioncraft::validate_camera(plan)?;
-            reel_assembly::motioncraft::camera_expression(plan)?;
+            reel_assembly::motioncraft::camera_geometry(plan)?;
             let mut expected = reel_assembly::motioncraft::compile(
                 &plan.direction,
                 &plan.safe_area,
@@ -1439,11 +1442,8 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         };
         let visual = match &p.motion {
             Some(PictureMotion::PhasedCamera { plan: motion }) => {
-                let zoom = reel_assembly::motioncraft::camera_expression(motion)?;
-                let left = format!("(W-W/({zoom}))/2");
-                let top = format!("(H-H/({zoom}))/2");
-                let right = format!("(W+W/({zoom}))/2");
-                let bottom = format!("(H+H/({zoom}))/2");
+                let [left, top, right, bottom] =
+                    reel_assembly::motioncraft::camera_geometry(motion)?;
                 format!(
                     "{layout_format}scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,perspective=x0='{left}':y0='{top}':x1='{right}':y1='{top}':x2='{left}':y2='{bottom}':x3='{right}':y3='{bottom}':interpolation=cubic:sense=source:eval=frame,{output_pad}",
                     region.width, region.height, region.width, region.height
