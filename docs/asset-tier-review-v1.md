@@ -77,3 +77,29 @@ Fixtures cover a real native decision-to-verification round trip without
 removal, held/forged blocks, stale/expired choices, cross-consumer protection
 changes, script-element escape prevention, private networkless rendering,
 portable project recreation, undeclared worktree holds and frozen source controls.
+
+## Explicit existing cold-copy removal
+
+`tier-demote` accepts optional `retained_tier` naming the policy cold tier.
+Omission retains the history-only contract. Cold mode accepts only planned
+`unregistered-cold-candidate` / `register-and-archive-first` objects. It probes
+only the exact configured archive CAS paths, requires an existing independent
+copy, and freshly verifies both copies with the same handle/alias protections.
+It never enumerates the archive or creates payload copies. Missing or corrupt
+cold content holds; registered content in any modern consumer also holds.
+
+Default verification does not register cold custody or remove source links.
+Explicit apply publishes an immutable `reel.cold-custody.v1` receipt in the named
+archive's `snapshots/reel-assets-cold-v1/<prefix>/<hash>.json` before any source
+unlink. Receipt paths reject reparse ancestors; receipt handles exclude writers
+and replacement through removal. A conflicting receipt or failed publication
+keeps the source. The cold register preserves hash, bytes, exact recovery path,
+unknown provenance and retention state separately from active selections.
+It is not a permanent retention pin. All-consumer, stale-plan, last-copy and durable-journal safeguards remain.
+Cold mode excludes every hash registered by any modern consumer, so unrelated
+job reservations do not globally block it. Under held metadata handles, late
+consumer changes trigger exact-object protection/registration refresh. A newly
+registered or selected input holds; unrelated new assets can proceed. The short
+metadata transaction lock remains; no reservation is removed or job stopped.
+History mode retains its existing job coordination gate. Browser block
+choices remain history-only; cold requests are explicit native operator batches.

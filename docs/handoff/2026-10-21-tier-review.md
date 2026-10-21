@@ -21,3 +21,16 @@ is not current physical state, block choice is not application, and source pin
 adoption is separate from replacing an executable. Scope/decision mutation and
 stale protections fail closed. No private hashes, roots, media or reports are
 included in public fixtures. No human or publication approval is inferred.
+
+Urgent cold-copy extension: explicit policy-named retained cold tier, exact
+existing-object verification and durable cold custody before unlink. No archive
+crawl, payload copy, last-copy retirement or relaxed job/selection safeguards.
+Producer-applied storage/provenance review: unknown provenance is preserved,
+active registration is distinct from cold custody, public fixtures remain
+synthetic. Tests cover cold dry-run, missing/corrupt copy, history mismatch,
+receipt publication failure and successful/idempotent Windows cold removal.
+
+Cold concurrency regression: unrelated live reservations and newly registered
+other objects allow removal; registering the exact candidate immediately before
+unlink holds it. 97 Windows tests pass (96 unit plus one executable), scoped
+Clippy and release build. Metadata transaction locking remains short and exact.

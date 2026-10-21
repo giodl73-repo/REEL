@@ -33,6 +33,9 @@ pub struct Request {
     pub source_controls: BTreeMap<String, String>,
     #[serde(default)]
     pub allow_same_volume_copies: bool,
+    /// Explicit cold custody operation; omitted preserves history-only behavior.
+    #[serde(default)]
+    pub retained_tier: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -471,6 +474,36 @@ fn stamp(journal: &Path, name: &str, value: &Value) -> Result<()> {
     tiering::write_plan(&path, value)
 }
 
+/// Exact named custody only. No archive enumeration, copying or last-copy
+/// retirement. The returned handles keep the durable receipt immutable until
+/// this object's source removals finish.
+fn register_cold(archive: &Path, hash: &str, bytes: u64, path: &Path) -> Result<Vec<fs::File>> {
+    let mut dir = archive.to_path_buf();
+    let mut guards = platform::guard_dirs(&dir.join("custody-anchor"))?;
+    for component in ["snapshots", "reel-assets-cold-v1", &hash[..2]] {
+        dir.push(component);
+        match fs::create_dir(&dir) {
+            Ok(()) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+            Err(e) => return Err(e.into()),
+        }
+        guards.extend(platform::guard_dirs(&dir.join("custody-anchor"))?);
+    }
+    let name = format!("{hash}.json");
+    let receipt = json!({"schema":"reel.cold-custody.v1","sha256":hash,"bytes":bytes,
+        "cache_uri":format!("cache://sha256/{hash}"),"cold_path":path,
+        "retention_state":"cold-registered","provenance":"Unregistered active-cache object; original provenance unknown",
+        "recovery":"Explicit named-object recovery only; ordinary active lookup does not probe this archive",
+        "not_a_permanent_retention_pin":true});
+    stamp(&dir, &name, &receipt)?;
+    let file = platform::open(&dir.join(&name), false)?;
+    if crate::load(&dir.join(&name))? != receipt {
+        return Err("Cold custody receipt changed".into());
+    }
+    guards.push(file);
+    Ok(guards)
+}
+
 #[cfg(test)]
 type TestHook = Box<dyn FnMut(&str) -> Result<()>>;
 #[cfg(test)]
@@ -507,13 +540,19 @@ pub fn run(
         .ok_or("Invalid deadline")?;
     let cfg = config(root)?;
     let control = admission::control(root, &cfg)?.canonicalize()?;
-    if apply {
-        let _guard = admission::lock(&control)?;
-        ensure_no_admissions(&control)?;
-    }
     let policy_bytes = tiering::read_bounded(&req.policy, 256 * 1024)?;
     let policy: tiering::Policy = serde_json::from_slice(&policy_bytes)?;
     policy.validate(&cfg)?;
+    let cold = match req.retained_tier.as_deref() {
+        None => false,
+        Some(id) if id == policy.history_tier => false,
+        Some(id) if id == policy.cold_tier => true,
+        _ => return Err("Retained tier must be the configured history or cold tier".into()),
+    };
+    if apply && !cold {
+        let _guard = admission::lock(&control)?;
+        ensure_no_admissions(&control)?;
+    }
     if req.schema != "reel.asset-demotion-request.v1"
         || req.consumer_scope != "all-managed-cache-consumers"
         || req.consumer_roots.is_empty()
@@ -546,8 +585,14 @@ pub fn run(
         let row = planned
             .get(h.as_str())
             .ok_or("Object absent from saved plan")?;
-        if row["proposal"] != "verify-and-demote" || row["class"] != "previously-used" {
-            return Err("Requested object is not an eligible historical proposal".into());
+        let eligible = if cold {
+            row["proposal"] == "register-and-archive-first"
+                && row["class"] == "unregistered-cold-candidate"
+        } else {
+            row["proposal"] == "verify-and-demote" && row["class"] == "previously-used"
+        };
+        if !eligible {
+            return Err("Requested object is not eligible for the explicit retained tier".into());
         }
         let n = row["bytes"].as_u64().ok_or("Missing planned bytes")?;
         bytes = bytes
@@ -621,6 +666,7 @@ pub fn run(
                 || state.current.contains(h)
                 || state.leased.contains(h)
                 || state.controls.contains(h)
+                || (cold && state.registered.contains_key(h))
             {
                 return Err(format!("Object protected by managed consumer: {h}").into());
             }
@@ -663,7 +709,11 @@ pub fn run(
         &json!({"request_sha256":tiering::digest(&request_bytes),"apply":apply,"plan_sha256":req.plan_sha256}),
     )?;
     let hot = &cfg.cache_roots[policy.tier(&policy.selected_tier).index];
-    let warm = &cfg.cache_roots[policy.tier(&policy.history_tier).index];
+    let warm = if cold {
+        &cfg.archive_roots[policy.tier(&policy.cold_tier).index]
+    } else {
+        &cfg.cache_roots[policy.tier(&policy.history_tier).index]
+    };
     if !req.allow_same_volume_copies && admission::volume_id(hot)? == admission::volume_id(warm)? {
         return Err("Source/destination share a volume; apply held".into());
     }
@@ -727,7 +777,7 @@ pub fn run(
         } else {
             None
         };
-        if apply {
+        if apply && !cold {
             ensure_no_admissions(&control)?;
         }
         if consumer_registration(root, &consumers, &inactive)? != registration {
@@ -743,9 +793,40 @@ pub fn run(
         for (consumer, token) in &consumer_tokens {
             let (fresh, held) = metadata_snapshot(consumer, apply)?;
             if fresh != *token {
-                return Err(
-                    "Managed consumer changed before removal; discard stale request".into(),
-                );
+                if !cold {
+                    return Err(
+                        "Managed consumer changed before removal; discard stale request".into(),
+                    );
+                }
+                // New unrelated registrations must not stop cold cleanup. The
+                // exact current metadata is held here: re-evaluate this object,
+                // including every registered hash, instead of waiving freshness.
+                if consumer.join("asset-project.json").is_file() {
+                    let other_cfg = config(consumer)?;
+                    if other_cfg.cache_roots != cfg.cache_roots
+                        || admission::control(consumer, &other_cfg)?.canonicalize()? != control
+                    {
+                        return Err("Consumer cache/coordination changed".into());
+                    }
+                    let state = tiering::live(consumer, &protection_policy)?;
+                    if state.registered.contains_key(h)
+                        || state.selected.contains(h)
+                        || state.current.contains(h)
+                        || state.leased.contains(h)
+                        || state.controls.contains(h)
+                    {
+                        return Err(
+                            "Cold object became protected or registered before removal".into()
+                        );
+                    }
+                } else if !legacy.contains(consumer)
+                    || legacy_protection(consumer, &cfg)?.contains(h)
+                {
+                    return Err("Cold object became protected by legacy consumer".into());
+                }
+                if metadata_token(consumer)? != fresh {
+                    return Err("Consumer changed during exact cold protection refresh".into());
+                }
             }
             control_guards.extend(held);
         }
@@ -758,6 +839,15 @@ pub fn run(
         }
         let proof = json!({"sha256":h,"bytes":size,"retained_path":destination,"retained_identity":retained_id,"verified":true});
         stamp(journal, &format!("{h}-retained.json"), &proof)?;
+        // Cold custody is separate from the active registry. Publish it before
+        // the first source unlink, while the exact independently verified cold
+        // object and all selection metadata remain locked against replacement.
+        let _cold_custody = if cold && apply {
+            Some(register_cold(warm, h, size, &destination)?)
+        } else {
+            None
+        };
+        checkpoint("after-cold-registration")?;
         // Recover a crash between handle deletion and the completion stamp.
         // Absence is observed, not attributed to this process or counted twice.
         for path in &paths {
@@ -809,7 +899,8 @@ pub fn run(
     let result = json!({"schema":"reel.asset-demotion-result.v1","apply":apply,"plan_sha256":req.plan_sha256,
         "objects":results,"free_bytes_before":free_before,"free_bytes_after":free_after,
         "observed_free_space_delta":i128::from(free_after)-i128::from(free_before),
-        "free_space_delta_is_exclusively_attributed":false,"archive_probed":false,"last_copy_retired":false});
+        "free_space_delta_is_exclusively_attributed":false,"archive_probed":cold,
+        "cold_custody_registered":cold && apply,"last_copy_retired":false});
     let mut result = result;
     result["admissions_present_at_completion"] = json!(admissions_present(&control)?);
     result["removal_authorized"] = json!(apply);
@@ -908,6 +999,149 @@ pub fn export_protections(root: &Path, request_path: &Path) -> Result<Value> {
 mod tests {
     use super::*;
     use crate::tiering::tests::Fixture;
+
+    fn cold_case() -> Case {
+        let mut f = Fixture::new();
+        let data = b"unregistered cold candidate";
+        let h = f.put(data, false);
+        let cold = object(&f.root().join("offline-cold"), &h);
+        fs::create_dir_all(cold.parent().unwrap()).unwrap();
+        fs::write(cold, data).unwrap();
+        f.baseline();
+        let plan = f.run().unwrap();
+        let saved = f.root().join("saved-plan.json");
+        tiering::write_plan(&saved, &plan).unwrap();
+        let request = f.root().join("request.json");
+        fs::write(&request,json!({"schema":"reel.asset-demotion-request.v1","policy":f.root().join("policy.json"),"plan":saved,"plan_sha256":plan["plan_sha256"],"consumer_roots":[f.root().canonicalize().unwrap()],"consumer_scope":"all-managed-cache-consumers","sha256s":[h],"max_verify_bytes":1024,"max_seconds":60,"allow_same_volume_copies":true,"retained_tier":"cold"}).to_string()).unwrap();
+        let journal = f.root().canonicalize().unwrap().join(".local/cold-journal");
+        Case {
+            f,
+            h,
+            request,
+            journal,
+        }
+    }
+
+    #[test]
+    fn explicit_cold_dry_run_verifies_named_object_without_registration() {
+        let c = cold_case();
+        let r = c.run(false).unwrap();
+        assert_eq!(r["archive_probed"], true);
+        assert_eq!(r["cold_custody_registered"], false);
+        assert!(c.e().is_file());
+        assert!(!c.f.root().join("offline-cold/snapshots").exists());
+    }
+
+    #[test]
+    fn cold_missing_corrupt_and_registered_history_are_held() {
+        let c = cold_case();
+        let path = object(&c.f.root().join("offline-cold"), &c.h);
+        fs::write(&path, b"corrupt").unwrap();
+        assert!(c.run(false).is_err());
+        fs::remove_file(&path).unwrap();
+        assert!(c.run(false).is_err());
+        assert!(c.e().is_file());
+        let c = Case::new();
+        let mut req = crate::load(&c.request).unwrap();
+        req["retained_tier"] = json!("cold");
+        fs::write(&c.request, req.to_string()).unwrap();
+        assert!(c.run(false).is_err());
+        assert!(c.e().is_file());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cold_custody_precedes_removal_and_survives_repeat_apply() {
+        let c = cold_case();
+        let archive = c.f.root().join("offline-cold");
+        let r = c.run(true).unwrap();
+        assert_eq!(r["cold_custody_registered"], true);
+        assert!(!c.e().exists());
+        assert!(object(&archive, &c.h).is_file());
+        let receipt = archive
+            .join("snapshots/reel-assets-cold-v1")
+            .join(&c.h[..2])
+            .join(format!("{}.json", c.h));
+        assert_eq!(crate::load(&receipt).unwrap()["sha256"], c.h);
+        c.run(true).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn failed_cold_registration_keeps_hot_source() {
+        let c = cold_case();
+        fs::write(
+            c.f.root().join("offline-cold/snapshots"),
+            b"not a directory",
+        )
+        .unwrap();
+        assert!(c.run(true).is_err());
+        assert!(c.e().is_file());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn interrupted_cold_registration_is_recoverable_and_conflicts_hold() {
+        let c = cold_case();
+        TEST_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(|stage| {
+                if stage == "after-cold-registration" {
+                    Err("simulated interruption".into())
+                } else {
+                    Ok(())
+                }
+            }))
+        });
+        assert!(c.run(true).is_err());
+        TEST_HOOK.with(|hook| *hook.borrow_mut() = None);
+        assert!(c.e().is_file());
+        c.run(true).unwrap();
+        assert!(!c.e().exists());
+
+        let c = cold_case();
+        let dir =
+            c.f.root()
+                .join("offline-cold/snapshots/reel-assets-cold-v1")
+                .join(&c.h[..2]);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(format!("{}.json", c.h)), b"{}").unwrap();
+        assert!(c.run(true).is_err());
+        assert!(c.e().is_file());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cold_cleanup_allows_live_jobs_and_unrelated_registration_but_holds_exact_new_input() {
+        for same_object in [false, true] {
+            let c = cold_case();
+            let cfg = config(c.f.root()).unwrap();
+            let reservation = admission::reserve(c.f.root(), &cfg, 1).unwrap();
+            let root = c.f.root().to_path_buf();
+            let hash = if same_object {
+                c.h.clone()
+            } else {
+                "a".repeat(64)
+            };
+            TEST_HOOK.with(|hook| {
+                *hook.borrow_mut() = Some(Box::new(move |stage| {
+                    if stage == "before-lock" {
+                        fs::write(root.join("registry/objects.tsv"), format!("{hash}\t26\n"))?;
+                    }
+                    Ok(())
+                }))
+            });
+            let result = c.run(true);
+            TEST_HOOK.with(|hook| *hook.borrow_mut() = None);
+            if same_object {
+                assert!(result.is_err());
+                assert!(c.e().exists());
+            } else {
+                assert!(result.is_ok(), "{result:?}");
+                assert!(!c.e().exists());
+            }
+            drop(reservation);
+        }
+    }
     #[cfg(windows)]
     #[test]
     fn reviewed_project_controls_exclude_writers_and_reject_new_declarations() {
