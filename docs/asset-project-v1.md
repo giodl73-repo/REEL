@@ -1,5 +1,8 @@
 # Project asset custody and cache accounting
 
+Explicit retained-baseline tier proposals and their limits are documented in
+[asset tiering](asset-tiering-v1.md). The planner is read-only, not an eviction tool.
+
 `reel-assets` is a separate Rust crate and explicit CLI. It owns local cache
 admission, immutable versions, dependency protection, local-only LFS transport,
 bounded jobs and read-only cache accounting. It has no dependency on a consumer

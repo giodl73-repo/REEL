@@ -77,7 +77,7 @@ pub fn project(root: &Path) -> Result<Project> {
 fn version_key(lock: &versions::Dependency) -> String {
     format!("{}@{}", lock.logical_id, lock.version_id)
 }
-fn expand(
+pub(crate) fn expand(
     s: &versions::State,
     roots: impl IntoIterator<Item = String>,
 ) -> Result<BTreeSet<String>> {
@@ -102,7 +102,7 @@ fn expand(
     }
     Ok(found)
 }
-fn selected_roots(
+pub(crate) fn selected_roots(
     root: &Path,
     p: &Project,
     s: &versions::State,
@@ -339,6 +339,7 @@ pub fn report_with_progress(root: &Path, mut progress: impl FnMut(usize, usize))
         }
     }
     let mut controls = BTreeSet::new();
+    controls.extend(state.metadata_roots.iter().cloned());
     let raw: Value = serde_json::from_slice(&before)?;
     if let Some(records) = raw["version_records"].as_object() {
         controls.extend(

@@ -218,13 +218,21 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
         if index.get(&tool.sha256) != Some(&tool.bytes) {
             return Err("Installed tool must be exactly registered".into());
         }
+    }
+    for asset in job.inputs.values().chain(job.tools.values()) {
+        if index.get(&asset.sha256) != Some(&asset.bytes) {
+            return Err("Job input/tool must be exactly registered".into());
+        }
+    }
+    // Reserve before resolving source paths: maintenance can then hold all
+    // admitted readers, instead of racing a path captured before admission.
+    let reservation = admission::reserve(root, &cfg, job.budget_bytes)
+        .map_err(|e| format!("Job not started; admission: {e}"))?;
+    for tool in job.installed_tools.values() {
         verify(&tool.path, &tool.sha256, tool.bytes)?;
     }
     let mut sources = BTreeMap::new();
     for (name, asset) in job.inputs.iter().chain(job.tools.iter()) {
-        if index.get(&asset.sha256) != Some(&asset.bytes) {
-            return Err("Job input/tool must be exactly registered".into());
-        }
         let mut found = None;
         for cache in &cfg.cache_roots {
             let path = object(cache, &asset.sha256);
@@ -243,8 +251,6 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
             found.ok_or("Named job input absent from active caches; no archive access")?,
         );
     }
-    let reservation = admission::reserve(root, &cfg, job.budget_bytes)
-        .map_err(|e| format!("Job not started; admission: {e}"))?;
     let workspace = reservation
         .cache_root
         .join("staging/caminos")

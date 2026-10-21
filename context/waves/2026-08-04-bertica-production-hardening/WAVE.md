@@ -19,6 +19,25 @@ or creating a consumer runtime dependency on REEL internals.
 
 ## Invariants
 
+### 2026-10-20 bounded version controls and read-only legacy protections
+
+Pulse 09 adds explicit version-control base/patch compaction and compatible
+legacy protection exports. See docs/asset-version-index-v2.md. No consumer
+checkout is modified by reading its protections; actual apply keeps its gates.
+
+### 2026-10-20 verified redundant-copy removal
+
+Pulse 08 adds an explicit guarded Windows hot-copy removal command, immutable
+journals and recovery. See docs/asset-demotion-v1.md. Active admissions and
+unsupported consumer metadata hold maintenance; no archive/last-copy retirement
+is introduced. Private production pilot evidence stays upstream.
+
+### 2026-10-20 advisory configurable tier planning
+
+Pulse 07 adds read-only baseline/delta tier proposals and metadata freshness
+checks in reel-assets. See docs/asset-tiering-v1.md. There is no apply or deletion
+API in this slice; private consumer inventory remains upstream.
+
 ### 2026-10-20 project-configured asset custody and accounting
 
 Extracted the shared local custody/version/LFS/job implementation into the

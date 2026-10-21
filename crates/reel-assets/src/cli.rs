@@ -17,6 +17,32 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
             .ok_or_else(|| "Missing argument".into())
     };
     match command {
+        "consumer-protections" => {
+            if args.len()!=3 {return Err("Usage: consumer-protections <request.json> <new-private-export.json>".into());}
+            let mut export=crate::demotion::export_protections(root,Path::new(arg(1)?))?;
+            crate::tiering::write_plan(Path::new(arg(2)?),&export)?;
+            let count=export["protected_hashes"].as_object().unwrap().len();
+            export.as_object_mut().unwrap().remove("protected_hashes");export["protected_objects"]=json!(count);Ok(export)
+        },
+        "tier-demote" => {
+            if args.len()!=3 && !(args.len()==4 && arg(3)?=="--apply") { return Err("Usage: tier-demote <request.json> <absolute-owned-journal> [--apply]".into()); }
+            let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+            crate::demotion::run(root,Path::new(arg(1)?),Path::new(arg(2)?),args.len()==4,now)
+        },
+        "tier-plan-check" => {
+            if args.len()!=3 { return Err("Usage: tier-plan-check <policy.json> <plan.json>".into()); }
+            let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+            crate::tiering::check_plan(root,Path::new(arg(1)?),Path::new(arg(2)?),now)
+        },
+        "tier-plan" => {
+            if args.len()!=4 { return Err("Usage: tier-plan <policy.json> <baseline.json> <new-private-plan.json>".into()); }
+            let destination=Path::new(arg(3)?);
+            if destination.exists() { return Err("Plan output already exists".into()); }
+            let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+            let mut plan=crate::tiering::plan(root,Path::new(arg(1)?),Path::new(arg(2)?),now)?;
+            crate::tiering::write_plan(destination,&plan)?;
+            plan.as_object_mut().unwrap().remove("objects");plan["private_plan_path"]=json!(destination);Ok(plan)
+        },
         "cache-report" => {
             if args.get(1).is_some_and(|p|Path::new(p).exists()) {return Err("Report output already exists; choose a new private report path".into());}
             let report=crate::accounting::report_with_progress(root,|done,total|eprintln!("Cache metadata: {done}/{total} objects"))?;
@@ -41,6 +67,7 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
         "ingest" => ingest(root,Path::new(arg(1)?)),
         "register" => registry::register(root,Path::new(arg(1)?)),
         "compact-objects" => registry::compact(root),
+        "compact-versions" => versions::compact(root),
         "run-job" => crate::jobs::run(root,Path::new(arg(1)?)),
         "discard-job-scratch" => crate::jobs::discard(root,arg(1)?,arg(2)?,args.get(3).is_some_and(|a|a=="--discard-incomplete")),
         "verify-active" => {
