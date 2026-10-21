@@ -13,6 +13,30 @@ def evidence(text):
 
 
 class LyricGateTests(unittest.TestCase):
+    def test_duration_ceiling_survives_retries_and_explicit_repetition(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/'source.txt';source.write_text('Alpha beta gamma\nDelta echo foxtrot\n')
+            campaign=local_song_campaign.Campaign(folder,Path(folder)/'unused.exe',Path(folder)/'work')
+            slot=dict(id='synthetic-short',title='Synthetic',source={},source_lock={},duration_seconds=90,max_duration_seconds=105,caption='Invented brief',seed_base=100)
+            with patch.object(campaign,'locate',return_value=source):
+                self.assertEqual(campaign.request(slot,1)['duration_seconds'],90)
+                self.assertEqual(campaign.request(slot,10)['duration_seconds'],105)
+                campaign.repeat_after_failures=2
+                self.assertEqual(campaign.request(slot,10)['duration_seconds'],105)
+                slot['max_duration_seconds']=89
+                with self.assertRaises(ValueError):campaign.request(slot,1)
+
+    def test_duration_ceiling_rejects_longer_timing_reference(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/'source.txt';source.write_text('Alpha beta gamma\n')
+            campaign=local_song_campaign.Campaign(folder,Path(folder)/'unused.exe',Path(folder)/'work')
+            campaign.timing_reference=dict(source={},source_lock={},seed=10,duration_seconds=180,attempt_starts={'synthetic-short':1},request={},version_lock={})
+            slot=dict(id='synthetic-short',title='Synthetic',source={},source_lock={},duration_seconds=90,max_duration_seconds=105,caption='Invented brief',seed_base=100)
+            with patch.object(campaign,'locate',return_value=source):
+                with self.assertRaises(ValueError):campaign.request(slot,1)
+
     def test_generated_guide_is_hash_bound_and_rejects_another_source_version(self):
         with tempfile.TemporaryDirectory() as folder:
             previous=Path.cwd()

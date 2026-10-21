@@ -1,5 +1,11 @@
 # Explicit local song auditions
 
+An optional campaign-slot `max_duration_seconds` bounds adaptive retries. It must
+be at least the initial `duration_seconds` and at most 480. Longer timing/audio
+references fail rather than overriding this ceiling. For compact new recordings,
+use one source pass, explicit singer/tempo/phrasing briefs and a fixed ceiling;
+lyric qualification alone does not establish musical pacing or voice delivery.
+
 `tools/local_song_campaign.py` coordinates explicit project campaigns through
 `reel-assets`: ingestion, registration, pinned immutable versions and `run-job`.
 `tools/local_song_backend.py` is the trusted offline ACE/Whisper/Demucs adapter

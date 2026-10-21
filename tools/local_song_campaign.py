@@ -145,6 +145,9 @@ class Campaign:
         # Canonical words stay immutable under every explicit rendering policy.
         render=format_lyrics(lyrics,join_single_word_continuations=attempt>1,max_phrase_words=self.phrase_max_words)
         duration=min(480,slot['duration_seconds']+15*((attempt-1)//3))
+        ceiling=slot.get('max_duration_seconds')
+        if ceiling is not None and (isinstance(ceiling,bool) or not isinstance(ceiling,(int,float)) or not slot['duration_seconds'] <= ceiling <= 480):
+            raise ValueError('Duration ceiling must be between the initial duration and 480 seconds')
         caption=slot['caption']
         repetition={}
         if self.asr_dtype:repetition['recognition_dtype']=self.asr_dtype
@@ -198,6 +201,11 @@ class Campaign:
             repetition.update(guide_audio=guide['recording'],guide_request=guide['request'],guide_generation=guide['generation'],
                 guide_version_lock=guide['version_lock'],guide_label=guide['label'],audio_cover_strength=guide['strength'],
                 render_format='Exact supplied render layout of the generated same-poem guide; source words unchanged')
+        if ceiling is not None:
+            if (self.audio_guide or self.timing_reference) and duration>ceiling:
+                raise ValueError('Reference duration exceeds the candidate duration ceiling')
+            duration=min(duration,ceiling)
+            repetition['max_duration_seconds']=ceiling
         return dict(schema='reel.local-song-request.v1',candidate_id=f"{slot['id']}-take-{attempt:03d}",
             slot_id=slot['id'],title=slot['title'],source=slot['source'],source_lock=slot['source_lock'],
             canonical_lyrics=lyrics,render_lyrics=render,caption=caption,duration_seconds=duration,
