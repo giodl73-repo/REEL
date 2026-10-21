@@ -35,6 +35,15 @@ Entries may also scope the existing `repeat_section_lines` (0 or 2–8) and
 the slot's hard duration ceiling. This allows a close take to keep one pass while
 other pending voices try denser supplied repetitions at their original lengths.
 
+`tools/local_song_edit.py` produces explicit short editions inside a native Rust
+job from one hash-bound generated source, ordered nonoverlapping cuts and bounded
+instrumental fades. It verifies every evidence-bearing decoded sample is exactly
+unchanged, then remaps the original independent word evidence to the edit clock.
+Changed fade edges and incomplete word spans supply no evidence. This is a new
+edition with source-derived analysis, not a new performance or transcription.
+Retain the original request, recording, generation/analysis, source version, edit
+recipe and equality receipt. The review page labels the edit and original prompt.
+
 `tools/local_song_campaign.py` coordinates explicit project campaigns through
 `reel-assets`: ingestion, registration, pinned immutable versions and `run-job`.
 `tools/local_song_backend.py` is the trusted offline ACE/Whisper/Demucs adapter

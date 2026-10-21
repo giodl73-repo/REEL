@@ -7,6 +7,7 @@ import local_song_backend as backend
 import local_song_campaign  # Campaign syntax/import must remain dependency-free.
 import local_song_ctc
 import json
+import local_song_edit
 
 
 def evidence(text):
@@ -14,6 +15,24 @@ def evidence(text):
 
 
 class LyricGateTests(unittest.TestCase):
+    def test_short_edition_bounds_exclude_changed_edges_and_obey_ceiling(self):
+        plan,frames=local_song_edit.segment_plan([[1,3],[5,8]],10,100,.1,.1,.1,5)
+        self.assertEqual(frames,49);self.assertEqual(plan[1]['output_start'],19)
+        with self.assertRaises(ValueError):local_song_edit.segment_plan([[1,3],[5,8]],10,100,.1,.1,.1,4.8)
+        with self.assertRaises(ValueError):local_song_edit.segment_plan([[1,3],[2,4]],10,100,.1,0,0,5)
+        with self.assertRaises(ValueError):local_song_edit.segment_plan([[1,1.1]],10,100,.1,.1,.1,5)
+
+    def test_short_edition_remaps_only_unmodified_source_word_samples(self):
+        plan,_=local_song_edit.segment_plan([[1,3],[5,8]],10,100,.1,.1,.1,5)
+        passes=[dict(name='synthetic',tokens=[dict(word='alpha',span=[1.2,1.4]),dict(word='beta',span=[1.6,1.8]),
+            dict(word='gamma',span=[5.2,5.4]),dict(word='delta',span=[5.7,5.9]),
+            dict(word='changed',span=[1,1.05]),dict(word='outside',span=[8,9]),dict(word='unknown',span=[None,None])])]
+        mapped=local_song_edit.remap_passes(passes,plan,10)
+        self.assertEqual([x['word'] for x in mapped[0]['tokens']],['alpha','beta','gamma','delta'])
+        self.assertAlmostEqual(mapped[0]['tokens'][2]['span'][0],2.1)
+        self.assertFalse(mapped[0]['new_recognition'])
+        self.assertEqual(backend.line_report('Alpha beta\nGamma delta',mapped)['exact_lines'],2)
+
     def test_musical_brief_revisions_keep_source_scope_and_bounded_text(self):
         slot=dict(id='synthetic',caption='Original invented brief',source={'sha256':'one'},source_lock={'version_id':'v1'})
         self.assertEqual(local_song_campaign.revised_caption(slot,{}),slot['caption'])
