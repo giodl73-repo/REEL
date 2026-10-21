@@ -206,6 +206,12 @@ The new output is labelled an audio-guided variation, with guide assets and
 dependency locks; it still requires fresh unprompted coverage and human musical
 review. Fixed candidates and original guide bytes remain unchanged.
 
+A qualified generated cover may itself guide another brief. Its request must
+retain the identical poem/version and private scope, and its original generation
+receipt must bind the waveform and record cover conditioning without external
+upload. The new package locks that donor version and its existing native
+dependency closure; this does not admit an external or identifiable voice source.
+
 A qualified sample-preserving short edition may also supply that guide. Retain
 its explicit recipe and native edit receipt in addition to the original
 text2music request/generation receipt. The adapter verifies every hash binding,

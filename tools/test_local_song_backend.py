@@ -208,6 +208,27 @@ class LyricGateTests(unittest.TestCase):
                 with self.assertRaises(ValueError):backend.validate_generated_guide(request,source)
             finally:os.chdir(previous)
 
+    def test_generated_cover_guide_requires_its_bound_conditioning_receipt(self):
+        with tempfile.TemporaryDirectory() as folder:
+            previous=Path.cwd()
+            try:
+                os.chdir(folder);source=Path('source.txt');source.write_bytes(b'Alpha beta gamma\n')
+                original=dict(schema='reel.local-song-request.v1',task='cover',language='es',duration_seconds=60,seed=1,
+                    canonical_lyrics='Alpha beta gamma\n',render_lyrics='[Verse]\nAlpha beta gamma',source=backend.descriptor(source),source_lock={},
+                    permissions=dict(private_only=True,external_upload=False,identifiable_imitation=False,public_release=False),
+                    guide_audio={},guide_request={},guide_generation={},guide_version_lock={},audio_cover_strength=.75)
+                backend.write('guide-request.json',original);Path('guide.wav').write_bytes(b'invented cover recording binding')
+                receipt=dict(request=backend.descriptor('guide-request.json'),recording=backend.descriptor('guide.wav'),task_type='cover',audio_conditioning={'recording':'invented'},external_upload=False)
+                def install(value):
+                    Path('guide-generation.json').write_text(json.dumps(value),encoding='utf-8')
+                    return backend.descriptor('guide-generation.json')
+                request=dict(original,guide_audio=backend.descriptor('guide.wav'),guide_request=backend.descriptor('guide-request.json'),guide_generation=install(receipt))
+                backend.validate_generated_guide(request,source)
+                for key,value in [('audio_conditioning',None),('task_type','text2music'),('external_upload',True)]:
+                    changed=dict(receipt);changed[key]=value;request['guide_generation']=install(changed)
+                    with self.assertRaises(ValueError):backend.validate_generated_guide(request,source)
+            finally:os.chdir(previous)
+
     def test_guided_candidate_preserves_source_render_and_distinct_brief(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as folder:

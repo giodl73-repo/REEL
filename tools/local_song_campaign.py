@@ -230,7 +230,7 @@ class Campaign:
             guide=None
         if guide:
             original=read(self.locate(guide['request']))
-            if original['task']!='text2music' or original['canonical_lyrics']!=lyrics or original['source_lock']!=slot['source_lock']:
+            if original['task'] not in ('text2music','cover') or original['canonical_lyrics']!=lyrics or original['source_lock']!=slot['source_lock']:
                 raise ValueError('Audio guide must be generated from the identical poem version')
             if self.planner_asset:raise ValueError('Generated-guide cover does not combine with optional planning')
             render=original['render_lyrics'];duration=original['duration_seconds'];task='cover'
@@ -401,7 +401,7 @@ class Campaign:
             if req['task']=='short-edit':
                 edition=req
                 req=read(self.locate(edition['source_request']))
-            if req['task']!='text2music':raise ValueError('Only generated text2music takes or verified short editions may supply this guide')
+            if req['task'] not in ('text2music','cover'):raise ValueError('Only generated takes or verified short editions may supply this guide')
             proposed=dict(slot_id=audio_guide_slot,label=next(slot['label'] for slot in campaign['slots'] if slot['id']==audio_guide_slot),
                 recording=donor['outputs']['recording'],request=donor['request'],generation=edition['source_generation'] if edition else donor['outputs']['generation'],
                 version_lock=donor['version_lock'],strength=.75 if audio_guide_strength is None else audio_guide_strength)

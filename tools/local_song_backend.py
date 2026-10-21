@@ -113,8 +113,10 @@ def validate_generated_guide(request,source):
     checked('guide-generation.json',request['guide_generation'])
     original=read('guide-request.json');receipt=read('guide-generation.json')
     validate_request(original,source)
-    if original['task']!='text2music' or original['source_lock']!=request['source_lock']:
-        raise ValueError('Guide must be a generated text2music take of the same source version')
+    if original['task'] not in ('text2music','cover') or original['source_lock']!=request['source_lock']:
+        raise ValueError('Guide must be a generated take of the same source version')
+    if original['task']=='cover' and (receipt.get('task_type')!='cover' or not receipt.get('audio_conditioning') or receipt.get('external_upload') is not False):
+        raise ValueError('Generated cover guide lacks its original conditioning receipt')
     if original['canonical_lyrics']!=request['canonical_lyrics'] or original['permissions']!=request['permissions']:
         raise ValueError('Guide source or private permission scope differs')
     recording=descriptor('guide.wav')
