@@ -45,7 +45,10 @@ fn executable_verifies_on_its_real_main_stack_and_applies_only_on_supported_plat
         format!("{hash}\t{}\n", payload.len()),
     )
     .unwrap();
-    let mut state = versions::State::default();
+    let mut state = versions::State {
+        coverage_complete: true,
+        ..versions::State::default()
+    };
     state
         .register(versions::Version {
             logical_id: "prior".into(),
@@ -57,6 +60,32 @@ fn executable_verifies_on_its_real_main_stack_and_applies_only_on_supported_plat
             deprecated: false,
         })
         .unwrap();
+    let new_payload = b"synthetic replacement CLI payload";
+    let new_hash = format!("{:x}", Sha256::digest(new_payload));
+    let path = reel_assets::object(&root.join("hot"), &new_hash);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, new_payload).unwrap();
+    fs::write(
+        root.join("registry/objects.tsv"),
+        format!(
+            "{hash}\t{}\n{new_hash}\t{}\n",
+            payload.len(),
+            new_payload.len()
+        ),
+    )
+    .unwrap();
+    state
+        .register(versions::Version {
+            logical_id: "prior".into(),
+            version_id: "v2".into(),
+            manifest_sha256: new_hash.clone(),
+            payloads: BTreeSet::from([new_hash]),
+            dependencies: vec![],
+            supersedes: Some("v1".into()),
+            deprecated: false,
+        })
+        .unwrap();
+    state.select("prior", "v2").unwrap();
     write(
         &root,
         "registry/versions.json",
@@ -92,9 +121,29 @@ fn executable_verifies_on_its_real_main_stack_and_applies_only_on_supported_plat
     let plan: Value = serde_json::from_slice(&fs::read(root.join("plan.json")).unwrap()).unwrap();
     write(
         &root,
-        "request.json",
+        "scope.json",
         &json!({"schema":"reel.asset-demotion-request.v1","policy":root.join("policy.json"),"plan":root.join("plan.json"),"plan_sha256":plan["plan_sha256"],"consumer_roots":[root],"consumer_scope":"all-managed-cache-consumers","sha256s":[hash],"max_verify_bytes":1024,"max_seconds":60,"allow_same_volume_copies":true}),
     );
+    let out = run(
+        &root,
+        &[
+            "version-eviction-request",
+            "prior",
+            "v1",
+            "prior",
+            "v2",
+            "scope.json",
+            "request.json",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let request: Value =
+        serde_json::from_slice(&fs::read(root.join("request.json")).unwrap()).unwrap();
+    assert_eq!(request["sha256s"], json!([hash]));
     let verify = root.join(".local/verify");
     let apply = root.join(".local/apply");
     let out = run(
@@ -133,4 +182,19 @@ fn executable_verifies_on_its_real_main_stack_and_applies_only_on_supported_plat
         payload
     );
     assert!(!root.join("cold-offline").exists());
+    assert!(run(&root, &["select", "prior", "v1"]).status.success());
+    let stale = run(
+        &root,
+        &[
+            "version-eviction-request",
+            "prior",
+            "v1",
+            "prior",
+            "v2",
+            "scope.json",
+            "stale-request.json",
+        ],
+    );
+    assert!(!stale.status.success());
+    assert!(!root.join("stale-request.json").exists());
 }

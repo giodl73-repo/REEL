@@ -111,7 +111,7 @@ impl State {
         self.generation += 1;
         Ok(())
     }
-    fn closure(&self, roots: impl Iterator<Item = String>) -> Result<BTreeSet<String>> {
+    pub(crate) fn closure(&self, roots: impl Iterator<Item = String>) -> Result<BTreeSet<String>> {
         let mut found = BTreeSet::new();
         let mut queue: Vec<_> = roots.collect();
         while let Some(k) = queue.pop() {

@@ -13,6 +13,7 @@ pub mod registry;
 pub mod scenes;
 pub mod tier_review;
 pub mod tiering;
+pub mod version_diff;
 pub mod versions;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};

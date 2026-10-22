@@ -160,6 +160,17 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
             let path=storage.join("objects").join(&oid[..2]).join(&oid[2..4]).join(oid);verify(&path,oid,size)?;
             Ok(json!({"sha256":oid,"bytes":size,"lfs_path":path,"cache_root":reservation.cache_root,"volume_id":reservation.volume_id,"verified":true,"daemon_started":false,"reused_active_object":existing,"payload_bytes_copied":if existing {Some(0u64)} else {None}}))
         },
+        "version-eviction-request" => {
+            if args.len()!=7 {return Err("Usage: version-eviction-request <old-logical-id> <old-version> <new-logical-id> <new-version> <consumer-scope.json> <new-request.json>".into());}
+            let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+            crate::version_diff::eviction_request(root,(arg(1)?,arg(2)?),(arg(3)?,arg(4)?),Path::new(arg(5)?),Path::new(arg(6)?),now)
+        },
+        "version-diff" => {
+            if args.len()!=6 {return Err("Usage: version-diff <old-logical-id> <old-version> <new-logical-id> <new-version> <new-private-report.json>".into());}
+            let report=crate::version_diff::compare(&versions::read(root)?,&selected(root)?,(arg(1)?,arg(2)?),(arg(3)?,arg(4)?))?;
+            crate::tiering::write_plan(Path::new(arg(5)?),&report)?;
+            Ok(json!({"schema":report["schema"],"added":report["added"].as_array().unwrap().len(),"retained":report["retained"].as_array().unwrap().len(),"dropped":report["dropped"].as_array().unwrap().len(),"eviction_candidates":report["eviction_candidate_sha256s"].as_array().unwrap().len(),"candidate_logical_bytes":report["candidate_logical_bytes"],"removal_authorized":false,"private_report_path":arg(5)?}))
+        },
         "register-version" => {
             let version: versions::Version=serde_json::from_value(load(Path::new(arg(1)?))?)?;
             let index=selected(root)?;
