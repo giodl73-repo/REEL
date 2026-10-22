@@ -20,11 +20,111 @@ fn history(root: &Path) -> Result<Value> {
     if fs::metadata(&path)?.len() > 256 * 1024 {
         return Err("Golden index exceeds budget".into());
     }
-    let doc = load(&path)?;
+    let doc = if let Some((oid, bytes)) = pointer_asset(root)? {
+        if crate::generic_objects(root)?.get(&oid) != Some(&bytes) {
+            return Err("Golden history control asset is not registered".into());
+        }
+        let path = active_existing(&config(root)?, &oid, bytes)?
+            .ok_or("Golden history absent from active caches; archive not probed")?;
+        load(&path)?
+    } else {
+        load(&path)?
+    };
     if doc["schema"] != "caminos.golden-history.v1" {
         return Err("Unknown Golden history schema".into());
     }
     Ok(doc)
+}
+
+fn index_bytes(root: &Path) -> Result<Option<Vec<u8>>> {
+    let path = root.join("registry/goldens.json");
+    match fs::symlink_metadata(&path) {
+        Ok(meta) if meta.file_type().is_file() => (),
+        Ok(_) => return Err("Golden history control must be a regular file".into()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    }
+    let path = crate::accounting::relative(root, "registry/goldens.json")?;
+    let bytes = crate::tiering::read_bounded(&path, 256 * 1024)?;
+    Ok(Some(bytes))
+}
+fn pointer_asset(root: &Path) -> Result<Option<(String, u64)>> {
+    let Some(bytes) = index_bytes(root)? else {
+        return Ok(None);
+    };
+    let asset = crate::registry::parse_pointer(&bytes)?;
+    if asset
+        .as_ref()
+        .is_some_and(|(_, size)| *size == 0 || *size > 256 * 1024)
+    {
+        return Err("Golden history control asset exceeds budget".into());
+    }
+    Ok(asset)
+}
+/// Protect cache-backed control data with either a pointer or hydrated work copy.
+pub(crate) fn control_asset(root: &Path) -> Result<Option<(String, u64)>> {
+    if let Some(asset) = pointer_asset(root)? {
+        return Ok(Some(asset));
+    }
+    let Some(bytes) = index_bytes(root)? else {
+        return Ok(None);
+    };
+    // Git may leave a hydrated JSON working copy. Its registered backing asset
+    // still needs protection for a checkout that leaves the LFS pointer intact.
+    let hash = crate::tiering::digest(&bytes);
+    let size = bytes.len() as u64;
+    Ok((crate::generic_objects(root)?.get(&hash) == Some(&size)).then_some((hash, size)))
+}
+
+/// Explicitly retain exact existing index bytes in cache/LFS; never touch media.
+pub fn compact(root: &Path) -> Result<Value> {
+    history(root)?;
+    if let Some((oid, bytes)) = pointer_asset(root)? {
+        return Ok(
+            json!({"already_compact":true,"sha256":oid,"bytes":bytes,"media_read":false,"archive_probed":false}),
+        );
+    }
+    let path = crate::accounting::relative(root, "registry/goldens.json")?;
+    let before = crate::tiering::read_bounded(&path, 256 * 1024)?;
+    let asset = crate::ingest(root, &path)?;
+    let oid = asset["sha256"]
+        .as_str()
+        .ok_or("Missing retained index hash")?;
+    let bytes = asset["bytes"]
+        .as_u64()
+        .ok_or("Missing retained index size")?;
+    if crate::tiering::digest(&before) != oid || before.len() as u64 != bytes {
+        return Err("Golden history changed during compaction".into());
+    }
+    let parent = path.parent().ok_or("Missing registry directory")?;
+    let register_path = crate::unique(parent, "golden-history-register");
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&register_path)?;
+    let registration = crate::Temporary(register_path);
+    file.write_all(&serde_json::to_vec(&json!({"assets":[{"sha256":oid,"bytes":bytes,"cache_uri":format!("cache://sha256/{oid}"),"provenance":"Exact existing Golden-history control bytes","rights":"Project-private metadata; no new creative authority","selection_state":"required-control-metadata"}]}))?)?;
+    file.sync_all()?;
+    drop(file);
+    crate::registry::register(root, &registration.0)?;
+    let _lock = crate::admission::worktree_lock(root)?;
+    if fs::read(&path)? != before {
+        return Err("Golden history changed before pointer publication".into());
+    }
+    let pointer = crate::registry::pointer(oid, bytes)?;
+    let temp_path = crate::unique(parent, "golden-history-index");
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp_path)?;
+    let temp = crate::Temporary(temp_path);
+    file.write_all(pointer.as_bytes())?;
+    file.sync_all()?;
+    drop(file);
+    crate::versions::replace(&temp.0, &path)?;
+    Ok(
+        json!({"schema":"reel.golden-history-compaction.v1","asset":{"sha256":oid,"bytes":bytes,"cache_uri":format!("cache://sha256/{oid}")},"index_bytes_after":pointer.len(),"current_changed":false,"media_read":false,"archive_probed":false}),
+    )
 }
 fn entry(root: &Path, video: &str, golden: &str) -> Result<Value> {
     if !safe_id(video) || !safe_id(golden) {

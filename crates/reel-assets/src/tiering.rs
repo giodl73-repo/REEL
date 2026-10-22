@@ -200,6 +200,7 @@ pub(crate) fn live(root: &Path, policy: &Policy) -> Result<Live> {
         .map(str::to_owned)
         .collect();
     controls.extend(state.metadata_roots.iter().cloned());
+    controls.extend(crate::goldens::control_asset(root)?.map(|(hash, _)| hash));
     let index_path = root.join("registry/object-index.json");
     let index_bytes = if index_path.exists() {
         read_bounded(&index_path, 256 * 1024)?
@@ -219,7 +220,7 @@ pub(crate) fn live(root: &Path, policy: &Policy) -> Result<Live> {
     let storage = fs::read(accounting::relative(root, &p.storage_config)?)?;
     let token = json!({"state":state,"registered":registered,"outputs":outputs,
         "selected":selected,"profile":digest(&profile),"object_index":digest(&index_bytes),"registry_control":digest(&raw),
-        "storage":storage});
+        "storage":storage,"controls":&controls});
     Ok(Live {
         generation: state.generation,
         fingerprint: digest(&serde_json::to_vec(&token)?),

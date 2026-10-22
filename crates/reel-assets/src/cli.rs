@@ -100,6 +100,7 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
         "register" => registry::register(root,Path::new(arg(1)?)),
         "compact-objects" => registry::compact(root),
         "compact-versions" => versions::compact(root),
+        "compact-goldens" => crate::goldens::compact(root),
         "run-job" => crate::jobs::run(root,Path::new(arg(1)?)),
         "discard-job-scratch" => crate::jobs::discard(root,arg(1)?,arg(2)?,args.get(3).is_some_and(|a|a=="--discard-incomplete")),
         "verify-active" => {

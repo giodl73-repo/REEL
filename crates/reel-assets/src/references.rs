@@ -594,6 +594,30 @@ impl Inspector<'_> {
             return Err(Budget("Total document byte budget exceeded").into());
         }
         self.source_hashes.insert(path, hash);
+        if id.starts_with("repo:")
+            && let Some((hash, size)) = crate::registry::parse_pointer(&bytes)?
+        {
+            if self.registered.get(&hash) != Some(&size) {
+                return Err("LFS control document is unregistered or has a size conflict".into());
+            }
+            if size > self.project.limits.document_bytes {
+                return Err(Budget("Document exceeds byte budget").into());
+            }
+            let cache_uri = format!("cache://sha256/{hash}");
+            let a = Asset {
+                sha256: hash,
+                bytes: size,
+                cache_uri,
+                extra: BTreeMap::new(),
+            };
+            let target = self.asset(id, &a, "lfs-control-document", "Git LFS pointer")?;
+            let body = self.read_document(&target)?;
+            let node = self.report.nodes.get_mut(&target).unwrap();
+            node.kind = "asset-document".into();
+            node.status = "metadata-sha256-verified".into();
+            node.details["verification"] = json!("fresh metadata SHA-256; no archive lookup");
+            return Ok(body);
+        }
         Ok(bytes)
     }
     fn process(&mut self, p: Pending) -> Result<()> {
@@ -1290,7 +1314,7 @@ pub fn catalogue() -> Result<Value> {
         {"schema":"reel.scene-authoring.v2","coverage":"native Rust structure; episode, policy and presentation-template references extracted; explicit scene contexts resolve selected bindings","json_schema":Value::Null},
         {"schema":"reel.scene-policy.v1","coverage":"native Rust structure only","json_schema":Value::Null},
         {"schema":"reel.scene-template-catalog.v1","coverage":"native Rust structure only","json_schema":Value::Null}
-    ],"registry_structures":{"coverage":"Strict serialized structures; partition, cross-version roles and dependency graph are checked at runtime","immutable_version":schemars::schema_for!(versions::Version),"dependency_contract":schemars::schema_for!(versions::DependencyContract)},"edge_semantics":{"selected-presentation-template":"Exact catalog-selected editable template metadata; in-memory compile only, not visual acceptance","selected-native-alignment":"Exact selected native alignment metadata; declared clocks only, not measured audio timing","aligned-take":"Alignment-to-selected-take identity; media size-only","requires-asset":"Exact selected input returned by the native scene resolver; media presence is size-only","authoring-document":"Explicit metadata input to a native scene context","requires-version":"Exact registry dependency; rebuild/retention candidate relationship","inventory-member":"Observed bytes; no build-dependency inference","retains-asset":"Immutable version custody, not creative selection","describes-version":"Contextual scope, not dependency","declares-asset":"Package declaration; role-specific semantics not inferred","current-selection":"Record current pointer; native registry current state is reported separately","historical-version":"Previous record version","episode-context":"Contextual backlink, not a dependency cycle"},"limitations":"Not a complete catalogue of all REEL schemas. Unsupported schemas and uninspected metadata are explicit findings. No arbitrary JSON/hash search."}),
+    ],"registry_structures":{"coverage":"Strict serialized structures; partition, cross-version roles and dependency graph are checked at runtime","immutable_version":schemars::schema_for!(versions::Version),"dependency_contract":schemars::schema_for!(versions::DependencyContract)},"edge_semantics":{"lfs-control-document":"Standard Git LFS control pointer to registered metadata; fresh active-tier SHA-256 verification, no archive lookup","selected-presentation-template":"Exact catalog-selected editable template metadata; in-memory compile only, not visual acceptance","selected-native-alignment":"Exact selected native alignment metadata; declared clocks only, not measured audio timing","aligned-take":"Alignment-to-selected-take identity; media size-only","requires-asset":"Exact selected input returned by the native scene resolver; media presence is size-only","authoring-document":"Explicit metadata input to a native scene context","requires-version":"Exact registry dependency; rebuild/retention candidate relationship","inventory-member":"Observed bytes; no build-dependency inference","retains-asset":"Immutable version custody, not creative selection","describes-version":"Contextual scope, not dependency","declares-asset":"Package declaration; role-specific semantics not inferred","current-selection":"Record current pointer; native registry current state is reported separately","historical-version":"Previous record version","episode-context":"Contextual backlink, not a dependency cycle"},"limitations":"Not a complete catalogue of all REEL schemas. Unsupported schemas and uninspected metadata are explicit findings. No arbitrary JSON/hash search."}),
     )
 }
 
@@ -1361,6 +1385,51 @@ mod tests {
         );
         profile(&f, json!(["inputs.json", "episode-record.json"]));
         (f, media, iph)
+    }
+    #[test]
+    fn repository_lfs_controls_resolve_registered_metadata_and_reject_corrupt_first_tier() {
+        let (f, _, _) = fixture();
+        let path = f.root().join("episode-record.json");
+        let bytes = fs::read(&path).unwrap();
+        let hash = f.put(&bytes, true);
+        fs::write(
+            &path,
+            crate::registry::pointer(&hash, bytes.len() as u64).unwrap(),
+        )
+        .unwrap();
+        profile(&f, json!(["episode-record.json"]));
+        let report = inspect(f.root(), "inspect.json").unwrap();
+        assert_eq!(
+            report.nodes["repo:episode-record.json"].schema.as_deref(),
+            Some("caminos.artifact-record.v1")
+        );
+        assert!(
+            report
+                .edges
+                .iter()
+                .any(|e| e.kind == "lfs-control-document" && e.to.ends_with(&hash))
+        );
+        assert_eq!(
+            report.nodes[&format!("cache://sha256/{hash}")].status,
+            "metadata-sha256-verified"
+        );
+        let d = object(&f.root().join("history"), &hash);
+        fs::create_dir_all(d.parent().unwrap()).unwrap();
+        fs::write(d, &bytes).unwrap();
+        fs::write(
+            object(&f.root().join("fast"), &hash),
+            vec![b'x'; bytes.len()],
+        )
+        .unwrap();
+        let report = inspect(f.root(), "inspect.json").unwrap();
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.code == "unreadable-document"
+                    && finding.detail.contains("hash/size mismatch"))
+        );
+        assert!(!f.root().join("offline-cold").exists());
     }
     #[test]
     fn inventory_membership_history_and_required_versions_remain_distinct() {

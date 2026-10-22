@@ -476,6 +476,7 @@ pub fn report_with_progress(root: &Path, mut progress: impl FnMut(usize, usize))
     }
     let mut controls = BTreeSet::new();
     controls.extend(state.metadata_roots.iter().cloned());
+    controls.extend(crate::goldens::control_asset(root)?.map(|(hash, _)| hash));
     let raw: Value = serde_json::from_slice(&before)?;
     if let Some(records) = raw["version_records"].as_object() {
         controls.extend(
@@ -936,6 +937,38 @@ mod tests {
         let r = report(&f.root()).unwrap();
         assert_eq!(r["registered_objects_missing_or_wrong_size"], 1);
         assert_eq!(row(&r, &h)["copies"], json!([]));
+    }
+    #[test]
+    fn cached_golden_history_is_protected_control_and_changes_plan_fingerprint() {
+        let f = Fixture::new();
+        let root = f.root();
+        let path = root.join("registry/goldens.json");
+        fs::write(
+            &path,
+            r#"{"schema":"caminos.golden-history.v1","videos":{}}"#,
+        )
+        .unwrap();
+        crate::goldens::compact(&root).unwrap();
+        let (first, _) = crate::goldens::control_asset(&root).unwrap().unwrap();
+        assert_eq!(
+            row(&report(&root).unwrap(), &first)["category"],
+            "registry-control"
+        );
+        let next = br#"{"schema":"caminos.golden-history.v1","videos":{"one":[]}}"#;
+        let second = f.put(&f.e, next, true);
+        let policy: crate::tiering::Policy=serde_json::from_value(json!({"schema":"reel.asset-tier-policy.v1","project_id":"synthetic","baseline":{"sha256":"a".repeat(64),"bytes":1},"tiers":[],"selected_tier":"hot","history_tier":"history","cold_tier":"cold","history_versions":[],"tier_pins":{},"max_objects":100,"max_plan_seconds":30,"expires_after_seconds":60,"max_batch_bytes":1000,"max_batch_objects":100})).unwrap();
+        let before = crate::tiering::live(&root, &policy).unwrap();
+        assert!(before.controls.contains(&first));
+        assert!(!before.controls.contains(&second));
+        fs::write(
+            &path,
+            crate::registry::pointer(&second, next.len() as u64).unwrap(),
+        )
+        .unwrap();
+        let after = crate::tiering::live(&root, &policy).unwrap();
+        assert_ne!(before.fingerprint, after.fingerprint);
+        assert!(after.controls.contains(&second));
+        assert!(!after.controls.contains(&first));
     }
     #[test]
     fn output_profile_marks_only_declared_roles_and_keeps_required_inputs() {

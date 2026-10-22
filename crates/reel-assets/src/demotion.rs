@@ -376,6 +376,9 @@ fn metadata_paths(root: &Path, cold: bool) -> Result<BTreeSet<PathBuf>> {
         PathBuf::from("registry/versions.json"),
         PathBuf::from("registry/object-index.json"),
     ]);
+    if !cold && root.join("registry/goldens.json").exists() {
+        paths.insert(PathBuf::from("registry/goldens.json"));
+    }
     let modern = root.join("asset-project.json").exists();
     let rules = if modern {
         let p = crate::accounting::project(root)?;
@@ -497,6 +500,7 @@ fn legacy_protection(root: &Path, cfg: &crate::Config) -> Result<BTreeSet<String
             .chain(state.leases.values().flatten().cloned()),
     )?;
     protected.extend(state.metadata_roots);
+    protected.extend(crate::goldens::control_asset(root)?.map(|(hash, _)| hash));
     if root.join("registry/object-index.json").exists() {
         let d = crate::load(&root.join("registry/object-index.json"))?;
         protected.insert(
