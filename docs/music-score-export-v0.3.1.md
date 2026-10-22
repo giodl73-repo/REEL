@@ -123,3 +123,13 @@ owner-confirmed performance omissions. Canonical corrections remain distinct
 from performed-source wording. Confirmed presence without a trustworthy clock
 stays unresolved. This report assigns no syllables, edits no pitches/audio, and
 does not substitute a best recognition span for completed lyric underlay.
+
+`tools/local_song_word_underlay.py` advances those exact source-bound candidates
+to an editable word-to-note proposal ledger. It retains UTF-8 performed-text
+ranges, independent-pass token IDs, repeated phrase alternatives and unchanged
+note IDs. Missing words stay unmapped; shared pitch runs and token reuse across
+lines require articulation/phrase review. Explicit listening windows may narrow
+an unresolved line without declaring expected words independently recognized.
+This is a partial underlay draft, not syllable segmentation or a new MusicModel.
+Native lead-sheet validation requires every melody note mapped exactly once;
+do not evade that contract by filling unknown singing with invented syllables.
