@@ -263,26 +263,85 @@ fn generic_artifact_preserves_explicit_history_and_exact_roles() {
 }
 
 #[test]
+fn classified_scene_verifies_primary_closure_without_archived_movie_provenance() {
+    let f = Fixture::new();
+    let scene = scene_fixture(&f);
+    let root = f.dir.path();
+    f.put(1, b"cel");
+    let old = f.retain(b"previous compiled movie", true);
+    let cue = f.retain(b"source cue", false);
+    let cue_manifest = f.retain(b"cue manifest", false);
+    let bindings_path = root.join("videos/scene-bindings.json");
+    let mut bindings = load(&bindings_path).unwrap();
+    bindings["assets"]["history/movie"] = json!({"logical_id":"old/movie","selection_state":"historical-reference","sha256":old,"bytes":23,"cache_uri":format!("cache://sha256/{old}")});
+    fs::write(&bindings_path, bindings.to_string()).unwrap();
+    let snapshot = scenes::snapshot(&load(&scene).unwrap(), &bindings).unwrap();
+    let manifest = f.retain(&snapshot, false);
+    let mut catalog = load(&root.join("catalog.json")).unwrap();
+    catalog["videos"][0]["version_lock"]["manifest_sha256"] = json!(manifest);
+    fs::write(root.join("catalog.json"), catalog.to_string()).unwrap();
+    let mut state = versions::read(root).unwrap();
+    state
+        .register(versions::Version {
+            logical_id: "cue".into(),
+            version_id: "v1".into(),
+            manifest_sha256: cue_manifest.clone(),
+            payloads: [cue.clone()].into(),
+            dependencies: vec![],
+            supersedes: None,
+            deprecated: false,
+            dependency_contract: Some(versions::DependencyContract {
+                primary_inputs: [cue.clone()].into(),
+                outputs: Default::default(),
+                references: Default::default(),
+            }),
+        })
+        .unwrap();
+    let version = state.versions.get_mut("scene/one@v1").unwrap();
+    version.manifest_sha256 = manifest;
+    version.payloads.insert(old.clone());
+    version.dependencies.push(versions::Dependency {
+        logical_id: "cue".into(),
+        version_id: "v1".into(),
+        manifest_sha256: cue_manifest,
+    });
+    version.dependency_contract = Some(versions::DependencyContract {
+        primary_inputs: Default::default(),
+        outputs: [f.oid.clone()].into(),
+        references: [old.clone()].into(),
+    });
+    fs::write(
+        root.join("registry/versions.json"),
+        serde_json::to_vec(&state).unwrap(),
+    )
+    .unwrap();
+    let result = scenes::check(root, &scene, true).unwrap();
+    assert_eq!(result["verified_objects"], 4);
+    assert_eq!(result["deferred_reference_objects"], 1);
+    assert_eq!(result["archive_probed"], false);
+    assert_eq!(
+        result["verification_scope"],
+        "active-primary-input-and-output-closure"
+    );
+    assert!(scenes::locate(root, &scene, "history/movie").is_err());
+    assert!(!object(&f.config.cache_roots[0], &old).exists());
+    let bad = object(&f.config.cache_roots[0], &cue);
+    fs::create_dir_all(bad.parent().unwrap()).unwrap();
+    fs::write(&bad, b"bad source").unwrap();
+    assert!(scenes::check(root, &scene, true).is_err());
+    fs::remove_file(bad).unwrap();
+    fs::remove_file(object(&f.config.cache_roots[1], &cue)).unwrap();
+    assert!(scenes::check(root, &scene, true).is_err());
+    assert!(scenes::check(root, &scene, false).is_ok());
+}
+
+#[test]
 fn classified_artifact_verifies_transitive_inputs_and_defers_archived_references() {
     let f = Fixture::new();
     let record = artifact_fixture(&f);
     let root = f.dir.path();
     f.put(1, b"cel");
-    let retain = |bytes: &[u8], archive: bool| {
-        let oid = format!("{:x}", Sha256::digest(bytes));
-        let cache = if archive {
-            &f.config.archive_roots[0]
-        } else {
-            &f.config.cache_roots[1]
-        };
-        let path = object(cache, &oid);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, bytes).unwrap();
-        let manifest = root.join(".local/register.json");
-        fs::write(&manifest, json!({"assets":[{"sha256":oid,"bytes":bytes.len(),"provenance":"test","rights":"fixture","selection_state":"fixture"}]}).to_string()).unwrap();
-        registry::register(root, &manifest).unwrap();
-        oid
-    };
+    let retain = |bytes: &[u8], archive: bool| f.retain(bytes, archive);
     let cue = retain(b"cue", false);
     let source_manifest = retain(b"primary input manifest", false);
     let historical = retain(b"old compiled movie", true);
@@ -366,6 +425,70 @@ fn artifact_verification_never_hides_corruption_or_recovers_archive() {
     f.put(1, b"cel");
     f.put(0, b"bad");
     assert!(artifacts::check(root, &record, None, true).is_err());
+}
+
+#[test]
+fn classified_golden_restore_keeps_provenance_cold_and_checks_primary_inputs() {
+    let f = Fixture::new();
+    golden_fixture(&f);
+    let root = f.dir.path();
+    f.put(1, b"cel");
+    let path = root.join("registry/goldens.json");
+    let mut history = load(&path).unwrap();
+    let row = &mut history["videos"]["one"][0];
+    let old_hash = row["snapshot"]["sha256"].as_str().unwrap();
+    let mut snapshot = load(&object(&f.config.cache_roots[1], old_hash)).unwrap();
+    let prior = f.retain(b"historical compiled movie", true);
+    let cue = f.retain(b"primary cue", false);
+    snapshot["bindings"]["assets"]["history/movie"] =
+        json!({"sha256":prior,"bytes":25,"cache_uri":format!("cache://sha256/{prior}")});
+    let bytes = serde_json::to_vec(&snapshot).unwrap();
+    let hash = f.retain(&bytes, false);
+    row["snapshot"] =
+        json!({"sha256":hash,"bytes":bytes.len(),"cache_uri":format!("cache://sha256/{hash}")});
+    row["version_lock"]["manifest_sha256"] = json!(hash);
+    fs::write(&path, history.to_string()).unwrap();
+    let mut state = versions::read(root).unwrap();
+    let v = state.versions.get_mut("scene/one@v1").unwrap();
+    v.manifest_sha256 = hash;
+    v.payloads.extend([prior.clone(), cue.clone()]);
+    v.dependency_contract = Some(versions::DependencyContract {
+        primary_inputs: [cue.clone()].into(),
+        outputs: [f.oid.clone()].into(),
+        references: [prior.clone()].into(),
+    });
+    fs::write(
+        root.join("registry/versions.json"),
+        serde_json::to_vec(&state).unwrap(),
+    )
+    .unwrap();
+    let control = fs::read(root.join("catalog.json")).unwrap();
+    let report = goldens::restore(root, "one", "golden-1").unwrap();
+    assert_eq!(report["verified_objects"], 3);
+    assert_eq!(report["deferred_reference_objects"], 1);
+    assert_eq!(
+        report["verification_scope"],
+        "active-primary-input-and-output-closure"
+    );
+    assert_eq!(report["archive_probed"], false);
+    assert_eq!(fs::read(root.join("catalog.json")).unwrap(), control);
+    assert!(!object(&f.config.cache_roots[0], &prior).exists());
+    fs::remove_file(object(&f.config.cache_roots[1], &cue)).unwrap();
+    assert!(goldens::restore(root, "one", "golden-1").is_err());
+    assert!(goldens::check(root, "one", "golden-1", false).is_ok());
+    let v = state.versions.get_mut("scene/one@v1").unwrap();
+    v.dependency_contract.as_mut().unwrap().outputs.clear();
+    v.dependency_contract
+        .as_mut()
+        .unwrap()
+        .references
+        .insert(f.oid.clone());
+    fs::write(
+        root.join("registry/versions.json"),
+        serde_json::to_vec(&state).unwrap(),
+    )
+    .unwrap();
+    assert!(goldens::check(root, "one", "golden-1", false).is_err());
 }
 
 #[test]
@@ -457,6 +580,21 @@ fn scenes_reject_scope_size_and_unknown_bindings() {
     assert!(scenes::locate(f.dir.path(), &path, "unknown").is_err());
 }
 impl Fixture {
+    fn retain(&self, bytes: &[u8], archive: bool) -> String {
+        let oid = format!("{:x}", Sha256::digest(bytes));
+        let cache = if archive {
+            &self.config.archive_roots[0]
+        } else {
+            &self.config.cache_roots[1]
+        };
+        let path = object(cache, &oid);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, bytes).unwrap();
+        let manifest = self.dir.path().join(".local/register-object.json");
+        fs::write(&manifest, json!({"assets":[{"sha256":oid,"bytes":bytes.len(),"provenance":"test","rights":"fixture","selection_state":"fixture"}]}).to_string()).unwrap();
+        registry::register(self.dir.path(), &manifest).unwrap();
+        oid
+    }
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
