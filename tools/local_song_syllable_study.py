@@ -111,6 +111,7 @@ def gap_phrases(report, base, performed, windows, duration, confirmed=()):
     anchors={p['id']:p for p in base['phrases']}
     candidates={p['id']:p for p in report['phrases']}
     result=[];occupied=[p['source_span_seconds'] for p in base['phrases']]
+    occupied += [row['span_seconds'] for row in base.get('syllables',[]) if row['note_ids']]
     for window in windows:
         number=window['line'];start,end=window['span_seconds']
         if type(number) is not int or not 1<=number<=len(source) or number in report['owner_accepted_omissions']:
@@ -274,6 +275,7 @@ def main():
             boundaries=[max(phrase['span_seconds'][0],charclock[0][0])]
             boundaries += [(charclock[b-1][1]+charclock[b][0])/2 for _,b in cuts[:-1]]
             boundaries += [min(phrase['span_seconds'][1],charclock[-1][1])]
+            boundaries=[max(phrase['span_seconds'][0],min(phrase['span_seconds'][1],value)) for value in boundaries]
             for i,(a,b) in enumerate(cuts):
                 low,high=boundaries[i:i+2]
                 mask=[j for j,lab in enumerate(ids) if lab and characters[cursor+a][0]<=start+j*step<characters[cursor+b-1][1]]

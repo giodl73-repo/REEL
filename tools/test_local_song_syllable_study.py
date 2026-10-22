@@ -14,6 +14,8 @@ class SyllableStudyTests(unittest.TestCase):
         for changed in [dict(window,line=3),dict(window,span_seconds=[1.9,5]),dict(window,right_anchor_id='missing')]:
             with self.subTest(changed=changed),self.assertRaises(ValueError):
                 gap_phrases(report,base,'a\nb\nc\n',[changed],10)
+        base['syllables']=[dict(span_seconds=[1.9,2.1],note_ids=['retained-note'])]
+        with self.assertRaises(ValueError):gap_phrases(report,base,'a\nb\nc\n',[window],10)
 
     def test_owner_scope_requires_real_confirmation_and_bounded_clock(self):
         report=dict(complete_canonical_lines=['hello'],owner_accepted_omissions=[],phrases=[],listening_windows=[dict(line=1,span_seconds=[3,4])])
