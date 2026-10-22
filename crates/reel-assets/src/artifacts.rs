@@ -73,6 +73,19 @@ pub(crate) fn inspect_with(
         return Err("Invalid artifact package descriptor or lock".into());
     }
     let protected = versions::payload_closure(state, &lock)?;
+    let classified = state.versions[&format!("{}@{}", lock.logical_id, lock.version_id)]
+        .dependency_contract
+        .is_some();
+    // Provenance remains authorized and recoverable, but typed active verification
+    // must not require historical outputs to be promoted out of the archive.
+    let active = if classified {
+        Some(crate::accounting::expand(
+            state,
+            [format!("{}@{}", lock.logical_id, lock.version_id)],
+        )?)
+    } else {
+        None
+    };
     if version.is_none() && state.current.get(&lock.logical_id) != Some(&lock.version_id) {
         return Err("Artifact current selection is stale".into());
     }
@@ -115,11 +128,31 @@ pub(crate) fn inspect_with(
                 .ok_or("Artifact read budget overflow")?;
         }
     }
+    let mut verification = unique.clone();
+    if let Some(active) = &active {
+        verification = active
+            .iter()
+            .map(|hash| {
+                let bytes = index
+                    .get(hash)
+                    .ok_or("Unregistered active artifact dependency")?;
+                Ok((hash.clone(), *bytes))
+            })
+            .collect::<Result<BTreeMap<_, _>>>()?;
+        total = verification.values().try_fold(0u64, |sum, bytes| {
+            sum.checked_add(*bytes)
+                .ok_or("Artifact read budget overflow")
+        })?;
+    }
+    let deferred_references = unique
+        .keys()
+        .filter(|hash| !verification.contains_key(*hash))
+        .count();
     if fresh {
         if total > cfg.capacity.max_object_bytes {
             return Err("Artifact verification exceeds read budget".into());
         }
-        for (hash, bytes) in &unique {
+        for (hash, bytes) in &verification {
             active_existing(cfg, hash, *bytes)?
                 .ok_or("Artifact asset absent from active caches; archive not probed")?;
         }
@@ -127,6 +160,9 @@ pub(crate) fn inspect_with(
     Ok((
         json!({"artifact_id":doc["artifact_id"],"kind":doc["kind"],"version_id":wanted,
         "assets":assets.len(),"unique_assets":unique.len(),"fresh_hash_verified":fresh,
+        "verification_scope":if classified {"active-primary-input-and-output-closure"}else{"declared-assets"},
+        "verified_objects":if fresh {Some(verification.len())}else{None},
+        "deferred_reference_objects":deferred_references,
         "package_sha256":oid,"verified_bytes":if fresh {Some(total)}else{None},"archive_probed":false,
         "payload_bytes_copied":0,"creative_authority":"not-granted-by-this-receipt"}),
         assets.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
