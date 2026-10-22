@@ -263,6 +263,99 @@ fn generic_artifact_preserves_explicit_history_and_exact_roles() {
 }
 
 #[test]
+fn classified_artifact_verifies_transitive_inputs_and_defers_archived_references() {
+    let f = Fixture::new();
+    let record = artifact_fixture(&f);
+    let root = f.dir.path();
+    f.put(1, b"cel");
+    let retain = |bytes: &[u8], archive: bool| {
+        let oid = format!("{:x}", Sha256::digest(bytes));
+        let cache = if archive {
+            &f.config.archive_roots[0]
+        } else {
+            &f.config.cache_roots[1]
+        };
+        let path = object(cache, &oid);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, bytes).unwrap();
+        let manifest = root.join(".local/register.json");
+        fs::write(&manifest, json!({"assets":[{"sha256":oid,"bytes":bytes.len(),"provenance":"test","rights":"fixture","selection_state":"fixture"}]}).to_string()).unwrap();
+        registry::register(root, &manifest).unwrap();
+        oid
+    };
+    let cue = retain(b"cue", false);
+    let source_manifest = retain(b"primary input manifest", false);
+    let historical = retain(b"old compiled movie", true);
+    let mut doc = load(&record).unwrap();
+    let old_package = doc["versions"][0]["manifest"]["sha256"].as_str().unwrap();
+    let mut package = load(&object(&f.config.cache_roots[1], old_package)).unwrap();
+    package["assets"]["history/movie"] =
+        json!({"sha256":historical,"bytes":18,"cache_uri":format!("cache://sha256/{historical}")});
+    let package_bytes = serde_json::to_vec(&package).unwrap();
+    let package_hash = retain(&package_bytes, false);
+    let mut state = versions::read(root).unwrap();
+    state
+        .register(versions::Version {
+            logical_id: "inputs/one".into(),
+            version_id: "v1".into(),
+            manifest_sha256: source_manifest.clone(),
+            payloads: [cue.clone()].into(),
+            dependencies: vec![],
+            supersedes: None,
+            deprecated: false,
+            dependency_contract: Some(versions::DependencyContract {
+                primary_inputs: [cue.clone()].into(),
+                outputs: Default::default(),
+                references: Default::default(),
+            }),
+        })
+        .unwrap();
+    let version = state.versions.get_mut("song/one@golden-v1").unwrap();
+    version.manifest_sha256 = package_hash.clone();
+    version.payloads.insert(historical.clone());
+    version.dependencies.push(versions::Dependency {
+        logical_id: "inputs/one".into(),
+        version_id: "v1".into(),
+        manifest_sha256: source_manifest,
+    });
+    version.dependency_contract = Some(versions::DependencyContract {
+        primary_inputs: Default::default(),
+        outputs: [f.oid.clone()].into(),
+        references: [historical.clone()].into(),
+    });
+    fs::write(
+        root.join("registry/versions.json"),
+        serde_json::to_vec(&state).unwrap(),
+    )
+    .unwrap();
+    doc["versions"][0]["manifest"] = json!({"sha256":package_hash,"bytes":package_bytes.len(),"cache_uri":format!("cache://sha256/{package_hash}")});
+    doc["versions"][0]["version_lock"]["manifest_sha256"] = json!(package_hash);
+    fs::write(&record, doc.to_string()).unwrap();
+
+    let report = artifacts::check(root, &record, None, true).unwrap();
+    assert_eq!(
+        report["verification_scope"],
+        "active-primary-input-and-output-closure"
+    );
+    assert_eq!(report["verified_objects"], 4);
+    assert_eq!(report["deferred_reference_objects"], 1);
+    assert_eq!(report["archive_probed"], false);
+    assert!(artifacts::locate(root, &record, None, "history/movie").is_err());
+    assert!(!object(&f.config.cache_roots[0], &historical).exists());
+    assert!(!object(&f.config.cache_roots[1], &historical).exists());
+    // A transitive primary input not listed in the output package must still
+    // be freshly verified, and corrupt E cannot fall through to valid D.
+    let corrupt = object(&f.config.cache_roots[0], &cue);
+    fs::create_dir_all(corrupt.parent().unwrap()).unwrap();
+    fs::write(&corrupt, b"bad").unwrap();
+    assert!(artifacts::check(root, &record, None, true).is_err());
+    fs::remove_file(corrupt).unwrap();
+    fs::remove_file(object(&f.config.cache_roots[1], &cue)).unwrap();
+    assert!(artifacts::check(root, &record, None, true).is_err());
+    assert!(artifacts::check(root, &record, None, false).is_ok());
+}
+
+#[test]
 fn artifact_verification_never_hides_corruption_or_recovers_archive() {
     let f = Fixture::new();
     let record = artifact_fixture(&f);

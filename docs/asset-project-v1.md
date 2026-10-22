@@ -70,6 +70,16 @@ primary inputs, compiled outputs, historical references, the completion receipt,
 post-publication eviction. Legacy records retain their conservative compatibility behavior
 until an explicit new immutable version replaces them.
 
+For classified artifact packages, `artifact-verify` freshly hashes the complete
+active primary-input/output dependency closure, including transitive inputs not
+listed directly in the package. Historical references remain authorized but are
+excluded from active verification; no archive lookup or promotion occurs. The
+receipt names `verification_scope`, counts `verified_objects` and reports
+`deferred_reference_objects` among the package's unique declared assets. Its
+`fresh_hash_verified` flag applies to that named scope, not to deferred history.
+Legacy packages retain declared-asset verification. Explicit `artifact-locate`
+of an archived reference still requires named recovery before active lookup.
+
 The detailed private report lists each observed hash, declared/observed size,
 direct version references, current/noncurrent/deprecated/pinned/leased flags and
 active-tier copies. Exclusive categories are:
