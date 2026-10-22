@@ -10,6 +10,22 @@ pub struct Transition {
     pub new: crate::versions::Dependency,
 }
 
+/// Execution receipts bind the full diagnostic report without copying its graph.
+pub(crate) fn comparison_summary(report: &Value) -> Result<Value> {
+    let count = |key: &str| report[key].as_array().map_or(0, Vec::len);
+    let primary = &report["primary_input_diff"];
+    Ok(json!({"schema":"reel.asset-version-diff-summary.v1",
+        "full_report_sha256":crate::tiering::digest(&serde_json::to_vec(report)?),
+        "added_objects":count("added"),"retained_objects":count("retained"),
+        "dropped_objects":count("dropped"),
+        "eviction_candidates":count("eviction_candidate_sha256s"),
+        "candidate_logical_bytes":report["candidate_logical_bytes"],
+        "primary_input_diff":if primary.is_null() {Value::Null} else {json!({
+            "added_objects":primary["added"].as_array().map_or(0,Vec::len),
+            "retained_objects":primary["retained"].as_array().map_or(0,Vec::len),
+            "dropped_objects":primary["dropped"].as_array().map_or(0,Vec::len)})}}))
+}
+
 pub(crate) fn validate_transition(root: &std::path::Path, t: &Transition) -> Result<Value> {
     let state = crate::versions::read(root)?;
     crate::tiering::validate_graph(
@@ -847,6 +863,22 @@ mod tests {
     }
 
     #[test]
+    fn execution_comparison_is_bounded_even_with_a_large_legacy_graph() {
+        let report = json!({"added":[],"retained":[],
+            "dropped":[{"sha256":"a".repeat(64),"protected_by":["x".repeat(17*1024*1024)]}],
+            "eviction_candidate_sha256s":[],"candidate_logical_bytes":0,
+            "primary_input_diff":{"added":["a"],"retained":["b"],"dropped":["c"]}});
+        let raw = serde_json::to_vec(&report).unwrap();
+        assert!(raw.len() > 16 * 1024 * 1024);
+        let summary = comparison_summary(&report).unwrap();
+        assert!(serde_json::to_vec(&summary).unwrap().len() < 1024);
+        assert_eq!(summary["full_report_sha256"], crate::tiering::digest(&raw));
+        assert_eq!(summary["dropped_objects"], 1);
+        assert_eq!(summary["primary_input_diff"]["added_objects"], 1);
+        assert!(summary.get("dropped").is_none());
+    }
+
+    #[test]
     fn replacement_closure_keeps_shared_current_leased_pinned_and_control_assets() {
         let h: Vec<_> = (0..12).map(|n| format!("{n:064x}")).collect();
         let sizes = h.iter().map(|h| (h.clone(), 10)).collect();
@@ -1192,8 +1224,8 @@ mod tests {
                     .unwrap();
             assert_eq!(result["admissions_present_at_completion"], true);
             let diff = &result["version_comparison"]["primary_input_diff"];
-            assert_eq!(diff["added"].as_array().unwrap().len(), 5);
-            assert_eq!(diff["dropped"].as_array().unwrap().len(), 5);
+            assert_eq!(diff["added_objects"], 5);
+            assert_eq!(diff["dropped_objects"], 5);
             for h in &old {
                 assert_eq!(
                     crate::object(&f.root().join("fast"), h).exists(),

@@ -1236,7 +1236,11 @@ pub fn run(
     result["removal_authorized"] = json!(apply);
     result["request_sha256"] = json!(tiering::digest(&request_bytes));
     result["version_transition"] = serde_json::to_value(&req.transition)?;
-    result["version_comparison"] = json!(transition_report);
+    result["version_comparison"] = transition_report
+        .as_ref()
+        .map(crate::version_diff::comparison_summary)
+        .transpose()?
+        .unwrap_or(Value::Null);
     // Resume may observe fewer links/free-space changes; keep earlier receipts intact.
     let out = crate::unique(journal, "result");
     tiering::write_plan(&out, &result)?;
