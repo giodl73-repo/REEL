@@ -293,3 +293,7 @@ Keep the compact project profile in Git. Retained graph reports, schema exports,
 HTML and review evidence belong in the producing project's private cache/LFS.
 Do not commit real inventories or producer metadata to public REEL. The graph
 never authorizes removal or changes creative/version selections.
+
+Selected source-text/alignment bytes also pass the renderer's direct native
+JSON parser before generic graph projection, so duplicate struct fields and
+unsupported byte-order marks cannot be silently normalized into a pass.

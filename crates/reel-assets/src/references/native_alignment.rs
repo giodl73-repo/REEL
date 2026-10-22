@@ -366,4 +366,38 @@ mod tests {
         assert_eq!(context(&r).status, "native-resolved");
         assert!(context(&r).details.get("native_alignment_valid").is_none());
     }
+
+    #[test]
+    fn selected_raw_json_uses_native_parser_before_duplicate_fields_can_collapse() {
+        for bom in [false, true] {
+            let (f, h) = fixture(|_, _| {});
+            let bytes = fs::read(object(&f.root().join("fast"), &h)).unwrap();
+            let bad = if bom {
+                [b"\xef\xbb\xbf".as_slice(), &bytes].concat()
+            } else {
+                let mut b = br#"{"cue_id":"foreign", "#.to_vec();
+                b.extend_from_slice(&bytes[1..]);
+                b
+            };
+            let sha = f.put(&bad, true);
+            edit(
+                &f,
+                "scene-bindings.json",
+                |v| v["assets"]["alignment.es"] = json!({"sha256":sha,"bytes":bad.len(),"cache_uri":format!("cache://sha256/{sha}"),"logical_id":"raw-native-alignment","selection_state":"selected-private-production"}),
+            );
+            let r = inspect_fixture(&f);
+            assert_eq!(
+                context(&r).details["native_alignment_checks"]["es"]["valid"],
+                false
+            );
+            if !bom {
+                assert!(
+                    r.findings
+                        .iter()
+                        .any(|f| f.code == "native-alignment-check-failed"
+                            && f.detail.contains("duplicate field"))
+                );
+            }
+        }
+    }
 }

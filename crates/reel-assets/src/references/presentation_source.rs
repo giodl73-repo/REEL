@@ -356,6 +356,36 @@ mod tests {
                 .any(|f| f.code == "presentation-source-check-failed"
                     && f.detail.contains("display text differ"))
         );
+        for bom in [false, true] {
+            let (f, h) = fixture(|_, _| {});
+            let bytes = fs::read(object(&f.root().join("fast"), &h)).unwrap();
+            let bad = if bom {
+                [b"\xef\xbb\xbf".as_slice(), &bytes].concat()
+            } else {
+                let mut b = br#"{"language":"foreign", "#.to_vec();
+                b.extend_from_slice(&bytes[1..]);
+                b
+            };
+            let sha = f.put(&bad, true);
+            edit(
+                &f,
+                "scene-bindings.json",
+                |v| v["assets"]["source.es"] = json!({"sha256":sha,"bytes":bad.len(),"cache_uri":format!("cache://sha256/{sha}"),"logical_id":"raw-source-text","selection_state":"selected-private-production"}),
+            );
+            let r = report(&f);
+            assert_eq!(
+                node(&r).details["presentation_source_checks"]["es"]["valid"],
+                false
+            );
+            if !bom {
+                assert!(
+                    r.findings
+                        .iter()
+                        .any(|f| f.code == "presentation-source-check-failed"
+                            && f.detail.contains("duplicate field"))
+                );
+            }
+        }
     }
     #[test]
     fn explicit_opt_in_budgets_and_snapshot_recheck_cover_selected_source_metadata() {

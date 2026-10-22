@@ -292,6 +292,20 @@ impl Inspector<'_> {
             if !schemas.contains(&schema) {
                 return Err("Selected native metadata has the wrong schema".into());
             }
+            // Match the renderer's byte-level native parser before a Value can
+            // collapse duplicate struct fields (or hide an unsupported BOM).
+            match schema {
+                reel_assembly::scene_authoring::NATIVE_ALIGNMENT_SCHEMA => {
+                    let _: reel_assembly::scene_authoring::NativeAlignment =
+                        serde_json::from_slice(&bytes)?;
+                }
+                reel_assembly::template_presentation::SOURCE_TEXT_SCHEMA
+                | reel_assembly::template_presentation::SCENE_SOURCE_TEXT_SCHEMA_V2 => {
+                    let _: reel_assembly::template_presentation::PresentationSourceText =
+                        serde_json::from_slice(&bytes)?;
+                }
+                _ => return Err("Unsupported selected native metadata parser".into()),
+            }
             let n = self.report.nodes.get_mut(&id).unwrap();
             n.kind = "asset-document".into();
             n.schema = Some(schema.into());
