@@ -3,7 +3,7 @@ use super::*;
 use reel_assembly::{scene_authoring as native, template_presentation as text};
 
 impl Inspector<'_> {
-    fn selected_source_text(
+    pub(super) fn selected_source_text(
         &mut self,
         context: &str,
         key: &str,
@@ -171,7 +171,7 @@ impl Inspector<'_> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::tiering::tests::Fixture;
     fn write(f: &Fixture, name: &str, value: &Value) {
@@ -182,7 +182,7 @@ mod tests {
         change(&mut v);
         write(f, name, &v);
     }
-    fn fixture(change: impl Fn(&str, &mut Value)) -> (Fixture, String) {
+    pub(in crate::references) fn fixture(change: impl Fn(&str, &mut Value)) -> (Fixture, String) {
         let (f, mut profile, _, _) = super::super::scene_context::tests::fixture();
         let document = f.put(b"synthetic original source", true);
         let mut source_hash = String::new();

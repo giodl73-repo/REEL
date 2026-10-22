@@ -135,3 +135,12 @@ cargo test --all-targets --all-features
 cargo run --quiet -- validate manifests/fixtures/two-speaker-untimed/planning.yaml --output json
 git diff --check
 ```
+
+### 2026-10-21 selected presentation template inspection
+
+Explicit scene-context template descriptors now opt into shared renderer/native
+content and clock compilation, following selected source and alignment checks.
+Reports retain hash/bytes and scene/overlay clocks without text or ASS. Failed
+languages hold their context; metadata and compilation work remain bounded.
+Real private authoring coverage failures are retained upstream without changing
+historical selections. See [handoff](../../../docs/handoff/2026-10-21-presentation-clock-inspection.md).

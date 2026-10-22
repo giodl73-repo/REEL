@@ -297,3 +297,27 @@ never authorizes removal or changes creative/version selections.
 Selected source-text/alignment bytes also pass the renderer's direct native
 JSON parser before generic graph projection, so duplicate struct fields and
 unsupported byte-order marks cannot be silently normalized into a pass.
+
+## Explicit selected presentation template
+
+A scene context may additionally provide `presentation_template` as an exact
+cache descriptor (`sha256`, `bytes`, `cache_uri`). Both
+`verify_presentation_sources` and `verify_native_alignments` must be explicitly
+true. The descriptor must match the native resolver's catalogue-selected scene
+presentation definition; no template discovery or standalone traversal occurs.
+
+Inspection and `reel-scene-template` share template identity, content/layout
+ownership, soundtrack requirements, source/display joins, native line anchors,
+coverage and chapter-overlay clock rules. The editable layer is compiled only in
+memory. Reports expose its hash/byte count and layer/scene sample clocks, without
+ASS or source text. A failed language is held independently; prior source,
+alignment and presence results remain separate. Native resolution must succeed
+before this additional check runs. Existing historical inputs are never rewritten
+to make a fixture pass.
+
+Input authorization, fresh metadata hashes, first-tier corruption behavior and
+final snapshot checks still apply. Inspection also caps compilation at 128 lines,
+256 cues and 8 MiB estimated text/event work. Over-budget inspection aborts. This
+is not font availability, visual layout, audio measurement, rendered timing or
+human acceptance. Fixed chapter-overlay visibility remains distinct from the
+longer narrated scene clock. Schema export states the native-parser coverage.
