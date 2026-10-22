@@ -69,6 +69,16 @@ pub(super) fn publish_and_retire(
         return Err("Retirement target escaped its exact admitted job staging parent".into());
     }
     usage(workspace, 0, &mut 0)?; // Reject reparse/symlink entries before any cleanup.
+    // A temporary hard link may outlive a canonical name removed by another
+    // operation. Never retire that last remaining view of a retained original.
+    for asset in job.inputs.values().chain(job.tools.values()) {
+        if active_existing(cfg, &asset.sha256, asset.bytes)?.is_none() {
+            return Err("Retained original absent from active caches; workspace preserved".into());
+        }
+    }
+    for tool in job.installed_tools.values() {
+        verify(&tool.path, &tool.sha256, tool.bytes)?;
+    }
     let mut controls = BTreeMap::new();
     for entry in fs::read_dir(workspace)? {
         let p = entry?.path();

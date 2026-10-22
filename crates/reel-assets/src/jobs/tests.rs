@@ -244,6 +244,38 @@ fn explicit_debug_retention_still_supports_guarded_discard() {
 }
 
 #[test]
+fn removal_of_canonical_names_does_not_delete_the_last_remaining_input_view() {
+    let f = Fixture::new();
+    let (manifest, mut job) = prepare(&f, "unlink-originals");
+    let oid = job["inputs"]["in.bin"]["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // Simulate external name removal while the job holds its input handles.
+    job["steps"][0]["args"]
+        .as_array_mut()
+        .unwrap()
+        .extend(["fast", "history"].map(|tier| json!(object(&f.root().join(tier), &oid))));
+    // Produce different output so publication does not incidentally restore the original.
+    job["steps"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"tool":"tools/tool.exe",
+        "args":["fail","in.bin","out.bin"],"timeout_seconds":10}));
+    fs::write(&manifest, job.to_string()).unwrap();
+    let error = run(f.root(), &manifest).unwrap_err().to_string();
+    assert!(error.contains("Retained original absent"), "{error}");
+    assert!(error.contains("staging preserved"), "{error}");
+    let workspace = fs::read_dir(f.root().join("fast/staging/caminos"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    assert_eq!(fs::read(workspace.join("in.bin")).unwrap(), b"source");
+}
+
+#[test]
 fn timeout_retires_workspace_after_descendants_die_and_preserves_pid_evidence() {
     use windows_sys::Win32::{Foundation::*, System::Threading::*};
     let f = Fixture::new();
