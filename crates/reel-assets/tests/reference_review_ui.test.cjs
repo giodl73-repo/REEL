@@ -56,3 +56,11 @@ test('native required input links are distinct from inventory observations and s
   assert.match(get('incoming').children[0].children[1].textContent,/Required selected input returned by the native scene resolver/);
   assert.match(get('incoming').children[0].children[1].textContent,/size-only/);
 });
+
+test('authority and delivery links preserve evidence and release boundaries',()=>{
+  for (const [kind,meaning] of [['source-authority',/does not establish authorship, consent or approval/],['delivers-version',/not a build dependency or current selection/],['delivers-asset',/no remote readback or release permission/],['delivery-evidence',/no destination was accessed/]]) {
+    const {get}=fixture({edges:[{from:'version',to:'media',kind,field:'record'}]});
+    get('nodes').children[1].events.click();
+    assert.match(get('incoming').children[0].children[1].textContent,meaning);
+  }
+});

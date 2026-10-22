@@ -64,7 +64,14 @@ fn inspection_reports_gaps_but_strict_check_fails_and_outputs_never_overwrite() 
     assert!(result.status.success());
     let catalogue: Value =
         serde_json::from_slice(&fs::read(root.join("schemas.json")).unwrap()).unwrap();
-    assert_eq!(catalogue["contracts"].as_array().unwrap().len(), 11);
+    let contracts = catalogue["contracts"].as_array().unwrap();
+    for name in ["reel.source-authority-record.v1", "reel.delivery-record.v1"] {
+        assert!(
+            contracts
+                .iter()
+                .any(|c| c["schema"] == name && c["json_schema"].is_object())
+        );
+    }
     assert!(!root.join("active").exists());
     assert!(!root.join("offline").exists());
     // Catalogue export is a pure code operation, independent of private storage controls.

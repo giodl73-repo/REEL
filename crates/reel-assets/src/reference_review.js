@@ -8,6 +8,12 @@ const describe = kind => ({
   'requires-version': 'Exact dependency recorded in the native version registry.',
   'requires-asset': 'Required selected input returned by the native scene resolver; media presence is size-only.',
   'authoring-document': 'Explicit metadata input to native scene resolution; its content hash is recorded.',
+  'source-authority': 'Declared source authority and scope; does not establish authorship, consent or approval.',
+  'source-document': 'Exact source revision bytes; content and declared scope have not been verified.',
+  'authority-evidence': 'Opaque authority evidence; not interpreted as a permission or approval.',
+  'delivers-version': 'Exact historical subject version; not a build dependency or current selection.',
+  'delivers-asset': 'Declared output retained by the subject version; no remote readback or release permission.',
+  'delivery-evidence': 'Opaque delivery receipt evidence; no destination was accessed.',
   'retains-asset': 'Bytes retained by an immutable version; not creative approval.',
   'describes-version': 'Context or scope; not a build dependency.',
   'episode-context': 'Episode backlink; not a required dependency cycle.'

@@ -83,6 +83,66 @@ standalone coverage findings remain visible; a successful context does not make
 an incomplete whole-episode graph pass `reference-check`. Explicit scene policy
 overrides and presentation-template references are also extracted.
 
+## Source authority and delivery reference records
+
+`reel.source-authority-record.v1` is a strict, project-neutral declaration:
+
+```json
+{
+  "schema": "reel.source-authority-record.v1",
+  "authority_id": "original-text",
+  "revisions": [{
+    "revision_id": "original",
+    "document": {"sha256": "<sha256>", "bytes": 123, "cache_uri": "cache://sha256/<sha256>"},
+    "scope_ids": ["paragraph-001"],
+    "evidence": []
+  }]
+}
+```
+
+Bind a scene's `source_authority_id` through `documents`. The target must declare
+that authority ID and this exact schema. The inspector checks that the scene's
+source, canonical-cue and presentation scope IDs are declared by the record.
+Scope IDs must be uniquely assigned across its revisions. This checks declared
+coverage, not correspondence between source text and cues. At most 128 revisions,
+10,000 total scope IDs and 128 evidence objects per revision are allowed.
+
+`reel.delivery-record.v1` declares an exact historical delivery subject:
+
+```json
+{
+  "schema": "reel.delivery-record.v1",
+  "delivery_id": "pilot-private-copy",
+  "subject": {"logical_id": "episode/pilot", "version_id": "golden-1", "manifest_sha256": "<sha256>"},
+  "audience": "private",
+  "outputs": [{
+    "role": "movie", "language": "es",
+    "asset": {"sha256": "<sha256>", "bytes": 456, "cache_uri": "cache://sha256/<sha256>"},
+    "evidence": []
+  }]
+}
+```
+
+The subject lock must match the immutable registry. Each output must be retained
+in that exact version's payload set. Output role/language pairs must be unique;
+labels describe the declaration, not a verified package-role or language match.
+At most 128 outputs and 128 evidence objects per output are allowed. Audience is
+`private` or `public`; neither value grants release permission. There is no
+remote destination or credential field and inspection never contacts a service.
+
+Both contracts reject unknown fields. Descriptors contain exactly SHA-256,
+positive byte count and matching cache URI. Referenced source, output and
+opaque evidence payloads get ordinary registration/size checks, not content hash
+verification. Evidence JSON is never parsed merely because it looks supported.
+Empty evidence arrays produce explicit findings. Every record also retains an
+unverified-semantics finding: neither a nonempty evidence list nor a successful
+structural check establishes authorship, rights, consent, approval, remote
+readback, playback, current delivery availability or public-release authority.
+
+These compact records can project historical evidence without rewriting it.
+An asset repository owns its declarations and private payloads; REEL contains
+only the generic types, inspection rules, schema export and synthetic fixtures.
+
 ## Relationship meanings
 
 | Relationship | Meaning |
@@ -100,6 +160,10 @@ overrides and presentation-template references are also extracted.
 | `requires-scene` / `requires-policy` / `requires-template` | Native episode references, resolved through the explicit profile. |
 | `episode-context` | A scene's contextual backlink; not a dependency cycle. |
 | `bound-asset` | An asset descriptor in a native scoped binding document. |
+| `source-authority` | A scene's explicitly bound authority record; scope coverage is declaration-only. |
+| `source-document` / `authority-evidence` | Exact source revision and opaque provenance/decision evidence. |
+| `delivers-version` / `delivers-asset` | Historical subject lock and retained output; neither is a build dependency. |
+| `delivery-evidence` | Opaque receipt evidence; no destination access or fresh remote verification. |
 | `authoring-document` | One explicitly supplied metadata document for a native scene context. |
 | `requires-asset` | An exact selected input returned by the native scene resolver; media presence remains size-only. |
 
@@ -132,7 +196,7 @@ those native structures; the catalogue reports `null` and states extraction
 coverage. Explicit scene contexts perform native symbolic selected-binding
 resolution. Whole-episode presentation, rendered motion, cue/source evidence
 and complete build/delivery validation remain separate. Rights,
-approval, delivery mirrors, generic family indexes and other schema families
+approval interpretation, delivery mirror verification, generic family indexes and other schema families
 remain explicit coverage gaps. No inspection pass supplies human approval,
 voice consent or a build certificate. JSON Schemas describe structure; Rust
 also enforces identifiers, exact locks, budgets and cross-document invariants.
