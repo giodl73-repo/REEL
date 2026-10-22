@@ -183,6 +183,84 @@ pub struct CompiledLayer {
     pub ass: String,
 }
 
+/// The shared scene-to-presentation projection used by rendering and inspection.
+/// This does not compile timing or grant approval.
+pub fn scene_invocation(
+    scene: &crate::scene_authoring::Scene,
+    language: &str,
+    kind: &str,
+) -> Result<EditableTextInvocation> {
+    if !scene.languages.contains_key(language) {
+        bail!("presentation language is outside scene scope");
+    }
+    let use_ = scene
+        .presentation
+        .as_ref()
+        .context("scene has no presentation")?;
+    let content = use_
+        .content
+        .as_object()
+        .context("scene presentation content must be an object")?;
+    let bilingual = scene.languages.len() > 1;
+    let title = content
+        .get("titles")
+        .and_then(|v| v.get(language))
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            (!bilingual)
+                .then(|| content.get("title").and_then(|v| v.as_str()))
+                .flatten()
+        })
+        .context("language-local presentation title missing")?;
+    let line_value = content
+        .get("lines_by_language")
+        .and_then(|v| v.get(language))
+        .or_else(|| (!bilingual).then(|| content.get("lines")).flatten());
+    let lines: Vec<PoemLine> = match line_value {
+        Some(value) => serde_json::from_value(value.clone())?,
+        None => vec![],
+    };
+    if matches!(kind, "opening-poem" | "internal-poem") && lines.is_empty() {
+        bail!("language-local poem lines missing");
+    }
+    let invocation = EditableTextInvocation {
+        schema: INVOCATION_SCHEMA.into(),
+        template_id: use_.template_id.clone(),
+        language: language.to_owned(),
+        title: title.into(),
+        byline: content
+            .get("bylines")
+            .and_then(|value| value.get(language))
+            .and_then(|value| value.as_str())
+            .map(str::to_owned),
+        lines,
+        chapter_number: content
+            .get("chapter_number")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned),
+    };
+    Ok(invocation)
+}
+
+/// Exact native source scope for the editable presentation (not DOCX extraction).
+pub fn scene_presentation_scope(
+    scene: &crate::scene_authoring::Scene,
+    kind: &str,
+) -> Result<Vec<String>> {
+    let mut presentation_scope = scene.source_scope_ids.clone();
+    for source_id in &scene.presentation_source_scope_ids {
+        if source_id.is_empty() || presentation_scope.contains(source_id) {
+            bail!("presentation source scope is empty or duplicates a spoken source ID");
+        }
+        presentation_scope.push(source_id.clone());
+    }
+    if kind == "chapter-title" && !scene.presentation_source_scope_ids.is_empty() {
+        // Chapter wording is sourced by its heading, separately from spoken prose.
+        presentation_scope = scene.presentation_source_scope_ids.clone();
+    }
+    Ok(presentation_scope)
+}
+
 /// Reject a source line anchored to an unrelated selected native performance.
 pub fn verify_native_line_ownership(
     invocation: &EditableTextInvocation,

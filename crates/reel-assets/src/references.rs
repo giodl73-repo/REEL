@@ -10,6 +10,7 @@ use std::{
 };
 
 mod authority_delivery;
+mod presentation_source;
 mod scene_context;
 pub use scene_context::{CacheDocument, DocumentSource, SceneContext};
 
@@ -656,6 +657,7 @@ impl Inspector<'_> {
                 | "reel.scene-asset-bindings.v1"
                 | "reel.scene-policy.v1"
                 | "reel.scene-template-catalog.v1"
+                | authority_delivery::AUTHORITY
         ) {
             self.native_documents.insert(p.id.clone(), value.clone());
         }

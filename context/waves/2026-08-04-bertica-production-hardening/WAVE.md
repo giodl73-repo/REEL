@@ -73,6 +73,16 @@ See `docs/scene-delivery-v0.1.md`, `docs/reviews/2026-09-09-scene-delivery.md`, 
 
 ## Validation
 
+### 2026-10-21 selected presentation source-text checks
+
+Scene contexts can explicitly verify native selected source-text metadata using
+the shared renderer projection and existing wording/stanza/display/cue checks.
+Per-language source holds, draft states, exact authority-document identity and
+all metadata bounds/freshness remain explicit. Original manuscript content,
+audio, render timing and human approval remain separate gates. See
+`docs/handoff/2026-10-21-presentation-source-checks.md`.
+
+
 ### 2026-10-21 source-authority and delivery reference contracts
 
 Strict generic records now expose source revisions, declared scope coverage,

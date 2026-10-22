@@ -64,3 +64,10 @@ test('authority and delivery links preserve evidence and release boundaries',()=
     assert.match(get('incoming').children[0].children[1].textContent,meaning);
   }
 });
+
+test('selected source text links distinguish metadata verification from original content',()=>{
+  const {get}=fixture({edges:[{from:'version',to:'media',kind:'selected-source-text',field:'source.es'}]});
+  get('nodes').children[1].events.click();
+  assert.match(get('incoming').children[0].children[1].textContent,/freshly hash checked when opted in/);
+  assert.match(get('incoming').children[0].children[1].textContent,/original manuscript and audio remain unverified/);
+});

@@ -7,8 +7,8 @@ use reel_assembly::scene_authoring::{
     SCENE_SCHEMA, SCENE_SCHEMA_V2, Scene, ScopedBindings, TemplateCatalog, materialize_scene,
 };
 use reel_assembly::template_presentation::{
-    EditableTextInvocation, EditableTextTemplate, INVOCATION_SCHEMA, PoemLine,
-    PresentationSourceText, compile_layer, verify_native_line_ownership, verify_source_text,
+    EditableTextTemplate, PresentationSourceText, compile_layer, scene_invocation,
+    scene_presentation_scope, verify_native_line_ownership, verify_source_text,
 };
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
@@ -238,44 +238,7 @@ fn run() -> Result<()> {
     }) {
         bail!("scene content tries to own template layout");
     }
-    let bilingual = scene.languages.len() > 1;
-    let title = content
-        .get("titles")
-        .and_then(|v| v.get(language))
-        .and_then(|v| v.as_str())
-        .or_else(|| {
-            (!bilingual)
-                .then(|| content.get("title").and_then(|v| v.as_str()))
-                .flatten()
-        })
-        .context("language-local presentation title missing")?;
-    let line_value = content
-        .get("lines_by_language")
-        .and_then(|v| v.get(language))
-        .or_else(|| (!bilingual).then(|| content.get("lines")).flatten());
-    let lines: Vec<PoemLine> = match line_value {
-        Some(value) => serde_json::from_value(value.clone())?,
-        None => vec![],
-    };
-    if matches!(definition.kind.as_str(), "opening-poem" | "internal-poem") && lines.is_empty() {
-        bail!("language-local poem lines missing");
-    }
-    let invocation = EditableTextInvocation {
-        schema: INVOCATION_SCHEMA.into(),
-        template_id: use_.template_id.clone(),
-        language: language.clone(),
-        title: title.into(),
-        byline: content
-            .get("bylines")
-            .and_then(|value| value.get(language))
-            .and_then(|value| value.as_str())
-            .map(str::to_owned),
-        lines,
-        chapter_number: content
-            .get("chapter_number")
-            .and_then(|v| v.as_str())
-            .map(str::to_owned),
-    };
+    let invocation = scene_invocation(&scene, language, &definition.kind)?;
     let season: ScopedBindings = read(season_path)?;
     let episode: ScopedBindings = read(episode_path)?;
     let scene_bindings: ScopedBindings = read(scene_bindings_path)?;
@@ -334,17 +297,7 @@ fn run() -> Result<()> {
         bail!("source-text file differs from selected scoped binding");
     }
     let source_text: PresentationSourceText = serde_json::from_slice(&source_bytes)?;
-    let mut presentation_scope = scene.source_scope_ids.clone();
-    for source_id in &scene.presentation_source_scope_ids {
-        if source_id.is_empty() || presentation_scope.contains(source_id) {
-            bail!("presentation source scope is empty or duplicates a spoken source ID");
-        }
-        presentation_scope.push(source_id.clone());
-    }
-    if definition.kind == "chapter-title" && !scene.presentation_source_scope_ids.is_empty() {
-        // Chapter wording is sourced by its heading, separately from spoken prose.
-        presentation_scope = scene.presentation_source_scope_ids.clone();
-    }
+    let presentation_scope = scene_presentation_scope(&scene, &definition.kind)?;
     verify_source_text(
         &invocation,
         &source_text,

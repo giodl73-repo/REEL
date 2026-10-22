@@ -83,6 +83,38 @@ standalone coverage findings remain visible; a successful context does not make
 an incomplete whole-episode graph pass `reference-check`. Explicit scene policy
 overrides and presentation-template references are also extracted.
 
+## Opt in to selected presentation source-text checks
+
+Set `verify_presentation_sources: true` on a scene context to open only its
+native resolver-selected `source_text_bindings` for each language. Default false
+preserves symbolic-only inspection. There is no arbitrary JSON discovery.
+Selected source-text metadata passes the same authorization, first-tier failure,
+hash/size, document-count, byte-budget and final snapshot checks as other named
+metadata. Corruption never silently falls back to another active tier.
+
+The inspector reuses the shared native `scene_invocation`,
+`scene_presentation_scope`, `verify_source_text` and
+`verify_native_line_ownership` functions. The rendering CLI uses the same scene
+projection helpers. Checks cover exact authored versus selected wording, titles,
+chapter/byline fields, stanza structure, language, ordered declared source scope,
+V2 display-text hashes and native performance ownership. An explicit authored
+language text state must equal the selected source-text state. The source document
+hash and scopes must also belong to one revision of the bound authority record.
+
+Context details report `presentation_source_valid` and per-language checks.
+A failed requested check is `source-held` even when symbolic native resolution
+succeeds. Other languages retain their individual results. Report details contain
+hashes/counts/states, not the selected source's wording, titles or bylines.
+A passed check leaves `project-draft-review-held` translations as drafts.
+
+This verifies consistency between authored presentation and selected source-text
+JSON, plus declared cue ownership and authority-document identity. It does not
+extract or compare the original manuscript content, decode spoken/sung words,
+validate alignment timing or template-definition contents, certify complete
+presentation performance coverage/rendering, or infer consent/human approval.
+The source-authority and delivery unverified-semantics findings remain. General
+standalone source-text schema traversal is not enabled by this option.
+
 ## Source authority and delivery reference records
 
 `reel.source-authority-record.v1` is a strict, project-neutral declaration:
@@ -164,6 +196,7 @@ only the generic types, inspection rules, schema export and synthetic fixtures.
 | `source-document` / `authority-evidence` | Exact source revision and opaque provenance/decision evidence. |
 | `delivers-version` / `delivers-asset` | Historical subject lock and retained output; neither is a build dependency. |
 | `delivery-evidence` | Opaque receipt evidence; no destination access or fresh remote verification. |
+| `selected-source-text` | Explicit native selected source-text metadata opened by an opted-in context. |
 | `authoring-document` | One explicitly supplied metadata document for a native scene context. |
 | `requires-asset` | An exact selected input returned by the native scene resolver; media presence remains size-only. |
 
