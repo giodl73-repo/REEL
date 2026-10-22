@@ -45,19 +45,35 @@ fn semantic_song_clock_renders_variable_picture_boundaries_without_restarting_au
 
 #[test]
 fn portrait_fit_keeps_square_canvas_pixels() {
-    still_geometry_fixture(false, false, true, false);
+    still_geometry_fixture(false, false, true, false, None);
 }
 
 #[test]
 fn non_square_source_is_fit_by_display_aspect_before_square_canvas() {
-    still_geometry_fixture(false, false, true, true);
+    still_geometry_fixture(false, false, true, true, None);
+}
+
+#[test]
+fn compact_lossless_encoding_preserves_all_pixels_pcm_and_variable_cuts() {
+    let ffv1 = still_geometry_fixture(true, true, false, false, None);
+    let h264 = still_geometry_fixture(true, true, false, false, Some("h264-lossless"));
+    assert_eq!(
+        ffv1, h264,
+        "encoding must preserve every decoded pixel and PCM sample"
+    );
 }
 
 fn still_fixture(with_audio: bool, song_clock: bool) {
-    still_geometry_fixture(with_audio, song_clock, false, false);
+    still_geometry_fixture(with_audio, song_clock, false, false, None);
 }
 
-fn still_geometry_fixture(with_audio: bool, song_clock: bool, portrait: bool, non_square: bool) {
+fn still_geometry_fixture(
+    with_audio: bool,
+    song_clock: bool,
+    portrait: bool,
+    non_square: bool,
+    encoding: Option<&str>,
+) -> (String, String) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     for (name, color) in [("red.png", "red"), ("blue.png", "blue")] {
@@ -197,6 +213,16 @@ fn still_geometry_fixture(with_audio: bool, song_clock: bool, portrait: bool, no
         )
         .unwrap();
     }
+    if let Some(encoding) = encoding {
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("manifest.json")).unwrap()).unwrap();
+        manifest["lossless_video_encoding"] = json!(encoding);
+        fs::write(
+            root.join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+    }
     let built = run(root, "build");
     assert!(
         built.status.success(),
@@ -213,6 +239,50 @@ fn still_geometry_fixture(with_audio: bool, song_clock: bool, portrait: bool, no
         serde_json::from_slice(&fs::read(root.join("render/receipt.json")).unwrap()).unwrap();
     assert_eq!(receipt["frames"], 48);
     assert_eq!(receipt["samples"], 96_000);
+    assert_eq!(
+        receipt["lossless_video_encoding"],
+        encoding.map_or(json!(null), |e| json!(e))
+    );
+    let decoded_hash = |args: &[&str]| {
+        let output = Command::new("ffmpeg")
+            .args(["-v", "error", "-i"])
+            .arg(root.join("render/master.mkv"))
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        hash(&output.stdout)
+    };
+    let content = (
+        decoded_hash(&["-map", "0:v:0", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"]),
+        decoded_hash(&["-map", "0:a:0", "-acodec", "pcm_s24le", "-f", "s24le", "-"]),
+    );
+    if encoding.is_some() {
+        let manifest_bytes = fs::read(root.join("manifest.json")).unwrap();
+        let mut manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
+        manifest["lossless_video_encoding"] = json!("h264-lossy");
+        fs::write(
+            root.join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        let rejected = run(root, "check");
+        assert!(!rejected.status.success());
+        assert!(String::from_utf8_lossy(&rejected.stderr).contains("unknown variant"));
+        fs::write(root.join("manifest.json"), manifest_bytes).unwrap();
+        let original_receipt = fs::read(root.join("render/receipt.json")).unwrap();
+        let mut tampered = receipt.clone();
+        tampered["lossless_video_encoding"] = json!("ffv1");
+        fs::write(
+            root.join("render/receipt.json"),
+            serde_json::to_vec(&tampered).unwrap(),
+        )
+        .unwrap();
+        let rejected = run(root, "check");
+        assert!(!rejected.status.success());
+        assert!(String::from_utf8_lossy(&rejected.stderr).contains("receipt/output mismatch"));
+        fs::write(root.join("render/receipt.json"), original_receipt).unwrap();
+    }
     if portrait {
         let probe = Command::new("ffprobe")
             .args([
@@ -336,4 +406,5 @@ fn still_geometry_fixture(with_audio: bool, song_clock: bool, portrait: bool, no
     }
     fs::write(root.join("render/editable-layer.ass"), b"tampered").unwrap();
     assert!(!run(root, "check").status.success());
+    content
 }

@@ -18,6 +18,15 @@ The builder writes `master.mkv` as FFV1/yuv444p with stereo PCM24, a browser `re
 
 The synthetic regression test uses two stills and checks 48 frames, 96,000 stereo samples, complete output closure and layer-tamper rejection.
 
+For a smaller lossless master, either manifest version may explicitly select
+`"lossless_video_encoding":"h264-lossless"`. This uses H.264 CRF0/yuv444p,
+without B frames, and the same stereo PCM24 and frame/sample clocks. FFV1 remains
+the default; its legacy receipt representation is unchanged. The selected
+encoding is bound into new receipts and checked against the actual video codec.
+The regression compares every decoded RGB byte and PCM sample across both
+encodings, including uneven source-clock cuts, and rejects unsupported encodings
+and mismatched receipt declarations.
+
 ## Variable cuts on a continuous source clock (V2)
 
 Use `reel.presentation-still-template.v2` with `total_frames` instead of
