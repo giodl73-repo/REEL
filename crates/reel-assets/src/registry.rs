@@ -70,13 +70,27 @@ pub fn register(root: &Path, manifest: &Path) -> Result<Value> {
     let directory = root.join("registry/objects");
     fs::create_dir_all(&directory)?;
     for prefix in touched.keys() {
-        let mut rows: Vec<_> = generic
-            .iter()
-            .filter(|(h, _)| h.starts_with(prefix.as_str()))
-            .collect();
-        rows.sort_by_key(|(h, _)| *h);
-        let text: String = rows.iter().map(|(h, s)| format!("{h}\t{s}\n")).collect();
         let target = directory.join(format!("{prefix}.tsv"));
+        let mut rows: BTreeMap<String, u64> = if root.join("registry/object-index.json").exists() {
+            // A compact baseline already owns its rows. Keep only this shard's
+            // actual overlay instead of re-copying the complete baseline into Git.
+            let mut delta = BTreeMap::new();
+            if target.exists() {
+                for line in fs::read_to_string(&target)?.lines() {
+                    let (h, n) = line.split_once('\t').ok_or("Invalid object overlay row")?;
+                    delta.insert(h.to_owned(), n.parse()?);
+                }
+            }
+            delta
+        } else {
+            generic
+                .iter()
+                .filter(|(h, _)| h.starts_with(prefix.as_str()))
+                .map(|(h, n)| (h.clone(), *n))
+                .collect()
+        };
+        rows.extend(touched[prefix].iter().map(|(h, n)| (h.clone(), *n)));
+        let text: String = rows.iter().map(|(h, n)| format!("{h}\t{n}\n")).collect();
         let temp = unique(&directory, "shard");
         fs::write(&temp, text)?;
         versions::replace(&temp, &target)?;
@@ -267,6 +281,39 @@ mod tests {
         descriptor["asset"]["bytes"] = json!(4 * 1024 * 1024 + 1);
         fs::write(r.join("registry/object-index.json"), descriptor.to_string()).unwrap();
         assert!(generic_objects(&r).is_err());
+    }
+    #[test]
+    fn registration_after_compaction_writes_only_new_rows_in_the_same_prefix() {
+        let (_t, r) = compact_fixture();
+        let manifest = r.join("manifest.json");
+        let first = "a".repeat(64);
+        let second = format!("aa{}", "b".repeat(62));
+        let third = format!("aa{}", "c".repeat(62));
+        for (n, oid) in [&first, &second, &third].into_iter().enumerate() {
+            fs::write(
+                &manifest,
+                json!({"assets":[{"sha256":oid,"bytes":5,
+                "provenance":"fixture","rights":"fixture","selection_state":"retained"}]})
+                .to_string(),
+            )
+            .unwrap();
+            register(&r, &manifest).unwrap();
+            if n == 0 {
+                compact(&r).unwrap();
+            }
+        }
+        let shard = fs::read_to_string(r.join("registry/objects/aa.tsv")).unwrap();
+        assert!(!shard.contains(&first));
+        assert_eq!(shard.lines().count(), 2);
+        let index = generic_objects(&r).unwrap();
+        for oid in [first, second, third] {
+            assert_eq!(index[&oid], 5);
+        }
+        compact(&r).unwrap();
+        let compacted = generic_objects(&r).unwrap();
+        for (oid, bytes) in index {
+            assert_eq!(compacted[&oid], bytes);
+        }
     }
     #[test]
     fn generic_payload_needs_provenance_and_cannot_change_size() {
