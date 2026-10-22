@@ -513,7 +513,14 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
             fs::copy(entry.path(), phased.join(entry.file_name())).unwrap();
         }
     }
-    write(&phased.join("conform.json"), &compact);
+    let mut phased_manifest = compact.clone();
+    // Square-pixel sources omit the false assumption flag in geometry records.
+    // Preparation must deserialize those records before issuing its checkpoint.
+    phased_manifest["output_geometry"] = serde_json::json!({
+        "width":64,"height":64,"policy":"preserve-aspect-lanczos",
+        "assume_square_for_unspecified_sar":true
+    });
+    write(&phased.join("conform.json"), &phased_manifest);
     let mut declared = serde_json::Map::new();
     for entry in fs::read_dir(&phased).unwrap() {
         let entry = entry.unwrap();
@@ -553,6 +560,9 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
     let checkpoint_bytes = fs::read(prepared.join("prepared.json")).unwrap();
     let mut checkpoint: serde_json::Value = serde_json::from_slice(&checkpoint_bytes).unwrap();
     assert_eq!(checkpoint["full_episode_verified"], false);
+    let geometry = &checkpoint["records"][0]["geometry_verification"];
+    assert!(geometry.is_object());
+    assert!(geometry.get("sample_aspect_ratio_assumed_square").is_none());
     let assembly_ref = checkpoint["master"]["file"].clone();
     assert_eq!(checkpoint["master"]["root"], "prepared");
     let assembled = prepared.join(assembly_ref["path"].as_str().unwrap());
