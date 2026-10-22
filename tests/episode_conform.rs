@@ -397,6 +397,24 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
     assert!(
         String::from_utf8_lossy(&rejected_audio.stderr).contains("differs from selected source")
     );
+    assert!(
+        ffmpeg()
+            .args(["-v", "error", "-i"])
+            .arg(output.join("master.mkv"))
+            .args(["-c", "copy", "-aspect", "2:1"])
+            .arg(root.join("changed-aspect.mkv"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    resumed["preassembled_master"] = reference(root, "changed-aspect.mkv");
+    write(&root.join("changed-aspect-resume.json"), &resumed);
+    let rejected_aspect = run(
+        "changed-aspect-resume.json",
+        &root.join("changed-aspect-resume-output"),
+    );
+    assert!(!rejected_aspect.status.success());
+    assert!(String::from_utf8_lossy(&rejected_aspect.stderr).contains("display metadata"));
     resumed["preassembled_master"] = reference(root, "scene-b.mkv");
     write(&root.join("short-resume.json"), &resumed);
     assert!(

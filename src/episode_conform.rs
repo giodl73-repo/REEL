@@ -2018,6 +2018,11 @@ pub fn build(
         ) {
             bail!("preassembled master geometry, frame rate or sample rate differs from episode");
         }
+        if candidate.sample_aspect_ratio != first.sample_aspect_ratio
+            || candidate.color_properties != first.color_properties
+        {
+            bail!("preassembled master display metadata differs from episode");
+        }
     }
     if manifest.output_geometry.is_some() {
         let final_facts = probe(&master)?;
