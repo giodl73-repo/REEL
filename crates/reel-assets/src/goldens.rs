@@ -105,7 +105,20 @@ fn snapshot(
     if lock.manifest_sha256 != oid {
         return Err("Golden snapshot lock differs".into());
     }
-    let protected = versions::payload_closure(&versions::read(root)?, &lock)?;
+    let state = versions::read(root)?;
+    let protected = versions::payload_closure(&state, &lock)?;
+    let active = versions::verification_payloads(&state, &lock, &index)?;
+    let classified = active.is_some();
+    if let Some(contract) =
+        &state.versions[&format!("{}@{}", lock.logical_id, lock.version_id)].dependency_contract
+        && !contract.outputs.contains(
+            row["movie_sha256"]
+                .as_str()
+                .ok_or("Missing Golden movie hash")?,
+        )
+    {
+        return Err("Classified Golden movie must be a declared compiled output".into());
+    }
     let assets = bindings["assets"]
         .as_object()
         .ok_or("Missing Golden asset bindings")?;
@@ -137,18 +150,30 @@ fn snapshot(
         return Err("Golden movie differs from index".into());
     }
     let mut paths = BTreeMap::new();
+    let verification = active.unwrap_or_else(|| unique.clone());
+    let deferred = unique
+        .keys()
+        .filter(|hash| !verification.contains_key(*hash))
+        .count();
+    if classified {
+        total = verification.values().try_fold(0u64, |n, bytes| {
+            n.checked_add(*bytes).ok_or("Golden read budget overflow")
+        })?;
+    }
     if fresh {
         if total > cfg.capacity.max_object_bytes {
             return Err("Golden verification exceeds read budget".into());
         }
-        for (oid, size) in unique {
-            let path = active_existing(&cfg, &oid, size)?
+        for (oid, size) in &verification {
+            let path = active_existing(&cfg, oid, *size)?
                 .ok_or("Golden asset absent from active caches; archive not probed")?;
-            paths.insert(oid, path);
+            paths.insert(oid.clone(), path);
         }
     }
     let receipt = json!({"video_id":video,"golden_id":golden,"snapshot_sha256":oid,
         "bindings":assets.len(),"fresh_hash_verified":fresh,"current_changed":false,
+        "verification_scope":if classified {"active-primary-input-and-output-closure"}else{"declared-assets"},
+        "deferred_reference_objects":deferred,"verified_objects":if fresh {Some(verification.len())}else{None},
         "payload_bytes_copied":0,"archive_probed":false,"movies_rebuilt":0,
         "reel_semantic_build_validated":false,"creative_authority":"not-granted-by-this-receipt"});
     Ok((scene.clone(), bindings.clone(), receipt, paths))
@@ -159,7 +184,8 @@ pub fn check(root: &Path, video: &str, golden: &str, fresh: bool) -> Result<Valu
 }
 
 pub fn restore(root: &Path, video: &str, golden: &str) -> Result<Value> {
-    // Verify all declared assets before writing any restored control files.
+    // Verify the declared legacy scope or classified active closure before
+    // writing any restored control files. Historical references remain cold.
     let (scene, bindings, mut receipt, paths) = snapshot(root, video, golden, true)?;
     let root = root.canonicalize()?;
     let base = root.join(".local/restored-goldens");
