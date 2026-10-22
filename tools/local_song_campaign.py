@@ -102,6 +102,22 @@ class Campaign:
         self.register([asset],provenance)
         return {k:asset[k] for k in ['sha256','bytes','cache_uri']}
 
+    def reuse_or_ingest(self, path, provenance):
+        """Reuse freshly verified registered bytes; admission still gates new data.
+
+        This changes no existing registration/provenance or cache policy. A
+        corrupt active object fails instead of falling back to a fresh ingest.
+        """
+        asset=descriptor(path)
+        asset['cache_uri']='cache://sha256/'+asset['sha256']
+        try:
+            self.locate(asset)
+        except RuntimeError as error:
+            if not any(reason in str(error) for reason in ['Unregistered hash','Named object absent from active caches; archive not probed']):
+                raise
+            return self.ingest(path,provenance)
+        return asset
+
     def asset_json(self, name, data, provenance):
         return self.ingest(self.save(name,data),provenance)
 
