@@ -87,3 +87,29 @@ The checked-in synthetic fixture contains no private BERTICA material. CLI and
 tamper tests prove atomic publication, deterministic guide bytes, independent
 MIDI and MusicXML note re-import, optional lead-sheet regeneration, and
 rejection after an exported pitch or lyric syllable changes.
+
+
+## Optional offline melody evidence adapter
+
+`tools/local_song_transcribe.py` is an explicit trusted-job adapter into the
+existing source, analysis and editable-model contracts. It takes hash-bound full
+recording and estimated-vocal WAVs, canonical text, source authority, a frozen
+native REEL executable, and an installed dependency manifest. It uses unprompted
+pYIN on the vocal estimate and YIN on the original mixture. Stable pitch runs,
+frame probabilities, mixture agreement, parameters and complete source duration
+remain separate evidence assets. Unknown frames and short unstable runs do not
+become invented sustained notes. The canonical poem is not supplied to either
+pitch estimator.
+
+The native Rust source/model validators and MIDI/MusicXML/SVG renderer/checker
+remain authoritative for their structural contracts. The adapter creates a
+private unreviewed melody model; the global beat estimate, provisional 4/4 display
+grid, missed notes, octave errors, accompaniment bleed, repeated-note segmentation,
+lyric underlay and musical form all require subsequent review. Tempo may be heard
+at half or double the estimated pulse. No harmony, accompaniment, selected key,
+source edits or musical/notation approval are inferred from a passing export.
+
+Inputs and outputs are explicit native job assets. No automatic downloads,
+service, upload, checkout search, Golden selection or cache management is added.
+The rehearsal oscillator and first SVG are diagnostic views, not a performance
+or a completed engraved songbook.
