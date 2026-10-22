@@ -391,6 +391,7 @@ fn metadata_paths(root: &Path, cold: bool) -> Result<BTreeSet<PathBuf>> {
                 record_field: "bindings".into(),
                 format: "bindings".into(),
                 role_prefixes: vec![],
+                version_field: None,
             }]
         } else {
             p.selections
@@ -402,6 +403,7 @@ fn metadata_paths(root: &Path, cold: bool) -> Result<BTreeSet<PathBuf>> {
             record_field: "bindings".into(),
             format: "bindings".into(),
             role_prefixes: vec!["delivery/".into()],
+            version_field: None,
         }]
     };
     for rule in rules {

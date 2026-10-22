@@ -99,6 +99,14 @@ nor infers publication from folder names; the producing project's index supplies
 the exact current locks. A project can include its review shelf by selecting its
 records explicitly. Do not enable it against an incomplete index.
 
+An artifact selector may name `version_field`, whose value is the item field
+containing an explicit immutable version ID. Each selected edition must match
+the artifact record's registered package/manifest lock. This supports several
+published items from one grouped logical package without changing its single
+metadata-current pointer. A missing explicit edition fails instead of falling
+back to the latest one. Binding selectors continue to use their exact native
+catalogue/current locks and do not accept this option.
+
 The detailed private report lists each observed hash, declared/observed size,
 direct version references, current/noncurrent/deprecated/pinned/leased flags and
 active-tier copies. Exclusive categories are:

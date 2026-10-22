@@ -41,6 +41,10 @@ pub struct Selection {
     pub record_field: String,
     pub format: String,
     pub role_prefixes: Vec<String>,
+    /// Optional per-item immutable edition. Useful when one logical package
+    /// publishes several independent items that must remain selected together.
+    #[serde(default)]
+    pub version_field: Option<String>,
 }
 pub fn relative(root: &Path, name: &str) -> Result<PathBuf> {
     let path = Path::new(name);
@@ -76,6 +80,15 @@ pub fn project(root: &Path) -> Result<Project> {
         return Err("Invalid asset project profile".into());
     }
     relative(root, &p.storage_config)?;
+    if p.selections.iter().any(|rule| {
+        rule.version_field
+            .as_ref()
+            .is_some_and(|field| field.is_empty() || rule.format != "artifact")
+    }) {
+        return Err(
+            "Explicit version fields require artifact selections and a nonempty field".into(),
+        );
+    }
     for namespace in &p.lfs_namespaces {
         if !namespace.starts_with("lfs/")
             || Path::new(namespace)
@@ -171,20 +184,30 @@ pub(crate) fn selected_roots(
                 continue;
             };
             let path = relative(root, record)?;
+            let explicit_version = rule
+                .version_field
+                .as_ref()
+                .map(|field| {
+                    row.get(field)
+                        .and_then(Value::as_str)
+                        .filter(|v| !v.is_empty())
+                        .ok_or("Selected item is missing its explicit immutable version")
+                })
+                .transpose()?;
             let (assets, lock) = match rule.format.as_str() {
                 "artifact" => {
                     let (_, assets) = artifacts::inspect_with(
                         root,
                         Path::new(record),
-                        None,
+                        explicit_version,
                         false,
                         registered,
                         s,
                         cfg,
                     )?;
                     let doc = bounded(&path)?;
-                    let current = doc["current_version"]
-                        .as_str()
+                    let current = explicit_version
+                        .or_else(|| doc["current_version"].as_str())
                         .ok_or("Missing selected artifact version")?;
                     let v = doc["versions"]
                         .as_array()
@@ -967,9 +990,10 @@ mod tests {
         let old = f.put(&f.e, b"old movie", true);
         let new = f.put(&f.e, b"new movie", true);
         let cel = f.put(&f.e, b"current primary cel", true);
-        let old_manifest = f.put(&f.e, b"old manifest", true);
         let evidence_manifest = f.put(&f.e, b"review evidence manifest", true);
         let asset = |hash: &str, bytes: u64| json!({"sha256":hash,"bytes":bytes,"cache_uri":format!("cache://sha256/{hash}")});
+        let old_package_bytes = serde_json::to_vec(&json!({"schema":"caminos.artifact-package.v1","artifact_id":"movie","kind":"video","version_id":"v1","assets":{"delivery/movie":asset(&old,9)}})).unwrap();
+        let old_manifest = f.put(&f.e, &old_package_bytes, true);
         let package = json!({"schema":"caminos.artifact-package.v1","artifact_id":"movie","kind":"video","version_id":"v2","assets":{"delivery/movie":asset(&new,9),"input/cel":asset(&cel,19)}});
         let package_bytes = serde_json::to_vec(&package).unwrap();
         let manifest = f.put(&f.e, &package_bytes, true);
@@ -1044,6 +1068,51 @@ mod tests {
         let live = crate::tiering::live(&root, &policy).unwrap();
         assert!(!live.current.contains(&old));
         assert!(live.selected.contains(&cel));
+        // Separate published items can retain different immutable editions of
+        // a grouped package without retargeting its one metadata-current pointer.
+        let record = root.join("artifact.json");
+        let mut doc = load(&record).unwrap();
+        doc["versions"].as_array_mut().unwrap().push(json!({"version_id":"v1","manifest":asset(&old_manifest,old_package_bytes.len() as u64),"version_lock":{"logical_id":"movie","version_id":"v1","manifest_sha256":old_manifest}}));
+        fs::write(&record, doc.to_string()).unwrap();
+        p["selections"][0]["version_field"] = json!("published_version");
+        fs::write(&profile, p.to_string()).unwrap();
+        assert!(report(&root).is_err()); // explicit editions may not silently default
+        fs::write(root.join("published.json"),json!({"items":[{"record":"artifact.json","published_version":"v1"},{"record":"artifact.json","published_version":"v2"}]}).to_string()).unwrap();
+        assert_eq!(
+            row(&report(&root).unwrap(), &old)["required_by_current_version"],
+            true
+        );
+        assert!(
+            crate::tiering::live(&root, &policy)
+                .unwrap()
+                .current
+                .contains(&old)
+        );
+        let diff = crate::version_diff::compare_project(
+            &root,
+            &state,
+            &sizes,
+            ("movie", "v1"),
+            ("movie", "v2"),
+        )
+        .unwrap();
+        assert!(
+            !diff["eviction_candidate_sha256s"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(old))
+        );
+        assert_eq!(versions::read(&root).unwrap().current["movie"], "v2");
+        p["selections"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("version_field");
+        fs::write(&profile, p.to_string()).unwrap();
+        fs::write(
+            root.join("published.json"),
+            json!({"items":[{"record":"artifact.json"}]}).to_string(),
+        )
+        .unwrap();
         state
             .leases
             .insert("render".into(), ["movie@v1".into()].into());
