@@ -12,6 +12,7 @@ use std::{
 mod authority_delivery;
 mod native_alignment;
 mod presentation_source;
+mod presentation_template;
 mod scene_context;
 pub use scene_context::{CacheDocument, DocumentSource, SceneContext};
 
@@ -302,6 +303,10 @@ impl Inspector<'_> {
                 reel_assembly::template_presentation::SOURCE_TEXT_SCHEMA
                 | reel_assembly::template_presentation::SCENE_SOURCE_TEXT_SCHEMA_V2 => {
                     let _: reel_assembly::template_presentation::PresentationSourceText =
+                        serde_json::from_slice(&bytes)?;
+                }
+                reel_assembly::template_presentation::TEMPLATE_SCHEMA => {
+                    let _: reel_assembly::template_presentation::EditableTextTemplate =
                         serde_json::from_slice(&bytes)?;
                 }
                 _ => return Err("Unsupported selected native metadata parser".into()),
@@ -1277,13 +1282,14 @@ pub fn catalogue() -> Result<Value> {
         {"schema":"caminos.artifact-package.v1","coverage":"reference projection; extra fields opaque","json_schema":schemars::schema_for!(Package)},
         {"schema":"caminos.episode-input-inventory.v1","coverage":"membership projection, not build closure","json_schema":schemars::schema_for!(Inventory)},
         {"schema":"caminos.episode-input-index.v1","coverage":"reference projection; extra fields opaque","json_schema":schemars::schema_for!(InventoryIndex)},
+        {"schema":"reel.editable-text-template.v1","coverage":"native Rust parser; explicit scene-context catalog hash, content and presentation clock checks; no standalone traversal or rendered acceptance","json_schema":Value::Null},
         {"schema":"reel.scene-native-alignment.v1","coverage":"native Rust parser; opt-in selected alignment identity/clock bounds and semantic-event spans; no audio measurement or standalone traversal","json_schema":Value::Null},
         {"schema":"reel.scene-asset-bindings.v1","coverage":"native Rust structure; explicit scene contexts resolve selected bindings","json_schema":Value::Null},
         {"schema":"reel.episode-authoring.v1","coverage":"native Rust structure; scene, template and policy references extracted; other semantics uninspected","json_schema":Value::Null},
         {"schema":"reel.scene-authoring.v2","coverage":"native Rust structure; episode, policy and presentation-template references extracted; explicit scene contexts resolve selected bindings","json_schema":Value::Null},
         {"schema":"reel.scene-policy.v1","coverage":"native Rust structure only","json_schema":Value::Null},
         {"schema":"reel.scene-template-catalog.v1","coverage":"native Rust structure only","json_schema":Value::Null}
-    ],"edge_semantics":{"selected-native-alignment":"Exact selected native alignment metadata; declared clocks only, not measured audio timing","aligned-take":"Alignment-to-selected-take identity; media size-only","requires-asset":"Exact selected input returned by the native scene resolver; media presence is size-only","authoring-document":"Explicit metadata input to a native scene context","requires-version":"Exact registry dependency; rebuild/retention candidate relationship","inventory-member":"Observed bytes; no build-dependency inference","retains-asset":"Immutable version custody, not creative selection","describes-version":"Contextual scope, not dependency","declares-asset":"Package declaration; role-specific semantics not inferred","current-selection":"Record current pointer; native registry current state is reported separately","historical-version":"Previous record version","episode-context":"Contextual backlink, not a dependency cycle"},"limitations":"Not a complete catalogue of all REEL schemas. Unsupported schemas and uninspected metadata are explicit findings. No arbitrary JSON/hash search."}),
+    ],"edge_semantics":{"selected-presentation-template":"Exact catalog-selected editable template metadata; in-memory compile only, not visual acceptance","selected-native-alignment":"Exact selected native alignment metadata; declared clocks only, not measured audio timing","aligned-take":"Alignment-to-selected-take identity; media size-only","requires-asset":"Exact selected input returned by the native scene resolver; media presence is size-only","authoring-document":"Explicit metadata input to a native scene context","requires-version":"Exact registry dependency; rebuild/retention candidate relationship","inventory-member":"Observed bytes; no build-dependency inference","retains-asset":"Immutable version custody, not creative selection","describes-version":"Contextual scope, not dependency","declares-asset":"Package declaration; role-specific semantics not inferred","current-selection":"Record current pointer; native registry current state is reported separately","historical-version":"Previous record version","episode-context":"Contextual backlink, not a dependency cycle"},"limitations":"Not a complete catalogue of all REEL schemas. Unsupported schemas and uninspected metadata are explicit findings. No arbitrary JSON/hash search."}),
     )
 }
 

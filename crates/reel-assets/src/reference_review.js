@@ -7,6 +7,7 @@ const describe = kind => ({
   'inventory-member': 'Inventory observation; does not establish a build dependency.',
   'requires-version': 'Exact dependency recorded in the native version registry.',
   'requires-asset': 'Required selected input returned by the native scene resolver; media presence is size-only.',
+  'selected-presentation-template': 'Exact catalog-selected template and in-memory presentation clock checks; rendered layout, audio and approval remain unverified.',
   'selected-native-alignment': 'Selected alignment JSON, freshly hash checked when opted in; declared clock consistency does not prove measured audio timing.',
   'aligned-take': 'Exact selected take named by alignment metadata; media remains size-only and is not decoded.',
   'selected-source-text': 'Native selected source-text metadata, freshly hash checked when opted in; original manuscript and audio remain unverified.',

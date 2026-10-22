@@ -61,6 +61,9 @@ pub struct SceneContext {
     /// Explicitly inspect selected native alignment JSON and compile event spans.
     #[serde(default)]
     pub verify_native_alignments: bool,
+    /// Explicit immutable catalog-selected editable template; requires both prior checks.
+    #[serde(default)]
+    pub presentation_template: Option<CacheDocument>,
 }
 impl SceneContext {
     fn inputs(&self) -> [(&'static str, &DocumentSource, &'static str); 7] {
@@ -235,6 +238,9 @@ impl Inspector<'_> {
                     }
                     if context.verify_native_alignments {
                         self.check_native_alignments(&id, &context, &resolved)?;
+                    }
+                    if context.presentation_template.is_some() {
+                        self.check_presentation_template(&id, &context, &resolved)?;
                     }
                 }
             }

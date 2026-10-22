@@ -78,3 +78,10 @@ test('alignment relationships distinguish declared clocks from measured media',(
     get('nodes').children[1].events.click();assert.match(get('incoming').children[0].children[1].textContent,meaning);
   }
 });
+
+test('template links distinguish compilation from rendered acceptance',()=>{
+  const {get}=fixture({edges:[{from:'version',to:'media',kind:'selected-presentation-template',field:'template'}]});
+  get('nodes').children[1].events.click();
+  assert.match(get('incoming').children[0].children[1].textContent,/in-memory presentation clock checks/);
+  assert.match(get('incoming').children[0].children[1].textContent,/rendered layout, audio and approval remain unverified/);
+});

@@ -3,13 +3,13 @@ use super::*;
 use reel_assembly::scene_authoring as native;
 
 impl Inspector<'_> {
-    fn inspect_alignment_language(
+    pub(super) fn inspect_alignment_language(
         &mut self,
         id: &str,
         language: &str,
         lane: &native::Language,
         resolved: &native::ResolvedScene,
-    ) -> Result<Value> {
+    ) -> Result<(Value, BTreeMap<String, native::NativeAlignment>)> {
         let mut alignments = BTreeMap::new();
         let mut cues = BTreeMap::new();
         let mut rate = None;
@@ -72,10 +72,11 @@ impl Inspector<'_> {
         }
         let spans = native::compile_native_event_spans(language, lane, &alignments)
             .map_err(|e| e.to_string())?;
-        Ok(
+        Ok((
             json!({"valid":true,"sample_rate":rate,"total_samples":samples,"cue_count":cues.len(),"cues":cues,"event_spans":spans,
             "audio_content_verified":false,"alignment_measurement_verified":false,"human_approval_inferred":false}),
-        )
+            alignments,
+        ))
     }
 
     pub(super) fn check_native_alignments(
@@ -90,7 +91,7 @@ impl Inspector<'_> {
         let mut valid = true;
         for (language, lane) in &scene.languages {
             match self.inspect_alignment_language(id, language, lane, resolved) {
-                Ok(value) => {
+                Ok((value, _)) => {
                     checks.insert(language.clone(), value);
                 }
                 Err(e) => {
