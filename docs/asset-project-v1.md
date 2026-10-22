@@ -84,6 +84,9 @@ Native `scene-verify` follows the same classified active-closure rule and report
 the same scope/count fields. Scene/binding snapshot validation still covers all
 declared bindings, including historical references; fresh media verification
 does not read those references. Explicit reference lookup stays archive-free.
+`golden-verify` and isolated `golden-restore` use this scope too. A classified
+Golden's movie must be declared as a compiled output. Restoring never changes
+the current selection or promotes archived provenance.
 
 The detailed private report lists each observed hash, declared/observed size,
 direct version references, current/noncurrent/deprecated/pinned/leased flags and

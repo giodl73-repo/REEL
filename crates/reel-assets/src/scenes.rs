@@ -110,6 +110,14 @@ pub(crate) fn inspect_with(
         .ok_or("Scene version is missing")?;
     let digest = format!("{:x}", Sha256::digest(snapshot(&scene, &bindings)?));
     let protected = versions::payload_closure(state, &lock)?;
+    if let Some(contract) = &version.dependency_contract
+        && let Some(movie) = assets.get("delivery/movie")
+        && !contract
+            .outputs
+            .contains(movie["sha256"].as_str().ok_or("Missing movie hash")?)
+    {
+        return Err("Classified scene movie must be a declared compiled output".into());
+    }
     if lock.manifest_sha256 != digest
         || version.manifest_sha256 != digest
         || state.current.get(&lock.logical_id) != Some(&lock.version_id)
