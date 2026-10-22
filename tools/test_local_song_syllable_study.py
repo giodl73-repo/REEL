@@ -1,9 +1,39 @@
 import copy
 import unittest
-from local_song_syllable_study import syllables, choose_phrases, char_spans, derived_model
+from local_song_syllable_study import syllables, choose_phrases, char_spans, derived_model, gap_phrases, chronological_text
 
 
 class SyllableStudyTests(unittest.TestCase):
+    def test_gap_scopes_preserve_previous_phrases_and_owner_omissions(self):
+        report=dict(complete_canonical_lines=['a','b','c'],owner_accepted_omissions=[3],phrases=[],listening_windows=[])
+        base=dict(phrases=[dict(id='left',source_span_seconds=[1,2]),dict(id='right',source_span_seconds=[5,6])])
+        window=dict(line=2,span_seconds=[2,5],basis='neighbor-scope',left_anchor_id='left',right_anchor_id='right')
+        result=gap_phrases(report,base,'a\nb\nc\n',[window],10)
+        self.assertEqual(result[0]['performed_source_line'],'b')
+        self.assertFalse(result[0]['independent_presence_test'])
+        for changed in [dict(window,line=3),dict(window,span_seconds=[1.9,5]),dict(window,right_anchor_id='missing')]:
+            with self.subTest(changed=changed),self.assertRaises(ValueError):
+                gap_phrases(report,base,'a\nb\nc\n',[changed],10)
+
+    def test_owner_scope_requires_real_confirmation_and_bounded_clock(self):
+        report=dict(complete_canonical_lines=['hello'],owner_accepted_omissions=[],phrases=[],listening_windows=[dict(line=1,span_seconds=[3,4])])
+        window=dict(line=1,span_seconds=[2.9,4.1],basis='owner-confirmed-presence')
+        with self.assertRaises(ValueError):gap_phrases(report,dict(phrases=[]),'hello',[window],10)
+        self.assertEqual(len(gap_phrases(report,dict(phrases=[]),'hello',[window],10,confirmed=[1])),1)
+        with self.assertRaises(ValueError):gap_phrases(report,dict(phrases=[]),'hello',[dict(window,span_seconds=[1,5])],10,confirmed=[1])
+
+    def test_inserted_phrase_rebases_utf8_without_changing_clock_or_text(self):
+        phrases=[dict(id='later',performed_source_line='corazón',source_span_seconds=[4,5]),
+                 dict(id='inserted',performed_source_line='sí',source_span_seconds=[2,3])]
+        text='corazón\nsí\n';offset=len('corazón\n'.encode())
+        rows=[dict(phrase_id='later',text='corazón',text_start_byte=0,text_end_byte=len('corazón'.encode()),span_seconds=[4,5]),
+              dict(phrase_id='inserted',text='sí',text_start_byte=offset,text_end_byte=offset+len('sí'.encode()),span_seconds=[2,3])]
+        ordered,newrows,newtext=chronological_text(phrases,rows,text)
+        self.assertEqual(newtext,'sí\ncorazón\n')
+        self.assertEqual([r['span_seconds'] for r in newrows],[[2,3],[4,5]])
+        for row in newrows:self.assertEqual(newtext.encode()[row['text_start_byte']:row['text_end_byte']].decode(),row['text'])
+        with self.assertRaises(ValueError):chronological_text(phrases,rows,text+'tampered')
+
     def test_orthographic_proposals_preserve_characters_and_common_groups(self):
         examples={'cielo':['cie','lo'],'copió':['co','pió'],'bosques':['bos','ques'],
                   'pretensiones':['pre','ten','sio','nes'],'sueño':['sue','ño'],

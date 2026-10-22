@@ -104,7 +104,66 @@ def char_spans(path, target, labels, step, offset):
     return result
 
 
-def derived_model(parent, syllable_rows, expected_text, title):
+def gap_phrases(report, base, performed, windows, duration, confirmed=()):
+    """Validate explicit timing proposals without promoting them to word proof."""
+    source=[line for line in performed.splitlines() if line.strip()]
+    if len(source)!=len(report['complete_canonical_lines']):raise ValueError('Performed line count differs')
+    anchors={p['id']:p for p in base['phrases']}
+    candidates={p['id']:p for p in report['phrases']}
+    result=[];occupied=[p['source_span_seconds'] for p in base['phrases']]
+    for window in windows:
+        number=window['line'];start,end=window['span_seconds']
+        if type(number) is not int or not 1<=number<=len(source) or number in report['owner_accepted_omissions']:
+            raise ValueError('Invalid line or accepted performance omission')
+        if not all(type(x) in (float,int) and math.isfinite(x) for x in [start,end]) or not 0<=start<end<=duration or end-start>15:
+            raise ValueError('Gap clock outside bounded full recording')
+        if any(min(end,b)-max(start,a)>1e-8 for a,b in occupied):
+            raise ValueError('Gap proposal overlaps retained study timing')
+        basis=window['basis']
+        if basis=='independent-source-clock':
+            candidate=candidates.get(window['candidate_id'])
+            if not candidate or candidate['line']!=number:raise ValueError('Wrong independent candidate')
+            a,b=candidate['span_seconds']
+            if min(end,b)<=max(start,a) or start<a-4 or end>b+4:raise ValueError('Gap scope exceeds independent clock context')
+        elif basis=='neighbor-scope':
+            left,right=anchors.get(window['left_anchor_id']),anchors.get(window['right_anchor_id'])
+            if not left or not right or start<left['source_span_seconds'][1] or end>right['source_span_seconds'][0]:
+                raise ValueError('Gap is not bounded by its exact retained anchors')
+        elif basis=='owner-confirmed-presence':
+            if number not in confirmed:raise ValueError('Owner confirmation absent')
+            contexts=[p['span_seconds'] for p in report['listening_windows'] if p['line']==number]
+            if not any(start>=a-1 and end<=b+1 for a,b in contexts):raise ValueError('Confirmed line exceeds its retained clock context')
+        else:raise ValueError('Unknown timing basis')
+        occupied.append([start,end])
+        result.append(dict(id=f'gap-line-{number}-{len(result)+1}',line=number,span_seconds=[start,end],
+                           performed_source_line=source[number-1],timing_basis=window,
+                           independent_presence_test=False))
+    return sorted(result,key=lambda p:p['span_seconds'])
+
+
+def chronological_text(phrases, rows, text):
+    """Rebase UTF-8 text ranges when inserting phrases; keep all clocks intact."""
+    origins={};offset=0;encoded=text.encode('utf-8')
+    for phrase in phrases:
+        body=(phrase['performed_source_line'].strip()+'\n').encode('utf-8')
+        if phrase['id'] in origins or encoded[offset:offset+len(body)]!=body:raise ValueError('Prior expected text/phrase binding differs')
+        origins[phrase['id']]=(offset,len(body));offset+=len(body)
+    if offset!=len(encoded):raise ValueError('Trailing unbound expected text')
+    if any(row['phrase_id'] not in origins for row in rows):raise ValueError('Orphan syllable phrase ID')
+    ordered=sorted(phrases,key=lambda p:p['source_span_seconds']);new_text='';new_rows=[]
+    for phrase in ordered:
+        old,size=origins[phrase['id']];prefix=len(new_text.encode('utf-8'))
+        for row in (r for r in rows if r['phrase_id']==phrase['id']):
+            item=copy.deepcopy(row);a,b=item['text_start_byte'],item['text_end_byte']
+            if not old<=a<b<=old+size or encoded[a:b].decode('utf-8')!=item['text']:
+                raise ValueError('Syllable UTF-8 range differs from its retained phrase')
+            item['text_start_byte']=prefix+a-old;item['text_end_byte']=prefix+b-old
+            new_rows.append(item)
+        new_text+=phrase['performed_source_line'].strip()+'\n'
+    return ordered,new_rows,new_text
+
+
+def derived_model(parent, syllable_rows, expected_text, title, edition='partial-syllable-study-v1'):
     """Exact interval intersections, never nearest-note or invented pitch fill."""
     model=copy.deepcopy(parent)
     scale=parent['tempo_map'][0]['microseconds_per_quarter']/1e6/parent['musical_timebase']['pulses_per_quarter']
@@ -138,7 +197,8 @@ def derived_model(parent, syllable_rows, expected_text, title):
         raise ValueError('No supported syllable/pitch intersections; no empty study score')
     if any(notes[i]['start_tick']+notes[i]['duration_ticks']>notes[i+1]['start_tick'] for i in range(len(notes)-1)):
         raise ValueError('Study articulation overlaps; review phrase/character boundaries')
-    model['model_id']+='-partial-syllable-study-v1'
+    if not re.fullmatch('[a-z0-9-]{1,64}',edition):raise ValueError('Invalid study edition')
+    model['model_id']+='-'+edition
     authority=copy.deepcopy(model['authority']);authority['status']='draft-not-reviewed';authority['decision_refs']=[]
     model['authority']=authority;model['review']['status']='not-reviewed';model['review']['decision_refs']=[]
     model['parts']=[dict(id='partial-vocal-study',role='melody',name='Partial syllable study — gaps unresolved',notes=notes)]
@@ -177,8 +237,20 @@ def main():
     if Path(bundle._path).name!=model_path.name:raise ValueError('Frozen CTC model differs')
     acoustic=bundle.get_model(dl_kwargs=dict(model_dir=str(model_path.parent),file_name=model_path.name,map_location='cpu',weights_only=True)).eval()
     labels=bundle.get_labels();lookup={c:i for i,c in enumerate(labels)}
-    selected=choose_phrases(report);rows=[];phrases=[];expected_text=''
+    selected=choose_phrases(report);rows=[];phrases=[];expected_text='';base=None
     duration=parent['duration_ticks']*parent['tempo_map'][0]['microseconds_per_quarter']/1e6/parent['musical_timebase']['pulses_per_quarter']
+    if 'extension' in request:
+        extension=request['extension']
+        for filename,key in [('base-study.json','study'),('base-expected.txt','expected_text'),('performed.txt','performed'),('line-alignment.json','line_alignment')]:checked(filename,extension[key])
+        base=read('base-study.json');alignment=read('line-alignment.json')
+        if base['request']['model']!=request['model'] or base['request']['recording']!=request['recording'] or base['request']['word_underlay']!=request['word_underlay']:
+            raise ValueError('Extension parent source/model/proposal binding differs')
+        if extension['performed']!=report['request']['performed'] or extension['line_alignment']!=report['request']['line_alignment'] or alignment['request']['recording']!=request['recording']:
+            raise ValueError('Extension performed text/recognition binding differs')
+        rows=copy.deepcopy(base['syllables']);phrases=copy.deepcopy(base['phrases'])
+        expected_text=Path('base-expected.txt').read_text(encoding='utf-8')
+        selected=gap_phrases(report,base,Path('performed.txt').read_text(encoding='utf-8'),extension['windows'],duration,
+                             alignment['request'].get('owner_confirmed_present_lines',[]))
     for phrase in selected:
         start,end=phrase['span_seconds'];start=max(0,start-.5);end=min(duration,end+.5)
         text=phrase['performed_source_line'].strip()
@@ -215,9 +287,15 @@ def main():
             cursor+=len(word)+1
         phrases.append(dict(id=phrase['id'],line=phrase['line'],source_span_seconds=phrase['span_seconds'],
             performed_source_line=text,expected_characters=target,character_spans=characters,
-            frame_seconds=step,forced_path=ids,selection='producer-proposed nonoverlapping exact-recognizer phrase; musical review pending'))
+            frame_seconds=step,forced_path=ids,selection='producer-proposed constrained gap timing; not independent word proof' if base else 'producer-proposed nonoverlapping exact-recognizer phrase; musical review pending',
+            timing_basis=phrase.get('timing_basis')))
+    if base:phrases,rows,expected_text=chronological_text(phrases,rows,expected_text)
     Path('expected-singing.txt').write_text(expected_text,encoding='utf-8',newline='\n')
-    model,ledger=derived_model(parent,rows,expected_text,request['title'])
+    model,ledger=derived_model(parent,rows,expected_text,request['title'],request.get('study_edition','partial-syllable-study-v1'))
+    if base:
+        signature=lambda row:(row['parent_note_id'],row['proposed_start_tick'],row['proposed_duration_ticks'])
+        if not {signature(row) for row in base['articulation_ledger']}.issubset({signature(row) for row in ledger}):
+            raise ValueError('Extension changed a retained study articulation')
     write('model.json',model)
     used={x['parent_note_id'] for x in ledger}
     evidence=dict(schema='reel.local-song-syllable-study.v1',request=request,phrases=phrases,syllables=rows,
@@ -226,6 +304,8 @@ def main():
         owner_accepted_omissions=report['owner_accepted_omissions'],unresolved_line_clocks=report['unresolved_line_clocks'],
         original_audio_modified=False,parent_model_modified=False,independent_presence_test=False,finished_score=False,
         limitations=model['unknowns'])
+    if base:evidence.update(extension_of=request['extension']['study'],prior_articulation_preserved=True,
+                            constrained_gap_lines=sorted({p['line'] for p in selected}))
     write('syllable-study.json',evidence)
     checks=dict(model=native('music-model-validate','model.json'))
     native('music-score-export-plan','model.json','--output-path','score-plan.json')

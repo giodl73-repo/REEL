@@ -150,3 +150,14 @@ canonical poem are retained. The native validator and exporters check this
 partial model, MIDI, MusicXML and SVG, without certifying complete melody or
 engraving. Never select the partial study as a replacement for an accepted
 full melody, nor treat an omitted study note as an accepted performance omission.
+
+An explicit extension may add bounded gap clocks while retaining an exact prior
+study/equivalent expected-text lock. Freeze each independent candidate, pair of
+neighbor anchor IDs, or actual owner-confirmed presence plus retained listening
+context. These scopes propose timing; they do not manufacture independent word
+recognition. Reject overlaps with retained phrase clocks, accepted omissions,
+unbound Unicode text and wrong recording/model bindings. Only new windows go
+through CTC; merge the old timing evidence by chronological UTF-8 rebasing and
+verify every prior parent-note/articulation interval is preserved. Keep the
+independent word-clock limitations even when a constrained timing proposal is
+available. The accepted full recording and melody remain separate and unchanged.
