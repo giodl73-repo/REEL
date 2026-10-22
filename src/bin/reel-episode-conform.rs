@@ -48,12 +48,39 @@ fn run() -> Result<()> {
             "usage: reel-episode-conform build <manifest.json> --input-root <authoring-root> --asset-root <hydrated-media-root> --output-dir <new-dir>"
         );
     };
-    if command != "build"
+    if !matches!(command.as_str(), "build" | "prepare" | "finish")
         || input_flag != "--input-root"
         || asset_flag != "--asset-root"
         || output_flag != "--output-dir"
     {
         bail!("invalid episode conform arguments");
+    }
+    if command == "prepare" {
+        reel::episode_conform::prepare(
+            Path::new(manifest),
+            Path::new(input_root),
+            Path::new(asset_root),
+            Path::new(output),
+        )?;
+        println!(
+            "source preparation complete; full episode verification and delivery remain pending"
+        );
+        return Ok(());
+    }
+    if command == "finish" {
+        if Path::new(input_root).canonicalize()? != Path::new(asset_root).canonicalize()? {
+            bail!("finish requires one closed input/asset workspace");
+        }
+        let receipt = reel::episode_conform::finish(
+            Path::new(manifest),
+            Path::new(asset_root),
+            Path::new(output),
+        )?;
+        println!(
+            "{} {} {} frames {} samples",
+            receipt.episode_id, receipt.language, receipt.total_frames, receipt.total_samples
+        );
+        return Ok(());
     }
     let receipt = reel::episode_conform::build(
         Path::new(manifest),
