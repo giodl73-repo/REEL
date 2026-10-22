@@ -14,6 +14,7 @@ fn cache_backed_version_records_preserve_locks_and_fail_closed() {
         dependencies: vec![],
         supersedes: None,
         deprecated: false,
+        dependency_contract: None,
     };
     let bytes = serde_json::to_vec(&v).unwrap();
     let oid = format!("{:x}", Sha256::digest(&bytes));
@@ -105,6 +106,7 @@ fn scene_fixture(f: &Fixture) -> PathBuf {
             dependencies: vec![],
             supersedes: None,
             deprecated: false,
+            dependency_contract: None,
         })
         .unwrap();
     state.select("scene/one", "v1").unwrap();
@@ -189,6 +191,7 @@ fn artifact_fixture(f: &Fixture) -> PathBuf {
             dependencies: vec![],
             supersedes: None,
             deprecated: false,
+            dependency_contract: None,
         })
         .unwrap();
     state.select("song/one", "golden-v1").unwrap();

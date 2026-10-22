@@ -1325,6 +1325,7 @@ mod tests {
                 dependencies: vec![],
                 supersedes: None,
                 deprecated: true,
+                dependency_contract: None,
             })
             .unwrap();
         let package=serde_json::to_vec(&json!({"schema":"caminos.artifact-package.v1","artifact_id":"episode/demo","kind":"episode","version_id":"v1","assets":{"delivery":descriptor(&media,15)}})).unwrap();

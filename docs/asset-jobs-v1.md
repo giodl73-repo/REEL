@@ -4,6 +4,11 @@
 trusted recipe in the project's configured active caches. It does not start a
 daemon or access archive tiers. Existing staging/result names remain compatible.
 
+Production version publication has a separate [asset-management completion hook](asset-version-diff-v1.md).
+After registering/selecting the exact accepted version, call `version-manage` and retain
+its `managed: true` receipt before completing the production job or PR. This is an explicit
+producer integration; `run-job` success and scratch retirement alone do not provide it.
+
 ## Inputs and executables
 
 Inputs and tools must be registered exact SHA-256/byte pairs. Immutable inputs

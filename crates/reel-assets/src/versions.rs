@@ -18,6 +18,14 @@ pub struct Dependency {
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct DependencyContract {
+    pub primary_inputs: BTreeSet<String>,
+    pub outputs: BTreeSet<String>,
+    /// Provenance/history/approval records are retained, but are not build inputs.
+    pub references: BTreeSet<String>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Version {
     pub logical_id: String,
     pub version_id: String,
@@ -29,6 +37,17 @@ pub struct Version {
     pub supersedes: Option<String>,
     #[serde(default)]
     pub deprecated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dependency_contract: Option<DependencyContract>,
+}
+impl Version {
+    /// Legacy rows remain conservatively protected until explicitly reclassified.
+    pub fn active_payloads(&self) -> BTreeSet<String> {
+        self.dependency_contract.as_ref().map_or_else(
+            || self.payloads.clone(),
+            |c| c.primary_inputs.union(&c.outputs).cloned().collect(),
+        )
+    }
 }
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -48,6 +67,70 @@ fn key(id: &str, version: &str) -> String {
     format!("{id}@{version}")
 }
 impl State {
+    pub fn validate_dependency_contract(&self, version: &Version) -> Result<()> {
+        let mut queue = vec![version];
+        let mut seen = BTreeSet::new();
+        while let Some(version) = queue.pop() {
+            if !seen.insert(key(&version.logical_id, &version.version_id)) {
+                continue;
+            }
+            let Some(contract) = &version.dependency_contract else {
+                continue;
+            };
+            let classified: BTreeSet<_> = contract
+                .primary_inputs
+                .iter()
+                .chain(&contract.outputs)
+                .chain(&contract.references)
+                .cloned()
+                .collect();
+            let mut payloads = version.payloads.clone();
+            payloads.remove(&version.manifest_sha256);
+            let mut classified_without_manifest = classified.clone();
+            classified_without_manifest.remove(&version.manifest_sha256);
+            if classified.iter().any(|h| !valid_oid(h))
+                || payloads != classified_without_manifest
+                || !contract.primary_inputs.is_disjoint(&contract.outputs)
+                || !contract.primary_inputs.is_disjoint(&contract.references)
+                || !contract.outputs.is_disjoint(&contract.references)
+            {
+                return Err(
+                    "Every payload must have exactly one primary-input, output or reference role"
+                        .into(),
+                );
+            }
+            for dep in &version.dependencies {
+                let target = self
+                    .versions
+                    .get(&key(&dep.logical_id, &dep.version_id))
+                    .ok_or("Dependency version missing")?;
+                let inputs = target.dependency_contract.as_ref().ok_or(
+                    "Primary-input dependency cannot target an unclassified legacy version",
+                )?;
+                if target.manifest_sha256 != dep.manifest_sha256 {
+                    return Err("Dependency manifest hash mismatch".into());
+                }
+                if !inputs.outputs.is_empty() {
+                    return Err("Compiled/output versions cannot be dependencies; use primary inputs and retain output references separately".into());
+                }
+                queue.push(target);
+            }
+            for existing in self
+                .versions
+                .values()
+                .filter_map(|v| v.dependency_contract.as_ref())
+            {
+                if !contract.primary_inputs.is_disjoint(&existing.outputs)
+                    || !contract.outputs.is_disjoint(&existing.primary_inputs)
+                {
+                    return Err(
+                        "A declared output cannot also be registered as a primary input".into(),
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
     pub fn register(&mut self, version: Version) -> Result<()> {
         if version.logical_id.is_empty()
             || version.version_id.is_empty()
@@ -74,6 +157,7 @@ impl State {
         {
             return Err("Superseded version missing".into());
         }
+        self.validate_dependency_contract(&version)?;
         self.versions.insert(k, version);
         self.generation += 1;
         Ok(())
@@ -86,6 +170,7 @@ impl State {
         if v.deprecated {
             return Err("Cannot select deprecated version for new use".into());
         }
+        self.validate_dependency_contract(v)?;
         self.current.insert(id.into(), version.into());
         self.generation += 1;
         Ok(())
@@ -95,6 +180,14 @@ impl State {
             .get_mut(&key(id, version))
             .ok_or("Version missing")?
             .deprecated = true;
+        self.generation += 1;
+        Ok(())
+    }
+    pub fn unselect(&mut self, id: &str, expected: &str) -> Result<()> {
+        if self.current.get(id).is_none_or(|v| v != expected) {
+            return Err("Current selection changed; refusing stale withdrawal".into());
+        }
+        self.current.remove(id);
         self.generation += 1;
         Ok(())
     }
@@ -532,6 +625,7 @@ mod tests {
             dependencies: vec![],
             supersedes: None,
             deprecated: false,
+            dependency_contract: None,
         }
     }
     #[test]
@@ -551,6 +645,68 @@ mod tests {
             s.retirement_plan("cel", "v1").unwrap()["removal_authorized"],
             false
         );
+        assert!(s.unselect("cel", "stale").is_err());
+        assert_eq!(s.current["cel"], "v1");
+        s.unselect("cel", "v1").unwrap();
+        assert!(!s.current.contains_key("cel"));
+        assert_eq!(s.retirement_plan("cel", "v1").unwrap()["protected"], true);
+    }
+    #[test]
+    fn typed_dependencies_reject_outputs_and_keep_provenance_out_of_active_inputs() {
+        let mut s = State::default();
+        let mut primary = version("cel", "v1", 'b');
+        primary.dependency_contract = Some(DependencyContract {
+            primary_inputs: primary.payloads.clone(),
+            outputs: BTreeSet::new(),
+            references: BTreeSet::new(),
+        });
+        s.register(primary).unwrap();
+        let mut compiled = version("episode", "v1", 'c');
+        compiled.payloads = BTreeSet::from(["d".repeat(64), "e".repeat(64)]);
+        compiled.dependency_contract = Some(DependencyContract {
+            primary_inputs: BTreeSet::new(),
+            outputs: BTreeSet::from(["d".repeat(64)]),
+            references: BTreeSet::from(["e".repeat(64)]),
+        });
+        compiled.dependencies.push(Dependency {
+            logical_id: "cel".into(),
+            version_id: "v1".into(),
+            manifest_sha256: "b".repeat(64),
+        });
+        s.register(compiled.clone()).unwrap();
+        let active = crate::accounting::expand(&s, ["episode@v1".into()]).unwrap();
+        assert!(active.contains(&"a".repeat(64)) && active.contains(&"d".repeat(64)));
+        assert!(!active.contains(&"e".repeat(64)));
+        let mut invalid = compiled.clone();
+        invalid.version_id = "v2".into();
+        invalid.dependencies = vec![Dependency {
+            logical_id: "episode".into(),
+            version_id: "v1".into(),
+            manifest_sha256: "c".repeat(64),
+        }];
+        assert!(
+            s.register(invalid)
+                .unwrap_err()
+                .to_string()
+                .contains("cannot be dependencies")
+        );
+        let mut disguised = version("disguised", "v1", 'f');
+        disguised.payloads = BTreeSet::from(["d".repeat(64)]);
+        disguised.dependency_contract = Some(DependencyContract {
+            primary_inputs: disguised.payloads.clone(),
+            outputs: BTreeSet::new(),
+            references: BTreeSet::new(),
+        });
+        assert!(s.register(disguised).is_err());
+        let mut ambiguous = compiled;
+        ambiguous.version_id = "v3".into();
+        ambiguous
+            .dependency_contract
+            .as_mut()
+            .unwrap()
+            .primary_inputs
+            .insert("d".repeat(64));
+        assert!(s.register(ambiguous).is_err());
     }
     #[test]
     fn version_index_compaction_preserves_state_and_small_transaction_patches() {

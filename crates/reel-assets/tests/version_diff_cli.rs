@@ -24,6 +24,7 @@ fn comparison_is_read_only_and_rejects_report_overwrite() {
                 dependencies: vec![],
                 supersedes: None,
                 deprecated: false,
+                dependency_contract: None,
             })
             .unwrap();
     }
@@ -63,4 +64,19 @@ fn comparison_is_read_only_and_rejects_report_overwrite() {
     );
     assert!(!root.join(".local").exists());
     assert!(!run().status.success());
+    fs::create_dir(root.join(".local")).unwrap();
+    fs::write(root.join(".local/storage-rust.json"), b"{}").unwrap();
+    fs::write(root.join("asset-project.json"),serde_json::json!({"schema":"reel.asset-project.v1","project_id":"strict-fixture","storage_config":".local/storage-rust.json","selections":[],"scan_cas":false,"max_inventory_objects":100,"lfs_namespaces":[],"require_primary_input_contracts":true}).to_string()).unwrap();
+    let rejected = Command::new(env!("CARGO_BIN_EXE_reel-assets"))
+        .arg("--root")
+        .arg(root)
+        .args(["select", "asset", "v2"])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("classified primary-input"));
+    assert_eq!(
+        fs::read(root.join("registry/versions.json")).unwrap(),
+        original
+    );
 }

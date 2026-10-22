@@ -7,6 +7,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[derive(Debug)]
+pub struct AdmissionDenied(pub String);
+impl std::fmt::Display for AdmissionDenied {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "No active cache admitted this operation: {}", self.0)
+    }
+}
+impl std::error::Error for AdmissionDenied {}
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Policy {
@@ -259,11 +268,7 @@ fn reserve_candidates(
             lease: Some(lease),
         });
     }
-    Err(format!(
-        "No active cache admitted this operation: {}",
-        reasons.join("; ")
-    )
-    .into())
+    Err(AdmissionDenied(reasons.join("; ")).into())
 }
 
 pub fn reserve(root: &Path, config: &Config, bytes: u64) -> Result<Reservation> {
@@ -272,6 +277,18 @@ pub fn reserve(root: &Path, config: &Config, bytes: u64) -> Result<Reservation> 
 pub fn reserve_on(root: &Path, config: &Config, cache: &Path, bytes: u64) -> Result<Reservation> {
     if !config.cache_roots.contains(&cache.to_path_buf()) {
         return Err("Destination is not an active cache".into());
+    }
+    reserve_candidates(root, config, &[cache.to_path_buf()], bytes)
+}
+/// Explicit named archival custody, never an automatic admission fallback.
+pub fn reserve_archive_on(
+    root: &Path,
+    config: &Config,
+    cache: &Path,
+    bytes: u64,
+) -> Result<Reservation> {
+    if !config.archive_roots.contains(&cache.to_path_buf()) {
+        return Err("Destination is not a configured archive".into());
     }
     reserve_candidates(root, config, &[cache.to_path_buf()], bytes)
 }

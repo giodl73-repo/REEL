@@ -44,6 +44,14 @@ pub struct Request {
     /// occur in the hash-bound verified index. Worktree paths are never inferred.
     #[serde(default)]
     pub source_alias_namespaces: Vec<String>,
+    /// Exact retained-copy removal may coexist with unrelated producer reservations.
+    /// Current references, file handles, alias counts and final controls still apply.
+    #[serde(default)]
+    pub allow_live_admissions: bool,
+    #[serde(default)]
+    pub transition: Option<crate::version_diff::Transition>,
+    #[serde(default)]
+    pub history_fallback_to_archive: bool,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -84,7 +92,7 @@ struct SourceProof {
 }
 
 #[derive(Serialize, Clone)]
-struct Identity {
+pub(crate) struct Identity {
     id: String,
     links: u64,
     allocated: u64,
@@ -92,7 +100,7 @@ struct Identity {
 }
 
 #[cfg(windows)]
-mod platform {
+pub(crate) mod platform {
     use super::*;
     use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
     use windows_sys::Win32::Storage::FileSystem::*;
@@ -207,7 +215,7 @@ mod platform {
     }
 }
 #[cfg(not(windows))]
-mod platform {
+pub(crate) mod platform {
     use super::*;
     pub fn open(path: &Path, _remove: bool) -> Result<fs::File> {
         Ok(fs::File::open(path)?)
@@ -651,6 +659,24 @@ pub fn run(
     let started = std::time::Instant::now();
     let request_bytes = tiering::read_bounded(request_path, 256 * 1024)?;
     let req: Request = serde_json::from_slice(&request_bytes)?;
+    let transition_report = if let Some(t) = &req.transition {
+        let report = crate::version_diff::validate_transition(root, t)?;
+        let candidates: BTreeSet<String> =
+            serde_json::from_value(report["eviction_candidate_sha256s"].clone())?;
+        if !req.sha256s.is_subset(&candidates) {
+            return Err(
+                "Removal set includes hashes outside the current version replacement".into(),
+            );
+        }
+        Some(report)
+    } else {
+        None
+    };
+    if req.allow_live_admissions && transition_report.is_none() {
+        return Err(
+            "Concurrent historical eviction requires an exact classified version transition".into(),
+        );
+    }
     let deadline = started
         .checked_add(std::time::Duration::from_secs(req.max_seconds))
         .ok_or("Invalid deadline")?;
@@ -659,13 +685,15 @@ pub fn run(
     let policy_bytes = tiering::read_bounded(&req.policy, 256 * 1024)?;
     let policy: tiering::Policy = serde_json::from_slice(&policy_bytes)?;
     policy.validate(&cfg)?;
-    let cold = match req.retained_tier.as_deref() {
+    let retained_archive = match req.retained_tier.as_deref() {
         None => false,
         Some(id) if id == policy.history_tier => false,
         Some(id) if id == policy.cold_tier => true,
         _ => return Err("Retained tier must be the configured history or cold tier".into()),
     };
-    if !cold && req.verified_cold_index.is_some() {
+    let archive_history = retained_archive && req.transition.is_some();
+    let cold = retained_archive && !archive_history;
+    if !retained_archive && req.verified_cold_index.is_some() {
         return Err("Verified cold index is valid only for explicit cold custody".into());
     }
     let normal_relative = |s: &str| {
@@ -679,14 +707,15 @@ pub fn run(
             .source_alias_namespaces
             .iter()
             .any(|s| !normal_relative(s))
-        || (!req.source_alias_namespaces.is_empty() && (!cold || req.verified_cold_index.is_none()))
+        || (!req.source_alias_namespaces.is_empty()
+            && (!retained_archive || req.verified_cold_index.is_none()))
     {
         return Err(
             "Cold alias namespaces require an explicit verified index and normal relative paths"
                 .into(),
         );
     }
-    if apply && !cold {
+    if apply && !cold && !req.allow_live_admissions {
         let _guard = admission::lock(&control)?;
         ensure_no_admissions(&control)?;
     }
@@ -705,7 +734,11 @@ pub fn run(
     {
         return Err("Invalid demotion request/scope/budget".into());
     }
-    let fresh = tiering::check_plan(root, &req.policy, &req.plan, now)?;
+    let fresh = if req.allow_live_admissions {
+        tiering::check_transition_plan(root, &req.policy, &req.plan, now)?
+    } else {
+        tiering::check_plan(root, &req.policy, &req.plan, now)?
+    };
     if fresh["plan_sha256"] != req.plan_sha256 {
         return Err("Request plan identity mismatch".into());
     }
@@ -784,7 +817,7 @@ pub fn run(
             if let Some(h) = req.sha256s.iter().find(|h| protected.contains(*h)) {
                 return Err(format!("Object protected by legacy managed consumer: {h}").into());
             }
-            if !cold && metadata_token(consumer)? != before {
+            if !cold && !req.allow_live_admissions && metadata_token(consumer)? != before {
                 return Err("Legacy consumer changed during reconciliation".into());
             }
             consumer_tokens.insert(consumer.clone(), before);
@@ -818,7 +851,10 @@ pub fn run(
                 return Err(format!("Object protected by managed consumer: {h}").into());
             }
         }
-        if !cold && metadata_snapshot_kind(consumer, false, cold)?.0 != before {
+        if !cold
+            && !req.allow_live_admissions
+            && metadata_snapshot_kind(consumer, false, cold)?.0 != before
+        {
             return Err("Consumer changed during protection reconciliation".into());
         }
         consumer_tokens.insert(consumer.clone(), before);
@@ -856,7 +892,7 @@ pub fn run(
         &json!({"request_sha256":tiering::digest(&request_bytes),"apply":apply,"plan_sha256":req.plan_sha256}),
     )?;
     let hot = &cfg.cache_roots[policy.tier(&policy.selected_tier).index];
-    let warm = if cold {
+    let warm = if retained_archive {
         &cfg.archive_roots[policy.tier(&policy.cold_tier).index]
     } else {
         &cfg.cache_roots[policy.tier(&policy.history_tier).index]
@@ -1025,7 +1061,7 @@ pub fn run(
             "retained_verification":retained_verification,
             "verified_cold_index_sha256":req.verified_cold_index.as_ref().map(|r|&r.sha256)});
         stamp(journal, &format!("{h}-retained.json"), &proof)?;
-        let _cold_custody = if cold && apply {
+        let _cold_custody = if retained_archive && apply {
             Some(register_cold(warm, h, size, &destination)?)
         } else {
             None
@@ -1039,9 +1075,9 @@ pub fn run(
         }
         let _source_controls = check_source_controls(root, &req, apply)?;
         let mut prepared_controls = BTreeMap::new();
-        if cold {
+        if cold || req.allow_live_admissions {
             for (consumer, token) in &mut consumer_tokens {
-                let before = metadata_snapshot_kind(consumer, false, true)?.0;
+                let before = metadata_snapshot_kind(consumer, false, cold)?.0;
                 if before != *token {
                     // Refresh expensive registry graphs without serializing
                     // capacity admission or unrelated producers' metadata.
@@ -1052,7 +1088,17 @@ pub fn run(
                         {
                             return Err("Consumer cache/coordination changed".into());
                         }
-                        cold_protection(consumer, policy.max_objects)?
+                        if cold {
+                            cold_protection(consumer, policy.max_objects)?
+                        } else {
+                            let view = tiering::live(consumer, &protection_policy)?;
+                            view.current
+                                .into_iter()
+                                .chain(view.selected)
+                                .chain(view.leased)
+                                .chain(view.controls)
+                                .collect()
+                        }
                     } else if legacy.contains(consumer) {
                         legacy_protection(consumer, &cfg)?
                     } else {
@@ -1067,7 +1113,10 @@ pub fn run(
                 // On Windows these handles deny writes and path replacement.
                 // The final transaction checks the *set* as well, so a newly
                 // created authorization shard cannot evade the held handles.
-                let snapshot = control_snapshot(consumer, apply, true)?;
+                // Managed historical transitions freeze content only after acquiring
+                // writer domains, so a concurrent publisher cannot fail a rename on
+                // our pre-lock read handles. Changed tokens still hold removal.
+                let snapshot = control_snapshot(consumer, apply && cold, cold)?;
                 if snapshot.token != before {
                     return Err("Consumer changed during cold protection preparation".into());
                 }
@@ -1077,7 +1126,7 @@ pub fn run(
         }
         checkpoint("after-protection-preparation")?;
         let _state_lock = if apply {
-            Some(if cold {
+            Some(if cold || req.allow_live_admissions {
                 admission::lock_for(&control, std::time::Duration::from_secs(2))?
             } else {
                 admission::lock(&control)?
@@ -1094,7 +1143,7 @@ pub fn run(
                 _writer_guards.push(admission::worktree_lock(consumer)?);
             }
         }
-        if apply && !cold {
+        if apply && !cold && !req.allow_live_admissions {
             ensure_no_admissions(&control)?;
         }
         if consumer_registration(root, &consumers, &inactive)? != registration {
@@ -1180,11 +1229,14 @@ pub fn run(
     let result = json!({"schema":"reel.asset-demotion-result.v1","apply":apply,"plan_sha256":req.plan_sha256,
         "objects":results,"free_bytes_before":free_before,"free_bytes_after":free_after,
         "observed_free_space_delta":i128::from(free_after)-i128::from(free_before),
-        "free_space_delta_is_exclusively_attributed":false,"archive_probed":cold,
-        "cold_custody_registered":cold && apply,"last_copy_retired":false});
+        "free_space_delta_is_exclusively_attributed":false,"archive_probed":retained_archive,
+        "cold_custody_registered":retained_archive && apply,"historical_archive_retention":archive_history,"last_copy_retired":false});
     let mut result = result;
     result["admissions_present_at_completion"] = json!(admissions_present(&control)?);
     result["removal_authorized"] = json!(apply);
+    result["request_sha256"] = json!(tiering::digest(&request_bytes));
+    result["version_transition"] = serde_json::to_value(&req.transition)?;
+    result["version_comparison"] = json!(transition_report);
     // Resume may observe fewer links/free-space changes; keep earlier receipts intact.
     let out = crate::unique(journal, "result");
     tiering::write_plan(&out, &result)?;
@@ -1825,6 +1877,7 @@ mod tests {
                 dependencies: vec![],
                 supersedes: None,
                 deprecated: false,
+                dependency_contract: None,
             })
             .unwrap();
         state.select("old", "v1").unwrap();

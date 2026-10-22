@@ -20,6 +20,8 @@ pub struct Project {
     pub lfs_namespaces: Vec<String>,
     #[serde(default)]
     pub measure_unregistered_physical: bool,
+    #[serde(default)]
+    pub require_primary_input_contracts: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -90,7 +92,8 @@ pub(crate) fn expand(
         }
         let v = s.versions.get(&k).ok_or("Usage root version missing")?;
         found.insert(v.manifest_sha256.clone());
-        found.extend(v.payloads.iter().cloned());
+        s.validate_dependency_contract(v)?;
+        found.extend(v.active_payloads());
         for dep in &v.dependencies {
             let key = version_key(dep);
             let target = s.versions.get(&key).ok_or("Usage dependency missing")?;
@@ -293,6 +296,66 @@ fn census(
 /// Private detailed report; caller explicitly chooses whether/where to retain it.
 pub fn report(root: &Path) -> Result<Value> {
     report_with_progress(root, |_, _| {})
+}
+
+/// Observe only named registered hashes after a version change. No CAS walk or archive probe.
+pub fn observe_named(root: &Path, hashes: &BTreeSet<String>) -> Result<Value> {
+    let p = project(root)?;
+    let cfg = config(root)?;
+    let registered = selected(root)?;
+    if hashes.len() > p.max_inventory_objects {
+        return Err("Named inventory exceeds project budget".into());
+    }
+    let before = fs::read(root.join("registry/versions.json"))?;
+    let state = versions::read(root)?;
+    let mut tiers = Vec::new();
+    for (n, cache) in cfg.cache_roots.iter().enumerate() {
+        tiers.push(json!({"tier":n,"root":cache,"volume_id":admission::volume_id(cache)?,"free_bytes":fs2::available_space(cache)?,"total_bytes":fs2::total_space(cache)?}));
+    }
+    let mut rows = Vec::new();
+    for hash in hashes {
+        let size = *registered
+            .get(hash)
+            .ok_or("Named inventory requires registered hashes")?;
+        let mut copies = Vec::new();
+        for (tier, cache) in cfg.cache_roots.iter().enumerate() {
+            let path = object(cache, hash);
+            match fs::symlink_metadata(&path) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(e.into()),
+                Ok(m) if !m.file_type().is_file() || m.len() != size => {
+                    return Err("Named cache object type/size mismatch".into());
+                }
+                Ok(_) => (),
+            }
+            let info = physical(&path, tiers[tier]["volume_id"].as_str().unwrap())?;
+            let mut aliases = 0u64;
+            for ns in &p.lfs_namespaces {
+                let lfs = cache
+                    .join(ns)
+                    .join("objects")
+                    .join(&hash[..2])
+                    .join(&hash[2..4])
+                    .join(hash);
+                match physical(&lfs, tiers[tier]["volume_id"].as_str().unwrap()) {
+                    Ok(alias) if alias.id == info.id => aliases += 1,
+                    Ok(_) => (),
+                    Err(e)
+                        if e.downcast_ref::<std::io::Error>()
+                            .is_some_and(|x| x.kind() == std::io::ErrorKind::NotFound) => {}
+                    Err(e) => return Err(e),
+                }
+            }
+            copies.push(json!({"tier":tier,"bytes":size,"physical_id":info.id,"allocated_bytes":info.allocated,"hard_links":info.links,"known_lfs_hard_links":aliases,"other_hard_links":info.links.saturating_sub(1+aliases)}));
+        }
+        rows.push(json!({"sha256":hash,"bytes":size,"registered":true,"copies":copies}));
+    }
+    if fs::read(root.join("registry/versions.json"))? != before {
+        return Err("Version state changed during named observation; retry".into());
+    }
+    Ok(
+        json!({"schema":"reel.asset-cache-report.v1","project_id":p.project_id,"profile_sha256":crate::tiering::digest(&fs::read(root.join("asset-project.json"))?),"registry_generation":state.generation,"tiers":tiers,"objects":rows,"inventory_scope":"exact named registered hashes only; not a full cache inventory","archive_probed":false}),
+    )
 }
 pub fn report_with_progress(root: &Path, mut progress: impl FnMut(usize, usize)) -> Result<Value> {
     let census_started_unix_seconds = std::time::SystemTime::now()
@@ -670,6 +733,7 @@ mod tests {
             dependencies: vec![],
             supersedes: None,
             deprecated: false,
+            dependency_contract: None,
         }
     }
     fn row<'a>(r: &'a Value, h: &str) -> &'a Value {
