@@ -33,6 +33,10 @@ pub struct Request {
     pub source_controls: BTreeMap<String, String>,
     #[serde(default)]
     pub allow_same_volume_copies: bool,
+    /// Opt in to verifying and removing each independent physical source copy.
+    /// Each group must have a complete known link set and its own source proof.
+    #[serde(default)]
+    pub allow_independent_source_copies: bool,
     /// Explicit cold custody operation; omitted preserves history-only behavior.
     #[serde(default)]
     pub retained_tier: Option<String>,
@@ -936,12 +940,19 @@ pub fn run(
     }
     let free_before = fs2::available_space(hot)?;
     let mut results = vec![];
+    let mut verification_budget_used = 0u64;
     for h in &req.sha256s {
         if started.elapsed().as_secs() >= req.max_seconds {
             return Err("Demotion time budget exceeded; resume the named journal".into());
         }
         let row = planned[h.as_str()];
         let size = row["bytes"].as_u64().unwrap();
+        verification_budget_used = verification_budget_used
+            .checked_add(size)
+            .ok_or("Verification budget overflow")?;
+        if verification_budget_used > req.max_verify_bytes {
+            return Err("Physical-copy verification budget exceeded".into());
+        }
         let destination = object(warm, h);
         let _dest_dirs = platform::guard_dirs(&destination)?;
         let mut retained = platform::open(&destination, false)?;
@@ -1002,7 +1013,9 @@ pub fn run(
         paths.retain(|p| seen_paths.insert(p.clone()));
         let mut guards = vec![];
         let mut links = vec![];
-        let mut source_id: Option<Identity> = None;
+        let mut source_ids: BTreeMap<String, Identity> = BTreeMap::new();
+        let mut source_link_counts: BTreeMap<String, u64> = BTreeMap::new();
+        let mut source_proofs: BTreeMap<String, &str> = BTreeMap::new();
         let mut source_verification = "source-already-absent";
         for path in &paths {
             match fs::symlink_metadata(path) {
@@ -1017,11 +1030,16 @@ pub fn run(
             if info.bytes != size {
                 return Err("Fresh hot copy size mismatch".into());
             }
-            if let Some(id) = &source_id {
-                if id.id != info.id {
+            if !source_ids.contains_key(&info.id) {
+                if !source_ids.is_empty() && !req.allow_independent_source_copies {
                     return Err("Independent LFS copy needs a separate action; held".into());
                 }
-            } else {
+                verification_budget_used = verification_budget_used
+                    .checked_add(size)
+                    .ok_or("Verification budget overflow")?;
+                if verification_budget_used > req.max_verify_bytes {
+                    return Err("Physical-copy verification budget exceeded".into());
+                }
                 let unchanged = if req
                     .verified_cold_index
                     .as_ref()
@@ -1051,14 +1069,16 @@ pub fn run(
                     verify(&mut file, h, size, deadline)?;
                     "fresh-sha256"
                 };
-                source_id = Some(info.clone());
+                source_proofs.insert(info.id.clone(), source_verification);
+                source_ids.insert(info.id.clone(), info.clone());
             }
-            links.push((path.clone(), file));
+            *source_link_counts.entry(info.id.clone()).or_default() += 1;
+            links.push((path.clone(), file, info.id));
         }
-        if let Some(id) = &source_id
-            && (id.links != links.len() as u64 || id.id == retained_id.id)
-        {
-            return Err("Unmanaged aliases or identical retained file; held".into());
+        for id in source_ids.values() {
+            if id.links != source_link_counts[&id.id] || id.id == retained_id.id {
+                return Err("Unmanaged aliases or identical retained file; held".into());
+            }
         }
         // Durable archive writes can be arbitrarily slow. They are additive:
         // a valid custody receipt is useful even if the final removal is held.
@@ -1204,14 +1224,19 @@ pub fn run(
             }
         }
         let mut removed = 0usize;
-        for (path, file) in links {
+        let mut removed_by_identity: BTreeMap<String, u64> = BTreeMap::new();
+        for (path, file, identity) in links {
             let key = tiering::digest(path.to_string_lossy().as_bytes());
             let intent = json!({"sha256":h,"path":path,"plan_sha256":req.plan_sha256,"retained_copy_verified":true});
             if apply {
                 stamp(journal, &format!("{h}-{key}-intent.json"), &intent)?;
                 // Recheck hard-link count after every completed unlink. A new alias holds the rest.
                 let info = platform::identity(&file)?;
-                if info.links != source_id.as_ref().unwrap().links - removed as u64 {
+                if info.id != identity
+                    || info.links
+                        != source_ids[&identity].links
+                            - removed_by_identity.get(&identity).copied().unwrap_or(0)
+                {
                     return Err("Source alias count changed; remaining removals held".into());
                 }
                 platform::assert_path(&file, &path)?;
@@ -1224,12 +1249,17 @@ pub fn run(
                 }
                 stamp(journal, &format!("{h}-{key}-done.json"), &intent)?;
                 removed += 1;
+                *removed_by_identity.entry(identity).or_default() += 1;
             }
         }
+        let removed_allocation = source_ids.values().try_fold(0u64, |sum, id| {
+            sum.checked_add(id.allocated).ok_or("Allocation overflow")
+        })?;
         results.push(json!({"sha256":h,"bytes":size,"verified_history_copy":destination,"hot_links_removed":removed,
             "retained_verification":retained_verification,
             "source_verification":source_verification,
-            "hot_copy_already_absent":source_id.is_none(),"estimated_removed_allocation":if apply&&removed>0{source_id.as_ref().map(|s|s.allocated)}else{None}}));
+            "source_physical_copies":source_ids.len(),"source_copy_verifications":source_proofs,
+            "hot_copy_already_absent":source_ids.is_empty(),"estimated_removed_allocation":if apply&&removed>0{Some(removed_allocation)}else{None}}));
     }
     let free_after = fs2::available_space(hot)?;
     let result = json!({"schema":"reel.asset-demotion-result.v1","apply":apply,"plan_sha256":req.plan_sha256,
@@ -2026,6 +2056,98 @@ mod tests {
         fs::copy(c.e(), alias).unwrap();
         assert!(c.run(cfg!(windows)).is_err());
         assert!(c.e().exists());
+    }
+    fn independent_copy_case() -> Case {
+        let c = Case::new();
+        let alias = c.lfs();
+        fs::create_dir_all(alias.parent().unwrap()).unwrap();
+        fs::copy(c.e(), alias).unwrap();
+        let mut req = crate::load(&c.request).unwrap();
+        req["allow_independent_source_copies"] = json!(true);
+        fs::write(&c.request, req.to_string()).unwrap();
+        c
+    }
+    #[test]
+    fn independent_copies_require_separate_hashes_and_budget_before_removal() {
+        let mut c = independent_copy_case();
+        let result = c.run(false).unwrap();
+        assert_eq!(result["objects"][0]["source_physical_copies"], 2);
+        assert_eq!(
+            result["objects"][0]["source_copy_verifications"]
+                .as_object()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(c.e().exists() && c.lfs().exists());
+        let mut req = crate::load(&c.request).unwrap();
+        req["max_verify_bytes"] = json!(fs::metadata(c.e()).unwrap().len() * 2);
+        fs::write(&c.request, req.to_string()).unwrap();
+        c.journal =
+            c.f.root()
+                .canonicalize()
+                .unwrap()
+                .join(".local/budget-journal");
+        assert!(
+            c.run(false)
+                .unwrap_err()
+                .to_string()
+                .contains("Physical-copy verification budget")
+        );
+        assert!(c.e().exists() && c.lfs().exists());
+    }
+    #[test]
+    fn corrupt_independent_copy_or_unknown_link_holds_all_source_groups() {
+        let c = independent_copy_case();
+        let mut bytes = fs::read(c.lfs()).unwrap();
+        bytes[0] ^= 1;
+        fs::write(c.lfs(), bytes).unwrap();
+        assert!(c.run(cfg!(windows)).is_err());
+        assert!(c.e().exists() && c.lfs().exists());
+        let c = independent_copy_case();
+        fs::hard_link(c.lfs(), c.f.root().join("unmanaged-independent-alias")).unwrap();
+        assert!(c.run(cfg!(windows)).is_err());
+        assert!(c.e().exists() && c.lfs().exists());
+    }
+    #[cfg(windows)]
+    #[test]
+    fn independent_copy_apply_counts_each_physical_group_once_and_resumes() {
+        let c = independent_copy_case();
+        let before = platform::identity(&platform::open(&c.e(), false).unwrap())
+            .unwrap()
+            .allocated
+            + platform::identity(&platform::open(&c.lfs(), false).unwrap())
+                .unwrap()
+                .allocated;
+        let r = c.run(true).unwrap();
+        assert_eq!(r["objects"][0]["hot_links_removed"], 2);
+        assert_eq!(r["objects"][0]["estimated_removed_allocation"], before);
+        assert!(!c.e().exists() && !c.lfs().exists());
+        assert!(c.d().exists());
+        let again = c.run(true).unwrap();
+        assert_eq!(again["objects"][0]["hot_links_removed"], 0);
+        assert_eq!(again["objects"][0]["hot_copy_already_absent"], true);
+    }
+    #[cfg(windows)]
+    #[test]
+    fn interrupted_independent_copy_removal_reverifies_remaining_group() {
+        let c = independent_copy_case();
+        TEST_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(|stage| {
+                if stage == "after-unlink" {
+                    return Err("synthetic interruption between physical groups".into());
+                }
+                Ok(())
+            }));
+        });
+        let interrupted = c.run(true);
+        TEST_HOOK.with(|hook| *hook.borrow_mut() = None);
+        assert!(interrupted.is_err());
+        assert!(!c.e().exists() && c.lfs().exists() && c.d().exists());
+        let resumed = c.run(true).unwrap();
+        assert_eq!(resumed["objects"][0]["source_physical_copies"], 1);
+        assert_eq!(resumed["objects"][0]["hot_links_removed"], 1);
+        assert!(!c.lfs().exists() && c.d().exists());
     }
     #[cfg(windows)]
     #[test]

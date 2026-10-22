@@ -29,6 +29,15 @@ policy/storage admission. Optional `allow_same_volume_copies` defaults false;
 enabling it permits distinct physical copies on one volume and never claims
 independent backup. Synthetic isolated fixtures use that option deliberately.
 
+`allow_independent_source_copies` is a separate opt-in, default false. It permits
+multiple physical source groups within the already scoped CAS/LFS/indexed alias
+paths. Every group is independently hashed (or matches its own exact unchanged
+source proof), has a complete known hard-link set, and is distinct from the
+retained copy. All groups pass before the first unlink. The verification budget
+charges the retained object plus each physical source group, including reused
+proofs. Receipts report each source verification and count allocation once per
+physical group. An unknown link or corrupt independent copy holds the object.
+
 ## Protection and concurrency
 
 All declared consumers must have a supported asset project profile and matching
@@ -68,7 +77,7 @@ Hashing happens outside the short coordination lock. Immediately before each
 object's removals, the command rechecks admissions, plan expiry, policy/request
 and consumer metadata tokens. On Windows it holds those control files against
 write/replace while removing the exact opened source links. Unknown hard links,
-independent LFS copies, readonly copies, unexpected types, reparse ancestors,
+independent LFS copies without explicit opt-in, readonly copies, unexpected types, reparse ancestors,
 corrupt/missing destinations and changed alias counts all hold/fail closed.
 
 The verified retained file remains open denying write/delete until removal and
