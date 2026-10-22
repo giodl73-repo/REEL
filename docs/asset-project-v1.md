@@ -80,6 +80,18 @@ receipt names `verification_scope`, counts `verified_objects` and reports
 Legacy packages retain declared-asset verification. Explicit `artifact-locate`
 of an archived reference still requires named recovery before active lookup.
 
+`compact-goldens` explicitly retains the exact Golden-history JSON bytes as a
+registered cache asset and replaces `registry/goldens.json` with its canonical
+Git LFS pointer. Projects should assign that path their normal LFS attributes
+and allow it as an asset pointer in repository validation. The Rust reader
+accepts existing JSON, hydrated LFS working copies and unhydrated pointers;
+pointer lookup verifies registered hash/size in active tiers and never probes M.
+The current index payload is protected control metadata in either working-copy
+form, and a different backing asset invalidates saved tier-plan fingerprints.
+Compaction does not read movies, change Golden locks or run on session entry.
+Reference inspection follows the standard LFS pointer as a metadata transport,
+verifying the registered body and accounting for both documents in its budgets.
+
 Native `scene-verify` follows the same classified active-closure rule and reports
 the same scope/count fields. Scene/binding snapshot validation still covers all
 declared bindings, including historical references; fresh media verification
@@ -87,6 +99,37 @@ does not read those references. Explicit reference lookup stays archive-free.
 `golden-verify` and isolated `golden-restore` use this scope too. A classified
 Golden's movie must be declared as a compiled output. Restoring never changes
 the current selection or promotes archived provenance.
+
+### Explicit working-set roots
+
+`retention_roots` defaults to `all-current`, preserving existing protection.
+Projects can explicitly choose `declared-selections` once their delivery
+indexes cover every item they intend to keep hot. This mode requires
+`require_primary_input_contracts: true`, complete registry coverage, nonempty
+resolved selections and classified selected versions. Missing or stale records,
+legacy roots and an empty delivery index fail closed. Selector role prefixes
+cannot promote a historical-reference hash to an active deliverable.
+
+Accounting, tier planning and project-aware version comparison then protect the
+declared selections and their primary-input/output closure rather than every
+metadata-current version. Registry current pointers remain intact for authoring
+and history. Active leases, control data, independent consumer protections and
+explicit tier pins still apply. This setting neither grants deletion authority
+nor infers delivery from folder names; the producing project's index supplies
+the exact current locks. A project can include its review shelf by selecting its
+records explicitly. Delivery evidence is provider-independent: a project may
+use Google Drive Goldens, another distribution destination or an explicit
+delivery record as its evidence. Delivery does not imply creative approval.
+Do not enable it against an incomplete index.
+
+An artifact selector may name `version_field`, whose value is the item field
+containing an explicit immutable version ID. Each selected edition must match
+the artifact record's registered package/manifest lock. This supports several
+published items from one grouped logical package without changing its single
+metadata-current pointer. A missing explicit edition fails instead of falling
+back to the latest one. Binding selectors continue to use their exact native
+catalogue/current locks and do not accept this option.
+
 
 The detailed private report lists each observed hash, declared/observed size,
 direct version references, current/noncurrent/deprecated/pinned/leased flags and

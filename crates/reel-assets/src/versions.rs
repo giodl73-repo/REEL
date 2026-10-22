@@ -16,7 +16,7 @@ pub struct Dependency {
     pub version_id: String,
     pub manifest_sha256: String,
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DependencyContract {
     pub primary_inputs: BTreeSet<String>,
@@ -24,7 +24,7 @@ pub struct DependencyContract {
     /// Provenance/history/approval records are retained, but are not build inputs.
     pub references: BTreeSet<String>,
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Version {
     pub logical_id: String,

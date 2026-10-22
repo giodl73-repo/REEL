@@ -12,6 +12,35 @@ pub fn pointer(oid: &str, size: u64) -> Result<String> {
     ))
 }
 
+/// Recognize the canonical, bounded LFS pointer used by local control assets.
+/// Ordinary JSON is left to its native parser; malformed pointers fail closed.
+pub fn parse_pointer(bytes: &[u8]) -> Result<Option<(String, u64)>> {
+    if !bytes.starts_with(b"version https://git-lfs.github.com/spec/v1") {
+        return Ok(None);
+    }
+    if bytes.len() > 1024 {
+        return Err("LFS control pointer exceeds budget".into());
+    }
+    let text = std::str::from_utf8(bytes)?;
+    let mut lines = text.lines();
+    if lines.next() != Some("version https://git-lfs.github.com/spec/v1") {
+        return Err("Invalid LFS control pointer version".into());
+    }
+    let oid = lines
+        .next()
+        .and_then(|s| s.strip_prefix("oid sha256:"))
+        .ok_or("Missing control pointer hash")?;
+    let size: u64 = lines
+        .next()
+        .and_then(|s| s.strip_prefix("size "))
+        .ok_or("Missing control pointer size")?
+        .parse()?;
+    if pointer(oid, size)?.as_bytes() != bytes || lines.next().is_some() {
+        return Err("Noncanonical LFS control pointer".into());
+    }
+    Ok(Some((oid.to_owned(), size)))
+}
+
 pub fn register(root: &Path, manifest: &Path) -> Result<Value> {
     let doc = load(manifest)?;
     let assets = doc["assets"]

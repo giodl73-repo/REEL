@@ -428,6 +428,69 @@ fn artifact_verification_never_hides_corruption_or_recovers_archive() {
 }
 
 #[test]
+fn golden_history_compacts_exact_bytes_and_never_recovers_archive_implicitly() {
+    let f = Fixture::new();
+    golden_fixture(&f);
+    let root = f.dir.path();
+    let mut catalog = load(&root.join("catalog.json")).unwrap();
+    catalog["videos"][0]["video_id"] = json!("one");
+    fs::write(root.join("catalog.json"), catalog.to_string()).unwrap();
+    let cfg_path = root.join(".local/storage-rust.json");
+    let mut cfg = load(&cfg_path).unwrap();
+    cfg["capacity"] = json!({"minimum_free_bytes":0,"minimum_free_basis_points":0});
+    fs::write(cfg_path, cfg.to_string()).unwrap();
+    fs::create_dir_all(&f.config.cache_roots[0]).unwrap();
+    let index = root.join("registry/goldens.json");
+    let before = fs::read(&index).unwrap();
+    let listed = goldens::list(root, "one").unwrap();
+    let receipt = goldens::compact(root).unwrap();
+    let (oid, size) = goldens::control_asset(root).unwrap().unwrap();
+    assert_eq!(size, before.len() as u64);
+    assert_eq!(
+        fs::read(&index).unwrap(),
+        registry::pointer(&oid, size).unwrap().as_bytes()
+    );
+    assert_eq!(
+        fs::read(object(&f.config.cache_roots[0], &oid)).unwrap(),
+        before
+    );
+    assert_eq!(goldens::list(root, "one").unwrap(), listed);
+    assert_eq!(receipt["media_read"], false);
+    assert_eq!(goldens::compact(root).unwrap()["already_compact"], true);
+    fs::write(&index, &before).unwrap(); // normal Git LFS smudge leaves JSON
+    assert_eq!(
+        goldens::control_asset(root).unwrap(),
+        Some((oid.clone(), size))
+    );
+    assert_eq!(goldens::list(root, "one").unwrap(), listed);
+    goldens::compact(root).unwrap();
+    assert!(!object(&f.config.cache_roots[1], &f.oid).exists()); // no movie was needed
+    let e = object(&f.config.cache_roots[0], &oid);
+    let d = object(&f.config.cache_roots[1], &oid);
+    fs::create_dir_all(d.parent().unwrap()).unwrap();
+    fs::write(&d, &before).unwrap();
+    fs::write(&e, vec![b'x'; before.len()]).unwrap();
+    assert!(goldens::list(root, "one").is_err()); // corrupt E cannot hide behind D
+    fs::remove_file(e).unwrap();
+    assert_eq!(goldens::list(root, "one").unwrap(), listed);
+    let m = object(&f.config.archive_roots[0], &oid);
+    fs::create_dir_all(m.parent().unwrap()).unwrap();
+    fs::write(&m, &before).unwrap();
+    fs::remove_file(d).unwrap();
+    assert!(goldens::list(root, "one").is_err());
+    assert_eq!(fs::read(m).unwrap(), before);
+    assert!(!object(&f.config.cache_roots[0], &oid).exists());
+    fs::write(&index, registry::pointer(&oid, 256 * 1024 + 1).unwrap()).unwrap();
+    assert!(goldens::control_asset(root).is_err());
+    fs::write(
+        &index,
+        b"version https://git-lfs.github.com/spec/v1\noid sha256:bad\nsize 1\n",
+    )
+    .unwrap();
+    assert!(goldens::control_asset(root).is_err());
+}
+
+#[test]
 fn classified_golden_restore_keeps_provenance_cold_and_checks_primary_inputs() {
     let f = Fixture::new();
     golden_fixture(&f);
