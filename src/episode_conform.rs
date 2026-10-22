@@ -18,6 +18,8 @@ use std::{
     process::{Command, Stdio},
 };
 
+mod checkpoint;
+
 pub const SCHEMA: &str = "reel.episode-conform.v1";
 
 fn verify_native_delivery_proof(
@@ -362,7 +364,8 @@ fn scoped_import_root(input_root: &Path, scope: Option<&Path>) -> Result<PathBuf
     Ok(selected)
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GeometryVerification {
     pub input_width: u64,
     pub input_height: u64,
@@ -503,7 +506,8 @@ pub enum SegmentKind {
     EpisodePresentation,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SegmentReceipt {
     pub kind: String,
     pub id: String,
@@ -704,6 +708,8 @@ pub struct Receipt {
     pub episode_id: String,
     pub language: String,
     pub manifest_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preparation_sha256: Option<String>,
     pub episode_presentation_fingerprint_sha256: String,
     pub ffmpeg_version: String,
     pub output_sample_rate: u32,
@@ -738,7 +744,8 @@ pub struct PresentationVerificationCache {
     pub policy: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct MediaFacts {
     pub requires_lossless_normalization: bool,
     pub width: u64,
@@ -1587,6 +1594,35 @@ pub fn build(
     asset_root: &Path,
     output: &Path,
 ) -> Result<Receipt> {
+    build_internal(manifest_path, input_root, asset_root, output, None)?
+        .context("missing final conform receipt")
+}
+
+pub fn prepare(
+    manifest_path: &Path,
+    input_root: &Path,
+    asset_root: &Path,
+    output: &Path,
+) -> Result<()> {
+    if input_root.canonicalize()? != asset_root.canonicalize()? {
+        bail!("native preparation requires one closed input/asset workspace");
+    }
+    let scope = checkpoint::snapshot_job_scope(asset_root)?;
+    build_internal(manifest_path, input_root, asset_root, output, Some(scope))?;
+    Ok(())
+}
+
+pub fn finish(prepared: &Path, asset_root: &Path, output: &Path) -> Result<Receipt> {
+    checkpoint::finish(prepared, asset_root, output)
+}
+
+fn build_internal(
+    manifest_path: &Path,
+    input_root: &Path,
+    asset_root: &Path,
+    output: &Path,
+    preparation_scope: Option<Vec<scene_delivery::FileRef>>,
+) -> Result<Option<Receipt>> {
     if output.exists() {
         bail!("episode output must be a new directory");
     }
@@ -2535,6 +2571,79 @@ pub fn build(
             bail!("conformed master changed declared sample aspect ratio or color properties");
         }
     }
+    let state = ConformState {
+        manifest_bytes,
+        first,
+        records,
+        normalized,
+        master,
+        frame_cursor,
+        sample_cursor,
+        presentation_fingerprint_sha256: presentation.fingerprint_sha256,
+        presentation_cache_hits,
+        presentation_cache_misses,
+        preparation_sha256: None,
+    };
+    if preparation_scope.is_some() {
+        let snapshot = preparation_scope.context("preparation scope missing")?;
+        let checkpoint = checkpoint::capture(&state, work, asset_root, snapshot)?;
+        fs::write(
+            work.join("prepared.json"),
+            serde_json::to_vec_pretty(&checkpoint)?,
+        )?;
+        let _ = temp.keep();
+        let work = stage.keep();
+        fs::rename(work, output)?;
+        return Ok(None);
+    }
+    let external = manifest.preassembled_master.is_some();
+    let receipt = finalize_conform(state, work, external)?;
+    drop(temp);
+    fs::rename(work, output)?;
+    Ok(Some(receipt))
+}
+
+pub(crate) struct ConformState {
+    pub preparation_sha256: Option<String>,
+    pub manifest_bytes: Vec<u8>,
+    pub first: MediaFacts,
+    pub records: Vec<SegmentReceipt>,
+    pub normalized: Vec<PathBuf>,
+    pub master: PathBuf,
+    pub frame_cursor: u64,
+    pub sample_cursor: u64,
+    pub presentation_fingerprint_sha256: String,
+    pub presentation_cache_hits: usize,
+    pub presentation_cache_misses: usize,
+}
+
+pub(crate) fn finalize_conform(
+    state: ConformState,
+    work: &Path,
+    master_external: bool,
+) -> Result<Receipt> {
+    let ConformState {
+        preparation_sha256,
+        manifest_bytes,
+        first,
+        records,
+        normalized,
+        master,
+        frame_cursor,
+        sample_cursor,
+        presentation_fingerprint_sha256,
+        presentation_cache_hits,
+        presentation_cache_misses,
+    } = state;
+    let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
+    let upstream_verified = records
+        .iter()
+        .map(|r| r.upstream_delivery_verified)
+        .collect::<Vec<_>>();
+    let presentation_verified = records
+        .iter()
+        .map(|r| r.upstream_presentation_verified)
+        .collect::<Vec<_>>();
     let video_lengths = records
         .iter()
         .map(|r| r.frames * first.width * first.height * 3)
@@ -2759,7 +2868,8 @@ pub fn build(
         episode_id: manifest.episode_id,
         language: manifest.language,
         manifest_sha256: sha(&manifest_bytes),
-        episode_presentation_fingerprint_sha256: presentation.fingerprint_sha256,
+        preparation_sha256,
+        episode_presentation_fingerprint_sha256: presentation_fingerprint_sha256,
         ffmpeg_version,
         output_sample_rate: manifest.output_sample_rate,
         output_geometry: manifest.output_geometry.clone(),
@@ -2816,15 +2926,13 @@ pub fn build(
     {
         // This file was created by this bounded conform, and all source masters
         // remain untouched. Its exact hash stays in the provenance receipt.
-        if manifest.preassembled_master.is_none() {
+        if !master_external {
             fs::remove_file(&master)?;
         }
-    } else if manifest.preassembled_master.is_some() {
+    } else if master_external {
         // A supplied candidate is immutable input, including when a retained
         // lossless copy is requested. Never rename or delete its original.
         fs::copy(&master, work.join("master.mkv"))?;
     }
-    drop(temp);
-    fs::rename(work, output)?;
     Ok(receipt)
 }

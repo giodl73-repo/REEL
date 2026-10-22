@@ -1,5 +1,30 @@
 # Data-driven episode conform
 
+Long native jobs can use two bounded steps with the same checked source closure:
+
+```
+reel-episode-conform prepare conform.json --input-root . --asset-root . --output-dir prepared
+reel-episode-conform finish prepared --input-root . --asset-root . --output-dir out
+```
+
+Preparation requires a closed native job workspace (`job.json`). It verifies the
+declared input/tool/inline-file hashes, rejects undeclared files and links, runs
+the complete upstream/normalization checks, and retains its exact normalized
+segments and lossless assembly. `prepared.json` explicitly records that the full
+episode is still unverified. It is neither a final receipt nor creative approval.
+
+Finish rehashes every original input and retained intermediate, requires the same
+validator/FFmpeg/FFprobe bytes, and verifies the prepared order and clocks. It then
+performs the same complete ordered picture/PCM comparisons, timestamp/boundary
+checks, encoding and full encoded-delivery decode as ordinary `build`. The final
+receipt binds `preparation_sha256`; the exact preparation record is copied into
+the final output. Preparation sources remain unchanged. Both steps use the
+existing job limits; this mode does not extend a timeout or omit a check.
+
+Preparation directories are owned job scratch. Reusing one after that scratch is
+discarded requires explicit retention of its referenced intermediate bytes; the
+final receipt alone does not claim that those temporary files remain available.
+
 Decoded picture checks use FFmpeg's SHA-256 hash muxer over packed raw video,
 with an independent raw-packet byte/frame counter. Ordered segment cuts count
 decoded frames rather than seeking timestamps. The SHA-256 values are identical

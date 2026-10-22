@@ -502,6 +502,129 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
             0
         );
     }
+
+    // Execute native preparation and finish as separate bounded steps. The
+    // preparation record is not a final verification or publication receipt.
+    let phased = root.join("phased");
+    fs::create_dir(&phased).unwrap();
+    for entry in fs::read_dir(root).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_type().unwrap().is_file() {
+            fs::copy(entry.path(), phased.join(entry.file_name())).unwrap();
+        }
+    }
+    write(&phased.join("conform.json"), &compact);
+    let mut declared = serde_json::Map::new();
+    for entry in fs::read_dir(&phased).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().to_str().unwrap().to_owned();
+        let r = reference(&phased, &name);
+        declared.insert(
+            name,
+            serde_json::json!({"sha256":r["sha256"],"bytes":r["bytes"]}),
+        );
+    }
+    write(
+        &phased.join("job.json"),
+        &serde_json::json!({"inputs":declared,"tools":{},"files":{}}),
+    );
+    let run_phase = |command: &str, input: &Path, output: &Path| {
+        Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
+            .arg(command)
+            .arg(input)
+            .arg("--input-root")
+            .arg(&phased)
+            .arg("--asset-root")
+            .arg(&phased)
+            .arg("--output-dir")
+            .arg(output)
+            .output()
+            .unwrap()
+    };
+    let prepared = phased.join("prepared");
+    let prepared_result = run_phase("prepare", &phased.join("conform.json"), &prepared);
+    assert!(
+        prepared_result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&prepared_result.stderr)
+    );
+    assert!(!prepared.join("receipt.json").exists());
+    assert!(!prepared.join("episode.mp4").exists());
+    let checkpoint_bytes = fs::read(prepared.join("prepared.json")).unwrap();
+    let mut checkpoint: serde_json::Value = serde_json::from_slice(&checkpoint_bytes).unwrap();
+    assert_eq!(checkpoint["full_episode_verified"], false);
+    let assembly_ref = checkpoint["master"]["file"].clone();
+    assert_eq!(checkpoint["master"]["root"], "prepared");
+    let assembled = prepared.join(assembly_ref["path"].as_str().unwrap());
+    let original_assembly = fs::read(&assembled).unwrap();
+    let finished = phased.join("finished");
+    let finished_result = run_phase("finish", &prepared, &finished);
+    assert!(
+        finished_result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&finished_result.stderr)
+    );
+    let final_receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(finished.join("receipt.json")).unwrap()).unwrap();
+    assert_eq!(
+        final_receipt["decoded_master_matches_ordered_segments"],
+        true
+    );
+    assert_eq!(final_receipt["timestamps_verified"], true);
+    assert_eq!(
+        final_receipt["encoded_delivery"]["full_decode_verified"],
+        true
+    );
+    assert_eq!(final_receipt["total_frames"], 120);
+    assert_eq!(
+        final_receipt["preparation_sha256"],
+        reference(&prepared, "prepared.json")["sha256"]
+    );
+    assert_eq!(fs::read(&assembled).unwrap(), original_assembly);
+    assert_eq!(
+        fs::read(finished.join("preparation.json")).unwrap(),
+        checkpoint_bytes
+    );
+    let catalog_before = fs::read(phased.join("catalog.json")).unwrap();
+    fs::write(phased.join("catalog.json"), b"changed source control").unwrap();
+    assert!(
+        !run_phase("finish", &prepared, &phased.join("stale-phased-output"))
+            .status
+            .success()
+    );
+    fs::write(phased.join("catalog.json"), catalog_before).unwrap();
+    checkpoint["records"][0]["decoded_picture_sha256"] = "0".repeat(64).into();
+    write(&prepared.join("prepared.json"), &checkpoint);
+    let changed_expected = run_phase("finish", &prepared, &phased.join("changed-prepared-pixels"));
+    assert!(!changed_expected.status.success());
+    assert!(
+        String::from_utf8_lossy(&changed_expected.stderr).contains("differs from selected source")
+    );
+    fs::write(prepared.join("prepared.json"), &checkpoint_bytes).unwrap();
+    let mut changed_assembly = original_assembly.clone();
+    let last = changed_assembly.len() - 1;
+    changed_assembly[last] ^= 1;
+    fs::write(&assembled, changed_assembly).unwrap();
+    assert!(
+        !run_phase("finish", &prepared, &phased.join("changed-prepared-master"))
+            .status
+            .success()
+    );
+    fs::write(&assembled, &original_assembly).unwrap();
+    checkpoint = serde_json::from_slice(&checkpoint_bytes).unwrap();
+    checkpoint["validator_sha256"] = "0".repeat(64).into();
+    write(&prepared.join("prepared.json"), &checkpoint);
+    assert!(
+        !run_phase(
+            "finish",
+            &prepared,
+            &phased.join("changed-prepared-validator")
+        )
+        .status
+        .success()
+    );
+    fs::write(prepared.join("prepared.json"), &checkpoint_bytes).unwrap();
+
     fs::write(root.join("source-master.json"), b"altered template").unwrap();
     let stale_source = Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
         .arg("build")
