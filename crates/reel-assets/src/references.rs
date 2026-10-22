@@ -9,6 +9,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+mod authority_delivery;
 mod scene_context;
 pub use scene_context::{CacheDocument, DocumentSource, SceneContext};
 
@@ -584,6 +585,8 @@ impl Inspector<'_> {
         };
         let schema = value["schema"].as_str().unwrap_or("").to_string();
         let declared_ids: Vec<Value> = match schema.as_str() {
+            authority_delivery::AUTHORITY => vec![value["authority_id"].clone()],
+            authority_delivery::DELIVERY => vec![value["delivery_id"].clone()],
             "reel.episode-authoring.v1" => vec![value["episode_id"].clone()],
             "reel.scene-authoring.v2" => vec![value["scene_id"].clone()],
             "reel.scene-policy.v1" => vec![value["policy_id"].clone()],
@@ -669,6 +672,8 @@ impl Inspector<'_> {
     fn extract(&mut self, p: &Pending, schema: &str, value: Value) -> Result<()> {
         let id = &p.id;
         match schema {
+            authority_delivery::AUTHORITY => self.source_authority(id, value)?,
+            authority_delivery::DELIVERY => self.delivery_record(id, value, p.depth)?,
             "caminos.artifact-record.v1" => {
                 let r: Record = serde_json::from_value(value)?;
                 if r.versions.is_empty()
@@ -903,6 +908,14 @@ impl Inspector<'_> {
             "reel.scene-authoring.v2" => {
                 let s: reel_assembly::scene_authoring::Scene = serde_json::from_value(value)?;
                 self.report.nodes.get_mut(id).unwrap().details["scene_id"] = json!(s.scene_id);
+                self.named(
+                    id,
+                    &s.source_authority_id,
+                    "source-authority",
+                    "source_authority_id",
+                    p.depth,
+                    Some(authority_delivery::AUTHORITY),
+                )?;
                 if let Some(policy) = &s.scene_policy_override_id {
                     self.named(
                         id,
@@ -1062,6 +1075,7 @@ fn inspect_with(root: &Path, profile: &str, before_recheck: impl FnOnce()) -> Re
         i.process(p)?;
     }
     i.resolve_scene_contexts()?;
+    i.check_authority_scopes();
     // DFS only required relationships; contextual episode/scene cycles are legitimate.
     let mut visiting = BTreeSet::new();
     let mut done = BTreeSet::new();
@@ -1187,6 +1201,8 @@ pub fn catalogue() -> Result<Value> {
         json!({"schema":"reel.asset-schema-catalogue.v1","json_schema_dialect":"https://json-schema.org/draft/2020-12/schema","contracts":[
         {"schema":PROFILE,"coverage":"complete profile contract","json_schema":schemars::schema_for!(Project)},
         {"schema":REPORT,"coverage":"complete report contract","json_schema":schemars::schema_for!(Report)},
+        {"schema":authority_delivery::AUTHORITY,"coverage":"strict source revision/scope and evidence references; no approval or source-content verification","json_schema":schemars::schema_for!(authority_delivery::SourceAuthority)},
+        {"schema":authority_delivery::DELIVERY,"coverage":"strict exact-version output/evidence references; no remote readback or release authorization","json_schema":schemars::schema_for!(authority_delivery::DeliveryRecord)},
         {"schema":"caminos.artifact-record.v1","coverage":"reference projection; extra fields opaque","json_schema":schemars::schema_for!(Record)},
         {"schema":"caminos.artifact-package.v1","coverage":"reference projection; extra fields opaque","json_schema":schemars::schema_for!(Package)},
         {"schema":"caminos.episode-input-inventory.v1","coverage":"membership projection, not build closure","json_schema":schemars::schema_for!(Inventory)},
@@ -1204,20 +1220,20 @@ pub fn catalogue() -> Result<Value> {
 mod tests {
     use super::*;
     use crate::tiering::tests::Fixture;
-    fn descriptor(hash: &str, bytes: u64) -> Value {
+    pub(super) fn descriptor(hash: &str, bytes: u64) -> Value {
         json!({"sha256":hash,"bytes":bytes,"cache_uri":format!("cache://sha256/{hash}")})
     }
-    fn write(f: &Fixture, path: &str, value: &Value) {
+    pub(super) fn write(f: &Fixture, path: &str, value: &Value) {
         fs::write(f.root().join(path), serde_json::to_vec(value).unwrap()).unwrap();
     }
-    fn profile(f: &Fixture, roots: Value) {
+    pub(super) fn profile(f: &Fixture, roots: Value) {
         write(
             f,
             "inspect.json",
             &json!({"schema":PROFILE,"project_id":"synthetic","roots":roots}),
         );
     }
-    fn fixture() -> (Fixture, String, String) {
+    pub(super) fn fixture() -> (Fixture, String, String) {
         let mut f = Fixture::new();
         let media = f.put(b"synthetic media", true);
         let old = f.put(b"previous golden", true);

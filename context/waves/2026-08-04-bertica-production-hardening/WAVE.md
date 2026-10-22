@@ -73,6 +73,16 @@ See `docs/scene-delivery-v0.1.md`, `docs/reviews/2026-09-09-scene-delivery.md`, 
 
 ## Validation
 
+### 2026-10-21 source-authority and delivery reference contracts
+
+Strict generic records now expose source revisions, declared scope coverage,
+exact delivery subject locks, retained outputs and opaque evidence relationships.
+Source scope/identity and delivery payload membership are checked. Unverified
+semantics stay findings, including for public-audience declarations. No service
+access, release inference, render or cache mutation is introduced. See
+`docs/handoff/2026-10-21-authority-delivery-references.md`.
+
+
 ### 2026-10-21 native scene selected-binding reference contexts
 
 Explicit scene contexts now reuse the existing native authoring resolver over
