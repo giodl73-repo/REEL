@@ -64,6 +64,12 @@ interpret arbitrary evidence files as dependencies.
 
 ## Counts and physical storage
 
+Projects can set `require_primary_input_contracts: true` to require classified new version
+registrations and selections. [Version-managed publication](asset-version-diff-v1.md) defines
+primary inputs, compiled outputs, historical references, the completion receipt, and bounded
+post-publication eviction. Legacy records retain their conservative compatibility behavior
+until an explicit new immutable version replaces them.
+
 The detailed private report lists each observed hash, declared/observed size,
 direct version references, current/noncurrent/deprecated/pinned/leased flags and
 active-tier copies. Exclusive categories are:

@@ -1,5 +1,8 @@
 # Verified redundant hot-copy removal
 
+For replacement versions, start with [version comparison](asset-version-diff-v1.md)
+to restrict a request to dropped hashes rather than reclaiming unrelated historical assets.
+
 This explicit Windows command supplements the read-only tier planner:
 
 ```text
