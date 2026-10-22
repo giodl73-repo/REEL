@@ -1,6 +1,6 @@
 //! Read-only, project-scoped accounting. Classifications never authorize removal.
 use crate::{Result, admission, artifacts, config, load, object, selected, valid_oid, versions};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -8,7 +8,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Project {
     pub schema: String,
@@ -22,8 +22,18 @@ pub struct Project {
     pub measure_unregistered_physical: bool,
     #[serde(default)]
     pub require_primary_input_contracts: bool,
+    #[serde(default)]
+    pub retention_roots: RetentionRoots,
 }
-#[derive(Deserialize)]
+/// Metadata current pointers and working-set roots are separate authorities.
+#[derive(Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum RetentionRoots {
+    #[default]
+    AllCurrent,
+    DeclaredSelections,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Selection {
     pub index: String,
@@ -60,6 +70,8 @@ pub fn project(root: &Path) -> Result<Project> {
         || p.project_id.is_empty()
         || p.max_inventory_objects == 0
         || p.max_inventory_objects > 1_000_000
+        || (p.retention_roots == RetentionRoots::DeclaredSelections
+            && (!p.require_primary_input_contracts || p.selections.is_empty()))
     {
         return Err("Invalid asset project profile".into());
     }
@@ -75,6 +87,37 @@ pub fn project(root: &Path) -> Result<Project> {
         }
     }
     Ok(p)
+}
+pub(crate) fn retention_roots(
+    p: &Project,
+    s: &versions::State,
+    declared: &BTreeSet<String>,
+) -> Result<BTreeSet<String>> {
+    if p.retention_roots == RetentionRoots::AllCurrent {
+        return Ok(s
+            .current
+            .iter()
+            .map(|(id, v)| format!("{id}@{v}"))
+            .collect());
+    }
+    if declared.is_empty() || !s.coverage_complete {
+        return Err(
+            "Declared retention roots require nonempty selections and complete coverage".into(),
+        );
+    }
+    for key in declared {
+        let v = s
+            .versions
+            .get(key)
+            .ok_or("Declared retention version missing")?;
+        if v.dependency_contract.is_none() {
+            return Err(
+                "Declared retention roots require classified primary-input contracts".into(),
+            );
+        }
+        s.validate_dependency_contract(v)?;
+    }
+    Ok(declared.clone())
 }
 fn version_key(lock: &versions::Dependency) -> String {
     format!("{}@{}", lock.logical_id, lock.version_id)
@@ -189,6 +232,13 @@ pub(crate) fn selected_roots(
                     let hash = a["sha256"].as_str().ok_or("Missing selected output hash")?;
                     if !protected.contains(hash) {
                         return Err("Selected output absent from version closure".into());
+                    }
+                    if let Some(contract) = &s.versions[&version_key(&lock)].dependency_contract
+                        && contract.references.contains(hash)
+                    {
+                        return Err(
+                            "A historical reference cannot be a selected active role".into()
+                        );
                     }
                     outputs.insert(hash.to_owned());
                     matches += 1;
@@ -369,11 +419,8 @@ pub fn report_with_progress(root: &Path, mut progress: impl FnMut(usize, usize))
     let state = versions::read(root)?;
     let registered = selected(root)?;
     let (outputs, golden_roots) = selected_roots(root, &p, &state, &registered, &cfg)?;
+    let current = expand(&state, retention_roots(&p, &state, &golden_roots)?)?;
     let golden = expand(&state, golden_roots)?;
-    let current = expand(
-        &state,
-        state.current.iter().map(|(id, v)| format!("{id}@{v}")),
-    )?;
     let pinned = expand(&state, state.pins.iter().cloned())?;
     let leased = expand(
         &state,
@@ -912,6 +959,153 @@ mod tests {
             json!("edited-without-new-version");
         fs::write(f.root().join("bindings.json"), changed.to_string()).unwrap();
         assert!(report(&f.root()).is_err());
+    }
+    #[test]
+    fn declared_retention_separates_metadata_current_from_hot_roots_and_keeps_leases() {
+        let f = Fixture::new();
+        let root = f.root();
+        let old = f.put(&f.e, b"old movie", true);
+        let new = f.put(&f.e, b"new movie", true);
+        let cel = f.put(&f.e, b"current primary cel", true);
+        let old_manifest = f.put(&f.e, b"old manifest", true);
+        let evidence_manifest = f.put(&f.e, b"review evidence manifest", true);
+        let asset = |hash: &str, bytes: u64| json!({"sha256":hash,"bytes":bytes,"cache_uri":format!("cache://sha256/{hash}")});
+        let package = json!({"schema":"caminos.artifact-package.v1","artifact_id":"movie","kind":"video","version_id":"v2","assets":{"delivery/movie":asset(&new,9),"input/cel":asset(&cel,19)}});
+        let package_bytes = serde_json::to_vec(&package).unwrap();
+        let manifest = f.put(&f.e, &package_bytes, true);
+        let mut state = versions::State {
+            coverage_complete: true,
+            ..Default::default()
+        };
+        let mut v1 = version("movie", "v1", &old_manifest);
+        v1.payloads.insert(old.clone());
+        v1.dependency_contract = Some(versions::DependencyContract {
+            primary_inputs: Default::default(),
+            outputs: [old.clone()].into(),
+            references: Default::default(),
+        });
+        state.register(v1).unwrap();
+        let mut v2 = version("movie", "v2", &manifest);
+        v2.supersedes = Some("v1".into());
+        v2.payloads.extend([new.clone(), cel.clone()]);
+        v2.dependency_contract = Some(versions::DependencyContract {
+            primary_inputs: [cel.clone()].into(),
+            outputs: [new.clone()].into(),
+            references: Default::default(),
+        });
+        state.register(v2).unwrap();
+        state.select("movie", "v2").unwrap();
+        // An old evidence registry still calls its broad custody graph current.
+        let mut evidence = version("evidence", "v1", &evidence_manifest);
+        evidence.payloads.insert(old.clone());
+        state.register(evidence).unwrap();
+        state.select("evidence", "v1").unwrap();
+        f.state(&state);
+        fs::write(root.join("artifact.json"),json!({"schema":"caminos.artifact-record.v1","artifact_id":"movie","kind":"video","current_version":"v2","versions":[{"version_id":"v2","manifest":asset(&manifest,package_bytes.len() as u64),"version_lock":{"logical_id":"movie","version_id":"v2","manifest_sha256":manifest}}]}).to_string()).unwrap();
+        fs::write(
+            root.join("published.json"),
+            json!({"items":[{"record":"artifact.json"}]}).to_string(),
+        )
+        .unwrap();
+        let profile = root.join("asset-project.json");
+        let mut p = load(&profile).unwrap();
+        p["selections"] = json!([{"index":"published.json","entries":"/items","record_field":"record","format":"artifact","role_prefixes":["delivery/"]}]);
+        fs::write(&profile, p.to_string()).unwrap();
+        assert_eq!(
+            row(&report(&root).unwrap(), &old)["required_by_current_version"],
+            true
+        );
+        p["retention_roots"] = json!("declared-selections");
+        fs::write(&profile, p.to_string()).unwrap();
+        assert!(project(&root).is_err()); // typed producer admission is mandatory
+        p["require_primary_input_contracts"] = json!(true);
+        fs::write(&profile, p.to_string()).unwrap();
+        let r = report(&root).unwrap();
+        assert_eq!(row(&r, &old)["required_by_current_version"], false);
+        assert_eq!(row(&r, &new)["required_by_current_version"], true);
+        assert_eq!(row(&r, &cel)["required_by_current_version"], true);
+        assert_eq!(state.current["evidence"], "v1"); // metadata identity remains intact
+        let sizes = selected(&root).unwrap();
+        let diff = crate::version_diff::compare_project(
+            &root,
+            &state,
+            &sizes,
+            ("movie", "v1"),
+            ("movie", "v2"),
+        )
+        .unwrap();
+        assert!(
+            diff["eviction_candidate_sha256s"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(old))
+        );
+        let policy: crate::tiering::Policy = serde_json::from_value(json!({"schema":"reel.asset-tier-policy.v1","project_id":"synthetic","baseline":{"sha256":"a".repeat(64),"bytes":1},"tiers":[],"selected_tier":"hot","history_tier":"history","cold_tier":"cold","history_versions":[],"tier_pins":{},"max_objects":100,"max_plan_seconds":30,"expires_after_seconds":60,"max_batch_bytes":1000,"max_batch_objects":100})).unwrap();
+        let live = crate::tiering::live(&root, &policy).unwrap();
+        assert!(!live.current.contains(&old));
+        assert!(live.selected.contains(&cel));
+        state
+            .leases
+            .insert("render".into(), ["movie@v1".into()].into());
+        f.state(&state);
+        assert!(
+            crate::tiering::live(&root, &policy)
+                .unwrap()
+                .leased
+                .contains(&old)
+        );
+        let diff = crate::version_diff::compare_project(
+            &root,
+            &state,
+            &sizes,
+            ("movie", "v1"),
+            ("movie", "v2"),
+        )
+        .unwrap();
+        assert!(
+            !diff["eviction_candidate_sha256s"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(old))
+        );
+        state.coverage_complete = false;
+        f.state(&state);
+        assert!(report(&root).is_err());
+        assert!(crate::tiering::live(&root, &policy).is_err());
+        assert!(
+            crate::version_diff::compare_project(
+                &root,
+                &state,
+                &sizes,
+                ("movie", "v1"),
+                ("movie", "v2")
+            )
+            .is_err()
+        );
+        state.coverage_complete = true;
+        let contract = state
+            .versions
+            .get_mut("movie@v2")
+            .unwrap()
+            .dependency_contract
+            .as_mut()
+            .unwrap();
+        contract.outputs.clear();
+        contract.references.insert(new.clone());
+        f.state(&state);
+        assert!(report(&root).is_err()); // publication cannot turn history into a hot role
+        state
+            .versions
+            .get_mut("movie@v2")
+            .unwrap()
+            .dependency_contract = None;
+        f.state(&state);
+        assert!(report(&root).is_err());
+        fs::write(root.join("published.json"), "{\"items\":[]}").unwrap();
+        assert!(report(&root).is_err()); // accidental empty publication cannot evict everything
+        p["retention_roots"] = json!("typo");
+        fs::write(&profile, p.to_string()).unwrap();
+        assert!(project(&root).is_err());
     }
     #[test]
     fn profile_escape_and_inventory_budget_fail_closed() {

@@ -1276,6 +1276,7 @@ pub fn catalogue() -> Result<Value> {
         json!({"schema":"reel.asset-schema-catalogue.v1","json_schema_dialect":"https://json-schema.org/draft/2020-12/schema","contracts":[
         {"schema":PROFILE,"coverage":"complete profile contract","json_schema":schemars::schema_for!(Project)},
         {"schema":REPORT,"coverage":"complete report contract","json_schema":schemars::schema_for!(Report)},
+        {"schema":"reel.asset-project.v1","coverage":"strict profile structure; runtime checks selections, coverage and primary-input graph","json_schema":schemars::schema_for!(crate::accounting::Project)},
         {"schema":authority_delivery::AUTHORITY,"coverage":"strict source revision/scope and evidence references; no approval or source-content verification","json_schema":schemars::schema_for!(authority_delivery::SourceAuthority)},
         {"schema":authority_delivery::DELIVERY,"coverage":"strict exact-version output/evidence references; no remote readback or release authorization","json_schema":schemars::schema_for!(authority_delivery::DeliveryRecord)},
         {"schema":"caminos.artifact-record.v1","coverage":"reference projection; extra fields opaque","json_schema":schemars::schema_for!(Record)},
@@ -1289,7 +1290,7 @@ pub fn catalogue() -> Result<Value> {
         {"schema":"reel.scene-authoring.v2","coverage":"native Rust structure; episode, policy and presentation-template references extracted; explicit scene contexts resolve selected bindings","json_schema":Value::Null},
         {"schema":"reel.scene-policy.v1","coverage":"native Rust structure only","json_schema":Value::Null},
         {"schema":"reel.scene-template-catalog.v1","coverage":"native Rust structure only","json_schema":Value::Null}
-    ],"edge_semantics":{"selected-presentation-template":"Exact catalog-selected editable template metadata; in-memory compile only, not visual acceptance","selected-native-alignment":"Exact selected native alignment metadata; declared clocks only, not measured audio timing","aligned-take":"Alignment-to-selected-take identity; media size-only","requires-asset":"Exact selected input returned by the native scene resolver; media presence is size-only","authoring-document":"Explicit metadata input to a native scene context","requires-version":"Exact registry dependency; rebuild/retention candidate relationship","inventory-member":"Observed bytes; no build-dependency inference","retains-asset":"Immutable version custody, not creative selection","describes-version":"Contextual scope, not dependency","declares-asset":"Package declaration; role-specific semantics not inferred","current-selection":"Record current pointer; native registry current state is reported separately","historical-version":"Previous record version","episode-context":"Contextual backlink, not a dependency cycle"},"limitations":"Not a complete catalogue of all REEL schemas. Unsupported schemas and uninspected metadata are explicit findings. No arbitrary JSON/hash search."}),
+    ],"registry_structures":{"coverage":"Strict serialized structures; partition, cross-version roles and dependency graph are checked at runtime","immutable_version":schemars::schema_for!(versions::Version),"dependency_contract":schemars::schema_for!(versions::DependencyContract)},"edge_semantics":{"selected-presentation-template":"Exact catalog-selected editable template metadata; in-memory compile only, not visual acceptance","selected-native-alignment":"Exact selected native alignment metadata; declared clocks only, not measured audio timing","aligned-take":"Alignment-to-selected-take identity; media size-only","requires-asset":"Exact selected input returned by the native scene resolver; media presence is size-only","authoring-document":"Explicit metadata input to a native scene context","requires-version":"Exact registry dependency; rebuild/retention candidate relationship","inventory-member":"Observed bytes; no build-dependency inference","retains-asset":"Immutable version custody, not creative selection","describes-version":"Contextual scope, not dependency","declares-asset":"Package declaration; role-specific semantics not inferred","current-selection":"Record current pointer; native registry current state is reported separately","historical-version":"Previous record version","episode-context":"Contextual backlink, not a dependency cycle"},"limitations":"Not a complete catalogue of all REEL schemas. Unsupported schemas and uninspected metadata are explicit findings. No arbitrary JSON/hash search."}),
     )
 }
 
@@ -1573,6 +1574,14 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|c| c["schema"] == "reel.episode-authoring.v1" && c["json_schema"].is_null())
+        );
+        assert_eq!(
+            c["registry_structures"]["immutable_version"]["additionalProperties"],
+            false
+        );
+        assert!(
+            c["registry_structures"]["immutable_version"]["properties"]["dependency_contract"]
+                .is_object()
         );
     }
     #[test]

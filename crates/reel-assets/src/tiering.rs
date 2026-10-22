@@ -184,11 +184,8 @@ pub(crate) fn live(root: &Path, policy: &Policy) -> Result<Live> {
         return Err("Version graph contains unregistered payloads".into());
     }
     let (outputs, roots) = accounting::selected_roots(root, &p, &state, &selected(root)?, &cfg)?;
+    let current = accounting::expand(&state, accounting::retention_roots(&p, &state, &roots)?)?;
     let selected = accounting::expand(&state, roots)?;
-    let current = accounting::expand(
-        &state,
-        state.current.iter().map(|(id, v)| format!("{id}@{v}")),
-    )?;
     let leased = accounting::expand(&state, state.leases.values().flatten().cloned())?;
     let mut history = BTreeSet::new();
     for lock in &policy.history_versions {

@@ -184,7 +184,7 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
         },
         "version-diff" => {
             if args.len()!=6 {return Err("Usage: version-diff <old-logical-id> <old-version> <new-logical-id> <new-version> <new-private-report.json>".into());}
-            let report=crate::version_diff::compare(&versions::read(root)?,&selected(root)?,(arg(1)?,arg(2)?),(arg(3)?,arg(4)?))?;
+            let report=crate::version_diff::compare_project(root,&versions::read(root)?,&selected(root)?,(arg(1)?,arg(2)?),(arg(3)?,arg(4)?))?;
             crate::tiering::write_plan(Path::new(arg(5)?),&report)?;
             Ok(json!({"schema":report["schema"],"added":report["added"].as_array().unwrap().len(),"retained":report["retained"].as_array().unwrap().len(),"dropped":report["dropped"].as_array().unwrap().len(),"eviction_candidates":report["eviction_candidate_sha256s"].as_array().unwrap().len(),"candidate_logical_bytes":report["candidate_logical_bytes"],"removal_authorized":false,"private_report_path":arg(5)?}))
         },

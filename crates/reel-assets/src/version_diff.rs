@@ -45,7 +45,8 @@ pub(crate) fn validate_transition(root: &std::path::Path, t: &Transition) -> Res
     if new.dependency_contract.is_none() {
         return Err("Managed replacement requires an explicit primary-input contract".into());
     }
-    let report = compare(
+    let report = compare_project(
+        root,
         &state,
         &crate::selected(root)?,
         (&t.old.logical_id, &t.old.version_id),
@@ -94,6 +95,48 @@ pub fn compare(
     (old_id, old): (&str, &str),
     (new_id, new): (&str, &str),
 ) -> Result<Value> {
+    compare_with_roots(
+        state,
+        sizes,
+        (old_id, old),
+        (new_id, new),
+        state
+            .current
+            .iter()
+            .map(|(id, version)| format!("{id}@{version}"))
+            .collect(),
+    )
+}
+
+/// Apply the same project working-set authority used by accounting and eviction.
+/// The pure state comparison above intentionally retains legacy all-current semantics.
+pub fn compare_project(
+    root: &std::path::Path,
+    state: &State,
+    sizes: &HashMap<String, u64>,
+    old: (&str, &str),
+    new: (&str, &str),
+) -> Result<Value> {
+    if !root.join("asset-project.json").exists() {
+        return compare(state, sizes, old, new);
+    }
+    let p = crate::accounting::project(root)?;
+    if p.retention_roots == crate::accounting::RetentionRoots::AllCurrent {
+        return compare(state, sizes, old, new);
+    }
+    let (_, selected) =
+        crate::accounting::selected_roots(root, &p, state, sizes, &crate::config(root)?)?;
+    let roots = crate::accounting::retention_roots(&p, state, &selected)?;
+    compare_with_roots(state, sizes, old, new, roots)
+}
+
+fn compare_with_roots(
+    state: &State,
+    sizes: &HashMap<String, u64>,
+    (old_id, old): (&str, &str),
+    (new_id, new): (&str, &str),
+    current_roots: BTreeSet<String>,
+) -> Result<Value> {
     let old_key = format!("{old_id}@{old}");
     let new_key = format!("{new_id}@{new}");
     let before = hashes(state, &old_key)?;
@@ -114,8 +157,7 @@ pub fn compare(
         }
         Ok(())
     };
-    for (id, version) in &state.current {
-        let root = format!("{id}@{version}");
+    for root in current_roots {
         protect(root.clone(), format!("current:{root}"))?;
     }
     for (owner, roots) in &state.leases {
@@ -227,7 +269,8 @@ pub fn eviction_request(
     if plan["plan_sha256"] != request.plan_sha256 {
         return Err("Scope plan hash mismatch".into());
     }
-    let report = compare(
+    let report = compare_project(
+        root,
         &crate::versions::read(root)?,
         &crate::selected(root)?,
         old,

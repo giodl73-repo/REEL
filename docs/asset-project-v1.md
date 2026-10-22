@@ -80,6 +80,25 @@ receipt names `verification_scope`, counts `verified_objects` and reports
 Legacy packages retain declared-asset verification. Explicit `artifact-locate`
 of an archived reference still requires named recovery before active lookup.
 
+### Explicit working-set roots
+
+`retention_roots` defaults to `all-current`, preserving existing protection.
+Projects can explicitly choose `declared-selections` once their publication
+indexes cover every item they intend to keep hot. This mode requires
+`require_primary_input_contracts: true`, complete registry coverage, nonempty
+resolved selections and classified selected versions. Missing or stale records,
+legacy roots and an empty publication index fail closed. Selector role prefixes
+cannot promote a historical-reference hash to an active deliverable.
+
+Accounting, tier planning and project-aware version comparison then protect the
+declared selections and their primary-input/output closure rather than every
+metadata-current version. Registry current pointers remain intact for authoring
+and history. Active leases, control data, independent consumer protections and
+explicit tier pins still apply. This setting neither grants deletion authority
+nor infers publication from folder names; the producing project's index supplies
+the exact current locks. A project can include its review shelf by selecting its
+records explicitly. Do not enable it against an incomplete index.
+
 The detailed private report lists each observed hash, declared/observed size,
 direct version references, current/noncurrent/deprecated/pinned/leased flags and
 active-tier copies. Exclusive categories are:
