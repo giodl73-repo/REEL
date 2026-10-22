@@ -115,6 +115,36 @@ presentation performance coverage/rendering, or infer consent/human approval.
 The source-authority and delivery unverified-semantics findings remain. General
 standalone source-text schema traversal is not enabled by this option.
 
+## Opt in to native alignment metadata and event spans
+
+Set `verify_native_alignments: true` on a scene context. Only the native
+resolver-selected `phrase_alignment_binding` for each cue is opened as JSON;
+its selected `take_binding` stays opaque media. Default false preserves prior
+inspection behavior. This shares the source-text metadata admission path:
+exact authorization/hash/byte counts, first-tier corruption holds, document and
+byte budgets, deduplicated reads and final snapshot checks. No discovery,
+hydration, archive read or audio decoding occurs.
+
+Native `validate_native_alignment` checks schema, cue/language identity, exact
+selected take hash, positive rate/end and every marker ID/bound, including unused
+markers. Markers must be strictly inside their cue. The same shared validator is
+used by the renderer's selected alignment loader and native event compiler.
+`compile_native_event_spans` then validates required semantic event markers,
+source order, cue coverage and the sample-zero start. The inspector requires a
+single consistent sample rate per lane and uses checked integer addition for
+its total sample count; it never guesses or converts a clock. Segmented-take
+cues are explicitly held by this inspection check.
+
+Context details add `native_alignment_valid` and per-language
+`native_alignment_checks` containing exact cue-local event spans, rate, total
+samples and alignment/take identities. A failure is `alignment-held`, or
+`checks-held` when source-text checks also failed. Native resolution, asset
+presence and source-text results retain their own flags. These checks certify
+consistency of declared alignment JSON and native event spans only, not actual
+audio duration, words, provider measurement accuracy, presentation-line marker
+timing, template layout, rendered clocks or human approval. The historical
+coverage and unverified-semantics findings remain visible.
+
 ## Source authority and delivery reference records
 
 `reel.source-authority-record.v1` is a strict, project-neutral declaration:
@@ -196,6 +226,7 @@ only the generic types, inspection rules, schema export and synthetic fixtures.
 | `source-document` / `authority-evidence` | Exact source revision and opaque provenance/decision evidence. |
 | `delivers-version` / `delivers-asset` | Historical subject lock and retained output; neither is a build dependency. |
 | `delivery-evidence` | Opaque receipt evidence; no destination access or fresh remote verification. |
+| `selected-native-alignment` / `aligned-take` | Selected alignment metadata and its exact declared take; no measured audio proof. |
 | `selected-source-text` | Explicit native selected source-text metadata opened by an opted-in context. |
 | `authoring-document` | One explicitly supplied metadata document for a native scene context. |
 | `requires-asset` | An exact selected input returned by the native scene resolver; media presence remains size-only. |
@@ -262,3 +293,7 @@ Keep the compact project profile in Git. Retained graph reports, schema exports,
 HTML and review evidence belong in the producing project's private cache/LFS.
 Do not commit real inventories or producer metadata to public REEL. The graph
 never authorizes removal or changes creative/version selections.
+
+Selected source-text/alignment bytes also pass the renderer's direct native
+JSON parser before generic graph projection, so duplicate struct fields and
+unsupported byte-order marks cannot be silently normalized into a pass.

@@ -101,12 +101,12 @@ fn alignments(
                 .context("cue has no selected take")?,
             scopes,
         )?;
-        if parsed.selected_take_sha256 != take.sha256 {
-            bail!(
-                "native alignment take differs from selected binding for {}",
-                cue.cue_id
-            );
-        }
+        reel_assembly::scene_authoring::validate_native_alignment(
+            &parsed,
+            language,
+            &cue.cue_id,
+            &take.sha256,
+        )?;
         out.insert(cue.cue_id.clone(), parsed);
     }
     Ok(out)

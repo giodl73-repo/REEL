@@ -58,6 +58,9 @@ pub struct SceneContext {
     /// Explicitly open only native resolver-selected presentation source JSON.
     #[serde(default)]
     pub verify_presentation_sources: bool,
+    /// Explicitly inspect selected native alignment JSON and compile event spans.
+    #[serde(default)]
+    pub verify_native_alignments: bool,
 }
 impl SceneContext {
     fn inputs(&self) -> [(&'static str, &DocumentSource, &'static str); 7] {
@@ -229,6 +232,9 @@ impl Inspector<'_> {
                     }
                     if context.verify_presentation_sources {
                         self.check_presentation_sources(&id, &context, &resolved)?;
+                    }
+                    if context.verify_native_alignments {
+                        self.check_native_alignments(&id, &context, &resolved)?;
                     }
                 }
             }
