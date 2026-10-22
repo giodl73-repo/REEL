@@ -133,3 +133,20 @@ an unresolved line without declaring expected words independently recognized.
 This is a partial underlay draft, not syllable segmentation or a new MusicModel.
 Native lead-sheet validation requires every melody note mapped exactly once;
 do not evade that contract by filling unknown singing with invented syllables.
+
+`tools/local_song_syllable_study.py` can make a separately named **partial study**
+from independently exact, nonoverlapping phrase candidates. It uses the already
+installed Spanish CTC acoustic model offline to align expected characters. This
+is constrained timing, never an independent lyric-presence check. Orthographic
+syllable proposals preserve the original text; musical vowel grouping remains
+open. The distinction between spelling conventions and actual articulation is
+described by [RAE/ASALE](https://www.rae.es/ortograf%C3%ADa-b%C3%A1sica/uso-de-la-tilde/las-reglas-de-acentuaci%C3%B3n-gr%C3%A1fica/la-acentuaci%C3%B3n-gr%C3%A1fica-de-las-palabras-con-secuencias-voc%C3%A1licas).
+
+The new study model includes only intersections of parent pitch runs with
+supported proposed syllable clocks. An explicit articulation ledger binds every
+derived interval/pitch to its unchanged parent; uncovered parent note IDs and
+unmapped syllables stay in the evidence. Original full source extent and
+canonical poem are retained. The native validator and exporters check this
+partial model, MIDI, MusicXML and SVG, without certifying complete melody or
+engraving. Never select the partial study as a replacement for an accepted
+full melody, nor treat an omitted study note as an accepted performance omission.
