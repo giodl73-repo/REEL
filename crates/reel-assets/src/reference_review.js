@@ -7,6 +7,7 @@ const describe = kind => ({
   'inventory-member': 'Inventory observation; does not establish a build dependency.',
   'requires-version': 'Exact dependency recorded in the native version registry.',
   'requires-asset': 'Required selected input returned by the native scene resolver; media presence is size-only.',
+  'selected-source-text': 'Native selected source-text metadata, freshly hash checked when opted in; original manuscript and audio remain unverified.',
   'authoring-document': 'Explicit metadata input to native scene resolution; its content hash is recorded.',
   'source-authority': 'Declared source authority and scope; does not establish authorship, consent or approval.',
   'source-document': 'Exact source revision bytes; content and declared scope have not been verified.',

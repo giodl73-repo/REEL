@@ -17,7 +17,7 @@ pub enum DocumentSource {
     Cache(CacheDocument),
 }
 impl DocumentSource {
-    fn id(&self) -> Result<String> {
+    pub(super) fn id(&self) -> Result<String> {
         match self {
             Self::Repository(path) => {
                 if path.is_empty()
@@ -55,6 +55,9 @@ pub struct SceneContext {
     pub season_bindings: DocumentSource,
     pub episode_bindings: DocumentSource,
     pub scene_bindings: DocumentSource,
+    /// Explicitly open only native resolver-selected presentation source JSON.
+    #[serde(default)]
+    pub verify_presentation_sources: bool,
 }
 impl SceneContext {
     fn inputs(&self) -> [(&'static str, &DocumentSource, &'static str); 7] {
@@ -129,7 +132,7 @@ impl Inspector<'_> {
         }
         Ok(())
     }
-    fn native_input<T: serde::de::DeserializeOwned>(
+    pub(super) fn native_input<T: serde::de::DeserializeOwned>(
         &self,
         source: &DocumentSource,
         expected: &str,
@@ -216,13 +219,16 @@ impl Inspector<'_> {
                         "inputs-held"
                     }
                     .into();
-                    node.details = json!({"native_resolution_valid":true,"input_presence_valid":available,"scene_id":resolved.scene_id,"scene_policy_id":resolved.scene_policy_id,"fingerprint":resolved.fingerprint_sha256,"language_fingerprints":resolved.language_fingerprints,"template_definitions":resolved.template_definitions,"selected_bindings":selected,"documents":documents,"scope":"Native symbolic selected-binding resolution only. Media presence is size-only. No decoding, source-text verification, render/build certificate or human approval."});
+                    node.details = json!({"native_resolution_valid":true,"input_presence_valid":available,"scene_id":resolved.scene_id,"scene_policy_id":resolved.scene_policy_id,"fingerprint":resolved.fingerprint_sha256,"language_fingerprints":resolved.language_fingerprints,"template_definitions":resolved.template_definitions,"selected_bindings":selected,"documents":documents,"scope":"Native symbolic selected-binding resolution. Media presence is size-only; opt-in selected source-text checks are reported separately. No original-manuscript/audio-content verification, render/build certificate or human approval."});
                     if !available {
                         self.finding(
                             &id,
                             "native-scene-inputs-held",
                             "Native bindings resolve, but required asset presence is not valid",
                         );
+                    }
+                    if context.verify_presentation_sources {
+                        self.check_presentation_sources(&id, &context, &resolved)?;
                     }
                 }
             }
@@ -232,7 +238,7 @@ impl Inspector<'_> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::tiering::tests::Fixture;
     fn write(f: &Fixture, name: &str, value: &Value) {
@@ -243,7 +249,7 @@ mod tests {
         let sha = f.put(&bytes, true);
         json!({"sha256":sha,"bytes":bytes.len(),"cache_uri":format!("cache://sha256/{sha}")})
     }
-    fn fixture() -> (Fixture, Value, String, String) {
+    pub(in crate::references) fn fixture() -> (Fixture, Value, String, String) {
         let f = Fixture::new();
         let mut assets = serde_json::Map::new();
         for key in [
