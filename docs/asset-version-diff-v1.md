@@ -20,6 +20,12 @@ private cache/LFS assets. A successful renderer process alone does not satisfy t
 This hook does not register/select a new version, grant creative approval, or silently
 attach itself to existing render recipes; producers must call it after publication.
 
+Execution receipts contain comparison counts and a hash of the full diagnostic report,
+rather than embedding its potentially large legacy protection graph. The standalone
+comparison remains private evidence. The completion gate independently refreshes the
+transition, consumer protections, hot aliases and retained copies; summary counts never
+authorize removal or replace those checks.
+
 If another managed consumer still needs a superseded cel, it remains hot and is reported
 as referenced. Zero-reference superseded objects must be absent from hot CAS/LFS aliases
 and have freshly verified retained copies. If a bounded batch leaves unreferenced hot
