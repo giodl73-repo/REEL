@@ -276,6 +276,46 @@ fn removal_of_canonical_names_does_not_delete_the_last_remaining_input_view() {
 }
 
 #[test]
+fn staging_parent_junction_cannot_redirect_job_writes_or_retirement_outside_cache() {
+    let f = Fixture::new();
+    let outside = tempfile::tempdir().unwrap();
+    let destination = outside.path().canonicalize().unwrap();
+    fs::write(destination.join("preserve.txt"), b"outside").unwrap();
+    let staging = f.root().join("fast/staging");
+    let cmd_path = |p: &Path| {
+        p.to_string_lossy()
+            .replace('/', "\\")
+            .trim_start_matches("\\\\?\\")
+            .to_owned()
+    };
+    let output = Command::new("cmd.exe")
+        .args(["/d", "/c", "mklink", "/J"])
+        .arg(cmd_path(&staging))
+        .arg(cmd_path(&destination))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let (manifest, _) = prepare(&f, "copy");
+    let error = run(f.root(), &manifest).unwrap_err().to_string();
+    assert!(
+        error.contains("escaped its exact admitted cache"),
+        "{error}"
+    );
+    assert!(!destination.join("caminos").exists());
+    assert_eq!(
+        fs::read(destination.join("preserve.txt")).unwrap(),
+        b"outside"
+    );
+    // Remove only this exact test junction, not its target tree.
+    assert!(staging.starts_with(f.root()));
+    fs::remove_dir(staging).unwrap();
+}
+
+#[test]
 fn timeout_retires_workspace_after_descendants_die_and_preserves_pid_evidence() {
     use windows_sys::Win32::{Foundation::*, System::Threading::*};
     let f = Fixture::new();

@@ -49,6 +49,56 @@ fn publish(root: &Path, cfg: &crate::Config, cache: &Path, path: &Path) -> Resul
     Ok(json!({"sha256":oid,"bytes":size,"cache_uri":format!("cache://sha256/{oid}")}))
 }
 
+pub(super) fn checked_workspace(
+    cfg: &crate::Config,
+    cache: &Path,
+    workspace: &Path,
+) -> Result<PathBuf> {
+    let canonical = workspace.canonicalize()?;
+    let cache_canonical = cache.canonicalize()?;
+    let staging = cache.join("staging/caminos").canonicalize()?;
+    if !cfg.cache_roots.contains(&cache.to_path_buf())
+        || staging != cache_canonical.join("staging/caminos")
+        || !canonical.starts_with(&cache_canonical)
+        || canonical.parent() != Some(staging.as_path())
+        || is_reparse(&fs::symlink_metadata(workspace)?)
+        || !canonical
+            .file_name()
+            .is_some_and(|s| s.to_string_lossy().starts_with("job-"))
+    {
+        return Err("Job workspace escaped its exact admitted cache staging parent".into());
+    }
+    Ok(canonical)
+}
+
+pub(super) fn prepare_staging(cache: &Path) -> Result<()> {
+    let mut parent = cache.canonicalize()?;
+    for name in ["staging", "caminos"] {
+        parent.push(name);
+        match fs::symlink_metadata(&parent) {
+            Ok(m) if m.is_dir() && !is_reparse(&m) => (),
+            Ok(_) => {
+                return Err("Job workspace escaped its exact admitted cache staging parent".into());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                match fs::create_dir(&parent) {
+                    Ok(()) => (),
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+                    Err(e) => return Err(e.into()),
+                }
+                let m = fs::symlink_metadata(&parent)?;
+                if !m.is_dir() || is_reparse(&m) {
+                    return Err(
+                        "Job workspace escaped its exact admitted cache staging parent".into(),
+                    );
+                }
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn publish_and_retire(
     root: &Path,
     cfg: &crate::Config,
@@ -58,16 +108,8 @@ pub(super) fn publish_and_retire(
     result: &Value,
     job: &Job,
 ) -> Result<Value> {
-    let canonical = workspace.canonicalize()?;
+    let canonical = checked_workspace(cfg, cache, workspace)?;
     let staging = cache.join("staging/caminos").canonicalize()?;
-    if canonical.parent() != Some(staging.as_path())
-        || !cfg.cache_roots.contains(&cache.to_path_buf())
-        || !canonical
-            .file_name()
-            .is_some_and(|s| s.to_string_lossy().starts_with("job-"))
-    {
-        return Err("Retirement target escaped its exact admitted job staging parent".into());
-    }
     usage(workspace, 0, &mut 0)?; // Reject reparse/symlink entries before any cleanup.
     // A temporary hard link may outlive a canonical name removed by another
     // operation. Never retire that last remaining view of a retained original.
@@ -177,7 +219,9 @@ pub(super) fn publish_and_retire(
         }
     }
     usage(workspace, 0, &mut 0)?;
-    if workspace.canonicalize()? != canonical || canonical.parent() != Some(staging.as_path()) {
+    if checked_workspace(cfg, cache, workspace)? != canonical
+        || canonical.parent() != Some(staging.as_path())
+    {
         return Err("Job target changed before retirement".into());
     }
     fs::remove_dir_all(&canonical)?;

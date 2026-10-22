@@ -278,8 +278,9 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
         .cache_root
         .join("staging/caminos")
         .join(&reservation.id);
-    fs::create_dir_all(workspace.parent().ok_or("Missing staging parent")?)?;
+    lifecycle::prepare_staging(&reservation.cache_root)?;
     fs::create_dir(&workspace)?;
+    lifecycle::checked_workspace(&cfg, &reservation.cache_root, &workspace)?;
     fs::write(workspace.join("job.json"), &bytes)?;
     let mut linked_input_bytes = 0u64;
     let mut copied_input_bytes = 0u64;
