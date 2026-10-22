@@ -6,11 +6,13 @@ let pageLimit = 200;
 const describe = kind => ({
   'inventory-member': 'Inventory observation; does not establish a build dependency.',
   'requires-version': 'Exact dependency recorded in the native version registry.',
+  'requires-asset': 'Required selected input returned by the native scene resolver; media presence is size-only.',
+  'authoring-document': 'Explicit metadata input to native scene resolution; its content hash is recorded.',
   'retains-asset': 'Bytes retained by an immutable version; not creative approval.',
   'describes-version': 'Context or scope; not a build dependency.',
   'episode-context': 'Episode backlink; not a required dependency cycle.'
 }[kind] || 'Typed reference; inspect its field and findings before deciding its meaning.');
-byId('summary').textContent = `${graph.project_id}: ${entries.length} nodes, ${graph.edges.length} relationships, ${graph.findings.length} findings`;
+byId('summary').textContent = `${graph.project_id} (registry snapshot ${graph.registry_generation}): ${entries.length} nodes, ${graph.edges.length} relationships, ${graph.findings.length} findings`;
 byId('scope').textContent = graph.scope;
 for (const kind of [...new Set(graph.edges.map(e => e.kind))].sort()) {
   const o = document.createElement('option'); o.value = kind; o.textContent = kind; byId('kind').append(o);

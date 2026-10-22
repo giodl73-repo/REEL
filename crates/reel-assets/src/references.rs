@@ -9,6 +9,9 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+mod scene_context;
+pub use scene_context::{CacheDocument, DocumentSource, SceneContext};
+
 const PROFILE: &str = "reel.asset-inspection-project.v1";
 const REPORT: &str = "reel.asset-reference-report.v1";
 
@@ -29,7 +32,10 @@ pub struct Project {
     pub roots: Vec<String>,
     /// Explicit bindings for native episode, scene, policy, and template identifiers.
     #[serde(default)]
-    pub documents: BTreeMap<String, String>,
+    pub documents: BTreeMap<String, DocumentSource>,
+    /// Explicit native resolver inputs. These do not select or build a scene.
+    #[serde(default)]
+    pub scene_contexts: Vec<SceneContext>,
     #[serde(default)]
     pub limits: Limits,
 }
@@ -244,6 +250,7 @@ struct Inspector<'a> {
     source_hashes: BTreeMap<PathBuf, String>,
     total: u64,
     locks: BTreeSet<String>,
+    native_documents: BTreeMap<String, Value>,
 }
 impl Inspector<'_> {
     fn finding(&mut self, node: &str, code: &str, detail: impl Into<String>) {
@@ -445,8 +452,8 @@ impl Inspector<'_> {
         depth: usize,
         expected: Option<&str>,
     ) -> Result<()> {
-        if let Some(path) = self.project.documents.get(name).cloned() {
-            self.document_ref(from, &path, kind, field, depth, expected)?;
+        if let Some(source) = self.project.documents.get(name).cloned() {
+            self.declared_document(from, &source, kind, field, depth, expected)?;
             self.queue.back_mut().unwrap().logical = Some(name.into());
             Ok(())
         } else {
@@ -638,6 +645,16 @@ impl Inspector<'_> {
                 "Package differs from immutable record",
             );
             return Ok(());
+        }
+        if matches!(
+            schema.as_str(),
+            "reel.episode-authoring.v1"
+                | "reel.scene-authoring.v2"
+                | "reel.scene-asset-bindings.v1"
+                | "reel.scene-policy.v1"
+                | "reel.scene-template-catalog.v1"
+        ) {
+            self.native_documents.insert(p.id.clone(), value.clone());
         }
         let result = self.extract(&p, &schema, value);
         if let Err(e) = result {
@@ -881,11 +898,31 @@ impl Inspector<'_> {
                     p.depth,
                     Some("reel.scene-policy.v1"),
                 )?;
-                self.finding(id,"partial-native-extraction","Native Episode structure parsed; presentation content, motion, score and binding semantics require the authoring validator");
+                self.finding(id,"partial-native-extraction","Standalone episode extraction is partial; explicit scene-context nodes resolve one scene only. Whole-episode presentation, conform and delivery checks are not performed");
             }
             "reel.scene-authoring.v2" => {
                 let s: reel_assembly::scene_authoring::Scene = serde_json::from_value(value)?;
                 self.report.nodes.get_mut(id).unwrap().details["scene_id"] = json!(s.scene_id);
+                if let Some(policy) = &s.scene_policy_override_id {
+                    self.named(
+                        id,
+                        policy,
+                        "requires-policy",
+                        "scene_policy_override_id",
+                        p.depth,
+                        Some("reel.scene-policy.v1"),
+                    )?;
+                }
+                if let Some(presentation) = &s.presentation {
+                    self.named(
+                        id,
+                        &presentation.template_id,
+                        "requires-template",
+                        "presentation/template_id",
+                        p.depth,
+                        Some("reel.scene-template-catalog.v1"),
+                    )?;
+                }
                 self.named(
                     id,
                     &s.episode_id,
@@ -894,7 +931,7 @@ impl Inspector<'_> {
                     p.depth,
                     Some("reel.episode-authoring.v1"),
                 )?;
-                self.finding(id,"partial-native-extraction","Native Scene structure parsed; cues, authority, language events, motion and bindings require authoring validation");
+                self.finding(id,"partial-native-extraction","Standalone scene extraction is partial; explicit scene-context nodes report native symbolic resolution separately. Source evidence, rendered timing and approvals are not certified");
             }
             "reel.scene-asset-bindings.v1" => {
                 let bindings: reel_assembly::scene_authoring::ScopedBindings =
@@ -903,7 +940,7 @@ impl Inspector<'_> {
                     let a: Asset = serde_json::from_value(serde_json::to_value(a)?)?;
                     self.asset(id, &a, "bound-asset", &format!("assets/{name}"))?;
                 }
-                self.finding(id,"reference-projection-only","Asset descriptors inspected; binding context and creative selection are not certified");
+                self.finding(id,"reference-projection-only","Standalone descriptor check only; explicit scene-context nodes report native resolution separately. Creative approval is not certified");
             }
             "reel.scene-policy.v1" => {
                 let _: reel_assembly::scene_authoring::ScenePolicy = serde_json::from_value(value)?;
@@ -940,6 +977,7 @@ fn inspect_with(root: &Path, profile: &str, before_recheck: impl FnOnce()) -> Re
         || project.project_id.is_empty()
         || project.roots.is_empty()
         || project.roots.len() > 1000
+        || project.scene_contexts.len() > 64
         || l.documents == 0
         || l.documents > 10000
         || l.nodes == 0
@@ -985,11 +1023,21 @@ fn inspect_with(root: &Path, profile: &str, before_recheck: impl FnOnce()) -> Re
     let state = versions::read(&root)?;
     let before = state_digest(&state)?;
     let registered = selected(&root)?;
-    let roots = project
+    let mut roots = project
         .roots
         .iter()
         .map(|p| format!("repo:{p}"))
         .collect::<Vec<_>>();
+    let mut context_ids = BTreeSet::new();
+    for context in &project.scene_contexts {
+        if context.id.trim().is_empty()
+            || context.id.len() > 256
+            || !context_ids.insert(context.id.clone())
+        {
+            return Err("Scene context IDs must be nonempty, bounded and unique".into());
+        }
+        roots.push(format!("scene-context:{}", context.id));
+    }
     let report=Report {schema:REPORT.into(),project_id:project.project_id.clone(),roots:roots.clone(),registry_generation:state.generation,nodes:BTreeMap::new(),edges:BTreeSet::new(),findings:vec![],scope:"Explicit root closure only. Inventory members and evidence are not build dependencies. Media presence is size-only; metadata bytes are freshly hashed. No creative approval, native build certification, orphan classification or removal authorization.".into(),report_sha256:String::new()};
     controls.insert(profile_path, tiering::digest(&profile_bytes));
     let mut i = Inspector {
@@ -1004,13 +1052,16 @@ fn inspect_with(root: &Path, profile: &str, before_recheck: impl FnOnce()) -> Re
         source_hashes: controls,
         total: 0,
         locks: BTreeSet::new(),
+        native_documents: BTreeMap::new(),
     };
-    for id in roots {
+    for id in roots.into_iter().filter(|id| id.starts_with("repo:")) {
         i.enqueue(id, 0, None, None)?;
     }
+    i.prepare_scene_contexts()?;
     while let Some(p) = i.queue.pop_front() {
         i.process(p)?;
     }
+    i.resolve_scene_contexts()?;
     // DFS only required relationships; contextual episode/scene cycles are legitimate.
     let mut visiting = BTreeSet::new();
     let mut done = BTreeSet::new();
@@ -1140,12 +1191,12 @@ pub fn catalogue() -> Result<Value> {
         {"schema":"caminos.artifact-package.v1","coverage":"reference projection; extra fields opaque","json_schema":schemars::schema_for!(Package)},
         {"schema":"caminos.episode-input-inventory.v1","coverage":"membership projection, not build closure","json_schema":schemars::schema_for!(Inventory)},
         {"schema":"caminos.episode-input-index.v1","coverage":"reference projection; extra fields opaque","json_schema":schemars::schema_for!(InventoryIndex)},
-        {"schema":"reel.scene-asset-bindings.v1","coverage":"asset descriptor projection; context unvalidated","json_schema":Value::Null},
+        {"schema":"reel.scene-asset-bindings.v1","coverage":"native Rust structure; explicit scene contexts resolve selected bindings","json_schema":Value::Null},
         {"schema":"reel.episode-authoring.v1","coverage":"native Rust structure; scene, template and policy references extracted; other semantics uninspected","json_schema":Value::Null},
-        {"schema":"reel.scene-authoring.v2","coverage":"native Rust structure; episode context extracted; other semantics uninspected","json_schema":Value::Null},
+        {"schema":"reel.scene-authoring.v2","coverage":"native Rust structure; episode, policy and presentation-template references extracted; explicit scene contexts resolve selected bindings","json_schema":Value::Null},
         {"schema":"reel.scene-policy.v1","coverage":"native Rust structure only","json_schema":Value::Null},
         {"schema":"reel.scene-template-catalog.v1","coverage":"native Rust structure only","json_schema":Value::Null}
-    ],"edge_semantics":{"requires-version":"Exact registry dependency; rebuild/retention candidate relationship","inventory-member":"Observed bytes; no build-dependency inference","retains-asset":"Immutable version custody, not creative selection","describes-version":"Contextual scope, not dependency","declares-asset":"Package declaration; role-specific semantics not inferred","current-selection":"Record current pointer; native registry current state is reported separately","historical-version":"Previous record version","episode-context":"Contextual backlink, not a dependency cycle"},"limitations":"Not a complete catalogue of all REEL schemas. Unsupported schemas and uninspected metadata are explicit findings. No arbitrary JSON/hash search."}),
+    ],"edge_semantics":{"requires-asset":"Exact selected input returned by the native scene resolver; media presence is size-only","authoring-document":"Explicit metadata input to a native scene context","requires-version":"Exact registry dependency; rebuild/retention candidate relationship","inventory-member":"Observed bytes; no build-dependency inference","retains-asset":"Immutable version custody, not creative selection","describes-version":"Contextual scope, not dependency","declares-asset":"Package declaration; role-specific semantics not inferred","current-selection":"Record current pointer; native registry current state is reported separately","historical-version":"Previous record version","episode-context":"Contextual backlink, not a dependency cycle"},"limitations":"Not a complete catalogue of all REEL schemas. Unsupported schemas and uninspected metadata are explicit findings. No arbitrary JSON/hash search."}),
     )
 }
 
