@@ -49,6 +49,36 @@ impl Version {
         )
     }
 }
+/// The active verification scope of a classified version. Legacy callers keep
+/// their declared-asset verification behavior; no archive reads occur here.
+pub(crate) fn verification_payloads(
+    state: &State,
+    lock: &Dependency,
+    registered: &std::collections::HashMap<String, u64>,
+) -> Result<Option<BTreeMap<String, u64>>> {
+    let key = format!("{}@{}", lock.logical_id, lock.version_id);
+    let version = state
+        .versions
+        .get(&key)
+        .ok_or("Verification version missing")?;
+    if version.manifest_sha256 != lock.manifest_sha256 {
+        return Err("Verification manifest lock mismatch".into());
+    }
+    if version.dependency_contract.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(
+        crate::accounting::expand(state, [key])?
+            .into_iter()
+            .map(|hash| {
+                let bytes = registered
+                    .get(&hash)
+                    .ok_or("Unregistered active artifact dependency")?;
+                Ok((hash, *bytes))
+            })
+            .collect::<Result<_>>()?,
+    ))
+}
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct State {

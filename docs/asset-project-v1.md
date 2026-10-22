@@ -80,6 +80,11 @@ receipt names `verification_scope`, counts `verified_objects` and reports
 Legacy packages retain declared-asset verification. Explicit `artifact-locate`
 of an archived reference still requires named recovery before active lookup.
 
+Native `scene-verify` follows the same classified active-closure rule and reports
+the same scope/count fields. Scene/binding snapshot validation still covers all
+declared bindings, including historical references; fresh media verification
+does not read those references. Explicit reference lookup stays archive-free.
+
 The detailed private report lists each observed hash, declared/observed size,
 direct version references, current/noncurrent/deprecated/pinned/leased flags and
 active-tier copies. Exclusive categories are:

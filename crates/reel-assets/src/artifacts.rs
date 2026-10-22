@@ -73,19 +73,10 @@ pub(crate) fn inspect_with(
         return Err("Invalid artifact package descriptor or lock".into());
     }
     let protected = versions::payload_closure(state, &lock)?;
-    let classified = state.versions[&format!("{}@{}", lock.logical_id, lock.version_id)]
-        .dependency_contract
-        .is_some();
     // Provenance remains authorized and recoverable, but typed active verification
     // must not require historical outputs to be promoted out of the archive.
-    let active = if classified {
-        Some(crate::accounting::expand(
-            state,
-            [format!("{}@{}", lock.logical_id, lock.version_id)],
-        )?)
-    } else {
-        None
-    };
+    let active = versions::verification_payloads(state, &lock, index)?;
+    let classified = active.is_some();
     if version.is_none() && state.current.get(&lock.logical_id) != Some(&lock.version_id) {
         return Err("Artifact current selection is stale".into());
     }
@@ -129,16 +120,8 @@ pub(crate) fn inspect_with(
         }
     }
     let mut verification = unique.clone();
-    if let Some(active) = &active {
-        verification = active
-            .iter()
-            .map(|hash| {
-                let bytes = index
-                    .get(hash)
-                    .ok_or("Unregistered active artifact dependency")?;
-                Ok((hash.clone(), *bytes))
-            })
-            .collect::<Result<BTreeMap<_, _>>>()?;
+    if let Some(active) = active {
+        verification = active;
         total = verification.values().try_fold(0u64, |sum, bytes| {
             sum.checked_add(*bytes)
                 .ok_or("Artifact read budget overflow")

@@ -120,6 +120,7 @@ pub(crate) fn inspect_with(
     Ok((
         json!({"scene_id":scene["scene_id"],"authoring_state":scene["authoring_state"],
         "snapshot_sha256":digest,"bindings":assets.len(),"unique_assets":unique.len(),
+        "version_lock":lock,
         "metadata_valid":true,"reel_semantic_build_validated":false,"production_cutover":false,
         "archive_probed":false,"payload_bytes_copied":0,"daemon_started":false}),
         unique,
@@ -127,20 +128,41 @@ pub(crate) fn inspect_with(
 }
 
 pub fn check(root: &Path, scene: &Path, fresh: bool) -> Result<Value> {
-    let (mut receipt, assets) = inspect(root, scene)?;
+    let index = selected(root)?;
+    let state = versions::read(root)?;
+    let (mut receipt, assets) = inspect_with(root, scene, &index, &state)?;
+    let lock: versions::Dependency = serde_json::from_value(receipt["version_lock"].clone())?;
+    let active = versions::verification_payloads(&state, &lock, &index)?;
+    receipt["verification_scope"] = json!(if active.is_some() {
+        "active-primary-input-and-output-closure"
+    } else {
+        "declared-assets"
+    });
+    let verification = active.unwrap_or_else(|| {
+        assets
+            .iter()
+            .map(|(hash, a)| (hash.clone(), a["bytes"].as_u64().unwrap()))
+            .collect()
+    });
+    receipt["deferred_reference_objects"] = json!(
+        assets
+            .keys()
+            .filter(|h| !verification.contains_key(*h))
+            .count()
+    );
     receipt["fresh_hash_verified"] = json!(fresh);
     if fresh {
         let cfg = config(root)?;
-        let total = assets.values().try_fold(0u64, |n, a| {
-            n.checked_add(a["bytes"].as_u64().unwrap())
-                .ok_or("Scene read budget overflow")
+        let total = verification.values().try_fold(0u64, |n, bytes| {
+            n.checked_add(*bytes).ok_or("Scene read budget overflow")
         })?;
         if total > cfg.capacity.max_object_bytes {
             return Err("Scene verification exceeds configured read budget".into());
         }
         let mut tiers = BTreeMap::<usize, usize>::new();
-        for (oid, asset) in assets {
-            let path = active_existing(&cfg, &oid, asset["bytes"].as_u64().unwrap())?
+        receipt["verified_objects"] = json!(verification.len());
+        for (oid, bytes) in verification {
+            let path = active_existing(&cfg, &oid, bytes)?
                 .ok_or("Named scene asset absent from active caches; archive not probed")?;
             let tier = cfg
                 .cache_roots
