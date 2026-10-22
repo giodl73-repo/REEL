@@ -9,48 +9,14 @@ impl Inspector<'_> {
         key: &str,
         a: &native::AssetRef,
     ) -> Result<text::PresentationSourceText> {
-        let id = self.asset(
+        let value = self.selected_native_metadata(
             context,
-            &Asset {
-                sha256: a.sha256.clone(),
-                bytes: a.bytes,
-                cache_uri: a.cache_uri.clone(),
-                extra: BTreeMap::new(),
-            },
-            "selected-source-text",
             key,
+            a,
+            "selected-source-text",
+            &[text::SOURCE_TEXT_SCHEMA, text::SCENE_SOURCE_TEXT_SCHEMA_V2],
         )?;
-        if self.registered.get(&a.sha256) != Some(&a.bytes) {
-            return Err(
-                "Selected source-text descriptor is not authorized with its exact byte count"
-                    .into(),
-            );
-        }
-        if !self.native_documents.contains_key(&id) {
-            if !self.seen.contains(&id) && self.seen.len() >= self.project.limits.documents {
-                return Err(Budget("Document count budget exceeded").into());
-            }
-            self.seen.insert(id.clone());
-            let bytes = self.read_document(&id)?;
-            let value = parse(&bytes)?;
-            let source: text::PresentationSourceText = serde_json::from_value(value.clone())?;
-            if !matches!(
-                source.schema.as_str(),
-                text::SOURCE_TEXT_SCHEMA | text::SCENE_SOURCE_TEXT_SCHEMA_V2
-            ) {
-                return Err("Selected source-text has the wrong native schema".into());
-            }
-            let n = self.report.nodes.get_mut(&id).unwrap();
-            n.kind = "asset-document".into();
-            n.schema = Some(source.schema);
-            n.status = "inspected-reference-projection".into();
-            n.details["metadata_sha256"] = json!(tiering::digest(&bytes));
-            n.details["verification"] = json!(
-                "Selected source-text metadata freshly hash/size verified; original source document and audio not read"
-            );
-            self.native_documents.insert(id.clone(), value);
-        }
-        Ok(serde_json::from_value(self.native_documents[&id].clone())?)
+        Ok(serde_json::from_value(value)?)
     }
 
     fn check_source_language(

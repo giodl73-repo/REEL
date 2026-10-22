@@ -10,6 +10,7 @@ use std::{
 };
 
 mod authority_delivery;
+mod native_alignment;
 mod presentation_source;
 mod scene_context;
 pub use scene_context::{CacheDocument, DocumentSource, SceneContext};
@@ -255,6 +256,59 @@ struct Inspector<'a> {
     native_documents: BTreeMap<String, Value>,
 }
 impl Inspector<'_> {
+    /// The only path for opt-in resolver-selected native JSON; media stays opaque.
+    fn selected_native_metadata(
+        &mut self,
+        context: &str,
+        key: &str,
+        a: &reel_assembly::scene_authoring::AssetRef,
+        kind: &str,
+        schemas: &[&str],
+    ) -> Result<Value> {
+        let id = self.asset(
+            context,
+            &Asset {
+                sha256: a.sha256.clone(),
+                bytes: a.bytes,
+                cache_uri: a.cache_uri.clone(),
+                extra: BTreeMap::new(),
+            },
+            kind,
+            key,
+        )?;
+        if self.registered.get(&a.sha256) != Some(&a.bytes) {
+            return Err(
+                "Selected native metadata is not authorized with its exact byte count".into(),
+            );
+        }
+        if !self.native_documents.contains_key(&id) {
+            if !self.seen.contains(&id) && self.seen.len() >= self.project.limits.documents {
+                return Err(Budget("Document count budget exceeded").into());
+            }
+            self.seen.insert(id.clone());
+            let bytes = self.read_document(&id)?;
+            let value = parse(&bytes)?;
+            let schema = value["schema"].as_str().unwrap_or("");
+            if !schemas.contains(&schema) {
+                return Err("Selected native metadata has the wrong schema".into());
+            }
+            let n = self.report.nodes.get_mut(&id).unwrap();
+            n.kind = "asset-document".into();
+            n.schema = Some(schema.into());
+            n.status = "inspected-reference-projection".into();
+            n.details["metadata_sha256"] = json!(tiering::digest(&bytes));
+            n.details["verification"] = json!(
+                "Selected native metadata freshly hash/size verified; original manuscript and media contents not read"
+            );
+            self.native_documents.insert(id.clone(), value);
+        }
+        let value = &self.native_documents[&id];
+        if !schemas.contains(&value["schema"].as_str().unwrap_or("")) {
+            return Err("Selected native metadata has the wrong schema".into());
+        }
+        Ok(value.clone())
+    }
+
     fn finding(&mut self, node: &str, code: &str, detail: impl Into<String>) {
         self.report.findings.push(Finding {
             node: node.into(),
@@ -1209,12 +1263,13 @@ pub fn catalogue() -> Result<Value> {
         {"schema":"caminos.artifact-package.v1","coverage":"reference projection; extra fields opaque","json_schema":schemars::schema_for!(Package)},
         {"schema":"caminos.episode-input-inventory.v1","coverage":"membership projection, not build closure","json_schema":schemars::schema_for!(Inventory)},
         {"schema":"caminos.episode-input-index.v1","coverage":"reference projection; extra fields opaque","json_schema":schemars::schema_for!(InventoryIndex)},
+        {"schema":"reel.scene-native-alignment.v1","coverage":"native Rust parser; opt-in selected alignment identity/clock bounds and semantic-event spans; no audio measurement or standalone traversal","json_schema":Value::Null},
         {"schema":"reel.scene-asset-bindings.v1","coverage":"native Rust structure; explicit scene contexts resolve selected bindings","json_schema":Value::Null},
         {"schema":"reel.episode-authoring.v1","coverage":"native Rust structure; scene, template and policy references extracted; other semantics uninspected","json_schema":Value::Null},
         {"schema":"reel.scene-authoring.v2","coverage":"native Rust structure; episode, policy and presentation-template references extracted; explicit scene contexts resolve selected bindings","json_schema":Value::Null},
         {"schema":"reel.scene-policy.v1","coverage":"native Rust structure only","json_schema":Value::Null},
         {"schema":"reel.scene-template-catalog.v1","coverage":"native Rust structure only","json_schema":Value::Null}
-    ],"edge_semantics":{"requires-asset":"Exact selected input returned by the native scene resolver; media presence is size-only","authoring-document":"Explicit metadata input to a native scene context","requires-version":"Exact registry dependency; rebuild/retention candidate relationship","inventory-member":"Observed bytes; no build-dependency inference","retains-asset":"Immutable version custody, not creative selection","describes-version":"Contextual scope, not dependency","declares-asset":"Package declaration; role-specific semantics not inferred","current-selection":"Record current pointer; native registry current state is reported separately","historical-version":"Previous record version","episode-context":"Contextual backlink, not a dependency cycle"},"limitations":"Not a complete catalogue of all REEL schemas. Unsupported schemas and uninspected metadata are explicit findings. No arbitrary JSON/hash search."}),
+    ],"edge_semantics":{"selected-native-alignment":"Exact selected native alignment metadata; declared clocks only, not measured audio timing","aligned-take":"Alignment-to-selected-take identity; media size-only","requires-asset":"Exact selected input returned by the native scene resolver; media presence is size-only","authoring-document":"Explicit metadata input to a native scene context","requires-version":"Exact registry dependency; rebuild/retention candidate relationship","inventory-member":"Observed bytes; no build-dependency inference","retains-asset":"Immutable version custody, not creative selection","describes-version":"Contextual scope, not dependency","declares-asset":"Package declaration; role-specific semantics not inferred","current-selection":"Record current pointer; native registry current state is reported separately","historical-version":"Previous record version","episode-context":"Contextual backlink, not a dependency cycle"},"limitations":"Not a complete catalogue of all REEL schemas. Unsupported schemas and uninspected metadata are explicit findings. No arbitrary JSON/hash search."}),
     )
 }
 

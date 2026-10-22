@@ -73,6 +73,15 @@ See `docs/scene-delivery-v0.1.md`, `docs/reviews/2026-09-09-scene-delivery.md`, 
 
 ## Validation
 
+### 2026-10-21 native alignment metadata inspection
+
+Scene contexts can opt into exact selected alignment JSON checks and native
+semantic-event spans through shared alignment validation/compiler functions.
+Per-language clocks, checked totals and holds stay distinct from actual audio
+measurement, presentation timing and approvals. No media/registry mutation is
+introduced. See `docs/handoff/2026-10-21-native-alignment-inspection.md`.
+
+
 ### 2026-10-21 selected presentation source-text checks
 
 Scene contexts can explicitly verify native selected source-text metadata using

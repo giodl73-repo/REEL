@@ -71,3 +71,10 @@ test('selected source text links distinguish metadata verification from original
   assert.match(get('incoming').children[0].children[1].textContent,/freshly hash checked when opted in/);
   assert.match(get('incoming').children[0].children[1].textContent,/original manuscript and audio remain unverified/);
 });
+
+test('alignment relationships distinguish declared clocks from measured media',()=>{
+  for (const [kind,meaning] of [['selected-native-alignment',/does not prove measured audio timing/],['aligned-take',/media remains size-only and is not decoded/]]) {
+    const {get}=fixture({edges:[{from:'version',to:'media',kind,field:'alignment.es'}]});
+    get('nodes').children[1].events.click();assert.match(get('incoming').children[0].children[1].textContent,meaning);
+  }
+});

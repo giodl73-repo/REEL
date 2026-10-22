@@ -257,6 +257,33 @@ pub struct NativeAlignment {
     pub semantic_markers: BTreeMap<String, u64>,
 }
 
+/// Validate declared native alignment identity and marker bounds against a
+/// selected take. This does not read/measure audio or certify provider evidence.
+pub fn validate_native_alignment(
+    alignment: &NativeAlignment,
+    language: &str,
+    cue_id: &str,
+    selected_take_sha256: &str,
+) -> Result<()> {
+    if alignment.schema != NATIVE_ALIGNMENT_SCHEMA
+        || language.trim().is_empty()
+        || cue_id.trim().is_empty()
+        || alignment.language != language
+        || alignment.cue_id != cue_id
+        || !sha(selected_take_sha256)
+        || alignment.selected_take_sha256 != selected_take_sha256
+        || alignment.sample_rate == 0
+        || alignment.cue_end_sample == 0
+        || alignment
+            .semantic_markers
+            .iter()
+            .any(|(id, sample)| id.trim().is_empty() || *sample >= alignment.cue_end_sample)
+    {
+        bail!("invalid native alignment identity, selected take, clock or marker bounds");
+    }
+    Ok(())
+}
+
 pub const WORD_TIMING_SCHEMA: &str = "reel.scene-word-timing-evidence.v1";
 pub const TRIGGER_TEXT_SCHEMA: &str = "reel.scene-trigger-text.v1";
 
@@ -928,15 +955,12 @@ pub fn compile_native_event_spans(
         let alignment = alignments
             .get(&cue.cue_id)
             .ok_or_else(|| anyhow::anyhow!("missing native alignment for {}", cue.cue_id))?;
-        if alignment.schema != NATIVE_ALIGNMENT_SCHEMA
-            || alignment.language != language_id
-            || alignment.cue_id != cue.cue_id
-            || !sha(&alignment.selected_take_sha256)
-            || alignment.sample_rate == 0
-            || alignment.cue_end_sample == 0
-        {
-            bail!("invalid native alignment for {}", cue.cue_id);
-        }
+        validate_native_alignment(
+            alignment,
+            language_id,
+            &cue.cue_id,
+            &alignment.selected_take_sha256,
+        )?;
         let events = language
             .events
             .iter()
