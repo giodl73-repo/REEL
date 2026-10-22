@@ -161,3 +161,12 @@ through CTC; merge the old timing evidence by chronological UTF-8 rebasing and
 verify every prior parent-note/articulation interval is preserved. Keep the
 independent word-clock limitations even when a constrained timing proposal is
 available. The accepted full recording and melody remain separate and unchanged.
+
+When a combined job cannot fit available admission headroom, explicit
+`analysis_only` construction and `local_song_study_export.py` export jobs may be
+separate. The first stage never claims native validation. The second verifies
+the exact model/expected-text hashes and uses an explicitly pinned installed
+native runtime, then performs the normal validation and export/re-import checks.
+Retain both actual native job receipts and label any composed result as staged;
+do not relabel an admission-refused combined job as successful. Budget each
+stage's complete inputs, scratch and atomic output coexistence independently.

@@ -220,8 +220,10 @@ def main():
     if request['schema']!='reel.local-song-syllable-study-request.v1':raise ValueError('Unsupported request')
     if request['permissions']!=dict(private_only=True,external_upload=False,public_release=False):raise ValueError('Private offline study only')
     if component['schema']!='reel.installed-spanish-ctc.v1':raise ValueError('Unsupported installed CTC component')
-    for path,key in [('word-underlay.json','word_underlay'),('parent-model.json','model'),('vocals.wav','vocal_estimate'),
-                     ('transcription.json','transcription_request'),('reel.exe','reel_runtime')]:checked(path,request[key])
+    bindings=[('word-underlay.json','word_underlay'),('parent-model.json','model'),('vocals.wav','vocal_estimate'),
+              ('transcription.json','transcription_request')]
+    if not request.get('analysis_only',False):bindings.append(('reel.exe','reel_runtime'))
+    for path,key in bindings:checked(path,request[key])
     report=read('word-underlay.json');parent=read('parent-model.json');transcription=read('transcription.json')
     if report['request']['model']!=request['model'] or report['request']['recording']!=request['recording'] or transcription['recording']!=request['recording'] or transcription['vocal_estimate']!=request['vocal_estimate']:
         raise ValueError('Full source/stem/model binding differs')
@@ -309,6 +311,11 @@ def main():
     if base:evidence.update(extension_of=request['extension']['study'],prior_articulation_preserved=True,
                             constrained_gap_lines=sorted({p['line'] for p in selected}))
     write('syllable-study.json',evidence)
+    if request.get('analysis_only',False):
+        write('analysis-stage.json',dict(schema='reel.local-song-syllable-analysis-stage.v1',model=descriptor('model.json'),
+              evidence=descriptor('syllable-study.json'),native_validation='deferred to explicit export job',finished_score=False))
+        print('SYLLABLE ANALYSIS COMPLETE; NATIVE VALIDATION AND EXPORT DEFERRED',flush=True)
+        return
     checks=dict(model=native('music-model-validate','model.json'))
     native('music-score-export-plan','model.json','--output-path','score-plan.json')
     native('music-score-export-render','score-plan.json','model.json','--output-dir','rendered')
