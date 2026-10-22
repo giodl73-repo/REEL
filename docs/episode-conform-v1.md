@@ -1,5 +1,22 @@
 # Data-driven episode conform
 
+Decoded picture checks use FFmpeg's SHA-256 hash muxer over packed raw video,
+with an independent raw-packet byte/frame counter. Ordered segment cuts count
+decoded frames rather than seeking timestamps. The SHA-256 values are identical
+to the historical raw-video pipe checks; short/extra frames remain errors.
+
+An optional `preassembled_master` FileRef supplies a read-only assembled
+candidate. REEL still validates every current source, compares every ordered
+decoded picture/audio segment, checks geometry/rates/timestamps, and fully decodes
+the final compact delivery. The supplied file is never renamed or deleted.
+Retaining a lossless output makes a separate copy.
+
+A scene segment with `master_proof` may explicitly pin its original checker with
+`master_proof_validator`. This FileRef must match the actual checker bytes and
+the proof's validator SHA-256. All current plan, media-tool, receipt and consumed
+master checks remain mandatory. Omitting it retains the strict current-executable
+check. Neither option grants human approval.
+
 `reel-episode-conform` builds one language-local lossless FFV1/PCM24 master from
 selected scene and presentation masters:
 

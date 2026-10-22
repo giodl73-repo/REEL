@@ -271,6 +271,139 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
     );
     // Retention affects only this conform's generated movie, never the sources.
     assert!(output.join("master.mkv").exists());
+    // A completed assembly can be consumed read-only after all current sources
+    // and its entire ordered decoded picture/audio are checked again.
+    let original_master = fs::read(output.join("master.mkv")).unwrap();
+    let mut resumed = compact.clone();
+    resumed["preassembled_master"] = reference(root, "output/master.mkv");
+    write(&root.join("resumed.json"), &resumed);
+    let resumed_output = root.join("resumed-output");
+    let run = |manifest: &str, target: &Path| {
+        Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
+            .arg("build")
+            .arg(root.join(manifest))
+            .arg("--input-root")
+            .arg(root)
+            .arg("--asset-root")
+            .arg(root)
+            .arg("--output-dir")
+            .arg(target)
+            .output()
+            .unwrap()
+    };
+    let resumed_result = run("resumed.json", &resumed_output);
+    assert!(
+        resumed_result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resumed_result.stderr)
+    );
+    assert_eq!(
+        fs::read(output.join("master.mkv")).unwrap(),
+        original_master
+    );
+    assert!(!resumed_output.join("master.mkv").exists());
+    let resumed_receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(resumed_output.join("receipt.json")).unwrap()).unwrap();
+    assert_eq!(resumed_receipt["master_sha256"], receipt["master_sha256"]);
+    assert_eq!(
+        resumed_receipt["preassembled_master"],
+        resumed["preassembled_master"]
+    );
+    assert_eq!(
+        resumed_receipt["encoded_delivery"]["full_decode_verified"],
+        true
+    );
+    let mut retained_resume = resumed.clone();
+    retained_resume["compact_delivery"]["retain_lossless_master"] = true.into();
+    write(&root.join("retained-resume.json"), &retained_resume);
+    let retained_output = root.join("retained-resume-output");
+    assert!(
+        run("retained-resume.json", &retained_output)
+            .status
+            .success()
+    );
+    assert_eq!(
+        fs::read(retained_output.join("master.mkv")).unwrap(),
+        original_master
+    );
+    assert_eq!(
+        fs::read(output.join("master.mkv")).unwrap(),
+        original_master
+    );
+    // Same byte count cannot substitute for the declared output geometry.
+    assert!(
+        ffmpeg()
+            .args(["-v", "error", "-i"])
+            .arg(output.join("master.mkv"))
+            .args([
+                "-vf",
+                "scale=32:128",
+                "-c:v",
+                "ffv1",
+                "-pix_fmt",
+                "yuv444p",
+                "-c:a",
+                "copy"
+            ])
+            .arg(root.join("reshaped.mkv"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    resumed["preassembled_master"] = reference(root, "reshaped.mkv");
+    write(&root.join("reshaped-resume.json"), &resumed);
+    let rejected_shape = run("reshaped-resume.json", &root.join("reshaped-resume-output"));
+    assert!(!rejected_shape.status.success());
+    assert!(String::from_utf8_lossy(&rejected_shape.stderr).contains("geometry"));
+    assert!(
+        ffmpeg()
+            .args(["-v", "error", "-i"])
+            .arg(output.join("master.mkv"))
+            .args([
+                "-vf", "negate", "-c:v", "ffv1", "-pix_fmt", "yuv444p", "-c:a", "copy"
+            ])
+            .arg(root.join("changed-picture.mkv"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    resumed["preassembled_master"] = reference(root, "changed-picture.mkv");
+    write(&root.join("changed-picture-resume.json"), &resumed);
+    let rejected_picture = run(
+        "changed-picture-resume.json",
+        &root.join("changed-picture-resume-output"),
+    );
+    assert!(!rejected_picture.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected_picture.stderr).contains("differs from selected source")
+    );
+    assert!(
+        ffmpeg()
+            .args(["-v", "error", "-i"])
+            .arg(output.join("master.mkv"))
+            .args(["-c:v", "copy", "-af", "volume=0.5", "-c:a", "pcm_s24le"])
+            .arg(root.join("changed-audio.mkv"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    resumed["preassembled_master"] = reference(root, "changed-audio.mkv");
+    write(&root.join("changed-audio-resume.json"), &resumed);
+    let rejected_audio = run(
+        "changed-audio-resume.json",
+        &root.join("changed-audio-resume-output"),
+    );
+    assert!(!rejected_audio.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected_audio.stderr).contains("differs from selected source")
+    );
+    resumed["preassembled_master"] = reference(root, "scene-b.mkv");
+    write(&root.join("short-resume.json"), &resumed);
+    assert!(
+        !run("short-resume.json", &root.join("short-resume-output"))
+            .status
+            .success()
+    );
     manifest["segments"].as_array_mut().unwrap().swap(1, 3);
     write(&root.join("wrong-order.json"), &manifest);
     let rejected = Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))

@@ -28,6 +28,19 @@ fn full_check_master_proof_rejects_stale_inputs_and_needs_no_unused_stems() {
         }
     }
     scene_delivery::recheck_master_proof(&job_path, root, &output, &proof).unwrap();
+    let validator = root.join("pinned-validator.exe");
+    fs::copy(std::env::current_exe().unwrap(), &validator).unwrap();
+    scene_delivery::recheck_master_proof_with_validator(
+        &job_path, root, &output, &proof, &validator,
+    )
+    .unwrap();
+    fs::write(&validator, b"changed validator").unwrap();
+    assert!(
+        scene_delivery::recheck_master_proof_with_validator(
+            &job_path, root, &output, &proof, &validator
+        )
+        .is_err()
+    );
     assert!(scene_delivery::check(&job_path, root, &output).is_err());
     let master = fs::read(output.join("master.mkv")).unwrap();
     fs::write(output.join("master.mkv"), b"changed master").unwrap();

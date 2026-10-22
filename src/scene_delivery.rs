@@ -1913,14 +1913,34 @@ pub fn recheck_master_proof(
     output: &Path,
     proof_path: &Path,
 ) -> Result<Receipt> {
+    recheck_master_proof_with_validator(
+        job_path,
+        asset_root,
+        output,
+        proof_path,
+        &std::env::current_exe()?,
+    )
+}
+
+/// Consume an explicitly pinned prior validator's proof. The caller must verify
+/// the validator FileRef; all plan, master, receipt and media-tool checks remain.
+pub fn recheck_master_proof_with_validator(
+    job_path: &Path,
+    asset_root: &Path,
+    output: &Path,
+    proof_path: &Path,
+    validator: &Path,
+) -> Result<Receipt> {
     let (_, current_plan) = plan(job_path, asset_root)?;
     let receipt: Receipt = serde_json::from_slice(&fs::read(output.join("receipt.json"))?)?;
     let proof: MasterProof = serde_json::from_slice(&fs::read(proof_path)?)?;
+    let mut expected = master_proof_facts(&receipt, output)?;
+    expected.validator_sha256 = crate::sha256_file(validator)?;
     if receipt.schema != "reel.scene-delivery-receipt.v0.1"
         || serde_json::to_value(&receipt.plan)? != serde_json::to_value(&current_plan)?
         || receipt.content_samples != current_plan.duration_samples
         || receipt.delivery_frames != current_plan.frame_count
-        || proof != master_proof_facts(&receipt, output)?
+        || proof != expected
     {
         bail!("scene master proof differs from current inputs, receipt or tools");
     }
