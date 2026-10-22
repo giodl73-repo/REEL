@@ -113,3 +113,13 @@ Inputs and outputs are explicit native job assets. No automatic downloads,
 service, upload, checkout search, Golden selection or cache management is added.
 The rehearsal oscillator and first SVG are diagnostic views, not a performance
 or a completed engraved songbook.
+
+
+After a draft is accepted, `tools/local_song_line_alignment.py` can produce
+source-clock line-to-note candidates from the exact original independent lyric
+recognition and the unchanged model. It checks the transcription/source binding,
+keeps each lexical candidate within one recognition pass, and honors explicit
+owner-confirmed performance omissions. Canonical corrections remain distinct
+from performed-source wording. Confirmed presence without a trustworthy clock
+stays unresolved. This report assigns no syllables, edits no pitches/audio, and
+does not substitute a best recognition span for completed lyric underlay.
