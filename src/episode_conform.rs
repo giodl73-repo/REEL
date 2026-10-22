@@ -186,7 +186,7 @@ pub struct GeometryVerification {
     pub input_width: u64,
     pub input_height: u64,
     pub input_sample_aspect_ratio: String,
-    #[serde(skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub sample_aspect_ratio_assumed_square: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assumed_color_space: Option<String>,
