@@ -126,6 +126,10 @@ pub struct Manifest {
     /// dependencies and tool binaries have been rehashed. Defaults to full checks.
     #[serde(default)]
     pub reuse_verified_presentations: bool,
+    /// Optional read-only assembled candidate. Every source and every ordered
+    /// decoded frame/sample is still checked before it can be published.
+    #[serde(default)]
+    pub preassembled_master: Option<scene_delivery::FileRef>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -412,6 +416,10 @@ pub struct Segment {
     /// Restricted to the semantic-scoped direct native delivery route.
     #[serde(default)]
     pub master_proof: Option<scene_delivery::FileRef>,
+    /// Explicit original checker for a previously issued master proof. Without
+    /// this FileRef, the proof must identify the current executable as before.
+    #[serde(default)]
+    pub master_proof_validator: Option<scene_delivery::FileRef>,
     /// Selected semantic scene scope for a direct scene-delivery receipt.
     /// This route always performs the full upstream delivery check.
     #[serde(default)]
@@ -705,6 +713,8 @@ pub struct Receipt {
     pub total_samples: u64,
     pub master_sha256: String,
     pub master_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preassembled_master: Option<scene_delivery::FileRef>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub encoded_delivery: Option<EncodedDelivery>,
     pub decoded_master_matches_ordered_segments: bool,
@@ -1037,6 +1047,10 @@ fn decoded_digest_with_pixel_format(
     video_filter: Option<&str>,
     pixel_format: &str,
 ) -> Result<(String, u64)> {
+    if video && padding_samples == 0 {
+        let result = crate::decoded_video_hash::hash(path, pixel_format, video_filter, None)?;
+        return Ok((result.values[0].clone(), result.bytes));
+    }
     let mut cmd = command("ffmpeg");
     cmd.args(["-v", "error", "-nostdin", "-i"]).arg(path);
     if video {
@@ -1096,6 +1110,9 @@ fn decoded_digest_with_pixel_format(
 }
 
 fn selected_receipt(segment: &Segment, language: &str, receipt: &serde_json::Value) -> Result<()> {
+    if segment.master_proof_validator.is_some() && segment.master_proof.is_none() {
+        bail!("a pinned master-proof validator requires a master proof");
+    }
     if receipt["schema"] == "reel.scene-delivery-receipt.v0.1" {
         if segment.kind != SegmentKind::Scene
             || segment.semantic_delivery.is_none()
@@ -1793,12 +1810,23 @@ pub fn build(
                 }
                 let checked = if let Some(proof) = &segment.master_proof {
                     let proof_path = scene_delivery::checked_file(input_root, proof)?;
-                    scene_delivery::recheck_master_proof(
-                        &job_path,
-                        asset_root,
-                        delivery_root,
-                        &proof_path,
-                    )?
+                    if let Some(validator) = &segment.master_proof_validator {
+                        let validator = scene_delivery::checked_file(input_root, validator)?;
+                        scene_delivery::recheck_master_proof_with_validator(
+                            &job_path,
+                            asset_root,
+                            delivery_root,
+                            &proof_path,
+                            &validator,
+                        )?
+                    } else {
+                        scene_delivery::recheck_master_proof(
+                            &job_path,
+                            asset_root,
+                            delivery_root,
+                            &proof_path,
+                        )?
+                    }
                 } else if let Some(imported) = &segment.imported_source_manifest {
                     imported_scene_proof::recheck(
                         &source_root,
@@ -2421,63 +2449,84 @@ pub fn build(
         writeln!(list, "file '{escaped}'")?;
     }
     drop(list);
-    let master = work.join("master.mkv");
-    let mut concat = command("ffmpeg");
-    concat
-        .args([
-            "-v",
-            "error",
-            "-nostdin",
-            "-reinit_filter",
-            "0",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-        ])
-        .arg(&list_path)
-        .args(["-map", "0:v:0", "-map", "0:a:0"]);
-    if manifest.audio_frame_conform.is_some() {
-        // Preserve the episode-wide setpts/asetpts counters when an adopted
-        // display changes SAR or color metadata. Filter reinitialization would
-        // restart N at zero; the muxer then clamps the remaining video PTS to
-        // the preceding frame. Ordered decoded-content checks still reject any
-        // incompatible source property that changes the selected pixels/audio.
-        let facts = common.as_ref().context("no common frame clock")?;
-        let (num, den) = fps_parts(&facts.fps)?;
+    let master = match &manifest.preassembled_master {
+        Some(reference) => scene_delivery::checked_file(asset_root, reference)?,
+        None => work.join("master.mkv"),
+    };
+    if manifest.preassembled_master.is_none() {
+        let mut concat = command("ffmpeg");
         concat
-            .args(["-vf"])
-            .arg(format!("setpts=N*{den}/({num}*TB)"))
             .args([
-                "-af",
-                "asetpts=N/SR/TB",
-                "-fps_mode",
-                "passthrough",
-                "-c:a",
-                "pcm_s24le",
-            ]);
-        if manifest
-            .compact_delivery
-            .as_ref()
-            .and_then(|p| p.intermediate_video_encoding.as_deref())
-            == Some("h264-lossless")
-        {
-            concat.args([
-                "-c:v", "libx264", "-crf", "0", "-preset", "veryfast", "-bf", "0", "-pix_fmt",
-                "yuv444p",
-            ]);
+                "-v",
+                "error",
+                "-nostdin",
+                "-reinit_filter",
+                "0",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+            ])
+            .arg(&list_path)
+            .args(["-map", "0:v:0", "-map", "0:a:0"]);
+        if manifest.audio_frame_conform.is_some() {
+            // Preserve the episode-wide setpts/asetpts counters when an adopted
+            // display changes SAR or color metadata. Filter reinitialization would
+            // restart N at zero; the muxer then clamps the remaining video PTS to
+            // the preceding frame. Ordered decoded-content checks still reject any
+            // incompatible source property that changes the selected pixels/audio.
+            let facts = common.as_ref().context("no common frame clock")?;
+            let (num, den) = fps_parts(&facts.fps)?;
+            concat
+                .args(["-vf"])
+                .arg(format!("setpts=N*{den}/({num}*TB)"))
+                .args([
+                    "-af",
+                    "asetpts=N/SR/TB",
+                    "-fps_mode",
+                    "passthrough",
+                    "-c:a",
+                    "pcm_s24le",
+                ]);
+            if manifest
+                .compact_delivery
+                .as_ref()
+                .and_then(|p| p.intermediate_video_encoding.as_deref())
+                == Some("h264-lossless")
+            {
+                concat.args([
+                    "-c:v", "libx264", "-crf", "0", "-preset", "veryfast", "-bf", "0", "-pix_fmt",
+                    "yuv444p",
+                ]);
+            } else {
+                concat.args(["-c:v", "ffv1", "-pix_fmt", "yuv444p"]);
+            }
         } else {
-            concat.args(["-c:v", "ffv1", "-pix_fmt", "yuv444p"]);
+            concat.args(["-c", "copy"]);
         }
-    } else {
-        concat.args(["-c", "copy"]);
-    }
-    let status = concat.arg(&master).status()?;
-    if !status.success() {
-        bail!("episode lossless concat failed");
+        let status = concat.arg(&master).status()?;
+        if !status.success() {
+            bail!("episode lossless concat failed");
+        }
     }
     let first = common.context("no episode media")?;
+    if manifest.preassembled_master.is_some() {
+        let candidate = probe(&master)?;
+        if (
+            candidate.width,
+            candidate.height,
+            &candidate.fps,
+            candidate.sample_rate,
+        ) != (
+            first.width,
+            first.height,
+            &first.fps,
+            manifest.output_sample_rate,
+        ) {
+            bail!("preassembled master geometry, frame rate or sample rate differs from episode");
+        }
+    }
     if manifest.output_geometry.is_some() {
         let final_facts = probe(&master)?;
         if final_facts.sample_aspect_ratio != "1:1"
@@ -2718,6 +2767,7 @@ pub fn build(
         total_samples: sample_cursor,
         master_sha256: file_sha(&master)?,
         master_bytes: fs::metadata(&master)?.len(),
+        preassembled_master: manifest.preassembled_master.clone(),
         encoded_delivery,
         decoded_master_matches_ordered_segments: true,
         timestamps_verified: true,
@@ -2766,7 +2816,13 @@ pub fn build(
     {
         // This file was created by this bounded conform, and all source masters
         // remain untouched. Its exact hash stays in the provenance receipt.
-        fs::remove_file(&master)?;
+        if manifest.preassembled_master.is_none() {
+            fs::remove_file(&master)?;
+        }
+    } else if manifest.preassembled_master.is_some() {
+        // A supplied candidate is immutable input, including when a retained
+        // lossless copy is requested. Never rename or delete its original.
+        fs::copy(&master, work.join("master.mkv"))?;
     }
     drop(temp);
     fs::rename(work, output)?;

@@ -159,6 +159,28 @@ pub(crate) fn load_scene(
 /// Hash each segment in one bounded-memory decode. Exact byte counts reject
 /// extra/short media; no timestamp seek, rate conversion or frame interpolation.
 pub(crate) fn decode_segments(path: &Path, video: bool, lengths: &[u64]) -> Result<Vec<String>> {
+    if video {
+        let frame_bytes = crate::decoded_video_hash::frame_bytes(path)?;
+        if lengths
+            .iter()
+            .any(|length| *length == 0 || length % frame_bytes != 0)
+        {
+            bail!("decoded segment does not contain complete frames");
+        }
+        let counts = lengths
+            .iter()
+            .map(|length| length / frame_bytes)
+            .collect::<Vec<_>>();
+        let result = crate::decoded_video_hash::hash(path, "yuv444p", None, Some(&counts))?;
+        let expected = lengths
+            .iter()
+            .try_fold(0u64, |sum, length| sum.checked_add(*length))
+            .context("decoded video byte overflow")?;
+        if result.bytes != expected {
+            bail!("decoded video byte count differs from segments");
+        }
+        return Ok(result.values);
+    }
     let mut cmd = ffmpeg_command();
     cmd.args([
         "-v",
