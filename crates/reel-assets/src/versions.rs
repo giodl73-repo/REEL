@@ -257,6 +257,9 @@ struct Index {
     patch: serde_json::Value,
 }
 
+// Cached metadata can grow independently of the small Git control/patch file.
+const MAX_EXPANDED_INDEX_BYTES: u64 = 4 * 1024 * 1024;
+
 fn baseline(
     root: &Path,
     index: &Index,
@@ -264,7 +267,7 @@ fn baseline(
 ) -> Result<serde_json::Value> {
     if index.schema != "caminos.version-index.v2"
         || !valid_oid(&index.base_sha256)
-        || index.base_bytes > 256 * 1024
+        || index.base_bytes > MAX_EXPANDED_INDEX_BYTES
         || !index.patch.is_object()
     {
         return Err("Invalid version-index baseline".into());
@@ -334,7 +337,7 @@ fn control(
     let index: Index = serde_json::from_value(value)?;
     let mut base = baseline(root, &index, storage)?;
     merge(&mut base, &index.patch);
-    if serde_json::to_vec(&base)?.len() > 256 * 1024 {
+    if serde_json::to_vec(&base)?.len() as u64 > MAX_EXPANDED_INDEX_BYTES {
         return Err("Expanded version index exceeds budget".into());
     }
     let _: State = serde_json::from_value(base.clone())?;
@@ -746,6 +749,49 @@ mod tests {
         assert_eq!(after.versions.len(), 30);
         let again = compact(f.root()).unwrap();
         assert_eq!(again["generation"], after.generation);
+    }
+    #[test]
+    fn cached_version_index_grows_without_relaxing_git_control_limit() {
+        let f = crate::tiering::tests::Fixture::new();
+        let mut state = State::default();
+        for n in 0..3000 {
+            state
+                .current
+                .insert(format!("artifact/{n:04}/{}", "x".repeat(80)), "v1".into());
+        }
+        let bytes = serde_json::to_vec(&state).unwrap();
+        assert!(bytes.len() > 256 * 1024);
+        let hash = f.put(&bytes, true);
+        let index = Index {
+            schema: "caminos.version-index.v2".into(),
+            base_sha256: hash,
+            base_bytes: bytes.len() as u64,
+            patch: serde_json::json!({}),
+        };
+        let value = serde_json::to_value(&index).unwrap();
+        assert!(control(f.root(), value.clone(), None).is_ok());
+        fs::write(
+            f.root().join("registry/versions.json"),
+            serde_json::to_vec(&value).unwrap(),
+        )
+        .unwrap();
+        assert!(read(f.root()).is_ok());
+        assert!(
+            encode_control(f.root(), serde_json::to_value(&state).unwrap())
+                .unwrap()
+                .len()
+                < 1024
+        );
+        let mut oversized = serde_json::to_value(&state).unwrap();
+        oversized["current"]["large"] =
+            serde_json::json!("x".repeat(MAX_EXPANDED_INDEX_BYTES as usize));
+        assert!(encode_control(f.root(), oversized.clone()).is_err());
+        let mut changed = value.clone();
+        changed["patch"] = oversized;
+        assert!(control(f.root(), changed, None).is_err());
+        let mut changed = value;
+        changed["base_bytes"] = serde_json::json!(MAX_EXPANDED_INDEX_BYTES + 1);
+        assert!(control(f.root(), changed, None).is_err());
     }
     #[test]
     fn version_baseline_corruption_stops_and_explicit_storage_is_read_only() {
