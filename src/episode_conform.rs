@@ -40,6 +40,13 @@ fn verify_native_delivery_proof(
 mod native_proof_tests {
     use super::*;
     #[test]
+    fn missing_hash_path_diagnostic_identifies_the_requested_file() {
+        let root = tempfile::tempdir().unwrap();
+        let requested = root.path().join("missing-native-input.json");
+        let error = file_sha(&requested).unwrap_err();
+        assert!(format!("{error:#}").contains("missing-native-input.json"));
+    }
+    #[test]
     fn imported_roots_reject_outside_symlink_targets() {
         let root = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
@@ -805,7 +812,8 @@ fn fps_parts(fps: &str) -> Result<(u64, u64)> {
 }
 
 pub(crate) fn file_sha(path: &Path) -> Result<String> {
-    let mut file = fs::File::open(path)?;
+    let mut file =
+        fs::File::open(path).with_context(|| format!("opening hash input {}", path.display()))?;
     let mut digest = Sha256::new();
     let mut buffer = [0u8; 65536];
     loop {
@@ -1637,7 +1645,8 @@ pub fn prepare(
     if input_root.canonicalize()? != asset_root.canonicalize()? {
         bail!("native preparation requires one closed input/asset workspace");
     }
-    let scope = checkpoint::snapshot_job_scope(asset_root)?;
+    let scope = checkpoint::snapshot_job_scope(asset_root)
+        .context("capturing closed native preparation source scope")?;
     build_internal(
         manifest_path,
         input_root,
@@ -1645,7 +1654,8 @@ pub fn prepare(
         output,
         Some(scope),
         None,
-    )?;
+    )
+    .context("preparing selected native program")?;
     Ok(())
 }
 

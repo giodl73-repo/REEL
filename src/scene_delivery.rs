@@ -343,13 +343,28 @@ pub(crate) fn checked_file(root: &Path, item: &FileRef) -> Result<PathBuf> {
     {
         bail!("asset path must be a relative local path");
     }
-    let root = root.canonicalize()?;
+    let root = root.canonicalize().with_context(|| {
+        format!(
+            "resolving asset root {} for {}",
+            root.display(),
+            item.path.display()
+        )
+    })?;
     // Windows may accept mismatched case that later fails on Linux. Verify the
     // exact directory entries as well as resolved bytes on every platform.
     let mut exact = root.clone();
     for component in item.path.components() {
         let name = component.as_os_str();
-        if !fs::read_dir(&exact)?.any(|entry| entry.is_ok_and(|entry| entry.file_name() == name)) {
+        if !fs::read_dir(&exact)
+            .with_context(|| {
+                format!(
+                    "reading asset directory {} for {}",
+                    exact.display(),
+                    item.path.display()
+                )
+            })?
+            .any(|entry| entry.is_ok_and(|entry| entry.file_name() == name))
+        {
             bail!(
                 "missing or case-mismatched asset path: {}",
                 item.path.display()
