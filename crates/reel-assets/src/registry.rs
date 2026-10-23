@@ -42,11 +42,27 @@ pub fn parse_pointer(bytes: &[u8]) -> Result<Option<(String, u64)>> {
 }
 
 pub fn register(root: &Path, manifest: &Path) -> Result<Value> {
+    register_with_publication_wait(root, manifest, false)
+}
+
+pub(crate) fn register_job_outputs(root: &Path, manifest: &Path) -> Result<Value> {
+    register_with_publication_wait(root, manifest, true)
+}
+
+fn register_with_publication_wait(
+    root: &Path,
+    manifest: &Path,
+    completed_job_outputs: bool,
+) -> Result<Value> {
     let doc = load(manifest)?;
     let assets = doc["assets"]
         .as_array()
         .ok_or("Manifest requires assets array")?;
-    let _lock = admission::worktree_lock(root)?;
+    let _lock = if completed_job_outputs {
+        admission::job_publication_lock(root)?
+    } else {
+        admission::worktree_lock(root)?
+    };
     let mut index = selected(root)?;
     let mut generic = generic_objects(root)?;
     let mut touched: BTreeMap<String, BTreeMap<String, u64>> = BTreeMap::new();

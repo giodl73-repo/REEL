@@ -2,6 +2,61 @@ use super::*;
 use tempfile::TempDir;
 
 #[test]
+fn completed_output_waits_for_metadata_without_recopied_media_or_broken_lock() {
+    let f = Fixture::new();
+    let source = f.put(2, b"cel");
+    let guard = admission::worktree_lock(f.dir.path()).unwrap();
+    let root = f.dir.path().to_path_buf();
+    let cache = f.config.cache_roots[0].clone();
+    let oid = f.oid.clone();
+    let original_source = source.clone();
+    let task = std::thread::spawn(move || {
+        recover_job_output(&root, &original_source, &cache, &oid, 3).map_err(|e| e.to_string())
+    });
+    let canonical = object(&f.config.cache_roots[0], &f.oid);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !canonical.exists() {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    // A publication wait must not restart the media copy after its verified
+    // immutable destination already exists.
+    fs::rename(&source, source.with_extension("retained-fixture")).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(2200));
+    assert!(!task.is_finished());
+    assert!(!f.dir.path().join(".local/cache-promotions.jsonl").exists());
+    assert!(admission::lock(&f.dir.path().join(".local/metadata-control")).is_err());
+    drop(guard);
+    assert_eq!(task.join().unwrap().unwrap(), canonical);
+    verify(&canonical, &f.oid, 3).unwrap();
+    let receipt = fs::read_to_string(f.dir.path().join(".local/cache-promotions.jsonl")).unwrap();
+    assert_eq!(receipt.lines().count(), 1);
+    assert_eq!(
+        serde_json::from_str::<Value>(&receipt).unwrap()["sha256"],
+        f.oid
+    );
+}
+
+#[test]
+fn completed_output_registration_waits_without_changing_ordinary_transaction_bound() {
+    let f = Fixture::new();
+    let manifest = f.dir.path().join("registration.json");
+    fs::write(&manifest, json!({"assets":[{"sha256":f.oid,"bytes":3,"provenance":"test","rights":"fixture","selection_state":"candidate"}]}).to_string()).unwrap();
+    let guard = admission::worktree_lock(f.dir.path()).unwrap();
+    assert!(registry::register(f.dir.path(), &manifest).is_err());
+    let root = f.dir.path().to_path_buf();
+    let task = std::thread::spawn(move || {
+        registry::register_job_outputs(&root, &manifest).map_err(|e| e.to_string())
+    });
+    std::thread::sleep(std::time::Duration::from_millis(2200));
+    assert!(!task.is_finished());
+    assert!(!f.dir.path().join("assets/objects/sha256").exists());
+    drop(guard);
+    task.join().unwrap().unwrap();
+    assert_eq!(selected(f.dir.path()).unwrap()[&f.oid], 3);
+}
+
+#[test]
 fn cache_backed_version_records_preserve_locks_and_fail_closed() {
     let f = Fixture::new();
     let root = f.dir.path();

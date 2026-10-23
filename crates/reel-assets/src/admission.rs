@@ -82,6 +82,15 @@ pub fn worktree_lock(root: &Path) -> Result<MetadataLock> {
     )
 }
 
+/// Completed job outputs must survive a busy producer metadata transaction.
+/// This changes only publication waiting, never job execution or capacity locks.
+pub(crate) fn job_publication_lock(root: &Path) -> Result<MetadataLock> {
+    lock_for_budget(
+        &root.join(".local/metadata-control"),
+        std::time::Duration::from_secs(30),
+    )
+}
+
 /// Backward-compatible capacity ledger transaction. Never hold this guard while
 /// hashing, copying, rendering, or updating a worktree registry.
 fn capacity_lock(dir: &Path) -> Result<MetadataLock> {
@@ -98,6 +107,10 @@ pub fn lock_for(dir: &Path, timeout: std::time::Duration) -> Result<MetadataLock
     if timeout > std::time::Duration::from_secs(2) {
         return Err("Metadata transaction wait exceeds two-second bound".into());
     }
+    lock_for_budget(dir, timeout)
+}
+
+fn lock_for_budget(dir: &Path, timeout: std::time::Duration) -> Result<MetadataLock> {
     fs::create_dir_all(dir)?;
     let file = OpenOptions::new()
         .read(true)

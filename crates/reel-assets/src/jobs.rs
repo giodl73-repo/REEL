@@ -1,7 +1,8 @@
 //! Explicit trusted production jobs in admitted existing-cache staging.
 //! This runner is not a sandbox for untrusted programs/manifests.
 use crate::{
-    Result, active_existing, admission, config, load, object, recover, selected, valid_oid, verify,
+    Result, active_existing, admission, config, load, object, recover_job_output, selected,
+    valid_oid, verify,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -448,7 +449,7 @@ fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Resul
             let reused = existing.is_some();
             let destination = match existing {
                 Some(path) => path,
-                None => recover(root, &path, &reservation.cache_root, &oid, size)?,
+                None => recover_job_output(root, &path, &reservation.cache_root, &oid, size)?,
             };
             retained.insert(role,json!({"sha256":oid,"bytes":size,"cache_uri":format!("cache://sha256/{oid}"),"path":destination,"reused_active_object":reused}));
         }
