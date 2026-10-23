@@ -45,6 +45,9 @@ provides per-key compare-and-swap updates and positive-only collector facts.
 Explicit [managed index commands](docs/inventory-evidence-managed-v1.md) build
 and admit named source assets and compare read-only subject lookups through a
 private JSON profile. They do not switch existing producers or enable cleanup.
+The opt-in [combined collector shadow](docs/inventory-evidence-collector-v1.md)
+combines declared consumers, jobs and index protection, then restricts native
+planner proposals without applying removals or refilling held batch slots.
 
 ---
 

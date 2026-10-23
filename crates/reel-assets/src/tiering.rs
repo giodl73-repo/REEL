@@ -252,6 +252,17 @@ pub(crate) fn live(root: &Path, policy: &Policy) -> Result<Live> {
     })
 }
 
+/// Reuse the native graph/selection/lease interpretation for the opt-in
+/// collector view; unknown declared dependency coverage never becomes empty.
+pub(crate) fn collector_live(root: &Path, policy: &Policy) -> Result<Live> {
+    policy.validate(&config(root)?)?;
+    let live = live(root, policy)?;
+    if live.project_id != policy.project_id || !live.coverage_complete {
+        return Err("Collector consumer scope or dependency coverage is incomplete".into());
+    }
+    Ok(live)
+}
+
 impl Policy {
     pub(crate) fn validate(&self, cfg: &crate::Config) -> Result<()> {
         if self.schema != "reel.asset-tier-policy.v1"

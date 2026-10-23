@@ -144,8 +144,10 @@ All 409 suite tests pass locally: 212 unit, five prior integration, 100 model,
 Strict all-target Clippy, formatting, ROLES structure and diff checks pass.
 Validation ran on Windows; this is not device/power-loss durability proof.
 
-Next adoption work is explicit project configuration and shadow comparison of
-planner decisions after combining staging/retained/job/media protection coverage.
+The subsequent [combined collector shadow](inventory-evidence-collector-v1.md)
+combines declared staging/retained/job/media protection and restricts native
+planner proposals. Next adoption work is explicit project/all-consumer
+configuration and execution-time coverage/custody integration.
 These commands do not connect a removal executor or replace the shared installed
 binary. Complete source ingestion streaming, deadline/cancellation, device-level
 durability and history compaction remain separate work.

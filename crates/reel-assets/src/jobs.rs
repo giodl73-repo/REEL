@@ -65,6 +65,19 @@ struct Job {
     outputs: BTreeMap<String, Output>,
 }
 
+/// Read-only collector adapter over the same validated request accepted by
+/// run-job. Never resolves tools, opens inputs, executes steps or infers outputs.
+pub(crate) fn protection_inputs(raw: &[u8]) -> Result<BTreeSet<String>> {
+    let job: Job = serde_json::from_slice(raw)?;
+    validate(&job)?;
+    Ok(job
+        .inputs
+        .values()
+        .chain(job.tools.values())
+        .map(|a| a.sha256.clone())
+        .collect())
+}
+
 fn relative(name: &str) -> Result<PathBuf> {
     if name.is_empty() || name.len() > 200 || name.contains('\\') || name.contains(':') {
         return Err("Job path must be a bounded portable relative path".into());

@@ -251,30 +251,42 @@ struct SourceWire {
     adapter: String,
     adapter_version: u32,
 }
+pub(super) fn source_from_key(value: &Value) -> Result<Source> {
+    let wire: SourceWire = serde_json::from_value(value.clone())?;
+    if wire.adapter != ADAPTER_ID {
+        return Err("Unsupported catalog source adapter".into());
+    }
+    let encoding = match wire.encoding.as_str() {
+        "identity" => Encoding::Identity,
+        "gzip" => Encoding::Gzip,
+        _ => return Err("Unsupported catalog source encoding".into()),
+    };
+    let source = Source {
+        encoded: wire.encoded.blob(),
+        decoded: wire.decoded.blob(),
+        encoding,
+        schema: wire.source_schema,
+        project_id: wire.project,
+        authority_namespace: wire.authority,
+        adapter_version: wire.adapter_version,
+    };
+    if source_key(&source) != *value
+        || source.schema != SOURCE_SCHEMA
+        || source.adapter_version != ADAPTER_VERSION
+        || !valid_oid(&source.encoded.sha256)
+        || !valid_oid(&source.decoded.sha256)
+        || source.project_id.trim().is_empty()
+        || source.project_id.len() > 256
+        || source.authority_namespace.trim().is_empty()
+        || source.authority_namespace.len() > 256
+    {
+        return Err("Noncanonical catalog source identity".into());
+    }
+    Ok(source)
+}
 impl Binding {
     fn source(&self) -> Result<Source> {
-        let wire: SourceWire = serde_json::from_value(self.source.clone())?;
-        if wire.adapter != ADAPTER_ID {
-            return Err("Unsupported catalog source adapter".into());
-        }
-        let encoding = match wire.encoding.as_str() {
-            "identity" => Encoding::Identity,
-            "gzip" => Encoding::Gzip,
-            _ => return Err("Unsupported catalog source encoding".into()),
-        };
-        let source = Source {
-            encoded: wire.encoded.blob(),
-            decoded: wire.decoded.blob(),
-            encoding,
-            schema: wire.source_schema,
-            project_id: wire.project,
-            authority_namespace: wire.authority,
-            adapter_version: wire.adapter_version,
-        };
-        if source_key(&source) != self.source {
-            return Err("Noncanonical catalog source identity".into());
-        }
-        Ok(source)
+        source_from_key(&self.source)
     }
     fn verify(&self) -> Result<validation::ValidatedIndex> {
         let source = self.source()?;

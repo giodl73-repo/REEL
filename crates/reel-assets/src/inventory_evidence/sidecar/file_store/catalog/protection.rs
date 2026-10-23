@@ -33,8 +33,28 @@ pub struct ProtectionSnapshot {
     protected: BTreeMap<String, u64>,
     sources: BTreeMap<String, u64>,
     limits: Limits,
+    work_bytes: u64,
+    work_nodes: usize,
+    work_objects: usize,
+    work_metadata: u64,
 }
 impl ProtectionSnapshot {
+    pub(crate) fn descriptors(&self) -> impl Iterator<Item = (&str, u64)> {
+        self.protected
+            .iter()
+            .map(|(id, bytes)| (id.as_str(), *bytes))
+    }
+    pub(crate) fn source_descriptors(&self) -> impl Iterator<Item = (&str, u64)> {
+        self.sources.iter().map(|(id, bytes)| (id.as_str(), *bytes))
+    }
+    pub(crate) fn work(&self) -> (u64, usize, usize, u64) {
+        (
+            self.work_bytes,
+            self.work_nodes,
+            self.work_objects,
+            self.work_metadata,
+        )
+    }
     pub fn protected_nodes(&self) -> usize {
         self.protected.len()
     }
@@ -232,5 +252,9 @@ pub fn collect(catalog: &Catalog, limits: Limits) -> Result<ProtectionSnapshot> 
         protected,
         sources,
         limits,
+        work_bytes: bytes,
+        work_nodes: nodes,
+        work_objects: objects,
+        work_metadata: metadata.used,
     })
 }

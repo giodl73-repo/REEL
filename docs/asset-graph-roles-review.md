@@ -332,3 +332,37 @@ combined staging/retained/job/media collector coverage and planner-decision
 shadow comparison remain before removal adoption. Streaming source preparation,
 deadline/cancellation, exact allocation, device durability and control/history
 compaction remain separate work. No existing collector receives deletion authority.
+
+## Combined collector protection and restrictive planner shadow increment
+
+Review base: `8292cdbdac1da8a20bf4e6a67d34362a1c7181b9`, plus new
+`sidecar/file_store/collector.rs`, `collector/{command,jobs,tests}.rs`,
+`tests/collector_shadow_cli.rs`, native adapters in `jobs.rs`/`tiering.rs`,
+catalog source/work accessors, CLI wiring and `inventory-evidence-collector-v1.md`.
+Producer-applied review uses all three infrastructure checklists (version 1)
+and Rights and Provenance. Owner: this implementation lane. This is not an
+independent review, human approval or live adoption. Earlier review hashes and
+test counts describe their original increments.
+
+| Role | Severity | Finding/correction and actual evidence |
+| --- | --- | --- |
+| Asset Graph and Version Integrity | Major corrected | Catalog-only protection omitted staging, retained history and other worktrees. Explicit combined scope now unions these with native selected/current/job-lease/control/tier-pin demand. A second consumer's input or lease holds the first consumer's historical demotion. Inventory-observed media remains outside scope; missing/incomplete declared coverage errors rather than returning zero demand. Explicit enrollment still cannot prove every consumer was declared. |
+| Asset Graph and Version Integrity | Major corrected | Version leases alone omit direct production-job inputs. A read-only adapter reuses native request validation, includes declared inputs/CAS tools, and separately protects manifest-bound published outputs. Fixtures prove absent payload/tool paths are not opened, output roles stay separate, malformed or mismatched controls reject, and result removal invalidates a snapshot. Scratch/unpublished outputs are not inferred. |
+| Storage Custody and Recovery | Major corrected | Partial staged data is demand, not a valid retained copy. Live stages receive holds without writer ownership; retained metadata requires exact full closure verification. Required original evidence remains demand without custody claims. Missing/corrupt retention rejects. Historical retained metadata remains protected after staging retirement/catalog tombstone; this does not keep all historical media hot. |
+| Registry Concurrency and Evidence Integrity | Major corrected | Single-pass membership is stale under concurrent sessions. Double capture compares controls, directory membership and native fingerprints, with catalog revision revalidation; later revalidation rejects changed demand. A writer can continue while protection is captured. No global lifetime lock is added. These observations are not an execution lease and cannot fence changes after return. |
+| Storage Custody and Recovery | Major corrected | Comparing a fresh independent batch after added holds could silently select extra removals. The unchanged native planner runs once; the overlay only changes protected demotion/archive proposals to holds and recomputes estimates. Fixtures preserve unrelated rows and prove no batch refill. A distinct shadow schema is rejected by existing executable-plan checks; no apply path is added. This is reference-plus-restriction, not independent planner parity. |
+| Registry Concurrency and Evidence Integrity | Advisory addressed | Combined providers need aggregate budgets. File/entry/metadata/node/data/hold/catalog costs are bounded across the declared providers; fixtures exhaust aggregate budgets. Directory enumeration is bounded separately from files read. Native consumer resolution still uses its existing internal limits; not all its reads are charged to this reader. Deadline/cancellation and exact memory/physical-I/O accounting remain open. |
+| Rights and Provenance | Advisory addressed | Private graph/scopes cannot appear in shareable scorecards. Snapshots have no automatic serialization; CLI stdout exposes schema/counts/booleans only. Executable fixtures exclude private sentinels and reject execution-like fields, unknown coverage and apply arguments without writes. Private diagnostics remain private. Only synthetic temporary caches were accessed; no network, live census, render, cleanup or installed binding change occurred. |
+
+Validation: all 426 tests pass (226 unit, five prior integration, 100 model,
+23 source adapter, 25 sidecar, 30 backend, 14 managed CLI and three collector CLI).
+The increment adds 14 collector unit cases and three executable cases. Strict
+all-target Clippy, formatting, ROLES structure and diff checks pass. Validation
+ran on Windows; no device/power-loss or other-platform guarantee is claimed.
+
+Disposition: optional positive protection union and read-only restrictive planner
+comparison implemented. Before removal adoption: explicit project/all-consumer
+enrollment, complete provider coverage, representative private-source performance
+measurement, execution fencing and independently verified retained custody.
+Snapshots never make unknown scope removable. No main merge, live reclamation,
+runtime adoption or media/index payload deletion is part of this increment.
