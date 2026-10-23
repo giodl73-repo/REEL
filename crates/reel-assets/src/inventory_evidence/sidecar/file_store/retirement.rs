@@ -261,6 +261,7 @@ impl FileStore {
     /// Append-only retained roots are protection anchors, not a mutable catalog.
     pub fn handoff(&mut self, parent: &Path, root: &Blob, source: &Source) -> Result<()> {
         self.admitted()?;
+        self.check_source_demand(source)?;
         if self.poisoned || self.sealed.as_ref() != Some(root) || marker_exists(self)? {
             return Err("Handoff requires a healthy sealed, non-retiring session".into());
         }
@@ -294,6 +295,7 @@ impl FileStore {
         root: &Blob,
         source: &Source,
     ) -> Result<RetirementPlan> {
+        self.check_source_demand(source)?;
         if self.poisoned || self.sealed.as_ref() != Some(root) {
             return Err("Retirement requires a healthy sealed session".into());
         }

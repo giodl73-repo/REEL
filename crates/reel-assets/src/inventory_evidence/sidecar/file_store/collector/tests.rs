@@ -65,6 +65,90 @@ fn enrolled_staging_is_held_and_invalid_fence_identity_never_becomes_empty_scope
     assert!(captured.revalidate().is_err());
     assert!(crate::object(&scope.cache, &node.sha256).exists());
 }
+
+#[cfg(windows)]
+#[test]
+fn original_source_demand_overlaps_build_handoff_and_retirement_without_selecting_observed_media() {
+    let (mut fixture, request) = setup();
+    let observed = fixture.put(b"inventory observation only", false);
+    fixture.baseline();
+    let raw = fs::read(fixture.root().join("baseline.json")).unwrap();
+    let blob = Blob {
+        sha256: hash(&raw),
+        bytes: raw.len() as u64,
+    };
+    let source = Source {
+        encoded: blob.clone(),
+        decoded: blob,
+        encoding: Encoding::Identity,
+        schema: SOURCE_SCHEMA.into(),
+        project_id: "fixture".into(),
+        authority_namespace: "fixture".into(),
+        adapter_version: ADAPTER_VERSION,
+    };
+    let scope = &request.caches[0];
+    let directory = scope.cache.join("publication-fence");
+    fs::create_dir(&directory).unwrap();
+    let domain = fence::Domain::initialize(&directory).unwrap();
+    let mut writer = FileStore::begin_fenced_source(
+        &scope.cache,
+        &scope.staging_parent,
+        "source",
+        super::super::Limits::default(),
+        &domain,
+        &source,
+    )
+    .unwrap();
+    // Demand does not establish custody: the original isn't in this CAS at all.
+    assert!(!crate::object(&scope.cache, &source.encoded.sha256).exists());
+    let before_build = capture(&request).unwrap();
+    assert!(
+        matches!(before_build.classify(&source.encoded.sha256).unwrap(), Membership::Held(reasons) if reasons.contains(&Reason::RequiredSource))
+    );
+    assert!(matches!(
+        before_build.classify(&observed).unwrap(),
+        Membership::OutsideDeclaredScope
+    ));
+    let prepared = prepare(
+        raw.as_slice(),
+        &source,
+        crate::inventory_evidence::Limits::default(),
+    )
+    .unwrap();
+    let root =
+        super::super::super::publish(&mut writer, &prepared, BuildLimits::default()).unwrap();
+    writer.seal(&root).unwrap();
+    writer
+        .handoff(&scope.retained_parent, &root, &source)
+        .unwrap();
+    drop(writer);
+    let mut recovered = FileStore::resume(&scope.cache, &scope.staging_parent, "source").unwrap();
+    let plan = recovered
+        .plan_retirement(&scope.retained_parent, &root, &source)
+        .unwrap();
+    recovered.apply_retirement(&plan, usize::MAX).unwrap();
+    assert_eq!(recovered.staged_nodes(), 0);
+    let after = capture(&request).unwrap();
+    assert!(
+        matches!(after.classify(&source.encoded.sha256).unwrap(), Membership::Held(reasons) if reasons.contains(&Reason::RequiredSource))
+    );
+    assert!(
+        matches!(after.classify(&root.sha256).unwrap(), Membership::Held(reasons) if reasons.contains(&Reason::RetainedIndex))
+    );
+    assert!(matches!(
+        after.classify(&observed).unwrap(),
+        Membership::OutsideDeclaredScope
+    ));
+    let path = recovered.staging_path().join("session.json");
+    let original = fs::read(&path).unwrap();
+    let mut damaged: Value = serde_json::from_slice(&original).unwrap();
+    damaged["source_demand"] = json!({});
+    fs::write(&path, serde_json::to_vec(&damaged).unwrap()).unwrap();
+    assert!(capture(&request).is_err());
+    assert!(after.revalidate().is_err());
+    fs::write(path, original).unwrap();
+    capture(&request).unwrap();
+}
 #[test]
 fn unprotected_rows_keep_reference_proposals_and_shadow_is_not_an_executable_plan() {
     let (mut f, request) = setup();

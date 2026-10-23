@@ -81,7 +81,7 @@ their original behavior. Arbitrary trusted-control rewriting or whole-lineage
 rollback is not prevented by a schema/version check.
 
 `managed::build_fenced` and the managed profile's optional `publication_fence`
-directory select this session protocol for all generated index nodes. The
+directory select enrolled publication for all generated index nodes. The
 profile opens an existing domain only; it never initializes or repairs one.
 The directory must be a separate child of the output cache, disjoint from
 staging, retention and catalog namespaces. Managed success remains count-only.
@@ -91,8 +91,47 @@ its metadata budget. Missing or changed fence identity makes capture fail,
 including when no nodes are staged; it never becomes an empty protected scope.
 This does not certify global enrollment. A fresh session/profile can still use
 version 1 when no cache-wide policy forbids it. Native job publication,
-original-source read demand, retained source receipts, catalog lifecycles and
+cross-project source demand, retained/catalog lifecycle cleanup and
 the removal executor still require their respective integration contracts.
+
+## Source demand before preparation
+
+`begin_fenced_source` and `begin_admitted_fenced_source` create version 3 session
+intent containing both the required fence binding and the exact canonical
+source descriptor. The latter includes encoded/decoded identities, encoding,
+project, authority and interpretation version, never the source body. The
+source's shared hash fence covers creation/sync of that compact intent, then
+releases before the caller opens, hashes or decompresses original evidence.
+The intent itself supplies continuing demand. No range lock spans source I/O.
+
+Enrolled managed builds reserve capacity and publish this version 3 session
+before source preparation; default unenrolled builds preserve their old order.
+A source-fence refusal precedes session creation. A missing/corrupt source after
+intent publication leaves a protected empty session, with no automatic retry,
+expiry or cleanup. The collector holds its encoded source hash as RequiredSource
+even when the source bytes are absent. This is demand, not verified custody.
+Media merely observed inside that inventory does not acquire selected status.
+
+Capacity-admitted version 3 sessions also persist `admission_required: true`
+before capacity-control publication. Missing capacity controls reject recovery
+and collection; interruption cannot fall back to an unadmitted writer. Existing
+explicit reacquisition remains necessary before mutation. Low-level constructors
+still require external volume admission and do not claim managed capacity.
+
+Named recovery validates the source descriptor and rejects version 3 without
+its source demand, as well as source-bearing older protocol combinations.
+Handoff and staging-retirement planning must use the identical descriptor;
+they cannot substitute another authority or evidence source. The retained
+receipt therefore overlaps the existing source intent before staging names
+retire. Session source demand remains afterwards and on failure; there is no
+new abandonment/source-release operation in this increment.
+
+The intent/domain lives in the output cache's explicit session scope. Source
+bytes can live in a different configured cache. This does not certify that
+every consumer or source-cache writer is enrolled; final removal must reconcile
+all participating domains and native controls. Source-byte custody, tier affinity,
+reference release and physical unlink remain separate checks. Do not infer
+removal permission from a released range lock or the existence of a receipt.
 
 ## Remaining integration contract
 
@@ -116,15 +155,17 @@ automatically honor new fences. No production runtime adoption occurs here.
 
 ## Validation
 
-Thirteen synthetic Windows integration cases plus a subprocess harness cover shared/exclusive behavior,
+Sixteen synthetic Windows integration cases plus a subprocess harness cover shared/exclusive behavior,
 unrelated-asset progress, partial-batch rollback, bounded waiting, conservative
 collisions, high offsets without file growth, invalid/missing/corrupt controls,
 control replacement prevention, idempotent initialization, killed publisher and
 remover recovery, retryable index publication with cache/node bounds, enrolled
 ordinary publication/recovery, conflicting domains, incomplete bindings and
-physical control replacement. One collector unit case rejects missing/recreated
-binding controls. Three managed executable cases cover enrolled build/recovery/
-parity, invalid-domain read-only failures and a removal-fenced node blocking admission.
-Two real child processes are terminated while holding ranges; surviving owners
+physical control replacement, source intent publication, source substitution and
+source-writer interruption. Two collector cases cover invalid bindings and source
+demand through handoff/staging retirement. Five managed executable cases cover
+enrolled build/recovery/parity, invalid-domain failures, fenced node/source refusal
+and missing-source failure with durable intent. Three real child processes are
+terminated while holding ranges or after source-intent publication; surviving owners
 keep their protection and released subjects can be reacquired. Tests access
 only temporary fixture directories, with no live cache, media or runtime change.

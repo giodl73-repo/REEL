@@ -457,3 +457,35 @@ Disposition: enrolled index-node sessions now enforce their persisted domain
 through ordinary publication, admitted construction and named recovery; managed
 profiles opt in explicitly. Full producer enrollment and removal integration
 remain open. Live caches, main and installed runtime bindings are unchanged.
+
+## Source-demand publication and retained overlap increment
+
+Review base: `2fa584e`, plus version 3 session intent/construction/recovery,
+admitted source construction, managed build ordering, collector source holds,
+handoff/retirement identity checks, fixtures and updated contracts. Review is
+producer-applied using the three infrastructure checklists (version 1) and
+Rights and Provenance. Owner: this implementation lane. No independent review,
+live adoption or full removal protocol is claimed.
+
+| Role | Severity | Finding/correction and actual evidence |
+| --- | --- | --- |
+| Registry Concurrency and Evidence Integrity | Major corrected for enrolled builds | A source can acquire demand only after it has already been read. Enrolled managed builds now reserve capacity and publish version 3 source intent before opening original evidence. The source hash's shared fence covers only compact session publication, then releases. A fenced-source refusal precedes session/source access; a missing source leaves durable demand and no automatic retry. Defaults remain compatible. |
+| Storage Custody and Recovery | Major corrected | Early source intent must not silently lose its admission contract after interruption. Admitted version 3 intent persists a required-capacity marker; missing capacity controls make recovery/collection fail. A fixture removes the capacity record after a failed source read and proves ordinary recovery cannot reinterpret it as an unadmitted writer. Low-level source constructors still require external volume admission. No process-kill-at-capacity-publication guarantee is claimed. |
+| Asset Graph and Version Integrity | Major corrected | Handoff could otherwise substitute source evidence or drop demand between stage/retained lifecycles. The exact canonical source descriptor persists through named recovery and must match handoff and retirement planning. A real native-report fixture retains RequiredSource before any node, after verified handoff, and after full staging retirement; observed media remains OutsideDeclaredScope. Session demand is deliberately not released or expired. |
+| Registry Concurrency and Evidence Integrity | Major corrected | Dropping a source range lock must not drop its published demand. A real child is terminated after source-intent publication; control bytes survive unchanged, ownership is released and explicit recovery can continue. Missing source demand in version 3, source-bearing old protocol combinations and malformed descriptors reject rather than producing an empty scope. Existing publisher/remover process fixtures remain passing. |
+| Storage Custody and Recovery | Blocking adoption gate retained | The source intent/domain is in the output cache and can refer to evidence in another configured cache. This does not enroll all consumers or source-cache writers and is not physical custody/tier affinity. Cache-wide policy, cross-domain reconciliation/order, native jobs, explicit demand release and final bounded check/unlink remain required. Existing removal does not automatically honor this intent. No new media/CAS unlink or reusable custody permit is added. |
+| Rights and Provenance | Advisory addressed | Only the existing bounded canonical source descriptor enters compact private session controls. No inventory body, observed-media list or new public identity-bearing receipt is written. Successful CLI summaries remain count/boolean-only. Source demand is provenance/intent, not selected media or independent custody. Synthetic fixtures only; no live cache, private media, Drive, daemon, network processing or runtime update occurred. |
+
+Validation: all 459 tests pass (229 unit, five prior integration, 100 model,
+23 source adapter, 25 sidecar, 30 backend, 19 managed CLI, 11 collector CLI and
+17 fence entries including the subprocess harness). This increment adds three
+source/fence cases, two managed executable cases and one collector lifecycle
+case. Three fence-suite child processes now test killed publishers, removers
+and source-intent writers. Strict all-target Clippy, formatting, ROLES structure
+and diff checks pass. Windows fixtures only; no power-loss/device or Unix claim.
+
+Disposition: opt-in index builds establish durable original-evidence demand
+before preparation, bind exact retained handoff and preserve demand through
+failure/recovery/staging retirement. Complete producer enrollment, explicit
+demand release and guarded physical removal remain separate work. Main, live
+caches and installed runtime bindings are unchanged.

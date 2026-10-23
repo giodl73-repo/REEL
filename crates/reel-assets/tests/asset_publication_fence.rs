@@ -17,6 +17,124 @@ fn hash(prefix: char) -> String {
 fn subjects(prefix: char) -> Vec<String> {
     vec![hash(prefix)]
 }
+fn source_demand() -> reel_assets::inventory_evidence::Source {
+    use reel_assets::inventory_evidence::{ADAPTER_VERSION, Blob, Encoding, SOURCE_SCHEMA, Source};
+    let blob = Blob {
+        sha256: format!("{:x}", Sha256::digest(b"source evidence")),
+        bytes: 15,
+    };
+    Source {
+        encoded: blob.clone(),
+        decoded: blob,
+        encoding: Encoding::Identity,
+        schema: SOURCE_SCHEMA.into(),
+        project_id: "synthetic".into(),
+        authority_namespace: "fixture".into(),
+        adapter_version: ADAPTER_VERSION,
+    }
+}
+
+#[test]
+fn source_intent_requires_its_fence_and_does_not_keep_a_lifetime_subject_lock() {
+    let temp = tempfile::tempdir().unwrap();
+    let cache = temp.path().canonicalize().unwrap();
+    for name in ["staging", "fence"] {
+        fs::create_dir(cache.join(name)).unwrap();
+    }
+    let domain = Domain::initialize(&cache.join("fence")).unwrap();
+    let source = source_demand();
+    let remover = domain
+        .acquire(
+            std::slice::from_ref(&source.encoded.sha256),
+            Mode::Remove,
+            Duration::ZERO,
+        )
+        .unwrap();
+    assert!(
+        FileStore::begin_fenced_source(
+            &cache,
+            &cache.join("staging"),
+            "source",
+            Limits::default(),
+            &domain,
+            &source
+        )
+        .is_err()
+    );
+    assert!(!cache.join("staging/source").exists());
+    drop(remover);
+    let writer = FileStore::begin_fenced_source(
+        &cache,
+        &cache.join("staging"),
+        "source",
+        Limits::default(),
+        &domain,
+        &source,
+    )
+    .unwrap();
+    let path = writer.staging_path().join("session.json");
+    let intent: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(intent["schema"], "reel.inventory-sidecar.session.v3");
+    // No long-lived source range lock: durable demand must veto removal later.
+    domain
+        .acquire(
+            std::slice::from_ref(&source.encoded.sha256),
+            Mode::Remove,
+            Duration::ZERO,
+        )
+        .unwrap();
+    drop(writer);
+    let mut missing = intent.clone();
+    missing.as_object_mut().unwrap().remove("source_demand");
+    fs::write(&path, serde_json::to_vec(&missing).unwrap()).unwrap();
+    assert!(FileStore::resume(&cache, &cache.join("staging"), "source").is_err());
+    fs::write(&path, serde_json::to_vec(&intent).unwrap()).unwrap();
+    FileStore::resume(&cache, &cache.join("staging"), "source").unwrap();
+}
+
+#[test]
+fn source_bound_handoff_and_retirement_reject_substituted_evidence_before_io() {
+    let temp = tempfile::tempdir().unwrap();
+    let cache = temp.path().canonicalize().unwrap();
+    for name in ["staging", "fence", "retained"] {
+        fs::create_dir(cache.join(name)).unwrap();
+    }
+    let domain = Domain::initialize(&cache.join("fence")).unwrap();
+    let source = source_demand();
+    let mut writer = FileStore::begin_fenced_source(
+        &cache,
+        &cache.join("staging"),
+        "source",
+        Limits::default(),
+        &domain,
+        &source,
+    )
+    .unwrap();
+    let root = writer.publish(b"deliberately not an index").unwrap();
+    writer.seal(&root).unwrap();
+    let mut wrong = source.clone();
+    wrong.authority_namespace = "different".into();
+    assert!(
+        writer
+            .handoff(&cache.join("retained"), &root, &wrong)
+            .unwrap_err()
+            .to_string()
+            .contains("persisted source demand")
+    );
+    assert!(
+        writer
+            .plan_retirement(&cache.join("retained"), &root, &wrong)
+            .is_err()
+    );
+    assert_eq!(fs::read_dir(cache.join("retained")).unwrap().count(), 0);
+    assert!(
+        writer
+            .staging_path()
+            .join("objects")
+            .join(root.sha256)
+            .exists()
+    );
+}
 
 #[test]
 fn enrolled_session_ordinary_publication_and_recovery_cannot_skip_its_fence() {
@@ -493,11 +611,54 @@ fn killed_remover_releases_its_range_without_stealing_other_owners() {
 }
 
 #[test]
+fn killed_source_intent_writer_keeps_durable_demand_and_can_resume() {
+    let temp = tempfile::tempdir().unwrap();
+    let cache = temp.path().canonicalize().unwrap();
+    for name in ["staging", "fence"] {
+        fs::create_dir(cache.join(name)).unwrap();
+    }
+    let domain = Domain::initialize(&cache.join("fence")).unwrap();
+    let mut writer = child(&cache, "source-intent");
+    let raw = fs::read(cache.join("staging/source/session.json")).unwrap();
+    writer.0.kill().unwrap();
+    writer.0.wait().unwrap();
+    let mut resumed = FileStore::resume(&cache, &cache.join("staging"), "source").unwrap();
+    assert_eq!(
+        fs::read(cache.join("staging/source/session.json")).unwrap(),
+        raw
+    );
+    domain
+        .acquire(
+            std::slice::from_ref(&source_demand().encoded.sha256),
+            Mode::Remove,
+            Duration::ZERO,
+        )
+        .unwrap();
+    resumed.publish(b"node after explicit recovery").unwrap();
+}
+
+#[test]
 fn subprocess_fence() {
     let Some(root) = std::env::var_os("REEL_FENCE_TEST_DIRECTORY") else {
         return;
     };
     let root = PathBuf::from(root);
+    if std::env::var("REEL_FENCE_TEST_MODE").unwrap() == "source-intent" {
+        let domain = Domain::open(&root.join("fence")).unwrap();
+        let _writer = FileStore::begin_fenced_source(
+            &root,
+            &root.join("staging"),
+            "source",
+            Limits::default(),
+            &domain,
+            &source_demand(),
+        )
+        .unwrap();
+        fs::write(root.join("ready"), b"ready").unwrap();
+        loop {
+            std::thread::park_timeout(Duration::from_secs(1));
+        }
+    }
     let domain = Domain::open(&root).unwrap();
     let mode = match std::env::var("REEL_FENCE_TEST_MODE").unwrap().as_str() {
         "publish" => Mode::Publish,

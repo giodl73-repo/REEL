@@ -9,8 +9,12 @@ use std::{
 
 const SESSION_SCHEMA: &str = "reel.inventory-sidecar.session.v1";
 const FENCED_SESSION_SCHEMA: &str = "reel.inventory-sidecar.session.v2";
+const SOURCE_SESSION_SCHEMA: &str = "reel.inventory-sidecar.session.v3";
 const SEAL_SCHEMA: &str = "reel.inventory-sidecar.seal.v1";
 const CONTROL_BYTES: u64 = 64 * 1024;
+fn is_false(value: &bool) -> bool {
+    !*value
+}
 mod capacity;
 pub mod catalog;
 pub mod collector;
@@ -46,11 +50,24 @@ struct Session {
     limits: Limits,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     publication_fence: Option<collector::fence::Binding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_demand: Option<Value>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    admission_required: bool,
 }
 impl Session {
     fn validate_protocol(&self) -> Result<()> {
-        match (self.schema.as_str(), self.publication_fence.is_some()) {
-            (SESSION_SCHEMA, false) | (FENCED_SESSION_SCHEMA, true) => Ok(()),
+        if self.admission_required && self.schema != SOURCE_SESSION_SCHEMA {
+            return Err("Admission marker requires source-session protocol".into());
+        }
+        match (
+            self.schema.as_str(),
+            self.publication_fence.is_some(),
+            self.source_demand.is_some(),
+        ) {
+            (SESSION_SCHEMA, false, false)
+            | (FENCED_SESSION_SCHEMA, true, false)
+            | (SOURCE_SESSION_SCHEMA, true, true) => Ok(()),
             _ => Err("Unsupported or incomplete sidecar session protocol".into()),
         }
     }
@@ -77,6 +94,7 @@ pub struct FileStore {
     requires_admission: bool,
     _reservation: Option<crate::admission::Reservation>,
     publication_fence: Option<collector::fence::Domain>,
+    source_demand: Option<Source>,
 }
 
 /// Exact named reads over an explicitly supplied existing cache. No session
@@ -239,7 +257,7 @@ impl FileStore {
     /// Explicit per-session creation only, no global lock or implicit recovery.
     /// Reserve capacity externally before beginning. No existing session reused.
     pub fn begin(cache: &Path, staging_parent: &Path, id: &str, limits: Limits) -> Result<Self> {
-        Self::begin_protocol(cache, staging_parent, id, limits, None)
+        Self::begin_protocol(cache, staging_parent, id, limits, None, None, false)
     }
     /// Persisted session enrollment; all ordinary publish calls on this writer
     /// and named recovery automatically use the same exact fence identity.
@@ -250,14 +268,37 @@ impl FileStore {
         limits: Limits,
         domain: &collector::fence::Domain,
     ) -> Result<Self> {
-        Self::begin_protocol(cache, staging_parent, id, limits, Some(domain))
+        Self::begin_protocol(cache, staging_parent, id, limits, Some(domain), None, false)
     }
+    /// Persist exact original-evidence demand under its shared publication
+    /// fence before the caller opens/reads it. Demand survives failure/recovery.
+    pub fn begin_fenced_source(
+        cache: &Path,
+        staging_parent: &Path,
+        id: &str,
+        limits: Limits,
+        domain: &collector::fence::Domain,
+        source: &Source,
+    ) -> Result<Self> {
+        Self::begin_protocol(
+            cache,
+            staging_parent,
+            id,
+            limits,
+            Some(domain),
+            Some(source),
+            false,
+        )
+    }
+    #[allow(clippy::too_many_arguments)] // explicit immutable session protocol parameters
     fn begin_protocol(
         cache: &Path,
         staging_parent: &Path,
         id: &str,
         limits: Limits,
         domain: Option<&collector::fence::Domain>,
+        source: Option<&Source>,
+        admission_required: bool,
     ) -> Result<Self> {
         check_limits(limits)?;
         let cache = checked_directory(cache)?;
@@ -277,6 +318,23 @@ impl FileStore {
             .as_ref()
             .map(|b| collector::fence::Domain::from_binding(&cache, b))
             .transpose()?;
+        let source_demand = source
+            .map(|s| catalog::source_from_key(&source_key(s)))
+            .transpose()?;
+        let _source_publication = if let Some(source) = &source_demand {
+            Some(
+                publication_fence
+                    .as_ref()
+                    .ok_or("Source demand requires enrolled publication")?
+                    .acquire(
+                        std::slice::from_ref(&source.encoded.sha256),
+                        collector::fence::Mode::Publish,
+                        std::time::Duration::ZERO,
+                    )?,
+            )
+        } else {
+            None
+        };
         let session = session_path(&parent, id)?;
         fs::create_dir(&session)?;
         let lock = owner(&session.join("owner.lock"), true)?;
@@ -284,7 +342,9 @@ impl FileStore {
         create_control(
             &session.join("session.json"),
             &Session {
-                schema: if binding.is_some() {
+                schema: if source_demand.is_some() {
+                    SOURCE_SESSION_SCHEMA
+                } else if binding.is_some() {
                     FENCED_SESSION_SCHEMA
                 } else {
                     SESSION_SCHEMA
@@ -295,6 +355,8 @@ impl FileStore {
                 id: id.into(),
                 limits,
                 publication_fence: binding,
+                source_demand: source_demand.as_ref().map(source_key),
+                admission_required,
             },
         )?;
         sync_directory(&parent)?;
@@ -307,9 +369,10 @@ impl FileStore {
             sealed: None,
             poisoned: false,
             _owner: lock,
-            requires_admission: false,
+            requires_admission: admission_required,
             _reservation: None,
             publication_fence,
+            source_demand,
         })
     }
     /// Explicit named recovery, bounded by immutable session budgets. Reads and
@@ -331,6 +394,11 @@ impl FileStore {
             return Err("Sidecar session scope mismatch".into());
         }
         check_limits(intent.limits)?;
+        let source_demand = intent
+            .source_demand
+            .as_ref()
+            .map(catalog::source_from_key)
+            .transpose()?;
         if let Some(binding) = &intent.publication_fence {
             binding.separate_from(&cache, &parent)?;
         }
@@ -352,6 +420,7 @@ impl FileStore {
             requires_admission: false,
             _reservation: None,
             publication_fence,
+            source_demand,
         };
         for entry in fs::read_dir(store.session.join("objects"))? {
             let entry = entry?;
@@ -385,6 +454,9 @@ impl FileStore {
             Err(e) => return Err(e.into()),
         }
         store.requires_admission = capacity::required(&store)?;
+        if intent.admission_required && !store.requires_admission {
+            return Err("Incomplete admitted source-session capacity contract".into());
+        }
         if store.sealed.is_none() && retirement::marker_exists(&store)? {
             return Err("Retirement marker requires a sealed session".into());
         }
@@ -401,6 +473,16 @@ impl FileStore {
     }
     pub fn sealed_root(&self) -> Option<&Blob> {
         self.sealed.as_ref()
+    }
+    fn check_source_demand(&self, source: &Source) -> Result<()> {
+        if self
+            .source_demand
+            .as_ref()
+            .is_some_and(|s| source_key(s) != source_key(source))
+        {
+            return Err("Index source differs from persisted source demand".into());
+        }
+        Ok(())
     }
     fn admitted(&self) -> Result<()> {
         if self.requires_admission && self._reservation.is_none() {

@@ -229,7 +229,7 @@ fn managed_profile_enrolls_every_node_and_preserves_fence_on_named_recovery() {
         .path();
     let intent: Value =
         serde_json::from_slice(&fs::read(session.join("session.json")).unwrap()).unwrap();
-    assert_eq!(intent["schema"], "reel.inventory-sidecar.session.v2");
+    assert_eq!(intent["schema"], "reel.inventory-sidecar.session.v3");
     let id = intent["id"].as_str().unwrap();
     let writer = FileStore::resume(&f.cache, &f.cache.join("staging"), id).unwrap();
     assert!(writer.sealed_root().is_some());
@@ -307,6 +307,78 @@ fn managed_build_cannot_admit_a_node_fenced_for_removal() {
     drop(removal);
     f.update(|p| p["session_id"] = json!("third"));
     assert_eq!(f.success("inventory-index-build")["catalog_revision"], 2);
+}
+
+#[cfg(windows)]
+#[test]
+fn managed_source_fence_refusal_precedes_source_access_and_session_creation() {
+    use reel_assets::inventory_evidence::sidecar::file_store::collector::fence::{Domain, Mode};
+    use std::time::Duration;
+    let f = Fixture::new(false, false);
+    let directory = f.cache.join("publication-fence");
+    fs::create_dir(&directory).unwrap();
+    let domain = Domain::initialize(&directory).unwrap();
+    f.update(|p| p["publication_fence"] = json!(directory));
+    f.success("inventory-index-init");
+    let subject = f
+        .source_file
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let _remover = domain
+        .acquire(&[subject], Mode::Remove, Duration::ZERO)
+        .unwrap();
+    fs::remove_file(&f.source_file).unwrap();
+    let out = f.run("inventory-index-build");
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("Publication fence unavailable"));
+    assert_eq!(fs::read_dir(f.cache.join("staging")).unwrap().count(), 0);
+}
+
+#[cfg(windows)]
+#[test]
+fn failed_source_read_keeps_demand_and_requires_a_new_explicit_build() {
+    use reel_assets::inventory_evidence::sidecar::file_store::collector::fence::Domain;
+    let f = Fixture::new(false, false);
+    let directory = f.cache.join("publication-fence");
+    fs::create_dir(&directory).unwrap();
+    let _domain = Domain::initialize(&directory).unwrap();
+    f.update(|p| p["publication_fence"] = json!(directory));
+    f.success("inventory-index-init");
+    let bytes = fs::read(&f.source_file).unwrap();
+    fs::remove_file(&f.source_file).unwrap();
+    let out = f.run("inventory-index-build");
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    let session = fs::read_dir(f.cache.join("staging"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let raw = fs::read(session.join("session.json")).unwrap();
+    let intent: Value = serde_json::from_slice(&raw).unwrap();
+    assert_eq!(intent["schema"], "reel.inventory-sidecar.session.v3");
+    assert!(intent["source_demand"].is_object());
+    assert_eq!(fs::read_dir(session.join("objects")).unwrap().count(), 0);
+    assert_eq!(f.success("inventory-index-recover")["catalog_revision"], 0);
+    fs::write(&f.source_file, bytes).unwrap();
+    f.update(|p| p["session_id"] = json!("retry"));
+    assert_eq!(f.success("inventory-index-build")["catalog_revision"], 1);
+    assert_eq!(fs::read(session.join("session.json")).unwrap(), raw);
+    assert_eq!(intent["admission_required"], true);
+    fs::remove_file(session.join("capacity.json")).unwrap();
+    assert!(
+        reel_assets::inventory_evidence::sidecar::file_store::FileStore::resume(
+            &f.cache,
+            &f.cache.join("staging"),
+            intent["id"].as_str().unwrap()
+        )
+        .is_err()
+    );
 }
 
 #[test]

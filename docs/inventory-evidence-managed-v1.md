@@ -22,22 +22,25 @@ the source asset, so an offline named source does not silently trigger recovery,
 archive fallback, source copying or a new census.
 
 `build` checks catalog scope and expected revision before opening the source.
-It verifies/prepares the exact encoded source asset, acquires the shared capacity
-allowance, publishes the index, seals staging, hands off verified retained links,
+The default path verifies/prepares the exact encoded source asset, acquires the
+shared capacity allowance, publishes the index, seals staging, hands off verified retained links,
 refreshes candidate proof and admits the expected catalog revision. Source bytes
 are unchanged. Staging stays protected after success; retirement is a separate
 explicit API/workflow. No source inventory or media is copied into Git.
 
 An optional private profile field, `publication_fence`, names an existing fence
 metadata directory inside the output cache, separate from staging, retention
-and catalog directories. It enables persisted version 2 session enrollment for
-every generated index node; ordinary publication and named session recovery
+and catalog directories. It enables persisted version 3 enrollment with exact
+source demand before source preparation, plus fences for every generated index node;
+ordinary publication and named session recovery
 then enforce that exact control-file identity. Initialization must have happened
 explicitly through the library; these commands only open the domain. Invalid or
 missing domains fail before source preparation/session creation. See the
 [publication fence contract](asset-publication-fence-v1.md). This optional field
-does not enroll native jobs, protect original source reads, forbid fresh legacy
+does not enroll native jobs, certify global source-cache coverage, forbid fresh legacy
 sessions or switch removal behavior. Default profiles retain version 1 sessions.
+If source access fails after intent publication, a protected session remains;
+the command does not retry or remove it. Retained handoff must bind the same source.
 
 `shadow` compares explicit exact-subject queries against the verified original
 source and currently selected index. It checks listed/captured-nonmembership

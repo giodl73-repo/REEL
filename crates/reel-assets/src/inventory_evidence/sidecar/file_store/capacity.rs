@@ -85,6 +85,33 @@ impl FileStore {
             Self::begin_fenced(cache, staging_parent, id, limits, domain)
         })
     }
+    /// Capacity-admitted source demand publication before original evidence I/O.
+    #[allow(clippy::too_many_arguments)] // existing explicit admission scope plus domain/source
+    pub fn begin_admitted_fenced_source(
+        root: &Path,
+        config: &Config,
+        cache: &Path,
+        staging_parent: &Path,
+        id: &str,
+        limits: Limits,
+        overhead: u64,
+        domain: &collector::fence::Domain,
+        source: &Source,
+    ) -> Result<Self> {
+        domain.binding(&checked_directory(cache)?)?;
+        catalog::source_from_key(&source_key(source))?;
+        Self::admit_new(root, config, cache, limits, overhead, || {
+            Self::begin_protocol(
+                cache,
+                staging_parent,
+                id,
+                limits,
+                Some(domain),
+                Some(source),
+                true,
+            )
+        })
+    }
     fn admit_new(
         root: &Path,
         config: &Config,

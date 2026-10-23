@@ -267,6 +267,22 @@ fn stage(
             let raw = reader.file(&binding.path(&scope.cache)?, false, CONTROL_BYTES)?;
             binding.validate_observed(&scope.cache, &raw)?;
         }
+        if let Some(source) = &intent.source_demand {
+            let source = catalog::source_from_key(source)?;
+            // Persisted intent is demand, not verified source custody or
+            // selection of the media observed inside the source inventory.
+            hold(
+                holds,
+                &source.encoded.sha256,
+                Reason::RequiredSource,
+                reader.limits.holds,
+            )?;
+        }
+        if intent.admission_required {
+            // A crash after session intent but before capacity control is not
+            // permission to recover/mutate as a low-level unadmitted writer.
+            plain(&session.join("capacity.json"), false)?;
+        }
         let contents = reader.directory(&session, 8)?;
         for entry in contents {
             let entry_name = entry

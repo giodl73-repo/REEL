@@ -118,6 +118,23 @@ fn build_protocol(
         request.key,
         request.expected_revision,
     )?;
+    // Enrolled writers publish durable source demand before even opening it.
+    // The source fence covers only intent publication, never preparation I/O.
+    let writer = if let Some(domain) = domain {
+        Some(FileStore::begin_admitted_fenced_source(
+            context.project_root,
+            context.storage,
+            request.cache,
+            request.staging_parent,
+            request.session_id,
+            request.budgets.store(),
+            request.staging_overhead_bytes,
+            domain,
+            request.source,
+        )?)
+    } else {
+        None
+    };
     let index = evidence::prepare(
         source_reader(
             request.source_cache,
@@ -127,17 +144,8 @@ fn build_protocol(
         request.source,
         request.budgets.preparation,
     )?;
-    let mut writer = if let Some(domain) = domain {
-        FileStore::begin_admitted_fenced(
-            context.project_root,
-            context.storage,
-            request.cache,
-            request.staging_parent,
-            request.session_id,
-            request.budgets.store(),
-            request.staging_overhead_bytes,
-            domain,
-        )?
+    let mut writer = if let Some(writer) = writer {
+        writer
     } else {
         FileStore::begin_admitted(
             context.project_root,
