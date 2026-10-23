@@ -742,6 +742,169 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
         .success()
     );
 
+    // Native completion can stop between lossless verification, encoding and
+    // final decode without issuing a delivery receipt or replaying prior work.
+    let staged = root.join("staged-completion");
+    fs::create_dir(&staged).unwrap();
+    let staged_job: serde_json::Value =
+        serde_json::from_slice(&fs::read(phased.join("job.json")).unwrap()).unwrap();
+    for name in staged_job["inputs"].as_object().unwrap().keys() {
+        fs::copy(phased.join(name), staged.join(name)).unwrap();
+    }
+    fs::copy(phased.join("job.json"), staged.join("job.json")).unwrap();
+    let staged_prepared = staged.join("prepared");
+    let staged_phase = |command: &str, input: &Path, output: &Path| {
+        Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
+            .arg(command)
+            .arg(input)
+            .arg("--input-root")
+            .arg(&staged)
+            .arg("--asset-root")
+            .arg(&staged)
+            .arg("--output-dir")
+            .arg(output)
+            .output()
+            .unwrap()
+    };
+    let staged_check = |command: &str| {
+        Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
+            .arg(command)
+            .arg(&staged_prepared)
+            .arg("--asset-root")
+            .arg(&staged)
+            .output()
+            .unwrap()
+    };
+    let prepared_stage = staged_phase("prepare", &staged.join("conform.json"), &staged_prepared);
+    assert!(
+        prepared_stage.status.success(),
+        "{}",
+        String::from_utf8_lossy(&prepared_stage.stderr)
+    );
+    assert!(!staged_check("encode-verified").status.success());
+    let staged_output = staged.join("finished");
+    assert!(
+        !staged_phase("finish-encoded", &staged_prepared, &staged_output)
+            .status
+            .success()
+    );
+    let before_staged: serde_json::Value =
+        serde_json::from_slice(&fs::read(staged_prepared.join("prepared.json")).unwrap()).unwrap();
+    let staged_master =
+        staged_prepared.join(before_staged["master"]["file"]["path"].as_str().unwrap());
+    let staged_master_bytes = fs::read(&staged_master).unwrap();
+    let verify_stage = staged_check("verify-consume-normalized");
+    assert!(
+        verify_stage.status.success(),
+        "{}",
+        String::from_utf8_lossy(&verify_stage.stderr)
+    );
+    let verified_directory = staged_prepared.join("verified-lossless");
+    let verification_file = verified_directory.join("verification.json");
+    let verification_bytes = fs::read(&verification_file).unwrap();
+    let verification: serde_json::Value = serde_json::from_slice(&verification_bytes).unwrap();
+    assert_eq!(verification["state"], "compact-delivery-pending");
+    assert!(verification["lossless_receipt"]["encoded_delivery"].is_null());
+    assert!(!verified_directory.join("receipt.json").exists());
+    assert!(!verified_directory.join("episode.mp4").exists());
+    assert!(!staged_output.exists());
+    for file in before_staged["normalized"].as_array().unwrap() {
+        if file["root"] == "prepared" {
+            assert!(
+                !staged_prepared
+                    .join(file["file"]["path"].as_str().unwrap())
+                    .exists()
+            );
+        }
+    }
+    let mut changed_verification = verification.clone();
+    changed_verification["job_sha256"] = "0".repeat(64).into();
+    write(&verification_file, &changed_verification);
+    assert!(!staged_check("encode-verified").status.success());
+    changed_verification = verification.clone();
+    changed_verification["lossless_receipt"]["segments"][0]["start_sample"] = 1.into();
+    write(&verification_file, &changed_verification);
+    assert!(!staged_check("encode-verified").status.success());
+    fs::write(&verification_file, &verification_bytes).unwrap();
+    let staged_catalog = fs::read(staged.join("catalog.json")).unwrap();
+    fs::write(staged.join("catalog.json"), b"changed source").unwrap();
+    assert!(!staged_check("encode-verified").status.success());
+    fs::write(staged.join("catalog.json"), staged_catalog).unwrap();
+    let mut changed_master = staged_master_bytes.clone();
+    let last = changed_master.len() - 1;
+    changed_master[last] ^= 1;
+    fs::write(&staged_master, &changed_master).unwrap();
+    assert!(!staged_check("encode-verified").status.success());
+    fs::write(&staged_master, &staged_master_bytes).unwrap();
+    let encode_stage = staged_check("encode-verified");
+    assert!(
+        encode_stage.status.success(),
+        "{}",
+        String::from_utf8_lossy(&encode_stage.stderr)
+    );
+    assert!(!staged_check("encode-verified").status.success());
+    assert!(!staged_output.exists());
+    assert!(!verified_directory.join("receipt.json").exists());
+    let encoded_file = verified_directory.join("episode.mp4");
+    let encoded_bytes = fs::read(&encoded_file).unwrap();
+    let encoding_file = verified_directory.join("encoding.json");
+    let encoding_bytes = fs::read(&encoding_file).unwrap();
+    let mut encoding: serde_json::Value = serde_json::from_slice(&encoding_bytes).unwrap();
+    assert_eq!(encoding["full_decode_verified"], false);
+    encoding["full_decode_verified"] = true.into();
+    write(&encoding_file, &encoding);
+    assert!(
+        !staged_phase("finish-encoded", &staged_prepared, &staged_output)
+            .status
+            .success()
+    );
+    fs::write(&encoding_file, &encoding_bytes).unwrap();
+    let mut changed_encoded = encoded_bytes.clone();
+    let last = changed_encoded.len() - 1;
+    changed_encoded[last] ^= 1;
+    fs::write(&encoded_file, changed_encoded).unwrap();
+    assert!(
+        !staged_phase("finish-encoded", &staged_prepared, &staged_output)
+            .status
+            .success()
+    );
+    fs::write(&encoded_file, &encoded_bytes).unwrap();
+    fs::write(&staged_master, changed_master).unwrap();
+    assert!(
+        !staged_phase("finish-encoded", &staged_prepared, &staged_output)
+            .status
+            .success()
+    );
+    fs::write(&staged_master, &staged_master_bytes).unwrap();
+    let finish_stage = staged_phase("finish-encoded", &staged_prepared, &staged_output);
+    assert!(
+        finish_stage.status.success(),
+        "{}",
+        String::from_utf8_lossy(&finish_stage.stderr)
+    );
+    let staged_receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(staged_output.join("receipt.json")).unwrap()).unwrap();
+    assert_eq!(staged_receipt["segments"], final_receipt["segments"]);
+    assert_eq!(
+        staged_receipt["boundary_findings"],
+        final_receipt["boundary_findings"]
+    );
+    assert_eq!(staged_receipt["timestamps_verified"], true);
+    assert_eq!(
+        staged_receipt["decoded_master_matches_ordered_segments"],
+        true
+    );
+    assert_eq!(
+        staged_receipt["encoded_delivery"]["full_decode_verified"],
+        true
+    );
+    assert_eq!(staged_receipt["publication"], "not-authorized");
+    assert_eq!(
+        fs::read(staged_output.join("episode.mp4")).unwrap(),
+        encoded_bytes
+    );
+    assert_eq!(fs::read(staged_master).unwrap(), staged_master_bytes);
+
     // Bounded normalization batches reuse issued intermediates and still feed
     // the ordinary preparation/finish checks; incomplete custody is not a movie.
     let batched = root.join("batched");

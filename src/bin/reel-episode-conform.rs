@@ -44,6 +44,22 @@ fn run() -> Result<()> {
             );
             return Ok(());
         }
+        if asset_flag == "--asset-root" && command == "verify-consume-normalized" {
+            reel::episode_conform::verify_prepared_consuming_normalized(
+                Path::new(prepared),
+                Path::new(assets),
+            )?;
+            println!("ordered lossless checks retained; compact delivery remains pending");
+            return Ok(());
+        }
+        if asset_flag == "--asset-root" && command == "encode-verified" {
+            reel::episode_conform::encode_verified_preparation(
+                Path::new(prepared),
+                Path::new(assets),
+            )?;
+            println!("compact encoding retained; full decode and policy checks remain pending");
+            return Ok(());
+        }
     }
     if let [
         _,
@@ -92,7 +108,7 @@ fn run() -> Result<()> {
     };
     if !matches!(
         command.as_str(),
-        "build" | "prepare" | "finish" | "finish-consume-normalized"
+        "build" | "prepare" | "finish" | "finish-consume-normalized" | "finish-encoded"
     ) || input_flag != "--input-root"
         || asset_flag != "--asset-root"
         || output_flag != "--output-dir"
@@ -111,14 +127,17 @@ fn run() -> Result<()> {
         );
         return Ok(());
     }
-    if matches!(command.as_str(), "finish" | "finish-consume-normalized") {
+    if matches!(
+        command.as_str(),
+        "finish" | "finish-consume-normalized" | "finish-encoded"
+    ) {
         if Path::new(input_root).canonicalize()? != Path::new(asset_root).canonicalize()? {
             bail!("finish requires one closed input/asset workspace");
         }
-        let finish = if command == "finish-consume-normalized" {
-            reel::episode_conform::finish_consuming_normalized
-        } else {
-            reel::episode_conform::finish
+        let finish = match command.as_str() {
+            "finish-consume-normalized" => reel::episode_conform::finish_consuming_normalized,
+            "finish-encoded" => reel::episode_conform::finish_encoded_preparation,
+            _ => reel::episode_conform::finish,
         };
         let receipt = finish(
             Path::new(manifest),

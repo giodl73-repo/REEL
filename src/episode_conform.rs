@@ -198,7 +198,7 @@ pub struct GeometryVerification {
     pub transformed_source_matches_selected: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct EncodedDelivery {
     pub filename: String,
     pub sha256: String,
@@ -341,7 +341,7 @@ pub struct SegmentReceipt {
     pub geometry_verification: Option<GeometryVerification>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Receipt {
     pub schema: String,
     pub episode_id: String,
@@ -378,11 +378,11 @@ pub struct Receipt {
     pub publication: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct NormalizationRetirement {
     pub files: usize,
     pub bytes: u64,
-    pub policy: &'static str,
+    pub policy: String,
 }
 
 pub(crate) struct NormalizationRetirementRequest {
@@ -390,7 +390,7 @@ pub(crate) struct NormalizationRetirementRequest {
     pub files: Vec<scene_delivery::FileRef>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PresentationVerificationCache {
     pub reused_verified_checks: usize,
     pub fresh_full_checks: usize,
@@ -1304,6 +1304,27 @@ pub fn finish_consuming_normalized(
     output: &Path,
 ) -> Result<Receipt> {
     checkpoint::finish(prepared, asset_root, output, true)
+}
+
+/// Verify ordered lossless picture/PCM, clocks and boundaries, then consume only
+/// generated normalizations. This checkpoint is not a completed delivery.
+pub fn verify_prepared_consuming_normalized(prepared: &Path, asset_root: &Path) -> Result<()> {
+    checkpoint::verify_preparation(prepared, asset_root)
+}
+
+/// Encode an unchanged, previously verified lossless preparation. The encoded
+/// movie still requires a separate complete decode and delivery-policy check.
+pub fn encode_verified_preparation(prepared: &Path, asset_root: &Path) -> Result<()> {
+    checkpoint::encode_verified(prepared, asset_root)
+}
+
+/// Finish a verified encoding only after complete decoding and policy checks.
+pub fn finish_encoded_preparation(
+    prepared: &Path,
+    asset_root: &Path,
+    output: &Path,
+) -> Result<Receipt> {
+    checkpoint::finish_encoded(prepared, asset_root, output)
 }
 
 fn build_internal(
@@ -2318,6 +2339,15 @@ pub(crate) fn finalize_conform(
     work: &Path,
     master_external: bool,
 ) -> Result<Receipt> {
+    finalize_conform_mode(state, work, master_external, false)
+}
+
+fn finalize_conform_mode(
+    state: ConformState,
+    work: &Path,
+    master_external: bool,
+    defer_compact: bool,
+) -> Result<Receipt> {
     let ConformState {
         normalization_retirement,
         preparation_sha256,
@@ -2436,7 +2466,7 @@ pub(crate) fn finalize_conform(
         Some(NormalizationRetirement {
             files: request.files.len(),
             bytes,
-            policy: "Explicit generated-normalization consumption after ordered picture/PCM, timestamp and boundary checks; original inputs and assembled master preserved",
+            policy: "Explicit generated-normalization consumption after ordered picture/PCM, timestamp and boundary checks; original inputs and assembled master preserved".into(),
         })
     } else {
         None
@@ -2447,149 +2477,10 @@ pub(crate) fn finalize_conform(
         .next()
         .unwrap_or("")
         .to_owned();
-    let encoded_delivery = if let Some(profile) = &manifest.compact_delivery {
-        if profile.crf > 51 || !(32..=512).contains(&profile.audio_bitrate_kbps) {
-            bail!("invalid compact episode encoding profile");
-        }
-        let target = work.join("episode.mp4");
-        let mut compact_encoder = command("ffmpeg");
-        compact_encoder
-            .args(["-v", "error", "-nostdin", "-i"])
-            .arg(&master)
-            .args(["-map", "0:v:0", "-map", "0:a:0", "-c:v", "libx264", "-crf"])
-            .arg(profile.crf.to_string())
-            .args(["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a"])
-            .arg(format!("{}k", profile.audio_bitrate_kbps))
-            .args(["-movflags", "+faststart"]);
-        if manifest.output_geometry.is_some() {
-            for (key, flag) in [
-                ("color_range", "-color_range"),
-                ("color_space", "-colorspace"),
-                ("color_transfer", "-color_trc"),
-                ("color_primaries", "-color_primaries"),
-            ] {
-                let value = &first.color_properties[key];
-                if value != "unknown" {
-                    compact_encoder.args([flag, value]);
-                }
-            }
-            // libx264 may omit its default limited-range VUI flag. MP4 does not
-            // retain Matroska's range tag, so pin known range in the bitstream.
-            match first.color_properties["color_range"].as_str() {
-                "tv" => {
-                    compact_encoder.args(["-bsf:v", "h264_metadata=video_full_range_flag=0"]);
-                }
-                "pc" => {
-                    compact_encoder.args(["-bsf:v", "h264_metadata=video_full_range_flag=1"]);
-                }
-                _ => {}
-            }
-        }
-        let status = compact_encoder.arg(&target).status()?;
-        if !status.success() {
-            bail!("compact episode encoding failed");
-        }
-        let decoded = command("ffmpeg")
-            .args(["-v", "error", "-xerror", "-nostdin", "-i"])
-            .arg(&target)
-            .args(["-map", "0:v:0", "-map", "0:a:0", "-f", "null", "-"])
-            .status()?;
-        if !decoded.success() {
-            bail!("compact episode full decode failed");
-        }
-        let probe = command("ffprobe")
-            .args([
-                "-v",
-                "error",
-                "-count_frames",
-                "-show_streams",
-                "-of",
-                "json",
-            ])
-            .arg(&target)
-            .output()?;
-        if !probe.status.success() {
-            bail!("compact episode probe failed");
-        }
-        let facts: serde_json::Value = serde_json::from_slice(&probe.stdout)?;
-        let streams = facts["streams"]
-            .as_array()
-            .context("compact episode streams missing")?;
-        let video = streams
-            .iter()
-            .find(|s| s["codec_type"] == "video")
-            .context("compact video missing")?;
-        let audio = streams
-            .iter()
-            .find(|s| s["codec_type"] == "audio")
-            .context("compact audio missing")?;
-        if manifest.output_geometry.is_some()
-            && (video["sample_aspect_ratio"] != "1:1"
-                || first
-                    .color_properties
-                    .iter()
-                    .any(|(key, expected)| video[key].as_str().unwrap_or("unknown") != expected))
-        {
-            bail!(
-                "compact delivery changed declared sample aspect ratio or color properties: expected {:?}, actual {:?}",
-                first.color_properties,
-                video
-            );
-        }
-        let (encoded_num, encoded_den) = fps_parts(
-            video["r_frame_rate"]
-                .as_str()
-                .context("compact frame rate missing")?,
-        )?;
-        let (source_num, source_den) = fps_parts(&first.fps)?;
-        let audio_duration: f64 = audio["duration"]
-            .as_str()
-            .context("compact audio duration missing")?
-            .parse()?;
-        let expected_audio_duration = sample_cursor as f64 / f64::from(manifest.output_sample_rate);
-        // MP4 edit lists trim encoder delay; allow one AAC frame plus one source
-        // video frame for container quantization, never cumulative scene padding.
-        let duration_tolerance =
-            1024.0 / f64::from(manifest.output_sample_rate) + source_den as f64 / source_num as f64;
-        if video["codec_name"] != "h264"
-            || video["width"].as_u64() != Some(first.width)
-            || video["height"].as_u64() != Some(first.height)
-            || video["nb_read_frames"]
-                .as_str()
-                .and_then(|s| s.parse::<u64>().ok())
-                != Some(frame_cursor)
-            || audio["codec_name"] != "aac"
-            || audio["sample_rate"]
-                .as_str()
-                .and_then(|s| s.parse::<u32>().ok())
-                != Some(manifest.output_sample_rate)
-            || audio["channels"].as_u64() != Some(2)
-            || u128::from(encoded_num) * u128::from(source_den)
-                != u128::from(source_num) * u128::from(encoded_den)
-            || !audio_duration.is_finite()
-            || (audio_duration - expected_audio_duration).abs() > duration_tolerance
-        {
-            bail!("compact episode media differs from selected delivery policy");
-        }
-        Some(EncodedDelivery {
-            filename: "episode.mp4".into(),
-            sha256: file_sha(&target)?,
-            bytes: fs::metadata(&target)?.len(),
-            video_codec: "h264".into(),
-            audio_codec: "aac".into(),
-            crf: profile.crf,
-            audio_bitrate_kbps: profile.audio_bitrate_kbps,
-            decoded_frames: frame_cursor,
-            full_decode_verified: true,
-            lossless_master_retained: profile.retain_lossless_master,
-        })
-    } else {
-        None
-    };
-    let receipt = Receipt {
+    let mut receipt = Receipt {
         schema: "reel.episode-conform-receipt.v1".into(),
-        episode_id: manifest.episode_id,
-        language: manifest.language,
+        episode_id: manifest.episode_id.clone(),
+        language: manifest.language.clone(),
         manifest_sha256: sha(&manifest_bytes),
         preparation_sha256,
         episode_presentation_fingerprint_sha256: presentation_fingerprint_sha256,
@@ -2601,7 +2492,7 @@ pub(crate) fn finalize_conform(
         master_sha256: file_sha(&master)?,
         master_bytes: fs::metadata(&master)?.len(),
         preassembled_master: manifest.preassembled_master.clone(),
-        encoded_delivery,
+        encoded_delivery: None,
         normalization_retirement,
         decoded_master_matches_ordered_segments: true,
         timestamps_verified: true,
@@ -2639,6 +2530,21 @@ pub(crate) fn finalize_conform(
         segments: records,
         publication: "not-authorized".into(),
     };
+    if defer_compact {
+        compact_profile(&manifest)?;
+        return Ok(receipt);
+    }
+    if manifest.compact_delivery.is_some() {
+        let target = work.join("episode.mp4");
+        encode_compact(&manifest, &first, &master, &target)?;
+        receipt.encoded_delivery = Some(verify_compact(
+            &manifest,
+            &first,
+            frame_cursor,
+            sample_cursor,
+            &target,
+        )?);
+    }
     fs::write(
         work.join("receipt.json"),
         serde_json::to_vec_pretty(&receipt)?,
@@ -2659,4 +2565,166 @@ pub(crate) fn finalize_conform(
         fs::copy(&master, work.join("master.mkv"))?;
     }
     Ok(receipt)
+}
+
+fn compact_profile(manifest: &Manifest) -> Result<&CompactDelivery> {
+    let profile = manifest
+        .compact_delivery
+        .as_ref()
+        .context("compact delivery profile missing")?;
+    if profile.crf > 51 || !(32..=512).contains(&profile.audio_bitrate_kbps) {
+        bail!("invalid compact episode encoding profile");
+    }
+    Ok(profile)
+}
+
+fn encode_compact(
+    manifest: &Manifest,
+    first: &MediaFacts,
+    master: &Path,
+    target: &Path,
+) -> Result<()> {
+    let profile = compact_profile(manifest)?;
+    let mut compact_encoder = command("ffmpeg");
+    compact_encoder
+        .args(["-v", "error", "-nostdin", "-i"])
+        .arg(master)
+        .args(["-map", "0:v:0", "-map", "0:a:0", "-c:v", "libx264", "-crf"])
+        .arg(profile.crf.to_string())
+        .args(["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a"])
+        .arg(format!("{}k", profile.audio_bitrate_kbps))
+        .args(["-movflags", "+faststart"]);
+    if manifest.output_geometry.is_some() {
+        for (key, flag) in [
+            ("color_range", "-color_range"),
+            ("color_space", "-colorspace"),
+            ("color_transfer", "-color_trc"),
+            ("color_primaries", "-color_primaries"),
+        ] {
+            let value = &first.color_properties[key];
+            if value != "unknown" {
+                compact_encoder.args([flag, value]);
+            }
+        }
+        // libx264 may omit its default limited-range VUI flag. MP4 does not
+        // retain Matroska's range tag, so pin known range in the bitstream.
+        match first.color_properties["color_range"].as_str() {
+            "tv" => {
+                compact_encoder.args(["-bsf:v", "h264_metadata=video_full_range_flag=0"]);
+            }
+            "pc" => {
+                compact_encoder.args(["-bsf:v", "h264_metadata=video_full_range_flag=1"]);
+            }
+            _ => {}
+        }
+    }
+    let status = compact_encoder.arg(target).status()?;
+    if !status.success() {
+        bail!("compact episode encoding failed");
+    }
+    Ok(())
+}
+
+fn verify_compact(
+    manifest: &Manifest,
+    first: &MediaFacts,
+    frame_cursor: u64,
+    sample_cursor: u64,
+    target: &Path,
+) -> Result<EncodedDelivery> {
+    let profile = compact_profile(manifest)?;
+    let decoded = command("ffmpeg")
+        .args(["-v", "error", "-xerror", "-nostdin", "-i"])
+        .arg(target)
+        .args(["-map", "0:v:0", "-map", "0:a:0", "-f", "null", "-"])
+        .status()?;
+    if !decoded.success() {
+        bail!("compact episode full decode failed");
+    }
+    let probe = command("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-count_frames",
+            "-show_streams",
+            "-of",
+            "json",
+        ])
+        .arg(target)
+        .output()?;
+    if !probe.status.success() {
+        bail!("compact episode probe failed");
+    }
+    let facts: serde_json::Value = serde_json::from_slice(&probe.stdout)?;
+    let streams = facts["streams"]
+        .as_array()
+        .context("compact episode streams missing")?;
+    let video = streams
+        .iter()
+        .find(|s| s["codec_type"] == "video")
+        .context("compact video missing")?;
+    let audio = streams
+        .iter()
+        .find(|s| s["codec_type"] == "audio")
+        .context("compact audio missing")?;
+    if manifest.output_geometry.is_some()
+        && (video["sample_aspect_ratio"] != "1:1"
+            || first
+                .color_properties
+                .iter()
+                .any(|(key, expected)| video[key].as_str().unwrap_or("unknown") != expected))
+    {
+        bail!(
+            "compact delivery changed declared sample aspect ratio or color properties: expected {:?}, actual {:?}",
+            first.color_properties,
+            video
+        );
+    }
+    let (encoded_num, encoded_den) = fps_parts(
+        video["r_frame_rate"]
+            .as_str()
+            .context("compact frame rate missing")?,
+    )?;
+    let (source_num, source_den) = fps_parts(&first.fps)?;
+    let audio_duration: f64 = audio["duration"]
+        .as_str()
+        .context("compact audio duration missing")?
+        .parse()?;
+    let expected_audio_duration = sample_cursor as f64 / f64::from(manifest.output_sample_rate);
+    // MP4 edit lists trim encoder delay; allow one AAC frame plus one source
+    // video frame for container quantization, never cumulative scene padding.
+    let duration_tolerance =
+        1024.0 / f64::from(manifest.output_sample_rate) + source_den as f64 / source_num as f64;
+    if video["codec_name"] != "h264"
+        || video["width"].as_u64() != Some(first.width)
+        || video["height"].as_u64() != Some(first.height)
+        || video["nb_read_frames"]
+            .as_str()
+            .and_then(|s| s.parse::<u64>().ok())
+            != Some(frame_cursor)
+        || audio["codec_name"] != "aac"
+        || audio["sample_rate"]
+            .as_str()
+            .and_then(|s| s.parse::<u32>().ok())
+            != Some(manifest.output_sample_rate)
+        || audio["channels"].as_u64() != Some(2)
+        || u128::from(encoded_num) * u128::from(source_den)
+            != u128::from(source_num) * u128::from(encoded_den)
+        || !audio_duration.is_finite()
+        || (audio_duration - expected_audio_duration).abs() > duration_tolerance
+    {
+        bail!("compact episode media differs from selected delivery policy");
+    }
+    Ok(EncodedDelivery {
+        filename: "episode.mp4".into(),
+        sha256: file_sha(target)?,
+        bytes: fs::metadata(target)?.len(),
+        video_codec: "h264".into(),
+        audio_codec: "aac".into(),
+        crf: profile.crf,
+        audio_bitrate_kbps: profile.audio_bitrate_kbps,
+        decoded_frames: frame_cursor,
+        full_decode_verified: true,
+        lossless_master_retained: profile.retain_lossless_master,
+    })
 }
