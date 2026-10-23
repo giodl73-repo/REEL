@@ -2359,7 +2359,12 @@ fn build_internal(
             } else {
                 encoder.args(["-c:v", "ffv1", "-pix_fmt", "yuv444p"]);
             }
-            if facts.sample_rate == manifest.output_sample_rate {
+            // A retained delivery source can already have the target sample rate
+            // while still carrying AAC or PCM16. The normalized intermediate
+            // must contain PCM24; copying that source audio leaves it invalid.
+            if facts.sample_rate == manifest.output_sample_rate
+                && !facts.requires_lossless_normalization
+            {
                 encoder.args(["-c:a", "copy"]);
             } else {
                 encoder

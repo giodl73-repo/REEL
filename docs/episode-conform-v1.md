@@ -341,3 +341,10 @@ the final delivery receipt. The final output also includes
 retention. Existing `finish` and `finish-consume-normalized` keep their complete
 validation behavior. A preparation stays pinned to its original executable;
 adopting a new runtime requires a new recipe and preparation.
+
+Retained-source presentation normalization also converts encoded source audio to
+stereo PCM24 when the source already has the selected sample rate. A matching
+sample rate alone does not permit AAC or PCM16 stream-copy into the lossless
+intermediate. The original selected container remains unchanged; existing
+decoded picture/PCM identity, frame/sample counts and timestamp checks still
+apply before conform accepts the normalized segment.

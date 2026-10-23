@@ -70,7 +70,7 @@ fn source_geometry(
         "-pix_fmt",
         if unknown_range { "yuv420p" } else { "yuv444p" },
         "-c:a",
-        "pcm_s24le",
+        if unknown_range { "aac" } else { "pcm_s24le" },
     ]);
     if unknown_range {
         cmd.args(["-f", "mp4"]);
