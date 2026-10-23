@@ -160,6 +160,20 @@ def produce(request, output):
     temporary=pdf.with_suffix('.tmp.pdf')
     with temporary.open('wb') as stream:writer.write(stream)
     temporary.replace(pdf)
+    individual=[]
+    combined=PdfReader(pdf)
+    for entry in request['entries']:
+        if 'individual_pdf' not in entry:continue
+        relative=Path(entry['individual_pdf'])
+        target=(output/relative).resolve()
+        if relative.is_absolute() or not target.is_relative_to(output.resolve()):raise ValueError('Individual score path escapes output')
+        numbers=[i for i,p in enumerate(pages) if p.get('song')==entry['title']]
+        if not numbers:raise ValueError('Individual score has no bound pages')
+        score=PdfWriter()
+        for number in numbers:score.add_page(combined.pages[number])
+        target.parent.mkdir(parents=True,exist_ok=True)
+        with target.open('wb') as stream:score.write(stream)
+        individual.append(dict(song=entry['title'],path=relative.as_posix(),source_pages=[i+1 for i in numbers],pages=len(numbers)))
     page=output/'Listen and review.html'
     page.write_text('''<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Full Golden Songbook</title><style>body{font:17px system-ui;max-width:1050px;margin:32px auto;padding:0 18px;background:#f6f5ee;color:#24342e}section{background:white;padding:22px;margin:25px 0;border-radius:10px}audio{width:100%}td,th{text-align:left;vertical-align:top;padding:10px;border-bottom:1px solid #ddd}button{padding:7px 12px;margin:3px;cursor:pointer}.gap{background:#fff0c4;padding:8px}a{color:#14624b}table{width:100%;border-collapse:collapse}</style><h1>Four full Goldens</h1><p>Private working songbook. Producer-applied notation and timing proposals; musical review pending.</p><p><a href="Full%20Golden%20Songbook%20-%20Working%20Edition.pdf">Open printable songbook</a></p><p>Original full recordings and complete canonical poems are preserved. Forced expected-text timing does not establish that every word is independently recognized. Pitch, rhythm, meter, repeated-note articulation and final engraving remain open.</p>'''+''.join(sections)+'''<script>document.querySelectorAll('button[data-audio]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('audio').forEach(a=>a.pause());const a=document.getElementById(b.dataset.audio);a.currentTime=Number(b.dataset.start);a.dataset.stop=b.dataset.end;a.play().catch(e=>alert(e.message));}));document.querySelectorAll('audio').forEach(a=>a.addEventListener('timeupdate',()=>{if(a.dataset.stop&&a.currentTime>=Number(a.dataset.stop)){a.pause();delete a.dataset.stop;}}));</script></html>''',encoding='utf-8',newline='\n')
     doc=pymupdf.open(pdf);renderdir=output/'render-check';renderdir.mkdir(exist_ok=True)
@@ -169,7 +183,7 @@ def produce(request, output):
         text=p.get_text()
         if '\ufffd' in text:raise ValueError('Replacement glyph in PDF')
         checks.append(dict(page=i+1,width=p.rect.width,height=p.rect.height,characters=len(text),rendered=True))
-    receipt=dict(schema='reel.local-songbook-review.v1',native_notation_modified=False,musical_approval=False,producer_applied=True,pages=pages,pdf_checks=checks,visual_review='Rendered pages retained; no human visual or listening approval is implied',outputs=[str(pdf),str(page)])
+    receipt=dict(schema='reel.local-songbook-review.v1',native_notation_modified=False,musical_approval=False,producer_applied=True,pages=pages,individual_scores=individual,pdf_checks=checks,visual_review='Rendered pages retained; no human visual or listening approval is implied',outputs=[str(pdf),str(page)])
     (output/'review-receipt.json').write_text(json.dumps(receipt,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
     return receipt
 
