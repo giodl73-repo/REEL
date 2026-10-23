@@ -29,6 +29,9 @@ the separate dry-run/application steps.
 The [schema and reference inspector](docs/asset-references-v1.md) exports typed
 contracts and builds a bounded, private offline graph with explicit gaps,
 distinguishing dependencies, inventory membership and historical versions.
+The [native cel source reader](docs/cel-source-inspection-v1.md) discovers stable
+picture events from explicit scene/binding controls across languages and cues,
+without resolving media or assuming a production-repository folder layout.
 
 ---
 
