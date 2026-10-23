@@ -3,6 +3,7 @@ use serde::Deserialize;
 pub mod accounting;
 pub mod admission;
 pub mod artifacts;
+pub mod cel_source;
 pub mod cli;
 pub mod demotion;
 pub mod goldens;

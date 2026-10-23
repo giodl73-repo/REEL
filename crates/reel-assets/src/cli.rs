@@ -17,6 +17,12 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
             .ok_or_else(|| "Missing argument".into())
     };
     match command {
+        "cel-inspect" => {
+            if args.len()!=4 {return Err("Usage: cel-inspect <scene.json> <scoped-bindings.json> <new-private-report.json>".into());}
+            let report=crate::cel_source::read(Path::new(arg(1)?),Path::new(arg(2)?))?;
+            crate::tiering::write_plan(Path::new(arg(3)?), &serde_json::to_value(&report)?)?;
+            Ok(report.summary())
+        },
         "schema-catalogue" => {
             if args.len()!=2 {return Err("Usage: schema-catalogue <new-output.json>".into());}
             let value=crate::references::catalogue()?;
