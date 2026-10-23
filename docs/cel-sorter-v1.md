@@ -8,6 +8,15 @@ Only declared selected images and the movie are resolved. Every file is freshly
 hashed; a corrupt earlier tier fails. Media are independent working copies,
 never writable hard links to canonical objects. No archive lookup or server starts.
 
+Declared identities and copy sizes are checked before any media reads or output
+creation. Repeated picture bindings share one exported picture per hash, and
+each unique hash is verified once during resolution. Each working copy is also
+hashed while copying. The budget counts actual media destinations: a movie copy
+and picture copy both count even if their bytes happen to have the same hash.
+Verification/copy reads are capped to declared bytes plus one; a growing source
+cannot bypass the budget. Failure may leave an incomplete new export directory,
+never a successful session or automatic cleanup of that directory.
+
 Serve the resulting folder through an explicitly requested local range-capable
 server. Drag cards, use up/down buttons, edit holds, substitute an already-bound
 image or remove a card. Playback uses the edited holds and the unchanged song.
@@ -21,6 +30,8 @@ writes native scene, alignment, bindings, graph and pointer documents. Unknown
 fields survive. The source remains unchanged. Draft alignment bytes must enter
 the project's cache before native compiler/build validation. Saving never selects
 a version, renders, approves or publishes. No setup/daemon/server is installed.
+Alignment rebinding uses the original intake hash rather than reopening its
+source path midway through draft application.
 
 The first bounded port supports one language and one full recording cue, an
 integral frame/sample clock, existing selected cels and ordinary native picture

@@ -85,14 +85,20 @@ fn source(project: &Path) -> Result<(BTreeMap<String, Value>, Value)> {
     }
     Ok((docs, Value::Object(hashes)))
 }
-fn resolve(roots: &[PathBuf], asset: &Value) -> Result<PathBuf> {
+fn identity(asset: &Value) -> Result<(&str, u64)> {
     let h = text(asset, "sha256")?;
     if h.len() != 64
-        || !h.bytes().all(|b| b.is_ascii_hexdigit())
+        || !h
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         || asset["cache_uri"] != format!("cache://sha256/{h}")
     {
         return Err("invalid asset identity".into());
     }
+    Ok((h, integer(asset, "bytes")?))
+}
+fn resolve(roots: &[PathBuf], asset: &Value) -> Result<PathBuf> {
+    let (h, bytes) = identity(asset)?;
     for root in roots {
         let p = root.join("objects/sha256").join(&h[..2]).join(h);
         let metadata = match fs::symlink_metadata(&p) {
@@ -103,10 +109,14 @@ fn resolve(roots: &[PathBuf], asset: &Value) -> Result<PathBuf> {
         if !metadata.is_file() || metadata.file_type().is_symlink() {
             return Err("cache object is not a regular file".into());
         }
-        if metadata.len() != integer(asset, "bytes")? {
+        if metadata.len() != bytes {
             return Err("cache byte mismatch".into());
         }
-        let mut f = fs::File::open(&p)?;
+        let file = fs::File::open(&p)?;
+        if file.metadata()?.len() != bytes {
+            return Err("cache object changed before verification".into());
+        }
+        let mut f = file.take(bytes.checked_add(1).ok_or("asset size overflow")?);
         let mut digest = Sha256::new();
         let mut b = [0; 65536];
         loop {
@@ -123,15 +133,17 @@ fn resolve(roots: &[PathBuf], asset: &Value) -> Result<PathBuf> {
     }
     Err(format!("active cache object absent {h}").into())
 }
-fn link(source: &Path, target: &Path, expected_hash: &str) -> Result<()> {
+fn link(source: &Path, target: &Path, expected_hash: &str, expected: u64) -> Result<()> {
     // Working editor files must never be writable aliases of canonical objects.
     let input = fs::File::open(source)?;
-    let expected = input.metadata()?.len();
+    if input.metadata()?.len() != expected {
+        return Err("export source size changed before copy".into());
+    }
     let mut output = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(target)?;
-    let mut reader = input.take(expected + 1);
+    let mut reader = input.take(expected.checked_add(1).ok_or("asset size overflow")?);
     let mut digest = Sha256::new();
     let mut copied = 0u64;
     let mut buffer = [0; 65536];
@@ -242,6 +254,69 @@ fn rows(docs: &BTreeMap<String, Value>) -> Result<Value> {
     }
     Ok(json!(result))
 }
+struct MediaPlan {
+    assets: BTreeMap<String, Value>,
+    pictures: BTreeSet<String>,
+    images: serde_json::Map<String, Value>,
+    movie_hash: String,
+}
+fn preflight(docs: &BTreeMap<String, Value>, rows: &Value, spec: &Value) -> Result<MediaPlan> {
+    let mut plan = MediaPlan {
+        assets: BTreeMap::new(),
+        pictures: BTreeSet::new(),
+        images: serde_json::Map::new(),
+        movie_hash: String::new(),
+    };
+    for row in rows.as_array().ok_or("rows")? {
+        let key = text(row, "picture_binding")?;
+        let asset = &docs["scene-bindings.json"]["assets"][key];
+        let (hash, bytes) = identity(asset)?;
+        if let Some(previous) = plan.assets.get(hash)
+            && integer(previous, "bytes")? != bytes
+        {
+            return Err("conflicting sizes for one media identity".into());
+        }
+        plan.assets
+            .entry(hash.into())
+            .or_insert_with(|| asset.clone());
+        plan.pictures.insert(hash.into());
+        plan.images
+            .insert(key.into(), json!(format!("media/{hash}.png")));
+    }
+    let (movie_hash, movie_bytes) = identity(&spec["movie"])?;
+    if let Some(previous) = plan.assets.get(movie_hash)
+        && integer(previous, "bytes")? != movie_bytes
+    {
+        return Err("conflicting sizes for one media identity".into());
+    }
+    // Pictures share one destination per hash. The movie is a second output
+    // name even if it has the same hash as a picture, so count its copy twice.
+    let total = plan
+        .assets
+        .values()
+        .try_fold(movie_bytes, |sum, asset| -> Result<u64> {
+            sum.checked_add(integer(asset, "bytes")?)
+                .ok_or_else(|| "export size overflow".into())
+        })?;
+    let budget = integer(spec, "max_export_copy_bytes")?;
+    if budget > 1024 * 1024 * 1024 || total > budget {
+        return Err("explicit editor-copy budget exceeded".into());
+    }
+    plan.movie_hash = movie_hash.into();
+    plan.assets
+        .entry(movie_hash.into())
+        .or_insert_with(|| spec["movie"].clone());
+    Ok(plan)
+}
+fn resolve_plan(
+    plan: &MediaPlan,
+    mut resolver: impl FnMut(&Value) -> Result<PathBuf>,
+) -> Result<BTreeMap<String, PathBuf>> {
+    plan.assets
+        .iter()
+        .map(|(hash, asset)| Ok((hash.clone(), resolver(asset)?)))
+        .collect()
+}
 fn export(spec: &Path) -> Result<()> {
     let s = read(spec)?;
     let project = Path::new(text(&s, "project")?);
@@ -251,51 +326,27 @@ fn export(spec: &Path) -> Result<()> {
     }
     let (docs, hashes) = source(project)?;
     let r = rows(&docs)?;
+    // Decide the complete declared copy budget before touching any media.
+    let plan = preflight(&docs, &r, &s)?;
     let roots: Vec<PathBuf> = s["cache_roots"]
         .as_array()
         .ok_or("cache_roots required")?
         .iter()
         .map(|v| v.as_str().map(PathBuf::from).ok_or("invalid root"))
         .collect::<std::result::Result<_, _>>()?;
-    let mut images = serde_json::Map::new();
-    let mut originals = vec![];
-    for row in r.as_array().ok_or("rows")? {
-        let k = text(row, "picture_binding")?;
-        let asset = &docs["scene-bindings.json"]["assets"][k];
-        let h = text(asset, "sha256")?;
-        let p = resolve(&roots, asset)?;
-        images.insert(k.into(), json!(format!("media/{h}.png")));
-        originals.push((p, h.to_owned()));
-    }
-    let movie = resolve(&roots, &s["movie"])?;
-    let mut unique = BTreeMap::new();
-    for (p, h) in &originals {
-        unique.insert(h.clone(), fs::metadata(p)?.len());
-    }
-    unique.insert(
-        text(&s["movie"], "sha256")?.to_owned(),
-        integer(&s["movie"], "bytes")?,
-    );
-    let total = unique.values().try_fold(0u64, |sum, bytes| {
-        sum.checked_add(*bytes).ok_or("export size overflow")
-    })?;
-    let budget = integer(&s, "max_export_copy_bytes")?;
-    if budget > 1024 * 1024 * 1024 || total > budget {
-        return Err("explicit editor-copy budget exceeded".into());
-    }
+    let resolved = resolve_plan(&plan, |asset| resolve(&roots, asset))?;
     fs::create_dir_all(out.join("media"))?;
-    for (p, h) in originals {
+    for h in &plan.pictures {
         let dest = out.join(format!("media/{h}.png"));
-        if !dest.exists() {
-            link(&p, &dest, &h)?;
-        }
+        link(&resolved[h], &dest, h, integer(&plan.assets[h], "bytes")?)?;
     }
     link(
-        &movie,
+        &resolved[&plan.movie_hash],
         &out.join("performance.mp4"),
-        text(&s["movie"], "sha256")?,
+        &plan.movie_hash,
+        integer(&s["movie"], "bytes")?,
     )?;
-    let data = json!({"schema":"reel.cel-sorter-session.v1","title":s["title"],"scene_id":docs["scene.json"]["scene_id"],"expected_inputs":hashes,"rows":r,"images":images,"sample_rate":docs["alignment.json"]["sample_rate"],"end_sample":docs["alignment.json"]["cue_end_sample"],"fps_numerator":docs["profile.json"]["frame_rate_numerator"],"fps_denominator":docs["profile.json"]["frame_rate_denominator"],"movie":"performance.mp4"});
+    let data = json!({"schema":"reel.cel-sorter-session.v1","title":s["title"],"scene_id":docs["scene.json"]["scene_id"],"expected_inputs":hashes,"rows":r,"images":plan.images,"sample_rate":docs["alignment.json"]["sample_rate"],"end_sample":docs["alignment.json"]["cue_end_sample"],"fps_numerator":docs["profile.json"]["frame_rate_numerator"],"fps_denominator":docs["profile.json"]["frame_rate_denominator"],"movie":"performance.mp4"});
     write(&out.join("session.json"), &data)?;
     fs::write(out.join("index.html"), include_str!("../cel_sorter.html"))?;
     fs::write(out.join("editor.js"), include_str!("../cel_sorter.js"))?;
@@ -411,7 +462,7 @@ fn apply(project: &Path, request: &Path, out: &Path) -> Result<()> {
     let assets = docs.get_mut("scene-bindings.json").ok_or("bindings")?["assets"]
         .as_object_mut()
         .ok_or("assets")?;
-    let old_hash = hash(&fs::read(project.join("alignment.json"))?);
+    let old_hash = text(&hashes, "alignment.json")?;
     let mut rebound = 0;
     for asset in assets.values_mut() {
         if asset["sha256"] == old_hash {
@@ -504,13 +555,123 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn asset(body: &[u8]) -> Value {
+        let sha256 = hash(body);
+        json!({"sha256":sha256,"bytes":body.len(),"cache_uri":format!("cache://sha256/{sha256}")})
+    }
+    fn media_fixture(project: &Path) -> Value {
+        fixture(project);
+        let mut bindings = read(&project.join("scene-bindings.json")).unwrap();
+        bindings["assets"]["one"] = asset(b"cell");
+        bindings["assets"]["two"] = asset(b"cell");
+        fs::write(
+            project.join("scene-bindings.json"),
+            serde_json::to_vec(&bindings).unwrap(),
+        )
+        .unwrap();
+        json!({"project":project,"cache_roots":[],"movie":asset(b"clip"),"max_export_copy_bytes":8})
+    }
+    #[test]
+    fn export_refuses_overbudget_before_missing_media_lookup_or_output_creation() {
+        let d = tempfile::tempdir().unwrap();
+        let mut spec = media_fixture(&d.path().join("source"));
+        spec["output"] = json!(d.path().join("output"));
+        spec["max_export_copy_bytes"] = json!(7);
+        let path = d.path().join("spec.json");
+        write(&path, &spec).unwrap();
+        assert!(
+            export(&path)
+                .unwrap_err()
+                .to_string()
+                .contains("budget exceeded")
+        );
+        assert!(!d.path().join("output").exists());
+    }
+    #[test]
+    fn repeated_cels_resolve_once_per_identity_and_copy_destinations_are_accounted() {
+        let d = tempfile::tempdir().unwrap();
+        let spec = media_fixture(&d.path().join("source"));
+        let (docs, _) = source(&d.path().join("source")).unwrap();
+        let repeated = json!(
+            (0..1000)
+                .map(|i| json!({"picture_binding":if i%2==0 {"one"} else {"two"}}))
+                .collect::<Vec<_>>()
+        );
+        let plan = preflight(&docs, &repeated, &spec).unwrap();
+        let mut calls = BTreeMap::new();
+        let resolved = resolve_plan(&plan, |asset| {
+            *calls.entry(text(asset, "sha256")?.to_owned()).or_insert(0) += 1;
+            Ok(PathBuf::from("synthetic"))
+        })
+        .unwrap();
+        assert_eq!(calls.len(), 2);
+        assert!(calls.values().all(|n| *n == 1));
+        assert_eq!(resolved.len(), 2);
+        assert_eq!(plan.pictures.len(), 1);
+        assert_eq!(plan.images.len(), 2);
+        let mut same_movie = spec.clone();
+        same_movie["movie"] = asset(b"cell");
+        same_movie["max_export_copy_bytes"] = json!(7);
+        assert!(preflight(&docs, &repeated, &same_movie).is_err());
+        same_movie["max_export_copy_bytes"] = json!(8);
+        assert!(preflight(&docs, &repeated, &same_movie).is_ok());
+        same_movie["movie"]["bytes"] = json!(3);
+        assert!(
+            preflight(&docs, &repeated, &same_movie)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("conflicting sizes")
+        );
+    }
+    #[test]
+    fn export_deduplicates_images_without_creating_writable_canonical_aliases() {
+        let d = tempfile::tempdir().unwrap();
+        let mut spec = media_fixture(&d.path().join("source"));
+        let cache = d.path().join("cache");
+        for body in [b"cell", b"clip"] {
+            let sha256 = hash(body);
+            let directory = cache.join("objects/sha256").join(&sha256[..2]);
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(directory.join(sha256), body).unwrap();
+        }
+        let out = d.path().join("output");
+        spec["output"] = json!(out);
+        spec["cache_roots"] = json!([cache]);
+        let path = d.path().join("spec.json");
+        write(&path, &spec).unwrap();
+        export(&path).unwrap();
+        assert_eq!(fs::read_dir(out.join("media")).unwrap().count(), 1);
+        fs::write(out.join(format!("media/{}.png", hash(b"cell"))), b"edit").unwrap();
+        assert_eq!(
+            fs::read(
+                cache
+                    .join("objects/sha256")
+                    .join(&hash(b"cell")[..2])
+                    .join(hash(b"cell"))
+            )
+            .unwrap(),
+            b"cell"
+        );
+        assert_eq!(fs::read(out.join("performance.mp4")).unwrap(), b"clip");
+        assert!(export(&path).is_err());
+    }
+    #[test]
+    fn grown_source_is_refused_before_copy_destination_creation() {
+        let d = tempfile::tempdir().unwrap();
+        let source = d.path().join("source");
+        let destination = d.path().join("destination");
+        fs::write(&source, b"grown source").unwrap();
+        assert!(link(&source, &destination, &hash(b"cell"), 4).is_err());
+        assert!(!destination.exists());
+    }
     #[test]
     fn copied_bytes_are_checked_against_expected_identity() {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("source");
         fs::write(&p, b"evil").unwrap();
         assert!(
-            link(&p, &d.path().join("target"), &hash(b"good"))
+            link(&p, &d.path().join("target"), &hash(b"good"), 4)
                 .unwrap_err()
                 .to_string()
                 .contains("hash/size")
