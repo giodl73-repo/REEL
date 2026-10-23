@@ -464,3 +464,25 @@ impl Store for FileStore {
         Ok(Box::new(verified(&destination, blob)?))
     }
 }
+
+impl FileStore {
+    /// Explicit per-node opt-in to publication/removal fencing. Ordinary
+    /// publication remains compatible; callers must enroll all producers before
+    /// treating a fence as an exclusive removal boundary. A busy fence does not
+    /// poison this writer or create staging, so callers may retry explicitly.
+    pub fn publish_fenced(
+        &mut self,
+        domain: &collector::fence::Domain,
+        bytes: &[u8],
+    ) -> Result<Blob> {
+        if bytes.len() as u64 > self.limits.node_bytes || !domain.belongs_to(&self.cache) {
+            return Err("Fenced publication exceeds node budget or cache domain".into());
+        }
+        let _fence = domain.acquire(
+            &[hash(bytes)],
+            collector::fence::Mode::Publish,
+            std::time::Duration::ZERO,
+        )?;
+        self.publish(bytes)
+    }
+}

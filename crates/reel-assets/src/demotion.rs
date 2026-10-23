@@ -106,6 +106,11 @@ pub(crate) struct Identity {
     allocated: u64,
     bytes: u64,
 }
+impl Identity {
+    pub(crate) fn same_file(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
 
 #[cfg(windows)]
 pub(crate) mod platform {

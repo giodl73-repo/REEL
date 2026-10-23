@@ -5,6 +5,7 @@ use crate::tiering;
 use serde_json::{Value, json};
 pub mod command;
 pub mod custody;
+pub mod fence;
 mod jobs;
 #[cfg(test)]
 mod tests;

@@ -395,3 +395,33 @@ removal authorization or persistent custody asset. Exact unlink integration
 still needs complete enrolled demand, compatible publication/removal fencing,
 and fresh retained-copy guards at the physical operation. No live reclamation,
 main merge or runtime replacement is part of this increment.
+
+## Per-asset publication fence primitive increment
+
+Review base: `f85dff0`, plus `collector/fence.rs`, `FileStore::publish_fenced`,
+the physical-identity comparison helper, Windows IO feature, process fixtures
+and `asset-publication-fence-v1.md`. Producer-applied review uses all three
+infrastructure checklists (version 1) and Rights and Provenance. Owner: this
+implementation lane. No independent review, production adoption or complete
+removal integration is claimed.
+
+| Role | Severity | Finding/correction and actual evidence |
+| --- | --- | --- |
+| Registry Concurrency and Evidence Integrity | Major corrected at primitive boundary | Repeated snapshots cannot exclude a publisher between the last check and unlink. The opt-in domain provides shared publisher/exclusive remover byte ranges per hash prefix, with conservative collisions. Same-asset exclusion and independent-asset progress pass across separate handles and real child processes. This establishes OS coordination only; it does not establish enrollment or make existing removals participate. |
+| Registry Concurrency and Evidence Integrity | Major corrected | A file per hash would create unbounded metadata churn. One fixed 32-byte control holds out-of-file byte ranges without file growth. Hash-prefix collisions only serialize extra subjects. Sorted bounded batches reject invalid/duplicate subjects, release partial acquisition on failure, and bound retry waits to two seconds. There is no forced guard expiry or lock stealing; caller lifetime remains explicit. |
+| Storage Custody and Recovery | Major corrected | Stale-owner file deletion can reset another owner's protection. Windows pins the control identity/ancestors against replacement, checks header/identity on acquisition, and rejects missing/corrupt controls without repair. Explicit reinitialization preserves existing locks. Actual killed publisher/remover processes release only their ranges; surviving guards remain effective. No persisted ownership record needs cleanup. Whole-lineage tampering and device durability remain outside this guarantee. |
+| Asset Graph and Version Integrity | Major corrected at optional writer boundary | Publishing a node must establish staged protection before CAS exposure inside the same fenced section. `publish_fenced` delegates to the existing verified path after acquiring its shared node fence. Busy/foreign/oversized refusal happens before publication and leaves the writer retryable. Fixtures prove no staged/CAS mutation on contention and unrelated-node progress. Ordinary publication is still compatible and unfenced; per-call opt-in is not session-wide enrollment. |
+| Storage Custody and Recovery | Blocking adoption gate retained | A fence alone cannot establish zero demand, retained custody, or an atomic removal transaction. Native jobs, retained source-evidence demand, catalogs, ordinary producers and the executor are not switched. Before adoption, persist one authoritative domain mapping, reject unfenced paths, establish overlapping lifecycle demand and define lock order with native worktree controls. Keep media verification/graph scans outside the short commit section. The current increment grants no new unlink path. |
+| Rights and Provenance | Advisory addressed | The control header carries no subject hash, identity, title or media data. Guards/domains have no automatic serialization, and no new CLI/scorecard/export is added. Fixtures use synthetic temporary directories and hidden test child processes; no live metadata directory, media, cache, daemon or installed binding is touched. Non-Windows platforms fail explicitly rather than silently using a global lock. |
+
+Validation: all 445 tests pass (227 unit, five prior integration, 100 model,
+23 source adapter, 25 sidecar, 30 backend, 14 managed CLI, 11 collector CLI and
+10 publication-fence test entries). The latter includes nine substantive cases
+and one subprocess harness, with two actual killed processes. Strict all-target
+Clippy, formatting, ROLES structure and diff checks pass. Windows only; no Unix,
+independent-device or power-loss claims.
+
+Disposition: optional OS fence primitive and bounded index-node writer API
+implemented. Removal integration remains gated on complete producer enrollment,
+overlapping demand and a bounded final check/unlink protocol. Existing collector,
+preflight, executor, runtime pins and live caches remain unchanged.

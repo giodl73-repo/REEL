@@ -106,6 +106,11 @@ case changes staging demand, policy, request or storage bindings after hashing
 and proves final checks reject success. These are Windows synthetic fixtures;
 no private media or live cache verification was performed.
 
+An optional [per-asset publication fence](asset-publication-fence-v1.md) now has
+OS/process fixtures and an explicit bounded index-node publication API. Complete
+producer enrollment and final unlink integration remain required; collector
+snapshots and verification summaries still confer no removal authority.
+
 ## Protection semantics
 
 The union includes native selected inputs/outputs, working and pinned state,

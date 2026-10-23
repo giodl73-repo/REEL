@@ -50,6 +50,9 @@ combines declared consumers, jobs and index protection, then restricts native
 planner proposals without applying removals or refilling held batch slots.
 Its named `collector-verify` preflight freshly hashes hot/retained pairs and
 rechecks demand, without copying, removing or exporting private identities.
+An optional [per-asset publication fence](docs/asset-publication-fence-v1.md)
+provides tested shared/exclusive coordination for short publication boundaries;
+it is not yet connected to live removal or complete producer enrollment.
 
 ---
 
