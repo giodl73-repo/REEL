@@ -922,7 +922,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         let attachment = format!("presentation-{}", request.language);
         attachments.push(json!({
             "id": attachment,
-            "target": {"kind":"title","title_id":scene.scene_id},
+            "target": {"kind":"title","title_id":delivery_id("title", &scene.scene_id)},
             "start":anchor(0, &cues)?,
             "end":anchor(duration, &cues)?
         }));
