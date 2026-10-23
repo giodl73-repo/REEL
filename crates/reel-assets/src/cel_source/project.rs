@@ -25,6 +25,7 @@ pub const FILES: &[&str] = &[
     "compile.json",
 ];
 const SCHEMA: &str = "reel.cel-sorter-project.v1";
+const SCOPED_SCHEMA: &str = "reel.cel-sorter-project.v3";
 const MULTI_SCHEMA: &str = "reel.cel-sorter-project.v2";
 pub const MAX_CUES: usize = 128;
 const TOTAL_BYTES: u64 = 32 * 1024 * 1024;
@@ -32,7 +33,9 @@ const PROFILE: &str = "cel-sorter-project.json";
 const REQUEST: &str = "edit-request.json";
 const CONTROL_BYTES: u64 = 2 * 1024 * 1024;
 fn control_budget(role: &str) -> u64 {
-    if matches!(role, "scene.json" | "scene-bindings.json") {
+    if role.starts_with("alignment-paths:") {
+        128 * 1024
+    } else if matches!(role, "scene.json" | "scene-bindings.json") {
         super::CONTROL_BYTES as u64
     } else {
         CONTROL_BYTES
@@ -44,8 +47,21 @@ fn control_budget(role: &str) -> u64 {
 struct Descriptor {
     schema: String,
     root: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    language: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "optional_files",
+        skip_serializing_if = "Option::is_none"
+    )]
+    alignment_paths: Option<BTreeMap<String, String>>,
     #[serde(deserialize_with = "unique_files")]
     files: BTreeMap<String, String>,
+}
+fn optional_files<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> std::result::Result<Option<BTreeMap<String, String>>, D::Error> {
+    Ok(Option::<NativePaths>::deserialize(decoder)?.map(|NativePaths(paths)| paths))
 }
 fn unique_files<'de, D: serde::Deserializer<'de>>(
     decoder: D,
@@ -80,6 +96,14 @@ pub struct Project {
     declared_files: BTreeMap<String, String>,
     captured: BTreeMap<String, Vec<u8>>,
     multi_cue: bool,
+    language: Option<String>,
+    declared_alignment_paths: Option<BTreeMap<String, String>>,
+}
+pub fn alignment_paths_role(language: &str) -> String {
+    format!("alignment-paths:{language}")
+}
+pub fn scoped_alignment_role(language: &str, cue_id: &str) -> String {
+    format!("alignment:{}", serde_json::json!([language, cue_id]))
 }
 pub fn alignment_role(cue_id: &str) -> String {
     format!("alignment:{cue_id}")
@@ -91,6 +115,7 @@ pub struct Snapshot {
     pub controls: BTreeMap<String, Value>,
     pub hashes: Value,
     pub bytes: BTreeMap<String, u64>,
+    pub raw: BTreeMap<String, Vec<u8>>,
 }
 
 fn plain(path: &Path, directory: bool) -> Result<()> {
@@ -180,6 +205,8 @@ impl Project {
                     .collect(),
                 captured: BTreeMap::new(),
                 multi_cue: false,
+                language: None,
+                declared_alignment_paths: None,
             });
         }
         plain(input, false)?;
@@ -189,8 +216,26 @@ impl Project {
             64 * 1024,
         )?;
         let descriptor: Descriptor = serde_json::from_slice(&bytes)?;
-        let multi_cue = descriptor.schema == MULTI_SCHEMA;
-        let required = if multi_cue {
+        let scoped = descriptor.schema == SCOPED_SCHEMA;
+        if scoped != descriptor.alignment_paths.is_some()
+            || scoped != descriptor.language.is_some()
+            || descriptor
+                .language
+                .as_ref()
+                .is_some_and(|language| language.trim().is_empty() || language.len() > 64)
+        {
+            return Err("Explicit language is required only for scoped project v3".into());
+        }
+        let multi_cue = matches!(descriptor.schema.as_str(), MULTI_SCHEMA | SCOPED_SCHEMA);
+        let required = if scoped {
+            vec![
+                "scene.json",
+                "scene-bindings.json",
+                "selected-graph.json",
+                "selected-pointer.json",
+                "profile.json",
+            ]
+        } else if multi_cue {
             vec![
                 "scene.json",
                 "scene-bindings.json",
@@ -202,13 +247,16 @@ impl Project {
         } else {
             FILES.iter().take(6).copied().collect()
         };
-        if !matches!(descriptor.schema.as_str(), SCHEMA | MULTI_SCHEMA)
-            || descriptor.root.as_os_str().is_empty()
+        if !matches!(
+            descriptor.schema.as_str(),
+            SCHEMA | MULTI_SCHEMA | SCOPED_SCHEMA
+        ) || descriptor.root.as_os_str().is_empty()
             || descriptor.files.len() > FILES.len()
             || required
                 .iter()
                 .any(|role| !descriptor.files.contains_key(*role))
             || (multi_cue && descriptor.files.contains_key("alignment.json"))
+            || (scoped && descriptor.files.contains_key("alignment-paths.json"))
             || descriptor
                 .files
                 .keys()
@@ -235,47 +283,88 @@ impl Project {
             descriptor_sha256: Some(tiering::digest(&bytes)),
             captured: BTreeMap::new(),
             multi_cue,
+            language: descriptor.language,
+            declared_alignment_paths: descriptor.alignment_paths,
         };
         if multi_cue {
-            let manifest = project.files["alignment-paths.json"].clone();
-            let bytes = project.read_path(&manifest, 128 * 1024)?;
-            let NativePaths(cues) = serde_json::from_slice(&bytes)?;
-            if cues.is_empty() || cues.len() > MAX_CUES {
-                return Err("Native cue path count exceeds budget".into());
-            }
-            let base = manifest
-                .rsplit_once('/')
-                .map(|(base, _)| base)
-                .unwrap_or("");
-            for (cue, path) in cues {
-                if cue.trim().is_empty() || cue.len() > 256 {
-                    return Err("Invalid bounded native cue identity".into());
-                }
-                let path = if base.is_empty() {
-                    path
+            let indexes: Vec<(Option<String>, String, String)> =
+                if let Some(indexes) = &project.declared_alignment_paths {
+                    if indexes.is_empty()
+                        || indexes.len() > 16
+                        || !indexes.contains_key(project.language().ok_or("language")?)
+                    {
+                        return Err("Scoped project needs bounded explicit language indexes".into());
+                    }
+                    let mut entries = Vec::new();
+                    for (language, path) in indexes {
+                        if language.trim().is_empty() || language.len() > 64 {
+                            return Err("Invalid bounded language index identity".into());
+                        }
+                        relative(path)?;
+                        if !paths.insert(path.to_lowercase()) {
+                            return Err("Aliased language index path".into());
+                        }
+                        let role = alignment_paths_role(language);
+                        project.files.insert(role.clone(), path.clone());
+                        entries.push((Some(language.clone()), role, path.clone()));
+                    }
+                    entries
                 } else {
-                    format!("{base}/{path}")
+                    vec![(
+                        None,
+                        "alignment-paths.json".into(),
+                        project.files["alignment-paths.json"].clone(),
+                    )]
                 };
-                relative(&path)?;
-                if !paths.insert(path.to_lowercase()) {
-                    return Err("Aliased native cue control path".into());
+            let mut total_cues = 0;
+            for (language, index_role, manifest) in indexes {
+                let bytes = project.read_path(&manifest, 128 * 1024)?;
+                let NativePaths(cues) = serde_json::from_slice(&bytes)?;
+                total_cues += cues.len();
+                if cues.is_empty() || total_cues > MAX_CUES {
+                    return Err("Native cue path count exceeds budget".into());
                 }
-                project.files.insert(alignment_role(&cue), path);
+                let base = manifest
+                    .rsplit_once('/')
+                    .map(|(base, _)| base)
+                    .unwrap_or("");
+                for (cue, path) in cues {
+                    if cue.trim().is_empty() || cue.len() > 256 {
+                        return Err("Invalid bounded native cue identity".into());
+                    }
+                    let path = if base.is_empty() {
+                        path
+                    } else {
+                        format!("{base}/{path}")
+                    };
+                    relative(&path)?;
+                    if !paths.insert(path.to_lowercase()) {
+                        return Err("Aliased native cue control path".into());
+                    }
+                    let role = language
+                        .as_ref()
+                        .map(|language| scoped_alignment_role(language, &cue))
+                        .unwrap_or_else(|| alignment_role(&cue));
+                    project.files.insert(role, path);
+                }
+                project.captured.insert(index_role, bytes);
             }
-            project
-                .captured
-                .insert("alignment-paths.json".into(), bytes);
         }
         Ok(project)
     }
     pub fn descriptor_sha256(&self) -> Option<&str> {
         self.descriptor_sha256.as_deref()
     }
+    pub fn language(&self) -> Option<&str> {
+        self.language.as_deref()
+    }
     pub fn is_multi_cue(&self) -> bool {
         self.multi_cue
     }
     pub fn session_schema(&self) -> &'static str {
-        if self.multi_cue {
+        if self.language.is_some() {
+            "reel.cel-sorter-session.v4"
+        } else if self.multi_cue {
             "reel.cel-sorter-session.v3"
         } else if self.descriptor_sha256.is_some() {
             "reel.cel-sorter-session.v2"
@@ -287,12 +376,18 @@ impl Project {
         match &self.descriptor_sha256 {
             Some(hash) => {
                 request["schema"]
-                    == if self.multi_cue {
+                    == if self.language.is_some() {
+                        "reel.cel-sorter-edit.v4"
+                    } else if self.multi_cue {
                         "reel.cel-sorter-edit.v3"
                     } else {
                         "reel.cel-sorter-edit.v2"
                     }
                     && request["expected_project"] == *hash
+                    && match &self.language {
+                        Some(language) => request["language"] == *language,
+                        None => request.get("language").is_none(),
+                    }
             }
             None => {
                 request["schema"] == "reel.cel-sorter-edit.v1"
@@ -315,6 +410,7 @@ impl Project {
         let mut controls = BTreeMap::new();
         let mut hashes = serde_json::Map::new();
         let mut sizes = BTreeMap::new();
+        let mut raw = BTreeMap::new();
         let mut total = 0;
         for (role, relative_path) in &self.files {
             let max = control_budget(role).min(TOTAL_BYTES - total);
@@ -330,11 +426,13 @@ impl Project {
             hashes.insert(role.clone(), Value::String(tiering::digest(&bytes)));
             sizes.insert(role.clone(), bytes.len() as u64);
             controls.insert(role.clone(), serde_json::from_slice(&bytes)?);
+            raw.insert(role.clone(), bytes);
         }
         Ok(Snapshot {
             controls,
             hashes: Value::Object(hashes),
             bytes: sizes,
+            raw,
         })
     }
     /// Create an entirely new candidate directory. Mapping and relative layout
@@ -346,6 +444,26 @@ impl Project {
         controls: &BTreeMap<String, Value>,
         request: &Value,
     ) -> Result<()> {
+        self.write_candidate(out, controls, request, None)
+    }
+    /// Preserve exact captured bytes for unchanged controls, including protected
+    /// alignments whose selected hashes bind formatting. No source reopening.
+    pub fn write_draft_from_snapshot(
+        &self,
+        out: &Path,
+        controls: &BTreeMap<String, Value>,
+        request: &Value,
+        snapshot: &Snapshot,
+    ) -> Result<()> {
+        self.write_candidate(out, controls, request, Some(snapshot))
+    }
+    fn write_candidate(
+        &self,
+        out: &Path,
+        controls: &BTreeMap<String, Value>,
+        request: &Value,
+        snapshot: Option<&Snapshot>,
+    ) -> Result<()> {
         if controls.len() != self.files.len()
             || controls.keys().any(|role| !self.files.contains_key(role))
         {
@@ -354,7 +472,25 @@ impl Project {
         let mut encoded = Vec::new();
         let mut total = 0u64;
         for (role, control) in controls {
-            let bytes = serde_json::to_vec(control)?;
+            let bytes = if let Some(snapshot) = snapshot {
+                let raw = snapshot
+                    .raw
+                    .get(role)
+                    .ok_or("Missing captured native control")?;
+                if snapshot.hashes[role] != tiering::digest(raw)
+                    || snapshot.bytes.get(role) != Some(&(raw.len() as u64))
+                {
+                    return Err("Captured native bytes differ from source locks".into());
+                }
+                let original: Value = serde_json::from_slice(raw)?;
+                if original == *control {
+                    raw.clone()
+                } else {
+                    serde_json::to_vec(control)?
+                }
+            } else {
+                serde_json::to_vec(control)?
+            };
             let max = if self.multi_cue && role == "alignment-paths.json" {
                 128 * 1024
             } else {
@@ -380,7 +516,16 @@ impl Project {
             encoded.push((
                 PROFILE.into(),
                 serde_json::to_vec(&Descriptor {
-                    schema: if self.multi_cue { MULTI_SCHEMA } else { SCHEMA }.into(),
+                    schema: if self.language.is_some() {
+                        SCOPED_SCHEMA
+                    } else if self.multi_cue {
+                        MULTI_SCHEMA
+                    } else {
+                        SCHEMA
+                    }
+                    .into(),
+                    language: self.language.clone(),
+                    alignment_paths: self.declared_alignment_paths.clone(),
                     root: ".".into(),
                     files: self.declared_files.clone(),
                 })?,

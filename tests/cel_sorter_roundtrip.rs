@@ -207,3 +207,50 @@ fn mixed_native_rates_remain_editable_but_delivery_compiler_holds_without_resamp
     assert!(!root.join("delivery").exists());
     assert_eq!(snapshot(&root), before);
 }
+
+#[test]
+fn scoped_bilingual_edits_compile_both_languages_with_other_lane_intact() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    let descriptor = ready_project(&source, false);
+    fixtures::add_english_lane(&source, &descriptor);
+    let before = snapshot(&source);
+    let project = Project::open(&descriptor).unwrap();
+    let (docs, locks) = editor::load(&project).unwrap();
+    let sequence = Sequence::for_project(&docs, &project).unwrap();
+    let mut rows = sequence.rows().as_array().unwrap().clone();
+    rows.swap(0, 1);
+    rows[0]["samples"] = json!(31000);
+    rows[1]["samples"] = json!(65000);
+    rows[0]["picture_binding"] = json!("one");
+    rows.remove(2);
+    rows[2]["samples"] = json!(88000);
+    let request = temp.path().join("request.json");
+    put(
+        &request,
+        &json!({"schema":"reel.cel-sorter-edit.v4","language":"es","expected_project":project.descriptor_sha256(),"expected_inputs":locks,"scene_id":"synthetic","rows":rows}),
+    );
+    let output = temp.path().join("candidate");
+    editor::apply(&descriptor, &request, &output).unwrap();
+    assert_eq!(snapshot(&source), before);
+    for (language, events) in [("es", 3), ("en", 4)] {
+        let mut request = manifest();
+        request.language = language.into();
+        request.delivery_id = format!("synthetic-{language}");
+        request.output_dir = format!("delivery-{language}");
+        if language == "en" {
+            request.alignment_paths = "timing/english-paths.json".into();
+        }
+        let receipt = compile_to_dir(&output, &request).unwrap();
+        assert_eq!(receipt["cue_count"], 2);
+        assert_eq!(receipt["semantic_event_count"], events);
+    }
+    assert_eq!(
+        fs::read(output.join("timing/english-0.json")).unwrap(),
+        before[&PathBuf::from("timing/english-0.json")]
+    );
+    assert_eq!(
+        get(&output.join("scene.json"))["language_event_bindings"]["en"],
+        docs["scene.json"]["language_event_bindings"]["en"]
+    );
+}

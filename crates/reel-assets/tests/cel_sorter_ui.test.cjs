@@ -85,3 +85,12 @@ test('delivery rate observations warn about mismatches without claiming build ac
  assert.equal(ui.clockNotice({delivery_clock:{state:'matches-profile'}}),'');
  assert.equal(ui.clockNotice({delivery_clock:{state:'not-declared'}}),'');assert.equal(ui.clockNotice({}),'');
 });
+
+test('scoped v4 requests bind language and isolate older autosaves',()=>{
+ const session={schema:'reel.cel-sorter-session.v4',language:'es',scene_id:'synthetic',expected_project:'a'.repeat(64),expected_inputs:{scene:'source'}};
+ const request=ui.draft(session,cues,'Scoped note');assert.equal(request.schema,'reel.cel-sorter-edit.v4');assert.equal(request.language,'es');assert(ui.matches(session,request));
+ assert(!ui.matches(session,{...request,language:'en'}));assert(!ui.matches(session,{...request,language:undefined}));assert(!ui.matches(session,{...request,schema:'reel.cel-sorter-edit.v3'}));
+ const old={...session,schema:'reel.cel-sorter-session.v3'};delete old.language;assert.notEqual(ui.key(session),ui.key(old));assert(!ui.matches(old,request));
+ for(const language of [undefined,'',' ','x'.repeat(65)])assert.throws(()=>ui.context({...session,language}));
+ assert.throws(()=>ui.context({...old,language:'es'}));
+});
