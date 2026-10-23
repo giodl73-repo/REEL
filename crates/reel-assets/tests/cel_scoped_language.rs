@@ -372,3 +372,82 @@ fn original_native_buffers_reject_duplicate_typed_fields_before_value_normalizat
             .contains("duplicate")
     );
 }
+
+#[test]
+fn separate_graph_files_preserve_protected_graph_pointer_bytes_and_stale_locks() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    let descriptor = fixture(&source);
+    fixtures::separate_language_graphs(&source, &descriptor);
+    // The same slot label in separate files is not a shared slot domain.
+    let mut scene = get(&source.join("scene.json"));
+    scene["language_event_bindings"]["en"][0]["picture_slot_id"] = json!("p1");
+    put(&source.join("scene.json"), &scene);
+    let mut graph = get(&source.join("en-graph.json"));
+    for slot in graph["slots"].as_array_mut().unwrap() {
+        if slot["slot_id"] == "en-p1" {
+            slot["slot_id"] = json!("p1");
+        }
+    }
+    for slot in graph["nodes"][0]["slots"].as_array_mut().unwrap() {
+        if *slot == "en-p1" {
+            *slot = json!("p1");
+        }
+    }
+    let typed: reel_assembly::Graph = serde_json::from_value(graph.clone()).unwrap();
+    graph["lock"] =
+        serde_json::to_value(reel_assembly::graph_lock(&typed, "en-draft").unwrap()).unwrap();
+    put(&source.join("en-graph.json"), &graph);
+    let mut pointer = get(&source.join("en-pointer.json"));
+    pointer["selected_lock"] = graph["lock"].clone();
+    put(&source.join("en-pointer.json"), &pointer);
+    let graph = fs::read(source.join("en-graph.json")).unwrap();
+    let pointer = fs::read(source.join("en-pointer.json")).unwrap();
+    let mut edits = rows(&descriptor);
+    edits[0]["picture_binding"] = json!("two");
+    let original = request(&descriptor, edits);
+    let output = apply(temp.path(), &descriptor, &original);
+    assert_eq!(fs::read(output.join("en-graph.json")).unwrap(), graph);
+    assert_eq!(fs::read(output.join("en-pointer.json")).unwrap(), pointer);
+    let profile = Project::open(&output.join("cel-sorter-project.json")).unwrap();
+    editor::load(&profile).unwrap();
+    let mut raw = graph;
+    raw.push(b' ');
+    fs::write(source.join("en-graph.json"), raw).unwrap();
+    let path = temp.path().join("stale.json");
+    put(&path, &original);
+    assert!(editor::apply(&descriptor, &path, &temp.path().join("stale")).is_err());
+    assert!(!temp.path().join("stale").exists());
+}
+#[test]
+fn incomplete_aliased_or_wrong_domain_protected_graph_routes_refuse() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    let descriptor = fixture(&source);
+    fixtures::separate_language_graphs(&source, &descriptor);
+    let original = get(&descriptor);
+    for case in 0..5 {
+        let mut config = original.clone();
+        match case {
+            0 => config["protected_graphs"] = json!({}),
+            1 => {
+                config["protected_graphs"] =
+                    json!({"es":{"graph":"en-graph.json","pointer":"en-pointer.json"}})
+            }
+            2 => config["protected_graphs"]["en"]["graph"] = json!("es-graph.json"),
+            3 => config["protected_graphs"]["en"]["pointer"] = json!("es-pointer.json"),
+            _ => config["protected_graphs"]["en"]["graph"] = json!("../outside.json"),
+        };
+        put(&descriptor, &config);
+        assert!(
+            Project::open(&descriptor)
+                .and_then(|project| editor::load(&project))
+                .is_err(),
+            "case {case}"
+        );
+    }
+    put(&descriptor, &original);
+    let raw=serde_json::to_string(&original).unwrap().replace("\"en\":{\"graph\":\"en-graph.json\",\"pointer\":\"en-pointer.json\"}","\"en\":{\"graph\":\"en-graph.json\",\"pointer\":\"en-pointer.json\"},\"en\":{\"graph\":\"en-graph.json\",\"pointer\":\"en-pointer.json\"}");
+    fs::write(&descriptor, raw).unwrap();
+    assert!(Project::open(&descriptor).is_err());
+}

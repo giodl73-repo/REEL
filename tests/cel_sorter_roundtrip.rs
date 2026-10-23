@@ -254,3 +254,40 @@ fn scoped_bilingual_edits_compile_both_languages_with_other_lane_intact() {
         docs["scene.json"]["language_event_bindings"]["en"]
     );
 }
+
+#[test]
+fn separate_language_graph_candidates_compile_independently_without_merging_control_files() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    let descriptor = ready_project(&source, false);
+    fixtures::add_english_lane(&source, &descriptor);
+    fixtures::separate_language_graphs(&source, &descriptor);
+    let original = fs::read(source.join("en-graph.json")).unwrap();
+    let project = Project::open(&descriptor).unwrap();
+    let (docs, locks) = editor::load(&project).unwrap();
+    let mut rows = Sequence::for_project(&docs, &project).unwrap().rows();
+    rows[0]["picture_binding"] = json!("two");
+    let request = temp.path().join("request.json");
+    put(
+        &request,
+        &json!({"schema":"reel.cel-sorter-edit.v4","language":"es","scene_id":"synthetic","expected_project":project.descriptor_sha256(),"expected_inputs":locks,"rows":rows}),
+    );
+    let output = temp.path().join("candidate");
+    editor::apply(&descriptor, &request, &output).unwrap();
+    assert_eq!(fs::read(output.join("en-graph.json")).unwrap(), original);
+    for language in ["es", "en"] {
+        let mut request = manifest();
+        request.language = language.into();
+        request.graph = format!("{language}-graph.json");
+        request.pointer = format!("{language}-pointer.json");
+        request.output_dir = format!("delivery-{language}");
+        request.delivery_id = format!("synthetic-{language}");
+        if language == "en" {
+            request.alignment_paths = "timing/english-paths.json".into();
+        }
+        assert_eq!(
+            compile_to_dir(&output, &request).unwrap()["semantic_event_count"],
+            4
+        );
+    }
+}

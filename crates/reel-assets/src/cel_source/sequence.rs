@@ -1,7 +1,10 @@
 //! Cue-local authoring clocks over native scene/alignment contracts. No media I/O.
 use super::{
     inspect,
-    project::{MAX_CUES, alignment_paths_role, alignment_role, scoped_alignment_role},
+    project::{
+        MAX_CUES, alignment_paths_role, alignment_role, protected_graph_role,
+        protected_pointer_role, scoped_alignment_role,
+    },
 };
 use crate::Result;
 use reel_assembly::{self as assembly, scene_authoring as native};
@@ -65,18 +68,24 @@ fn selected(state: &str) -> bool {
 }
 impl Sequence {
     pub fn new(docs: &BTreeMap<String, Value>, multi: bool) -> Result<Self> {
-        Self::intake(docs, multi, None)
+        Self::intake(docs, multi, None, false)
     }
     pub fn for_project(
         docs: &BTreeMap<String, Value>,
         project: &super::project::Project,
     ) -> Result<Self> {
-        Self::intake(docs, project.is_multi_cue(), project.language())
+        Self::intake(
+            docs,
+            project.is_multi_cue(),
+            project.language(),
+            project.has_protected_graphs(),
+        )
     }
     fn intake(
         docs: &BTreeMap<String, Value>,
         multi: bool,
         requested: Option<&str>,
+        separate_graphs: bool,
     ) -> Result<Self> {
         if [
             "scene.json",
@@ -136,6 +145,38 @@ impl Sequence {
         assembly::validate_selected_graph(&pointer, &graph)?;
         if graph.nodes.len() != 1 || graph.nodes[0].id != scene.scene_id {
             return Err("Editor requires one native scene node".into());
+        }
+        let mut protected_graphs = BTreeMap::new();
+        if separate_graphs {
+            let expected: BTreeSet<_> = materialized
+                .languages
+                .keys()
+                .filter(|id| **id != language)
+                .cloned()
+                .collect();
+            for prefix in ["protected-graph:", "protected-pointer:"] {
+                if docs
+                    .keys()
+                    .filter_map(|key| key.strip_prefix(prefix).map(str::to_owned))
+                    .collect::<BTreeSet<_>>()
+                    != expected
+                {
+                    return Err(
+                        "Protected graph routes must cover every other scene language".into(),
+                    );
+                }
+            }
+            for id in expected {
+                let graph: assembly::Graph =
+                    serde_json::from_value(docs[&protected_graph_role(&id)].clone())?;
+                let pointer: assembly::SelectedPointer =
+                    serde_json::from_value(docs[&protected_pointer_role(&id)].clone())?;
+                assembly::validate_selected_graph(&pointer, &graph)?;
+                if graph.nodes.len() != 1 || graph.nodes[0].id != scene.scene_id {
+                    return Err("Protected graph must name the same native scene node".into());
+                }
+                protected_graphs.insert(id, graph);
+            }
         }
         let mut all_clocks = Vec::new();
         let mut alignments = BTreeMap::new();
@@ -268,6 +309,11 @@ impl Sequence {
         let mut cells = BTreeMap::new();
         let mut by_event = BTreeMap::new();
         for cel in &report.cels {
+            let graph = if separate_graphs && cel.language != language {
+                &protected_graphs[&cel.language]
+            } else {
+                &graph
+            };
             let id = cel
                 .shared_semantic_id
                 .clone()
@@ -320,31 +366,45 @@ impl Sequence {
                 },
             );
         }
-        let graph_ids: BTreeSet<_> = graph
-            .events
-            .iter()
-            .map(|event| event.event_id.as_str())
-            .collect();
-        let expected: BTreeSet<_> = report
-            .cels
-            .iter()
-            .map(|cell| cell.event_id.as_str())
-            .collect();
-        let picture_slots: BTreeSet<_> = graph
-            .slots
-            .iter()
-            .filter(|slot| slot.lane == assembly::Lane::Picture)
-            .map(|slot| slot.slot_id.as_str())
-            .collect();
-        if graph_ids != expected
-            || picture_slots
-                != report
-                    .cels
-                    .iter()
-                    .map(|cell| cell.picture_slot_id.as_str())
-                    .collect()
-        {
-            return Err("Unsupported unrelated graph scope".into());
+        let domains: Vec<_> = if separate_graphs {
+            std::iter::once((Some(language.as_str()), &graph))
+                .chain(
+                    protected_graphs
+                        .iter()
+                        .map(|(language, graph)| (Some(language.as_str()), graph)),
+                )
+                .collect()
+        } else {
+            vec![(None, &graph)]
+        };
+        for (domain, graph) in domains {
+            let expected: Vec<_> = report
+                .cels
+                .iter()
+                .filter(|cell| domain.is_none_or(|language| cell.language == language))
+                .collect();
+            let ids: BTreeSet<_> = graph
+                .events
+                .iter()
+                .map(|event| event.event_id.as_str())
+                .collect();
+            let slots: BTreeSet<_> = graph
+                .slots
+                .iter()
+                .filter(|slot| slot.lane == assembly::Lane::Picture)
+                .map(|slot| slot.slot_id.as_str())
+                .collect();
+            if ids != expected.iter().map(|cell| cell.event_id.as_str()).collect()
+                || slots
+                    != expected
+                        .iter()
+                        .map(|cell| cell.picture_slot_id.as_str())
+                        .collect()
+            {
+                return Err(
+                    "Selected graph must cover exactly its declared language domain".into(),
+                );
+            }
         }
         let mut rows = Vec::new();
         for span in spans {

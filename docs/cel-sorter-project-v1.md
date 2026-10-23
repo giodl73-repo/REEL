@@ -183,3 +183,36 @@ its recorded hash/size refuses. None of these APIs grants publication authority.
 The complete scene/graph hash changes with an edit, so old build receipts remain
 bound to their original snapshots even when the other lane is semantically
 unchanged. Scoped drafts do not select a new Golden or reclaim media.
+
+## Separate language graph files
+
+When each language already has its own selected native graph and pointer, keep
+those files separate. Project v3 accepts an optional `protected_graphs` map:
+
+```json
+"protected_graphs": {
+  "en": {
+    "graph": "assembly/en-graph.json",
+    "pointer": "assembly/en-current.json"
+  }
+}
+```
+
+The five core roles still name the edited language's graph and pointer. This
+map must cover every other scene language exactly once, exclude the edited
+language, and contain 1–15 entries. Without it, the existing combined-graph
+contract applies. Partial mixtures of combined and separate graphs reject.
+Each graph must contain exactly its language's native cels in one scene node;
+each pointer must select that graph correctly. No graph fields are merged.
+
+Graph/pointer routes obey the same bounded, root-relative path and alias rules
+as other controls. Duplicate language keys, unknown route fields, wrong-domain
+events, missing languages and stale protected-file hashes refuse. Slot names
+belong to their graph: identical labels in two separate files are independent,
+while references sharing a slot inside one graph retain the existing protection.
+
+Captured roles are `protected-graph:<language>` and
+`protected-pointer:<language>`. Their original raw bytes and every other lane's
+alignment/index controls remain unchanged in the candidate. The emitted project
+descriptor retains the explicit map. Session/edit v4 already locks the complete
+descriptor and all controls; no alternate request grammar is introduced.

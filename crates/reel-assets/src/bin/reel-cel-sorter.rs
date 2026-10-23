@@ -256,9 +256,33 @@ fn apply(project: &Path, request: &Path, out: &Path) -> Result<()> {
     );
     Ok(())
 }
+fn inspect_project(input: &Path, out: &Path) -> Result<()> {
+    let project = Project::open(input)?;
+    let (docs, hashes) = load(&project)?;
+    let sequence = Sequence::for_project(&docs, &project)?;
+    let rows = sequence.rows();
+    let count = rows.as_array().ok_or("rows")?.len();
+    let mut request = json!({"schema":project.session_schema().replace("session","edit"),"scene_id":docs["scene.json"]["scene_id"],"expected_inputs":hashes,"rows":rows,"notes":"","human_approval":false});
+    if let Some(hash) = project.descriptor_sha256() {
+        request["expected_project"] = json!(hash);
+    }
+    if let Some(language) = project.language() {
+        request["language"] = json!(language);
+    }
+    let report = json!({"schema":"reel.cel-sorter-inspection.v1","edit_request":request,"clock":sequence.session_clock(),"media_resolved":false});
+    if serde_json::to_vec(&report)?.len() > 2 * 1024 * 1024 {
+        return Err("Private inspection exceeds control budget".into());
+    }
+    write(out, &report)?;
+    println!(
+        "{}",
+        json!({"cels":count,"language_scoped":project.language().is_some(),"protected_languages":sequence.other_cues.iter().map(|cue|&cue.language).collect::<BTreeSet<_>>().len(),"media_resolved":false})
+    );
+    Ok(())
+}
 fn main() -> Result<()> {
     let a: Vec<String> = env::args().collect();
-    match a.get(1).map(String::as_str){Some("export") if a.len()==3=>export(Path::new(&a[2])),Some("apply") if a.len()==5=>apply(Path::new(&a[2]),Path::new(&a[3]),Path::new(&a[4])),_=>Err("usage: reel-cel-sorter export <spec.json> | apply <native-project> <edit.json> <new-draft-dir>".into())}
+    match a.get(1).map(String::as_str){Some("inspect") if a.len()==4=>inspect_project(Path::new(&a[2]),Path::new(&a[3])),Some("export") if a.len()==3=>export(Path::new(&a[2])),Some("apply") if a.len()==5=>apply(Path::new(&a[2]),Path::new(&a[3]),Path::new(&a[4])),_=>Err("usage: reel-cel-sorter inspect <project> <new-private-report> | export <spec.json> | apply <native-project> <edit.json> <new-draft-dir>".into())}
 }
 
 #[cfg(test)]
@@ -987,6 +1011,21 @@ mod tests {
         assert_eq!(session["language"], "es");
         assert!(session["images"].get("english-image").is_none());
         assert_eq!(session["rows"].as_array().unwrap().len(), 4);
+    }
+    #[test]
+    fn metadata_inspection_handles_separate_graphs_without_media_or_output_overwrite() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let descriptor = multi_fixture(&source);
+        super::cel_fixtures::add_english_lane(&source, &descriptor);
+        super::cel_fixtures::separate_language_graphs(&source, &descriptor);
+        let report = temp.path().join("private.json");
+        inspect_project(&descriptor, &report).unwrap();
+        let data = read(&report).unwrap();
+        assert_eq!(data["edit_request"]["language"], "es");
+        assert_eq!(data["edit_request"]["rows"].as_array().unwrap().len(), 4);
+        assert_eq!(data["media_resolved"], false);
+        assert!(inspect_project(&descriptor, &report).is_err());
     }
     #[test]
     fn delivery_clock_observations_do_not_change_native_editability() {
