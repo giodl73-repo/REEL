@@ -1228,6 +1228,13 @@ mod tests {
     }
 
     #[test]
+    fn scoped_scene_title_ids_are_safe_and_distinct() {
+        let nested = delivery_id("title", "journey-01/intro-01");
+        assert!(nested.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')));
+        assert_ne!(nested, delivery_id("title", "journey-01-intro-01"));
+    }
+
+    #[test]
     fn superseded_picture_event_is_not_counted_as_active() {
         let event = |id: &str, language: &str| {
             json!({
