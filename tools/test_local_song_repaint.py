@@ -1,9 +1,20 @@
 import unittest
 import numpy as np
-from local_song_repaint import splice, validate
+from local_song_repaint import splice, validate, validate_source_mode
 
 
 class RepaintTests(unittest.TestCase):
+    def test_instrumental_patch_and_source_scope(self):
+        permissions=dict(private_only=True,external_upload=False,identifiable_imitation=False,public_release=False)
+        plan=dict(schema='reel.local-song-repaint.v1',instrumental=True,permissions=permissions,patches=[dict(start=2,end=7,lyrics='[Instrumental]')])
+        request=dict(instrumental=True,canonical_lyrics='',render_lyrics='[Instrumental]',permissions=permissions)
+        validate(plan,100,10);validate_source_mode(plan,request)
+        with self.assertRaises(ValueError):validate_source_mode(plan,dict(request,instrumental=False))
+        with self.assertRaises(ValueError):validate_source_mode(plan,dict(request,canonical_lyrics='invented'))
+        with self.assertRaises(ValueError):validate_source_mode(dict(plan,permissions={}),request)
+        with self.assertRaises(ValueError):validate(dict(plan,patches=[dict(start=2,end=7,lyrics='invented words')]),100,10)
+        with self.assertRaises(ValueError):validate(dict(plan,instrumental='true'),100,10)
+
     def test_only_mask_changes(self):
         source=np.arange(200,dtype=np.float32).reshape(100,2)/200
         result=splice(source,np.zeros_like(source),10,2,5,.2)

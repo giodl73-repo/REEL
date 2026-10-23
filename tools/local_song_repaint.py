@@ -15,6 +15,8 @@ def validate(plan, frames, rate):
         raise ValueError('Unsupported repaint plan')
     if not 1 <= len(plan['patches']) <= 3:
         raise ValueError('Expected one to three bounded patches')
+    if type(plan.get('instrumental', False)) is not bool:
+        raise ValueError('Instrumental repaint mode must be boolean')
     previous = 0
     for patch in plan['patches']:
         start, end = patch['start'], patch['end']
@@ -22,6 +24,8 @@ def validate(plan, frames, rate):
             raise ValueError('Invalid overlapping or oversized patch')
         if not patch['lyrics'].strip():
             raise ValueError('Patch lyrics required')
+        if plan.get('instrumental', False) and patch['lyrics'] != '[Instrumental]':
+            raise ValueError('Instrumental repaint requires the exact instrumental marker')
         previous = end
     insertion = plan.get('insertion')
     if insertion:
@@ -29,6 +33,18 @@ def validate(plan, frames, rate):
             raise ValueError('Invalid bounded insertion')
         if not any(p['start'] <= insertion['at'] and insertion['at']+insertion['seconds'] <= p['end'] for p in plan['patches']):
             raise ValueError('Insertion must be fully inside a repaint mask')
+
+
+def validate_source_mode(plan, request):
+    instrumental = plan.get('instrumental', False)
+    if instrumental != request.get('instrumental', False):
+        raise ValueError('Repaint mode differs from source performance')
+    if instrumental:
+        permissions=dict(private_only=True, external_upload=False, identifiable_imitation=False, public_release=False)
+        if request.get('canonical_lyrics') != '' or request.get('render_lyrics') != '[Instrumental]':
+            raise ValueError('Instrumental source contains lyrics')
+        if request.get('permissions') != permissions or plan.get('permissions') != permissions:
+            raise ValueError('Instrumental repaint requires exact private permission scope')
 
 
 def splice(original, generated, rate, start, end, fade_seconds=.12):
@@ -58,6 +74,7 @@ def main():
         raise ValueError('Source lyric binding differs')
     if not request['permissions']['private_only'] or request['permissions']['external_upload']:
         raise ValueError('Only private offline sources supported')
+    validate_source_mode(plan, request)
     runtime_files(runtime, 'generation_files')
     checked(runtime['python']['path'],runtime['python'])
     actual = subprocess.check_output(['git','-C',runtime['ace_root'],'rev-parse','HEAD'],text=True).strip()
@@ -95,7 +112,7 @@ def main():
         context=working[context_start:context_end]
         offset=context_start/rate
         sf.write(source,context,rate,subtype='FLOAT')
-        params=GenerationParams(task_type='repaint',src_audio=source,repainting_start=patch['start']-offset,repainting_end=patch['end']-offset,chunk_mask_mode='explicit',repaint_mode='aggressive',repaint_wav_crossfade_sec=0,caption=plan['caption'],lyrics=patch['lyrics'],instrumental=False,vocal_language='es',duration=len(context)/rate,inference_steps=8,guidance_scale=7.5,seed=plan['seed']+i,thinking=False,use_cot_metas=False,use_cot_caption=False,use_cot_language=False,use_cot_lyrics=False)
+        params=GenerationParams(task_type='repaint',src_audio=source,repainting_start=patch['start']-offset,repainting_end=patch['end']-offset,chunk_mask_mode='explicit',repaint_mode='aggressive',repaint_wav_crossfade_sec=0,caption=plan['caption'],lyrics=patch['lyrics'],instrumental=plan.get('instrumental',False),vocal_language='es',duration=len(context)/rate,inference_steps=8,guidance_scale=7.5,seed=plan['seed']+i,thinking=False,use_cot_metas=False,use_cot_caption=False,use_cot_language=False,use_cot_lyrics=False)
         print('Repaint bounded patch',i,patch['start'],patch['end'],flush=True)
         result=generate_music(handler,None,params,GenerationConfig(batch_size=1,use_random_seed=False,seeds=[params.seed],audio_format='wav'),save_dir=f'generated-{i}')
         if not result.success or len(result.audios)!=1:
@@ -123,9 +140,19 @@ def main():
     if not np.isfinite(working).all() or np.max(np.abs(working))>1.001:
         raise ValueError('Invalid output signal')
     sf.write('recording.wav',working,rate,subtype='FLOAT')
-    write('repaint-receipt.json',dict(schema='reel.local-song-repaint-receipt.v1',plan=descriptor('repaint.json'),source=descriptor('source.wav'),recording=descriptor('recording.wav'),patches=results,insertion=insertion,unmasked_samples_exact=True,duration_seconds=len(working)/rate,semantic_planner=False,external_upload=False,human_listening='pending',selected=False))
+    retained, retained_rate = sf.read('recording.wav', dtype='float32', always_2d=True)
+    if retained_rate != rate or not np.array_equal(retained, working):
+        raise ValueError('Retained float WAV differs from verified repaint samples')
+    write('repaint-receipt.json',dict(schema='reel.local-song-repaint-receipt.v1',plan=descriptor('repaint.json'),source=descriptor('source.wav'),recording=descriptor('recording.wav'),patches=results,insertion=insertion,instrumental=plan.get('instrumental',False),unmasked_samples_exact=True,duration_seconds=len(working)/rate,semantic_planner=False,external_upload=False,human_listening='pending',selected=False))
     revised=dict(request,candidate_id=plan['candidate_id'],duration_seconds=len(working)/rate,max_duration_seconds=len(working)/rate)
     write('request.json',revised)
+    if plan.get('make_listening_preview') is True:
+        ffmpeg=runtime['ffmpeg'];checked(ffmpeg['path'],ffmpeg)
+        subprocess.run([ffmpeg['path'],'-v','error','-i','recording.wav','-c:a','libmp3lame','-b:a','256k','preview.mp3'],check=True)
+        decoded=np.frombuffer(subprocess.check_output([ffmpeg['path'],'-v','error','-i','preview.mp3','-ac','1','-ar','16000','-f','f32le','-']),dtype=np.float32)
+        if not np.isfinite(decoded).all() or abs(len(decoded)/16000-len(working)/rate)>.05:
+            raise ValueError('Listening preview failed full decode or duration check')
+        write('listening-check.json',dict(recording=descriptor('recording.wav'),listening=descriptor('preview.mp3'),full_decode=True,duration_seconds=len(decoded)/16000,unmasked_lossless_samples_exact=True,lossless_write_read_exact=True,protected_frames=int(mask.sum()),changed_mask_frames=int((~mask).sum()),preview_encoding='256kbps MP3, no EQ or pitch filter; lossy preview is re-encoded',human_listening='pending',selected=False))
 
 
 if __name__=='__main__':main()
