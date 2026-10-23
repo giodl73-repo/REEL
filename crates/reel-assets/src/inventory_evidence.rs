@@ -1,8 +1,9 @@
 //! Opt-in, read-only adapter for existing cache-report metadata.
 //!
-//! Does not resolve paths, probe storage, select roots, publish indexes or authorize
+//! Preparation does not resolve paths, probe storage, select roots or authorize
 //! movement. Source descriptors/authority must be admitted by the caller. The
-//! prepared index is in memory; no sharded interchange format is introduced.
+//! prepared index is in memory; optional `sidecar` publication uses an explicit
+//! caller-supplied immutable store, never automatic cache discovery.
 use crate::{Result, valid_oid};
 use serde::{
     Deserialize, Serialize,
@@ -20,6 +21,7 @@ pub const ADAPTER_ID: &str = "reel.cache-report-metadata";
 pub const ADAPTER_VERSION: u32 = 1;
 pub const SOURCE_SCHEMA: &str = "reel.asset-cache-report.v1";
 const MAX_TIERS: usize = 64;
+pub mod sidecar;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct Blob {
@@ -375,7 +377,8 @@ fn read_limited(mut reader: impl Read, max: u64) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 /// Explicit preparation only. Encoded/decompressed bytes and parsed metadata are
-/// bounded but resident in memory. This is not persistent/sharded sidecar indexing.
+/// bounded but resident in memory. Optional persistent publication is a separate
+/// explicit operation in `sidecar`, not an effect of preparation.
 pub fn prepare(reader: impl Read, source: &Source, limits: Limits) -> Result<PreparedInventory> {
     if source.schema != SOURCE_SCHEMA
         || source.adapter_version != ADAPTER_VERSION
@@ -458,25 +461,7 @@ pub fn prepare(reader: impl Read, source: &Source, limits: Limits) -> Result<Pre
         if copy_count > limits.total_copies {
             return Err("Inventory copy budget exceeded".into());
         }
-        let mut seen = BTreeSet::new();
-        for copy in &row.copies {
-            if !tiers.contains_key(&copy.tier)
-                || !seen.insert(copy.tier)
-                || copy
-                    .physical_id
-                    .as_ref()
-                    .is_some_and(|id| id.trim().is_empty())
-                || (copy.physical_identity_measured == Some(false) && copy.physical_id.is_some())
-            {
-                return Err("Invalid captured copy/tier identity".into());
-            }
-            if row.registered
-                && let (Some(size), Some(matches)) = (row.bytes, copy.descriptor_size_matches)
-                && matches != (size == copy.bytes)
-            {
-                return Err("Inconsistent descriptor-size observation".into());
-            }
-        }
+        validate_observation(&row, &tiers)?;
         row.source_record = ordinal;
         rows.insert(row.sha256.clone(), row);
     }
@@ -492,4 +477,36 @@ pub fn prepare(reader: impl Read, source: &Source, limits: Limits) -> Result<Pre
         dependency_coverage: report.dependency_coverage,
         copy_count,
     })
+}
+
+fn validate_observation(
+    row: &ObservedObject,
+    tiers: &BTreeMap<usize, TierObservation>,
+) -> Result<()> {
+    if !valid_oid(&row.sha256)
+        || (row.registered && row.bytes.is_none())
+        || row.copies.len() > MAX_TIERS
+    {
+        return Err("Invalid inventory observation".into());
+    }
+    let mut seen = BTreeSet::new();
+    for copy in &row.copies {
+        if !tiers.contains_key(&copy.tier)
+            || !seen.insert(copy.tier)
+            || copy
+                .physical_id
+                .as_ref()
+                .is_some_and(|id| id.trim().is_empty())
+            || (copy.physical_identity_measured == Some(false) && copy.physical_id.is_some())
+        {
+            return Err("Invalid captured copy/tier identity".into());
+        }
+        if row.registered
+            && let (Some(size), Some(matches)) = (row.bytes, copy.descriptor_size_matches)
+            && matches != (size == copy.bytes)
+        {
+            return Err("Inconsistent descriptor-size observation".into());
+        }
+    }
+    Ok(())
 }

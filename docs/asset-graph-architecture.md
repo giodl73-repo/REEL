@@ -302,5 +302,7 @@ expanded scenarios and the remaining production implementation gates.
 The [100-scenario lessons](asset-graph-scenario-learnings.md) distinguish model
 corrections from confirmed invariants and list the second and third batches.
 The first [read-only native inventory adapter](inventory-evidence-adapter-v1.md)
-now has producer-parity fixtures. It is opt-in, memory-resident and not connected
-to runtime/placement policy; persistent source-bound shards remain future work.
+now has producer-parity fixtures. Preparation is memory-resident; optional
+[persistent source-bound sidecars](inventory-evidence-sidecar-v1.md) add bounded
+lookups through an explicit immutable store. Both remain opt-in and disconnected
+from runtime/placement policy. Production backend adoption remains future work.

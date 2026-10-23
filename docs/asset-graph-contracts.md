@@ -237,3 +237,9 @@ these contracts. Required gates remain: complete canonical codec; real bounded
 source adapters/sidecars with reader parity; transactional crash/replay and
 multi-process tests; scope/privacy/egress checks; physical custody verification;
 benchmarks; shadow accounting. No production removal authority is added here.
+
+The first native inventory adapter and its optional
+[source-bound sidecar](inventory-evidence-sidecar-v1.md) now have isolated
+producer-parity and persistent-query fixtures. This private derived codec does
+not freeze the universal graph format or close backend durability, catalog
+admission, concurrency or planner-adoption gates.

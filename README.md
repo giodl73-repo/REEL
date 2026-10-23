@@ -34,7 +34,9 @@ shared immutable snapshots, concurrent roots and large evidence adapters through
 executable synthetic scenarios; it does not change production storage behavior.
 An opt-in [read-only inventory evidence adapter](docs/inventory-evidence-adapter-v1.md)
 parses existing native reports with source verification and private provenance;
-it is not wired into runtime placement or demotion.
+optional [source-bound sidecars](docs/inventory-evidence-sidecar-v1.md) support
+persistent bounded lookups through an explicit immutable store. Neither API is
+wired into runtime placement or demotion.
 
 ---
 

@@ -166,3 +166,37 @@ Reviewed target file-byte SHA-256:
 - `src/inventory_evidence.rs`: `524e457b4226bdfddb30bf957c9767030dee48a40f99cb93105ead84448274e6`
 - `tests/inventory_evidence.rs`: `79a32b9831260c220b8452ef57612a1bb4678784eaa8de5b9a67c93cc43588d6`
 - `inventory-evidence-adapter-v1.md`: `7d0a4c5559eb53f5f392df86bbdbdfdfe3d48d79831b020133e25f3a0d516129`
+
+## Persistent inventory-sidecar increment
+
+Review base: `983df887369e0b256ad265d9d61d591354f9e8f2`, plus
+`src/inventory_evidence.rs`, new `src/inventory_evidence/sidecar.rs`,
+`tests/inventory_sidecar.rs` and `inventory-evidence-sidecar-v1.md`. Historical
+review hashes above remain unchanged. Producer-applied checklists: Asset Graph
+and Version Integrity, Storage Custody and Recovery, Registry Concurrency and
+Evidence Integrity (all version 1), and Rights and Provenance. No independent
+review, human approval or production adoption is claimed. Owner for corrections
+and remaining adoption work: this implementation lane.
+
+| Role | Severity | Finding, correction and evidence |
+| --- | --- | --- |
+| Asset Graph and Version Integrity | Major corrected | Valid byte hashes alone do not establish subject routing or evidence semantics. Queries validate every row in the visited leaf, original ordinals, tier references, registered-size consistency and advancing radix prefixes. Validly hashed malformed rows, wrong-leaf rows and malformed branches reject. Off-path integrity and global cross-leaf counts are explicitly not re-proved by a selective lookup. |
+| Registry Concurrency and Evidence Integrity | Major corrected | Binding source hashes is not an inclusion proof or source admission. Queries require exact caller-admitted root and expected source; trusted builder provenance remains required. Encoded/decoded identities, encoding, schema, project, authority and interpretation changes reject. Old/new snapshots remain independently readable; neither source nor catalog is rewritten. |
+| Storage Custody and Recovery | Major corrected | Store success can lie or leave partial output. Verify returned address and exact readback; publish children before header. Fixtures reject false identities, corrupted readback and corrupt existing winners; injected publication failures return no root and leave no header. Unrooted staged chunks still require caller-owned protection, capacity accounting and retirement. No cleanup permission follows from failure. |
+| Registry Concurrency and Evidence Integrity | Major corrected | Record-only limits allow large nodes; node-only limits allow large traversals. Enforce per-node/total bytes and node counts before open, declared-length-plus-one reads, leaf rows and fixed maximum depth. Build preflights variable-length fields and bounds leaf attempts. Real fixture covers full 64-digit shared prefixes and byte-driven splits. Allocation/RSS and time/cancellation are not claimed bounded by these counters. |
+| Rights and Provenance | Advisory addressed | Sidecars contain private source hashes, paths and observations. Wire DTOs are private; public evidence types remain without automatic serialization and no new public report/export is added. Documentation requires private metadata-asset storage, never raw evidence in Git/scorecards. Synthetic temp-directory fixtures introduce no private source/egress dependency. |
+
+Validation: all 345 tests pass (195 unit, five prior integration, 100 model,
+23 source-adapter and 22 sidecar). The reopened 1,000-record fixture reads three
+chunks and at most 128 rows without original preparation/source bytes. Actual
+native census and named reports preserve recorded sizes, tier/copy metadata,
+capture/scope distinctions and original record locators through persistence.
+Strict all-target Clippy, formatting, ROLES structure and diff checks pass.
+
+Disposition: bounded persistent derived-query library implemented over an
+explicit store interface, with a real temporary-filesystem fixture backend.
+No global lock, daemon, configured cache path, planner integration, default
+backend or runtime change. Backend process races/power-loss durability, catalog
+admission, staging lifecycle, deadline/cancellation, receipt/registry adapters,
+large real-source benchmarks and shadow planner parity remain adoption gates.
+The fixture's no-clobber writes/syncs do not establish production crash durability.

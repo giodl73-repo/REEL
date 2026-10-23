@@ -75,11 +75,17 @@ million copies. Defensive ceilings are 512 MiB encoded, one GiB decoded, one
 million objects and four million copies. Larger sources require a future bounded
 backend or explicit adapter revision; limits are never silently raised.
 
-This is not constant-memory streaming or persistent sharded indexing. Encoded/
+Preparation is not constant-memory streaming. Encoded/
 decoded source bytes and typed metadata consume memory during preparation; these
 input/record limits are not an exact RSS bound. There is no deadline/cancellation
 contract yet, and a caller-provided reader can block. Keep preparation explicit
 and bounded; do not invoke it automatically during orientation or every lookup.
+
+Optional [persistent source-bound sidecars](inventory-evidence-sidecar-v1.md)
+now provide a separate explicit publication/query API over a caller-supplied
+immutable store. They do not change preparation behavior or adopt a production
+backend. Later exact-subject queries can reopen the saved index and read a
+bounded path without the original source body or resident preparation.
 
 Source descriptors, witnesses, rows and tier data are private evidence without
 automatic serialization. `summary()` is a separate serializable projection of
@@ -100,6 +106,7 @@ All 195 unit tests, five existing integration tests, 100 model scenarios and 23
 adapter tests pass locally. Strict all-target Clippy, formatting, ROLES structure
 and diff checks pass. This establishes a real-format read-only adapter, not a
 benchmark, real private inventory acceptance, complete evidence algebra or safe
-demotion integration. Persistent source-bound shards, receipt/registry adapters,
+demotion integration. Source-bound shards now have separate library fixtures;
+production backend adoption, receipt/registry adapters,
 time/cancellation support, catalog admission, crash/concurrent publication and
 shadow planner parity remain follow-up work before runtime adoption.
