@@ -7,6 +7,31 @@ reel-episode-conform prepare conform.json --input-root . --asset-root . --output
 reel-episode-conform finish prepared --input-root . --asset-root . --output-dir out
 ```
 
+When normalization itself exceeds one bounded step, a closed native job can
+declare multiple `prepare-batch` steps followed by assembly and finish:
+
+```
+reel-episode-conform prepare-batch conform.json --input-root . --asset-root . --output-dir prepared --max-segments 3
+# Repeat the same command ceil(segment_count / 3) times in the frozen job.
+reel-episode-conform assemble-preparation prepared --asset-root .
+reel-episode-conform finish prepared --input-root . --asset-root . --output-dir out
+```
+
+Each batch performs the existing upstream checks and normalizes only the next
+ordered group. It retains `normalization-progress.json` and verified generated
+media inside the same job workspace. Subsequent batches rehash every original
+input and retained intermediate and require the same manifest, closed job and
+validator/FFmpeg/FFprobe bytes. Completed media is reused without re-encoding.
+The progress record is explicitly incomplete: it has no assembled master,
+`prepared.json`, final receipt or delivery. Assembly rejects incomplete coverage;
+finish still performs all ordered decoded picture/PCM, timestamp, boundary and
+encoded-delivery checks. Existing one-step preparation remains unchanged.
+
+The steps keep the original per-step timeout and operation/storage limits.
+These are checkpoints within one frozen job, not a cross-job resume API.
+Default job retirement still applies on failure; preserving failed debugging
+scratch requires an explicit bounded retention decision and later disposal.
+
 Preparation requires a closed native job workspace (`job.json`). It verifies the
 declared input/tool/inline-file hashes, rejects undeclared files and links, runs
 the complete upstream/normalization checks, and retains its exact normalized
