@@ -200,3 +200,100 @@ fn symlink_control_does_not_follow_an_outside_file() {
     std::os::unix::fs::symlink(&outside, &path).unwrap();
     assert!(Project::open(&profile).unwrap().load().is_err());
 }
+
+fn multi_paths_fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let (temp, profile, data) = fixture();
+    let mut config = get(&profile);
+    config["schema"] = json!("reel.cel-sorter-project.v2");
+    config["files"]
+        .as_object_mut()
+        .unwrap()
+        .remove("alignment.json");
+    config["files"]["alignment-paths.json"] = json!("timing/paths.json");
+    fs::create_dir(data.join("timing")).unwrap();
+    put(
+        &data.join("timing/paths.json"),
+        &json!({"a":"one.json","b":"two.json"}),
+    );
+    put(&data.join("timing/one.json"), &json!({"cue":"a"}));
+    put(&data.join("timing/two.json"), &json!({"cue":"b"}));
+    put(&profile, &config);
+    (temp, profile, data)
+}
+#[test]
+fn native_paths_are_manifest_relative_locked_once_and_drafts_reopen() {
+    let (temp, profile, data) = multi_paths_fixture();
+    let project = Project::open(&profile).unwrap();
+    let original = fs::read(data.join("timing/paths.json")).unwrap();
+    put(
+        &data.join("timing/paths.json"),
+        &json!({"new":"absent.json"}),
+    );
+    let snapshot = project.load().unwrap();
+    assert_eq!(snapshot.controls["alignment:a"]["cue"], "a");
+    assert_eq!(snapshot.hashes["alignment-paths.json"], {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(&original))
+    });
+    assert_eq!(project.session_schema(), "reel.cel-sorter-session.v3");
+    let request =
+        json!({"schema":"reel.cel-sorter-edit.v3","expected_project":project.descriptor_sha256()});
+    assert!(project.accepts_edit(&request));
+    assert!(!project.accepts_edit(
+        &json!({"schema":"reel.cel-sorter-edit.v2","expected_project":project.descriptor_sha256()})
+    ));
+    let out = temp.path().join("candidate");
+    project
+        .write_draft(&out, &snapshot.controls, &request)
+        .unwrap();
+    let next = Project::open(&out.join("cel-sorter-project.json")).unwrap();
+    assert_eq!(next.load().unwrap().hashes, snapshot.hashes);
+    // Reopening observes the new index. The captured map is no namespace lease.
+    assert!(Project::open(&profile).unwrap().load().is_err());
+}
+#[test]
+fn native_paths_refuse_duplicates_empty_excessive_and_aliased_or_escaping_routes() {
+    let (_temp, profile, data) = multi_paths_fixture();
+    let paths = data.join("timing/paths.json");
+    for value in [
+        json!({}),
+        json!({" ":"one.json"}),
+        json!({"a":"../outside.json"}),
+        json!({"a":"/absolute.json"}),
+        json!({"a":"one.json","b":"ONE.JSON"}),
+        json!({"a":"../controls/input-0.json"}),
+        json!({"a":"paths.json"}),
+        json!({"a":"C:/file.json"}),
+        json!({"a":"x\\y.json"}),
+    ] {
+        put(&paths, &value);
+        assert!(Project::open(&profile).is_err(), "{value}");
+    }
+    fs::write(&paths, br#"{"a":"one.json","a":"two.json"}"#).unwrap();
+    assert!(Project::open(&profile).is_err());
+    let many: BTreeMap<_, _> = (0..129)
+        .map(|i| (format!("cue-{i}"), format!("cue-{i}.json")))
+        .collect();
+    put(&paths, &json!(many));
+    assert!(Project::open(&profile).is_err());
+    fs::write(&paths, vec![b' '; 128 * 1024 + 1]).unwrap();
+    assert!(Project::open(&profile).is_err());
+}
+#[test]
+fn multi_schema_rejects_legacy_alignment_and_mismatched_control_sets() {
+    let (_temp, profile, _data) = multi_paths_fixture();
+    let mut config = get(&profile);
+    config["files"]["alignment.json"] = json!("legacy.json");
+    put(&profile, &config);
+    assert!(Project::open(&profile).is_err());
+    config["files"]
+        .as_object_mut()
+        .unwrap()
+        .remove("alignment.json");
+    config["files"]
+        .as_object_mut()
+        .unwrap()
+        .remove("alignment-paths.json");
+    put(&profile, &config);
+    assert!(Project::open(&profile).is_err());
+}

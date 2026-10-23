@@ -63,10 +63,47 @@ Embedded native references, including absolute references, remain unchanged.
 Preserving a valid relative layout avoids a converter, but does not certify a
 self-contained compiler project. Only supplied context is copied. Cache/LFS
 registration, full native compilation, selected-version advancement, physical
-custody and media retention remain separate producer operations. This does not
-extend the current editor beyond one language and one full-recording cue.
+custody and media retention remain separate producer operations. The editor remains single-language; the explicit v2 descriptor below enables
+multiple cues.
 
 Rust consumers can reuse `cel_source::project::Project` for explicit routing,
 bounded raw snapshots, descriptor/version checks and candidate layout writing.
 Native semantics are checked by the editor/shared reader, not by file routing.
 The APIs grant no publication, selection, deletion or human approval authority.
+
+## Native multi-cue projects
+
+Use `reel.cel-sorter-project.v2` with the same explicit root and file map.
+Replace the singular `alignment.json` role with `alignment-paths.json` (required).
+The index is the existing native cue-to-filename object, for example:
+
+```json
+{"first-cue":"first.json","second-cue":"second.json"}
+```
+
+These paths are relative to the index's parent directory, matching the native
+alignment-path contract. No wildcard scanning or transitive discovery occurs.
+The index has 1–128 unique cue IDs (at most 256 UTF-8 bytes each), is bounded to
+128 KiB, and must exactly cover the native scene's cues. Index routes obey the
+same portable-path rules; aliases against any static control or another cue
+reject. Total captured controls are bounded to 32 MiB. The index is read once
+when opening a `Project`, and its exact buffer is retained with those routes.
+Reopen explicitly to observe index edits; this snapshot is no custody lease or
+protection against a hostile filesystem namespace.
+
+Per-cue alignment locks appear as `alignment:<cue_id>` data keys in
+`expected_inputs`; these keys are never interpreted as paths. Each alignment's
+raw SHA-256 and byte count must match the exact binding named by its cue.
+Export emits `reel.cel-sorter-session.v3`; browser requests use
+`reel.cel-sorter-edit.v3` and cannot downgrade to frame-based v1/v2 edits.
+Rows contain `cue_id`, integer `samples` and `sample_rate` instead of `frames`.
+Session `cues` carry each original sample budget, rate and concatenated preview
+offset; `total_seconds` replaces the singular session sample clock.
+
+Rust consumers can reuse `cel_source::sequence::Sequence` to validate native
+cue clocks, obtain editor rows and plan cue-local edits without media I/O.
+It uses the native measured-span compiler, preserves unrelated markers, and
+rejects insertion, duplicate IDs, changed cue/rate, cue reordering, missing cues
+and any per-cue timing drift. It validates semantic metadata; callers must also
+check exact raw file locks as the CLI does. These checks do not constitute a
+full project compiler/render, cache registration, visual review or approval.

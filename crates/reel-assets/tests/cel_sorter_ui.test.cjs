@@ -47,3 +47,34 @@ test('source lock maps compare by entries without ignoring extra or changed keys
  assert(!ui.locksEqual({scene:'a'},{scene:'changed'}));
  assert.equal(ui.locksEqual(null,{}),false);assert.equal(ui.locksEqual([],[]),false);
 });
+
+const cues=[{semantic_id:'a',picture_binding:'one',cue_id:'first',samples:47,sample_rate:48},{semantic_id:'b',picture_binding:'two',cue_id:'first',samples:49,sample_rate:48},{semantic_id:'c',picture_binding:'one',cue_id:'second',samples:43,sample_rate:44},{semantic_id:'d',picture_binding:'two',cue_id:'second',samples:45,sample_rate:44}];
+test('sample cue groups fit independently with exact budgets and retain comments',()=>{
+ const edited=[{...cues[1],samples:20,comment:'Keep this cut'},cues[0],cues[3]];
+ assert(ui.valid(edited,cues,null));assert(!ui.valid(edited,cues,4));
+ const fit=ui.fit(edited,4,cues);assert(ui.valid(fit,cues,4));
+ assert.equal(fit[0].samples+fit[1].samples,96);assert.equal(fit[2].samples,88);
+ assert.equal(fit[0].comment,'Keep this cut');assert.equal(fit[0].semantic_id,'b');
+ assert.equal(cues[0].samples,47);
+});
+test('cross cue edits, altered rates and removing whole cues reject',()=>{
+ for(const rows of [[cues[2],cues[0],cues[1],cues[3]],[{...cues[0],cue_id:'second'},...cues.slice(1)],[{...cues[0],sample_rate:44},...cues.slice(1)],cues.slice(0,2),[{...cues[0],frames:10},...cues.slice(1)]])assert(!ui.valid(rows,cues,null));
+ assert.throws(()=>ui.fit(cues.slice(0,2),4,cues));
+});
+test('equal total duration cannot hide drift between native cues',()=>{
+ const edited=structuredClone(cues);edited[0].samples+=48;edited[2].samples-=22;edited[3].samples-=22;
+ assert.equal(edited.reduce((s,r)=>s+ui.duration(r,24),0),4);
+ assert(!ui.valid(edited,cues,4));
+});
+test('preview uses seconds and fixes the next cue boundary during temporary hold edits',()=>{
+ const edited=structuredClone(cues);edited[0].samples+=48;
+ const starts=ui.timeStarts(edited,cues,24);assert.equal(starts[0],0);assert.equal(starts[1],95/48);
+ assert.equal(starts[2],2);assert.equal(starts[3],2+43/44);
+ assert.deepEqual(ui.timeStarts(rows,rows,10),[0,4.1]);
+});
+test('v3 drafts cannot masquerade as frame edits and preserve project locks',()=>{
+ const session={schema:'reel.cel-sorter-session.v3',scene_id:'synthetic',expected_project:'a'.repeat(64),expected_inputs:{'alignment:first':'first','alignment:second':'second'}};
+ const request=ui.draft(session,cues,'Keep cues');assert.equal(request.schema,'reel.cel-sorter-edit.v3');assert(ui.matches(session,request));
+ const frame={...session,schema:'reel.cel-sorter-session.v2'};assert(!ui.matches(frame,request));assert.notEqual(ui.key(frame),ui.key(session));
+ assert(!ui.valid([{...rows[0],samples:1},rows[1]],rows,100));
+});

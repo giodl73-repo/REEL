@@ -6,6 +6,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, path::Path};
 pub mod project;
+pub mod sequence;
 
 const CONTROL_BYTES: usize = 1024 * 1024;
 const MAX_EVENTS: usize = 8192;
