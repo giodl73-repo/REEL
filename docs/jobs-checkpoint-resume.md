@@ -39,3 +39,12 @@ time. It changes no original JSON bytes or native validation, memory/disk bounds
 tool identity, command or output requirement. The result and failure diagnostics
 explicitly report the effective extension rather than claiming the original
 timeout was enforced. Ordinary `run-job` retains its one-hour step cap.
+
+For a fresh, unchanged recipe, `run-job-window <original-job.json>
+<registered-execution-window.json>` executes every original step. Its separately
+registered descriptor contains only `schema: reel.native-job-execution-window.v1`,
+`job_sha256` and the same one-entry `step_timeout_seconds` map, capped at 7,200
+seconds. It provides no checkpoints and skips no steps. Both original recipe and
+descriptor must be registered and freshly verified in active caches. Results
+and failure diagnostics use a separate `execution_window` evidence field. This
+does not mutate stored recipes, default `run-job`, tools or build checks.

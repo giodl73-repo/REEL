@@ -514,3 +514,80 @@ fn recovery_window_rejects_implicit_unbounded_or_unrelated_step_changes() {
         no_scratch(&f);
     }
 }
+
+#[test]
+fn fresh_registered_window_runs_all_steps_and_preserves_original_timeout_controls() {
+    let f = Fixture::new();
+    let (manifest, mut job) = prepare(&f, "hold-copy");
+    job["steps"][0]["timeout_seconds"] = json!(1);
+    let original = serde_json::to_vec(&job).unwrap();
+    fs::write(&manifest, &original).unwrap();
+    let hash = f.put(&original, true);
+    let error = run(f.root(), &manifest).unwrap_err().to_string();
+    assert!(error.contains("timed out"), "{error}");
+    let policy = json!({"schema":"reel.native-job-execution-window.v1",
+        "job_sha256":hash,"step_timeout_seconds":{"0":5}});
+    let bytes = serde_json::to_vec(&policy).unwrap();
+    let path = f.root().join("execution-window.json");
+    fs::write(&path, &bytes).unwrap();
+    assert!(run_with_execution_window(f.root(), &manifest, &path).is_err());
+    no_scratch(&f);
+    f.put(&bytes, true);
+    let result = run_with_execution_window(f.root(), &manifest, &path).unwrap();
+    assert!(result.get("checkpoint_resume").is_none());
+    assert_eq!(result["execution_window"]["steps_skipped"], false);
+    assert_eq!(
+        result["execution_window"]["effective_step_timeout_seconds"]["0"],
+        5
+    );
+    assert_eq!(result["manifest_sha256"], hash);
+    assert_eq!(fs::read(&manifest).unwrap(), original);
+    assert_eq!(
+        fs::read(result["outputs"]["copy"]["path"].as_str().unwrap()).unwrap(),
+        b"source"
+    );
+    no_scratch(&f);
+}
+
+#[test]
+fn fresh_window_rejects_changed_identity_extra_fields_and_checkpoint_commands() {
+    for mode in [
+        "schema",
+        "recipe",
+        "extra-field",
+        "empty",
+        "too-long",
+        "multiple",
+        "not-longer",
+        "resume-command",
+    ] {
+        let f = Fixture::new();
+        let (manifest, _) = prepare(&f, "copy");
+        let original = fs::read(&manifest).unwrap();
+        let hash = f.put(&original, true);
+        let mut policy = json!({"schema":"reel.native-job-execution-window.v1",
+            "job_sha256":hash,"step_timeout_seconds":{"0":11}});
+        match mode {
+            "schema" => policy["schema"] = json!("unknown"),
+            "recipe" => policy["job_sha256"] = json!("a".repeat(64)),
+            "extra-field" => policy["files"] = json!({}),
+            "empty" => policy["step_timeout_seconds"] = json!({}),
+            "too-long" => policy["step_timeout_seconds"] = json!({"0":7201}),
+            "multiple" => policy["step_timeout_seconds"] = json!({"0":11,"1":11}),
+            "not-longer" => policy["step_timeout_seconds"] = json!({"0":10}),
+            "resume-command" => {}
+            _ => unreachable!(),
+        }
+        let bytes = serde_json::to_vec(&policy).unwrap();
+        let path = f.root().join("execution-window.json");
+        fs::write(&path, &bytes).unwrap();
+        f.put(&bytes, true);
+        let result = if mode == "resume-command" {
+            resume(f.root(), &manifest, &path)
+        } else {
+            run_with_execution_window(f.root(), &manifest, &path)
+        };
+        assert!(result.is_err(), "{mode}");
+        no_scratch(&f);
+    }
+}
