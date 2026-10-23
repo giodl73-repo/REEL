@@ -56,6 +56,10 @@ pub struct Request {
     pub transition: Option<crate::version_diff::Transition>,
     #[serde(default)]
     pub history_fallback_to_archive: bool,
+    /// Explicitly archive only historical compiled outputs named by the policy's
+    /// output-retention map. This is independent of a render-version transition.
+    #[serde(default)]
+    pub archive_outputs: bool,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -455,6 +459,34 @@ fn metadata_paths(root: &Path, cold: bool) -> Result<BTreeSet<PathBuf>> {
     Ok(paths)
 }
 
+/// Freeze authoring selections, not unrelated authorization additions or leases.
+/// Every participating consumer must still match this before an output hold is waived.
+pub(crate) fn output_selection_stamp(
+    root: &Path,
+    state: &crate::versions::State,
+) -> Result<String> {
+    let mut documents = BTreeMap::new();
+    for p in metadata_paths(root, false)? {
+        if p == Path::new("registry/versions.json")
+            || p == Path::new("registry/object-index.json")
+            || p == Path::new("registry/objects.tsv")
+            || (p.starts_with("registry/objects") && p.extension().is_some_and(|e| e == "tsv"))
+        {
+            continue;
+        }
+        let name = p
+            .to_str()
+            .ok_or("Non-UTF8 output selection control")?
+            .replace('\\', "/");
+        let path = crate::accounting::relative(root, &name)?;
+        let bytes = tiering::read_bounded(&path, 4 * 1024 * 1024)?;
+        documents.insert(name, tiering::digest(&bytes));
+    }
+    Ok(tiering::digest(&serde_json::to_vec(
+        &json!({"current":state.current,"documents":documents}),
+    )?))
+}
+
 fn control_snapshot(root: &Path, hold: bool, cold: bool) -> Result<ControlSnapshot> {
     let paths = metadata_paths(root, cold)?;
     let mut hashes = BTreeMap::new();
@@ -492,7 +524,11 @@ fn control_snapshot(root: &Path, hold: bool, cold: bool) -> Result<ControlSnapsh
     })
 }
 
-fn legacy_protection(root: &Path, cfg: &crate::Config) -> Result<BTreeSet<String>> {
+fn legacy_protection(
+    root: &Path,
+    cfg: &crate::Config,
+    policy: &tiering::Policy,
+) -> Result<BTreeSet<String>> {
     let state = crate::versions::read_with(root, Some(cfg))?;
     tiering::validate_graph(&state, 1_000_000)?;
     let mut protected = crate::accounting::expand(
@@ -503,7 +539,7 @@ fn legacy_protection(root: &Path, cfg: &crate::Config) -> Result<BTreeSet<String
             .map(|(id, v)| format!("{id}@{v}"))
             .chain(state.leases.values().flatten().cloned()),
     )?;
-    protected.extend(state.metadata_roots);
+    protected.extend(state.metadata_roots.iter().cloned());
     protected.extend(crate::goldens::control_asset(root)?.map(|(hash, _)| hash));
     if root.join("registry/object-index.json").exists() {
         let d = crate::load(&root.join("registry/object-index.json"))?;
@@ -556,10 +592,57 @@ fn legacy_protection(root: &Path, cfg: &crate::Config) -> Result<BTreeSet<String
             }
         }
     }
+    if let Some(map) = crate::output_retention::load(root, policy)? {
+        map.validate_selection(root, &state)?;
+        map.validate_primary_inputs(&state)?;
+        map.filter_authoring_heads(&mut protected);
+        protected.extend(crate::accounting::expand(
+            &state,
+            state.leases.values().flatten().cloned(),
+        )?);
+        protected.extend(state.metadata_roots.iter().cloned());
+        protected.extend(crate::goldens::control_asset(root)?.map(|(hash, _)| hash));
+        if root.join("registry/object-index.json").exists() {
+            protected.insert(
+                crate::load(&root.join("registry/object-index.json"))?["asset"]["sha256"]
+                    .as_str()
+                    .ok_or("Missing legacy authorization root")?
+                    .into(),
+            );
+        }
+        protected.extend(policy.output_retention.iter().map(|a| a.sha256.clone()));
+    }
     Ok(protected)
 }
 fn metadata_token(root: &Path) -> Result<String> {
     Ok(metadata_snapshot(root, false)?.0)
+}
+
+fn check_legacy_output_scope(root: &Path, consumer: &Path, policy: &tiering::Policy) -> Result<()> {
+    if policy.output_retention.is_none()
+        || consumer.join("asset-project.json").exists()
+        || root.canonicalize()? == consumer.canonicalize()?
+    {
+        return Ok(());
+    }
+    let common = |p: &Path| -> Result<PathBuf> {
+        let q = std::process::Command::new("git")
+            .arg("-C")
+            .arg(p)
+            .args(["rev-parse", "--git-common-dir"])
+            .output()?;
+        if !q.status.success() {
+            return Err("Cannot bind legacy output-retention consumer".into());
+        }
+        let s = String::from_utf8(q.stdout)?;
+        Ok(p.join(s.trim()).canonicalize()?)
+    };
+    if common(root)? != common(consumer)? {
+        return Err(
+            "Output retention authority cannot override a foreign legacy repository".into(),
+        );
+    }
+    Ok(())
 }
 
 /// Cold exclusion is stronger than selection: every authorized object and
@@ -624,11 +707,35 @@ fn register_cold(archive: &Path, hash: &str, bytes: u64, path: &Path) -> Result<
         guards.extend(platform::guard_dirs(&dir.join("custody-anchor"))?);
     }
     let name = format!("{hash}.json");
-    let receipt = json!({"schema":"reel.cold-custody.v1","sha256":hash,"bytes":bytes,
+    let mut receipt = json!({"schema":"reel.cold-custody.v1","sha256":hash,"bytes":bytes,
         "cache_uri":format!("cache://sha256/{hash}"),"cold_path":path,
-        "retention_state":"cold-registered","provenance":"Unregistered active-cache object; original provenance unknown",
+        "retention_state":"cold-registered","provenance":"Exact retained custody; source provenance and selection remain in immutable project records",
         "recovery":"Explicit named-object recovery only; ordinary active lookup does not probe this archive",
         "not_a_permanent_retention_pin":true});
+    let existing = dir.join(&name);
+    if existing.exists() {
+        let prior: Value = serde_json::from_slice(&tiering::read_bounded(&existing, 16 * 1024)?)?;
+        for field in [
+            "schema",
+            "sha256",
+            "bytes",
+            "cache_uri",
+            "retention_state",
+            "not_a_permanent_retention_pin",
+        ] {
+            if prior[field] != receipt[field] {
+                return Err("Cold custody receipt conflicts with exact retained object".into());
+            }
+        }
+        let old_path = prior["cold_path"]
+            .as_str()
+            .ok_or("Missing prior cold custody locator")?;
+        if Path::new(old_path).canonicalize()? != path.canonicalize()? {
+            return Err("Cold custody locator differs from retained object".into());
+        }
+        // Preserve the original intake provenance instead of rewriting history.
+        receipt = prior;
+    }
     stamp(&dir, &name, &receipt)?;
     let file = platform::open(&dir.join(&name), false)?;
     if crate::load(&dir.join(&name))? != receipt {
@@ -682,7 +789,7 @@ pub fn run(
     } else {
         None
     };
-    if req.allow_live_admissions && transition_report.is_none() {
+    if req.allow_live_admissions && transition_report.is_none() && !req.archive_outputs {
         return Err(
             "Concurrent historical eviction requires an exact classified version transition".into(),
         );
@@ -701,7 +808,17 @@ pub fn run(
         Some(id) if id == policy.cold_tier => true,
         _ => return Err("Retained tier must be the configured history or cold tier".into()),
     };
-    let archive_history = retained_archive && req.transition.is_some();
+    if req.archive_outputs {
+        let map = crate::output_retention::load(root, &policy)?
+            .ok_or("Historical outputs require an explicit output retention map")?;
+        if !retained_archive
+            || req.transition.is_some()
+            || req.sha256s.iter().any(|h| !map.is_archival(h))
+        {
+            return Err("Historical output request exceeds its explicit archive scope".into());
+        }
+    }
+    let archive_history = retained_archive && (req.transition.is_some() || req.archive_outputs);
     let cold = retained_archive && !archive_history;
     if !retained_archive && req.verified_cold_index.is_some() {
         return Err("Verified cold index is valid only for explicit cold custody".into());
@@ -765,7 +882,9 @@ pub fn run(
         let row = planned
             .get(h.as_str())
             .ok_or("Object absent from saved plan")?;
-        let eligible = if cold {
+        let eligible = if req.archive_outputs {
+            row["proposal"] == "verify-and-archive-output" && row["class"] == "archival-output"
+        } else if cold {
             row["proposal"] == "register-and-archive-first"
                 && row["class"] == "unregistered-cold-candidate"
         } else {
@@ -814,6 +933,7 @@ pub fn run(
     protection_policy.history_versions.clear();
     let mut consumer_tokens = BTreeMap::new();
     for consumer in &consumers {
+        check_legacy_output_scope(root, consumer, &policy)?;
         if !consumer.join("asset-project.json").is_file() {
             if !legacy.contains(consumer) {
                 return Err(format!(
@@ -823,7 +943,7 @@ pub fn run(
                 .into());
             }
             let before = metadata_token(consumer)?;
-            let protected = legacy_protection(consumer, &cfg)?;
+            let protected = legacy_protection(consumer, &cfg, &policy)?;
             if let Some(h) = req.sha256s.iter().find(|h| protected.contains(*h)) {
                 return Err(format!("Object protected by legacy managed consumer: {h}").into());
             }
@@ -1126,7 +1246,7 @@ pub fn run(
                                 .collect()
                         }
                     } else if legacy.contains(consumer) {
-                        legacy_protection(consumer, &cfg)?
+                        legacy_protection(consumer, &cfg, &policy)?
                     } else {
                         return Err("Cold consumer compatibility changed".into());
                     };
@@ -1322,6 +1442,7 @@ pub fn export_protections(root: &Path, request_path: &Path) -> Result<Value> {
     let mut hashes: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     let mut consumers = vec![];
     for (n, path) in active.iter().enumerate() {
+        check_legacy_output_scope(root, path, &policy)?;
         let before = metadata_token(path)?;
         let protected = if path.join("asset-project.json").exists() {
             let other = config(path)?;
@@ -1339,7 +1460,7 @@ pub fn export_protections(root: &Path, request_path: &Path) -> Result<Value> {
             if !legacy.contains(path) {
                 return Err("Legacy consumer must be explicitly declared".into());
             }
-            legacy_protection(path, &cfg)?
+            legacy_protection(path, &cfg, &policy)?
         };
         for h in protected {
             hashes.entry(h).or_default().push(n);
@@ -1347,8 +1468,10 @@ pub fn export_protections(root: &Path, request_path: &Path) -> Result<Value> {
         if metadata_token(path)? != before {
             return Err("Consumer changed during protection export".into());
         }
-        consumers
-            .push(json!({"root":path,"fingerprint_sha256":before,"legacy":legacy.contains(path)}));
+        let state = crate::versions::read_with(path, Some(&cfg))?;
+        let output_selection = output_selection_stamp(path, &state)?;
+        consumers.push(json!({"root":path,"fingerprint_sha256":before,
+            "output_selection_sha256":output_selection,"legacy":legacy.contains(path)}));
     }
     if consumer_registration(root, &active, &inactive)? != registration
         || fs::read(request_path)? != raw
@@ -1372,6 +1495,182 @@ pub fn export_protections(root: &Path, request_path: &Path) -> Result<Value> {
 mod tests {
     use super::*;
     use crate::tiering::tests::Fixture;
+
+    fn historical_output_case(selected: bool, archive_authorized: bool) -> Case {
+        let mut c = Case::new();
+        c.f.state.select("old", "v1").unwrap();
+        c.f.save();
+        let bytes = fs::metadata(c.e()).unwrap().len();
+        let map = serde_json::to_vec(&json!({"schema":"reel.output-retention-map.v1",
+            "project_id":"fixture","consumer_selections":{c.f.root().canonicalize().unwrap().to_string_lossy().as_ref():output_selection_stamp(c.f.root(),&c.f.state).unwrap()},
+            "outputs":{&c.h:{"bytes":bytes,"selected":selected,"archive_authorized":archive_authorized}}})).unwrap();
+        let hash = c.f.put(&map, true);
+        c.f.policy["output_retention"] = json!({"sha256":hash,"bytes":map.len()});
+        let dest = object(&c.f.root().join("offline-cold"), &c.h);
+        fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        fs::copy(c.e(), dest).unwrap();
+        c.f.baseline();
+        let plan = c.f.run().unwrap();
+        let mut req = crate::load(&c.request).unwrap();
+        tiering::write_plan(&c.f.root().join("output-plan.json"), &plan).unwrap();
+        req["plan"] = json!(c.f.root().join("output-plan.json"));
+        req["plan_sha256"] = plan["plan_sha256"].clone();
+        req["retained_tier"] = json!("cold");
+        req["archive_outputs"] = json!(true);
+        req["allow_live_admissions"] = json!(true);
+        fs::write(&c.request, req.to_string()).unwrap();
+        c
+    }
+
+    #[test]
+    fn historical_output_scope_separates_authoring_head_from_hot_placement() {
+        let mut c = historical_output_case(false, true);
+        let r = c.run(false).unwrap();
+        assert_eq!(r["historical_archive_retention"], true);
+        assert_eq!(
+            crate::versions::read(c.f.root()).unwrap().current["old"],
+            "v1"
+        );
+        assert!(c.e().exists());
+        c.journal =
+            c.f.root()
+                .canonicalize()
+                .unwrap()
+                .join(".local/output-apply-journal");
+        let applied = c.run(cfg!(windows));
+        assert!(applied.is_ok(), "{applied:?}");
+        assert_eq!(c.e().exists(), !cfg!(windows));
+        assert!(object(&c.f.root().join("offline-cold"), &c.h).exists());
+    }
+    #[test]
+    fn selected_and_unproven_outputs_never_enter_historical_scope() {
+        for (selected, used) in [(true, true), (false, false)] {
+            let c = historical_output_case(selected, used);
+            assert!(c.run(cfg!(windows)).is_err());
+            assert!(c.e().exists());
+        }
+    }
+    #[test]
+    fn historical_output_map_does_not_override_job_leases_or_tier_pins() {
+        for lease in [false, true] {
+            let mut c = historical_output_case(false, true);
+            if lease {
+                c.f.state
+                    .leases
+                    .insert("actual-job".into(), BTreeSet::from(["old@v1".into()]));
+                c.f.save();
+            } else {
+                c.f.policy["tier_pins"] = json!({&c.h:"hot"});
+            }
+            let p = c.f.run().unwrap();
+            let row = p["objects"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|v| v["sha256"] == c.h)
+                .unwrap();
+            assert_eq!(row["proposal"], "hold");
+            assert!(c.run(cfg!(windows)).is_err());
+            assert!(c.e().exists());
+        }
+    }
+    #[test]
+    fn corrupt_or_foreign_output_control_holds_before_removal() {
+        for corrupt in [false, true] {
+            let mut c = historical_output_case(false, true);
+            let a = c.f.policy["output_retention"].clone();
+            if corrupt {
+                fs::write(
+                    object(
+                        &config(c.f.root()).unwrap().cache_roots[0],
+                        a["sha256"].as_str().unwrap(),
+                    ),
+                    b"corrupt",
+                )
+                .unwrap();
+            } else {
+                c.f.policy["project_id"] = json!("foreign");
+            }
+            assert!(c.f.run().is_err());
+            assert!(c.e().exists());
+        }
+    }
+    #[test]
+    fn output_selection_freeze_holds_reselection_but_allows_unrelated_authorization() {
+        let c = historical_output_case(false, true);
+        c.f.put(b"unrelated newly authorized input", true);
+        assert!(c.run(false).is_ok());
+
+        let mut c = historical_output_case(false, true);
+        let other = c.f.put(b"another authoring selection", true);
+        c.f.version("another", &other);
+        c.f.state.select("another", "v1").unwrap();
+        c.f.save();
+        let error = c.run(cfg!(windows)).unwrap_err().to_string();
+        assert!(error.contains("selection changed"), "{error}");
+        assert!(c.e().exists());
+    }
+    #[test]
+    fn output_classification_conflicting_with_primary_input_never_relaxes_protection() {
+        let mut c = historical_output_case(false, true);
+        c.f.state
+            .versions
+            .get_mut("old@v1")
+            .unwrap()
+            .dependency_contract = Some(crate::versions::DependencyContract {
+            primary_inputs: BTreeSet::from([c.h.clone()]),
+            outputs: BTreeSet::new(),
+            references: BTreeSet::new(),
+        });
+        c.f.save();
+        let error = c.run(cfg!(windows)).unwrap_err().to_string();
+        assert!(error.contains("primary input"), "{error}");
+        assert!(c.e().exists());
+    }
+    #[test]
+    fn existing_cold_intake_provenance_is_preserved_with_exact_custody() {
+        let c = cold_case();
+        let archive = c.f.root().join("offline-cold");
+        let object_path = object(&archive, &c.h);
+        drop(
+            register_cold(
+                &archive,
+                &c.h,
+                fs::metadata(&object_path).unwrap().len(),
+                &object_path,
+            )
+            .unwrap(),
+        );
+        let path = archive
+            .join("snapshots/reel-assets-cold-v1")
+            .join(&c.h[..2])
+            .join(format!("{}.json", c.h));
+        let mut prior = crate::load(&path).unwrap();
+        prior["provenance"] = json!("original intake classification remains historical");
+        fs::write(&path, serde_json::to_vec(&prior).unwrap()).unwrap();
+        let before = fs::read(&path).unwrap();
+        drop(
+            register_cold(
+                &archive,
+                &c.h,
+                fs::metadata(&object_path).unwrap().len(),
+                &object_path,
+            )
+            .unwrap(),
+        );
+        assert_eq!(fs::read(&path).unwrap(), before);
+        prior["bytes"] = json!(0);
+        fs::write(&path, serde_json::to_vec(&prior).unwrap()).unwrap();
+        assert!(
+            register_cold(
+                &archive,
+                &c.h,
+                fs::metadata(&object_path).unwrap().len(),
+                &object_path
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn cold_guard_protects_all_authorization_and_version_refs_without_reading_unrelated_authoring()

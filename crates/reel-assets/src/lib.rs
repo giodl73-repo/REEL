@@ -8,6 +8,7 @@ pub mod demotion;
 pub mod goldens;
 pub mod jobs;
 pub mod manager_review;
+mod output_retention;
 pub mod references;
 pub mod registry;
 pub mod scenes;
