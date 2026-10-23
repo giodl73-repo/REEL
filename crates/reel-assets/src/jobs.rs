@@ -180,14 +180,33 @@ fn validate(job: &Job) -> Result<()> {
     Ok(())
 }
 
+fn read_workspace_directory(
+    mut read: impl FnMut() -> std::io::Result<fs::ReadDir>,
+) -> std::io::Result<Option<fs::ReadDir>> {
+    // Windows can report ACCESS_DENIED/SHARING_VIOLATION while a temporary
+    // directory is delete-pending. Re-read briefly, then fail closed if it stays
+    // inaccessible. Only NotFound means the directory no longer contributes.
+    for attempt in 0..4 {
+        match read() {
+            Ok(entries) => return Ok(Some(entries)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) if cfg!(windows) && matches!(e.raw_os_error(), Some(5 | 32)) && attempt < 3 => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    unreachable!("bounded directory read always returns after its final attempt")
+}
+
 fn usage(dir: &Path, depth: usize, count: &mut usize) -> Result<u64> {
     if depth > 16 {
         return Err("Job workspace depth exceeded".into());
     }
     let mut size = 0;
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+    let entries = match read_workspace_directory(|| fs::read_dir(dir)) {
+        Ok(Some(entries)) => entries,
+        Ok(None) => return Ok(0),
         Err(e) => {
             return Err(format!("Job monitor cannot enumerate {}: {e}", dir.display()).into());
         }
@@ -603,6 +622,69 @@ mod process {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn workspace_monitor_preserves_counts_and_rejects_persistent_errors() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("input.bin"), [0u8; 23]).unwrap();
+        fs::create_dir(root.path().join("nested")).unwrap();
+        fs::write(root.path().join("nested/output.bin"), [0u8; 31]).unwrap();
+        let mut count = 0;
+        assert_eq!(usage(root.path(), 0, &mut count).unwrap(), 54);
+        assert_eq!(count, 3);
+        assert!(
+            read_workspace_directory(|| Err(std::io::Error::other("permanent read failure")))
+                .is_err()
+        );
+        assert!(
+            read_workspace_directory(|| fs::read_dir(root.path().join("removed")))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn delete_pending_directory_is_retried_but_permanent_access_denied_still_fails() {
+        for code in [5, 32] {
+            let root = tempfile::tempdir().unwrap();
+            let mut calls = 0;
+            let entries = read_workspace_directory(|| {
+                calls += 1;
+                if calls < 3 {
+                    return Err(std::io::Error::from_raw_os_error(code));
+                }
+                fs::read_dir(root.path())
+            })
+            .unwrap();
+            assert!(entries.is_some());
+            assert_eq!(calls, 3);
+            let mut calls = 0;
+            let error = read_workspace_directory(|| {
+                calls += 1;
+                Err(std::io::Error::from_raw_os_error(code))
+            })
+            .unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(code));
+            assert_eq!(calls, 4);
+        }
+        let root = tempfile::tempdir().unwrap();
+        let child = root.path().join("temporary");
+        fs::create_dir(&child).unwrap();
+        let mut calls = 0;
+        assert!(
+            read_workspace_directory(|| {
+                calls += 1;
+                if calls == 1 {
+                    fs::remove_dir(&child).unwrap();
+                    return Err(std::io::Error::from_raw_os_error(5));
+                }
+                fs::read_dir(&child)
+            })
+            .unwrap()
+            .is_none()
+        );
+        assert_eq!(calls, 2);
+    }
     #[test]
     fn workspace_paths_cannot_escape_or_alias_devices() {
         for path in [

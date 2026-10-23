@@ -70,3 +70,9 @@ Ordinary LFS lookup and existing project accounting behavior remain unchanged.
 The subsequent [explicit redundant-copy command](asset-demotion-v1.md) has its
 own request, verification, concurrency and journal gates. A plan alone remains
 non-executable and grants no removal authorization.
+
+An explicit version lease protects all payloads declared by that version and its
+locked dependency closure, including compiled reference assets needed by a live
+job. It does not reclassify references as primary inputs or permanent selections.
+Releasing the lease restores ordinary primary-input/output retention rules; an
+old plan still requires generation and source revalidation before any removal.
