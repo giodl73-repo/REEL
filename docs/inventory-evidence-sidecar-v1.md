@@ -1,7 +1,8 @@
 # Persistent inventory evidence sidecars
 
 Status: opt-in Rust library, `inventory_evidence::sidecar`. Derived metadata
-format only; no production cache backend, catalog admission, CLI or planner
+format only; an explicit [existing-cache file backend](inventory-evidence-file-store-v1.md)
+is available, without production adoption, catalog admission, CLI or planner
 integration. It is not the universal asset-graph interchange format.
 
 The existing source adapter verifies an admitted inventory once. Explicit
@@ -80,7 +81,9 @@ leaves, even if their observations otherwise look alike.
 
 ## Publication, interruption and concurrency
 
-The `Store` trait is explicitly supplied by the caller. There is no default
+The `Store` trait is explicitly supplied by the caller. An optional `FileStore`
+uses named protected staging sessions and the existing CAS layout;
+`ReadOnlyStore` makes exact queries without session recovery. There is no default
 filesystem path, new cache, background task, archive scan or network resolver.
 Implementations must provide immutable atomic no-overwrite publication and
 reject corrupt existing winners. Library publication verifies the returned
@@ -117,7 +120,8 @@ tests, 100 model scenarios and 23 source-adapter tests (345 total). Strict
 all-target Clippy, formatting, ROLES structure and diff checks pass locally.
 Fixtures read no project cache or private media and do not change runtime pins.
 
-Next adoption work: an explicit backend over existing immutable storage with
-bounded admission and staging cleanup; process/crash tests; trusted source/root
+The file backend now has separate bounded-staging, process-concurrency and
+process-termination fixtures. Next adoption work: shared capacity admission,
+verified staging handoff/retirement; device/platform crash tests; trusted source/root
 catalog admission; cancellation/deadlines; and shadow comparison with existing
 planner queries. Receipt and registry adapters are still separate work.

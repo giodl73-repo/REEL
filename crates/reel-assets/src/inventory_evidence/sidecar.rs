@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 const HEADER: &str = "reel.inventory-sidecar.header.v1";
 const NODE: &str = "reel.inventory-sidecar.node.v1";
 const MAX_NODE_BYTES: u64 = 4 * 1024 * 1024;
+pub mod file_store;
 
 /// Caller-supplied immutable storage. `publish` must atomically publish without
 /// overwriting an existing node, and reject a corrupt existing winner. Its

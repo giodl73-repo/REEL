@@ -200,3 +200,34 @@ backend or runtime change. Backend process races/power-loss durability, catalog
 admission, staging lifecycle, deadline/cancellation, receipt/registry adapters,
 large real-source benchmarks and shadow planner parity remain adoption gates.
 The fixture's no-clobber writes/syncs do not establish production crash durability.
+
+## Existing-cache file backend increment
+
+Review base: `d77a53cce981182ebd2c448676d51f34fecba98f`, plus new
+`src/inventory_evidence/sidecar/file_store.rs`, `tests/inventory_file_store.rs`,
+`inventory-evidence-file-store-v1.md` and associated module/documentation links.
+Producer-applied review uses all three infrastructure checklists (version 1)
+and Rights and Provenance; owner is this implementation lane. No independent
+review or human approval is implied. Earlier review hashes remain historical.
+
+| Role | Severity | Finding/correction and evidence |
+| --- | --- | --- |
+| Asset Graph and Version Integrity | Major corrected | Reopening a writer verifies its whole staged set and would defeat bounded ordinary queries. A separate ReadOnlyStore opens exact named CAS chunks without session recovery or ownership. A 1,000-record query during live writer ownership reads three logical chunks; an unrelated broken staging session has no effect. Source/root admission remains external. |
+| Storage Custody and Recovery | Major corrected | An interrupted writer can leave published children before header admission. Each complete node has a verified protected staged hard link before its CAS name is published. Actual process termination retains staging; exact named recovery/retry succeeds. Partial staged files and corrupt controls reject without deletion or repair. Missing CAS names fail ordinary reads, even while staged bytes remain intact. Same-volume hard links are explicitly not independent custody. |
+| Registry Concurrency and Evidence Integrity | Major corrected | A global lock would block independent producers. Ownership is per explicit staging session only; separate OS processes concurrently publish identical CAS names without overwrite. Same-session takeover rejects while live and succeeds after process termination. Corrupt existing winners are preserved/rejected. This is actual process concurrency and kill testing, not a serial model or power-loss proof. |
+| Storage Custody and Recovery | Major remaining adoption gate | Node/count/logical-byte staging bounds are enforced and recovered from create-once private controls. They do not reserve shared-volume capacity or account filesystem overhead across sessions. Shared capacity admission, collector-aware protection, catalog handoff and bounded explicit retirement must be integrated before live use. Drop/age/seal never deletes staging. |
+| Registry Concurrency and Evidence Integrity | Advisory addressed | Completion seals are create-once, bounded and idempotent for one root. Sealing blocks new writes but is not catalog admission, closure verification, a CAS revision or release authority. Incomplete seals remain a recovery error. No source/catalog updates or collector adoption are hidden in this backend. |
+| Rights and Provenance | Advisory addressed | Absolute paths and session controls remain private local metadata assets. Paths are explicit, traversal/reparse checks reject Windows junctions, and no inventory data supplies storage roots or executes tools. Fixture child processes operate only on synthetic temporary directories; no project cache, private source, network or shareable evidence export is accessed. Trusted ownership is required; TOCTOU-resistant hostile-filesystem sandboxing is not claimed. |
+
+Validation: all 361 suite tests pass, including 16 backend cases. Strict
+all-target Clippy, formatting, ROLES structure and diff checks pass. Windows
+directory-junction rejection is exercised; Unix symlink and namespace-sync
+branches are not exercised by this Windows run. File data is synced, but no
+portable Windows directory namespace durability barrier is implemented.
+
+Disposition: optional existing-layout file backend and independent exact reader
+implemented and tested. No live cache/runtime/CLI/planner wiring or new cache
+root. Production adoption remains blocked on shared capacity admission, trusted
+catalog/root revisions, collector-aware staging handoff/retirement, shadow
+planner parity and platform/device crash validation. Time/cancellation and
+receipt/registry adapters remain separate work.
