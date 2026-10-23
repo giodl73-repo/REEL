@@ -40,3 +40,9 @@ The cache census continues to report metadata usage conservatively. The tier
 plan overlays this explicit placement decision. It does not mark global source
 coverage complete or silently classify other current records. Existing projects
 without an output-retention map keep their previous behavior.
+
+Use `cache-observe <exact-hashes.json> <new-private-report.json>` to refresh a
+bounded array of registered hashes in active tiers only. This exposes the same
+named-observation core used for version transitions: exact type/size and physical
+link observations, without a whole-cache census, media hash scrub or M access.
+A new tier policy may bind this report as its baseline for the bounded plan.
