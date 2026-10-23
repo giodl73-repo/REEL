@@ -29,6 +29,40 @@ the separate dry-run/application steps.
 The [schema and reference inspector](docs/asset-references-v1.md) exports typed
 contracts and builds a bounded, private offline graph with explicit gaps,
 distinguishing dependencies, inventory membership and historical versions.
+The proposed [asset graph architecture](docs/asset-graph-architecture.md) explores
+shared immutable snapshots, concurrent roots and large evidence adapters through
+executable synthetic scenarios; it does not change production storage behavior.
+An opt-in [read-only inventory evidence adapter](docs/inventory-evidence-adapter-v1.md)
+parses existing native reports with source verification and private provenance;
+optional [source-bound sidecars](docs/inventory-evidence-sidecar-v1.md) support
+persistent bounded lookups through an explicit immutable store, with an optional
+[existing-cache backend](docs/inventory-evidence-file-store-v1.md). Neither API is
+wired into runtime placement or demotion. Optional
+[capacity-admitted handoff](docs/inventory-evidence-handoff-v1.md) verifies the
+complete index before retiring only redundant staging names.
+The optional [revisioned index catalog](docs/inventory-evidence-catalog-v1.md)
+provides per-key compare-and-swap updates and positive-only collector facts.
+Explicit [managed index commands](docs/inventory-evidence-managed-v1.md) build
+and admit named source assets and compare read-only subject lookups through a
+private JSON profile. They do not switch existing producers or enable cleanup.
+The opt-in [combined collector shadow](docs/inventory-evidence-collector-v1.md)
+combines declared consumers, jobs and index protection, then restricts native
+planner proposals without applying removals or refilling held batch slots.
+Its named `collector-verify` preflight freshly hashes hot/retained pairs and
+rechecks demand, without copying, removing or exporting private identities.
+An optional [per-asset publication fence](docs/asset-publication-fence-v1.md)
+provides tested shared/exclusive coordination for short publication boundaries;
+persisted sessions and optional managed profiles enforce their exact enrolled
+domain on publication/recovery. Live removal and complete producer enrollment
+remain separate integration work.
+An explicit library-only per-cache requirement can now refuse unenrolled
+FileStore/native-job writers; activation requires quiescence and does not certify
+coverage of other producers or authorize eviction.
+Enrolled builds also persist exact source-evidence demand before preparation and
+preserve it across failed reads, recovery, retained handoff and staging retirement.
+Optional [enrolled native jobs](docs/asset-fenced-jobs-v1.md) publish durable
+input/output intent before payload access/publication. Automatic retirement also
+enrolls salvage and diagnostic assets before verified scratch cleanup.
 
 ---
 

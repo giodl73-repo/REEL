@@ -1,5 +1,6 @@
 //! Explicit trusted production jobs in admitted existing-cache staging.
 //! This runner is not a sandbox for untrusted programs/manifests.
+use crate::inventory_evidence::sidecar::file_store::collector::fence::Domain;
 use crate::{
     Result, active_existing, admission, config, load, object, recover, selected, valid_oid, verify,
 };
@@ -63,6 +64,24 @@ struct Job {
     files: BTreeMap<String, String>,
     steps: Vec<Step>,
     outputs: BTreeMap<String, Output>,
+}
+
+/// Read-only collector adapter over the same validated request accepted by
+/// run-job. Never resolves tools, opens inputs, executes steps or infers outputs.
+pub(crate) fn protection_inputs(raw: &[u8]) -> Result<BTreeSet<String>> {
+    let job = decode(raw)?;
+    validate(&job)?;
+    Ok(job
+        .inputs
+        .values()
+        .chain(job.tools.values())
+        .map(|a| a.sha256.clone())
+        .collect())
+}
+fn decode(raw: &[u8]) -> Result<Job> {
+    Ok(serde_json::from_slice(
+        raw.strip_prefix(b"\xef\xbb\xbf").unwrap_or(raw),
+    )?)
 }
 
 fn relative(name: &str) -> Result<PathBuf> {
@@ -225,13 +244,69 @@ fn usage(dir: &Path, depth: usize, count: &mut usize) -> Result<u64> {
 }
 
 pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
-    let bytes = fs::read(manifest)?;
-    if bytes.len() > 256 * 1024 {
-        return Err("Job manifest exceeds intake budget".into());
+    run_protocol(root, manifest, None)
+}
+/// Explicit bounded job enrollment, including diagnostic/salvage publication
+/// before automatic retirement. Default unenrolled job behavior is unchanged.
+pub fn run_fenced(root: &Path, manifest: &Path, domain: &Domain) -> Result<Value> {
+    run_protocol(root, manifest, Some(domain))
+}
+/// Allowlisted public projection. Native result/intent records remain private.
+pub fn publication_summary(result: &Value) -> Result<Value> {
+    let outputs = result["outputs"]
+        .as_object()
+        .ok_or("Missing fenced job outputs")?;
+    if result["publication_enrolled"] != true {
+        return Err("Unsupported fenced job summary state".into());
     }
-    let job: Job = serde_json::from_value(load(manifest)?)?;
+    let retained = result["workspace_retained"]
+        .as_bool()
+        .ok_or("Missing workspace retention state")?;
+    if !retained
+        && (result["retirement_evidence"]["sha256"]
+            .as_str()
+            .is_none_or(|h| !valid_oid(h))
+            || result["retirement_evidence"]["bytes"].as_u64().is_none())
+    {
+        return Err("Retired enrolled job requires retained evidence".into());
+    }
+    let mut bytes = 0u64;
+    for output in outputs.values() {
+        add(
+            &mut bytes,
+            output["bytes"].as_u64().ok_or("Missing output size")?,
+        )?;
+    }
+    let linked = result["linked_input_bytes"]
+        .as_u64()
+        .ok_or("Missing linked-input count")?;
+    let copied = result["copied_input_bytes"]
+        .as_u64()
+        .ok_or("Missing copied-input count")?;
+    Ok(
+        json!({"schema":"reel.fenced-job-summary.v1","outputs":outputs.len(),"output_logical_bytes":bytes,
+        "linked_input_bytes":linked,"copied_input_bytes":copied,
+        "workspace_retained":retained,"retirement_completed":!retained,"publication_enrolled":true,"removal_authorized":false,"daemon_started":false}),
+    )
+}
+fn run_protocol(root: &Path, manifest: &Path, domain: Option<&Domain>) -> Result<Value> {
+    let bytes = crate::tiering::read_bounded(manifest, 256 * 1024)?;
+    let job = decode(&bytes)?;
     validate(&job)?;
+    if domain.is_some() {
+        publication::validate_enrolled(&job, &bytes)?;
+    }
     let cfg = config(root)?;
+    // Requirements on any configured active cache must be satisfied before
+    // admission or input resolution. Multiple required domains currently hold
+    // the job rather than guessing cross-cache demand routing.
+    let _publication_policies = cfg
+        .cache_roots
+        .iter()
+        .map(|cache| {
+            crate::inventory_evidence::sidecar::file_store::publication_policy::check(cache, domain)
+        })
+        .collect::<Result<Vec<_>>>()?;
     let index = selected(root)?;
     for tool in job.installed_tools.values() {
         if index.get(&tool.sha256) != Some(&tool.bytes) {
@@ -247,6 +322,9 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
     // admitted readers, instead of racing a path captured before admission.
     let reservation = admission::reserve(root, &cfg, job.budget_bytes)
         .map_err(|e| format!("Job not started; admission: {e}"))?;
+    let enrolled_workspace = domain
+        .map(|domain| publication::prepare(&cfg, &reservation, domain, &bytes))
+        .transpose()?;
     let mut sources = BTreeMap::new();
     let mut source_guards = Vec::new();
     for tool in job.installed_tools.values() {
@@ -274,16 +352,22 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
             found.ok_or("Named job input absent from active caches; no archive access")?,
         );
     }
-    let workspace = reservation
-        .cache_root
-        .join("staging/caminos")
-        .join(&reservation.id);
-    lifecycle::prepare_staging(&reservation.cache_root)?;
-    fs::create_dir(&workspace)?;
-    lifecycle::checked_workspace(&cfg, &reservation.cache_root, &workspace)?;
-    fs::write(workspace.join("job.json"), &bytes)?;
+    let workspace = if let Some(workspace) = enrolled_workspace {
+        workspace
+    } else {
+        let workspace = reservation
+            .cache_root
+            .join("staging/caminos")
+            .join(&reservation.id);
+        lifecycle::prepare_staging(&reservation.cache_root)?;
+        fs::create_dir(&workspace)?;
+        lifecycle::checked_workspace(&cfg, &reservation.cache_root, &workspace)?;
+        fs::write(workspace.join("job.json"), &bytes)?;
+        workspace
+    };
     let mut linked_input_bytes = 0u64;
     let mut copied_input_bytes = 0u64;
+    let mut retirement_attempted = false;
     let attempt = (|| -> Result<Value> {
         // File handles deny writes to immutable views while allowing concurrent readers
         // and removal of their temporary hard links. Canonical bytes are never writable.
@@ -375,11 +459,35 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
             }
             let oid = format!("{:x}", hasher.finalize());
             verify(&path, &oid, metadata.len())?;
-            let existing = active_existing(&cfg, &oid, metadata.len())?;
+            let existing = if domain.is_none() {
+                active_existing(&cfg, &oid, metadata.len())?
+            } else {
+                None
+            };
             results.insert(role.clone(), (path, oid, metadata.len(), existing));
+        }
+        if let Some(domain) = domain {
+            let outputs = results
+                .iter()
+                .map(|(role, (_, oid, bytes, _))| {
+                    (
+                        role.clone(),
+                        publication::Descriptor {
+                            sha256: oid.clone(),
+                            bytes: *bytes,
+                        },
+                    )
+                })
+                .collect();
+            publication::outputs(&workspace, &reservation.id, &bytes, domain, outputs)?;
         }
         let mut retained = BTreeMap::new();
         for (role, (path, oid, size, existing)) in results {
+            let existing = if domain.is_some() {
+                active_existing(&cfg, &oid, size)?
+            } else {
+                existing
+            };
             let reused = existing.is_some();
             let destination = match existing {
                 Some(path) => path,
@@ -392,11 +500,25 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
         "volume_id":reservation.volume_id,"budget_bytes":job.budget_bytes,"workspace":workspace,
         "outputs":retained,"linked_input_bytes":linked_input_bytes,"copied_input_bytes":copied_input_bytes,"daemon_started":false,"original_inputs_modified":false,
         "workspace_retained":true,"creative_authority":"not-granted-by-this-receipt"});
-        fs::write(
-            workspace.join("result.json"),
-            serde_json::to_vec_pretty(&result)?,
-        )?;
+        if domain.is_some() {
+            result["publication_enrolled"] = json!(true);
+        }
+        let result_bytes = serde_json::to_vec_pretty(&result)?;
+        if domain.is_some() && result_bytes.len() as u64 > publication::LIMIT {
+            return Err("Enrolled job result exceeds metadata budget".into());
+        }
+        if domain.is_some() {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(workspace.join("result.json"))?;
+            file.write_all(&result_bytes)?;
+            file.sync_all()?;
+        } else {
+            fs::write(workspace.join("result.json"), result_bytes)?;
+        }
         if !job.retain_workspace {
+            retirement_attempted = true;
             let evidence = lifecycle::publish_and_retire(
                 root,
                 &cfg,
@@ -405,6 +527,7 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
                 &bytes,
                 &result,
                 &job,
+                domain,
             )?;
             result["workspace_retained"] = json!(false);
             result["retirement_evidence"] = evidence;
@@ -417,6 +540,12 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
             if job.retain_workspace {
                 return Err(error);
             }
+            if domain.is_some() && retirement_attempted {
+                return Err(format!(
+                    "{error}; enrolled retirement needs explicit reconciliation; no retry performed"
+                )
+                .into());
+            }
             let failure = json!({"schema":"reel.failed-job-result.v1","job_id":reservation.id,
                 "manifest_sha256":format!("{:x}",Sha256::digest(&bytes)),"error":error.to_string(),"outputs":{},
                 "creative_authority":"not-granted-by-this-receipt"});
@@ -428,6 +557,7 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
                 &bytes,
                 &failure,
                 &job,
+                domain,
             ) {
                 Ok(evidence) => Err(format!(
                     "{error}; staging retired; diagnostic {}",
@@ -506,14 +636,31 @@ pub fn discard(root: &Path, id: &str, manifest_oid: &str, incomplete: bool) -> R
         .get(manifest_oid)
         .ok_or("Job manifest must be a registered retained asset")?;
     verify(&workspace.join("job.json"), manifest_oid, manifest_size)?;
-    let job: Job = serde_json::from_value(load(&workspace.join("job.json"))?)?;
+    let manifest_bytes = crate::tiering::read_bounded(&workspace.join("job.json"), 256 * 1024)?;
+    if manifest_bytes.len() as u64 != manifest_size
+        || format!("{:x}", Sha256::digest(&manifest_bytes)) != manifest_oid
+    {
+        return Err("Job manifest changed during discard intake".into());
+    }
+    let job = decode(&manifest_bytes)?;
     validate(&job)?;
+    let cache = workspace
+        .ancestors()
+        .nth(3)
+        .ok_or("Missing named job cache")?;
+    let _publication_domain = publication::discard_domain(cache, &workspace, &manifest_bytes)?;
     let mut required: BTreeMap<String, u64> = job
         .inputs
         .values()
         .chain(job.tools.values())
         .map(|a| (a.sha256.clone(), a.bytes))
         .collect();
+    for asset in publication::retirement_assets(&workspace, &manifest_bytes)? {
+        if index.get(&asset.sha256) != Some(&asset.bytes) {
+            return Err("Retirement artifact must be registered before scratch discard".into());
+        }
+        required.insert(asset.sha256, asset.bytes);
+    }
     for tool in job.installed_tools.values() {
         required.insert(tool.sha256.clone(), tool.bytes);
     }
@@ -546,7 +693,12 @@ pub fn discard(root: &Path, id: &str, manifest_oid: &str, incomplete: bool) -> R
         return Err("Incomplete job requires explicit --discard-incomplete; only temporary results will be discarded".into());
     }
     required.insert(manifest_oid.to_owned(), manifest_size);
+    let mut _custody = Vec::new();
     for (oid, size) in &required {
+        if _publication_domain.is_some() {
+            _custody.extend(lifecycle::pin_retained(&cfg, oid, *size)?);
+            continue;
+        }
         let mut found = false;
         for cache in &cfg.cache_roots {
             let path = object(cache, oid);
@@ -577,6 +729,7 @@ pub fn discard(root: &Path, id: &str, manifest_oid: &str, incomplete: bool) -> R
 }
 
 mod lifecycle;
+pub(crate) mod publication;
 
 #[cfg(all(test, windows))]
 #[path = "jobs/tests.rs"]

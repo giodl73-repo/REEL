@@ -17,6 +17,21 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
             .ok_or_else(|| "Missing argument".into())
     };
     match command {
+        "collector-verify" => {
+            if args.len()!=2 {return Err("Usage: collector-verify <private-job.json>".into());}
+            let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+            crate::inventory_evidence::sidecar::file_store::collector::custody::run(root,Path::new(arg(1)?),now)
+        },
+        "collector-shadow" => {
+            if args.len()!=2 {return Err("Usage: collector-shadow <private-job.json>".into());}
+            let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+            crate::inventory_evidence::sidecar::file_store::collector::command::run(root,Path::new(arg(1)?),now)
+        },
+        "inventory-index-init" | "inventory-index-build" | "inventory-index-recover" | "inventory-index-shadow" => {
+            let expected=if command=="inventory-index-shadow" {3}else{2};
+            if args.len()!=expected {return Err("Usage: inventory-index-init|inventory-index-build|inventory-index-recover <profile.json> | inventory-index-shadow <profile.json> <exact-subjects.json>".into());}
+            crate::inventory_evidence::sidecar::file_store::managed::command::run(root,command,Path::new(arg(1)?),args.get(2).map(Path::new))
+        },
         "schema-catalogue" => {
             if args.len()!=2 {return Err("Usage: schema-catalogue <new-output.json>".into());}
             let value=crate::references::catalogue()?;
@@ -109,6 +124,12 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
         "compact-versions" => versions::compact(root),
         "compact-goldens" => crate::goldens::compact(root),
         "run-job" => crate::jobs::run(root,Path::new(arg(1)?)),
+        "run-job-fenced" => {
+            if args.len()!=3 {return Err("Usage: run-job-fenced <manifest.json> <existing-fence-directory>".into());}
+            let domain=crate::inventory_evidence::sidecar::file_store::collector::fence::Domain::open(Path::new(arg(2)?))?;
+            let result=crate::jobs::run_fenced(root,Path::new(arg(1)?),&domain)?;
+            Ok(crate::jobs::publication_summary(&result)?)
+        },
         "discard-job-scratch" => crate::jobs::discard(root,arg(1)?,arg(2)?,args.get(3).is_some_and(|a|a=="--discard-incomplete")),
         "verify-active" => {
             let oid=arg(1)?;let index=selected(root)?;let size=*index.get(oid).ok_or("Unregistered hash")?;
@@ -227,7 +248,7 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
             versions::transact(root,|s|{s.validate_plan(&plan)?;Ok(json!({"generation":s.generation,"fresh":true,"removal_authorized":false}))})
         },
         "release-reservation" => {admission::release_stale(root,&config(root)?,arg(1)?)?;Ok(json!({"released":arg(1)?}))},
-        _=>Err("Commands: ingest, register, verify-active, locate, resolve, fetch, register-version, select, deprecate, lease, release-lease, retirement-plan, check-plan, release-reservation".into()),
+        _=>Err("Commands include: collector-verify, collector-shadow, inventory-index-init, inventory-index-build, inventory-index-shadow, inventory-index-recover, ingest, register, verify-active, locate, resolve, fetch, register-version, select, deprecate, lease, release-lease, retirement-plan, check-plan, release-reservation".into()),
     }
 }
 pub fn main() {

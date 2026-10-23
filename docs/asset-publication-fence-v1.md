@@ -1,0 +1,215 @@
+# Per-asset publication fence
+
+This opt-in Rust library primitive coordinates a short publication/removal
+critical section for one asset or a bounded batch. It does not authorize
+removal, prove custody, enroll producers, or change the existing executor.
+It addresses the race between a final demand check and concurrent publication;
+snapshot revalidation alone cannot make that boundary atomic.
+
+## Control and API
+
+`collector::fence::Domain::initialize(existing_directory)` explicitly creates
+one `asset-publication-fence.v1.lock` control containing a fixed 32-byte schema
+header. It creates no directories, cache or per-asset file. Existing controls
+are checked without overwrite; missing/partial/corrupt controls are not repaired.
+`Domain::open` only opens an existing control. The caller must choose a trusted
+local metadata directory, separate from enumerated staging/retained/catalog
+namespaces. No CLI, daemon, default discovery or installed configuration is added.
+
+`Domain::acquire(subjects, Mode::Publish | Mode::Remove, wait)` returns an owned
+guard. Publish uses shared Windows byte-range locks; Remove uses exclusive locks.
+Publishers of the same asset can overlap, while removal excludes participating
+publishers/removers of that asset. Other assets proceed independently, except
+conservative prefix collisions. The domain itself holds no subject lock.
+
+Each validated lowercase SHA-256 maps its first 64 bits, masked to 62 bits,
+to a one-byte range starting at `4096 + prefix`. Locks beyond EOF do not extend
+or populate the file. The mapping is part of this control schema. Collisions
+add contention; they never drop protection. Batches reject duplicates, empty or
+invalid subjects and more than 512 subjects, deduplicate collided offsets, and
+acquire offsets in sorted order. A failed acquisition releases earlier ranges.
+
+Acquisition is nonblocking by default; explicit retry waits are limited to two
+seconds for the whole batch. There is no lock stealing, expiry or stale-owner
+reset. Dropping the guard or process termination releases its OS locks. The wait
+bound is not a maximum guard lifetime or a hard cancellation guarantee for
+blocking filesystem calls. Callers must keep critical sections short; never
+hold these guards over renders, media copies/hashing or whole graph traversal.
+
+The control's file identity and ancestor directories are pinned against Windows
+replacement while opened. Acquisition checks identity/header again. Trusted
+metadata ownership is still required; this is not protection from an adversary
+with arbitrary writes or whole-lineage rollback. Different directories or
+different schema mappings are different domains and cannot coordinate.
+
+Only Windows is implemented. Other platforms fail explicitly, with no global
+file-lock fallback. `Win32_System_IO` is an additional feature of the existing
+windows-sys dependency; no new crate, service or runtime executable is added.
+
+## Index publication opt-in
+
+`FileStore::publish_fenced(&domain, bytes)` requires an initialized domain inside
+that store's cache and obeys the existing node-size limit. It acquires shared
+protection for the node before staged/CAS publication, then uses the existing
+verified publication path. The bounded node write/verification happens inside
+this short guard. Busy-fence refusal occurs before publication and does not
+poison the writer, so an explicit retry can succeed later. Unrelated nodes can
+publish while another node is exclusively fenced.
+
+The per-call API remains available for unenrolled writers. It does not establish
+session-wide enrollment by itself. No code may treat it as complete coverage or
+permission to unlink a CAS name.
+
+## Persisted session enrollment
+
+`FileStore::begin_fenced` and `begin_admitted_fenced` create
+`reel.inventory-sidecar.session.v2` controls with a required private binding to
+the canonical metadata directory, fence schema and physical control-file
+identity. Every ordinary `Store::publish` call on that writer acquires its
+shared node fence. Named `resume`/`resume_admitted` automatically reopens and
+checks the persisted domain; callers cannot resume through an unfenced fallback.
+The domain is pinned for the writer lifetime, with no subject locks between
+publications. Capacity admission remains separately required when applicable.
+
+Version 2 without a binding, version 1 with a binding, unsupported bindings,
+missing controls and recreated controls with the same header but a different
+physical identity fail. A per-call fence cannot override an enrolled domain.
+Enrolled metadata must stay inside the same cache filesystem and separate from
+staging. Older readers reject this version/unknown field; they cannot silently
+treat an enrolled session as the old protocol. Existing version 1 sessions retain
+their original behavior. Arbitrary trusted-control rewriting or whole-lineage
+rollback is not prevented by a schema/version check.
+
+`managed::build_fenced` and the managed profile's optional `publication_fence`
+directory select enrolled publication for all generated index nodes. The
+profile opens an existing domain only; it never initializes or repairs one.
+The directory must be a separate child of the output cache, disjoint from
+staging, retention and catalog namespaces. Managed success remains count-only.
+
+The collector validates version 2 bindings and stamps their control bytes under
+its metadata budget. Missing or changed fence identity makes capture fail,
+including when no nodes are staged; it never becomes an empty protected scope.
+This does not certify global enrollment. A fresh session/profile can still use
+version 1 when no cache-wide policy forbids it. Unenrolled native jobs,
+cross-project source demand, retained/catalog lifecycle cleanup and
+the removal executor still require their respective integration contracts.
+
+Optional [enrolled native jobs](asset-fenced-jobs-v1.md) publish input intent
+before source access, output intent before CAS publication and bounded retirement
+intent before salvage/request/evidence publication. Their scratch cleanup retains
+fresh canonical custody handles; canonical cache eviction is not enabled here.
+
+## Source demand before preparation
+
+`begin_fenced_source` and `begin_admitted_fenced_source` create version 3 session
+intent containing both the required fence binding and the exact canonical
+source descriptor. The latter includes encoded/decoded identities, encoding,
+project, authority and interpretation version, never the source body. The
+source's shared hash fence covers creation/sync of that compact intent, then
+releases before the caller opens, hashes or decompresses original evidence.
+The intent itself supplies continuing demand. No range lock spans source I/O.
+
+Enrolled managed builds reserve capacity and publish this version 3 session
+before source preparation; default unenrolled builds preserve their old order.
+A source-fence refusal precedes session creation. A missing/corrupt source after
+intent publication leaves a protected empty session, with no automatic retry,
+expiry or cleanup. The collector holds its encoded source hash as RequiredSource
+even when the source bytes are absent. This is demand, not verified custody.
+Media merely observed inside that inventory does not acquire selected status.
+
+Capacity-admitted version 3 sessions also persist `admission_required: true`
+before capacity-control publication. Missing capacity controls reject recovery
+and collection; interruption cannot fall back to an unadmitted writer. Existing
+explicit reacquisition remains necessary before mutation. Low-level constructors
+still require external volume admission and do not claim managed capacity.
+
+Named recovery validates the source descriptor and rejects version 3 without
+its source demand, as well as source-bearing older protocol combinations.
+Handoff and staging-retirement planning must use the identical descriptor;
+they cannot substitute another authority or evidence source. The retained
+receipt therefore overlaps the existing source intent before staging names
+retire. Session source demand remains afterwards and on failure; there is no
+new abandonment/source-release operation in this increment.
+
+The intent/domain lives in the output cache's explicit session scope. Source
+bytes can live in a different configured cache. This does not certify that
+every consumer or source-cache writer is enrolled; final removal must reconcile
+all participating domains and native controls. Source-byte custody, tier affinity,
+reference release and physical unlink remain separate checks. Do not infer
+removal permission from a released range lock or the existence of a receipt.
+
+## Explicit producer-family requirement
+
+The library-only `file_store::publication_policy::install(cache, domain)` writes
+one bounded, create-new `reel-managed-publication.v1.json` in an existing cache.
+It binds the canonical cache and exact physical fence control identity. This
+version governs FileStore writers and native jobs only; it is **not** an
+all-consumer enrollment certificate. No CLI or runtime silently installs it.
+
+Installation requires quiescent affected producers. It does not detect or drain
+already running processes, and is not a concurrent activation transaction.
+Existing binaries and other publisher families do not enforce this requirement.
+There is no automatic migration, replacement, repair or uninstall operation.
+Partial/corrupt controls fail closed; installation retries never overwrite.
+
+New FileStore sessions and named recovery must present the required persisted
+domain. Ordinary publication rechecks the requirement, so an old live writer
+cannot subsequently publish unfenced through these updated APIs. Per-call
+`publish_fenced` does not upgrade a legacy session into enrolled demand. Active
+enrolled writers pin the requirement and bound domain identity against replacement,
+without holding an asset range lock for their lifetime. Read-only access is
+unchanged. This policy alone does not add source demand to a node-only session.
+
+Native jobs check every configured active cache before admission/input access,
+and pin accepted controls through execution/retirement. Legacy `run-job` refuses
+a required cache. `run-job-fenced` must match each requirement. Multiple distinct
+required cache domains currently hold the job: cross-cache demand routing is not
+implemented, and this version never skips an enforced cache to find a permissive
+destination. Missing/inaccessible active cache directories also hold intake.
+
+Requirement presence proves only that these updated producer entry points refuse
+unenrolled work. Removing controls while producers are idle, old binaries,
+direct CAS writers, other native operations and unknown consumers remain outside
+this guarantee. Canonical eviction must still refuse incomplete coverage.
+
+## Remaining integration contract
+
+Before guarded removal can adopt this mechanism:
+
+1. Extend producer-family requirements to authoritative domain/schema enrollment
+   for every participating cache and producer, with safe activation and complete
+   coverage validation. FileStore/native-job compatibility refusal is implemented;
+   other writers and old binaries remain an adoption gate.
+2. Establish overlapping demand before source reads or root publication,
+   including native jobs, retained source-evidence demand and catalog lifecycles.
+3. Acquire removal protection before the final bounded demand check and exact
+   unlink, while preserving the existing native worktree/selection controls and
+   independently verified retained-copy handles.
+4. Define one acquisition order across domains/worktree controls. A timeout
+   holds the operation; it never relaxes custody or demand rules. Expensive
+   graph/physical verification must precede that short commit boundary.
+
+These are integration gates, not guarantees provided by this primitive. The
+current collector/preflight remains advisory, and existing cache removals do not
+automatically honor new fences. No production runtime adoption occurs here.
+
+## Validation
+
+Eighteen synthetic Windows integration cases plus a subprocess harness cover shared/exclusive behavior,
+unrelated-asset progress, partial-batch rollback, bounded waiting, conservative
+collisions, high offsets without file growth, invalid/missing/corrupt controls,
+control replacement prevention, idempotent initialization, killed publisher and
+remover recovery, retryable index publication with cache/node bounds, enrolled
+ordinary publication/recovery, conflicting domains, incomplete bindings and
+physical control replacement, source intent publication, source substitution and
+source-writer interruption, required-policy legacy/per-call/recovery refusal,
+matching concurrent writers, pinned policy controls, corrupt/oversize/misplaced
+requirements and recreated domain identities. Two native job cases cover legacy
+refusal before admission, matching enrollment and multiple-domain refusal.
+Two collector cases cover invalid bindings and source
+demand through handoff/staging retirement. Five managed executable cases cover
+enrolled build/recovery/parity, invalid-domain failures, fenced node/source refusal
+and missing-source failure with durable intent. Three real child processes are
+terminated while holding ranges or after source-intent publication; surviving owners
+keep their protection and released subjects can be reacquired. Tests access
+only temporary fixture directories, with no live cache, media or runtime change.
