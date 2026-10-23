@@ -24,6 +24,12 @@ Fit holds to the full song before saving. Browser drafts persist locally; Save
 downloads one `reel.cel-sorter-edit.v1` request, including notes and exact input
 hashes. This is an edit request, not an alternative scene or render grammar.
 
+The interface is in English. Each cel has a comment box; comments travel with
+the stable cel row through reordering, hold fitting, undo, browser autosave and
+draft export/import. Older drafts without comments remain supported. Cel comments
+and general notes are editorial feedback, preserved in the edit request; they do
+not become poem text, subtitles, approval or native scene content.
+
 `reel-cel-sorter apply native-project edit.json new-draft-directory` checks every
 input hash, stable ID, picture binding, and full frame/sample coverage, then
 writes native scene, alignment, bindings, graph and pointer documents. Unknown
