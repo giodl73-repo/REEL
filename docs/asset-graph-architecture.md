@@ -33,6 +33,12 @@ Small 1,000-entry maps can remain one node if measurements favor simplicity.
 These are storage/index envelopes around existing declarative artifact contracts,
 not a second scene grammar. Native `scene.json` remains the authoring contract;
 adapt or index its references without silently changing its meaning.
+Snapshot identity must include the complete native authoring/recipe state:
+ordering, timing/timebases, cue placement, crop/transform, captions, declared
+output variants and tool/recipe versions where they affect interpretation.
+An unchanged set of payload hashes does not mean the episode is unchanged.
+The asset-only model below is a projection for storage questions, not a complete
+scene snapshot serializer. Typed authoring references bind these other controls.
 
 For a synthetic 1,000-binding episode split over ten scenes, replace ten cels
 and three cues in two scenes. Write thirteen new payloads, two scene manifests,
@@ -74,6 +80,11 @@ Dependency edges resolve immutable version locks; build dependencies may consume
 primary inputs, never compiled deliveries. Generated cels/cues/bounded VFX can
 be declared primary inputs: role is semantic, not simply "generated or not".
 Reject compiled-output/primary-input conflicts rather than relabeling an output.
+For audio, preserve container-byte identity separately from decoded-signal or
+musical equivalence evidence. A decoded-signal claim must name normalization,
+tool/version, sample timebase and rounding. Equal decoded signals do not allow
+one container's content address to stand in for another. Derived equivalence
+claims are evidence edges, not permission to discard originals or approve audio.
 
 ```text
 R = selected deliveries union authorized drafts union live jobs union pins
@@ -105,6 +116,10 @@ versions remain recoverable independently of current working-set placement.
 Writers publish immutable blobs/nodes independently, verifying existing winners.
 Then atomically admit a change set with expected revisions for the mutable keys
 it changes: artifact selection, draft authorization or job protection.
+Revisions must never be reused: retain a monotonic revision/tombstone or unique
+incarnation identity across rollback, root deletion/recreation and compaction.
+Reverting a selection to an earlier version still creates a new revision; this
+prevents ABA acceptance of a writer whose expected value merely looks current.
 Different keys can advance concurrently. Competing updates to the same key
 require an explicit merge/rebase, even when both writers started from one root.
 Two edits in the same scene/page can still be merged by stable binding ID;
@@ -151,6 +166,17 @@ perform no movement, deletion, repair, upload or automatic whole-cache census.
 Scope and expected source digest come from the caller's admitted source catalog,
 not from an untrusted record being read. Verification failures are explicit.
 Keep source-specific fields behind adapters and preserve original evidence.
+Validate project and authority namespace against the admitted catalog, not just
+the source digest; reject a correctly hashed source from the wrong scope.
+Adapters are explicitly installed/versioned parsers. Data cannot supply an
+executable adapter, trigger a download, run a command or grant network access.
+
+Evidence queries and diagnostics are private by default, including paths,
+source hashes, record locators and provenance chains. A shareable report is a
+separate allowlisted projection with aggregate technical results only; never
+serialize the private claim graph and redact it afterward. Rights and disclosure
+policy apply transitively to linked evidence. Public examples/tests remain
+synthetic. Actual adapter/export privacy and egress tests are adoption gates.
 
 For legacy monolithic JSON/gzip, first access may require a full bounded
 streaming pass. Do not promise random access into ordinary gzip. Explicitly
@@ -196,6 +222,10 @@ Authorized drafts have an owner, exact root, declared retained outputs, budget
 and review policy. Becoming overdue requests review, not deletion. Promotion
 establishes delivery protection before draft release. Abandonment is explicit.
 Automatic draft expiry/budget enforcement is not implemented by this design.
+Distinct delivered variants (for example captioned and clean) need explicit
+variant identities and separately scoped selection/protection where appropriate.
+The storage engine preserves those decisions; it does not infer which version
+an audience needs or grant editorial/caption/publication acceptance.
 
 Historical placement requires project evidence of actual use; a filename, old
 timestamp or abandoned draft does not by itself establish that eligibility.
@@ -210,7 +240,9 @@ RemoveCopy(h, L) requires:
 ```
 
 Independent custody means another failure domain, not another hard link or
-alias on the same physical volume. Count physical allocation groups separately
+alias on the same physical volume. Distinct partitions/drive letters are not
+proof of independence; bind physical mapping and the configured failure-domain
+policy, and hold if that evidence is unknown. Count physical allocation groups separately
 from logical bytes and directory entries. Revalidate immediately before unlink;
 coordinate with new admissions using bounded per-object/metadata protocols,
 not a lifetime cache lock. A reference change cancels/replans affected removal.
@@ -257,8 +289,10 @@ Open design decisions: node fanout/splitting thresholds, canonical wire encoding
 evidence trust/catalog admission, transactional backend and platform recovery
 protocol. This proposal intentionally does not resolve them by documentation alone.
 
-Local validation: 14 model scenarios, the existing 195 unit tests and five other
+Local validation before role review: 14 model scenarios, the existing 195 unit tests and five other
 integration tests pass; strict all-target Clippy, formatting, ROLES structure and
 diff checks pass. Review caught two important boundaries: a page-local removal
 may still be used elsewhere in the same root, and monolithic compressed evidence
 needs explicit indexing before bounded random lookup. These are reflected above.
+The subsequent [role review](asset-graph-roles-review.md) records corrections,
+expanded scenarios and the remaining production implementation gates.

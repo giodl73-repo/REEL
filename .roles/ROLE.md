@@ -1,7 +1,7 @@
 # REEL review roles
 
-The files in this directory are production-review checklists used to examine
-REEL artifacts from distinct craft perspectives. They do not represent actual
+The files in this directory are production and infrastructure review checklists
+used to examine REEL artifacts and tools from distinct perspectives. They do not represent actual
 people, approvals, or authority to publish.
 
 For substantive production changes, select the roles whose focus intersects
@@ -11,7 +11,23 @@ tests and receipt validation; it does not replace them.
 
 Current lenses cover animation direction, editing, platform/audience fit, sound
 design, story direction, music reconstruction, score and arrangement, lyric and
-vocal adaptation, and rights/provenance.
+vocal adaptation, rights/provenance, and the technical panel below.
+
+## Asset infrastructure panel
+
+- [Asset Graph and Version Integrity](parliament/asset-graph-integrity.md)
+- [Storage Custody and Recovery](parliament/storage-custody-recovery.md)
+- [Registry Concurrency and Evidence Integrity](parliament/registry-evidence-concurrency.md)
+
+Use all three for shared graph/lifecycle architecture or cross-cutting custody
+changes; use the applicable subset for a bounded implementation. Add Rights and
+Provenance for evidence privacy, authority, source custody or exchange, and the
+relevant craft roles when native authoring/production semantics change.
+
+Record the reviewed commit/paths, role revisions, severity, owner, correction,
+actual validation and remaining gates. Distinguish a corrected design from a
+passed implementation fixture. Identify producer-applied versus independent
+review; roles are checklists, not simulated people or authority to spawn agents.
 
 ## Core production panel
 

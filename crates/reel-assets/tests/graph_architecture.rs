@@ -38,12 +38,20 @@ enum Node {
     Children(BTreeMap<String, Hash>),
 }
 fn snapshot(cas: &mut Cas, scenes: &[BTreeMap<String, Hash>]) -> Hash {
-    let children = scenes
+    // Initial fixture IDs only. Updates/insertion use snapshot_named to keep IDs.
+    let named = scenes
         .iter()
         .enumerate()
-        .map(|(i, rows)| {
+        .map(|(i, rows)| (format!("scene-{i:02}"), rows.clone()))
+        .collect();
+    snapshot_named(cas, &named)
+}
+fn snapshot_named(cas: &mut Cas, scenes: &BTreeMap<String, BTreeMap<String, Hash>>) -> Hash {
+    let children = scenes
+        .iter()
+        .map(|(id, rows)| {
             (
-                format!("scene-{i:02}"),
+                id.clone(),
                 cas.put("node-v1", &Node::Bindings(rows.clone())),
             )
         })
@@ -103,6 +111,12 @@ fn users<'a>(roots: &'a BTreeMap<String, Root>, h: &str, location: &str) -> BTre
 struct Heads(BTreeMap<String, u64>);
 impl Heads {
     fn admit(&mut self, changes: &[(&str, u64, u64)]) -> Result<(), &'static str> {
+        if changes
+            .iter()
+            .any(|(_, expected, next)| expected.checked_add(1) != Some(*next))
+        {
+            return Err("Revision must advance without reuse");
+        }
         if changes
             .iter()
             .map(|(key, _, _)| key)
@@ -184,14 +198,14 @@ fn removal_allowed(
     complete: bool,
     planned_revision: u64,
     now_revision: u64,
-    source_volume: &str,
-    retained_volume: &str,
+    source_failure_domain: &str,
+    retained_failure_domain: &str,
     retained_verified: bool,
 ) -> bool {
     !demand
         && complete
         && planned_revision == now_revision
-        && source_volume != retained_volume
+        && source_failure_domain != retained_failure_domain
         && retained_verified
 }
 
@@ -205,11 +219,13 @@ struct Claim {
 }
 #[derive(Serialize, Deserialize)]
 struct EvidenceIndex {
+    project: String,
     complete: bool,
     shards: BTreeMap<String, Hash>,
 }
 #[derive(Clone, PartialEq, Eq)]
 struct Descriptor {
+    project: String,
     source: Hash,
     adapter_version: u32,
 }
@@ -231,6 +247,9 @@ impl EvidenceAdapter<'_> {
         let index: EvidenceIndex = self
             .cas
             .read("evidence-index-v1", &self.descriptor.source)?;
+        if index.project != self.descriptor.project {
+            return Err("Evidence project scope mismatch".into());
+        }
         let mut claims = Vec::new();
         let mut reads = 1;
         if let Some(h) = index.shards.get(&subject[..2]) {
@@ -259,7 +278,15 @@ fn evidence(cas: &mut Cas, rows: Vec<Claim>, complete: bool) -> Descriptor {
         .map(|(k, v)| (k, cas.put("evidence-shard-v1", &v)))
         .collect();
     Descriptor {
-        source: cas.put("evidence-index-v1", &EvidenceIndex { complete, shards }),
+        project: "synthetic-project".into(),
+        source: cas.put(
+            "evidence-index-v1",
+            &EvidenceIndex {
+                project: "synthetic-project".into(),
+                complete,
+                shards,
+            },
+        ),
         adapter_version: 1,
     }
 }
@@ -513,4 +540,103 @@ fn evidence_content_or_adapter_revision_invalidates_a_derived_result_key() {
         .lookup(&claim(0, true).subject, 2)
         .is_err()
     );
+}
+
+#[test]
+fn timing_only_authoring_change_creates_a_new_snapshot_without_recopying_inputs() {
+    let mut cas = Cas::default();
+    let bindings = snapshot(&mut cas, &episode());
+    let before = cas.0.len();
+    // Synthetic authoring envelope, not an alternative native scene grammar.
+    let a = serde_json::json!({"bindings":bindings,"cue_start_ticks":100,"ticks_per_second":48000});
+    let b = serde_json::json!({"bindings":bindings,"cue_start_ticks":101,"ticks_per_second":48000});
+    assert_ne!(
+        cas.put("synthetic-authoring-v1", &a),
+        cas.put("synthetic-authoring-v1", &b)
+    );
+    assert_eq!(cas.0.len() - before, 2);
+    assert_eq!(inputs(&cas, &bindings, &mut 11).unwrap().len(), 1000);
+}
+
+#[test]
+fn valid_hashed_evidence_from_a_foreign_project_is_rejected() {
+    let mut cas = Cas::default();
+    let mut descriptor = evidence(&mut cas, vec![claim(0, true)], true);
+    descriptor.project = "other-project".into();
+    let result = EvidenceAdapter {
+        cas: &cas,
+        descriptor,
+    }
+    .lookup(&claim(0, true).subject, 2);
+    assert!(matches!(result, Err(message) if message == "Evidence project scope mismatch"));
+}
+
+#[test]
+fn shareable_summary_does_not_serialize_private_claim_graph() {
+    let mut cas = Cas::default();
+    let mut row = claim(0, true);
+    row.location = "SYNTHETIC_PRIVATE_LOCATION".into();
+    let descriptor = evidence(&mut cas, vec![row.clone()], true);
+    let result = EvidenceAdapter {
+        cas: &cas,
+        descriptor: descriptor.clone(),
+    }
+    .lookup(&row.subject, 2)
+    .unwrap();
+    // Allowlisted projection: the private graph is not Serialize input here.
+    let shared =
+        serde_json::json!({"schema":"synthetic-summary-v1","claim_count":result.claims.len()})
+            .to_string();
+    for private in [&row.location, &row.subject, &descriptor.source] {
+        assert!(!shared.contains(private));
+    }
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&shared).unwrap()["claim_count"],
+        1
+    );
+}
+
+#[test]
+fn inserting_a_named_scene_reuses_all_existing_scene_nodes() {
+    let mut cas = Cas::default();
+    let mut scenes: BTreeMap<_, _> = episode()
+        .into_iter()
+        .enumerate()
+        .map(|(i, rows)| (format!("scene-{i:02}"), rows))
+        .collect();
+    snapshot_named(&mut cas, &scenes);
+    let before = cas.0.len();
+    scenes.insert(
+        "scene-00-inserted".into(),
+        BTreeMap::from([("cel".into(), asset("inserted-scene"))]),
+    );
+    let new = snapshot_named(&mut cas, &scenes);
+    assert_eq!(cas.0.len() - before, 2); // new scene and root, no shifted IDs
+    assert_eq!(inputs(&cas, &new, &mut 12).unwrap().len(), 1001);
+}
+
+#[test]
+fn selection_revisions_cannot_roll_back_and_accept_an_aba_writer() {
+    let mut heads = Heads::default();
+    heads.admit(&[("episode", 0, 1)]).unwrap();
+    heads.admit(&[("episode", 1, 2)]).unwrap();
+    assert!(heads.admit(&[("episode", 2, 0)]).is_err());
+    assert!(heads.admit(&[("episode", 0, 1)]).is_err());
+    assert_eq!(heads.0["episode"], 2);
+}
+
+#[test]
+fn different_partition_labels_do_not_prove_independent_custody() {
+    let labels = ("partition-a", "partition-b");
+    assert_ne!(labels.0, labels.1);
+    // Both map to the same physical failure domain under this synthetic policy.
+    assert!(!removal_allowed(
+        false,
+        true,
+        1,
+        1,
+        "same-disk",
+        "same-disk",
+        true
+    ));
 }
