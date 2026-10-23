@@ -34,6 +34,160 @@ fn tool_hash(name: &str) -> Result<String> {
     file_sha(Path::new(command(name).get_program()))
 }
 
+/// Incomplete normalization custody; never a final preparation or receipt.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NormalizationProgress {
+    schema: String,
+    validator_sha256: String,
+    ffmpeg_sha256: String,
+    ffprobe_sha256: String,
+    job_sha256: String,
+    source_scope: Vec<scene_delivery::FileRef>,
+    manifest_json: String,
+    manifest_sha256: String,
+    first: MediaFacts,
+    records: Vec<SegmentReceipt>,
+    normalized: Vec<RootedFile>,
+    frame_cursor: u64,
+    sample_cursor: u64,
+    presentation_fingerprint_sha256: String,
+    presentation_cache_hits: usize,
+    presentation_cache_misses: usize,
+    full_episode_verified: bool,
+}
+
+pub(super) struct NormalizationState {
+    pub source_scope: Vec<scene_delivery::FileRef>,
+    pub manifest_bytes: Vec<u8>,
+    pub first: MediaFacts,
+    pub records: Vec<SegmentReceipt>,
+    pub normalized: Vec<PathBuf>,
+    pub frame_cursor: u64,
+    pub sample_cursor: u64,
+    pub presentation_fingerprint_sha256: String,
+    pub presentation_cache_hits: usize,
+    pub presentation_cache_misses: usize,
+}
+
+pub(super) fn save_normalization(
+    state: &NormalizationState,
+    work: &Path,
+    assets: &Path,
+) -> Result<()> {
+    for file in &state.source_scope {
+        scene_delivery::checked_file(assets, file)?;
+    }
+    let progress = NormalizationProgress {
+        schema: "reel.episode-normalization-progress.v1".into(),
+        validator_sha256: file_sha(&std::env::current_exe()?)?,
+        ffmpeg_sha256: tool_hash("ffmpeg")?,
+        ffprobe_sha256: tool_hash("ffprobe")?,
+        job_sha256: file_sha(&assets.join("job.json"))?,
+        source_scope: state.source_scope.clone(),
+        manifest_json: String::from_utf8(state.manifest_bytes.clone())?,
+        manifest_sha256: sha(&state.manifest_bytes),
+        first: state.first.clone(),
+        records: serde_json::from_value(serde_json::to_value(&state.records)?)?,
+        normalized: state
+            .normalized
+            .iter()
+            .map(|p| capture_file(p, work, assets))
+            .collect::<Result<_>>()?,
+        frame_cursor: state.frame_cursor,
+        sample_cursor: state.sample_cursor,
+        presentation_fingerprint_sha256: state.presentation_fingerprint_sha256.clone(),
+        presentation_cache_hits: state.presentation_cache_hits,
+        presentation_cache_misses: state.presentation_cache_misses,
+        full_episode_verified: false,
+    };
+    let pending = work.join("normalization-progress.pending.json");
+    fs::write(&pending, serde_json::to_vec_pretty(&progress)?)?;
+    fs::rename(pending, work.join("normalization-progress.json"))?;
+    Ok(())
+}
+
+pub(super) fn load_normalization(prepared: &Path, assets: &Path) -> Result<NormalizationState> {
+    if prepared.canonicalize()?.parent() != Some(assets.canonicalize()?.as_path())
+        || prepared.join("prepared.json").exists()
+    {
+        bail!(
+            "normalization progress requires its incomplete preparation inside the same workspace"
+        );
+    }
+    let file = prepared.join("normalization-progress.json");
+    if fs::metadata(&file)?.len() > 4 * 1024 * 1024 {
+        bail!("normalization progress exceeds its bound");
+    }
+    let progress: NormalizationProgress = serde_json::from_slice(&fs::read(file)?)?;
+    if progress.schema != "reel.episode-normalization-progress.v1"
+        || progress.full_episode_verified
+        || progress.validator_sha256 != file_sha(&std::env::current_exe()?)?
+        || progress.ffmpeg_sha256 != tool_hash("ffmpeg")?
+        || progress.ffprobe_sha256 != tool_hash("ffprobe")?
+        || progress.job_sha256 != file_sha(&assets.join("job.json"))?
+        || progress.manifest_sha256 != sha(progress.manifest_json.as_bytes())
+        || progress.source_scope.is_empty()
+        || progress.source_scope.len() > 65536
+    {
+        bail!("normalization progress identity or tool changed");
+    }
+    for source in &progress.source_scope {
+        scene_delivery::checked_file(assets, source)?;
+    }
+    let manifest: Manifest = serde_json::from_str(&progress.manifest_json)?;
+    if progress.records.is_empty()
+        || progress.records.len() > manifest.segments.len()
+        || progress.records.len() != progress.normalized.len()
+    {
+        bail!("normalization progress coverage differs from manifest");
+    }
+    let mut frames = 0u64;
+    let mut samples = 0u64;
+    for (record, selected) in progress.records.iter().zip(&manifest.segments) {
+        if record.id != selected.id
+            || record.selected_master_sha256 != selected.master.sha256
+            || record.selected_master_bytes != selected.master.bytes
+            || record.source_receipt_sha256 != selected.source_receipt.sha256
+            || record.start_frame != frames
+            || record.start_sample != samples
+            || record.frames == 0
+            || record.samples == 0
+            || record.output_sample_rate != manifest.output_sample_rate
+            || !valid_sha(&record.decoded_picture_sha256)
+            || !valid_sha(&record.decoded_audio_sha256)
+        {
+            bail!("normalization progress differs from source or clock");
+        }
+        frames = frames
+            .checked_add(record.frames)
+            .context("progress frame overflow")?;
+        samples = samples
+            .checked_add(record.samples)
+            .context("progress sample overflow")?;
+    }
+    if frames != progress.frame_cursor || samples != progress.sample_cursor {
+        bail!("normalization progress clock differs from segments");
+    }
+    let normalized = progress
+        .normalized
+        .iter()
+        .map(|f| resolve(f, prepared, assets))
+        .collect::<Result<_>>()?;
+    Ok(NormalizationState {
+        source_scope: progress.source_scope,
+        manifest_bytes: progress.manifest_json.into_bytes(),
+        first: progress.first,
+        records: progress.records,
+        normalized,
+        frame_cursor: frames,
+        sample_cursor: samples,
+        presentation_fingerprint_sha256: progress.presentation_fingerprint_sha256,
+        presentation_cache_hits: progress.presentation_cache_hits,
+        presentation_cache_misses: progress.presentation_cache_misses,
+    })
+}
+
 /// The generic native job contract is the closed staging authority. This is a
 /// bounded verification census of that one workspace, never a source importer.
 pub(super) fn snapshot_job_scope(root: &Path) -> Result<Vec<scene_delivery::FileRef>> {

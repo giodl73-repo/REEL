@@ -6,6 +6,48 @@ fn run() -> Result<()> {
     if let [
         _,
         command,
+        manifest,
+        input_flag,
+        input,
+        asset_flag,
+        assets,
+        output_flag,
+        output,
+        limit_flag,
+        limit,
+    ] = args.as_slice()
+    {
+        if command == "prepare-batch"
+            && input_flag == "--input-root"
+            && asset_flag == "--asset-root"
+            && output_flag == "--output-dir"
+            && limit_flag == "--max-segments"
+        {
+            reel::episode_conform::prepare_batch(
+                Path::new(manifest),
+                Path::new(input),
+                Path::new(assets),
+                Path::new(output),
+                limit.parse()?,
+            )?;
+            println!(
+                "bounded normalization batch retained; assembly and final verification remain pending"
+            );
+            return Ok(());
+        }
+    }
+    if let [_, command, prepared, asset_flag, assets] = args.as_slice() {
+        if command == "assemble-preparation" && asset_flag == "--asset-root" {
+            reel::episode_conform::assemble_preparation(Path::new(prepared), Path::new(assets))?;
+            println!(
+                "preparation assembled; full episode verification and delivery remain pending"
+            );
+            return Ok(());
+        }
+    }
+    if let [
+        _,
+        command,
         job,
         asset_flag,
         asset_root,

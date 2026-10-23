@@ -1212,7 +1212,7 @@ pub fn build(
     asset_root: &Path,
     output: &Path,
 ) -> Result<Receipt> {
-    build_internal(manifest_path, input_root, asset_root, output, None)?
+    build_internal(manifest_path, input_root, asset_root, output, None, None)?
         .context("missing final conform receipt")
 }
 
@@ -1226,8 +1226,68 @@ pub fn prepare(
         bail!("native preparation requires one closed input/asset workspace");
     }
     let scope = checkpoint::snapshot_job_scope(asset_root)?;
-    build_internal(manifest_path, input_root, asset_root, output, Some(scope))?;
+    build_internal(
+        manifest_path,
+        input_root,
+        asset_root,
+        output,
+        Some(scope),
+        None,
+    )?;
     Ok(())
+}
+
+/// Normalize the next bounded group. Assembly and final verification stay separate.
+pub fn prepare_batch(
+    manifest_path: &Path,
+    input_root: &Path,
+    asset_root: &Path,
+    output: &Path,
+    max_segments: usize,
+) -> Result<()> {
+    if input_root.canonicalize()? != asset_root.canonicalize()? || !(1..=64).contains(&max_segments)
+    {
+        bail!("bounded preparation requires one closed workspace and 1..64 segments");
+    }
+    if output
+        .parent()
+        .context("batch output lacks parent")?
+        .canonicalize()?
+        != asset_root.canonicalize()?
+    {
+        bail!("batch preparation must be directly inside its closed workspace");
+    }
+    let resume = if output.exists() {
+        Some(checkpoint::load_normalization(output, asset_root)?)
+    } else {
+        None
+    };
+    if let Some(state) = &resume {
+        if fs::read(manifest_path)? != state.manifest_bytes {
+            bail!("normalization progress manifest changed");
+        }
+    }
+    let scope = match &resume {
+        Some(state) => state.source_scope.clone(),
+        None => checkpoint::snapshot_job_scope(asset_root)?,
+    };
+    build_internal(
+        manifest_path,
+        input_root,
+        asset_root,
+        output,
+        Some(scope),
+        Some(BatchPreparation {
+            max_segments,
+            resume,
+        }),
+    )?;
+    Ok(())
+}
+
+struct BatchPreparation {
+    max_segments: usize,
+    resume: Option<checkpoint::NormalizationState>,
 }
 
 pub fn finish(prepared: &Path, asset_root: &Path, output: &Path) -> Result<Receipt> {
@@ -1251,8 +1311,10 @@ fn build_internal(
     asset_root: &Path,
     output: &Path,
     preparation_scope: Option<Vec<scene_delivery::FileRef>>,
+    mut batch: Option<BatchPreparation>,
 ) -> Result<Option<Receipt>> {
-    if output.exists() {
+    let resuming = batch.as_ref().is_some_and(|b| b.resume.is_some());
+    if output.exists() && !resuming {
         bail!("episode output must be a new directory");
     }
     let manifest_bytes = fs::read(manifest_path)?;
@@ -1625,17 +1687,46 @@ fn build_internal(
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     fs::create_dir_all(parent)?;
-    let stage = tempfile::Builder::new()
-        .prefix(".episode-conform-")
-        .tempdir_in(parent)?;
-    let work = stage.path();
+    let stage = if resuming {
+        None
+    } else {
+        Some(
+            tempfile::Builder::new()
+                .prefix(".episode-conform-")
+                .tempdir_in(parent)?,
+        )
+    };
+    let work = stage.as_ref().map_or(output, |stage| stage.path());
     let temp = tempfile::tempdir_in(work)?;
     let mut normalized = Vec::new();
     let mut records = Vec::new();
     let mut common: Option<MediaFacts> = None;
     let mut frame_cursor = 0u64;
     let mut sample_cursor = 0u64;
+    if let Some(state) = batch.as_mut().and_then(|b| b.resume.take()) {
+        if state.presentation_fingerprint_sha256 != presentation.fingerprint_sha256 {
+            bail!("normalization progress presentation scope changed");
+        }
+        normalized = state.normalized;
+        records = state.records;
+        common = Some(state.first);
+        frame_cursor = state.frame_cursor;
+        sample_cursor = state.sample_cursor;
+    }
+    let completed = records.len();
+    if batch.is_some() && completed == manifest.segments.len() {
+        bail!("normalization is complete; assemble the preparation next");
+    }
     for (index, (segment, source)) in manifest.segments.iter().zip(&sources).enumerate() {
+        if index < completed {
+            continue;
+        }
+        if batch
+            .as_ref()
+            .is_some_and(|b| index - completed >= b.max_segments)
+        {
+            break;
+        }
         let facts = probe(source)?;
         let mut output_facts = facts.clone();
         let assumed_color_space = if let Some(space) = manifest
@@ -1991,10 +2082,83 @@ fn build_internal(
         }
         normalized.push(selected);
     }
-    let list_path = temp.path().join("segments.ffconcat");
+    if batch.is_some() {
+        let state = checkpoint::NormalizationState {
+            source_scope: preparation_scope.context("batch preparation scope missing")?,
+            manifest_bytes,
+            first: common.context("no normalized media")?,
+            records,
+            normalized,
+            frame_cursor,
+            sample_cursor,
+            presentation_fingerprint_sha256: presentation.fingerprint_sha256,
+            presentation_cache_hits,
+            presentation_cache_misses,
+        };
+        checkpoint::save_normalization(&state, work, asset_root)?;
+        let _ = temp.keep();
+        if let Some(stage) = stage {
+            fs::rename(stage.keep(), output)?;
+        }
+        return Ok(None);
+    }
+    let first = common.context("no episode media")?;
+    let master = assemble_normalized(
+        &manifest,
+        &first,
+        &normalized,
+        work,
+        temp.path(),
+        asset_root,
+    )?;
+    let state = ConformState {
+        manifest_bytes,
+        first,
+        records,
+        normalized,
+        master,
+        frame_cursor,
+        sample_cursor,
+        presentation_fingerprint_sha256: presentation.fingerprint_sha256,
+        presentation_cache_hits,
+        presentation_cache_misses,
+        preparation_sha256: None,
+        normalization_retirement: None,
+    };
+    if preparation_scope.is_some() {
+        let snapshot = preparation_scope.context("preparation scope missing")?;
+        let checkpoint = checkpoint::capture(&state, work, asset_root, snapshot)?;
+        fs::write(
+            work.join("prepared.json"),
+            serde_json::to_vec_pretty(&checkpoint)?,
+        )?;
+        let _ = temp.keep();
+        let work = stage.context("preparation stage missing")?.keep();
+        fs::rename(work, output)?;
+        return Ok(None);
+    }
+    let external = manifest.preassembled_master.is_some();
+    let receipt = finalize_conform(state, work, external)?;
+    drop(temp);
+    fs::rename(
+        stage.as_ref().context("conform stage missing")?.path(),
+        output,
+    )?;
+    Ok(Some(receipt))
+}
+
+fn assemble_normalized(
+    manifest: &Manifest,
+    first: &MediaFacts,
+    normalized: &[PathBuf],
+    work: &Path,
+    temporary: &Path,
+    asset_root: &Path,
+) -> Result<PathBuf> {
+    let list_path = temporary.join("segments.ffconcat");
     let mut list = fs::File::create(&list_path)?;
     writeln!(list, "ffconcat version 1.0")?;
-    for path in &normalized {
+    for path in normalized {
         let escaped = path
             .to_string_lossy()
             .replace('\\', "/")
@@ -2029,7 +2193,7 @@ fn build_internal(
             // restart N at zero; the muxer then clamps the remaining video PTS to
             // the preceding frame. Ordered decoded-content checks still reject any
             // incompatible source property that changes the selected pixels/audio.
-            let facts = common.as_ref().context("no common frame clock")?;
+            let facts = first;
             let (num, den) = fps_parts(&facts.fps)?;
             concat
                 .args(["-vf"])
@@ -2063,7 +2227,6 @@ fn build_internal(
             bail!("episode lossless concat failed");
         }
     }
-    let first = common.context("no episode media")?;
     if manifest.preassembled_master.is_some() {
         let candidate = probe(&master)?;
         if (
@@ -2093,37 +2256,45 @@ fn build_internal(
             bail!("conformed master changed declared sample aspect ratio or color properties");
         }
     }
-    let state = ConformState {
-        manifest_bytes,
-        first,
-        records,
-        normalized,
-        master,
-        frame_cursor,
-        sample_cursor,
-        presentation_fingerprint_sha256: presentation.fingerprint_sha256,
-        presentation_cache_hits,
-        presentation_cache_misses,
-        preparation_sha256: None,
-        normalization_retirement: None,
-    };
-    if preparation_scope.is_some() {
-        let snapshot = preparation_scope.context("preparation scope missing")?;
-        let checkpoint = checkpoint::capture(&state, work, asset_root, snapshot)?;
-        fs::write(
-            work.join("prepared.json"),
-            serde_json::to_vec_pretty(&checkpoint)?,
-        )?;
-        let _ = temp.keep();
-        let work = stage.keep();
-        fs::rename(work, output)?;
-        return Ok(None);
+    Ok(master)
+}
+
+/// Assemble fully checked normalization batches into an ordinary preparation.
+pub fn assemble_preparation(prepared: &Path, asset_root: &Path) -> Result<()> {
+    let progress = checkpoint::load_normalization(prepared, asset_root)?;
+    let manifest: Manifest = serde_json::from_slice(&progress.manifest_bytes)?;
+    if progress.records.len() != manifest.segments.len() {
+        bail!("cannot assemble incomplete normalization coverage");
     }
-    let external = manifest.preassembled_master.is_some();
-    let receipt = finalize_conform(state, work, external)?;
-    drop(temp);
-    fs::rename(work, output)?;
-    Ok(Some(receipt))
+    let temp = tempfile::tempdir_in(prepared)?;
+    let master = assemble_normalized(
+        &manifest,
+        &progress.first,
+        &progress.normalized,
+        prepared,
+        temp.path(),
+        asset_root,
+    )?;
+    let state = ConformState {
+        normalization_retirement: None,
+        preparation_sha256: None,
+        manifest_bytes: progress.manifest_bytes,
+        first: progress.first,
+        records: progress.records,
+        normalized: progress.normalized,
+        master,
+        frame_cursor: progress.frame_cursor,
+        sample_cursor: progress.sample_cursor,
+        presentation_fingerprint_sha256: progress.presentation_fingerprint_sha256,
+        presentation_cache_hits: progress.presentation_cache_hits,
+        presentation_cache_misses: progress.presentation_cache_misses,
+    };
+    let issued = checkpoint::capture(&state, prepared, asset_root, progress.source_scope)?;
+    fs::write(
+        prepared.join("prepared.json"),
+        serde_json::to_vec_pretty(&issued)?,
+    )?;
+    Ok(())
 }
 
 pub(crate) struct ConformState {

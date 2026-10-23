@@ -742,6 +742,137 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
         .success()
     );
 
+    // Bounded normalization batches reuse issued intermediates and still feed
+    // the ordinary preparation/finish checks; incomplete custody is not a movie.
+    let batched = root.join("batched");
+    fs::create_dir(&batched).unwrap();
+    let closed_job: serde_json::Value =
+        serde_json::from_slice(&fs::read(phased.join("job.json")).unwrap()).unwrap();
+    for name in closed_job["inputs"].as_object().unwrap().keys() {
+        fs::copy(phased.join(name), batched.join(name)).unwrap();
+    }
+    fs::copy(phased.join("job.json"), batched.join("job.json")).unwrap();
+    let batched_prepared = batched.join("prepared");
+    let run_batch = || {
+        Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
+            .arg("prepare-batch")
+            .arg(batched.join("conform.json"))
+            .arg("--input-root")
+            .arg(&batched)
+            .arg("--asset-root")
+            .arg(&batched)
+            .arg("--output-dir")
+            .arg(&batched_prepared)
+            .arg("--max-segments")
+            .arg("2")
+            .output()
+            .unwrap()
+    };
+    let assemble = || {
+        Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
+            .arg("assemble-preparation")
+            .arg(&batched_prepared)
+            .arg("--asset-root")
+            .arg(&batched)
+            .output()
+            .unwrap()
+    };
+    let first_batch = run_batch();
+    assert!(
+        first_batch.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first_batch.stderr)
+    );
+    let progress_file = batched_prepared.join("normalization-progress.json");
+    let progress_bytes = fs::read(&progress_file).unwrap();
+    let mut progress: serde_json::Value = serde_json::from_slice(&progress_bytes).unwrap();
+    assert_eq!(progress["records"].as_array().unwrap().len(), 2);
+    assert_eq!(progress["full_episode_verified"], false);
+    assert!(!batched_prepared.join("prepared.json").exists());
+    assert!(!batched_prepared.join("master.mkv").exists());
+    assert!(!assemble().status.success());
+    let intermediate =
+        batched_prepared.join(progress["normalized"][0]["file"]["path"].as_str().unwrap());
+    assert_eq!(progress["normalized"][0]["root"], "prepared");
+    let normalized_bytes = fs::read(&intermediate).unwrap();
+    let mut corrupted = normalized_bytes.clone();
+    let last = corrupted.len() - 1;
+    corrupted[last] ^= 1;
+    fs::write(&intermediate, corrupted).unwrap();
+    assert!(!run_batch().status.success());
+    fs::write(&intermediate, &normalized_bytes).unwrap();
+    let original_mtime = fs::metadata(&intermediate).unwrap().modified().unwrap();
+    let catalog_bytes = fs::read(batched.join("catalog.json")).unwrap();
+    fs::write(batched.join("catalog.json"), b"changed source").unwrap();
+    assert!(!run_batch().status.success());
+    fs::write(batched.join("catalog.json"), catalog_bytes).unwrap();
+    progress["validator_sha256"] = "0".repeat(64).into();
+    write(&progress_file, &progress);
+    assert!(!run_batch().status.success());
+    fs::write(&progress_file, &progress_bytes).unwrap();
+    progress = serde_json::from_slice(&progress_bytes).unwrap();
+    progress["records"][0]["start_frame"] = 1.into();
+    write(&progress_file, &progress);
+    assert!(!run_batch().status.success());
+    fs::write(&progress_file, &progress_bytes).unwrap();
+    for expected_count in [4, 5] {
+        let next_batch = run_batch();
+        assert!(
+            next_batch.status.success(),
+            "{}",
+            String::from_utf8_lossy(&next_batch.stderr)
+        );
+        let next: serde_json::Value =
+            serde_json::from_slice(&fs::read(&progress_file).unwrap()).unwrap();
+        assert_eq!(next["records"].as_array().unwrap().len(), expected_count);
+        assert_eq!(
+            fs::metadata(&intermediate).unwrap().modified().unwrap(),
+            original_mtime
+        );
+        assert_eq!(fs::read(&intermediate).unwrap(), normalized_bytes);
+    }
+    assert!(!run_batch().status.success());
+    let assembled_batch = assemble();
+    assert!(
+        assembled_batch.status.success(),
+        "{}",
+        String::from_utf8_lossy(&assembled_batch.stderr)
+    );
+    assert!(!run_batch().status.success());
+    let batched_output = batched.join("finished");
+    let finish_batch = Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
+        .arg("finish-consume-normalized")
+        .arg(&batched_prepared)
+        .arg("--input-root")
+        .arg(&batched)
+        .arg("--asset-root")
+        .arg(&batched)
+        .arg("--output-dir")
+        .arg(&batched_output)
+        .output()
+        .unwrap();
+    assert!(
+        finish_batch.status.success(),
+        "{}",
+        String::from_utf8_lossy(&finish_batch.stderr)
+    );
+    let batch_receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(batched_output.join("receipt.json")).unwrap()).unwrap();
+    assert_eq!(batch_receipt["segments"], final_receipt["segments"]);
+    assert_eq!(
+        batch_receipt["boundary_findings"],
+        final_receipt["boundary_findings"]
+    );
+    assert_eq!(
+        batch_receipt["decoded_master_matches_ordered_segments"],
+        true
+    );
+    assert_eq!(batch_receipt["timestamps_verified"], true);
+    assert_eq!(
+        batch_receipt["encoded_delivery"]["full_decode_verified"],
+        true
+    );
+
     fs::write(root.join("source-master.json"), b"altered template").unwrap();
     let stale_source = Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
         .arg("build")
