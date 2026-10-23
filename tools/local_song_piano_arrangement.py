@@ -235,7 +235,12 @@ def render(request):
     if os.name!='nt':env['QT_QPA_PLATFORM']='offscreen'
     else:env.pop('QT_QPA_PLATFORM',None)
     expected=midi_events('score.mid')
-    if request.get('renderer_method')=='native-clock-sample-bank':
+    if request.get('renderer_method')=='retained-piano-stem':
+        checked('piano-stem.wav',request['piano_input']);checked('prior-render-receipt.json',request['prior_render_receipt'])
+        prior=read('prior-render-receipt.json')
+        if prior['native_midi']!=request['score_midi'] or prior['source_vocal']!=request['vocal_estimate'] or not prior['note_clock_audit']['passed']:raise ValueError('Prior piano source/clock binding differs')
+        audit=prior['note_clock_audit'];piano,rate=sf.read('piano-stem.wav',dtype='float32',always_2d=True)
+    elif request.get('renderer_method')=='native-clock-sample-bank':
         # Native note velocities are already source-bound in the editable score.
         import mido
         midi=mido.MidiFile('score.mid');velocities={};tempo=500000;seconds=0.
@@ -258,12 +263,14 @@ def render(request):
     frames=len(vocals);piano=np.pad(piano,((0,max(0,frames-len(piano))),(0,0)))[:frames]
     if not np.isfinite(piano).all() or float(np.sqrt(np.mean(piano**2)))<1e-5:raise ValueError('Silent or invalid piano proof')
     if piano.shape[1]!=2 or vocals.shape[1]!=2:raise ValueError('Expected stereo piano and retained vocal estimate')
-    piano_gain=.65;vocal_gain=.85;mix=piano*piano_gain+vocals*vocal_gain
+    piano_gain=float(request.get('piano_target_rms',0))/float(np.sqrt(np.mean(piano**2))) if request.get('piano_target_rms') else .65
+    vocal_gain=.85;mix=piano*piano_gain+vocals*vocal_gain
     peak=float(np.max(np.abs(mix)));master_gain=min(1,.89/max(peak,1e-9));piano*=piano_gain*master_gain;vocals_out=vocals*vocal_gain*master_gain;mix=piano+vocals_out
     sf.write('instrumental.wav',piano,rate,subtype='PCM_24');sf.write('with-vocals.wav',mix,rate,subtype='PCM_24');sf.write('vocal-stem.wav',vocals_out,rate,subtype='PCM_24')
     for name in ['instrumental','with-vocals']:
         subprocess.run([str(ffmpeg),'-v','error','-nostdin','-i',name+'.wav','-c:a','libmp3lame','-b:a','256k',name+'.mp3'],check=True,capture_output=True)
     receipt=dict(schema='reel.local-piano-arrangement-render.v1',source_vocal=request['vocal_estimate'],native_midi=request['score_midi'],note_clock_audit=audit,renderer_method=request.get('renderer_method','direct-score-export'),renderer=request['musescore'],soundfont=request['soundfont'],sample_rate=rate,frames=frames,duration_seconds=frames/rate,piano_gain=piano_gain*master_gain,vocal_gain=vocal_gain*master_gain,peak=float(np.max(np.abs(mix))),vocal_retimed=False,vocal_regenerated=False,vocal_pitched=False,instrumental_contains_added_vocal=False,arrangement_selected=False,public_release=False,limitations=['Separation estimate may retain original accompaniment bleed.','Piano harmony and waltz direction require musical listening review.'])
+    if request.get('piano_input'):receipt.update(piano_input=request['piano_input'],prior_render_receipt=request['prior_render_receipt'])
     write('render-receipt.json',receipt);print('FULL PIANO AUDIO PROOF VERIFIED',frames/rate,'seconds',flush=True)
 
 
