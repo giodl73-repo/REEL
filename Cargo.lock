@@ -723,6 +723,7 @@ dependencies = [
  "ed25519-dalek",
  "image",
  "reel-assembly",
+ "reel-assets",
  "reel-music",
  "same-file",
  "serde",

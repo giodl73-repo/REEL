@@ -82,3 +82,20 @@ native build validation remain producer operations. Requests and browser downloa
 it does not simulate rendered motion/VFX. Browser drafts with a temporary duration
 mismatch are retained locally but need fitting before export. The editor is private project output; no
 production pictures, titles or paths belong in REEL source or synthetic tests.
+
+The same candidate-application core is available to Rust callers through
+`cel_source::editor::{load, apply}`. The CLI uses these functions; producers can
+validate and write native candidates without a subprocess or another authoring
+grammar. `load` checks native semantics and exact raw alignment identities;
+`apply` additionally checks the request's input/descriptor locks and writes a
+new directory. These APIs resolve no media and grant no selection authority.
+
+Each exported session now includes a rate-only `delivery_clock` observation.
+The interface keeps a notice visible for mixed native rates or a profile-rate
+mismatch while allowing draft editing. The delivery compiler currently requires
+all cue rates to match its profile; editing preserves the originals and never
+resamples them. `matches-profile` only describes rates, not build readiness.
+Synthetic integration tests apply the native candidate and invoke the actual
+`scene_delivery_compile::compile_to_dir`: same-rate off-frame edits compile,
+and mixed rates fail before creating delivery output. Real media, rendering,
+private compiler acceptance and visual review remain separate producer checks.

@@ -1,5 +1,5 @@
 //! Explicit, offline editor export and optimistic native-draft application.
-use reel_assets::cel_source::{project::Project, sequence::Sequence};
+use reel_assets::cel_source::{editor::load, project::Project, sequence::Sequence};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -11,6 +11,7 @@ use std::{
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 #[cfg(test)]
 use reel_assets::cel_source::project::FILES;
+#[cfg(test)]
 fn hash(b: &[u8]) -> String {
     format!("{:x}", Sha256::digest(b))
 }
@@ -49,27 +50,6 @@ fn write(p: &Path, v: &Value) -> Result<()> {
 #[cfg(test)]
 fn source(project: &Path) -> Result<(BTreeMap<String, Value>, Value)> {
     load(&Project::open(project)?)
-}
-fn load(project: &Project) -> Result<(BTreeMap<String, Value>, Value)> {
-    let snapshot = project.load()?;
-    let docs = snapshot.controls;
-    let hashes = snapshot.hashes;
-    if docs["scene.json"]["schema"] != "reel.scene-authoring.v2"
-        || docs["scene-bindings.json"]["schema"] != "reel.scene-asset-bindings.v1"
-        || docs["scene.json"]["scene_id"] != docs["scene-bindings.json"]["scope_id"]
-    {
-        return Err("unsupported native input or scope".into());
-    }
-    let sequence = Sequence::new(&docs, project.is_multi_cue())?;
-    for cue in &sequence.cues {
-        let bound = &docs["scene-bindings.json"]["assets"][&cue.alignment_binding];
-        if bound["sha256"] != hashes[&cue.alignment_role]
-            || bound["bytes"] != snapshot.bytes[&cue.alignment_role]
-        {
-            return Err("native alignment binding differs from exact intake bytes".into());
-        }
-    }
-    Ok((docs, hashes))
 }
 fn identity(asset: &Value) -> Result<(&str, u64)> {
     let h = text(asset, "sha256")?;
@@ -266,189 +246,9 @@ fn export(spec: &Path) -> Result<()> {
     Ok(())
 }
 fn apply(project: &Path, request: &Path, out: &Path) -> Result<()> {
-    let r = read(request)?;
-    let project = Project::open(project)?;
-    let (mut docs, hashes) = load(&project)?;
-    if !project.accepts_edit(&r)
-        || r["expected_inputs"] != hashes
-        || r["scene_id"] != docs["scene.json"]["scene_id"]
-    {
-        return Err("stale or unsupported edit; source hashes differ".into());
-    }
-    let sequence = Sequence::new(&docs, project.is_multi_cue())?;
-    let edited = r["rows"].as_array().ok_or("missing rows")?;
-    let plan = sequence.plan(edited)?;
-    let old_events = docs["scene.json"]["shared_events"]
-        .as_array()
-        .ok_or("events")?
-        .clone();
-    let lang = sequence.language.clone();
-    let old_language = docs["scene.json"]["language_event_bindings"][&lang]
-        .as_array()
-        .ok_or("missing language events")?
-        .clone();
-    let mut events = vec![];
-    for row in edited {
-        let id = text(row, "semantic_id")?;
-        let binding = text(row, "picture_binding")?;
-        let mut e = old_events
-            .iter()
-            .find(|e| e["semantic_id"] == id)
-            .ok_or("event absent")?
-            .clone();
-        let realization = old_language
-            .iter()
-            .find(|event| event["semantic_id"] == id)
-            .ok_or("missing native language event")?;
-        // Preserve shared defaults when the source deliberately chose a local
-        // override. A no-op round trip must not rewrite the editorial layer.
-        if realization["picture_binding_override"].is_null() {
-            e["picture_binding"] = json!(binding);
-        }
-        events.push(e);
-    }
-    let mut language = vec![];
-    for row in edited {
-        let mut event = old_language
-            .iter()
-            .find(|e| e["semantic_id"] == row["semantic_id"])
-            .ok_or("missing native language event")?
-            .clone();
-        if !event["picture_binding_override"].is_null() {
-            event["picture_binding_override"] = row["picture_binding"].clone();
-        }
-        language.push(event);
-    }
-    let mut slot_assets: BTreeMap<String, Value> = BTreeMap::new();
-    for (row, e) in edited.iter().zip(&language) {
-        let slot = text(e, "picture_slot_id")?;
-        let desired = &docs["scene-bindings.json"]["assets"][text(row, "picture_binding")?];
-        if let Some(previous) = slot_assets.get(slot)
-            && ["logical_id", "cache_uri", "sha256"]
-                .iter()
-                .any(|key| previous[*key] != desired[*key])
-        {
-            return Err("one selected picture slot cannot bind different edited assets".into());
-        }
-        slot_assets.insert(slot.to_owned(), desired.clone());
-    }
-    let mut graph_events = vec![];
-    if let Some(existing) = docs["selected-graph.json"]["events"].as_array() {
-        for ((row, e), timing) in edited.iter().zip(&language).zip(&plan.cells) {
-            let event_id = text(e, "event_id")?;
-            let mut event = existing
-                .iter()
-                .find(|x| x["event_id"] == event_id)
-                .ok_or("missing native graph event")?
-                .clone();
-            event["phrase_start_seconds"] =
-                json!(timing.start_sample as f64 / timing.sample_rate as f64);
-            event["phrase_end_seconds"] =
-                json!(timing.end_sample as f64 / timing.sample_rate as f64);
-            let asset = &docs["scene-bindings.json"]["assets"][text(row, "picture_binding")?];
-            for key in ["logical_id", "sha256"] {
-                event["picture"][key] = asset[key].clone();
-            }
-            graph_events.push(event);
-        }
-    }
-    docs.get_mut("scene.json").ok_or("scene")?["shared_events"] = json!(events);
-    docs.get_mut("scene.json").ok_or("scene")?["language_event_bindings"][&lang] = json!(language);
-    for cue in &sequence.cues {
-        docs.get_mut(&cue.alignment_role).ok_or("alignment")?["semantic_markers"] =
-            serde_json::to_value(&plan.markers[&cue.cue_id])?;
-        let bytes = serde_json::to_vec(&docs[&cue.alignment_role])?;
-        let digest = hash(&bytes);
-        let asset = &mut docs.get_mut("scene-bindings.json").ok_or("bindings")?["assets"]
-            [&cue.alignment_binding];
-        if asset["sha256"] != digest {
-            asset["selection_state"] = json!("selected-private-production");
-        }
-        asset["sha256"] = json!(digest);
-        asset["bytes"] = json!(bytes.len());
-        asset["cache_uri"] = json!(format!("cache://sha256/{digest}"));
-    }
-    let graph = docs.get_mut("selected-graph.json").ok_or("graph")?;
-    if !graph_events.is_empty() {
-        graph["events"] = json!(graph_events);
-    }
-    if let Some(nodes) = graph["nodes"].as_array_mut() {
-        if nodes.len() != 1 {
-            return Err("unsupported graph scope: requires one scene node".into());
-        }
-        nodes[0]["events"] = json!(
-            language
-                .iter()
-                .map(|e| e["event_id"].clone())
-                .collect::<Vec<_>>()
-        );
-        let retained_slots = slot_assets.keys().cloned().collect::<BTreeSet<_>>();
-        let picture_slots = old_language
-            .iter()
-            .filter_map(|e| e["picture_slot_id"].as_str())
-            .collect::<BTreeSet<_>>();
-        nodes[0]["slots"]
-            .as_array_mut()
-            .ok_or("node slots")?
-            .retain(|s| {
-                !picture_slots.contains(s.as_str().unwrap_or(""))
-                    || retained_slots.contains(s.as_str().unwrap_or(""))
-            });
-    }
-    let slots = graph["slots"].as_array_mut().ok_or("graph slots")?;
-    slots.retain(|s| {
-        s["lane"] != "picture" || slot_assets.contains_key(s["slot_id"].as_str().unwrap_or(""))
-    });
-    let mut typed: reel_assembly::Graph = serde_json::from_value(graph.clone())?;
-    let mut revisions = Vec::new();
-    for slot in &typed.slots {
-        if let Some(asset) = slot_assets.get(&slot.slot_id) {
-            let current = slot
-                .revisions
-                .iter()
-                .find(|revision| Some(&revision.revision_id) == slot.selected_revision_id.as_ref())
-                .ok_or("missing selected picture revision")?;
-            let desired = reel_assembly::Asset {
-                logical_id: text(asset, "logical_id")?.into(),
-                cache_uri: text(asset, "cache_uri")?.into(),
-                sha256: text(asset, "sha256")?.into(),
-            };
-            if current.asset.logical_id != desired.logical_id
-                || current.asset.sha256 != desired.sha256
-                || current.asset.cache_uri != desired.cache_uri
-            {
-                let id = hash(&serde_json::to_vec(
-                    &json!({"source_lock":typed.lock,"slot":slot.slot_id,"asset":desired}),
-                )?);
-                revisions.push(reel_assembly::SlotRevisionSelection {
-                    slot_id: slot.slot_id.clone(),
-                    revision: reel_assembly::Revision {
-                        revision_id: format!("cel-edit-{id}"),
-                        supersedes: Some(current.revision_id.clone()),
-                        asset: desired,
-                    },
-                });
-            }
-        }
-    }
-    if revisions.is_empty() {
-        typed.lock = reel_assembly::graph_lock(&typed, &typed.lock.logical_id)?;
-    } else {
-        typed = reel_assembly::append_selected_revisions(
-            &typed,
-            &reel_assembly::SlotRevisionBatchRequest {
-                schema: reel_assembly::REVISION_BATCH_REQUEST_SCHEMA.into(),
-                next_lock_logical_id: typed.lock.logical_id.clone(),
-                revisions,
-            },
-        )?;
-    }
-    *graph = serde_json::to_value(typed)?;
-    let lock = graph["lock"].clone();
-    docs.get_mut("selected-pointer.json").ok_or("pointer")?["selected_lock"] = lock;
-    project.write_draft(out, &docs, &r)?;
+    reel_assets::cel_source::editor::apply(project, request, out)?;
     println!(
-        "Native draft saved; no selection or approval changed: {}",
+        "Native candidate saved; source selection and approvals unchanged: {}",
         out.display()
     );
     Ok(())
@@ -459,34 +259,13 @@ fn main() -> Result<()> {
 }
 
 #[cfg(test)]
+#[path = "../../tests/fixtures/cel_native.rs"]
+mod cel_fixtures;
+
+#[cfg(test)]
 mod tests {
+    use super::cel_fixtures::{asset, fixture, graph_asset, multi_fixture, save_graph};
     use super::*;
-    fn asset(body: &[u8]) -> Value {
-        let sha256 = hash(body);
-        json!({"logical_id":format!("synthetic/{sha256}"),"sha256":sha256,"bytes":body.len(),"cache_uri":format!("cache://sha256/{sha256}"),"selection_state":"selected-private-production"})
-    }
-    fn graph_asset(body: &[u8]) -> Value {
-        let value = asset(body);
-        json!({"logical_id":value["logical_id"],"cache_uri":value["cache_uri"],"sha256":value["sha256"]})
-    }
-    fn save_graph(project: &Path, mut graph: Value) {
-        let typed: reel_assembly::Graph = serde_json::from_value(graph.clone()).unwrap();
-        graph["lock"] = serde_json::to_value(
-            reel_assembly::graph_lock(&typed, &typed.lock.logical_id).unwrap(),
-        )
-        .unwrap();
-        let pointer = json!({"schema":reel_assembly::POINTER_SCHEMA,"logical_id":"synthetic-current","selected_lock":graph["lock"]});
-        fs::write(
-            project.join("selected-graph.json"),
-            serde_json::to_vec(&graph).unwrap(),
-        )
-        .unwrap();
-        fs::write(
-            project.join("selected-pointer.json"),
-            serde_json::to_vec(&pointer).unwrap(),
-        )
-        .unwrap();
-    }
     fn media_fixture(project: &Path) -> Value {
         fixture(project);
         let mut bindings = read(&project.join("scene-bindings.json")).unwrap();
@@ -613,43 +392,6 @@ mod tests {
                 .to_string()
                 .contains("hash/size")
         );
-    }
-    fn fixture(project: &Path) {
-        fs::create_dir_all(project).unwrap();
-        for name in FILES {
-            write(&project.join(name), &json!({"unknown":{"preserve":true}})).unwrap();
-        }
-        let alignment = json!({"schema":"reel.scene-native-alignment.v1","language":"es","cue_id":"es-cue","selected_take_sha256":hash(b"voice"),"sample_rate":48,"cue_end_sample":96,"semantic_markers":{"a":0,"b":48}});
-        let ab = serde_json::to_vec(&alignment).unwrap();
-        let ah = hash(&ab);
-        let scene = json!({"schema":"reel.scene-authoring.v2","scene_id":"synthetic","episode_id":"synthetic-episode","authoring_state":"ready-for-private-build","source_authority_id":"synthetic-authority","canonical_cue_ids":["cue"],
-            "languages":{"es":{"cues":[{"cue_id":"es-cue","source_id":"cue","exact_text_sha256":hash(b"text"),"narration_slot_id":"narration","take_binding":"take","phrase_alignment_binding":"clock"}]}},
-            "shared_events":[{"semantic_id":"a","canonical_cue_id":"cue","picture_binding":"one","score":{"disposition":"silence"}},{"semantic_id":"b","canonical_cue_id":"cue","picture_binding":"two","score":{"disposition":"silence"}}],
-            "language_event_bindings":{"es":[{"semantic_id":"a","event_id":"event-a","cue_id":"es-cue","semantic_trigger_id":"a","picture_slot_id":"p1"},{"semantic_id":"b","event_id":"event-b","cue_id":"es-cue","semantic_trigger_id":"b","picture_slot_id":"p2"}]},
-            "presentation":{"role":"synthetic","template_id":"synthetic-template","content":{"unknown":{"preserve":true}}}});
-        let mut clock = asset(&ab);
-        clock["logical_id"] = json!("clock");
-        assert_eq!(clock["sha256"], ah);
-        let bindings = json!({"schema":"reel.scene-asset-bindings.v1","scope_id":"synthetic","assets":{"clock":clock,"take":asset(b"voice"),"one":asset(b"first"),"two":asset(b"second")}});
-        let graph = json!({"schema":reel_assembly::GRAPH_SCHEMA,"nodes":[{"id":"synthetic","slots":["p1","p2"],"events":["event-a","event-b"]}],
-            "events":[{"event_id":"event-a","scene_id":"synthetic","language":"es","narration":{"logical_id":asset(b"voice")["logical_id"],"sha256":hash(b"voice")},"picture":{"logical_id":asset(b"first")["logical_id"],"sha256":hash(b"first")},"phrase_start_seconds":0.0,"phrase_end_seconds":1.0},
-                {"event_id":"event-b","scene_id":"synthetic","language":"es","narration":{"logical_id":asset(b"voice")["logical_id"],"sha256":hash(b"voice")},"picture":{"logical_id":asset(b"second")["logical_id"],"sha256":hash(b"second")},"phrase_start_seconds":1.0,"phrase_end_seconds":2.0}],
-            "lock":{"logical_id":"draft","sha256":hash(b"old")},"slots":[{"slot_id":"p1","beat_id":"cue","lane":"picture","disposition":"selected","selected_revision_id":"v1","revisions":[{"revision_id":"v1","asset":graph_asset(b"first")}]},
-                {"slot_id":"p2","beat_id":"cue","lane":"picture","disposition":"selected","selected_revision_id":"v1","revisions":[{"revision_id":"v1","asset":graph_asset(b"second")}]}]});
-        let graph_copy = graph.clone();
-        for (name, v) in [
-            ("scene.json", scene),
-            ("scene-bindings.json", bindings),
-            ("alignment.json", alignment),
-            ("selected-graph.json", graph),
-            (
-                "profile.json",
-                json!({"frame_rate_numerator":24,"frame_rate_denominator":1}),
-            ),
-        ] {
-            fs::write(project.join(name), serde_json::to_vec(&v).unwrap()).unwrap();
-        }
-        save_graph(project, graph_copy);
     }
     fn override_fixture(project: &Path) {
         fixture(project);
@@ -1090,100 +832,6 @@ mod tests {
     }
 
     // Two exact recording clocks, off-frame cuts and distinct trigger/semantic IDs.
-    fn multi_fixture(project: &Path) -> PathBuf {
-        use reel_assets::cel_source::project::alignment_role;
-        fixture(project);
-        let (mut docs, _) = source(project).unwrap();
-        let mut first = docs["alignment.json"].clone();
-        first["semantic_markers"] = json!({"ta":0,"tb":47,"unrelated":12});
-        let mut second = first.clone();
-        second["cue_id"] = json!("second-cue");
-        second["selected_take_sha256"] = json!(hash(b"second-voice"));
-        second["sample_rate"] = json!(44);
-        second["cue_end_sample"] = json!(88);
-        second["semantic_markers"] = json!({"tc":0,"td":43,"other":13});
-        let scene = docs.get_mut("scene.json").unwrap();
-        scene["canonical_cue_ids"] = json!(["cue", "second"]);
-        let mut cue = scene["languages"]["es"]["cues"][0].clone();
-        cue["cue_id"] = json!("second-cue");
-        cue["source_id"] = json!("second");
-        cue["take_binding"] = json!("take2");
-        cue["phrase_alignment_binding"] = json!("clock2");
-        cue["narration_slot_id"] = json!("narration2");
-        scene["languages"]["es"]["cues"]
-            .as_array_mut()
-            .unwrap()
-            .push(cue);
-        scene["language_event_bindings"]["es"][0]["semantic_trigger_id"] = json!("ta");
-        scene["language_event_bindings"]["es"][1]["semantic_trigger_id"] = json!("tb");
-        for (index, id, trigger, slot) in [(0, "c", "tc", "p3"), (1, "d", "td", "p4")] {
-            let mut event = scene["shared_events"][index].clone();
-            event["semantic_id"] = json!(id);
-            event["canonical_cue_id"] = json!("second");
-            scene["shared_events"].as_array_mut().unwrap().push(event);
-            let mut local = scene["language_event_bindings"]["es"][index].clone();
-            local["semantic_id"] = json!(id);
-            local["cue_id"] = json!("second-cue");
-            local["event_id"] = json!(format!("event-{id}"));
-            local["semantic_trigger_id"] = json!(trigger);
-            local["picture_slot_id"] = json!(slot);
-            scene["language_event_bindings"]["es"]
-                .as_array_mut()
-                .unwrap()
-                .push(local);
-        }
-        let assets = &mut docs.get_mut("scene-bindings.json").unwrap()["assets"];
-        assets["clock"] = asset(&serde_json::to_vec(&first).unwrap());
-        assets["clock"]["selection_state"] = json!("principal-approved");
-        assets["unused-alias"] = assets["clock"].clone();
-        assets["clock2"] = asset(&serde_json::to_vec(&second).unwrap());
-        assets["take2"] = asset(b"second-voice");
-        let mut graph = docs["selected-graph.json"].clone();
-        for (index, id, slot) in [(0, "c", "p3"), (1, "d", "p4")] {
-            let mut event = graph["events"][index].clone();
-            event["event_id"] = json!(format!("event-{id}"));
-            event["narration"] = json!({"logical_id":asset(b"second-voice")["logical_id"],"sha256":hash(b"second-voice")});
-            graph["events"].as_array_mut().unwrap().push(event);
-            let mut picture = graph["slots"][index].clone();
-            picture["slot_id"] = json!(slot);
-            picture["beat_id"] = json!("second");
-            graph["slots"].as_array_mut().unwrap().push(picture);
-        }
-        graph["nodes"][0]["events"] = json!(["event-a", "event-b", "event-c", "event-d"]);
-        graph["nodes"][0]["slots"] = json!(["p1", "p2", "p3", "p4"]);
-        fs::create_dir(project.join("timing")).unwrap();
-        for (path, value) in [
-            ("scene.json", docs["scene.json"].clone()),
-            ("scene-bindings.json", docs["scene-bindings.json"].clone()),
-            ("timing/first.json", first),
-            ("timing/second.json", second),
-        ] {
-            fs::write(project.join(path), serde_json::to_vec(&value).unwrap()).unwrap();
-        }
-        save_graph(project, graph);
-        fs::write(
-            project.join("timing/paths.json"),
-            br#"{"es-cue":"first.json","second-cue":"second.json"}"#,
-        )
-        .unwrap();
-        let mut files: BTreeMap<String, String> = FILES
-            .iter()
-            .take(6)
-            .filter(|name| **name != "alignment.json")
-            .map(|name| ((*name).into(), (*name).into()))
-            .collect();
-        files.insert("alignment-paths.json".into(), "timing/paths.json".into());
-        let descriptor = project.join("multi.json");
-        write(
-            &descriptor,
-            &json!({"schema":"reel.cel-sorter-project.v2","root":".","files":files}),
-        )
-        .unwrap();
-        let input = Project::open(&descriptor).unwrap();
-        let loaded = input.load().unwrap();
-        assert!(loaded.controls.contains_key(&alignment_role("second-cue")));
-        descriptor
-    }
     #[test]
     fn multi_cue_sample_edits_reopen_with_exact_native_local_clocks_and_provenance() {
         use reel_assets::cel_source::project::alignment_role;
@@ -1309,6 +957,23 @@ mod tests {
         assert!(session.get("end_sample").is_none());
         assert_eq!(session["cues"].as_array().unwrap().len(), 2);
         assert_eq!(session["rows"][0]["samples"], 47);
+    }
+    #[test]
+    fn delivery_clock_observations_do_not_change_native_editability() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("source");
+        fixture(&root);
+        let (mut docs, _) = source(&root).unwrap();
+        for (rate, state) in [
+            (None, "not-declared"),
+            (Some(48), "matches-profile"),
+            (Some(44100), "profile-rate-mismatch"),
+        ] {
+            docs.get_mut("profile.json").unwrap()["sample_rate"] = json!(rate);
+            let sequence = Sequence::new(&docs, false).unwrap();
+            assert_eq!(sequence.session_clock()["delivery_clock"]["state"], state);
+            assert!(sequence.plan(sequence.rows().as_array().unwrap()).is_ok());
+        }
     }
     #[test]
     fn invalid_cache_identity_fails_before_lookup() {

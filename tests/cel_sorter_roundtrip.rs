@@ -1,0 +1,209 @@
+//! Actual offline delivery compilation after applying native cel-editor requests.
+//! No real media/cache access, renderer, server, selection or publication.
+#[path = "../crates/reel-assets/tests/fixtures/cel_native.rs"]
+mod fixtures;
+use reel::scene_delivery_compile::{CompileManifest, compile_to_dir};
+use reel_assets::cel_source::{editor, project::Project, sequence::Sequence};
+use serde_json::{Value, json};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+};
+fn get(path: &Path) -> Value {
+    serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
+}
+fn put(path: &Path, value: &Value) {
+    fs::write(path, serde_json::to_vec(value).unwrap()).unwrap();
+}
+fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    fn visit(root: &Path, dir: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                visit(root, &path, files);
+            } else {
+                files.insert(
+                    path.strip_prefix(root).unwrap().into(),
+                    fs::read(&path).unwrap(),
+                );
+            }
+        }
+    }
+    let mut files = BTreeMap::new();
+    visit(root, root, &mut files);
+    files
+}
+fn ready_project(root: &Path, mixed: bool) -> PathBuf {
+    let descriptor = fixtures::multi_fixture(root);
+    let mut scene = get(&root.join("scene.json"));
+    scene.as_object_mut().unwrap().remove("presentation");
+    scene["source_scope_ids"] = scene["canonical_cue_ids"].clone();
+    put(&root.join("scene.json"), &scene);
+    let mut bindings = get(&root.join("scene-bindings.json"));
+    for (name, key, rate) in [
+        ("first", "clock", 48000),
+        ("second", "clock2", if mixed { 44100 } else { 48000 }),
+    ] {
+        let path = root.join(format!("timing/{name}.json"));
+        let mut alignment = get(&path);
+        alignment["sample_rate"] = json!(rate);
+        alignment["cue_end_sample"] = json!(alignment["cue_end_sample"].as_u64().unwrap() * 1000);
+        for marker in alignment["semantic_markers"]
+            .as_object_mut()
+            .unwrap()
+            .values_mut()
+        {
+            *marker = json!(marker.as_u64().unwrap() * 1000);
+        }
+        put(&path, &alignment);
+        let mut asset = fixtures::asset(&fs::read(path).unwrap());
+        asset["logical_id"] = json!(key);
+        bindings["assets"][key] = asset;
+    }
+    put(&root.join("scene-bindings.json"), &bindings);
+    let mut graph = get(&root.join("selected-graph.json"));
+    for (slot, take) in [("narration", "take"), ("narration2", "take2")] {
+        let asset = &bindings["assets"][take];
+        graph["slots"].as_array_mut().unwrap().push(json!({"slot_id":slot,"beat_id":"cue","lane":"narration","disposition":"selected","selected_revision_id":"v1","revisions":[{"revision_id":"v1","asset":{"logical_id":asset["logical_id"],"sha256":asset["sha256"],"cache_uri":asset["cache_uri"]}}]}));
+        graph["nodes"][0]["slots"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!(slot));
+    }
+    fixtures::save_graph(root, graph);
+    for (role, value) in [
+        (
+            "catalog.json",
+            json!({"schema":"reel.scene-template-catalog.v1","templates":[]}),
+        ),
+        (
+            "episode.json",
+            json!({"schema":"reel.episode-authoring.v1","episode_id":"synthetic-episode","season_id":"synthetic-season","authoring_state":"ready-for-private-build","master_template_id":"synthetic-master","scene_policy_id":"synthetic-policy","presentation":[],"score_palette":[],"scene_ids":["synthetic"]}),
+        ),
+        (
+            "policy.json",
+            json!({"schema":"reel.scene-policy.v1","policy_id":"synthetic-policy","target_composition_seconds_min":0.1,"target_composition_seconds_max":10.0,"hard_unchanged_composition_seconds_max":10.0,"semantic_cuts_required":true}),
+        ),
+        (
+            "episode-bindings.json",
+            json!({"schema":"reel.scene-asset-bindings.v1","scope_id":"synthetic-episode","assets":{}}),
+        ),
+        (
+            "season-bindings.json",
+            json!({"schema":"reel.scene-asset-bindings.v1","scope_id":"synthetic-season","assets":{}}),
+        ),
+        (
+            "profile.json",
+            json!({"schema":"reel.scene-delivery-profile.v1","width":320,"height":180,"sample_rate":48000,"frame_rate_numerator":24,"frame_rate_denominator":1,"max_composition_samples":480000,"score_gain_db":-18,"score_fade_in_samples":0,"score_fade_out_samples":0}),
+        ),
+    ] {
+        put(&root.join(role), &value);
+    }
+    let mut config = get(&descriptor);
+    for role in [
+        "catalog.json",
+        "episode.json",
+        "policy.json",
+        "episode-bindings.json",
+        "season-bindings.json",
+    ] {
+        config["files"][role] = json!(role);
+    }
+    put(&descriptor, &config);
+    descriptor
+}
+fn edited_candidate(temp: &Path, mixed: bool) -> PathBuf {
+    let root = temp.join("source");
+    let descriptor = ready_project(&root, mixed);
+    let before = snapshot(&root);
+    let project = Project::open(&descriptor).unwrap();
+    let (docs, locks) = editor::load(&project).unwrap();
+    let sequence = Sequence::new(&docs, true).unwrap();
+    assert_eq!(
+        sequence.session_clock()["delivery_clock"]["state"],
+        if mixed {
+            "mixed-native-rates"
+        } else {
+            "matches-profile"
+        }
+    );
+    let mut rows = sequence.rows().as_array().unwrap().clone();
+    rows.swap(0, 1);
+    rows[0]["samples"] = json!(31000);
+    rows[1]["samples"] = json!(65000);
+    rows[0]["picture_binding"] = json!("one");
+    rows[0]["comment"] = json!("Synthetic compiler check");
+    rows.remove(2);
+    rows[2]["samples"] = json!(88000);
+    let request = temp.join("request.json");
+    put(
+        &request,
+        &json!({"schema":"reel.cel-sorter-edit.v3","scene_id":"synthetic","expected_project":project.descriptor_sha256(),"expected_inputs":locks,"rows":rows}),
+    );
+    let candidate = temp.join("candidate");
+    editor::apply(&descriptor, &request, &candidate).unwrap();
+    assert_eq!(snapshot(&root), before);
+    let next = Project::open(&candidate.join("cel-sorter-project.json")).unwrap();
+    editor::load(&next).unwrap();
+    candidate
+}
+fn manifest() -> CompileManifest {
+    serde_json::from_value(json!({"schema":"reel.scene-delivery-compile.v1","catalog":"catalog.json","episode":"episode.json","scene":"scene.json","policy":"policy.json","season_bindings":"season-bindings.json","episode_bindings":"episode-bindings.json","scene_bindings":"scene-bindings.json","graph":"selected-graph.json","pointer":"selected-pointer.json","alignment_paths":"timing/paths.json","profile":"profile.json","language":"es","delivery_id":"synthetic-edit","delivery_title":"Synthetic native edit","output_dir":"delivery"})).unwrap()
+}
+#[test]
+fn edited_multicue_candidate_compiles_to_delivery_with_exact_cue_anchors_and_revision_lineage() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = edited_candidate(temp.path(), false);
+    let receipt = compile_to_dir(&root, &manifest()).unwrap();
+    assert_eq!(receipt["cue_count"], 2);
+    assert_eq!(receipt["semantic_event_count"], 3);
+    let contract = get(&root.join("delivery/contract.json"));
+    assert_eq!(
+        contract["cues"],
+        json!([{"cue_id":"es-cue","duration_samples":96000},{"cue_id":"second-cue","duration_samples":88000}])
+    );
+    assert!(
+        contract["attachments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["start"]["cue_id"] == "es-cue"
+                && item["start"]["offset_samples"] == 31000)
+    );
+    let graph = get(&root.join("selected-graph.json"));
+    let slot = graph["slots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|slot| slot["slot_id"] == "p2")
+        .unwrap();
+    assert_eq!(slot["revisions"].as_array().unwrap().len(), 2);
+    let job = get(&root.join("delivery/job.json"));
+    assert_eq!(job["pictures"].as_array().unwrap().len(), 3);
+    assert_eq!(job["audio"].as_array().unwrap().len(), 2);
+    let build = get(&root.join("delivery/build.json"));
+    assert_eq!(build["alignment_paths"], "timing/paths.json");
+    assert!(root.join("delivery/semantic-delivery.json").is_file());
+    let before = snapshot(&root.join("delivery"));
+    assert!(compile_to_dir(&root, &manifest()).is_err());
+    assert_eq!(snapshot(&root.join("delivery")), before);
+    assert_eq!(
+        get(&root.join("edit-request.json"))["rows"][0]["comment"],
+        "Synthetic compiler check"
+    );
+}
+#[test]
+fn mixed_native_rates_remain_editable_but_delivery_compiler_holds_without_resampling_or_output() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = edited_candidate(temp.path(), true);
+    let before = snapshot(&root);
+    let error = compile_to_dir(&root, &manifest()).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("cue sample rate differs from delivery profile")
+    );
+    assert!(!root.join("delivery").exists());
+    assert_eq!(snapshot(&root), before);
+}

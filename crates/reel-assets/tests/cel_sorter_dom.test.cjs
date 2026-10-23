@@ -11,14 +11,14 @@ test('exported multi-cue UI keeps groups, fits recordings and downloads v3 comme
  const elements=new Map(),element=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
  const document={getElementById:element,createElement:tag=>new Element(tag),querySelectorAll:()=>element('filmstrip').children};
  const rows=[{semantic_id:'a',picture_binding:'one',cue_id:'first',samples:47,sample_rate:48},{semantic_id:'b',picture_binding:'two',cue_id:'first',samples:49,sample_rate:48},{semantic_id:'c',picture_binding:'one',cue_id:'second',samples:43,sample_rate:44},{semantic_id:'d',picture_binding:'two',cue_id:'second',samples:45,sample_rate:44}];
- const session={schema:'reel.cel-sorter-session.v3',expected_project:'a'.repeat(64),expected_inputs:{scene:'synthetic'},scene_id:'synthetic',rows,images:{one:'one.png',two:'two.png'},total_seconds:4,fps_numerator:24,fps_denominator:1,movie:'synthetic.mp4'};
+ const session={schema:'reel.cel-sorter-session.v3',expected_project:'a'.repeat(64),expected_inputs:{scene:'synthetic'},scene_id:'synthetic',rows,images:{one:'one.png',two:'two.png'},delivery_clock:{state:'mixed-native-rates'},total_seconds:4,fps_numerator:24,fps_denominator:1,movie:'synthetic.mp4'};
  let downloaded,animation;const saved=new Map();
  vm.runInNewContext(fs.readFileSync(require.resolve('../src/cel_sorter.js'),'utf8'),{document,fetch:async()=>({ok:true,json:async()=>session}),structuredClone,Blob,URL:{createObjectURL:blob=>{downloaded=blob;return 'blob:synthetic';},revokeObjectURL(){}},localStorage:{getItem:key=>saved.get(key),setItem:(key,value)=>saved.set(key,value)},requestAnimationFrame:fn=>{animation=fn;},setTimeout:fn=>fn(),confirm:()=>true});
  await new Promise(setImmediate);
  const cards=()=>element('filmstrip').children;
  const descendants=node=>[node,...node.children.flatMap(descendants)];
  const button=(card,label)=>descendants(card).find(node=>node.tagName==='BUTTON'&&node.textContent===label);
- assert.equal(cards().length,4);assert.equal(element('save').disabled,false);
+ assert.equal(cards().length,4);assert.equal(element('save').disabled,false);assert.equal(element('delivery-clock').hidden,false);assert.match(element('delivery-clock').textContent,/different sample rates/);
  assert(descendants(cards()[2]).some(node=>node.textContent?.startsWith('2.00 s')));
  assert.equal(button(cards()[1],'\u2193').disabled,true);assert.equal(button(cards()[2],'\u2191').disabled,true);
  // Dragging across cues rolls back the actual UI state.

@@ -42,6 +42,7 @@ pub struct Sequence {
     pub cells: BTreeMap<String, Cell>,
     multi: bool,
     rows: Value,
+    profile_sample_rate: Option<u64>,
 }
 fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
     value[key]
@@ -272,13 +273,16 @@ impl Sequence {
             cells,
             multi,
             rows: json!(rows),
+            profile_sample_rate: docs["profile.json"]["sample_rate"].as_u64(),
         })
     }
     pub fn rows(&self) -> Value {
         self.rows.clone()
     }
+    /// Native clocks plus a rate-only delivery compatibility observation.
+    /// This is not a project compilation or media/readiness certificate.
     pub fn session_clock(&self) -> Value {
-        if self.multi {
+        let mut clock = if self.multi {
             let mut seconds = 0.0;
             let mut cues = Vec::new();
             for cue in &self.cues {
@@ -291,8 +295,25 @@ impl Sequence {
         } else {
             let cue = &self.cues[0];
             json!({"sample_rate":cue.alignment.sample_rate,"end_sample":cue.alignment.cue_end_sample})
-        }
+        };
+        let rates: BTreeSet<_> = self
+            .cues
+            .iter()
+            .map(|cue| cue.alignment.sample_rate)
+            .collect();
+        let state = if rates.len() > 1 {
+            "mixed-native-rates"
+        } else if self.profile_sample_rate.is_none() {
+            "not-declared"
+        } else if self.profile_sample_rate == rates.first().map(|rate| u64::from(*rate)) {
+            "matches-profile"
+        } else {
+            "profile-rate-mismatch"
+        };
+        clock["delivery_clock"] = json!({"state":state,"native_sample_rates":rates,"profile_sample_rate":self.profile_sample_rate});
+        clock
     }
+
     pub fn plan(&self, edited: &[Value]) -> Result<EditPlan> {
         if edited.is_empty() || edited.len() > self.cells.len() {
             return Err("Unsupported event insertion or empty scene".into());

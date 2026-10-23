@@ -78,3 +78,10 @@ test('v3 drafts cannot masquerade as frame edits and preserve project locks',()=
  const frame={...session,schema:'reel.cel-sorter-session.v2'};assert(!ui.matches(frame,request));assert.notEqual(ui.key(frame),ui.key(session));
  assert(!ui.valid([{...rows[0],samples:1},rows[1]],rows,100));
 });
+
+test('delivery rate observations warn about mismatches without claiming build acceptance',()=>{
+ assert.match(ui.clockNotice({delivery_clock:{state:'mixed-native-rates'}}),/different sample rates/);
+ assert.match(ui.clockNotice({delivery_clock:{state:'profile-rate-mismatch'}}),/before rendering/);
+ assert.equal(ui.clockNotice({delivery_clock:{state:'matches-profile'}}),'');
+ assert.equal(ui.clockNotice({delivery_clock:{state:'not-declared'}}),'');assert.equal(ui.clockNotice({}),'');
+});

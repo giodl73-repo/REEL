@@ -37,3 +37,6 @@ required-features = ["test-fixtures"]
 [workspace]
 members = ["crates/reel-music", "crates/reel-assembly", "crates/reel-assets"]
 resolver = "3"
+
+[dev-dependencies]
+reel-assets = { path = "crates/reel-assets" }

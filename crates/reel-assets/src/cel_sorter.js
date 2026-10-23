@@ -6,6 +6,7 @@ const CelSorter = {
  matches(session,request) {try{const context=this.context(session);return request.schema===context.schema&&request.expected_project===context.expected_project&&request.scene_id===session.scene_id&&this.locksEqual(request.expected_inputs,session.expected_inputs);}catch{return false;}},
  key(session) {this.context(session);return 'reel-cel-sorter:'+(session.schema!=='reel.cel-sorter-session.v1'?session.schema.slice(-2)+':'+session.expected_project+':':'')+JSON.stringify(session.expected_inputs);},
  starts(rows) { let t=0; return rows.map(r=>{const s=t;t+=r.frames;return s;}); },
+ clockNotice(session) {const state=session.delivery_clock?.state;return state==='mixed-native-rates'?'Recordings use different sample rates. Delivery needs recordings at one matching sample rate. You can keep editing this draft.':state==='profile-rate-mismatch'?'Recording and delivery sample rates differ. Choose matching recordings or a matching delivery profile before rendering. You can keep editing this draft.':'';},
  sampleMode(known) {return known[0]?.cue_id!==undefined;},
  groups(known) {const result=[];for(const row of known){let g=result.at(-1);if(!g||g.id!==row.cue_id){g={id:row.cue_id,rate:row.sample_rate,total:0};result.push(g);}g.total+=row.samples;}return result;},
  valid(rows, known, total) {
@@ -39,6 +40,7 @@ const $=id=>document.getElementById(id),session=await fetch('session.json').then
 const fps=session.fps_numerator/session.fps_denominator,sample=CelSorter.sampleMode(session.rows),seconds=sample?session.total_seconds:session.end_sample/session.sample_rate,total=sample?seconds:Math.round(seconds*fps),key=CelSorter.key(session),original=structuredClone(session.rows),history=[];
 let rows=structuredClone(original),notes='',selected=0,drag=null,lastDisplayed=-1;
 try{const saved=JSON.parse(localStorage.getItem(key));if(saved&&CelSorter.valid(saved.rows,original,null)){rows=saved.rows;notes=saved.notes||'';}}catch{}
+const clockNotice=CelSorter.clockNotice(session);$('delivery-clock').textContent=clockNotice;$('delivery-clock').hidden=!clockNotice;
 $('title').textContent=session.title||'Cel sorter';$('audio').src=session.movie;$('seek').max=seconds;$('notes').value=notes;
 function status(message,error=false){$('status').textContent=message;$('status').className=error?'error':'';}
 function persist(){try{localStorage.setItem(key,JSON.stringify({rows,notes:$('notes').value}));status('Changes and comments saved in this browser.');}catch{status('Could not save in this browser. Download the draft to keep your changes.',true);}}

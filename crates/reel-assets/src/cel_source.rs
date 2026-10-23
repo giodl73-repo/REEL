@@ -5,6 +5,7 @@ use reel_assembly::scene_authoring as native;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, path::Path};
+pub mod editor;
 pub mod project;
 pub mod sequence;
 

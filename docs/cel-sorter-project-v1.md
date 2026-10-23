@@ -107,3 +107,10 @@ rejects insertion, duplicate IDs, changed cue/rate, cue reordering, missing cues
 and any per-cue timing drift. It validates semantic metadata; callers must also
 check exact raw file locks as the CLI does. These checks do not constitute a
 full project compiler/render, cache registration, visual review or approval.
+
+Session `delivery_clock` contains `native_sample_rates`, the optional
+`profile_sample_rate`, and a rate-only state: `not-declared`, `matches-profile`,
+`profile-rate-mismatch` or `mixed-native-rates`. Mixed-rate editing does not
+extend the delivery compiler's single-rate contract. A matching observation is
+not a successful compiler/build/media check. The editor displays mismatch
+notices without blocking draft authoring or changing source recordings.
