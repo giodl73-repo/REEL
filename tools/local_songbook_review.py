@@ -92,8 +92,14 @@ def produce(request, output):
         y-=13
         for number,text in enumerate(all_lines,1):
             # Fixed numbered canonical text; do not substitute transcription spelling.
+            if y<82:
+                footer(612,'Complete canonical poem');pages.append(dict(kind='poem',song=title));c.showPage()
+                c.setPageSize((612,792));y=wrap(title+' (continued)',48,728,516,17,23)-18
             y=wrap(str(number)+'. '+text,48,y,516,12,15)
         y-=12
+        if y<112:
+            footer(612,'Complete canonical poem');pages.append(dict(kind='poem',song=title));c.showPage()
+            c.setPageSize((612,792));y=wrap(title+' - study notes',48,728,516,17,23)-18
         if omitted:y=wrap('Accepted performance omissions: '+', '.join(map(str,omitted))+'. The complete lines above remain available for a future rendition.',48,y,516,10,14)
         y=wrap(f'Timing proposals: {len(timed)}/{len(all_lines)-len(omitted)} performed lines. These do not prove independent word presence.',48,y,516,10,14)
         if y<48:raise ValueError('Canonical poem page overflows')
