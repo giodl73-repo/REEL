@@ -188,6 +188,75 @@ fn executable_rejects_execution_options_and_missing_domain_without_initializing(
     assert!(!control.exists());
     assert!(!fixture.root.join("hot/staging").exists());
 }
+
+#[test]
+fn executable_automatic_retirement_keeps_count_only_summary_and_no_scratch() {
+    let fixture = Fixture::new("copy");
+    let mut job: Value = serde_json::from_slice(&fs::read(&fixture.manifest).unwrap()).unwrap();
+    job["retain_workspace"] = json!(false);
+    fs::write(&fixture.manifest, job.to_string()).unwrap();
+    let out = fixture.run();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let summary: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(summary["workspace_retained"], false);
+    assert_eq!(summary["retirement_completed"], true);
+    for (key, value) in summary.as_object().unwrap() {
+        assert!(key == "schema" || value.is_number() || value.is_boolean());
+    }
+    for private in [
+        "PRIVATE_OUTPUT",
+        fixture.root.to_str().unwrap(),
+        fixture.input.as_str(),
+    ] {
+        assert!(!summary.to_string().contains(private));
+    }
+    assert_eq!(
+        fs::read_dir(fixture.root.join("hot/staging/caminos"))
+            .unwrap()
+            .count(),
+        0
+    );
+    assert_eq!(
+        fs::read(reel_assets::object(
+            &fixture.root.join("hot"),
+            &fixture.input
+        ))
+        .unwrap(),
+        b"source"
+    );
+}
+
+#[test]
+fn executable_failed_job_retains_declared_candidate_but_retires_scratch() {
+    let fixture = Fixture::new("fail");
+    let mut job: Value = serde_json::from_slice(&fs::read(&fixture.manifest).unwrap()).unwrap();
+    job["retain_workspace"] = json!(false);
+    fs::write(&fixture.manifest, job.to_string()).unwrap();
+    let out = fixture.run();
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("staging retired"));
+    let candidate = hash(b"candidate");
+    assert_eq!(
+        fs::read(reel_assets::object(&fixture.root.join("hot"), &candidate)).unwrap(),
+        b"candidate"
+    );
+    assert!(
+        reel_assets::selected(&fixture.root)
+            .unwrap()
+            .contains_key(&candidate)
+    );
+    assert_eq!(
+        fs::read_dir(fixture.root.join("hot/staging/caminos"))
+            .unwrap()
+            .count(),
+        0
+    );
+}
 struct ChildGuard(std::process::Child);
 impl Drop for ChildGuard {
     fn drop(&mut self) {

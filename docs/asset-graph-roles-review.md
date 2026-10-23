@@ -521,3 +521,37 @@ Disposition: opt-in retained native jobs now publish typed input/output demand
 around short fences and preserve it through interruption, with validated explicit
 discard. Auto-retiring jobs, complete producer policy and final guarded physical
 removal remain separate work. Live caches and installed bindings are unchanged.
+
+## Automatic native-job retirement enrollment increment
+
+Review base: `5e8f444`, plus `jobs/{publication,lifecycle}.rs`, runner/discard
+integration, collector retirement-intent interpretation, native/executable
+fixtures and updated job/fence contracts. Producer-applied review uses all three
+infrastructure checklists (version 1) and Rights and Provenance. Owner: this
+implementation lane. No independent review, live adoption or canonical-cache
+removal integration is claimed; earlier reviews remain historical.
+
+| Role | Severity | Finding/correction and actual evidence |
+| --- | --- | --- |
+| Registry Concurrency and Evidence Integrity | Major corrected | Retained-only job enrollment left automatic salvage/diagnostics outside the protocol. Automatic jobs now require enrollment version 2, paired with the manifest's retention choice. Bounded outputs/request/evidence descriptors enter one immutable retirement intent under short shared artifact fences before their retirement CAS publication. Hashing/copy/registration stay outside these fences. Default unenrolled execution remains compatible. |
+| Asset Graph and Version Integrity | Major corrected | Diagnostic evidence must not become compiled input demand or imply selection. Collector interpretation protects retirement outputs separately from request/evidence controls. It validates job/manifest identity, exact request hash/bytes, declared output roles/bounds and evidence size; malformed controls reject. These are positive demands, never custody or human approval. A pre-unlink fixture verifies both reason classes and refuses corrupted intent. |
+| Storage Custody and Recovery | Major corrected | Metadata allowance must cover retirement before cleanup is enabled. Automatic admission now includes bounded request/evidence copies, registration and retirement control. Retained artifacts must be registered and freshly verified before scratch removal or explicit discard. Missing canonical evidence holds cleanup even if intent is valid. Large diagnostic bodies stay compressed CAS assets; no large Git registry is introduced. |
+| Storage Custody and Recovery | Major corrected with actual Windows alias fixture | Verification followed by an unguarded scratch unlink can lose its canonical counterpart. Enrolled cleanup/discard now keep canonical file and ancestor handles through unlink. A direct fixture proves an eviction DELETE handle/canonical removal is refused while the owned temporary hard-link directory can be removed. This tested operation needs no weaker sharing fallback. Hash-range fences still do not span media hashing/copying. Unsupported sharing/custody conditions fail. |
+| Registry Concurrency and Evidence Integrity | Major corrected at recovery boundary | A failed successful-job retirement must not re-enter the failure path and rewrite prepared records. Enrolled retirement is attempted once, then requires explicit reconciliation. A real writer is killed after registration at the pre-unlink boundary; durable demand remains, recorded admission blocks discard until explicit stale-owner reconciliation, then named verified discard completes without tool replay or CAS deletion. A separate injected fault/corrupt-control/missing-custody fixture proves the same hold behavior. |
+| Storage Custody and Recovery | Blocking adoption gate retained | This closes opt-in job retirement publication, not global producer policy or canonical eviction. Unenrolled clients, cross-domain policy/lock order and the final managed-cache removal transaction remain gates. The process fixture stops before unlink; partial publication or partial filesystem deletion can require manual reconciliation and is not advertised as automatically replayable. No last-copy/cache-tier/M deletion is added. |
+| Rights and Provenance | Advisory addressed | Native candidate registration preserves private provenance and grants no creative selection. Count-only success now reports retained versus retired workspace without paths, hashes, roles or evidence bodies; failed jobs retain private diagnostics. Synthetic Windows executable cases prove automatic success/failure salvage and no remaining scratch. No live media/cache, Drive, external service, daemon, installed binding or main change occurred. |
+
+Validation: all 477 tests pass (242 unit, five prior integration, 100 model,
+23 source adapter, 25 sidecar, 30 backend, 19 managed CLI, 11 collector CLI,
+17 fence entries and five fenced-job executable cases). Five substantive native
+cases plus one subprocess harness and two executable cases are added. Strict
+all-target Clippy, formatting, ROLES structure and diff checks pass. One existing
+process-tree fixture exposed parallel startup timing sensitivity; its local
+allowance is now five seconds instead of two, retaining mandatory timeout,
+both PID records and descendant-exit assertions. Production deadlines are unchanged.
+Windows-only validation; no Unix, device/power-loss or hostile-filesystem claim.
+
+Disposition: opt-in automatic jobs now enroll salvage and diagnostic artifacts,
+register/verify custody and retire only owned scratch, with explicit recovery
+after a pre-unlink interruption. Complete producer policy and canonical cache
+removal remain separate work. Live caches and installed runtimes are unchanged.

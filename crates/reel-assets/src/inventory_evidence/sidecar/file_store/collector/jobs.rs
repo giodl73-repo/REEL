@@ -99,6 +99,37 @@ pub(super) fn capture(
                 )?;
             }
         }
+        let retirement = workspace.join("job-retirement-intent.json");
+        match fs::symlink_metadata(&retirement) {
+            Ok(_) => {
+                if !enrolled {
+                    return Err("Retirement intent requires enrolled job controls".into());
+                }
+                let intent = crate::jobs::publication::check_retirement(
+                    &workspace,
+                    &raw,
+                    &reader.file(&retirement, false, CONTROL_BYTES)?,
+                )?;
+                for descriptor in [&intent.manifest, &intent.evidence] {
+                    hold(
+                        holds,
+                        &descriptor.sha256,
+                        Reason::RegistryControl,
+                        reader.limits.holds,
+                    )?;
+                }
+                for descriptor in intent.outputs.values() {
+                    hold(
+                        holds,
+                        &descriptor.sha256,
+                        Reason::JobWorkspaceOutput,
+                        reader.limits.holds,
+                    )?;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(e.into()),
+        }
         for subject in crate::jobs::protection_inputs(&raw)? {
             hold(
                 holds,

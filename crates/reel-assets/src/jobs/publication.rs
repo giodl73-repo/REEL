@@ -1,9 +1,11 @@
-//! Optional native retained-job demand publication, never a render-wide lock.
+//! Optional native job demand publication, never a render-wide lock.
 use super::*;
 use crate::inventory_evidence::sidecar::file_store::collector::fence::{Binding, Mode};
 use serde::Serialize;
 
 pub(super) const LIMIT: u64 = 64 * 1024;
+pub(super) const EVIDENCE_LIMIT: u64 = 2 * 1024 * 1024 + 64 * 1024;
+pub(super) const REGISTRATION_LIMIT: u64 = 256 * 1024;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Enrollment {
@@ -14,11 +16,21 @@ struct Enrollment {
     workspace: PathBuf,
     binding: Binding,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Descriptor {
     pub sha256: String,
     pub bytes: u64,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RetirementIntent {
+    schema: String,
+    job_id: String,
+    manifest_sha256: String,
+    pub manifest: Descriptor,
+    pub evidence: Descriptor,
+    pub outputs: BTreeMap<String, Descriptor>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -38,14 +50,8 @@ fn write(path: &Path, raw: &[u8]) -> Result<()> {
     Ok(())
 }
 pub(super) fn validate_enrolled(job: &Job, raw: &[u8]) -> Result<()> {
-    if !job.retain_workspace
-        || protection_inputs(raw)?.len() > 512
-        || job.outputs.keys().any(|key| key.len() > 200)
-    {
-        return Err(
-            "Enrolled jobs require explicit retain_workspace and bounded input/output scopes"
-                .into(),
-        );
+    if protection_inputs(raw)?.len() > 512 || job.outputs.keys().any(|key| key.len() > 200) {
+        return Err("Enrolled jobs require bounded input/output scopes".into());
     }
     for name in job
         .inputs
@@ -62,7 +68,7 @@ pub(super) fn validate_enrolled(job: &Job, raw: &[u8]) -> Result<()> {
                 .unwrap_or("")
                 .to_ascii_lowercase()
                 .as_str(),
-            "job-publication.json" | "job-output-intent.json"
+            "job-publication.json" | "job-output-intent.json" | "job-retirement-intent.json"
         ) {
             return Err("Enrolled job paths overlap publication controls".into());
         }
@@ -85,6 +91,18 @@ pub(super) fn validate_enrolled(job: &Job, raw: &[u8]) -> Result<()> {
     }
     add(&mut required, raw.len() as u64)?;
     add(&mut required, 3 * LIMIT)?;
+    if !job.retain_workspace {
+        add(
+            &mut required,
+            (raw.len() as u64)
+                .checked_mul(2)
+                .ok_or("Request budget overflow")?,
+        )?;
+        add(
+            &mut required,
+            2 * EVIDENCE_LIMIT + REGISTRATION_LIMIT + LIMIT,
+        )?;
+    }
     if required > job.budget_bytes {
         return Err("Enrolled job budget must cover bounded publication controls".into());
     }
@@ -115,7 +133,12 @@ pub(super) fn prepare(
     fs::create_dir(&workspace)?;
     lifecycle::checked_workspace(cfg, &reservation.cache_root, &workspace)?;
     let control = Enrollment {
-        schema: "reel.job-publication.v1".into(),
+        schema: if decode(raw)?.retain_workspace {
+            "reel.job-publication.v1"
+        } else {
+            "reel.job-publication.v2"
+        }
+        .into(),
         job_id: reservation.id.clone(),
         manifest_sha256: format!("{:x}", Sha256::digest(raw)),
         cache,
@@ -142,6 +165,7 @@ pub(super) fn outputs(
     domain: &Domain,
     outputs: BTreeMap<String, Descriptor>,
 ) -> Result<()> {
+    require_domain(workspace, raw, domain)?;
     let subjects: Vec<_> = outputs
         .values()
         .map(|v| v.sha256.clone())
@@ -196,7 +220,12 @@ pub(crate) fn check_enrollment(
     let job = decode(manifest)?;
     validate(&job)?;
     validate_enrolled(&job, manifest)?;
-    if control.schema != "reel.job-publication.v1"
+    let expected_schema = if job.retain_workspace {
+        "reel.job-publication.v1"
+    } else {
+        "reel.job-publication.v2"
+    };
+    if control.schema != expected_schema
         || control.job_id != id
         || control.manifest_sha256 != format!("{:x}", Sha256::digest(manifest))
         || !same_path(&control.cache, cache)
@@ -241,6 +270,110 @@ pub(crate) fn check_outputs(
     Ok(control.outputs)
 }
 
+pub(super) fn retirement(
+    workspace: &Path,
+    id: &str,
+    raw: &[u8],
+    domain: &Domain,
+    manifest: Descriptor,
+    evidence: Descriptor,
+    outputs: BTreeMap<String, Descriptor>,
+) -> Result<()> {
+    require_domain(workspace, raw, domain)?;
+    let control = RetirementIntent {
+        schema: "reel.job-retirement-intent.v1".into(),
+        job_id: id.into(),
+        manifest_sha256: format!("{:x}", Sha256::digest(raw)),
+        manifest,
+        evidence,
+        outputs,
+    };
+    let bytes = serde_json::to_vec(&control)?;
+    check_retirement(workspace, raw, &bytes)?;
+    let subjects = control
+        .outputs
+        .values()
+        .chain([&control.manifest, &control.evidence])
+        .map(|d| d.sha256.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let _publication = domain.acquire(&subjects, Mode::Publish, Duration::ZERO)?;
+    write(&workspace.join("job-retirement-intent.json"), &bytes)
+}
+fn require_domain(workspace: &Path, raw: &[u8], domain: &Domain) -> Result<()> {
+    let cache = workspace
+        .ancestors()
+        .nth(3)
+        .ok_or("Missing enrolled job cache")?
+        .canonicalize()?;
+    if crate::tiering::read_bounded(&workspace.join("job.json"), 256 * 1024)? != raw {
+        return Err("Enrolled job manifest changed before publication".into());
+    }
+    let binding = check_enrollment(
+        &cache,
+        workspace,
+        raw,
+        &crate::tiering::read_bounded(&workspace.join("job-publication.json"), LIMIT)?,
+    )?;
+    if !domain.same_domain(&Domain::from_binding(&cache, &binding)?)? {
+        return Err("Publication domain differs from enrolled job".into());
+    }
+    Ok(())
+}
+pub(crate) fn check_retirement(
+    workspace: &Path,
+    raw: &[u8],
+    bytes: &[u8],
+) -> Result<RetirementIntent> {
+    let intent: RetirementIntent = serde_json::from_slice(bytes)?;
+    let job = decode(raw)?;
+    validate(&job)?;
+    validate_enrolled(&job, raw)?;
+    if job.retain_workspace
+        || intent.schema != "reel.job-retirement-intent.v1"
+        || Some(intent.job_id.as_str()) != workspace.file_name().and_then(|s| s.to_str())
+        || intent.manifest_sha256 != format!("{:x}", Sha256::digest(raw))
+        || intent.manifest.sha256 != intent.manifest_sha256
+        || intent.manifest.bytes != raw.len() as u64
+        || !valid_oid(&intent.evidence.sha256)
+        || intent.evidence.bytes > EVIDENCE_LIMIT
+        || intent.outputs.len() > job.outputs.len()
+    {
+        return Err("Retirement intent schema/manifest/scope mismatch".into());
+    }
+    for (role, descriptor) in &intent.outputs {
+        if !valid_oid(&descriptor.sha256)
+            || job
+                .outputs
+                .get(role)
+                .is_none_or(|o| descriptor.bytes > o.max_bytes)
+        {
+            return Err("Retirement output intent exceeds declared scope".into());
+        }
+    }
+    Ok(intent)
+}
+pub(super) fn retirement_assets(workspace: &Path, raw: &[u8]) -> Result<Vec<Descriptor>> {
+    let path = workspace.join("job-retirement-intent.json");
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) => {
+            if !metadata.is_file() || lifecycle::is_reparse(&metadata) {
+                return Err("Invalid retirement intent control".into());
+            }
+            let intent =
+                check_retirement(workspace, raw, &crate::tiering::read_bounded(&path, LIMIT)?)?;
+            Ok(intent
+                .outputs
+                .into_values()
+                .chain([intent.manifest, intent.evidence])
+                .collect())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(e.into()),
+    }
+}
+
 pub(super) fn discard_domain(
     cache: &Path,
     workspace: &Path,
@@ -278,6 +411,10 @@ pub(super) fn discard_domain(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(e.into()),
     };
+    let retiring = retirement_assets(workspace, manifest)?;
+    if !retiring.is_empty() && domain.is_none() {
+        return Err("Retirement intent requires enrolled job control".into());
+    }
     match fs::symlink_metadata(workspace.join("result.json")) {
         Ok(metadata) => {
             if lifecycle::is_reparse(&metadata) {

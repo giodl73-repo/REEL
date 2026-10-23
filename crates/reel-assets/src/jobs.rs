@@ -246,8 +246,8 @@ fn usage(dir: &Path, depth: usize, count: &mut usize) -> Result<u64> {
 pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
     run_protocol(root, manifest, None)
 }
-/// Explicit bounded retained-workspace enrollment. Default job retirement is
-/// unchanged; full diagnostic/retirement publication enrollment remains separate.
+/// Explicit bounded job enrollment, including diagnostic/salvage publication
+/// before automatic retirement. Default unenrolled job behavior is unchanged.
 pub fn run_fenced(root: &Path, manifest: &Path, domain: &Domain) -> Result<Value> {
     run_protocol(root, manifest, Some(domain))
 }
@@ -256,8 +256,19 @@ pub fn publication_summary(result: &Value) -> Result<Value> {
     let outputs = result["outputs"]
         .as_object()
         .ok_or("Missing fenced job outputs")?;
-    if result["publication_enrolled"] != true || result["workspace_retained"] != true {
+    if result["publication_enrolled"] != true {
         return Err("Unsupported fenced job summary state".into());
+    }
+    let retained = result["workspace_retained"]
+        .as_bool()
+        .ok_or("Missing workspace retention state")?;
+    if !retained
+        && (result["retirement_evidence"]["sha256"]
+            .as_str()
+            .is_none_or(|h| !valid_oid(h))
+            || result["retirement_evidence"]["bytes"].as_u64().is_none())
+    {
+        return Err("Retired enrolled job requires retained evidence".into());
     }
     let mut bytes = 0u64;
     for output in outputs.values() {
@@ -275,7 +286,7 @@ pub fn publication_summary(result: &Value) -> Result<Value> {
     Ok(
         json!({"schema":"reel.fenced-job-summary.v1","outputs":outputs.len(),"output_logical_bytes":bytes,
         "linked_input_bytes":linked,"copied_input_bytes":copied,
-        "workspace_retained":true,"publication_enrolled":true,"removal_authorized":false,"daemon_started":false}),
+        "workspace_retained":retained,"retirement_completed":!retained,"publication_enrolled":true,"removal_authorized":false,"daemon_started":false}),
     )
 }
 fn run_protocol(root: &Path, manifest: &Path, domain: Option<&Domain>) -> Result<Value> {
@@ -346,6 +357,7 @@ fn run_protocol(root: &Path, manifest: &Path, domain: Option<&Domain>) -> Result
     };
     let mut linked_input_bytes = 0u64;
     let mut copied_input_bytes = 0u64;
+    let mut retirement_attempted = false;
     let attempt = (|| -> Result<Value> {
         // File handles deny writes to immutable views while allowing concurrent readers
         // and removal of their temporary hard links. Canonical bytes are never writable.
@@ -496,6 +508,7 @@ fn run_protocol(root: &Path, manifest: &Path, domain: Option<&Domain>) -> Result
             fs::write(workspace.join("result.json"), result_bytes)?;
         }
         if !job.retain_workspace {
+            retirement_attempted = true;
             let evidence = lifecycle::publish_and_retire(
                 root,
                 &cfg,
@@ -504,6 +517,7 @@ fn run_protocol(root: &Path, manifest: &Path, domain: Option<&Domain>) -> Result
                 &bytes,
                 &result,
                 &job,
+                domain,
             )?;
             result["workspace_retained"] = json!(false);
             result["retirement_evidence"] = evidence;
@@ -516,6 +530,12 @@ fn run_protocol(root: &Path, manifest: &Path, domain: Option<&Domain>) -> Result
             if job.retain_workspace {
                 return Err(error);
             }
+            if domain.is_some() && retirement_attempted {
+                return Err(format!(
+                    "{error}; enrolled retirement needs explicit reconciliation; no retry performed"
+                )
+                .into());
+            }
             let failure = json!({"schema":"reel.failed-job-result.v1","job_id":reservation.id,
                 "manifest_sha256":format!("{:x}",Sha256::digest(&bytes)),"error":error.to_string(),"outputs":{},
                 "creative_authority":"not-granted-by-this-receipt"});
@@ -527,6 +547,7 @@ fn run_protocol(root: &Path, manifest: &Path, domain: Option<&Domain>) -> Result
                 &bytes,
                 &failure,
                 &job,
+                domain,
             ) {
                 Ok(evidence) => Err(format!(
                     "{error}; staging retired; diagnostic {}",
@@ -624,6 +645,12 @@ pub fn discard(root: &Path, id: &str, manifest_oid: &str, incomplete: bool) -> R
         .chain(job.tools.values())
         .map(|a| (a.sha256.clone(), a.bytes))
         .collect();
+    for asset in publication::retirement_assets(&workspace, &manifest_bytes)? {
+        if index.get(&asset.sha256) != Some(&asset.bytes) {
+            return Err("Retirement artifact must be registered before scratch discard".into());
+        }
+        required.insert(asset.sha256, asset.bytes);
+    }
     for tool in job.installed_tools.values() {
         required.insert(tool.sha256.clone(), tool.bytes);
     }
@@ -656,7 +683,12 @@ pub fn discard(root: &Path, id: &str, manifest_oid: &str, incomplete: bool) -> R
         return Err("Incomplete job requires explicit --discard-incomplete; only temporary results will be discarded".into());
     }
     required.insert(manifest_oid.to_owned(), manifest_size);
+    let mut _custody = Vec::new();
     for (oid, size) in &required {
+        if _publication_domain.is_some() {
+            _custody.extend(lifecycle::pin_retained(&cfg, oid, *size)?);
+            continue;
+        }
         let mut found = false;
         for cache in &cfg.cache_roots {
             let path = object(cache, oid);
