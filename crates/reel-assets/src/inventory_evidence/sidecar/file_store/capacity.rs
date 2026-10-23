@@ -63,10 +63,40 @@ impl FileStore {
         limits: Limits,
         overhead: u64,
     ) -> Result<Self> {
+        Self::admit_new(root, config, cache, limits, overhead, || {
+            Self::begin(cache, staging_parent, id, limits)
+        })
+    }
+    /// The existing capacity contract plus persisted fence enrollment. Domain
+    /// scope is validated before shared-ledger reservation or session creation.
+    #[allow(clippy::too_many_arguments)] // existing explicit admission scope plus required domain
+    pub fn begin_admitted_fenced(
+        root: &Path,
+        config: &Config,
+        cache: &Path,
+        staging_parent: &Path,
+        id: &str,
+        limits: Limits,
+        overhead: u64,
+        domain: &collector::fence::Domain,
+    ) -> Result<Self> {
+        domain.binding(&checked_directory(cache)?)?;
+        Self::admit_new(root, config, cache, limits, overhead, || {
+            Self::begin_fenced(cache, staging_parent, id, limits, domain)
+        })
+    }
+    fn admit_new(
+        root: &Path,
+        config: &Config,
+        cache: &Path,
+        limits: Limits,
+        overhead: u64,
+        begin: impl FnOnce() -> Result<Self>,
+    ) -> Result<Self> {
         let coord = coordination(config)?;
         let budget = Self::capacity_budget(limits, overhead)?;
         let reservation = admission::reserve_on(root, config, cache, budget)?;
-        let mut store = Self::begin(cache, staging_parent, id, limits)?;
+        let mut store = begin()?;
         create_control(
             &store.session.join("capacity.json"),
             &Record {

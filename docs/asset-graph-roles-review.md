@@ -425,3 +425,35 @@ Disposition: optional OS fence primitive and bounded index-node writer API
 implemented. Removal integration remains gated on complete producer enrollment,
 overlapping demand and a bounded final check/unlink protocol. Existing collector,
 preflight, executor, runtime pins and live caches remain unchanged.
+
+## Persisted node-writer enrollment increment
+
+Review base: `f891195`, plus versioned session controls/recovery in
+`file_store.rs`, admitted construction, private fence bindings, collector
+binding validation, `managed::build_fenced`, the optional managed profile field
+and their fixtures/docs. Producer-applied review uses the three infrastructure
+checklists (version 1) and Rights and Provenance. Owner: this implementation
+lane. No independent review, installed adoption or complete producer enrollment
+is claimed; earlier review counts/hashes remain historical.
+
+| Role | Severity | Finding/correction and actual evidence |
+| --- | --- | --- |
+| Registry Concurrency and Evidence Integrity | Major corrected for enrolled sessions | Per-call fencing can disappear when ordinary publication or recovery is used. New version 2 session intent requires a persisted canonical domain/schema/physical-identity binding. Ordinary publication automatically takes its shared node fence; named recovery reopens that exact control. Fixtures show ordinary and resumed calls refuse an exclusively fenced subject, unrelated nodes proceed, and retry succeeds after release without poisoning. |
+| Registry Concurrency and Evidence Integrity | Major corrected | Equal header bytes do not identify the old coordination domain. Recovery rejects missing controls and replacement physical files with identical schema bytes. Version 2 without its binding and version 1 with a binding reject; per-call domain substitution also rejects. Bound metadata is checked inside the same cache filesystem and outside staging. Old readers reject the new protocol instead of resuming it unfenced. Arbitrary rewriting/whole-lineage rollback still requires external authority. |
+| Storage Custody and Recovery | Major corrected | Persisted fencing must not bypass shared capacity admission. The admitted constructor validates domain scope before reservation, then uses the existing reservation/session contract; ordinary named recovery still requires admitted reacquisition before mutation. The new managed build path uses that admitted constructor and preserves sealed/retained/catalog sequencing. No reservation becomes a lifetime subject/global lock. |
+| Asset Graph and Version Integrity | Major corrected | A collector cannot treat an unsupported or missing enrolled control as no demand. It parses both supported session protocols, meters/stamps fence control bytes and verifies physical identity. A staged node remains held with a valid binding; missing/recreated controls make capture and revalidation fail. No partial successful scope or zero-reference result is emitted. |
+| Registry Concurrency and Evidence Integrity | Major corrected at managed producer boundary | Optional profile enrollment must affect actual node publication, not just receipts. Executable managed builds create enrolled sessions; ordinary Store publication fences every generated node. An exclusive root-node fence causes build failure before seal/admission, leaves its prior catalog revision intact and requires a new explicit attempt after release. Missing, foreign and overlapping profile domains fail without filesystem writes. |
+| Storage Custody and Recovery | Blocking adoption gate retained | This is session enrollment, not authoritative cache-wide enrollment. A fresh profile can omit the optional domain and create a legacy session. Native jobs, original-source read demand, retained source receipts/catalog lifecycles and final unlink are not enrolled by this change. Removal remains gated on complete producer policy, overlapping demand and consistent short commit lock order. No new unlink API or reusable custody permit is added. |
+| Rights and Provenance | Advisory addressed | The physical identity/path binding stays inside private compact session controls and has no shareable projection. Managed success stays counts/booleans; executable privacy and read-only parity fixtures pass. Profiles only open existing domains and never initialize/repair them. Only synthetic temporary fixtures were used; no media, live cache, installed runtime or external service was accessed. |
+
+Validation: all 453 tests pass (228 unit, five prior integration, 100 model,
+23 source adapter, 25 sidecar, 30 backend, 17 managed CLI, 11 collector CLI and
+14 fence test entries, including the existing subprocess harness). Added four
+session/fence cases, one collector case and three managed executable cases.
+Strict all-target Clippy, formatting, ROLES structure and diff checks pass.
+Windows only; no device durability, Unix or hostile whole-lineage guarantee.
+
+Disposition: enrolled index-node sessions now enforce their persisted domain
+through ordinary publication, admitted construction and named recovery; managed
+profiles opt in explicitly. Full producer enrollment and removal integration
+remain open. Live caches, main and installed runtime bindings are unchanged.

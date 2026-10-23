@@ -93,6 +93,23 @@ fn source_reader(cache: &Path, source: &Source, limits: evidence::Limits) -> Res
 /// Failure may leave protected staging/retained nodes or a pending catalog
 /// decision. No failure handler deletes, retries or recovers on the caller's behalf.
 pub fn build(context: &MutationContext<'_>, request: &Request<'_>) -> Result<Produced> {
+    build_protocol(context, request, None)
+}
+/// Opt-in node-publication enrollment. Original-source demand and other
+/// producer families still need their separate lifecycle contracts.
+pub fn build_fenced(
+    context: &MutationContext<'_>,
+    request: &Request<'_>,
+    domain: &collector::fence::Domain,
+) -> Result<Produced> {
+    domain.binding(&checked_directory(request.cache)?)?;
+    build_protocol(context, request, Some(domain))
+}
+fn build_protocol(
+    context: &MutationContext<'_>,
+    request: &Request<'_>,
+    domain: Option<&collector::fence::Domain>,
+) -> Result<Produced> {
     request.budgets.validate()?;
     FileStore::capacity_budget(request.budgets.store(), request.staging_overhead_bytes)?;
     request.catalog.producer_preflight(
@@ -110,15 +127,28 @@ pub fn build(context: &MutationContext<'_>, request: &Request<'_>) -> Result<Pro
         request.source,
         request.budgets.preparation,
     )?;
-    let mut writer = FileStore::begin_admitted(
-        context.project_root,
-        context.storage,
-        request.cache,
-        request.staging_parent,
-        request.session_id,
-        request.budgets.store(),
-        request.staging_overhead_bytes,
-    )?;
+    let mut writer = if let Some(domain) = domain {
+        FileStore::begin_admitted_fenced(
+            context.project_root,
+            context.storage,
+            request.cache,
+            request.staging_parent,
+            request.session_id,
+            request.budgets.store(),
+            request.staging_overhead_bytes,
+            domain,
+        )?
+    } else {
+        FileStore::begin_admitted(
+            context.project_root,
+            context.storage,
+            request.cache,
+            request.staging_parent,
+            request.session_id,
+            request.budgets.store(),
+            request.staging_overhead_bytes,
+        )?
+    };
     let root = super::super::publish(&mut writer, &index, request.budgets.index)?;
     writer.seal(&root)?;
     writer.handoff(request.retained_parent, &root, request.source)?;

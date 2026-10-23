@@ -124,6 +124,8 @@ struct Profile {
     budgets: BudgetProfile,
     #[serde(default)]
     staging_overhead_bytes: Option<u64>,
+    #[serde(default)]
+    publication_fence: Option<PathBuf>,
 }
 fn named(root: &Path, path: &Path) -> Result<PathBuf> {
     let path = if path.is_absolute() {
@@ -151,6 +153,7 @@ struct Loaded {
     source: Source,
     scope: catalog::Scope,
     overhead: u64,
+    publication_fence: Option<collector::fence::Domain>,
 }
 impl Loaded {
     fn read(root: &Path, path: &Path) -> Result<Self> {
@@ -217,6 +220,24 @@ impl Loaded {
                 }
             }
         }
+        let publication_fence = if let Some(path) = &profile.publication_fence {
+            let path = checked_directory(path)?;
+            if path == profile.cache
+                || !path.starts_with(&profile.cache)
+                || dirs
+                    .iter()
+                    .any(|d| path.starts_with(d) || d.starts_with(&path))
+            {
+                return Err(
+                    "Publication fence must be a separate existing cache metadata child".into(),
+                );
+            }
+            let domain = collector::fence::Domain::open(&path)?;
+            domain.binding(&profile.cache)?;
+            Some(domain)
+        } else {
+            None
+        };
         profile.budgets.budgets().validate()?;
         let overhead = profile.staging_overhead_bytes.unwrap_or(
             (profile.budgets.index_nodes as u64)
@@ -236,6 +257,7 @@ impl Loaded {
             source,
             scope,
             overhead,
+            publication_fence,
         })
     }
     fn request<'a>(&'a self, catalog: &'a Catalog) -> Request<'a> {
@@ -284,9 +306,15 @@ pub fn run(root: &Path, operation: &str, profile: &Path, subjects: Option<&Path>
     }
     let catalog = Catalog::open(&p.cache, &p.catalog_directory, &loaded.scope)?;
     match operation {
-        "inventory-index-build" => Ok(serde_json::to_value(
-            build(&context, &loaded.request(&catalog))?.summary(),
-        )?),
+        "inventory-index-build" => {
+            let request = loaded.request(&catalog);
+            let produced = if let Some(domain) = &loaded.publication_fence {
+                build_fenced(&context, &request, domain)?
+            } else {
+                build(&context, &request)?
+            };
+            Ok(serde_json::to_value(produced.summary())?)
+        }
         "inventory-index-shadow" => {
             let path =
                 subjects.ok_or("Shadow command requires an explicit exact-subject JSON array")?;

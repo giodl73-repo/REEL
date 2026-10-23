@@ -207,6 +207,108 @@ fn assert_private(summary: &Value, f: &Fixture) {
     }
 }
 
+#[cfg(windows)]
+#[test]
+fn managed_profile_enrolls_every_node_and_preserves_fence_on_named_recovery() {
+    use reel_assets::inventory_evidence::sidecar::file_store::{
+        FileStore, collector::fence::Domain,
+    };
+    let f = Fixture::new(false, false);
+    let directory = f.cache.join("publication-fence");
+    fs::create_dir(&directory).unwrap();
+    let _domain = Domain::initialize(&directory).unwrap();
+    f.update(|p| p["publication_fence"] = json!(directory));
+    f.success("inventory-index-init");
+    let built = f.success("inventory-index-build");
+    assert_private(&built, &f);
+    let session = fs::read_dir(f.cache.join("staging"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let intent: Value =
+        serde_json::from_slice(&fs::read(session.join("session.json")).unwrap()).unwrap();
+    assert_eq!(intent["schema"], "reel.inventory-sidecar.session.v2");
+    let id = intent["id"].as_str().unwrap();
+    let writer = FileStore::resume(&f.cache, &f.cache.join("staging"), id).unwrap();
+    assert!(writer.sealed_root().is_some());
+    drop(writer);
+    let queries = f.queries(json!([f.primary]));
+    let before = snapshot(&f.root);
+    let out = f.shadow(&queries);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_private(&serde_json::from_slice(&out.stdout).unwrap(), &f);
+    assert_eq!(snapshot(&f.root), before);
+}
+
+#[cfg(windows)]
+#[test]
+fn managed_fence_profile_rejects_missing_foreign_and_overlapping_domains_without_writes() {
+    for case in 0..3 {
+        let f = Fixture::new(false, false);
+        let directory = match case {
+            0 => f.cache.join("missing-fence"),
+            1 => f.root.join("coordination"),
+            _ => f.cache.join("staging"),
+        };
+        f.update(|p| p["publication_fence"] = json!(directory));
+        let before = snapshot(&f.root);
+        let out = f.run("inventory-index-build");
+        assert!(!out.status.success());
+        assert!(out.stdout.is_empty());
+        assert_eq!(snapshot(&f.root), before);
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn managed_build_cannot_admit_a_node_fenced_for_removal() {
+    use reel_assets::inventory_evidence::sidecar::file_store::collector::fence::{Domain, Mode};
+    use std::time::Duration;
+    let f = Fixture::new(false, false);
+    let directory = f.cache.join("publication-fence");
+    fs::create_dir(&directory).unwrap();
+    let domain = Domain::initialize(&directory).unwrap();
+    f.update(|p| p["publication_fence"] = json!(directory));
+    f.success("inventory-index-init");
+    f.success("inventory-index-build");
+    let session = fs::read_dir(f.cache.join("staging"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let seal: Value =
+        serde_json::from_slice(&fs::read(session.join("root.json")).unwrap()).unwrap();
+    let subject = seal["root"]["sha256"].as_str().unwrap().to_owned();
+    let removal = domain
+        .acquire(std::slice::from_ref(&subject), Mode::Remove, Duration::ZERO)
+        .unwrap();
+    f.update(|p| {
+        p["expected_revision"] = json!(1);
+        p["session_id"] = json!("second");
+    });
+    let out = f.run("inventory-index-build");
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("Publication fence unavailable"));
+    assert!(
+        !f.cache
+            .join("staging/second/objects")
+            .join(&subject)
+            .exists()
+    );
+    assert_eq!(f.success("inventory-index-recover")["catalog_revision"], 1);
+    drop(removal);
+    f.update(|p| p["session_id"] = json!("third"));
+    assert_eq!(f.success("inventory-index-build")["catalog_revision"], 2);
+}
+
 #[test]
 fn native_census_build_and_named_shadow_have_exact_read_only_parity() {
     let f = Fixture::new(false, false);

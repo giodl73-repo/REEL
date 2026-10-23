@@ -107,6 +107,9 @@ pub(crate) struct Identity {
     bytes: u64,
 }
 impl Identity {
+    pub(crate) fn token(&self) -> String {
+        self.id.clone()
+    }
     pub(crate) fn same_file(&self, other: &Self) -> bool {
         self.id == other.id
     }

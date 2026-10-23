@@ -254,13 +254,18 @@ fn stage(
             .ok_or("Invalid session filename")?;
         session_path(&scope.staging_parent, name)?;
         let intent: Session = reader.control(&session.join("session.json"))?;
+        intent.validate_protocol()?;
         check_limits(intent.limits)?;
-        if intent.schema != SESSION_SCHEMA
-            || intent.cache != scope.cache
+        if intent.cache != scope.cache
             || intent.staging_parent != scope.staging_parent
             || intent.id != name
         {
             return Err("Staging session scope mismatch".into());
+        }
+        if let Some(binding) = &intent.publication_fence {
+            binding.separate_from(&scope.cache, &scope.staging_parent)?;
+            let raw = reader.file(&binding.path(&scope.cache)?, false, CONTROL_BYTES)?;
+            binding.validate_observed(&scope.cache, &raw)?;
         }
         let contents = reader.directory(&session, 8)?;
         for entry in contents {

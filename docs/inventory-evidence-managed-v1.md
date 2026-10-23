@@ -28,6 +28,17 @@ refreshes candidate proof and admits the expected catalog revision. Source bytes
 are unchanged. Staging stays protected after success; retirement is a separate
 explicit API/workflow. No source inventory or media is copied into Git.
 
+An optional private profile field, `publication_fence`, names an existing fence
+metadata directory inside the output cache, separate from staging, retention
+and catalog directories. It enables persisted version 2 session enrollment for
+every generated index node; ordinary publication and named session recovery
+then enforce that exact control-file identity. Initialization must have happened
+explicitly through the library; these commands only open the domain. Invalid or
+missing domains fail before source preparation/session creation. See the
+[publication fence contract](asset-publication-fence-v1.md). This optional field
+does not enroll native jobs, protect original source reads, forbid fresh legacy
+sessions or switch removal behavior. Default profiles retain version 1 sessions.
+
 `shadow` compares explicit exact-subject queries against the verified original
 source and currently selected index. It checks listed/captured-nonmembership
 results, every preserved row/copy field, original source ordinal, tiers, scope,
@@ -139,7 +150,7 @@ Explicit profiles ignore legacy transfer-cache environment overrides; commands
 also run with no external executable search path, exercising the no-tool/no-daemon boundary.
 Filesystem snapshots verify shadow/recovery do not alter fixture files.
 
-All 409 suite tests pass locally: 212 unit, five prior integration, 100 model,
+The initial command increment passed 409 tests: 212 unit, five prior integration, 100 model,
 23 source-adapter, 25 sidecar, 30 backend and 14 managed executable cases.
 Strict all-target Clippy, formatting, ROLES structure and diff checks pass.
 Validation ran on Windows; this is not device/power-loss durability proof.

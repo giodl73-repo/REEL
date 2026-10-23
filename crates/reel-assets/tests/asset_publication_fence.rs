@@ -1,6 +1,8 @@
 #![cfg(windows)]
+use reel_assets::inventory_evidence::sidecar::Store;
 use reel_assets::inventory_evidence::sidecar::file_store::collector::fence::{Domain, Mode};
 use reel_assets::inventory_evidence::sidecar::file_store::{FileStore, Limits};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
@@ -14,6 +16,140 @@ fn hash(prefix: char) -> String {
 }
 fn subjects(prefix: char) -> Vec<String> {
     vec![hash(prefix)]
+}
+
+#[test]
+fn enrolled_session_ordinary_publication_and_recovery_cannot_skip_its_fence() {
+    let temp = tempfile::tempdir().unwrap();
+    let cache = temp.path().canonicalize().unwrap();
+    fs::create_dir(cache.join("staging")).unwrap();
+    fs::create_dir(cache.join("fence")).unwrap();
+    let domain = Domain::initialize(&cache.join("fence")).unwrap();
+    let mut writer = FileStore::begin_fenced(
+        &cache,
+        &cache.join("staging"),
+        "session",
+        Limits::default(),
+        &domain,
+    )
+    .unwrap();
+    let data = b"enrolled ordinary node";
+    let subject = format!("{:x}", Sha256::digest(data));
+    let removed = domain
+        .acquire(std::slice::from_ref(&subject), Mode::Remove, Duration::ZERO)
+        .unwrap();
+    assert!(writer.publish(data).is_err());
+    assert!(!reel_assets::object(&cache, &subject).exists());
+    let unrelated = writer.publish(b"unrelated enrolled node").unwrap();
+    let intent: Value =
+        serde_json::from_slice(&fs::read(writer.staging_path().join("session.json")).unwrap())
+            .unwrap();
+    assert_eq!(intent["schema"], "reel.inventory-sidecar.session.v2");
+    assert!(intent["publication_fence"]["identity"].is_string());
+    drop(writer);
+    let mut resumed = FileStore::resume(&cache, &cache.join("staging"), "session").unwrap();
+    assert!(resumed.publish(data).is_err());
+    assert!(reel_assets::object(&cache, &unrelated.sha256).exists());
+    drop(removed);
+    assert_eq!(resumed.publish(data).unwrap().sha256, subject);
+}
+
+#[test]
+fn enrolled_session_rejects_a_second_domain_even_inside_the_same_cache() {
+    let temp = tempfile::tempdir().unwrap();
+    let cache = temp.path().canonicalize().unwrap();
+    for name in ["staging", "one", "two"] {
+        fs::create_dir(cache.join(name)).unwrap();
+    }
+    let one = Domain::initialize(&cache.join("one")).unwrap();
+    let two = Domain::initialize(&cache.join("two")).unwrap();
+    let mut writer = FileStore::begin_fenced(
+        &cache,
+        &cache.join("staging"),
+        "session",
+        Limits::default(),
+        &one,
+    )
+    .unwrap();
+    assert!(writer.publish_fenced(&two, b"node").is_err());
+    assert_eq!(writer.staged_nodes(), 0);
+    writer.publish_fenced(&one, b"node").unwrap();
+}
+
+#[test]
+fn enrolled_recovery_rejects_missing_and_recreated_identical_header_controls() {
+    let temp = tempfile::tempdir().unwrap();
+    let cache = temp.path().canonicalize().unwrap();
+    for name in ["staging", "fence"] {
+        fs::create_dir(cache.join(name)).unwrap();
+    }
+    let domain = Domain::initialize(&cache.join("fence")).unwrap();
+    let mut writer = FileStore::begin_fenced(
+        &cache,
+        &cache.join("staging"),
+        "session",
+        Limits::default(),
+        &domain,
+    )
+    .unwrap();
+    let node = writer.publish(b"preserved staged node").unwrap();
+    let intent_path = writer.staging_path().join("session.json");
+    let intent = fs::read(&intent_path).unwrap();
+    drop((writer, domain));
+    let control = cache.join("fence/asset-publication-fence.v1.lock");
+    // Keep the old physical file alive so its identity cannot be reused.
+    fs::rename(&control, cache.join("old-fence-control")).unwrap();
+    assert!(FileStore::resume(&cache, &cache.join("staging"), "session").is_err());
+    let replacement = Domain::initialize(&cache.join("fence")).unwrap();
+    assert!(FileStore::resume(&cache, &cache.join("staging"), "session").is_err());
+    assert_eq!(fs::read(intent_path).unwrap(), intent);
+    assert_eq!(
+        fs::read(reel_assets::object(&cache, &node.sha256)).unwrap(),
+        b"preserved staged node"
+    );
+    drop(replacement);
+}
+
+#[test]
+fn enrolled_session_controls_reject_downgrade_and_partial_binding() {
+    let temp = tempfile::tempdir().unwrap();
+    let cache = temp.path().canonicalize().unwrap();
+    for name in ["staging", "fence"] {
+        fs::create_dir(cache.join(name)).unwrap();
+    }
+    let domain = Domain::initialize(&cache.join("fence")).unwrap();
+    let writer = FileStore::begin_fenced(
+        &cache,
+        &cache.join("staging"),
+        "session",
+        Limits::default(),
+        &domain,
+    )
+    .unwrap();
+    let path = writer.staging_path().join("session.json");
+    let original: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    drop(writer);
+    for case in 0..5 {
+        let mut changed = original.clone();
+        match case {
+            0 => {
+                changed.as_object_mut().unwrap().remove("publication_fence");
+            }
+            1 => changed["schema"] = json!("reel.inventory-sidecar.session.v1"),
+            2 => changed["publication_fence"]["schema"] = json!("unknown"),
+            3 => changed["publication_fence"]["identity"] = json!("different"),
+            _ => changed["publication_fence"]["directory"] = json!(cache.parent().unwrap()),
+        }
+        let raw = serde_json::to_vec(&changed).unwrap();
+        fs::write(&path, &raw).unwrap();
+        assert!(
+            FileStore::resume(&cache, &cache.join("staging"), "session").is_err(),
+            "case {case}"
+        );
+        assert_eq!(fs::read(&path).unwrap(), raw);
+    }
+    fs::write(&path, serde_json::to_vec(&original).unwrap()).unwrap();
+    FileStore::resume(&cache, &cache.join("staging"), "session").unwrap();
 }
 
 #[test]

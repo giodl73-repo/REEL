@@ -56,18 +56,51 @@ this short guard. Busy-fence refusal occurs before publication and does not
 poison the writer, so an explicit retry can succeed later. Unrelated nodes can
 publish while another node is exclusively fenced.
 
-Ordinary `publish`, managed producer commands, native jobs, retained receipts,
-catalog updates and the removal executor retain their existing behavior. This
-explicit per-call API does not persist session-wide fence enrollment and cannot
-prove every producer used it. No code may treat the primitive alone as complete
-coverage or permission to unlink a CAS name.
+The per-call API remains available for unenrolled writers. It does not establish
+session-wide enrollment by itself. No code may treat it as complete coverage or
+permission to unlink a CAS name.
+
+## Persisted session enrollment
+
+`FileStore::begin_fenced` and `begin_admitted_fenced` create
+`reel.inventory-sidecar.session.v2` controls with a required private binding to
+the canonical metadata directory, fence schema and physical control-file
+identity. Every ordinary `Store::publish` call on that writer acquires its
+shared node fence. Named `resume`/`resume_admitted` automatically reopens and
+checks the persisted domain; callers cannot resume through an unfenced fallback.
+The domain is pinned for the writer lifetime, with no subject locks between
+publications. Capacity admission remains separately required when applicable.
+
+Version 2 without a binding, version 1 with a binding, unsupported bindings,
+missing controls and recreated controls with the same header but a different
+physical identity fail. A per-call fence cannot override an enrolled domain.
+Enrolled metadata must stay inside the same cache filesystem and separate from
+staging. Older readers reject this version/unknown field; they cannot silently
+treat an enrolled session as the old protocol. Existing version 1 sessions retain
+their original behavior. Arbitrary trusted-control rewriting or whole-lineage
+rollback is not prevented by a schema/version check.
+
+`managed::build_fenced` and the managed profile's optional `publication_fence`
+directory select this session protocol for all generated index nodes. The
+profile opens an existing domain only; it never initializes or repairs one.
+The directory must be a separate child of the output cache, disjoint from
+staging, retention and catalog namespaces. Managed success remains count-only.
+
+The collector validates version 2 bindings and stamps their control bytes under
+its metadata budget. Missing or changed fence identity makes capture fail,
+including when no nodes are staged; it never becomes an empty protected scope.
+This does not certify global enrollment. A fresh session/profile can still use
+version 1 when no cache-wide policy forbids it. Native job publication,
+original-source read demand, retained source receipts, catalog lifecycles and
+the removal executor still require their respective integration contracts.
 
 ## Remaining integration contract
 
 Before guarded removal can adopt this mechanism:
 
-1. Persist authoritative domain/schema enrollment for every participating cache
-   and producer; compatibility checks must reject unfenced publication paths.
+1. Extend the persisted session binding to authoritative domain/schema enrollment
+   for every participating cache and producer; compatibility checks must reject
+   unfenced publication paths, including fresh unenrolled sessions.
 2. Establish overlapping demand before source reads or root publication,
    including native jobs, retained source-evidence demand and catalog lifecycles.
 3. Acquire removal protection before the final bounded demand check and exact
@@ -83,11 +116,15 @@ automatically honor new fences. No production runtime adoption occurs here.
 
 ## Validation
 
-Nine synthetic Windows integration cases plus a subprocess harness cover shared/exclusive behavior,
+Thirteen synthetic Windows integration cases plus a subprocess harness cover shared/exclusive behavior,
 unrelated-asset progress, partial-batch rollback, bounded waiting, conservative
 collisions, high offsets without file growth, invalid/missing/corrupt controls,
 control replacement prevention, idempotent initialization, killed publisher and
-remover recovery, and retryable index publication with cache/node bounds.
+remover recovery, retryable index publication with cache/node bounds, enrolled
+ordinary publication/recovery, conflicting domains, incomplete bindings and
+physical control replacement. One collector unit case rejects missing/recreated
+binding controls. Three managed executable cases cover enrolled build/recovery/
+parity, invalid-domain read-only failures and a removal-fenced node blocking admission.
 Two real child processes are terminated while holding ranges; surviving owners
 keep their protection and released subjects can be reacquired. Tests access
 only temporary fixture directories, with no live cache, media or runtime change.

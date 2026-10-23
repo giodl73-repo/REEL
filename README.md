@@ -52,7 +52,9 @@ Its named `collector-verify` preflight freshly hashes hot/retained pairs and
 rechecks demand, without copying, removing or exporting private identities.
 An optional [per-asset publication fence](docs/asset-publication-fence-v1.md)
 provides tested shared/exclusive coordination for short publication boundaries;
-it is not yet connected to live removal or complete producer enrollment.
+persisted sessions and optional managed profiles enforce their exact enrolled
+domain on publication/recovery. Live removal and complete producer enrollment
+remain separate integration work.
 
 ---
 

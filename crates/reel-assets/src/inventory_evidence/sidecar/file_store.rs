@@ -8,6 +8,7 @@ use std::{
 };
 
 const SESSION_SCHEMA: &str = "reel.inventory-sidecar.session.v1";
+const FENCED_SESSION_SCHEMA: &str = "reel.inventory-sidecar.session.v2";
 const SEAL_SCHEMA: &str = "reel.inventory-sidecar.seal.v1";
 const CONTROL_BYTES: u64 = 64 * 1024;
 mod capacity;
@@ -43,6 +44,16 @@ struct Session {
     staging_parent: PathBuf,
     id: String,
     limits: Limits,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    publication_fence: Option<collector::fence::Binding>,
+}
+impl Session {
+    fn validate_protocol(&self) -> Result<()> {
+        match (self.schema.as_str(), self.publication_fence.is_some()) {
+            (SESSION_SCHEMA, false) | (FENCED_SESSION_SCHEMA, true) => Ok(()),
+            _ => Err("Unsupported or incomplete sidecar session protocol".into()),
+        }
+    }
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -65,6 +76,7 @@ pub struct FileStore {
     _owner: File,
     requires_admission: bool,
     _reservation: Option<crate::admission::Reservation>,
+    publication_fence: Option<collector::fence::Domain>,
 }
 
 /// Exact named reads over an explicitly supplied existing cache. No session
@@ -227,6 +239,26 @@ impl FileStore {
     /// Explicit per-session creation only, no global lock or implicit recovery.
     /// Reserve capacity externally before beginning. No existing session reused.
     pub fn begin(cache: &Path, staging_parent: &Path, id: &str, limits: Limits) -> Result<Self> {
+        Self::begin_protocol(cache, staging_parent, id, limits, None)
+    }
+    /// Persisted session enrollment; all ordinary publish calls on this writer
+    /// and named recovery automatically use the same exact fence identity.
+    pub fn begin_fenced(
+        cache: &Path,
+        staging_parent: &Path,
+        id: &str,
+        limits: Limits,
+        domain: &collector::fence::Domain,
+    ) -> Result<Self> {
+        Self::begin_protocol(cache, staging_parent, id, limits, Some(domain))
+    }
+    fn begin_protocol(
+        cache: &Path,
+        staging_parent: &Path,
+        id: &str,
+        limits: Limits,
+        domain: Option<&collector::fence::Domain>,
+    ) -> Result<Self> {
         check_limits(limits)?;
         let cache = checked_directory(cache)?;
         let parent = checked_directory(staging_parent)?;
@@ -237,6 +269,14 @@ impl FileStore {
         if crate::admission::volume_id(&cache)? != crate::admission::volume_id(&parent)? {
             return Err("Sidecar staging and cache must be on the same filesystem".into());
         }
+        let binding = domain.map(|d| d.binding(&cache)).transpose()?;
+        if let Some(binding) = &binding {
+            binding.separate_from(&cache, &parent)?;
+        }
+        let publication_fence = binding
+            .as_ref()
+            .map(|b| collector::fence::Domain::from_binding(&cache, b))
+            .transpose()?;
         let session = session_path(&parent, id)?;
         fs::create_dir(&session)?;
         let lock = owner(&session.join("owner.lock"), true)?;
@@ -244,11 +284,17 @@ impl FileStore {
         create_control(
             &session.join("session.json"),
             &Session {
-                schema: SESSION_SCHEMA.into(),
+                schema: if binding.is_some() {
+                    FENCED_SESSION_SCHEMA
+                } else {
+                    SESSION_SCHEMA
+                }
+                .into(),
                 cache: cache.clone(),
                 staging_parent: parent.clone(),
                 id: id.into(),
                 limits,
+                publication_fence: binding,
             },
         )?;
         sync_directory(&parent)?;
@@ -263,6 +309,7 @@ impl FileStore {
             _owner: lock,
             requires_admission: false,
             _reservation: None,
+            publication_fence,
         })
     }
     /// Explicit named recovery, bounded by immutable session budgets. Reads and
@@ -279,14 +326,19 @@ impl FileStore {
         let session = checked_directory(&session_path(&parent, id)?)?;
         let lock = owner(&session.join("owner.lock"), false)?;
         let intent: Session = control(&session.join("session.json"))?;
-        if intent.schema != SESSION_SCHEMA
-            || intent.cache != cache
-            || intent.staging_parent != parent
-            || intent.id != id
-        {
+        intent.validate_protocol()?;
+        if intent.cache != cache || intent.staging_parent != parent || intent.id != id {
             return Err("Sidecar session scope mismatch".into());
         }
         check_limits(intent.limits)?;
+        if let Some(binding) = &intent.publication_fence {
+            binding.separate_from(&cache, &parent)?;
+        }
+        let publication_fence = intent
+            .publication_fence
+            .as_ref()
+            .map(|b| collector::fence::Domain::from_binding(&cache, b))
+            .transpose()?;
         checked_directory(&session.join("objects"))?;
         let mut store = Self {
             cache,
@@ -299,6 +351,7 @@ impl FileStore {
             _owner: lock,
             requires_admission: false,
             _reservation: None,
+            publication_fence,
         };
         for entry in fs::read_dir(store.session.join("objects"))? {
             let entry = entry?;
@@ -453,6 +506,21 @@ impl Store for FileStore {
         if self.poisoned || self.sealed.is_some() {
             return Err("Sidecar writer is failed or sealed".into());
         }
+        if self.publication_fence.is_some() && bytes.len() as u64 > self.limits.node_bytes {
+            return Err("Sidecar node exceeds publication byte budget".into());
+        }
+        // Acquisition errors precede put/poisoning and leave the writer retryable.
+        let _publication = self
+            .publication_fence
+            .as_ref()
+            .map(|domain| {
+                domain.acquire(
+                    &[hash(bytes)],
+                    collector::fence::Mode::Publish,
+                    std::time::Duration::ZERO,
+                )
+            })
+            .transpose()?;
         let result = self.put(bytes);
         if result.is_err() {
             self.poisoned = true;
@@ -477,6 +545,11 @@ impl FileStore {
     ) -> Result<Blob> {
         if bytes.len() as u64 > self.limits.node_bytes || !domain.belongs_to(&self.cache) {
             return Err("Fenced publication exceeds node budget or cache domain".into());
+        }
+        if let Some(enrolled) = &self.publication_fence
+            && !domain.same_domain(enrolled)?
+        {
+            return Err("Per-call fence differs from enrolled session domain".into());
         }
         let _fence = domain.acquire(
             &[hash(bytes)],

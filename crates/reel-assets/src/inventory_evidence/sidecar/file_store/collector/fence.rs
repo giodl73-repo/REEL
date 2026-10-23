@@ -7,6 +7,51 @@ const NAME: &str = "asset-publication-fence.v1.lock";
 const HEADER: &[u8] = b"reel.asset-publication-fence.v1\n";
 const MAX_SUBJECTS: usize = 512;
 
+/// Private session control, never a shareable receipt or removal permit.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Binding {
+    schema: String,
+    directory: PathBuf,
+    identity: String,
+}
+impl Binding {
+    pub(crate) fn separate_from(&self, cache: &Path, staging: &Path) -> Result<()> {
+        let path = self.path(cache)?;
+        let directory = path.parent().ok_or("Missing bound fence directory")?;
+        if directory.starts_with(staging) || staging.starts_with(directory) {
+            return Err("Publication fence overlaps the staging namespace".into());
+        }
+        Ok(())
+    }
+    pub(crate) fn path(&self, cache: &Path) -> Result<PathBuf> {
+        if self.schema != "reel.asset-publication-fence-binding.v1"
+            || self.identity.is_empty()
+            || self.identity.len() > 256
+            || !self.directory.is_absolute()
+        {
+            return Err("Invalid persisted publication fence binding".into());
+        }
+        let directory = checked_directory(&self.directory)?;
+        if directory == cache
+            || !directory.starts_with(cache)
+            || crate::admission::volume_id(&directory)? != crate::admission::volume_id(cache)?
+        {
+            return Err("Persisted publication fence is outside the session cache".into());
+        }
+        Ok(directory.join(NAME))
+    }
+    pub(crate) fn validate_observed(&self, cache: &Path, raw: &[u8]) -> Result<()> {
+        let path = self.path(cache)?;
+        if raw != HEADER
+            || crate::demotion::platform::identity(&open(&path)?)?.token() != self.identity
+        {
+            return Err("Publication fence schema or persisted identity changed".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum Mode {
     /// Concurrent publishers of one subject may overlap.
@@ -61,6 +106,31 @@ fn header(file: &mut File) -> Result<()> {
 impl Domain {
     pub(crate) fn belongs_to(&self, cache: &Path) -> bool {
         self.path.starts_with(cache)
+    }
+    pub(crate) fn binding(&self, cache: &Path) -> Result<Binding> {
+        if !self.belongs_to(cache) || self.path.parent() == Some(cache) {
+            return Err("Publication domain must use a metadata child of this cache".into());
+        }
+        let binding = Binding {
+            schema: "reel.asset-publication-fence-binding.v1".into(),
+            directory: self.path.parent().ok_or("Missing fence parent")?.to_owned(),
+            identity: crate::demotion::platform::identity(&self.anchor)?.token(),
+        };
+        binding.path(cache)?;
+        Ok(binding)
+    }
+    pub(crate) fn from_binding(cache: &Path, binding: &Binding) -> Result<Self> {
+        let path = binding.path(cache)?;
+        let domain = Self::open(path.parent().ok_or("Missing bound fence directory")?)?;
+        if crate::demotion::platform::identity(&domain.anchor)?.token() != binding.identity {
+            return Err("Persisted publication fence identity changed".into());
+        }
+        Ok(domain)
+    }
+    pub(crate) fn same_domain(&self, other: &Self) -> Result<bool> {
+        Ok(self.path == other.path
+            && crate::demotion::platform::identity(&self.anchor)?
+                .same_file(&crate::demotion::platform::identity(&other.anchor)?))
     }
     /// Explicit initialization of one compact control in an existing trusted
     /// directory. Never creates directories, repairs or overwrites controls.

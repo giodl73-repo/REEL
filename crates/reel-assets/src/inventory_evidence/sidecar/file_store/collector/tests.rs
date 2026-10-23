@@ -32,6 +32,39 @@ pub(super) fn setup() -> (Fixture, Request) {
     };
     (f, request)
 }
+
+#[cfg(windows)]
+#[test]
+fn enrolled_staging_is_held_and_invalid_fence_identity_never_becomes_empty_scope() {
+    let (_fixture, request) = setup();
+    let scope = &request.caches[0];
+    let directory = scope.cache.join("publication-fence");
+    fs::create_dir(&directory).unwrap();
+    let domain = fence::Domain::initialize(&directory).unwrap();
+    let mut writer = FileStore::begin_fenced(
+        &scope.cache,
+        &scope.staging_parent,
+        "enrolled",
+        super::super::Limits::default(),
+        &domain,
+    )
+    .unwrap();
+    let node = writer.publish(b"enrolled stage").unwrap();
+    let captured = capture(&request).unwrap();
+    assert!(matches!(
+        captured.classify(&node.sha256).unwrap(),
+        Membership::Held(_)
+    ));
+    drop((writer, domain));
+    let control = directory.join("asset-publication-fence.v1.lock");
+    fs::rename(&control, scope.cache.join("old-publication-control")).unwrap();
+    assert!(capture(&request).is_err());
+    assert!(captured.revalidate().is_err());
+    let _replacement = fence::Domain::initialize(&directory).unwrap();
+    assert!(capture(&request).is_err());
+    assert!(captured.revalidate().is_err());
+    assert!(crate::object(&scope.cache, &node.sha256).exists());
+}
 #[test]
 fn unprotected_rows_keep_reference_proposals_and_shadow_is_not_an_executable_plan() {
     let (mut f, request) = setup();
