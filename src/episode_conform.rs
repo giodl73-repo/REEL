@@ -151,6 +151,9 @@ pub struct OutputGeometry {
     /// Resolve an unspecified matrix only when independent decoded RGB agrees.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assume_color_space_for_unspecified: Option<String>,
+    /// Resolve an unspecified range only when original decoded RGB is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assume_color_range_for_unspecified: Option<String>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -364,6 +367,8 @@ pub struct GeometryVerification {
     pub sample_aspect_ratio_assumed_square: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assumed_color_space: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assumed_color_range: Option<String>,
     pub color_properties: BTreeMap<String, String>,
     pub output_width: u64,
     pub output_height: u64,
@@ -964,6 +969,19 @@ fn verify_color_space_declaration(source: &Path, space: &str) -> Result<()> {
     )?;
     if declared != original {
         bail!("unspecified color-space declaration changes decoded source colors");
+    }
+    Ok(())
+}
+
+fn verify_color_range_declaration(source: &Path, space: Option<&str>) -> Result<()> {
+    let original = decoded_digest_with_pixel_format(source, true, 0, None, "rgb24")?;
+    let filter = match space {
+        Some(space) => format!("setparams=range=limited:colorspace={space}"),
+        None => "setparams=range=limited".into(),
+    };
+    let declared = decoded_digest_with_pixel_format(source, true, 0, Some(&filter), "rgb24")?;
+    if declared != original {
+        bail!("unspecified display range declaration changes decoded source colors");
     }
     Ok(())
 }
@@ -1924,6 +1942,23 @@ pub fn build(
             probe(source)?
         };
         let mut output_facts = facts.clone();
+        let assumed_color_range = if let Some(range) = manifest
+            .output_geometry
+            .as_ref()
+            .and_then(|geometry| geometry.assume_color_range_for_unspecified.as_ref())
+        {
+            if range != "tv" {
+                bail!("unsupported unspecified color-range declaration");
+            }
+            (facts.color_properties["color_range"] == "unknown").then(|| range.clone())
+        } else {
+            None
+        };
+        if let Some(range) = &assumed_color_range {
+            output_facts
+                .color_properties
+                .insert("color_range".into(), range.clone());
+        }
         let frame_filter = if let Some(rate) = &manifest.output_frame_rate {
             let filter = rate.filter(&facts.fps)?;
             let (n, d) = rate.clock()?;
@@ -2002,6 +2037,12 @@ pub fn build(
             scale_filter = Some(match scale_filter {
                 Some(existing) => format!("{existing},{filter}"),
                 None => filter,
+            });
+        }
+        if assumed_color_range.is_some() {
+            scale_filter = Some(match scale_filter {
+                Some(filter) => format!("{filter},setparams=range=limited"),
+                None => "setparams=range=limited".into(),
             });
         }
         if segment.kind == SegmentKind::Scene
@@ -2128,7 +2169,9 @@ pub fn build(
             (frames, samples)
         } else {
             let (source_picture_hash, source_picture_bytes) = decoded_digest(source, true)?;
-            if let Some(space) = &assumed_color_space {
+            if assumed_color_range.is_some() {
+                verify_color_range_declaration(source, assumed_color_space.as_deref())?;
+            } else if let Some(space) = &assumed_color_space {
                 verify_color_space_declaration(source, space)?;
             }
             let (source_audio_hash, source_audio_bytes) = decoded_digest(source, false)?;
@@ -2165,6 +2208,7 @@ pub fn build(
                     input_sample_aspect_ratio: facts.sample_aspect_ratio.clone(),
                     sample_aspect_ratio_assumed_square: assumed_square,
                     assumed_color_space: assumed_color_space.clone(),
+                    assumed_color_range: assumed_color_range.clone(),
                     color_properties: facts.color_properties.clone(),
                     output_width: selected_facts.width,
                     output_height: selected_facts.height,
@@ -2197,6 +2241,7 @@ pub fn build(
                 input_sample_aspect_ratio: facts.sample_aspect_ratio.clone(),
                 sample_aspect_ratio_assumed_square: assumed_square,
                 assumed_color_space: assumed_color_space.clone(),
+                assumed_color_range: assumed_color_range.clone(),
                 color_properties: facts.color_properties.clone(),
                 output_width: selected_facts.width,
                 output_height: selected_facts.height,

@@ -28,6 +28,7 @@ fn source_geometry(
     unspecified: bool,
     known_matrix: bool,
     fps: u32,
+    unknown_range: bool,
 ) {
     let mut cmd = Command::new("ffmpeg");
     #[cfg(windows)]
@@ -59,19 +60,22 @@ fn source_geometry(
     if known_matrix {
         cmd.args(["-colorspace", "bt470bg"]);
     }
-    let status = cmd
-        .args([
-            "-shortest",
-            "-c:v",
-            "ffv1",
-            "-pix_fmt",
-            "yuv444p",
-            "-c:a",
-            "pcm_s24le",
-        ])
-        .arg(root.join(name))
-        .status()
-        .unwrap();
+    if unknown_range {
+        cmd.args(["-color_range", "unknown"]);
+    }
+    cmd.args([
+        "-shortest",
+        "-c:v",
+        if unknown_range { "libx264" } else { "ffv1" },
+        "-pix_fmt",
+        if unknown_range { "yuv420p" } else { "yuv444p" },
+        "-c:a",
+        "pcm_s24le",
+    ]);
+    if unknown_range {
+        cmd.args(["-f", "mp4"]);
+    }
+    let status = cmd.arg(root.join(name)).status().unwrap();
     assert!(status.success());
 }
 
@@ -310,6 +314,7 @@ fn ordered_geometry_fixture_with_rate(
                 } else {
                     24
                 },
+                output_fps.is_some() && id == "display-a",
             );
             let selected = reference(root, &media_name);
             if id.starts_with("display") {
@@ -491,6 +496,32 @@ fn ordered_geometry_fixture_with_rate(
             manifest["output_frame_rate"] =
                 json!({"numerator":fps,"denominator":1,"policy":"repeat-only"});
             manifest["audio_frame_conform"] = "pad-silence-to-picture-boundaries".into();
+            manifest["output_geometry"] =
+                json!({"width":64,"height":64,"policy":"preserve-aspect-lanczos"});
+            write(&root.join(&manifest_name), &manifest);
+            let rejected = run(
+                root,
+                &manifest_name,
+                &format!("no-range-declaration-{lang}"),
+            );
+            assert!(!rejected.status.success());
+            assert!(
+                String::from_utf8_lossy(&rejected.stderr)
+                    .contains("consistent source color properties")
+            );
+            manifest["output_geometry"]["assume_color_range_for_unspecified"] = "pc".into();
+            write(&root.join(&manifest_name), &manifest);
+            let rejected = run(
+                root,
+                &manifest_name,
+                &format!("unsupported-range-declaration-{lang}"),
+            );
+            assert!(!rejected.status.success());
+            assert!(
+                String::from_utf8_lossy(&rejected.stderr)
+                    .contains("unsupported unspecified color-range")
+            );
+            manifest["output_geometry"]["assume_color_range_for_unspecified"] = "tv".into();
         }
         if mixed {
             manifest["audio_frame_conform"] = "pad-silence-to-picture-boundaries".into();
@@ -600,6 +631,21 @@ fn ordered_geometry_fixture_with_rate(
             }
         }
         assert_eq!(receipt["decoded_master_matches_ordered_segments"], true);
+        if output_fps.is_some() {
+            assert_eq!(
+                receipt["segments"][1]["geometry_verification"]["assumed_color_range"],
+                "tv"
+            );
+            assert_eq!(
+                receipt["segments"][1]["geometry_verification"]["color_properties"]["color_range"],
+                "unknown"
+            );
+            assert!(
+                receipt["segments"][0]["geometry_verification"]
+                    .get("assumed_color_range")
+                    .is_none()
+            );
+        }
         assert_eq!(receipt["timestamps_verified"], true);
         if mixed {
             assert_eq!(receipt["output_geometry"], manifest["output_geometry"]);
@@ -685,6 +731,7 @@ fn ordered_geometry_fixture_with_rate(
                 false,
                 false,
                 24,
+                false,
             );
             let mut non_square = manifest.clone();
             let selected = reference(root, &non_square_media);
@@ -710,7 +757,7 @@ fn ordered_geometry_fixture_with_rate(
                 "{}",
                 String::from_utf8_lossy(&rejected.stderr)
             );
-        } else {
+        } else if output_fps.is_none() {
             assert!(receipt.get("output_geometry").is_none());
             assert!(
                 receipt["segments"][0]

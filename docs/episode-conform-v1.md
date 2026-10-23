@@ -103,6 +103,15 @@ matrix; the segment receipt preserves original color tags and records the
 assumption. This is a verified interpretation of untagged decoded content, not
 permission to relabel known color spaces or claim source color calibration.
 
+The independent `"assume_color_range_for_unspecified":"tv"` declaration can
+resolve an absent range tag to limited range. It accepts only `tv`, changes only
+an unknown tag, and preserves known range tags. Before normalization, the full
+original decoded RGB must match the explicitly declared interpretation exactly.
+If both matrix and range are declared, the combined interpretation is checked.
+The original tags and `assumed_color_range` remain in each affected segment's
+geometry receipt. This is a verified interpretation of existing displayed pixels,
+not color correction or permission to relabel a known full-range source.
+
 ### Explicit repeat-only frame clock
 
 Mixed source rates remain errors by default. A common delivery clock can be
