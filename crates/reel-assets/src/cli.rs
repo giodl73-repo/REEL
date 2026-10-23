@@ -89,6 +89,13 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
                 let mut summary=report;summary.as_object_mut().unwrap().remove("objects");summary["private_report_path"]=json!(path);Ok(summary)
             } else {let mut summary=report;summary.as_object_mut().unwrap().remove("objects");Ok(summary)}
         },
+        "cache-observe" => {
+            if args.len()!=3 {return Err("Usage: cache-observe <exact-hashes.json> <new-private-report.json>".into());}
+            let hashes:BTreeSet<String>=serde_json::from_slice(&crate::tiering::read_bounded(Path::new(arg(1)?),64*1024*1024)?)?;
+            let report=crate::accounting::observe_named(root,&hashes)?;
+            crate::tiering::write_plan(Path::new(arg(2)?),&report)?;
+            Ok(json!({"schema":"reel.asset-named-observation.v1","objects":hashes.len(),"archive_probed":false,"payload_bytes_copied":0,"private_report":arg(2)?}))
+        },
         "artifact-check" | "artifact-verify" => crate::artifacts::check(root,Path::new(arg(1)?),args.get(2).map(String::as_str),command=="artifact-verify"),
         "artifact-locate" => crate::artifacts::locate(root,Path::new(arg(1)?),args.get(3).map(String::as_str),arg(2)?),
         "golden-list" => crate::goldens::list(root,arg(1)?),
