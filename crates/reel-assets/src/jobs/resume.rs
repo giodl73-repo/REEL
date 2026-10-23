@@ -10,6 +10,8 @@ pub(super) struct Checkpoint {
     source_job_id: String,
     start_step: usize,
     files: BTreeMap<String, Asset>,
+    #[serde(default)]
+    step_timeout_seconds: BTreeMap<usize, u64>,
 }
 
 pub(super) struct Seed {
@@ -33,8 +35,10 @@ impl Seed {
 
     pub fn validate(&self, job: &Job, job_bytes: &[u8]) -> Result<()> {
         let checkpoint = &self.checkpoint;
-        if checkpoint.schema != "reel.native-job-resume.v1"
-            || checkpoint.job_sha256 != format!("{:x}", Sha256::digest(job_bytes))
+        if !matches!(
+            checkpoint.schema.as_str(),
+            "reel.native-job-resume.v1" | "reel.native-job-resume.v2"
+        ) || checkpoint.job_sha256 != format!("{:x}", Sha256::digest(job_bytes))
             || !checkpoint.source_job_id.starts_with("job-")
             || checkpoint.source_job_id.len() > 100
             || !checkpoint
@@ -46,6 +50,19 @@ impl Seed {
             || checkpoint.files.len() > 4096
         {
             return Err("Invalid checkpoint identity, coverage or resume step".into());
+        }
+        let windows = &checkpoint.step_timeout_seconds;
+        if (checkpoint.schema == "reel.native-job-resume.v1" && !windows.is_empty())
+            || (checkpoint.schema == "reel.native-job-resume.v2" && windows.len() != 1)
+            || windows.iter().any(|(index, seconds)| {
+                *index < checkpoint.start_step
+                    || job
+                        .steps
+                        .get(*index)
+                        .is_none_or(|step| *seconds <= step.timeout_seconds || *seconds > 7200)
+            })
+        {
+            return Err("Invalid explicitly scoped recovery execution window".into());
         }
         let reserved: BTreeSet<String> = job
             .inputs
@@ -135,14 +152,25 @@ impl Seed {
         self.checkpoint.start_step
     }
 
+    pub fn step_timeout_seconds(&self, index: usize, original: u64) -> u64 {
+        self.checkpoint
+            .step_timeout_seconds
+            .get(&index)
+            .copied()
+            .unwrap_or(original)
+    }
+
     pub fn evidence(&self) -> Value {
-        json!({"schema":"reel.native-job-resume-evidence.v1",
+        json!({"schema":if self.checkpoint.schema == "reel.native-job-resume.v2" {"reel.native-job-resume-evidence.v2"} else {"reel.native-job-resume-evidence.v1"},
             "original_manifest_sha256":self.checkpoint.job_sha256,
             "source_job_id":self.checkpoint.source_job_id,
             "checkpoint_descriptor_sha256":self.sha256,
             "checkpoint_files":self.checkpoint.files.len(),
             "first_executed_step":self.checkpoint.start_step,
             "original_manifest_modified":false,"source_workspace_modified":false,
+            "original_step_timeout_controls_modified":false,
+            "effective_step_timeout_seconds":self.checkpoint.step_timeout_seconds,
+            "execution_window_explicitly_extended":!self.checkpoint.step_timeout_seconds.is_empty(),
             "copied_checkpoints_independently_verified":true,
             "native_build_checks_required":true,"human_approval":false})
     }

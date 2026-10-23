@@ -398,7 +398,9 @@ fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Resul
                 &step.args,
                 &workspace,
                 &workspace.join(format!("step-{n}.log")),
-                Duration::from_secs(step.timeout_seconds),
+                Duration::from_secs(seed.as_ref().map_or(step.timeout_seconds, |seed| {
+                    seed.step_timeout_seconds(n, step.timeout_seconds)
+                })),
                 check,
             )
             .map_err(|e| format!("Job {} step {n}: {e}", reservation.id))?;
@@ -471,9 +473,12 @@ fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Resul
             if job.retain_workspace {
                 return Err(error);
             }
-            let failure = json!({"schema":"reel.failed-job-result.v1","job_id":reservation.id,
+            let mut failure = json!({"schema":"reel.failed-job-result.v1","job_id":reservation.id,
                 "manifest_sha256":format!("{:x}",Sha256::digest(&bytes)),"error":error.to_string(),"outputs":{},
                 "creative_authority":"not-granted-by-this-receipt"});
+            if let Some(seed) = &seed {
+                failure["checkpoint_resume"] = seed.evidence();
+            }
             match lifecycle::publish_and_retire(
                 root,
                 &cfg,

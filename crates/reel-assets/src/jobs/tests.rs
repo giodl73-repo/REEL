@@ -440,3 +440,77 @@ fn checkpoint_resume_rejects_changed_recipe_scope_escape_and_corruption() {
         no_scratch(&f);
     }
 }
+
+#[test]
+fn registered_recovery_window_extends_only_the_selected_step_and_preserves_recipe() {
+    let f = Fixture::new();
+    let (manifest, seed_path, mut seed) = checkpoint_fixture(&f);
+    let mut job: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    job["steps"][1]["args"] = json!(["hold-copy", "prepared/checkpoint.bin", "out.bin"]);
+    job["steps"][1]["timeout_seconds"] = json!(1);
+    let original = serde_json::to_vec(&job).unwrap();
+    fs::write(&manifest, &original).unwrap();
+    seed["job_sha256"] = json!(f.put(&original, true));
+    let bytes = serde_json::to_vec(&seed).unwrap();
+    fs::write(&seed_path, &bytes).unwrap();
+    f.put(&bytes, true);
+    let error = resume(f.root(), &manifest, &seed_path)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("timed out"), "{error}");
+    assert_eq!(
+        failed_evidence(&f, &error)["result"]["checkpoint_resume"]["execution_window_explicitly_extended"],
+        false
+    );
+
+    seed["schema"] = json!("reel.native-job-resume.v2");
+    seed["step_timeout_seconds"] = json!({"1": 5});
+    let bytes = serde_json::to_vec(&seed).unwrap();
+    fs::write(&seed_path, &bytes).unwrap();
+    f.put(&bytes, true);
+    let result = resume(f.root(), &manifest, &seed_path).unwrap();
+    assert_eq!(
+        result["checkpoint_resume"]["effective_step_timeout_seconds"]["1"],
+        5
+    );
+    assert_eq!(
+        result["checkpoint_resume"]["execution_window_explicitly_extended"],
+        true
+    );
+    assert_eq!(fs::read(&manifest).unwrap(), original);
+    assert_eq!(
+        fs::read(result["outputs"]["copy"]["path"].as_str().unwrap()).unwrap(),
+        b"checkpoint"
+    );
+    no_scratch(&f);
+}
+
+#[test]
+fn recovery_window_rejects_implicit_unbounded_or_unrelated_step_changes() {
+    for (schema, windows) in [
+        ("reel.native-job-resume.v1", json!({"1": 11})),
+        ("reel.native-job-resume.v2", json!({})),
+        ("reel.native-job-resume.v2", json!({"0": 11})),
+        ("reel.native-job-resume.v2", json!({"2": 11})),
+        ("reel.native-job-resume.v2", json!({"1": 0})),
+        ("reel.native-job-resume.v2", json!({"1": 10})),
+        ("reel.native-job-resume.v2", json!({"1": 7201})),
+        ("reel.native-job-resume.v2", json!({"0": 11, "1": 11})),
+    ] {
+        let f = Fixture::new();
+        let (manifest, seed_path, mut seed) = checkpoint_fixture(&f);
+        seed["schema"] = json!(schema);
+        seed["step_timeout_seconds"] = windows.clone();
+        let bytes = serde_json::to_vec(&seed).unwrap();
+        fs::write(&seed_path, &bytes).unwrap();
+        f.put(&bytes, true);
+        let error = resume(f.root(), &manifest, &seed_path)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("scoped recovery execution window"),
+            "{schema} {windows}: {error}"
+        );
+        no_scratch(&f);
+    }
+}

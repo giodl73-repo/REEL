@@ -4,7 +4,8 @@
 creates a fresh admitted workspace from an unchanged, registered original job.
 It copies registered checkpoint files as private working data, then executes the
 original steps beginning at the explicitly selected step. The original job,
-tool pins, inputs, output bounds, workspace budget and step timeouts are unchanged.
+tool pins, inputs, output bounds and workspace budget are unchanged. V1 preserves
+all step timeouts.
 The original workspace is not accessed or removed by this operation.
 
 The checkpoint descriptor uses `reel.native-job-resume.v1` with these fields:
@@ -27,3 +28,14 @@ native continuation must validate its checkpoint's source scope, content, clocks
 and tool identities before using it, and must retain its ordinary final checks.
 The result and retained retirement evidence record the descriptor hash, original
 job identity and first executed step separately from build or human approval.
+
+An explicitly registered `reel.native-job-resume.v2` descriptor may additionally
+declare `step_timeout_seconds`, an object mapping one original step index to a
+longer execution window, capped at 7,200 seconds. The index must be at or after
+`start_step` and identify an existing step. Empty, shorter, equal, out-of-range,
+multiple-step and over-cap windows are rejected; V1 cannot carry an extension.
+This provides bounded recovery when a complete native verification needs more
+time. It changes no original JSON bytes or native validation, memory/disk bounds,
+tool identity, command or output requirement. The result and failure diagnostics
+explicitly report the effective extension rather than claiming the original
+timeout was enforced. Ordinary `run-job` retains its one-hour step cap.
