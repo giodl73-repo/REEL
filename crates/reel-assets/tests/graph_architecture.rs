@@ -19,11 +19,18 @@ fn asset(label: &str) -> Hash {
 struct Cas(BTreeMap<Hash, Vec<u8>>);
 impl Cas {
     fn put<T: Serialize>(&mut self, domain: &str, value: &T) -> Hash {
+        self.try_put(domain, value)
+            .expect("Valid synthetic CAS publication")
+    }
+    fn try_put<T: Serialize>(&mut self, domain: &str, value: &T) -> Result<Hash, String> {
         let bytes = serde_json::to_vec(value).unwrap();
         let h = digest(domain, &bytes);
         let framed = [domain.as_bytes(), &[0], bytes.as_slice()].concat();
+        if self.0.get(&h).is_some_and(|existing| existing != &framed) {
+            return Err("Existing CAS winner is corrupt; do not overwrite".into());
+        }
         self.0.entry(h.clone()).or_insert(framed);
-        h
+        Ok(h)
     }
     fn read<T: DeserializeOwned>(&self, domain: &str, h: &str) -> Result<T, String> {
         let bytes = self.0.get(h).ok_or("Missing node")?;
@@ -348,6 +355,13 @@ impl EvidenceAdapter<'_> {
             if shard.len() > limits.records {
                 return Err("Lookup record budget".into());
             }
+            if shard.iter().any(|row| {
+                !reel_assets::valid_oid(&row.subject)
+                    || row.subject[..2] != subject[..2]
+                    || row.location.trim().is_empty()
+            }) {
+                return Err("Invalid record or shard routing".into());
+            }
             reads += 1;
             claims.extend(shard.into_iter().filter(|c| c.subject == subject));
         }
@@ -359,6 +373,9 @@ impl EvidenceAdapter<'_> {
         })
     }
 }
+
+#[path = "support/graph_scenarios_100.rs"]
+mod expanded_scenarios;
 fn evidence(cas: &mut Cas, rows: Vec<Claim>, complete: bool) -> Descriptor {
     let mut groups: BTreeMap<String, Vec<Claim>> = BTreeMap::new();
     for row in rows {

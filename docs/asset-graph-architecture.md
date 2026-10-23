@@ -299,5 +299,5 @@ may still be used elsewhere in the same root, and monolithic compressed evidence
 needs explicit indexing before bounded random lookup. These are reflected above.
 The subsequent [role review](asset-graph-roles-review.md) records corrections,
 expanded scenarios and the remaining production implementation gates.
-The [50-scenario lessons](asset-graph-scenario-learnings.md) distinguish model
-corrections from confirmed invariants and list the second batch of 25 cases.
+The [100-scenario lessons](asset-graph-scenario-learnings.md) distinguish model
+corrections from confirmed invariants and list the second and third batches.

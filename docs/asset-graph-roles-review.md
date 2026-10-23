@@ -109,3 +109,26 @@ Corrected target file-byte SHA-256 values for this increment:
 
 - `asset-graph-contracts.md`: `e6e4eb63e782cf9a6a15dfa06671140897f433dea1ff1b95f8f12fd5f93d64c2`
 - `graph_architecture.rs`: `964f46477e60ab6a7716dbb9825c86586dae9a368fee3c8a07def66f867c1da5`
+
+## Hundred-scenario follow-up
+
+Fifty further cases live in `tests/support/graph_scenarios_100.rs`; the scenario
+lessons enumerate cases 51-100. Review remains producer-applied using the same
+technical/provenance checklists. Graph: fast diff success is not closure integrity
+validation; repeated DAG paths still cost traversal. Storage: prior-proof reuse
+requires explicit policy and current identity evidence; model assertions are not
+real custody checks. Registry: reject corrupt publication winners without
+overwrite; validate decoded subjects and shard routing before emitting claims.
+Provenance: keep separate location/verification observations and reject malformed
+or partial-success records; multiplicity does not create new retention roots.
+
+All 100 model cases, strict all-target Clippy, formatting, ROLES structural and
+diff checks pass locally. Serial interleavings/checkpoint rejection do not prove
+multi-process durability or crash recovery. No production format or runtime is
+adopted by this review, and all previously named production gates remain open.
+
+Corrected target file-byte SHA-256 values for this increment:
+
+- `asset-graph-contracts.md`: `67fa26d63589ffc50ae673a135621dfb5aafb33523c97db5045a07c6939143d5`
+- `graph_architecture.rs`: `6db78b3c4a48455c3e55c7e8c1d3aa577d048a25d9e310a9ab78287496fc6486`
+- `support/graph_scenarios_100.rs`: `e8e2a8cd1875109a2c9bd634c57d856453ae7a30836e23d853e029079be99cb1`

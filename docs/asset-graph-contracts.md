@@ -83,6 +83,8 @@ Output variants have stable IDs and typed roles. Selection/draft transactions
 state which variants are retained; adapters do not infer audience acceptance.
 Container-byte and normalized decoded-audio identities remain separate records.
 Only byte-identical encoded objects share a physical CAS object automatically.
+Duplicate publication must verify an existing winner against expected bytes;
+never silently accept or overwrite corruption under the expected address.
 
 Branch splitting uses stable IDs, with a versioned partition algorithm. Do not
 commit a partition/fanout algorithm until measured against realistic workloads.
@@ -158,6 +160,12 @@ of current physical absence or zero live users. Coverage is scoped, not a global
 boolean blessing every project/location. Missing or wrong-size/corrupt evidence
 must not return a successful empty result. Diagnostics can expose partial claims
 privately, but incomplete results cannot support a removal decision.
+Verify semantic index integrity as well as byte integrity: decoded records must
+have valid exact subject identities, belong to the authenticated shard partition
+and supply required location/scope fields. Validate every examined row before
+emitting claims, so an invalid later row cannot leave a successful partial result.
+Conflicting observation values remain separately witnessed diagnostics, not a
+consistent custody proof. Record multiplicity never determines root refcounts.
 
 Private claims and witnesses are not a shareable report format. Construct public
 technical summaries from allowlisted fields; do not serialize and then redact
@@ -213,6 +221,11 @@ reads in the model does not prove either latency or an upper bound on all memory
 ## 7. State transitions and remaining implementation gates
 
 Admit a root only after its immutable nodes and required protection exist.
+An active working root needs a known configured affinity. Missing location
+policy is an admission/coverage gap, not evidence of zero demand everywhere.
+An unchanged subtree hash lets a diff skip comparison, not skip validation of
+closure evidence needed for removal. Reuse validated summaries only with their
+schema, interpretation, evidence and trust context intact.
 Transactions bind expected per-key revisions and advance non-reusable revisions;
 tombstones/incarnations survive removal/recreation and checkpoint compaction.
 Independent producers do not need a shared lifetime lock. Release predecessor
