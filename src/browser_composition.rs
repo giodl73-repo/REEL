@@ -402,7 +402,7 @@ fn verify_poster(poster: &Poster, frame: &FrameLineage, root: &Path) -> Result<(
     if relative.components().count() != 1 || relative.extension().is_none_or(|ext| !ext.eq_ignore_ascii_case("png")) {
         bail!("poster must be a sibling file");
     }
-    let root = root.canonicalize()?;
+    let root = if root.as_os_str().is_empty() { Path::new(".") } else { root }.canonicalize()?;
     let path = root.join(relative).canonicalize()?;
     if !path.starts_with(&root) {
         bail!("poster escapes its receipt directory");
@@ -825,6 +825,17 @@ mod tests {
         options.poster = Some(dir.path().join("other/poster.png"));
         assert!(validate_poster(&options, 1).is_err());
         assert_eq!(fs::read(dir.path().join("poster.png")).unwrap(), b"keep existing bytes");
+    }
+
+    #[test]
+    fn poster_check_accepts_a_receipt_filename_in_the_current_directory() {
+        let file = Builder::new().prefix(".reel-poster-test-").suffix(".png").tempfile_in(".").unwrap();
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([18, 86, 52, 255])).save(file.path()).unwrap();
+        let sha256 = production::sha256_path(file.path()).unwrap();
+        let poster = Poster { path: file.path().file_name().unwrap().to_str().unwrap().into(),
+            sha256: sha256.clone(), bytes: fs::metadata(file.path()).unwrap().len() };
+        let frame = FrameLineage { index: 0, sha256, sequence_sha256: String::new(), stable_background_sha256: None };
+        verify_poster(&poster, &frame, Path::new("")).unwrap();
     }
 
     #[test]
