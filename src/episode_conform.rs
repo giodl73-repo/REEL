@@ -106,6 +106,9 @@ pub struct Manifest {
     /// Explicit delivery geometry. Without this, sources must have identical sizes.
     #[serde(default)]
     pub output_geometry: Option<OutputGeometry>,
+    /// Explicit repeat-only delivery clock; source frames are never discarded.
+    #[serde(default)]
+    pub output_frame_rate: Option<OutputFrameRate>,
     pub catalog: scene_delivery::FileRef,
     pub master_template_definition: scene_delivery::FileRef,
     #[serde(default)]
@@ -152,6 +155,184 @@ pub struct OutputGeometry {
 
 fn is_false(value: &bool) -> bool {
     !value
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OutputFrameRate {
+    pub numerator: u32,
+    pub denominator: u32,
+    pub policy: String,
+}
+
+impl OutputFrameRate {
+    fn clock(&self) -> Result<(u64, u64)> {
+        let (mut a, mut b) = (u64::from(self.numerator), u64::from(self.denominator));
+        if a == 0
+            || b == 0
+            || a > 1_000_000
+            || b > 1_000_000
+            || a > 120 * b
+            || self.policy != "repeat-only"
+        {
+            bail!("invalid repeat-only output frame rate");
+        }
+        let (n, d) = (a, b);
+        while b != 0 {
+            (a, b) = (b, a % b);
+        }
+        Ok((n / a, d / a))
+    }
+
+    fn filter(&self, source: &str) -> Result<Option<String>> {
+        let (n, d) = self.clock()?;
+        let (sn, sd) = fps_parts(source)?;
+        if u128::from(n) * u128::from(sd) < u128::from(sn) * u128::from(d) {
+            bail!("repeat-only output frame rate would discard source frames");
+        }
+        Ok(
+            (u128::from(n) * u128::from(sd) != u128::from(sn) * u128::from(d))
+                .then(|| format!("fps=fps={n}/{d}:start_time=0:round=up:eof_action=pass")),
+        )
+    }
+
+    fn frames(&self, input_frames: u64, source: &str) -> Result<u64> {
+        let (n, d) = self.clock()?;
+        let (sn, sd) = fps_parts(source)?;
+        let numerator = u128::from(input_frames) * u128::from(n) * u128::from(sd);
+        let denominator = u128::from(d) * u128::from(sn);
+        u64::try_from(numerator.div_ceil(denominator)).context("repeat-only frame count overflow")
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct FrameRateVerification {
+    pub input_fps: String,
+    pub output_fps: String,
+    pub input_frames: u64,
+    /// Excludes separately recorded silent tail holds.
+    pub output_frames: u64,
+    pub repeated_frames: u64,
+    pub transformed_source_matches_selected: bool,
+}
+
+#[cfg(test)]
+mod repeat_only_tests {
+    use super::*;
+
+    #[test]
+    fn clock_is_explicit_reduced_bounded_and_cannot_drop_frames() {
+        let rate = OutputFrameRate {
+            numerator: 60,
+            denominator: 2,
+            policy: "repeat-only".into(),
+        };
+        assert_eq!(rate.clock().unwrap(), (30, 1));
+        assert!(rate.filter("30/1").unwrap().is_none());
+        assert!(
+            rate.filter("25/1")
+                .unwrap()
+                .unwrap()
+                .contains("round=up:eof_action=pass")
+        );
+        assert_eq!(rate.frames(11, "25/1").unwrap(), 14);
+        assert_eq!(rate.frames(3015, "30/1").unwrap(), 3015);
+        assert!(rate.filter("50/1").is_err());
+        for (numerator, denominator, policy) in [
+            (0, 1, "repeat-only"),
+            (30, 0, "repeat-only"),
+            (121, 1, "repeat-only"),
+            (30, 1, "nearest"),
+        ] {
+            assert!(
+                OutputFrameRate {
+                    numerator,
+                    denominator,
+                    policy: policy.into()
+                }
+                .clock()
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn moving_source_retains_every_frame_and_audio_through_fractional_end() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source.mkv");
+        let selected = temp.path().join("selected.mkv");
+        let status = command("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=s=32x32:r=25:d=0.44",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=437:sample_rate=48000:duration=0.44",
+                "-ac",
+                "2",
+                "-shortest",
+                "-c:v",
+                "ffv1",
+                "-pix_fmt",
+                "yuv444p",
+                "-c:a",
+                "pcm_s24le",
+            ])
+            .arg(&source)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let rate = OutputFrameRate {
+            numerator: 30,
+            denominator: 1,
+            policy: "repeat-only".into(),
+        };
+        let status = command("ffmpeg")
+            .args(["-v", "error", "-nostdin", "-i"])
+            .arg(&source)
+            .args(["-map", "0:v:0", "-map", "0:a:0", "-vf"])
+            .arg(rate.filter("25/1").unwrap().unwrap())
+            .args(["-c:v", "ffv1", "-pix_fmt", "yuv444p", "-c:a", "copy"])
+            .arg(&selected)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let raw = |path: &Path| {
+            let output = command("ffmpeg")
+                .args(["-v", "error", "-nostdin", "-i"])
+                .arg(path)
+                .args(["-map", "0:v:0", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            output.stdout
+        };
+        let before = raw(&source);
+        let after = raw(&selected);
+        let bytes_per_frame = 32 * 32 * 3;
+        assert_eq!(before.len() / bytes_per_frame, 11);
+        assert_eq!(after.len() / bytes_per_frame, 14);
+        let mut original = before.chunks_exact(bytes_per_frame).peekable();
+        for frame in after.chunks_exact(bytes_per_frame) {
+            if original.peek().is_some_and(|next| *next == frame) {
+                original.next();
+            }
+        }
+        assert!(
+            original.next().is_none(),
+            "an original moving frame was lost or reordered"
+        );
+        assert_eq!(probe(&selected).unwrap().fps, "30/1");
+        assert_eq!(
+            decoded_digest(&source, false).unwrap(),
+            decoded_digest(&selected, false).unwrap()
+        );
+    }
 }
 
 fn scoped_import_root(input_root: &Path, scope: Option<&Path>) -> Result<PathBuf> {
@@ -331,6 +512,8 @@ pub struct SegmentReceipt {
     pub decoded_audio_sha256: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub geometry_verification: Option<GeometryVerification>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame_rate_verification: Option<FrameRateVerification>,
 }
 
 fn u64_is_zero(value: &u64) -> bool {
@@ -538,6 +721,7 @@ pub struct PresentationVerificationCache {
 
 #[derive(Clone)]
 pub(crate) struct MediaFacts {
+    pub requires_lossless_normalization: bool,
     pub width: u64,
     pub height: u64,
     pub sample_aspect_ratio: String,
@@ -653,6 +837,15 @@ mod media_tool_resolution_tests {
 }
 
 pub(crate) fn probe(path: &Path) -> Result<MediaFacts> {
+    probe_with_source_formats(path, false)
+}
+
+/// Only for a complete selected source whose identity is independently verified.
+pub(crate) fn probe_selected_source(path: &Path) -> Result<MediaFacts> {
+    probe_with_source_formats(path, true)
+}
+
+fn probe_with_source_formats(path: &Path, allow_encoded_source: bool) -> Result<MediaFacts> {
     let output = command("ffprobe")
         .args(["-v", "error", "-show_streams", "-of", "json"])
         .arg(path)
@@ -676,11 +869,22 @@ pub(crate) fn probe(path: &Path) -> Result<MediaFacts> {
         bail!("episode segment must have one picture and one audio stream");
     }
     let (v, a) = (video[0], audio[0]);
-    if !matches!(v["codec_name"].as_str(), Some("ffv1" | "h264"))
-        || v["pix_fmt"] != "yuv444p"
-        || a["codec_name"] != "pcm_s24le"
-        || a["channels"] != 2
-    {
+    let native_lossless_format = matches!(v["codec_name"].as_str(), Some("ffv1" | "h264"))
+        && v["pix_fmt"] == "yuv444p"
+        && a["codec_name"] == "pcm_s24le"
+        && a["channels"] == 2;
+    let supported_selected_format = allow_encoded_source
+        && matches!(v["codec_name"].as_str(), Some("ffv1" | "h264"))
+        && matches!(
+            v["pix_fmt"].as_str(),
+            Some("yuv420p" | "yuv422p" | "yuv444p")
+        )
+        && matches!(
+            a["codec_name"].as_str(),
+            Some("aac" | "pcm_s16le" | "pcm_s24le")
+        )
+        && a["channels"] == 2;
+    if !native_lossless_format && !supported_selected_format {
         bail!("episode segment must be FFV1 or H264/yuv444p and stereo PCM24");
     }
     let width = v["width"].as_u64().context("missing picture width")?;
@@ -697,6 +901,7 @@ pub(crate) fn probe(path: &Path) -> Result<MediaFacts> {
         bail!("invalid episode media geometry or clock");
     }
     Ok(MediaFacts {
+        requires_lossless_normalization: !native_lossless_format,
         reordered_video_frames: v["has_b_frames"].as_u64().unwrap_or(0),
         video_codec: v["codec_name"]
             .as_str()
@@ -1362,6 +1567,12 @@ pub fn build(
     {
         bail!("unsupported episode audio frame conform policy");
     }
+    if let Some(rate) = &manifest.output_frame_rate {
+        rate.clock()?;
+        if manifest.audio_frame_conform.as_deref() != Some("pad-silence-to-picture-boundaries") {
+            bail!("repeat-only frame conversion requires non-trimming audio frame conform");
+        }
+    }
     if manifest.schema != SCHEMA
         || manifest.episode_id.is_empty()
         || !matches!(manifest.language.as_str(), "es" | "en")
@@ -1463,6 +1674,7 @@ pub fn build(
     let mut sources = Vec::new();
     let mut upstream_verified = Vec::new();
     let mut presentation_verified = Vec::new();
+    let mut retained_sources = Vec::new();
     let mut presentation_counts = Vec::new();
     let mut presentation_cache_hits = 0;
     let mut presentation_cache_misses = 0;
@@ -1665,6 +1877,7 @@ pub fn build(
         sources.push(master);
         upstream_verified.push(rechecked);
         presentation_verified.push(presentation_rechecked);
+        retained_sources.push(presentation_rechecked && receipt["output_mode"] == "retain-source");
     }
     if seen_scenes != *expected_scenes {
         bail!("episode scene order or coverage mismatch");
@@ -1705,8 +1918,20 @@ pub fn build(
     let mut frame_cursor = 0u64;
     let mut sample_cursor = 0u64;
     for (index, (segment, source)) in manifest.segments.iter().zip(&sources).enumerate() {
-        let facts = probe(source)?;
+        let facts = if retained_sources[index] {
+            probe_selected_source(source)?
+        } else {
+            probe(source)?
+        };
         let mut output_facts = facts.clone();
+        let frame_filter = if let Some(rate) = &manifest.output_frame_rate {
+            let filter = rate.filter(&facts.fps)?;
+            let (n, d) = rate.clock()?;
+            output_facts.fps = format!("{n}/{d}");
+            filter
+        } else {
+            None
+        };
         let assumed_color_space = if let Some(space) = manifest
             .output_geometry
             .as_ref()
@@ -1773,6 +1998,12 @@ pub fn build(
                 None => declaration,
             });
         }
+        if let Some(filter) = frame_filter {
+            scale_filter = Some(match scale_filter {
+                Some(existing) => format!("{existing},{filter}"),
+                None => filter,
+            });
+        }
         if segment.kind == SegmentKind::Scene
             && facts.video_codec == "h264"
             && (segment.delivery_job.is_none() || segment.delivery_receipt.is_none())
@@ -1804,6 +2035,7 @@ pub fn build(
             "ffv1"
         };
         let needs_video_normalization = scale_filter.is_some()
+            || facts.requires_lossless_normalization
             || facts.video_codec != target_codec
             || (target_codec == "h264" && facts.reordered_video_frames != 0);
         let needs_normalization =
@@ -1908,7 +2140,10 @@ pub fn build(
             let source_frame_bytes = facts.width * facts.height * 3;
             if source_picture_bytes == 0
                 || source_picture_bytes % source_frame_bytes != 0
-                || source_picture_bytes / source_frame_bytes != frames
+                || manifest.output_frame_rate.as_ref().map_or_else(
+                    || Ok(source_picture_bytes / source_frame_bytes),
+                    |rate| rate.frames(source_picture_bytes / source_frame_bytes, &facts.fps),
+                )? != frames
                 || expected_picture != (picture_hash.clone(), picture_bytes)
                 || source_audio_bytes % 6 != 0
                 || (facts.sample_rate == manifest.output_sample_rate
@@ -1941,6 +2176,20 @@ pub fn build(
             }
             (source_picture_bytes / source_frame_bytes, input_samples)
         };
+        let frame_rate_verification = if manifest.output_frame_rate.is_some() {
+            Some(FrameRateVerification {
+                input_fps: facts.fps.clone(),
+                output_fps: selected_facts.fps.clone(),
+                input_frames,
+                output_frames: frames,
+                repeated_frames: frames
+                    .checked_sub(input_frames)
+                    .context("repeat-only normalization discarded source frames")?,
+                transformed_source_matches_selected: true,
+            })
+        } else {
+            None
+        };
         if manifest.output_geometry.is_some() && geometry_verification.is_none() {
             geometry_verification = Some(GeometryVerification {
                 input_width: facts.width,
@@ -1961,7 +2210,7 @@ pub fn build(
                 bail!("presentation decoded media differs from its source receipt");
             }
         }
-        if manifest.output_geometry.is_some() {
+        if manifest.output_geometry.is_some() || manifest.output_frame_rate.is_some() {
             let (num, den) = fps_parts(&facts.fps)?;
             episode_delivery::verify_timestamps(source, facts.sample_rate, num, den)?;
         }
@@ -2081,6 +2330,7 @@ pub fn build(
             decoded_picture_sha256: picture_hash,
             decoded_audio_sha256: audio_hash,
             geometry_verification,
+            frame_rate_verification,
         });
         frame_cursor += frames;
         sample_cursor += samples;

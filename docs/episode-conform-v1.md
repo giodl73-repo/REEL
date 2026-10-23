@@ -69,7 +69,7 @@ frame rate. To join different resolutions, declare an output size explicitly:
 
 This policy accepts square-pixel sources with the same aspect ratio as the
 target. It rejects cropping, stretching, non-square pixels, unsupported
-policies, and frame-rate changes. Dimensions must be 1–16384. Sources already
+policies, and implicit frame-rate changes. Dimensions must be 1–16384. Sources already
 at the target size are retained at that size. Other sources are scaled with
 Lanczos as part of lossless normalization; the declared transformation is
 independently decoded from the original and must match normalized picture
@@ -102,6 +102,27 @@ Normalized streams, the full master, and compact output must retain the declared
 matrix; the segment receipt preserves original color tags and records the
 assumption. This is a verified interpretation of untagged decoded content, not
 permission to relabel known color spaces or claim source color calibration.
+
+### Explicit repeat-only frame clock
+
+Mixed source rates remain errors by default. A common delivery clock can be
+declared independently from geometry:
+
+```json
+"output_frame_rate": {"numerator": 30, "denominator": 1, "policy": "repeat-only"},
+"audio_frame_conform": "pad-silence-to-picture-boundaries"
+```
+
+The target must be at least every selected source rate and no more than120fps.
+Zero clocks, unsupported policies and any downconversion fail. REEL repeats
+frames with forward rounding, includes the final source frame, and verifies
+the complete transformed decoded picture against the original. The normalized
+frame count must equal the ceiling of the original frame count at the new
+rational clock. Source audio is not sped up, trimmed or stretched; existing
+non-trimming audio boundary padding remains required. Per-segment
+`frame_rate_verification` records original/output rates and frame counts,
+repeat count and exact decoded transform agreement. Separately declared
+`tail_hold_frames` use the output clock and remain separate receipt fields.
 
 The receipt records the output policy and, for each segment, original and
 output dimensions, original decoded picture hash, whether scaling occurred,

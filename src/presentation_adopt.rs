@@ -15,6 +15,15 @@ use std::{
 
 pub const SCHEMA: &str = "reel.presentation-adopt.v1";
 
+/// Storage encoding only: both choices must pass decoded source equivalence.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum LosslessVideoEncoding {
+    #[default]
+    Ffv1,
+    H264Lossless,
+}
+
 /// A frame-exact excerpt of a hash-bound source. Audio uses the same rational
 /// frame clock; callers cannot independently shift the spoken performance.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -93,6 +102,11 @@ pub struct Manifest {
     pub audio_clock_repair: Option<AudioClockRepair>,
     #[serde(default)]
     pub audio_range_origin: Option<AudioRangeOrigin>,
+    #[serde(default)]
+    pub lossless_video_encoding: LosslessVideoEncoding,
+    /// Retain the selected complete encoded source, avoiding an intermediate transcode.
+    #[serde(default)]
+    pub output_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -137,6 +151,10 @@ pub struct Receipt {
     pub audio_range_origin: Option<AudioRangeOrigin>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio_sample_window: Option<AudioSampleWindow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lossless_video_encoding: Option<LosslessVideoEncoding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_mode: Option<String>,
     pub selection_evidence_sha256: Option<String>,
     pub evidence_hash_pointer: Option<String>,
     pub master_sha256: String,
@@ -643,6 +661,18 @@ pub fn build(
         bail!("presentation output must be a new directory");
     }
     let manifest: Manifest = serde_json::from_slice(&fs::read(manifest_path)?)?;
+    let retain_source = manifest.output_mode.as_deref() == Some("retain-source");
+    if manifest.output_mode.is_some()
+        && (!retain_source
+            || manifest.source_range.is_some()
+            || manifest.audio_clock_repair.is_some()
+            || manifest.audio_range_origin.is_some()
+            || manifest.lossless_video_encoding != LosslessVideoEncoding::Ffv1)
+    {
+        bail!(
+            "retain-source requires a complete unchanged source without conversion or clock repair"
+        );
+    }
     if manifest.schema != SCHEMA
         || manifest.role.is_empty()
         || !matches!(manifest.language.as_str(), "es" | "en")
@@ -831,7 +861,11 @@ pub fn build(
         .prefix(".presentation-adopt-")
         .tempdir_in(parent)?;
     let master = stage.path().join("master.mkv");
-    if manifest.source_range.is_none() && is_native_lossless(&source)? {
+    if retain_source
+        || (manifest.lossless_video_encoding == LosslessVideoEncoding::Ffv1
+            && manifest.source_range.is_none()
+            && is_native_lossless(&source)?)
+    {
         fs::copy(&source, &master)?;
     } else {
         let mut command = episode_conform::command("ffmpeg");
@@ -863,16 +897,19 @@ pub fn build(
                     resolved_range_filter(range, &definition, false, audio_sample_window.as_ref())?
                 });
         }
+        command.args(["-map", "0:v:0", "-map", "0:a:0", "-fps_mode", "passthrough"]);
+        match manifest.lossless_video_encoding {
+            LosslessVideoEncoding::Ffv1 => {
+                command.args(["-c:v", "ffv1"]);
+            }
+            LosslessVideoEncoding::H264Lossless => {
+                command.args([
+                    "-c:v", "libx264", "-crf", "0", "-preset", "veryfast", "-bf", "0",
+                ]);
+            }
+        }
         let status = command
             .args([
-                "-map",
-                "0:v:0",
-                "-map",
-                "0:a:0",
-                "-fps_mode",
-                "passthrough",
-                "-c:v",
-                "ffv1",
                 "-pix_fmt",
                 "yuv444p",
                 "-c:a",
@@ -889,7 +926,11 @@ pub fn build(
             bail!("presentation lossless conversion failed");
         }
     }
-    let facts = episode_conform::probe(&master)?;
+    let facts = if retain_source {
+        episode_conform::probe_selected_source(&master)?
+    } else {
+        episode_conform::probe(&master)?
+    };
     if (
         facts.width,
         facts.height,
@@ -917,8 +958,23 @@ pub fn build(
         &definition,
         audio_sample_window.as_ref(),
     )?;
-    let (picture_sha, picture_bytes) = episode_conform::decoded_digest(&master, true)?;
-    let (audio_sha, audio_bytes) = episode_conform::decoded_digest(&master, false)?;
+    let master_sha256 = episode_conform::file_sha(&master)?;
+    let master_bytes = fs::metadata(&master)?.len();
+    if retain_source && (master_sha256 != selected.sha256 || master_bytes != selected.bytes) {
+        bail!("retained presentation changed selected source bytes");
+    }
+    // A full source decode plus exact byte identity also proves the retained
+    // master's decoded content. Do not decode the same complete movie twice.
+    let (picture_sha, picture_bytes) = if retain_source {
+        (source_picture_sha.clone(), source_picture_bytes)
+    } else {
+        episode_conform::decoded_digest(&master, true)?
+    };
+    let (audio_sha, audio_bytes) = if retain_source {
+        (source_audio_sha.clone(), source_audio_bytes)
+    } else {
+        episode_conform::decoded_digest(&master, false)?
+    };
     let frame_bytes = definition.width * definition.height * 3;
     if picture_sha != source_picture_sha
         || picture_bytes != source_picture_bytes
@@ -977,10 +1033,14 @@ pub fn build(
         audio_clock_repair: manifest.audio_clock_repair,
         audio_range_origin: manifest.audio_range_origin,
         audio_sample_window,
+        lossless_video_encoding: (manifest.lossless_video_encoding
+            == LosslessVideoEncoding::H264Lossless)
+            .then_some(manifest.lossless_video_encoding),
+        output_mode: manifest.output_mode,
         selection_evidence_sha256,
         evidence_hash_pointer: manifest.evidence_hash_pointer,
-        master_sha256: episode_conform::file_sha(&master)?,
-        master_bytes: fs::metadata(&master)?.len(),
+        master_sha256,
+        master_bytes,
         decoded_picture_sha256: picture_sha,
         decoded_audio_sha256: audio_sha,
         frames,
@@ -1018,6 +1078,9 @@ pub fn check(
         || !selected.source_content_matches_lossless_master
         || selected.master_sha256 != episode_conform::file_sha(master_path)?
         || selected.master_bytes != fs::metadata(master_path)?.len()
+        || (selected.output_mode.as_deref() == Some("retain-source")
+            && (selected.master_sha256 != selected.source_sha256
+                || selected.master_bytes != selected.source_bytes))
     {
         bail!("selected presentation adoption receipt or master is invalid");
     }
@@ -1051,7 +1114,11 @@ pub fn check(
         input_root,
         &manifest.template_definition,
     )?)?)?;
-    let facts = episode_conform::probe(master_path)?;
+    let facts = if selected.output_mode.as_deref() == Some("retain-source") {
+        episode_conform::probe_selected_source(master_path)?
+    } else {
+        episode_conform::probe(master_path)?
+    };
     if (
         facts.width,
         facts.height,
@@ -1075,6 +1142,11 @@ pub fn check(
         definition.fps_numerator,
         definition.fps_denominator,
     )?;
+    if selected.output_mode.as_deref() == Some("retain-source") {
+        // The rebuilt selection was fully decoded; both selected and rebuilt
+        // masters are hash-verified identical to that exact current source.
+        return Ok(());
+    }
     let (picture_sha, picture_bytes) = episode_conform::decoded_digest(master_path, true)?;
     let (audio_sha, audio_bytes) = episode_conform::decoded_digest(master_path, false)?;
     if picture_sha != rebuilt.decoded_picture_sha256

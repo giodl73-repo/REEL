@@ -18,6 +18,7 @@ fn reference(root: &Path, name: &str) -> Value {
     json!({"path":name,"sha256":digest(&bytes),"bytes":bytes.len()})
 }
 
+#[allow(clippy::too_many_arguments)]
 fn source_geometry(
     root: &Path,
     name: &str,
@@ -26,6 +27,7 @@ fn source_geometry(
     small: bool,
     unspecified: bool,
     known_matrix: bool,
+    fps: u32,
 ) {
     let mut cmd = Command::new("ffmpeg");
     #[cfg(windows)]
@@ -35,9 +37,9 @@ fn source_geometry(
     }
     cmd.args(["-v", "error", "-f", "lavfi", "-i"])
         .arg(if small {
-            "testsrc2=s=32x32:r=24:d=1".to_owned()
+            format!("testsrc2=s=32x32:r={fps}:d=1")
         } else {
-            format!("color=c={color}:s=64x64:r=24:d=1")
+            format!("color=c={color}:s=64x64:r={fps}:d=1")
         })
         .args(["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo:d=1"]);
     if unspecified {
@@ -157,6 +159,11 @@ fn explicit_silent_holds_preserve_selected_scene_and_presentation_sources() {
     ordered_geometry_fixture_with_hold(true, false, false, false, false, false, 48);
 }
 
+#[test]
+fn mixed_frame_rates_repeat_source_frames_with_complete_audio_and_silent_holds() {
+    ordered_geometry_fixture_with_rate(true, false, false, false, false, false, 60, Some(30));
+}
+
 #[allow(clippy::too_many_arguments)]
 fn ordered_geometry_fixture_with_hold(
     adopt: bool,
@@ -166,6 +173,29 @@ fn ordered_geometry_fixture_with_hold(
     unspecified: bool,
     color_declaration: bool,
     tail_hold_frames: u64,
+) {
+    ordered_geometry_fixture_with_rate(
+        adopt,
+        clock_transition,
+        reuse_cache,
+        mixed,
+        unspecified,
+        color_declaration,
+        tail_hold_frames,
+        None,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ordered_geometry_fixture_with_rate(
+    adopt: bool,
+    clock_transition: bool,
+    reuse_cache: bool,
+    mixed: bool,
+    unspecified: bool,
+    color_declaration: bool,
+    tail_hold_frames: u64,
+    output_fps: Option<u32>,
 ) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
@@ -273,6 +303,13 @@ fn ordered_geometry_fixture_with_hold(
                 mixed && id == "scene-a",
                 unspecified && id == "display-a",
                 color_declaration && id == "display-b",
+                if output_fps.is_some() && id == "scene-a" {
+                    25
+                } else if output_fps.is_some() && id == "scene-b" {
+                    30
+                } else {
+                    24
+                },
             );
             let selected = reference(root, &media_name);
             if id.starts_with("display") {
@@ -356,6 +393,13 @@ fn ordered_geometry_fixture_with_hold(
                         "selection_evidence":reference(root,&text_name),"evidence_hash_pointer":"/rendered_source_master_sha256"
                     }),
                 );
+                if output_fps.is_some() {
+                    let path = root.join(&manifest_name);
+                    let mut selected: Value =
+                        serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                    selected["output_mode"] = json!("retain-source");
+                    write(&path, &selected);
+                }
                 let output_dir = format!("adopted-{role}-{lang}");
                 let output = Command::new(env!("CARGO_BIN_EXE_reel-presentation-adopt"))
                     .arg("build")
@@ -443,6 +487,11 @@ fn ordered_geometry_fixture_with_hold(
             manifest["reuse_verified_presentations"] = true.into();
         }
         let manifest_name = format!("manifest-{lang}.json");
+        if let Some(fps) = output_fps {
+            manifest["output_frame_rate"] =
+                json!({"numerator":fps,"denominator":1,"policy":"repeat-only"});
+            manifest["audio_frame_conform"] = "pad-silence-to-picture-boundaries".into();
+        }
         if mixed {
             manifest["audio_frame_conform"] = "pad-silence-to-picture-boundaries".into();
             manifest["compact_delivery"] = json!({"crf":18,"audio_bitrate_kbps":320,
@@ -509,22 +558,45 @@ fn ordered_geometry_fixture_with_hold(
             &fs::read(root.join(format!("output-{lang}/receipt.json"))).unwrap(),
         )
         .unwrap();
-        assert_eq!(receipt["total_frames"], 96 + 4 * tail_hold_frames);
+        let fps = u64::from(output_fps.unwrap_or(24));
+        assert_eq!(receipt["total_frames"], 4 * fps + 4 * tail_hold_frames);
         assert_eq!(
             receipt["total_samples"],
             if clock_transition {
                 176_400
             } else {
-                192_000 + 4 * tail_hold_frames * 2000
+                192_000 + 4 * tail_hold_frames * 48000 / fps
             }
         );
         if tail_hold_frames != 0 {
-            for segment in receipt["segments"].as_array().unwrap() {
-                assert_eq!(segment["input_frames"], 24);
-                assert_eq!(segment["frames"], 24 + tail_hold_frames);
+            for (index, segment) in receipt["segments"].as_array().unwrap().iter().enumerate() {
+                let source_frames = if output_fps.is_some() && index == 0 {
+                    25
+                } else if output_fps.is_some() && index == 3 {
+                    30
+                } else {
+                    24
+                };
+                assert_eq!(segment["input_frames"], source_frames);
+                assert_eq!(segment["frames"], fps + tail_hold_frames);
                 assert_eq!(segment["tail_hold_frames"], tail_hold_frames);
-                assert_eq!(segment["tail_hold_samples"], tail_hold_frames * 2000);
+                assert_eq!(segment["tail_hold_samples"], tail_hold_frames * 48000 / fps);
                 assert_eq!(segment["input_samples"], 48000);
+                if output_fps.is_some() {
+                    assert_eq!(
+                        segment["frame_rate_verification"]["input_frames"],
+                        source_frames
+                    );
+                    assert_eq!(segment["frame_rate_verification"]["output_frames"], fps);
+                    assert_eq!(
+                        segment["frame_rate_verification"]["repeated_frames"],
+                        fps - source_frames
+                    );
+                    assert_eq!(
+                        segment["frame_rate_verification"]["transformed_source_matches_selected"],
+                        true
+                    );
+                }
             }
         }
         assert_eq!(receipt["decoded_master_matches_ordered_segments"], true);
@@ -604,7 +676,16 @@ fn ordered_geometry_fixture_with_hold(
                 digest(&expected.stdout)
             );
             let non_square_media = format!("non-square-{lang}.mkv");
-            source_geometry(root, &non_square_media, "red", true, false, false, false);
+            source_geometry(
+                root,
+                &non_square_media,
+                "red",
+                true,
+                false,
+                false,
+                false,
+                24,
+            );
             let mut non_square = manifest.clone();
             let selected = reference(root, &non_square_media);
             let mut original_receipt: Value = serde_json::from_slice(

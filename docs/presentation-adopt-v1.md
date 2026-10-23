@@ -45,6 +45,14 @@ states `technical_validation_state: decoded-source-equivalent` and keeps
 creative review and publication open. It does not establish that the inherited
 source text, cast, score, or imagery was approved.
 
+For a compact lossless master, set `lossless_video_encoding` to
+`"h264-lossless"`. This uses H.264 lossless/yuv444p with stereo PCM24 and no
+reordered frames. The source selection, exact frame/sample windows, decoded
+byte equality and timestamp checks are the same. The receipt records this
+encoding, and `check` and episode conform rebuild with it. The default remains
+`"ffv1"`; existing manifests and their native-source byte-copy behavior retain
+their original meaning. Unsupported encoding values fail during parsing.
+
 When episode conform consumes this receipt, its segment must name the exact
 adoption manifest. Conform reruns the adoption and compares selected source,
 template, evidence and decoded master content. A receipt without that manifest
@@ -145,3 +153,16 @@ policies. A timestamp pass alone does not prove that the correct source window
 was selected. Neither policy resamples, rewrites a performance, or authorizes
 creative selection or publication. Without either policy, existing behavior
 remains unchanged.
+
+## Retain a complete encoded source
+
+Set `"output_mode":"retain-source"` to adopt the entire selected movie without
+an intermediate transcode. The master retains the source bytes, container and
+codec. This option rejects excerpts, audio clock/window repair, an explicit
+lossless conversion encoding, and unsupported mode strings. It does not assert
+that the original source codec was lossless. The full decoded picture/audio,
+frame/sample counts, source selection and timestamps still pass the ordinary
+checks, and the receipt records the mode and exact source/master byte identity.
+`check` verifies that identity and independently resolves the selection again.
+Episode conform can consume the checked adoption and perform its explicit final
+normalization once. Defaults and existing lossless conversion modes are unchanged.
