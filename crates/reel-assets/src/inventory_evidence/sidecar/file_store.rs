@@ -1,5 +1,5 @@
-//! Explicit existing-cache backend. Protected staging is retained until a future
-//! caller-owned catalog/retirement integration; dropping a writer deletes nothing.
+//! Explicit existing-cache backend with optional shared capacity admission and
+//! verified staged-link retirement. Drop never deletes staged/CAS/retained nodes.
 use super::*;
 use std::{
     fs::{self, File, OpenOptions},
@@ -10,9 +10,12 @@ use std::{
 const SESSION_SCHEMA: &str = "reel.inventory-sidecar.session.v1";
 const SEAL_SCHEMA: &str = "reel.inventory-sidecar.seal.v1";
 const CONTROL_BYTES: u64 = 64 * 1024;
+mod capacity;
+pub mod retirement;
 
 /// Logical staged-byte ceiling, not a filesystem free-space reservation.
-/// Concurrent writers need external shared-volume capacity admission before use.
+/// Low-level writers need external shared-volume admission; managed producers
+/// use `begin_admitted` and `resume_admitted` to reserve in the existing ledger.
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Limits {
@@ -57,6 +60,8 @@ pub struct FileStore {
     sealed: Option<Blob>,
     poisoned: bool,
     _owner: File,
+    requires_admission: bool,
+    _reservation: Option<crate::admission::Reservation>,
 }
 
 /// Exact named reads over an explicitly supplied existing cache. No session
@@ -219,6 +224,9 @@ impl FileStore {
         if parent == cache || !parent.starts_with(&cache) {
             return Err("Sidecar staging parent must be inside the selected existing cache".into());
         }
+        if crate::admission::volume_id(&cache)? != crate::admission::volume_id(&parent)? {
+            return Err("Sidecar staging and cache must be on the same filesystem".into());
+        }
         let session = session_path(&parent, id)?;
         fs::create_dir(&session)?;
         let lock = owner(&session.join("owner.lock"), true)?;
@@ -243,6 +251,8 @@ impl FileStore {
             sealed: None,
             poisoned: false,
             _owner: lock,
+            requires_admission: false,
+            _reservation: None,
         })
     }
     /// Explicit named recovery, bounded by immutable session budgets. Reads and
@@ -252,6 +262,9 @@ impl FileStore {
         let parent = checked_directory(staging_parent)?;
         if parent == cache || !parent.starts_with(&cache) {
             return Err("Invalid sidecar staging parent".into());
+        }
+        if crate::admission::volume_id(&cache)? != crate::admission::volume_id(&parent)? {
+            return Err("Sidecar staging and cache must be on the same filesystem".into());
         }
         let session = checked_directory(&session_path(&parent, id)?)?;
         let lock = owner(&session.join("owner.lock"), false)?;
@@ -274,6 +287,8 @@ impl FileStore {
             sealed: None,
             poisoned: false,
             _owner: lock,
+            requires_admission: false,
+            _reservation: None,
         };
         for entry in fs::read_dir(store.session.join("objects"))? {
             let entry = entry?;
@@ -298,11 +313,17 @@ impl FileStore {
                     return Err("Unsupported sidecar seal".into());
                 }
                 let root = seal.root.blob();
-                store.check_staged(&root)?;
+                if !retirement::started(&store, &root)? {
+                    store.check_staged(&root)?;
+                }
                 store.sealed = Some(root);
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
             Err(e) => return Err(e.into()),
+        }
+        store.requires_admission = capacity::required(&store)?;
+        if store.sealed.is_none() && retirement::marker_exists(&store)? {
+            return Err("Retirement marker requires a sealed session".into());
         }
         Ok(store)
     }
@@ -317,6 +338,12 @@ impl FileStore {
     }
     pub fn sealed_root(&self) -> Option<&Blob> {
         self.sealed.as_ref()
+    }
+    fn admitted(&self) -> Result<()> {
+        if self.requires_admission && self._reservation.is_none() {
+            return Err("Session requires shared capacity admission before mutation".into());
+        }
+        Ok(())
     }
     fn admit(&self, blob: &Blob) -> Result<()> {
         if !valid_oid(&blob.sha256)
@@ -341,6 +368,7 @@ impl FileStore {
     /// Completion marker only, not catalog admission, selection or removal
     /// authority. Keeps ALL staged hard links and allows reads but no new writes.
     pub fn seal(&mut self, root: &Blob) -> Result<()> {
+        self.admitted()?;
         if self.poisoned {
             return Err("Failed sidecar session requires explicit recovery".into());
         }
@@ -411,6 +439,7 @@ impl FileStore {
 }
 impl Store for FileStore {
     fn publish(&mut self, bytes: &[u8]) -> Result<Blob> {
+        self.admitted()?;
         if self.poisoned || self.sealed.is_some() {
             return Err("Sidecar writer is failed or sealed".into());
         }

@@ -37,7 +37,9 @@ parses existing native reports with source verification and private provenance;
 optional [source-bound sidecars](docs/inventory-evidence-sidecar-v1.md) support
 persistent bounded lookups through an explicit immutable store, with an optional
 [existing-cache backend](docs/inventory-evidence-file-store-v1.md). Neither API is
-wired into runtime placement or demotion.
+wired into runtime placement or demotion. Optional
+[capacity-admitted handoff](docs/inventory-evidence-handoff-v1.md) verifies the
+complete index before retiring only redundant staging names.
 
 ---
 

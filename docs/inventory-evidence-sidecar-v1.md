@@ -115,13 +115,15 @@ a no-clobber file backend. It covers reopening after dropping preparation,
 stale identities, corruption, missing nodes, malformed semantics/routing,
 publication interruption, false store success, byte/node/row budgets, oversized
 metadata, full-depth prefixes and native census/named-report round trips.
-All 22 sidecar tests pass, alongside the 195 unit tests, five existing integration
-tests, 100 model scenarios and 23 source-adapter tests (345 total). Strict
+All 25 sidecar tests pass, including complete-closure count/ordinal and missing
+off-path checks. With 195 unit tests, five prior integration, 100 model,
+23 source-adapter and 27 file-backend tests, the full suite passes 375 tests. Strict
 all-target Clippy, formatting, ROLES structure and diff checks pass locally.
 Fixtures read no project cache or private media and do not change runtime pins.
 
-The file backend now has separate bounded-staging, process-concurrency and
-process-termination fixtures. Next adoption work: shared capacity admission,
-verified staging handoff/retirement; device/platform crash tests; trusted source/root
-catalog admission; cancellation/deadlines; and shadow comparison with existing
-planner queries. Receipt and registry adapters are still separate work.
+The backend now has bounded-staging, process-concurrency/termination fixtures
+and optional [capacity admission plus verified handoff/retirement](inventory-evidence-handoff-v1.md).
+Whole-index validation is explicit; ordinary queries stay selective. Remaining
+adoption work: managed producer/collector integration, device/platform crash
+tests, trusted source/current-root catalog admission, cancellation/deadlines and
+shadow comparison with existing planners. Receipt/registry adapters remain separate.

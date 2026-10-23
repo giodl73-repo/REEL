@@ -231,3 +231,36 @@ root. Production adoption remains blocked on shared capacity admission, trusted
 catalog/root revisions, collector-aware staging handoff/retirement, shadow
 planner parity and platform/device crash validation. Time/cancellation and
 receipt/registry adapters remain separate work.
+
+## Capacity admission and verified staging handoff increment
+
+Review base: `f87e7b42e135e11d9c4e558d4626db113ea047aa`, plus
+`sidecar/validation.rs`, `sidecar/file_store/{capacity,retirement}.rs`, their
+parent modules, `tests/inventory_{file_store,sidecar}.rs`, and
+`inventory-evidence-handoff-v1.md`. Producer-applied review uses all three
+infrastructure checklists (version 1) and Rights and Provenance. Owner: this
+implementation lane. No independent review, human approval or production
+adoption is claimed; earlier target hashes remain historical.
+
+| Role | Severity | Finding/correction and evidence |
+| --- | --- | --- |
+| Storage Custody and Recovery | Major corrected | Per-session logical limits do not coordinate shared free space. Managed begin reserves payload, declared filesystem/link overhead and bounded controls in the existing shared ledger before creating staging. Shared coordination is explicit; defaults reject. Two worktree roots share the ledger, existing live reservations reduce capacity, and denial leaves no staging. Normal mutation after recovery requires reacquisition in the persisted ledger scope. A 4 KiB/node overhead floor is not measured allocation. |
+| Asset Graph and Version Integrity | Major corrected | A short lookup cannot establish a whole index suitable for handoff. Explicit full validation checks every node, total counts and globally unique original ordinals. Cross-leaf duplicate ordinals and missing off-path nodes reject even when a selective query succeeds. Ordinary queries retain bounded paths. This remains derived-index consistency, not source inclusion or current-root authority. |
+| Registry Concurrency and Evidence Integrity | Major corrected | Releasing staging on a completion seal alone leaves no verified admitted protection. Handoff now creates append-only exact-root retained links and atomically publishes a compact source/root/closure receipt only after verification. Existing corrupt winners reject without overwrite; interrupted handoff can retry. Ownership is per session or exact retained root; the shared capacity lock is released before node I/O. Retained anchors are not a mutable selection catalog or CAS revision protocol. |
+| Storage Custody and Recovery | Major corrected | A retirement dry run must not create controls or treat unknown staged files as unrelated noise. Plan creation enumerates/validates only the exact session against its complete closure and creates nothing. Execution revalidates the plan, records exact intent and verifies retained counterparts before unlinking only staged names. Tests cover missing/corrupt retention, cross-session/stale scope, injected unknown staging and capacity bypass rejection. |
+| Registry Concurrency and Evidence Integrity | Major corrected | Process death during unlink needs explicit replay semantics. Persisted retirement intent binds sealed root/session/retained closure before any unlink. A real child is killed after five of 18 removals; named recovery plans and retires exactly the remaining 13, preserves queryability and leaves other sessions usable. Completed replay removes zero more links. Partial/corrupt controls remain explicit errors, not silent repair. |
+| Storage Custody and Recovery | Advisory addressed | Hard-link retirement does not free retained payload allocation or establish independent custody. Plans report zero payload reclamation, separate logical bytes from remaining names, and leave CAS/retained aliases and compact controls untouched. Same-filesystem identity is checked before staging/handoff. No recursive deletion, retained-root deletion, media eviction or last-copy operation is added. |
+| Rights and Provenance | Advisory addressed | Plans, closure descriptors and source/authority receipts remain private without automatic export. Retained/session controls are compact private cache metadata; large descriptor sets are not added to Git. Tests use synthetic temporary caches only. Source trust, original-source custody and human selection stay external; no daemon, network or private-media processing is triggered. |
+
+Validation: all 375 tests pass (195 unit, five prior integration, 100 model,
+23 source adapter, 25 sidecar, 27 backend), plus strict all-target Clippy,
+formatting, ROLES structure and diff checks. Four actual child processes exercise
+two concurrent publishers, post-publication termination and partial-retirement
+termination. Only the Windows filesystem branches are exercised locally.
+
+Disposition: optional shared-capacity writer APIs and verified bounded index
+staging retirement implemented. Live adoption still needs explicit managed
+producer/collector wiring, source/current-root catalog revisions, shadow planner
+parity and platform/device durability validation. Existing collectors do not
+automatically honor new anchors. Time/cancellation, exact physical allocation,
+receipt/registry adapters and compact-control retention remain separate work.

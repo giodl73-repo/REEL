@@ -101,20 +101,22 @@ publication and reacquisition of that session, partial-file recovery rejection,
 complete-stage exact retry, corrupt existing winners, missing CAS aliases,
 budget exhaustion/recovery, scope mismatch and Windows junction rejection.
 
-All 16 backend suite tests pass locally, including two concurrent writer child
-processes and a third writer killed after publication. The complete reel-assets
-suite passes 361 tests: 195 unit, five prior integration, 100 model, 23 source
-adapter, 22 sidecar and 16 backend. Strict all-target Clippy, formatting, ROLES
+All 27 backend suite tests pass locally, including two concurrent writer child
+processes and writers killed after publication and partial staged retirement.
+The complete reel-assets suite passes 375 tests: 195 unit, five prior
+integration, 100 model, 23 source adapter, 25 sidecar and 27 backend.
+Strict all-target Clippy, formatting, ROLES
 structure and diff checks pass. This is a Windows local-filesystem validation;
 the Unix-specific symlink/directory-sync paths are not validated by this run.
 
-Before live adoption, integrate shared capacity admission and an exact source/
-root catalog with revisions. Collectors must understand staged protection and
-preserve it through root admission; release only after an independently verified
-handoff with bounded explicit retirement/recovery. Existing collectors are not
-updated by this increment. Automatic cleanup would be unsafe until that contract
-is implemented. Shadow planner parity, time/cancellation, physical accounting
-and platform/device crash validation remain separate work.
+Optional [capacity admission and verified staged-link retirement](inventory-evidence-handoff-v1.md)
+now provide managed begin/recovery, whole-index handoff and separate dry-run/
+bounded execution APIs. Low-level writer APIs retain their external-admission
+contract. Before live adoption, implement the exact source/current-root catalog
+with revisions and wire managed producers/collector protection. Existing
+collectors are not updated here. Automatic cleanup remains inappropriate;
+shadow planner parity, time/cancellation, physical accounting and platform/device
+crash validation remain separate work.
 
 Private session controls and index chunks belong in metadata-asset storage,
 not Git or shareable scorecards. No raw project data is included in these tests

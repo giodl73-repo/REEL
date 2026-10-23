@@ -713,3 +713,94 @@ fn validly_hashed_row_in_the_wrong_leaf_rejects() {
     let root = store.put_value(&header);
     assert!(query(&mut store, &root, index.source(), &ids[0]).is_err());
 }
+
+#[test]
+fn whole_index_validation_checks_all_counts_and_has_explicit_total_budgets() {
+    let (_d, mut store, index, ids, root) = setup(1000);
+    let result =
+        sidecar::validation::validate(&mut store, &root, index.source(), ReadLimits::default())
+            .unwrap();
+    assert_eq!(result.nodes_read, 18);
+    assert_eq!(result.objects, 1000);
+    assert_eq!(result.copies, 1000);
+    for key in ["objects", "copies"] {
+        let mut header = store.value(&root);
+        header[key] = json!(1001);
+        let bad = store.put_value(&header);
+        assert!(
+            sidecar::validation::validate(&mut store, &bad, index.source(), ReadLimits::default())
+                .is_err()
+        );
+    }
+    for limits in [
+        ReadLimits {
+            nodes: 1,
+            ..ReadLimits::default()
+        },
+        ReadLimits {
+            rows: 999,
+            ..ReadLimits::default()
+        },
+        ReadLimits {
+            total_bytes: root.bytes,
+            ..ReadLimits::default()
+        },
+    ] {
+        assert!(sidecar::validation::validate(&mut store, &root, index.source(), limits).is_err());
+    }
+    assert!(
+        query(&mut store, &root, index.source(), &ids[0])
+            .unwrap()
+            .observation
+            .is_some()
+    );
+}
+
+#[test]
+fn complete_validation_rejects_cross_leaf_duplicate_ordinals_that_local_queries_cannot_see() {
+    let (_d, mut store, index, ids, root) = setup(1000);
+    let mut header = store.value(&root);
+    let mut branch = store.value(&tree(&store, &root));
+    let key = &ids[0][..1];
+    let child = &branch["body"]["children"][key];
+    let desc = Blob {
+        sha256: child["sha256"].as_str().unwrap().into(),
+        bytes: child["bytes"].as_u64().unwrap(),
+    };
+    let mut leaf = store.value(&desc);
+    let other = ids.iter().position(|id| !id.starts_with(key)).unwrap();
+    leaf["body"]["rows"][0]["record"] = json!(other);
+    let b = store.put_value(&leaf);
+    branch["body"]["children"][key] = json!({"sha256":b.sha256,"bytes":b.bytes});
+    let b = store.put_value(&branch);
+    header["tree"] = json!({"sha256":b.sha256,"bytes":b.bytes});
+    let bad = store.put_value(&header);
+    assert!(query(&mut store, &bad, index.source(), &ids[0]).is_ok());
+    assert!(
+        sidecar::validation::validate(&mut store, &bad, index.source(), ReadLimits::default())
+            .is_err()
+    );
+}
+
+#[test]
+fn whole_validation_does_not_treat_an_unvisited_missing_branch_as_empty() {
+    let (_d, mut store, index, ids, root) = setup(1000);
+    let branch = store.value(&tree(&store, &root));
+    let (key, child) = branch["body"]["children"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .find(|(key, _)| !ids[0].starts_with(*key))
+        .unwrap();
+    assert!(!ids[0].starts_with(key));
+    let b = Blob {
+        sha256: child["sha256"].as_str().unwrap().into(),
+        bytes: child["bytes"].as_u64().unwrap(),
+    };
+    fs::remove_file(store.path(&b)).unwrap();
+    assert!(query(&mut store, &root, index.source(), &ids[0]).is_ok());
+    assert!(
+        sidecar::validation::validate(&mut store, &root, index.source(), ReadLimits::default())
+            .is_err()
+    );
+}
