@@ -138,13 +138,48 @@ all participating domains and native controls. Source-byte custody, tier affinit
 reference release and physical unlink remain separate checks. Do not infer
 removal permission from a released range lock or the existence of a receipt.
 
+## Explicit producer-family requirement
+
+The library-only `file_store::publication_policy::install(cache, domain)` writes
+one bounded, create-new `reel-managed-publication.v1.json` in an existing cache.
+It binds the canonical cache and exact physical fence control identity. This
+version governs FileStore writers and native jobs only; it is **not** an
+all-consumer enrollment certificate. No CLI or runtime silently installs it.
+
+Installation requires quiescent affected producers. It does not detect or drain
+already running processes, and is not a concurrent activation transaction.
+Existing binaries and other publisher families do not enforce this requirement.
+There is no automatic migration, replacement, repair or uninstall operation.
+Partial/corrupt controls fail closed; installation retries never overwrite.
+
+New FileStore sessions and named recovery must present the required persisted
+domain. Ordinary publication rechecks the requirement, so an old live writer
+cannot subsequently publish unfenced through these updated APIs. Per-call
+`publish_fenced` does not upgrade a legacy session into enrolled demand. Active
+enrolled writers pin the requirement and bound domain identity against replacement,
+without holding an asset range lock for their lifetime. Read-only access is
+unchanged. This policy alone does not add source demand to a node-only session.
+
+Native jobs check every configured active cache before admission/input access,
+and pin accepted controls through execution/retirement. Legacy `run-job` refuses
+a required cache. `run-job-fenced` must match each requirement. Multiple distinct
+required cache domains currently hold the job: cross-cache demand routing is not
+implemented, and this version never skips an enforced cache to find a permissive
+destination. Missing/inaccessible active cache directories also hold intake.
+
+Requirement presence proves only that these updated producer entry points refuse
+unenrolled work. Removing controls while producers are idle, old binaries,
+direct CAS writers, other native operations and unknown consumers remain outside
+this guarantee. Canonical eviction must still refuse incomplete coverage.
+
 ## Remaining integration contract
 
 Before guarded removal can adopt this mechanism:
 
-1. Extend the persisted session binding to authoritative domain/schema enrollment
-   for every participating cache and producer; compatibility checks must reject
-   unfenced publication paths, including fresh unenrolled sessions.
+1. Extend producer-family requirements to authoritative domain/schema enrollment
+   for every participating cache and producer, with safe activation and complete
+   coverage validation. FileStore/native-job compatibility refusal is implemented;
+   other writers and old binaries remain an adoption gate.
 2. Establish overlapping demand before source reads or root publication,
    including native jobs, retained source-evidence demand and catalog lifecycles.
 3. Acquire removal protection before the final bounded demand check and exact
@@ -160,14 +195,18 @@ automatically honor new fences. No production runtime adoption occurs here.
 
 ## Validation
 
-Sixteen synthetic Windows integration cases plus a subprocess harness cover shared/exclusive behavior,
+Eighteen synthetic Windows integration cases plus a subprocess harness cover shared/exclusive behavior,
 unrelated-asset progress, partial-batch rollback, bounded waiting, conservative
 collisions, high offsets without file growth, invalid/missing/corrupt controls,
 control replacement prevention, idempotent initialization, killed publisher and
 remover recovery, retryable index publication with cache/node bounds, enrolled
 ordinary publication/recovery, conflicting domains, incomplete bindings and
 physical control replacement, source intent publication, source substitution and
-source-writer interruption. Two collector cases cover invalid bindings and source
+source-writer interruption, required-policy legacy/per-call/recovery refusal,
+matching concurrent writers, pinned policy controls, corrupt/oversize/misplaced
+requirements and recreated domain identities. Two native job cases cover legacy
+refusal before admission, matching enrollment and multiple-domain refusal.
+Two collector cases cover invalid bindings and source
 demand through handoff/staging retirement. Five managed executable cases cover
 enrolled build/recovery/parity, invalid-domain failures, fenced node/source refusal
 and missing-source failure with durable intent. Three real child processes are

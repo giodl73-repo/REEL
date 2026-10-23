@@ -35,6 +35,110 @@ fn source_demand() -> reel_assets::inventory_evidence::Source {
 }
 
 #[test]
+fn cache_requirement_refuses_legacy_begin_resume_and_existing_writer_publication() {
+    use reel_assets::inventory_evidence::sidecar::file_store::publication_policy;
+    let temp = tempfile::tempdir().unwrap();
+    let cache = temp.path().canonicalize().unwrap();
+    for name in ["staging", "fence", "other"] {
+        fs::create_dir(cache.join(name)).unwrap();
+    }
+    let staging = cache.join("staging");
+    let domain = Domain::initialize(&cache.join("fence")).unwrap();
+    let other = Domain::initialize(&cache.join("other")).unwrap();
+    let mut old = FileStore::begin(&cache, &staging, "old", Limits::default()).unwrap();
+    publication_policy::install(&cache, &domain).unwrap();
+    assert!(publication_policy::install(&cache, &domain).is_err());
+    assert!(old.publish(b"must not publish").is_err());
+    assert!(
+        old.publish_fenced(&domain, b"per-call is not enrollment")
+            .is_err()
+    );
+    assert!(!cache.join("objects").exists());
+    drop(old);
+    assert!(FileStore::resume(&cache, &staging, "old").is_err());
+    assert!(FileStore::begin(&cache, &staging, "legacy", Limits::default()).is_err());
+    assert!(!staging.join("legacy").exists());
+    assert!(FileStore::begin_fenced(&cache, &staging, "wrong", Limits::default(), &other).is_err());
+    assert!(!staging.join("wrong").exists());
+    let mut writer =
+        FileStore::begin_fenced(&cache, &staging, "right", Limits::default(), &domain).unwrap();
+    writer.publish(b"allowed").unwrap();
+    // Requirement handles deny replacement; asset locks remain per-call only.
+    let control = cache.join("reel-managed-publication.v1.json");
+    assert!(fs::remove_file(&control).is_err());
+    assert!(fs::write(&control, b"{}").is_err());
+    domain
+        .acquire(&subjects('a'), Mode::Remove, Duration::ZERO)
+        .unwrap();
+    let mut second =
+        FileStore::begin_fenced(&cache, &staging, "second", Limits::default(), &domain).unwrap();
+    second.publish(b"independent").unwrap();
+    drop(second);
+    drop(writer);
+    let mut resumed = FileStore::resume(&cache, &staging, "right").unwrap();
+    resumed.publish(b"after recovery").unwrap();
+}
+
+#[test]
+fn cache_requirement_rejects_corruption_scope_and_recreated_fence() {
+    use reel_assets::inventory_evidence::sidecar::file_store::publication_policy;
+    let temp = tempfile::tempdir().unwrap();
+    let cache = temp.path().canonicalize().unwrap();
+    fs::create_dir(cache.join("staging")).unwrap();
+    fs::create_dir(cache.join("fence")).unwrap();
+    let domain = Domain::initialize(&cache.join("fence")).unwrap();
+    publication_policy::install(&cache, &domain).unwrap();
+    let control = cache.join("reel-managed-publication.v1.json");
+    let original = fs::read(&control).unwrap();
+    for bytes in [
+        b"{".to_vec(),
+        vec![b' '; 65537],
+        {
+            let mut value: Value = serde_json::from_slice(&original).unwrap();
+            value["cache"] = json!(cache.join("staging"));
+            serde_json::to_vec(&value).unwrap()
+        },
+        {
+            let mut value: Value = serde_json::from_slice(&original).unwrap();
+            value["schema"] = json!("future");
+            serde_json::to_vec(&value).unwrap()
+        },
+    ] {
+        fs::write(&control, bytes).unwrap();
+        assert!(
+            FileStore::begin_fenced(
+                &cache,
+                &cache.join("staging"),
+                "blocked",
+                Limits::default(),
+                &domain
+            )
+            .is_err()
+        );
+        assert!(!cache.join("staging/blocked").exists());
+    }
+    fs::write(&control, original).unwrap();
+    drop(domain);
+    // Preserve the old file to ensure a different physical identity.
+    fs::rename(
+        cache.join("fence/asset-publication-fence.v1.lock"),
+        cache.join("old-control"),
+    )
+    .unwrap();
+    let replacement = Domain::initialize(&cache.join("fence")).unwrap();
+    assert!(
+        FileStore::begin_fenced(
+            &cache,
+            &cache.join("staging"),
+            "blocked",
+            Limits::default(),
+            &replacement
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn source_intent_requires_its_fence_and_does_not_keep_a_lifetime_subject_lock() {
     let temp = tempfile::tempdir().unwrap();
     let cache = temp.path().canonicalize().unwrap();

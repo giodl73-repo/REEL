@@ -54,6 +54,37 @@ fn only_workspace(fixture: &Fixture) -> PathBuf {
 }
 
 #[test]
+fn required_job_enrollment_refuses_legacy_before_admission_and_allows_exact_domain() {
+    use crate::inventory_evidence::sidecar::file_store::publication_policy;
+    let (fixture, manifest, _, domain) = enrolled("mutate");
+    publication_policy::install(&fixture.root().join("fast"), &domain).unwrap();
+    let error = run(fixture.root(), &manifest).unwrap_err().to_string();
+    assert!(error.contains("legacy writer refused"), "{error}");
+    assert!(!fixture.root().join("fast/staging/caminos").exists());
+    let result = run_fenced(fixture.root(), &manifest, &domain).unwrap();
+    assert_eq!(result["publication_enrolled"], true);
+}
+
+#[test]
+fn multiple_required_cache_domains_hold_job_without_cross_cache_guessing() {
+    use crate::inventory_evidence::sidecar::file_store::publication_policy;
+    let (fixture, manifest, _, domain) = enrolled("mutate");
+    let cfg = config(fixture.root()).unwrap();
+    let other = cfg
+        .cache_roots
+        .iter()
+        .find(|p| **p != fixture.root().join("fast").canonicalize().unwrap())
+        .unwrap();
+    let directory = other.join("fence");
+    fs::create_dir(&directory).unwrap();
+    let other_domain = Domain::initialize(&directory).unwrap();
+    publication_policy::install(other, &other_domain).unwrap();
+    publication_policy::install(&fixture.root().join("fast"), &domain).unwrap();
+    assert!(run_fenced(fixture.root(), &manifest, &domain).is_err());
+    assert!(!fixture.root().join("fast/staging/caminos").exists());
+}
+
+#[test]
 fn enrolled_job_publishes_distinct_input_output_demand_and_count_only_summary() {
     let (mut fixture, manifest, job, domain) = enrolled("mutate");
     let result = run_fenced(fixture.root(), &manifest, &domain).unwrap();

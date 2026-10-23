@@ -19,6 +19,7 @@ mod capacity;
 pub mod catalog;
 pub mod collector;
 pub mod managed;
+pub mod publication_policy;
 pub mod retirement;
 
 /// Logical staged-byte ceiling, not a filesystem free-space reservation.
@@ -95,6 +96,7 @@ pub struct FileStore {
     _reservation: Option<crate::admission::Reservation>,
     publication_fence: Option<collector::fence::Domain>,
     source_demand: Option<Source>,
+    _publication_policy: Option<publication_policy::Guard>,
 }
 
 /// Exact named reads over an explicitly supplied existing cache. No session
@@ -302,6 +304,7 @@ impl FileStore {
     ) -> Result<Self> {
         check_limits(limits)?;
         let cache = checked_directory(cache)?;
+        let publication_policy = publication_policy::check(&cache, domain)?;
         let parent = checked_directory(staging_parent)?;
         // Staging protection must stay in the explicitly chosen existing cache.
         if parent == cache || !parent.starts_with(&cache) {
@@ -373,6 +376,7 @@ impl FileStore {
             _reservation: None,
             publication_fence,
             source_demand,
+            _publication_policy: publication_policy,
         })
     }
     /// Explicit named recovery, bounded by immutable session budgets. Reads and
@@ -407,6 +411,7 @@ impl FileStore {
             .as_ref()
             .map(|b| collector::fence::Domain::from_binding(&cache, b))
             .transpose()?;
+        let publication_policy = publication_policy::check(&cache, publication_fence.as_ref())?;
         checked_directory(&session.join("objects"))?;
         let mut store = Self {
             cache,
@@ -421,6 +426,7 @@ impl FileStore {
             _reservation: None,
             publication_fence,
             source_demand,
+            _publication_policy: publication_policy,
         };
         for entry in fs::read_dir(store.session.join("objects"))? {
             let entry = entry?;
@@ -584,6 +590,7 @@ impl FileStore {
 }
 impl Store for FileStore {
     fn publish(&mut self, bytes: &[u8]) -> Result<Blob> {
+        let _policy = publication_policy::check(&self.cache, self.publication_fence.as_ref())?;
         self.admitted()?;
         if self.poisoned || self.sealed.is_some() {
             return Err("Sidecar writer is failed or sealed".into());

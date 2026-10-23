@@ -55,6 +55,9 @@ provides tested shared/exclusive coordination for short publication boundaries;
 persisted sessions and optional managed profiles enforce their exact enrolled
 domain on publication/recovery. Live removal and complete producer enrollment
 remain separate integration work.
+An explicit library-only per-cache requirement can now refuse unenrolled
+FileStore/native-job writers; activation requires quiescence and does not certify
+coverage of other producers or authorize eviction.
 Enrolled builds also persist exact source-evidence demand before preparation and
 preserve it across failed reads, recovery, retained handoff and staging retirement.
 Optional [enrolled native jobs](docs/asset-fenced-jobs-v1.md) publish durable

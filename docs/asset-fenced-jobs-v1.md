@@ -11,6 +11,13 @@ outputs, request and diagnostic evidence, then register/verify those artifacts
 before retiring only their owned scratch. There is no new expiry, daemon or
 job replay. Existing unenrolled jobs and installed bindings are not switched.
 
+An explicitly installed [producer-family cache requirement](asset-publication-fence-v1.md#explicit-producer-family-requirement)
+changes intake for updated binaries: ordinary jobs refuse required caches before
+admission, and fenced jobs must match every configured active-cache requirement.
+Accepted controls stay pinned through the job without lifetime asset range locks.
+Multiple required domains currently hold intake pending cross-cache demand routing.
+Installation requires quiescent producers and does not certify other writer families.
+
 The domain must already exist in a separate metadata child of the cache chosen
 by capacity admission. A different admitted cache is not silently given another
 domain. No cache, control or archive fallback is initialized. Canonical inputs/

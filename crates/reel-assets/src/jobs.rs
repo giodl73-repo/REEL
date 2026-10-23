@@ -297,6 +297,16 @@ fn run_protocol(root: &Path, manifest: &Path, domain: Option<&Domain>) -> Result
         publication::validate_enrolled(&job, &bytes)?;
     }
     let cfg = config(root)?;
+    // Requirements on any configured active cache must be satisfied before
+    // admission or input resolution. Multiple required domains currently hold
+    // the job rather than guessing cross-cache demand routing.
+    let _publication_policies = cfg
+        .cache_roots
+        .iter()
+        .map(|cache| {
+            crate::inventory_evidence::sidecar::file_store::publication_policy::check(cache, domain)
+        })
+        .collect::<Result<Vec<_>>>()?;
     let index = selected(root)?;
     for tool in job.installed_tools.values() {
         if index.get(&tool.sha256) != Some(&tool.bytes) {

@@ -555,3 +555,30 @@ Disposition: opt-in automatic jobs now enroll salvage and diagnostic artifacts,
 register/verify custody and retire only owned scratch, with explicit recovery
 after a pre-unlink interruption. Complete producer policy and canonical cache
 removal remain separate work. Live caches and installed runtimes are unchanged.
+
+## Producer-family cache requirement increment
+
+Review base: `d3056ac`, plus `file_store/publication_policy.rs`, FileStore
+creation/recovery/publication, native-job intake, synthetic fixtures and related
+contracts. Producer-applied review uses all three infrastructure checklists
+(version 1) and Rights and Provenance. Owner: this implementation lane. No
+independent approval or production activation is claimed.
+
+| Role | Severity | Finding/correction and actual evidence |
+| --- | --- | --- |
+| Registry Concurrency and Evidence Integrity | Major corrected within declared producer families | Optional enrollment allowed fresh legacy sessions and jobs to bypass fencing. An immutable, bounded, create-new cache requirement binds the exact domain identity. Updated FileStore begin/resume/publish and native-job intake reject missing enrollment or conflicting domains. Per-call fencing cannot upgrade a legacy session. Fixtures verify refusal before session creation/CAS publication or job admission. |
+| Registry Concurrency and Evidence Integrity | Major corrected | Policy replacement could silently change coordination domains. Accepted writers pin the requirement file, ancestors and bound domain, without lifetime asset range locks. Actual Windows tests refuse control writes/removal while independent enrolled writers publish and unrelated removal ranges remain available. Malformed, oversized, misplaced, unsupported and recreated-domain controls reject. |
+| Asset Graph and Version Integrity | Blocking adoption gate retained | A producer-family requirement does not certify every consumer, route demand between caches or supply source demand to node-only sessions. Jobs check all configured active caches and hold on distinct required domains. No policy field grants coverage, creative selection, semantic input status or removal authority. |
+| Storage Custody and Recovery | Blocking activation gate retained | Installation requires quiescent affected producers; it neither detects/drains old processes nor atomically activates policy across caches. No replacement, uninstall, automatic repair/migration, canonical unlink or last-copy operation is added. Old binaries, direct CAS writers and other publisher families remain outside enforcement. Partial controls hold work. |
+| Rights and Provenance | Advisory addressed | The requirement is a private compact local control containing paths/identity, with no new shareable receipt or successful stdout. Tests use synthetic temporary caches only; no live cache, Drive, daemon, installed runtime binding or main change occurred. |
+
+Validation: all 481 tests pass (244 unit, five prior integration, 100 model,
+23 source adapter, 25 sidecar, 30 backend, 19 managed CLI, 11 collector CLI,
+19 fence entries and five fenced-job CLI cases). Two Windows integration cases
+and two native-job cases are added. Strict all-target Clippy, formatting, ROLES
+structure and diff checks pass. No Unix, device/power-loss, hostile filesystem or
+all-consumer coverage guarantee is inferred from these fixtures.
+
+Disposition: updated FileStore/native-job APIs can enforce a declared cache
+requirement. Safe activation, other producers, cross-domain demand routing and
+the final guarded canonical eviction transaction remain integration gates.
