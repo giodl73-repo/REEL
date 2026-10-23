@@ -5,6 +5,7 @@ use reel_assembly::scene_authoring as native;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, path::Path};
+pub mod project;
 
 const CONTROL_BYTES: usize = 1024 * 1024;
 const MAX_EVENTS: usize = 8192;

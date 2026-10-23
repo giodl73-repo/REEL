@@ -8,6 +8,12 @@ Only declared selected images and the movie are resolved. Every file is freshly
 hashed; a corrupt earlier tier fails. Media are independent working copies,
 never writable hard links to canonical objects. No archive lookup or server starts.
 
+`project` may name a [versioned file-map descriptor](cel-sorter-project-v1.md)
+instead of the legacy directory. Six native controls are required; compilation
+context is optional. This opens an existing layout without rearranging it and
+preserves that relative layout in the new draft. Mapped sessions/edits use version
+2 with an exact descriptor lock; legacy folder sessions remain version 1.
+
 Declared identities and copy sizes are checked before any media reads or output
 creation. Repeated picture bindings share one exported picture per hash, and
 each unique hash is verified once during resolution. Each working copy is also
@@ -30,7 +36,7 @@ draft export/import. Older drafts without comments remain supported. Cel comment
 and general notes are editorial feedback, preserved in the edit request; they do
 not become poem text, subtitles, approval or native scene content.
 
-`reel-cel-sorter apply native-project edit.json new-draft-directory` checks every
+`reel-cel-sorter apply native-project-or-descriptor edit.json new-draft-directory` checks every
 input hash, stable ID, picture binding, and full frame/sample coverage, then
 writes native scene, alignment, bindings, graph and pointer documents. Accepted
 open content and unknown fields in other copied controls survive. The source

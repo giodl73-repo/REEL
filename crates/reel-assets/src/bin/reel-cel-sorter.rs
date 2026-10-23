@@ -1,4 +1,5 @@
 //! Explicit, offline editor export and optimistic native-draft application.
+use reel_assets::cel_source::project::Project;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -8,21 +9,8 @@ use std::{
     path::{Path, PathBuf},
 };
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-const FILES: &[&str] = &[
-    "scene.json",
-    "scene-bindings.json",
-    "alignment.json",
-    "selected-graph.json",
-    "selected-pointer.json",
-    "profile.json",
-    "catalog.json",
-    "episode.json",
-    "policy.json",
-    "season-bindings.json",
-    "episode-bindings.json",
-    "alignment-paths.json",
-    "compile.json",
-];
+#[cfg(test)]
+use reel_assets::cel_source::project::FILES;
 fn hash(b: &[u8]) -> String {
     format!("{:x}", Sha256::digest(b))
 }
@@ -58,18 +46,15 @@ fn write(p: &Path, v: &Value) -> Result<()> {
     f.write_all(&serde_json::to_vec(v)?)?;
     Ok(())
 }
+#[cfg(test)]
 fn source(project: &Path) -> Result<(BTreeMap<String, Value>, Value)> {
-    let mut docs: BTreeMap<String, Value> = BTreeMap::new();
-    let mut hashes = serde_json::Map::new();
-    let mut alignment_size = 0;
-    for name in FILES {
-        let b = bounded(&project.join(name))?;
-        if *name == "alignment.json" {
-            alignment_size = b.len();
-        }
-        hashes.insert((*name).into(), json!(hash(&b)));
-        docs.insert((*name).into(), serde_json::from_slice(&b)?);
-    }
+    load(&Project::open(project)?)
+}
+fn load(project: &Project) -> Result<(BTreeMap<String, Value>, Value)> {
+    let snapshot = project.load()?;
+    let docs = snapshot.controls;
+    let hashes = snapshot.hashes;
+    let alignment_size = snapshot.bytes["alignment.json"];
     if docs["scene.json"]["schema"] != "reel.scene-authoring.v2"
         || docs["scene-bindings.json"]["schema"] != "reel.scene-asset-bindings.v1"
         || docs["alignment.json"]["schema"] != "reel.scene-native-alignment.v1"
@@ -99,7 +84,7 @@ fn source(project: &Path) -> Result<(BTreeMap<String, Value>, Value)> {
     if bound["sha256"] != hashes["alignment.json"] || bound["bytes"] != alignment_size {
         return Err("native alignment binding differs from exact intake bytes".into());
     }
-    Ok((docs, Value::Object(hashes)))
+    Ok((docs, hashes))
 }
 fn identity(asset: &Value) -> Result<(&str, u64)> {
     let h = text(asset, "sha256")?;
@@ -402,7 +387,8 @@ fn export(spec: &Path) -> Result<()> {
     if out.exists() {
         return Err("export exists; choose a new version".into());
     }
-    let (docs, hashes) = source(project)?;
+    let project = Project::open(project)?;
+    let (docs, hashes) = load(&project)?;
     let r = rows(&docs)?;
     // Decide the complete declared copy budget before touching any media.
     let plan = preflight(&docs, &r, &s)?;
@@ -424,7 +410,11 @@ fn export(spec: &Path) -> Result<()> {
         &plan.movie_hash,
         integer(&s["movie"], "bytes")?,
     )?;
-    let data = json!({"schema":"reel.cel-sorter-session.v1","title":s["title"],"scene_id":docs["scene.json"]["scene_id"],"expected_inputs":hashes,"rows":r,"images":plan.images,"sample_rate":docs["alignment.json"]["sample_rate"],"end_sample":docs["alignment.json"]["cue_end_sample"],"fps_numerator":docs["profile.json"]["frame_rate_numerator"],"fps_denominator":docs["profile.json"]["frame_rate_denominator"],"movie":"performance.mp4"});
+    let mut data = json!({"schema":"reel.cel-sorter-session.v1","title":s["title"],"scene_id":docs["scene.json"]["scene_id"],"expected_inputs":hashes,"rows":r,"images":plan.images,"sample_rate":docs["alignment.json"]["sample_rate"],"end_sample":docs["alignment.json"]["cue_end_sample"],"fps_numerator":docs["profile.json"]["frame_rate_numerator"],"fps_denominator":docs["profile.json"]["frame_rate_denominator"],"movie":"performance.mp4"});
+    if let Some(hash) = project.descriptor_sha256() {
+        data["schema"] = json!("reel.cel-sorter-session.v2");
+        data["expected_project"] = json!(hash);
+    }
     write(&out.join("session.json"), &data)?;
     fs::write(out.join("index.html"), include_str!("../cel_sorter.html"))?;
     fs::write(out.join("editor.js"), include_str!("../cel_sorter.js"))?;
@@ -433,8 +423,9 @@ fn export(spec: &Path) -> Result<()> {
 }
 fn apply(project: &Path, request: &Path, out: &Path) -> Result<()> {
     let r = read(request)?;
-    let (mut docs, hashes) = source(project)?;
-    if r["schema"] != "reel.cel-sorter-edit.v1"
+    let project = Project::open(project)?;
+    let (mut docs, hashes) = load(&project)?;
+    if !project.accepts_edit(&r)
         || r["expected_inputs"] != hashes
         || r["scene_id"] != docs["scene.json"]["scene_id"]
     {
@@ -647,14 +638,7 @@ fn apply(project: &Path, request: &Path, out: &Path) -> Result<()> {
     *graph = serde_json::to_value(typed)?;
     let lock = graph["lock"].clone();
     docs.get_mut("selected-pointer.json").ok_or("pointer")?["selected_lock"] = lock;
-    if out.exists() {
-        return Err("draft destination exists".into());
-    }
-    fs::create_dir_all(out)?;
-    for (name, doc) in docs {
-        write(&out.join(name), &doc)?;
-    }
-    write(&out.join("edit-request.json"), &r)?;
+    project.write_draft(out, &docs, &r)?;
     println!(
         "Native draft saved; no selection or approval changed: {}",
         out.display()
@@ -892,6 +876,131 @@ mod tests {
             .asset
             .sha256
             .clone()
+    }
+    fn map_fixture(project: &Path, minimal: bool) -> PathBuf {
+        let mut files = BTreeMap::new();
+        for (index, role) in FILES.iter().enumerate() {
+            let original = project.join(role);
+            if minimal && index >= 6 {
+                fs::remove_file(original).unwrap();
+                continue;
+            }
+            let relative = format!("native/group-{}/control-{index}.json", index % 3);
+            let destination = project.join(&relative);
+            fs::create_dir_all(destination.parent().unwrap()).unwrap();
+            fs::rename(original, destination).unwrap();
+            files.insert((*role).to_owned(), relative);
+        }
+        let descriptor = project.join("editor-project.json");
+        write(
+            &descriptor,
+            &json!({"schema":"reel.cel-sorter-project.v1","root":".","files":files}),
+        )
+        .unwrap();
+        descriptor
+    }
+    #[test]
+    fn mapped_six_control_native_draft_reopens_without_canonical_filenames() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("source");
+        fixture(&p);
+        let profile = map_fixture(&p, true);
+        let project = Project::open(&profile).unwrap();
+        let (docs, hashes) = source(&profile).unwrap();
+        assert_eq!(docs.len(), 6);
+        assert!(!p.join("scene.json").exists());
+        let mut edited = rows(&docs).unwrap();
+        edited[0]["frames"] = json!(12);
+        edited[1]["frames"] = json!(36);
+        let request = d.path().join("edit.json");
+        write(&request,&json!({"schema":"reel.cel-sorter-edit.v2","expected_project":project.descriptor_sha256(),"expected_inputs":hashes,"scene_id":"synthetic","rows":edited})).unwrap();
+        let out = d.path().join("candidate");
+        apply(&profile, &request, &out).unwrap();
+        assert!(!out.join("scene.json").exists());
+        assert!(out.join("native/group-0/control-0.json").is_file());
+        let (draft, _) = source(&out.join("cel-sorter-project.json")).unwrap();
+        assert_eq!(rows(&draft).unwrap()[0]["frames"], 12);
+        native_graph(&draft).unwrap();
+        assert_eq!(source(&profile).unwrap().1, hashes);
+    }
+    #[test]
+    fn mapped_edits_refuse_downgrade_or_changed_file_routes_with_identical_content() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("source");
+        fixture(&p);
+        let profile = map_fixture(&p, true);
+        let project = Project::open(&profile).unwrap();
+        let (docs, hashes) = source(&profile).unwrap();
+        let mut request = json!({"schema":"reel.cel-sorter-edit.v1","expected_inputs":hashes,"scene_id":"synthetic","rows":rows(&docs).unwrap()});
+        let path = d.path().join("edit.json");
+        write(&path, &request).unwrap();
+        assert!(apply(&profile, &path, &d.path().join("downgraded")).is_err());
+        request["schema"] = json!("reel.cel-sorter-edit.v2");
+        request["expected_project"] = json!(project.descriptor_sha256());
+        fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+        let mut descriptor = read(&profile).unwrap();
+        let previous = descriptor["files"]["scene.json"].as_str().unwrap();
+        fs::copy(p.join(previous), p.join("identical-scene.json")).unwrap();
+        descriptor["files"]["scene.json"] = json!("identical-scene.json");
+        fs::write(&profile, serde_json::to_vec(&descriptor).unwrap()).unwrap();
+        assert_eq!(source(&profile).unwrap().1, hashes);
+        let out = d.path().join("stale");
+        assert!(
+            apply(&profile, &path, &out)
+                .unwrap_err()
+                .to_string()
+                .contains("stale")
+        );
+        assert!(!out.exists());
+    }
+    #[test]
+    fn mapped_export_emits_v2_and_optional_context_keeps_its_relative_references() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("source");
+        let mut spec = media_fixture(&p);
+        let profile = map_fixture(&p, false);
+        let mut descriptor = read(&profile).unwrap();
+        let compile_path = p.join(descriptor["files"]["compile.json"].as_str().unwrap());
+        let compile = json!({"scene":descriptor["files"]["scene.json"],"scene_bindings":descriptor["files"]["scene-bindings.json"],"custom":{"preserve":true}});
+        fs::write(compile_path, serde_json::to_vec(&compile).unwrap()).unwrap();
+        let cache = d.path().join("cache");
+        for body in [b"cell", b"clip"] {
+            let h = hash(body);
+            let dir = cache.join("objects/sha256").join(&h[..2]);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join(h), body).unwrap();
+        }
+        let editor = d.path().join("editor");
+        spec["project"] = json!(profile);
+        spec["output"] = json!(editor);
+        spec["cache_roots"] = json!([cache]);
+        let spec_path = d.path().join("export.json");
+        write(&spec_path, &spec).unwrap();
+        export(&spec_path).unwrap();
+        let session = read(&editor.join("session.json")).unwrap();
+        assert_eq!(session["schema"], "reel.cel-sorter-session.v2");
+        assert_eq!(
+            session["expected_project"],
+            Project::open(&profile)
+                .unwrap()
+                .descriptor_sha256()
+                .unwrap()
+        );
+        let request = d.path().join("edit.json");
+        write(&request,&json!({"schema":"reel.cel-sorter-edit.v2","expected_project":session["expected_project"],"expected_inputs":session["expected_inputs"],"scene_id":session["scene_id"],"rows":session["rows"]})).unwrap();
+        let out = d.path().join("candidate");
+        apply(&profile, &request, &out).unwrap();
+        let (draft, _) = source(&out.join("cel-sorter-project.json")).unwrap();
+        assert_eq!(draft["compile.json"], compile);
+        assert!(
+            out.join(draft["compile.json"]["scene"].as_str().unwrap())
+                .exists()
+        );
+        descriptor["root"] = json!(".");
+        assert_eq!(
+            read(&out.join("cel-sorter-project.json")).unwrap(),
+            descriptor
+        );
     }
     #[test]
     fn effective_override_noop_preserves_shared_default_and_native_graph_identity() {
