@@ -249,7 +249,19 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
 
 /// Explicit continuation of a trusted native recipe using registered checkpoints.
 pub fn resume(root: &Path, manifest: &Path, checkpoint: &Path) -> Result<Value> {
-    run_seeded(root, manifest, Some(resume::Seed::read(checkpoint)?))
+    let seed = resume::Seed::read(checkpoint)?;
+    if seed.evidence_key() != "checkpoint_resume" {
+        return Err("Checkpoint resume requires a resume descriptor".into());
+    }
+    run_seeded(root, manifest, Some(seed))
+}
+
+pub fn run_with_execution_window(root: &Path, manifest: &Path, policy: &Path) -> Result<Value> {
+    run_seeded(
+        root,
+        manifest,
+        Some(resume::Seed::read_execution_window(policy)?),
+    )
 }
 
 fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Result<Value> {
@@ -398,7 +410,9 @@ fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Resul
                 &step.args,
                 &workspace,
                 &workspace.join(format!("step-{n}.log")),
-                Duration::from_secs(step.timeout_seconds),
+                Duration::from_secs(seed.as_ref().map_or(step.timeout_seconds, |seed| {
+                    seed.step_timeout_seconds(n, step.timeout_seconds)
+                })),
                 check,
             )
             .map_err(|e| format!("Job {} step {n}: {e}", reservation.id))?;
@@ -444,7 +458,7 @@ fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Resul
         "outputs":retained,"linked_input_bytes":linked_input_bytes,"copied_input_bytes":copied_input_bytes,"daemon_started":false,"original_inputs_modified":false,
         "workspace_retained":true,"creative_authority":"not-granted-by-this-receipt"});
         if let Some(seed) = &seed {
-            result["checkpoint_resume"] = seed.evidence();
+            result[seed.evidence_key()] = seed.evidence();
         }
         fs::write(
             workspace.join("result.json"),
@@ -471,9 +485,12 @@ fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Resul
             if job.retain_workspace {
                 return Err(error);
             }
-            let failure = json!({"schema":"reel.failed-job-result.v1","job_id":reservation.id,
+            let mut failure = json!({"schema":"reel.failed-job-result.v1","job_id":reservation.id,
                 "manifest_sha256":format!("{:x}",Sha256::digest(&bytes)),"error":error.to_string(),"outputs":{},
                 "creative_authority":"not-granted-by-this-receipt"});
+            if let Some(seed) = &seed {
+                failure[seed.evidence_key()] = seed.evidence();
+            }
             match lifecycle::publish_and_retire(
                 root,
                 &cfg,
