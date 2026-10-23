@@ -633,7 +633,15 @@ pub fn compile_scene_layer(
     if definition.kind == "semantic-label" {
         verify_native_line_ownership(&invocation, &lane.cues)?;
     }
-    let compiled = compile_layer(definition, &invocation, &ordered_cues, native)?;
+    // Fixed chapter display is independent of the scene's spoken cue clock.
+    // The native clocks still bound its visibility and determine the receipt.
+    let no_reading_clocks = BTreeMap::new();
+    let reading_clocks = if definition.kind == "chapter-title" {
+        &no_reading_clocks
+    } else {
+        native
+    };
+    let compiled = compile_layer(definition, &invocation, &ordered_cues, reading_clocks)?;
     // A title overlays a narrated scene without replacing its native clock.
     // The ASS still uses the template's fixed visible duration.
     let (duration_samples, sample_rate) =
