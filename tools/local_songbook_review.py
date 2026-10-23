@@ -36,6 +36,11 @@ def system_pages(root, per_page=4):
             for i in range(0, len(systems), per_page)]
 
 
+def utf16_cmap(data):
+    """Repair ReportLab's non-BMP ToUnicode value for the treble-clef glyph."""
+    return data.replace(b'<1D11E>', b'<D834DD1E>')
+
+
 def produce(request, output):
     from reportlab.pdfgen import canvas
     from reportlab.pdfbase import pdfmetrics
@@ -113,6 +118,15 @@ def produce(request, output):
         for e in root:
             if e.tag.endswith('style'):e.text=e.text.replace('font-family:serif;','')
         drawing=svg2rlg(io.BytesIO(ET.tostring(root)))
+        # svglib can resolve CSS/font aliases and pixel units differently from
+        # the native SVG. Normalize presentation units and actual text nodes.
+        from reportlab.graphics.shapes import String
+        def font_nodes(node):
+            if isinstance(node,String):node.fontName='BookSymbol' if '\U0001d11e' in node.text else 'BookText'
+            for child in getattr(node,'contents',[]):font_nodes(child)
+        font_nodes(drawing)
+        factor=float(root.attrib['width'])/drawing.width
+        drawing.scale(factor,factor)
         scale=720/1100
         for start,end in bands:
             c.setPageSize((792,612));y=wrap(title,36,578,720,17,22)
@@ -135,6 +149,17 @@ def produce(request, output):
         links=' · '.join(f'<a href="{html.escape(rel(checked(entry[role])),quote=True)}">{label}</a>' for role,label in [('musicxml','Editable MusicXML'),('midi','MIDI'),('svg','Native SVG study')])
         sections.append(f'<section><h2>{html.escape(title)}</h2><p>{html.escape(entry["edition"])} · {html.escape(entry["duration"])}</p><p>{html.escape(entry["status"])}</p><audio id="{audio_id}" controls preload="metadata" src="{rel(audio)}"></audio><details><summary>Partial notation diagnostic guide</summary><audio controls preload="none" src="{rel(guide)}"></audio><p>Simple oscillator guide; unmapped passages are silent.</p></details><p>{links}</p><table><tr><th>Line</th><th>Complete canonical poem</th><th>Listen / study gaps</th></tr>'+''.join(rows)+'</table></section>')
     c.save()
+    from pypdf import PdfReader, PdfWriter
+    writer=PdfWriter();writer.clone_document_from_reader(PdfReader(pdf))
+    for page in writer.pages:
+        for ref in page['/Resources'].get('/Font',{}).values():
+            font=ref.get_object()
+            if '/ToUnicode' in font:
+                stream=font['/ToUnicode'].get_object();data=stream.get_data();fixed=utf16_cmap(data)
+                if fixed!=data:stream.set_data(fixed)
+    temporary=pdf.with_suffix('.tmp.pdf')
+    with temporary.open('wb') as stream:writer.write(stream)
+    temporary.replace(pdf)
     page=output/'Listen and review.html'
     page.write_text('''<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Full Golden Songbook</title><style>body{font:17px system-ui;max-width:1050px;margin:32px auto;padding:0 18px;background:#f6f5ee;color:#24342e}section{background:white;padding:22px;margin:25px 0;border-radius:10px}audio{width:100%}td,th{text-align:left;vertical-align:top;padding:10px;border-bottom:1px solid #ddd}button{padding:7px 12px;margin:3px;cursor:pointer}.gap{background:#fff0c4;padding:8px}a{color:#14624b}table{width:100%;border-collapse:collapse}</style><h1>Four full Goldens</h1><p>Private working songbook. Producer-applied notation and timing proposals; musical review pending.</p><p><a href="Full%20Golden%20Songbook%20-%20Working%20Edition.pdf">Open printable songbook</a></p><p>Original full recordings and complete canonical poems are preserved. Forced expected-text timing does not establish that every word is independently recognized. Pitch, rhythm, meter, repeated-note articulation and final engraving remain open.</p>'''+''.join(sections)+'''<script>document.querySelectorAll('button[data-audio]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('audio').forEach(a=>a.pause());const a=document.getElementById(b.dataset.audio);a.currentTime=Number(b.dataset.start);a.dataset.stop=b.dataset.end;a.play().catch(e=>alert(e.message));}));document.querySelectorAll('audio').forEach(a=>a.addEventListener('timeupdate',()=>{if(a.dataset.stop&&a.currentTime>=Number(a.dataset.stop)){a.pause();delete a.dataset.stop;}}));</script></html>''',encoding='utf-8',newline='\n')
     doc=pymupdf.open(pdf);renderdir=output/'render-check';renderdir.mkdir(exist_ok=True)

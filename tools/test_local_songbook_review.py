@@ -3,10 +3,13 @@ import tempfile
 import unittest
 from pathlib import Path
 import xml.etree.ElementTree as ET
-from local_songbook_review import checked, system_pages
+from local_songbook_review import checked, system_pages, utf16_cmap
 
 
 class ReviewTests(unittest.TestCase):
+    def test_non_bmp_clef_mapping_uses_utf16_surrogates(self):
+        self.assertEqual(utf16_cmap(b'<80> <1D11E>\n<81> <00E9>'),b'<80> <D834DD1E>\n<81> <00E9>')
+
     def grid(self,count):
         root=ET.Element('{http://www.w3.org/2000/svg}svg')
         for i in range(count):
