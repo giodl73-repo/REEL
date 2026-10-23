@@ -49,8 +49,8 @@ existing job limits; this mode does not extend a timeout or omit a check.
 An explicit `finish-consume-normalized` command uses the same arguments as
 `finish`. It requires preparation directly inside the same closed job workspace.
 After the complete ordered picture/PCM, timestamp and boundary checks succeed,
-it rehashes and retires only the exact generated `normalized-NNN.mkv` and
-`padded-NNN.mkv` files inside that preparation's temporary subdirectory, before
+it rehashes and retires only the exact generated `normalized-NNN.mkv`,
+`padded-NNN.mkv` and `held-NNN.mkv` files inside that preparation's temporary subdirectory, before
 compact encoding. Original inputs and the assembled master remain unchanged;
 ordinary `finish` continues to preserve all preparation sources. The final
 receipt records retired file/byte counts. A consumed preparation is one-shot;

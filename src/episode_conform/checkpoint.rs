@@ -490,7 +490,7 @@ fn finish_mode(
                 .and_then(|n| n.to_str())
                 .unwrap_or("");
             let generated_name = name.strip_suffix(".mkv").is_some_and(|n| {
-                ["normalized-", "padded-"].iter().any(|prefix| {
+                ["normalized-", "padded-", "held-"].iter().any(|prefix| {
                     n.strip_prefix(prefix).is_some_and(|index| {
                         index.len() == 3 && index.bytes().all(|b| b.is_ascii_digit())
                     })
@@ -554,6 +554,7 @@ fn finish_mode(
         completion::save_verified(prepared, assets, &bytes, &receipt, stage.path())?;
     }
     fs::write(stage.path().join("preparation.json"), bytes)?;
-    fs::rename(stage.path(), output)?;
+    fs::rename(stage.path(), output)
+        .with_context(|| format!("publishing completed preparation {}", output.display()))?;
     Ok(receipt)
 }

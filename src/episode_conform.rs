@@ -214,7 +214,8 @@ impl OutputFrameRate {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FrameRateVerification {
     pub input_fps: String,
     pub output_fps: String,
@@ -228,6 +229,21 @@ pub struct FrameRateVerification {
 #[cfg(test)]
 mod repeat_only_tests {
     use super::*;
+
+    #[test]
+    fn checkpoint_roundtrip_preserves_repeat_only_frame_evidence() {
+        let evidence = FrameRateVerification {
+            input_fps: "25/1".into(),
+            output_fps: "30/1".into(),
+            input_frames: 11,
+            output_frames: 14,
+            repeated_frames: 3,
+            transformed_source_matches_selected: true,
+        };
+        let value = serde_json::to_value(&evidence).unwrap();
+        let restored: FrameRateVerification = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(restored).unwrap(), value);
+    }
 
     #[test]
     fn clock_is_explicit_reduced_bounded_and_cannot_drop_frames() {
@@ -523,9 +539,9 @@ pub struct SegmentReceipt {
     pub frames: u64,
     pub samples: u64,
     pub audio_padding_samples: u64,
-    #[serde(skip_serializing_if = "u64_is_zero")]
+    #[serde(default, skip_serializing_if = "u64_is_zero")]
     pub tail_hold_frames: u64,
-    #[serde(skip_serializing_if = "u64_is_zero")]
+    #[serde(default, skip_serializing_if = "u64_is_zero")]
     pub tail_hold_samples: u64,
     pub start_frame: u64,
     pub start_sample: u64,
@@ -2567,6 +2583,15 @@ fn build_internal(
             {
                 bail!("silent picture hold has wrong frame or sample count");
             }
+            if selected == temp.path().join(format!("normalized-{index:03}.mkv"))
+                || selected == temp.path().join(format!("padded-{index:03}.mkv"))
+            {
+                // The checked held replacement contains the complete prefix.
+                // Retire only our exact superseded scratch, never a source.
+                fs::remove_file(&selected).with_context(|| {
+                    format!("retiring superseded hold scratch {}", selected.display())
+                })?;
+            }
             selected = held;
             picture_hash = picture.0;
             audio_hash = audio.0;
@@ -2664,7 +2689,13 @@ fn build_internal(
         )?;
         let _ = temp.keep();
         let work = stage.context("preparation stage missing")?.keep();
-        fs::rename(work, output)?;
+        fs::rename(&work, output).with_context(|| {
+            format!(
+                "publishing preparation {} to {}",
+                work.display(),
+                output.display()
+            )
+        })?;
         return Ok(None);
     }
     let external = manifest.preassembled_master.is_some();
@@ -2964,7 +2995,12 @@ fn finalize_conform_mode(
             bytes = bytes
                 .checked_add(file.bytes)
                 .context("retirement byte overflow")?;
-            fs::remove_file(path)?;
+            fs::remove_file(&path).with_context(|| {
+                format!(
+                    "consuming verified normalization scratch {}",
+                    path.display()
+                )
+            })?;
         }
         Some(NormalizationRetirement {
             files: request.files.len(),

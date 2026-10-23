@@ -647,6 +647,75 @@ fn ordered_geometry_fixture_with_rate(
             );
         }
         assert_eq!(receipt["timestamps_verified"], true);
+        if output_fps.is_some() && lang == "es" {
+            // A closed staged run must preserve mixed-rate, range and hold
+            // evidence, while consuming only generated normalization files.
+            let staged = tempfile::tempdir().unwrap();
+            let mut pending = vec![root.to_path_buf()];
+            let mut inputs = serde_json::Map::new();
+            while let Some(directory) = pending.pop() {
+                for entry in fs::read_dir(directory).unwrap() {
+                    let path = entry.unwrap().path();
+                    if path.is_dir() {
+                        pending.push(path);
+                        continue;
+                    }
+                    let relative = path.strip_prefix(root).unwrap();
+                    let target = staged.path().join(relative);
+                    fs::create_dir_all(target.parent().unwrap()).unwrap();
+                    fs::copy(&path, &target).unwrap();
+                    let name = relative.to_string_lossy().replace('\\', "/");
+                    inputs.insert(name.clone(), reference(staged.path(), &name));
+                }
+            }
+            let mut staged_manifest = manifest.clone();
+            staged_manifest["compact_delivery"] = json!({
+                "crf":26,"audio_bitrate_kbps":128,"retain_lossless_master":false
+            });
+            write(&staged.path().join(&manifest_name), &staged_manifest);
+            inputs.insert(
+                manifest_name.clone(),
+                reference(staged.path(), &manifest_name),
+            );
+            write(
+                &staged.path().join("job.json"),
+                &json!({"inputs": inputs, "tools": {}}),
+            );
+            for (command, selected, destination) in [
+                ("prepare", manifest_name.as_str(), "prepared"),
+                ("finish-consume-normalized", "prepared", "finished"),
+            ] {
+                let result = Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
+                    .arg(command)
+                    .arg(staged.path().join(selected))
+                    .arg("--input-root")
+                    .arg(staged.path())
+                    .arg("--asset-root")
+                    .arg(staged.path())
+                    .arg("--output-dir")
+                    .arg(staged.path().join(destination))
+                    .output()
+                    .unwrap();
+                if !result.status.success() {
+                    let retained = staged.keep();
+                    panic!(
+                        "staged {command} failed; bounded fixture retained at {}: {}",
+                        retained.display(),
+                        String::from_utf8_lossy(&result.stderr)
+                    );
+                }
+            }
+            let final_receipt: Value = serde_json::from_slice(
+                &fs::read(staged.path().join("finished/receipt.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(final_receipt["segments"], receipt["segments"]);
+            assert_eq!(final_receipt["normalization_retirement"]["files"], 4);
+            assert_eq!(final_receipt["timestamps_verified"], true);
+            for (name, selected) in inputs {
+                assert_eq!(reference(staged.path(), &name), selected);
+            }
+        }
         if mixed {
             assert_eq!(receipt["output_geometry"], manifest["output_geometry"]);
             if color_declaration {
