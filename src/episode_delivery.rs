@@ -426,6 +426,11 @@ pub(crate) fn verify_timestamps(
         .context("master timestamps missing")?;
     let (mut video, mut audio) = (0u64, 0u64);
     for frame in frames {
+        // Complete selected movies can retain timed text. Subtitle events are
+        // not decoded picture/audio samples and have no best-effort AV clock.
+        if frame["media_type"] == "subtitle" {
+            continue;
+        }
         let time = frame["best_effort_timestamp_time"]
             .as_str()
             .context("frame timestamp missing")?

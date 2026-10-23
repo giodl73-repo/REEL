@@ -231,10 +231,33 @@ fn opening_fixture_with_output_mode(
         } else {
             vec![]
         })
-        .arg(root.join("opening.mkv"))
+        .arg(root.join(if retain_source {
+            "uncaptioned.mkv"
+        } else {
+            "opening.mkv"
+        }))
         .status()
         .unwrap();
     assert!(status.success());
+    if retain_source {
+        fs::write(
+            root.join("selected.srt"),
+            "1\n00:00:00,000 --> 00:00:01,500\nSelected source caption\n",
+        )
+        .unwrap();
+        let status = ffmpeg()
+            .args(["-v", "error", "-i"])
+            .arg(root.join("uncaptioned.mkv"))
+            .args(["-i"])
+            .arg(root.join("selected.srt"))
+            .args([
+                "-map", "0:v:0", "-map", "0:a:0", "-map", "1:s:0", "-c", "copy",
+            ])
+            .arg(root.join("opening.mkv"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
     write(
         &root.join("template.json"),
         &json!({
