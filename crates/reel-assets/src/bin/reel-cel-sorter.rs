@@ -123,7 +123,7 @@ fn resolve(roots: &[PathBuf], asset: &Value) -> Result<PathBuf> {
     }
     Err(format!("active cache object absent {h}").into())
 }
-fn link(source: &Path, target: &Path) -> Result<()> {
+fn link(source: &Path, target: &Path, expected_hash: &str) -> Result<()> {
     // Working editor files must never be writable aliases of canonical objects.
     let input = fs::File::open(source)?;
     let expected = input.metadata()?.len();
@@ -131,9 +131,21 @@ fn link(source: &Path, target: &Path) -> Result<()> {
         .write(true)
         .create_new(true)
         .open(target)?;
-    let copied = std::io::copy(&mut input.take(expected + 1), &mut output)?;
-    if copied != expected {
-        return Err("export source changed during copy".into());
+    let mut reader = input.take(expected + 1);
+    let mut digest = Sha256::new();
+    let mut copied = 0u64;
+    let mut buffer = [0; 65536];
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        output.write_all(&buffer[..count])?;
+        digest.update(&buffer[..count]);
+        copied += count as u64;
+    }
+    if copied != expected || format!("{:x}", digest.finalize()) != expected_hash {
+        return Err("export copy hash/size mismatch".into());
     }
     Ok(())
 }
@@ -157,6 +169,14 @@ fn rows(docs: &BTreeMap<String, Value>) -> Result<Value> {
     let language = docs["scene.json"]["language_event_bindings"][lang]
         .as_array()
         .ok_or("language events")?;
+    if language
+        .iter()
+        .any(|e| !e["picture_binding_override"].is_null())
+    {
+        return Err(
+            "picture binding overrides require native effective-binding editor support".into(),
+        );
+    }
     let native_ids = language
         .iter()
         .map(|e| text(e, "event_id"))
@@ -267,10 +287,14 @@ fn export(spec: &Path) -> Result<()> {
     for (p, h) in originals {
         let dest = out.join(format!("media/{h}.png"));
         if !dest.exists() {
-            link(&p, &dest)?;
+            link(&p, &dest, &h)?;
         }
     }
-    link(&movie, &out.join("performance.mp4"))?;
+    link(
+        &movie,
+        &out.join("performance.mp4"),
+        text(&s["movie"], "sha256")?,
+    )?;
     let data = json!({"schema":"reel.cel-sorter-session.v1","title":s["title"],"scene_id":docs["scene.json"]["scene_id"],"expected_inputs":hashes,"rows":r,"images":images,"sample_rate":docs["alignment.json"]["sample_rate"],"end_sample":docs["alignment.json"]["cue_end_sample"],"fps_numerator":docs["profile.json"]["frame_rate_numerator"],"fps_denominator":docs["profile.json"]["frame_rate_denominator"],"movie":"performance.mp4"});
     write(&out.join("session.json"), &data)?;
     fs::write(out.join("index.html"), include_str!("../cel_sorter.html"))?;
@@ -480,6 +504,18 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn copied_bytes_are_checked_against_expected_identity() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("source");
+        fs::write(&p, b"evil").unwrap();
+        assert!(
+            link(&p, &d.path().join("target"), &hash(b"good"))
+                .unwrap_err()
+                .to_string()
+                .contains("hash/size")
+        );
+    }
     fn fixture(project: &Path) {
         fs::create_dir_all(project).unwrap();
         for name in FILES {
