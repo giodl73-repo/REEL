@@ -5,6 +5,28 @@ It proposes wire and adapter contracts, not a deployed API. The executable model
 checks selected invariants, not complete codec conformance or real-format parsing.
 Existing scene, registry, receipt and cache formats remain authoritative today.
 
+## Format policy
+
+There is not yet an adopted official graph-index format. Existing producers keep
+their versioned object/version registries and cache-report/receipt schemas.
+This draft proposes one internal graph/claim contract per supported major
+version, with multiple explicit source-format adapters. The synthetic test index
+schema is a fixture, not a format projects should start producing.
+
+Adapters advertise exact supported `(producer/schema, encoding, adapter version,
+config)` combinations. Encoding is transport, not evidence semantics: identity
+and gzip do not need different claim models. Multiple source formats normalize
+to the same internal contract, preserving original source descriptors/witnesses;
+avoid pairwise conversions among every inventory/receipt format. Unknown schema
+versions are errors, never guessed from filenames or overlapping field names.
+
+Internal format migration builds and verifies a new immutable index from a
+supported original source or proven lossless prior representation, records its
+transformation, and then admits the new descriptor. Keep older evidence and
+compatible readers for retained snapshots. Never rewrite an old index under its
+existing hash. Derived database storage layouts may vary by backend/version;
+they are not alternative authorities for artifact identity or root intent.
+
 ## 1. Content identity and node envelope
 
 Every node uses the existing CAS rule: SHA-256 of exactly the bytes stored.

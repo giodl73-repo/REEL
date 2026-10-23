@@ -94,3 +94,18 @@ New reviewed target file-byte SHA-256 values:
 
 - `asset-graph-contracts.md`: `bdb55cc368a6d11a5b81f8eb8b17fd7fa02eeef475fc887426369849cd02f232`
 - `graph_architecture.rs`: `9f4739378805d61e6e7ce0515d4e25797081bc5f9e1035e14f37f3050a9ccae4`
+
+## Fifty-scenario follow-up
+
+The [scenario lessons](asset-graph-scenario-learnings.md) record the next 25 cases
+and their producer-applied review through the same four technical/provenance
+checklists. New model corrections hold unknown failure-domain identity and bind
+prepared indexes to authority namespace, configuration and explicit schema.
+The format-policy contract now distinguishes supported external source formats
+from the proposed internal index contract. All 50 model scenarios and the local
+Clippy/format/role/diff checks pass; production adoption gates remain open.
+
+Corrected target file-byte SHA-256 values for this increment:
+
+- `asset-graph-contracts.md`: `e6e4eb63e782cf9a6a15dfa06671140897f433dea1ff1b95f8f12fd5f93d64c2`
+- `graph_architecture.rs`: `964f46477e60ab6a7716dbb9825c86586dae9a368fee3c8a07def66f867c1da5`

@@ -112,7 +112,7 @@ fn users<'a>(roots: &'a BTreeMap<String, Root>, h: &str, location: &str) -> BTre
         })
         .collect()
 }
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 struct Heads(BTreeMap<String, u64>);
 impl Heads {
     fn admit(&mut self, changes: &[(&str, u64, u64)]) -> Result<(), &'static str> {
@@ -209,6 +209,8 @@ fn removal_allowed(
 ) -> bool {
     !demand
         && complete
+        && !source_failure_domain.trim().is_empty()
+        && !retained_failure_domain.trim().is_empty()
         && planned_revision == now_revision
         && source_failure_domain != retained_failure_domain
         && retained_verified
@@ -223,14 +225,20 @@ struct Claim {
     payload_verified: bool,
 }
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct EvidenceIndex {
+    schema: String,
     project: String,
+    authority_namespace: String,
+    config_hash: Hash,
     complete: bool,
     shards: BTreeMap<String, Hash>,
 }
 #[derive(Clone, PartialEq, Eq)]
 struct Descriptor {
     project: String,
+    authority_namespace: String,
+    config_hash: Hash,
     source: Hash,
     adapter_version: u32,
 }
@@ -243,6 +251,23 @@ struct Lookup {
     complete: bool,
     reads: usize,
     provenance: Descriptor,
+}
+#[derive(Debug, PartialEq, Eq)]
+enum CapturedMembership {
+    Present,
+    AbsentAtCapture,
+    Unknown,
+}
+impl Lookup {
+    fn membership(&self) -> CapturedMembership {
+        if !self.claims.is_empty() {
+            CapturedMembership::Present
+        } else if self.complete {
+            CapturedMembership::AbsentAtCapture
+        } else {
+            CapturedMembership::Unknown
+        }
+    }
 }
 #[derive(Clone, Copy)]
 struct LookupLimits {
@@ -305,8 +330,16 @@ impl EvidenceAdapter<'_> {
         };
         let index: EvidenceIndex =
             meter.read(self.cas, "evidence-index-v1", &self.descriptor.source)?;
+        if index.schema != "synthetic.evidence-index.v1" {
+            return Err("Unsupported evidence index schema".into());
+        }
         if index.project != self.descriptor.project {
             return Err("Evidence project scope mismatch".into());
+        }
+        if index.authority_namespace != self.descriptor.authority_namespace
+            || index.config_hash != self.descriptor.config_hash
+        {
+            return Err("Evidence authority/config mismatch; prepare a matching index".into());
         }
         let mut claims = Vec::new();
         let mut reads = 1;
@@ -337,10 +370,15 @@ fn evidence(cas: &mut Cas, rows: Vec<Claim>, complete: bool) -> Descriptor {
         .collect();
     Descriptor {
         project: "synthetic-project".into(),
+        authority_namespace: "synthetic-authority".into(),
+        config_hash: asset("default-adapter-config"),
         source: cas.put(
             "evidence-index-v1",
             &EvidenceIndex {
+                schema: "synthetic.evidence-index.v1".into(),
                 project: "synthetic-project".into(),
+                authority_namespace: "synthetic-authority".into(),
+                config_hash: asset("default-adapter-config"),
                 complete,
                 shards,
             },
@@ -809,5 +847,345 @@ fn invalid_unicode_short_or_uppercase_subjects_are_errors_without_slicing_panics
     };
     for invalid in ["अ", "x", "", &"A".repeat(64)] {
         assert!(adapter.lookup(invalid, 2).is_err());
+    }
+}
+
+/// Second scenario batch: design exploration only, not production I/O tests.
+mod additional_scenarios {
+    use super::*;
+
+    fn bindings() -> BTreeMap<String, Hash> {
+        BTreeMap::from([("cel".into(), asset("cel")), ("cue".into(), asset("cue"))])
+    }
+    fn named_scenes() -> BTreeMap<String, BTreeMap<String, Hash>> {
+        episode()
+            .into_iter()
+            .enumerate()
+            .map(|(i, rows)| (format!("scene-{i:02}"), rows))
+            .collect()
+    }
+
+    #[test]
+    fn identical_republication_reuses_all_nodes() {
+        let mut cas = Cas::default();
+        let scenes = episode();
+        let a = snapshot(&mut cas, &scenes);
+        let count = cas.0.len();
+        assert_eq!(snapshot(&mut cas, &scenes), a);
+        assert_eq!(cas.0.len(), count);
+    }
+    #[test]
+    fn binding_insertion_order_does_not_change_sorted_map_identity() {
+        let mut cas = Cas::default();
+        let a = bindings();
+        let b: BTreeMap<_, _> = a
+            .iter()
+            .rev()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        assert_eq!(
+            cas.put("node-v1", &Node::Bindings(a)),
+            cas.put("node-v1", &Node::Bindings(b))
+        );
+    }
+    #[test]
+    fn moving_a_binding_between_scenes_preserves_whole_episode_membership() {
+        let mut cas = Cas::default();
+        let mut scenes = episode();
+        let a = snapshot(&mut cas, &scenes);
+        let moved = scenes[0].remove("binding-0000").unwrap();
+        scenes[1].insert("moved-use-site".into(), moved);
+        let b = snapshot(&mut cas, &scenes);
+        assert_ne!(a, b);
+        assert_eq!(
+            inputs(&cas, &a, &mut 11).unwrap(),
+            inputs(&cas, &b, &mut 11).unwrap()
+        );
+    }
+    #[test]
+    fn removing_a_scene_writes_only_a_root_and_preserves_the_old_snapshot() {
+        let mut cas = Cas::default();
+        let mut scenes = named_scenes();
+        let old = snapshot_named(&mut cas, &scenes);
+        let before = cas.0.len();
+        scenes.remove("scene-00");
+        let new = snapshot_named(&mut cas, &scenes);
+        assert_eq!(cas.0.len() - before, 1);
+        assert_eq!(inputs(&cas, &new, &mut 10).unwrap().len(), 900);
+        assert_eq!(inputs(&cas, &old, &mut 11).unwrap().len(), 1000);
+    }
+    #[test]
+    fn topology_change_is_an_explicit_diff_gap_not_an_empty_removal_set() {
+        let mut cas = Cas::default();
+        let mut scenes = named_scenes();
+        let a = snapshot_named(&mut cas, &scenes);
+        scenes.remove("scene-00");
+        let b = snapshot_named(&mut cas, &scenes);
+        assert!(changed_page_inputs(&cas, &a, &b, &mut 0).is_err());
+    }
+    #[test]
+    fn deletion_merges_with_an_unchanged_peer() {
+        let base = bindings();
+        let mut left = base.clone();
+        left.remove("cel");
+        assert_eq!(merge_bindings(&base, &left, &base).unwrap(), left);
+    }
+    #[test]
+    fn deletion_conflicts_with_an_edit_to_the_same_binding() {
+        let base = bindings();
+        let (mut left, mut right) = (base.clone(), base.clone());
+        left.remove("cel");
+        right.insert("cel".into(), asset("changed"));
+        assert!(merge_bindings(&base, &left, &right).is_err());
+    }
+    #[test]
+    fn identical_concurrent_edits_merge_without_a_false_conflict() {
+        let base = bindings();
+        let mut edited = base.clone();
+        edited.insert("cel".into(), asset("same-change"));
+        assert_eq!(merge_bindings(&base, &edited, &edited).unwrap(), edited);
+    }
+    #[test]
+    fn disjoint_added_binding_ids_merge() {
+        let base = bindings();
+        let (mut left, mut right) = (base.clone(), base.clone());
+        left.insert("new-cel".into(), asset("new-cel"));
+        right.insert("new-cue".into(), asset("new-cue"));
+        let merged = merge_bindings(&base, &left, &right).unwrap();
+        assert_eq!(merged.len(), 4);
+        assert_eq!(merged["new-cel"], left["new-cel"]);
+        assert_eq!(merged["new-cue"], right["new-cue"]);
+    }
+    #[test]
+    fn competing_additions_at_the_same_id_require_resolution() {
+        let base = bindings();
+        let (mut left, mut right) = (base.clone(), base.clone());
+        left.insert("new".into(), asset("a"));
+        right.insert("new".into(), asset("b"));
+        assert!(merge_bindings(&base, &left, &right).is_err());
+    }
+    #[test]
+    fn releasing_one_draft_preserves_another_and_only_last_release_removes_demand() {
+        let mut roots = BTreeMap::from([
+            ("draft/a".into(), root(&["cel"], &["hot"])),
+            ("draft/b".into(), root(&["cel"], &["hot"])),
+        ]);
+        roots.remove("draft/a");
+        assert_eq!(users(&roots, "cel", "hot"), BTreeSet::from(["draft/b"]));
+        roots.remove("draft/b");
+        assert!(users(&roots, "cel", "hot").is_empty()); // not removal permission
+    }
+    #[test]
+    fn abandoning_a_draft_does_not_release_a_golden_shared_input() {
+        let mut roots = BTreeMap::from([
+            ("draft".into(), root(&["cel", "candidate"], &["hot"])),
+            ("golden".into(), root(&["cel"], &["hot"])),
+        ]);
+        roots.remove("draft");
+        assert_eq!(users(&roots, "cel", "hot"), BTreeSet::from(["golden"]));
+        assert!(users(&roots, "candidate", "hot").is_empty());
+    }
+    #[test]
+    fn delivered_variants_have_separate_output_demand_and_shared_inputs() {
+        let mut clean = root(&["cel"], &["hot"]);
+        clean.outputs.insert("clean-movie".into());
+        let mut captioned = root(&["cel"], &["hot"]);
+        captioned.outputs.insert("captioned-movie".into());
+        let mut roots = BTreeMap::from([("clean".into(), clean), ("captioned".into(), captioned)]);
+        roots.remove("captioned");
+        assert_eq!(users(&roots, "clean-movie", "hot").len(), 1);
+        assert_eq!(users(&roots, "cel", "hot").len(), 1);
+        assert!(users(&roots, "captioned-movie", "hot").is_empty());
+    }
+    #[test]
+    fn job_to_draft_handoff_overlaps_protection() {
+        let mut protection = root(&["input"], &["hot"]);
+        protection.outputs.insert("preview".into());
+        let mut roots = BTreeMap::from([("job".into(), protection.clone())]);
+        assert_eq!(users(&roots, "preview", "hot").len(), 1);
+        roots.insert("draft".into(), protection);
+        assert_eq!(users(&roots, "preview", "hot").len(), 2);
+        roots.remove("job");
+        assert_eq!(users(&roots, "preview", "hot"), BTreeSet::from(["draft"]));
+    }
+    #[test]
+    fn checkpoint_roundtrip_preserves_revisions_and_rejects_stale_creation() {
+        let mut heads = Heads::default();
+        heads.admit(&[("draft", 0, 1)]).unwrap();
+        let checkpoint = serde_json::to_vec(&heads).unwrap();
+        let mut restored: Heads = serde_json::from_slice(&checkpoint).unwrap();
+        assert!(restored.admit(&[("draft", 0, 1)]).is_err());
+        restored.admit(&[("draft", 1, 2)]).unwrap();
+        assert_eq!(restored.0["draft"], 2);
+    }
+    #[test]
+    fn revision_overflow_cannot_partially_apply_an_independent_key() {
+        let mut heads = Heads::default();
+        heads.0.insert("exhausted".into(), u64::MAX);
+        let before = heads.0.clone();
+        assert!(
+            heads
+                .admit(&[("new", 0, 1), ("exhausted", u64::MAX, 0)])
+                .is_err()
+        );
+        assert_eq!(heads.0, before);
+    }
+    #[test]
+    fn unknown_failure_domain_never_counts_as_an_independent_backup() {
+        for unknown in ["", " "] {
+            assert!(!removal_allowed(false, true, 1, 1, unknown, "known", true));
+            assert!(!removal_allowed(false, true, 1, 1, "known", unknown, true));
+        }
+    }
+    #[test]
+    fn complete_inventory_absence_is_only_absence_from_the_captured_membership() {
+        let mut cas = Cas::default();
+        let descriptor = evidence(&mut cas, vec![], true);
+        let result = EvidenceAdapter {
+            cas: &cas,
+            descriptor,
+        }
+        .lookup(&asset("absent"), 2)
+        .unwrap();
+        assert_eq!(result.membership(), CapturedMembership::AbsentAtCapture);
+        let partial = evidence(&mut cas, vec![], false);
+        assert_eq!(
+            EvidenceAdapter {
+                cas: &cas,
+                descriptor: partial
+            }
+            .lookup(&asset("absent"), 2)
+            .unwrap()
+            .membership(),
+            CapturedMembership::Unknown
+        );
+    }
+    #[test]
+    fn same_project_different_authority_namespace_cannot_reuse_an_index() {
+        let mut cas = Cas::default();
+        let mut descriptor = evidence(&mut cas, vec![claim(0, true)], true);
+        descriptor.authority_namespace = "different-authority".into();
+        assert!(
+            EvidenceAdapter {
+                cas: &cas,
+                descriptor
+            }
+            .lookup(&claim(0, true).subject, 2)
+            .is_err()
+        );
+    }
+    #[test]
+    fn adapter_configuration_change_requires_a_new_prepared_index() {
+        let mut cas = Cas::default();
+        let mut descriptor = evidence(&mut cas, vec![claim(0, true)], true);
+        descriptor.config_hash = asset("new-interpretation");
+        assert!(
+            EvidenceAdapter {
+                cas: &cas,
+                descriptor
+            }
+            .lookup(&claim(0, true).subject, 2)
+            .is_err()
+        );
+    }
+    #[test]
+    fn an_unknown_index_schema_is_not_silently_guessed() {
+        let mut cas = Cas::default();
+        let mut descriptor = evidence(&mut cas, vec![claim(0, true)], true);
+        let mut index: EvidenceIndex = cas.read("evidence-index-v1", &descriptor.source).unwrap();
+        index.schema = "synthetic.evidence-index.v999".into();
+        descriptor.source = cas.put("evidence-index-v1", &index);
+        assert!(
+            matches!(EvidenceAdapter { cas: &cas, descriptor }.lookup(&claim(0, true).subject, 2), Err(e) if e == "Unsupported evidence index schema")
+        );
+    }
+    #[test]
+    fn unrelated_corrupt_shard_is_not_scanned_but_its_own_lookup_fails() {
+        let mut cas = Cas::default();
+        let a = claim(0, true);
+        let mut b = claim(1, true);
+        b.subject = format!(
+            "{}{}",
+            if a.subject.starts_with("00") {
+                "ff"
+            } else {
+                "00"
+            },
+            &b.subject[2..]
+        );
+        let descriptor = evidence(&mut cas, vec![a.clone(), b.clone()], false);
+        let index: EvidenceIndex = cas.read("evidence-index-v1", &descriptor.source).unwrap();
+        cas.0
+            .get_mut(&index.shards[&b.subject[..2]])
+            .unwrap()
+            .push(0);
+        let adapter = EvidenceAdapter {
+            cas: &cas,
+            descriptor,
+        };
+        let found = adapter.lookup(&a.subject, 2).unwrap();
+        assert_eq!(found.reads, 2);
+        assert_eq!(found.claims, vec![a]);
+        assert!(adapter.lookup(&b.subject, 2).is_err());
+    }
+    #[test]
+    fn a_missing_referenced_shard_is_an_error_not_an_empty_success() {
+        let mut cas = Cas::default();
+        let descriptor = evidence(&mut cas, vec![claim(0, true)], true);
+        let index: EvidenceIndex = cas.read("evidence-index-v1", &descriptor.source).unwrap();
+        cas.0.remove(index.shards.values().next().unwrap());
+        assert!(
+            EvidenceAdapter {
+                cas: &cas,
+                descriptor
+            }
+            .lookup(&claim(0, true).subject, 2)
+            .is_err()
+        );
+    }
+    #[test]
+    fn zero_record_budget_cannot_emit_a_present_claim() {
+        let mut cas = Cas::default();
+        let descriptor = evidence(&mut cas, vec![claim(0, true)], true);
+        let adapter = EvidenceAdapter {
+            cas: &cas,
+            descriptor,
+        };
+        let limits = LookupLimits {
+            node_bytes: 65536,
+            total_bytes: 131072,
+            records: 0,
+            nodes: 2,
+        };
+        assert!(
+            adapter
+                .lookup_limited(&claim(0, true).subject, limits)
+                .is_err()
+        );
+        assert_eq!(
+            adapter
+                .lookup(&claim(0, true).subject, 2)
+                .unwrap()
+                .membership(),
+            CapturedMembership::Present
+        );
+    }
+    #[test]
+    fn byte_counter_overflow_is_an_error_without_wrapping() {
+        let mut cas = Cas::default();
+        let h = cas.put("test", &1);
+        let mut meter = Meter {
+            limits: LookupLimits {
+                node_bytes: usize::MAX,
+                total_bytes: usize::MAX,
+                records: usize::MAX,
+                nodes: usize::MAX,
+            },
+            bytes: usize::MAX,
+            nodes: 0,
+        };
+        assert!(meter.read::<u64>(&cas, "test", &h).is_err());
+        assert_eq!(meter.bytes, usize::MAX);
+        assert_eq!(meter.nodes, 0);
     }
 }
