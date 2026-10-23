@@ -1,3 +1,6 @@
+use reel_assets::inventory_evidence::sidecar::file_store::catalog::{
+    Candidate, Catalog, MutationContext, Scope, protection,
+};
 use reel_assets::{
     inventory_evidence::{
         self as evidence,
@@ -423,6 +426,10 @@ fn subprocess_writer() {
     let cache = PathBuf::from(cache);
     let id = std::env::var("REEL_SIDECAR_TEST_ID").unwrap();
     let mode = std::env::var("REEL_SIDECAR_TEST_MODE").unwrap();
+    if mode.starts_with("catalog-") {
+        catalog_child(&cache, &id, &mode);
+        return;
+    }
     let mut store = FileStore::begin(&cache, &staging, &id, Limits::default()).unwrap();
     fs::write(cache.join(format!("{id}.ready")), b"ready").unwrap();
     wait_for(|| cache.join("go").exists());
@@ -919,5 +926,196 @@ fn interrupted_handoff_can_retry_but_never_overwrites_a_bad_retained_winner() {
         writer
             .plan_retirement(&retained, &root, index.source())
             .is_ok()
+    );
+}
+
+fn catalog_scope() -> Scope {
+    Scope {
+        project_id: "synthetic".into(),
+        authority_namespace: "fixture".into(),
+        catalog_id: hash(b"integration catalog"),
+    }
+}
+fn catalog_setup(f: &Fixture, keys: &[&str]) -> (Catalog, reel_assets::Config, evidence::Blob) {
+    let retained = retained_parent(f);
+    let (mut writer, index, root) = sealed(f, "catalog-index");
+    writer.handoff(&retained, &root, index.source()).unwrap();
+    drop(writer);
+    let config = capacity_config(f);
+    let dir = f.cache.join("catalog");
+    fs::create_dir(&dir).unwrap();
+    let context = MutationContext {
+        project_root: &f.cache,
+        storage: &config,
+        overhead_bytes: 64 * 1024,
+    };
+    let catalog = Catalog::initialize(&context, &f.cache, &dir, &catalog_scope()).unwrap();
+    for key in keys {
+        catalog.create_key(&context, key).unwrap();
+    }
+    fs::write(
+        f.cache.join("catalog-root.json"),
+        serde_json::to_vec(&json!({"sha256":root.sha256,"bytes":root.bytes})).unwrap(),
+    )
+    .unwrap();
+    fs::write(f.cache.join("catalog-storage.json"),json!({"path_policy":"configured-local-roots","cache_roots":[f.cache],"archive_roots":[],
+        "coordination_root":f.cache.join("shared-coordination"),"capacity":{"minimum_free_bytes":0,"minimum_free_basis_points":0}}).to_string()).unwrap();
+    (catalog, config, root)
+}
+fn catalog_child(cache: &Path, id: &str, mode: &str) {
+    let config: reel_assets::Config =
+        serde_json::from_slice(&fs::read(cache.join("catalog-storage.json")).unwrap()).unwrap();
+    let catalog = Catalog::open(cache, &cache.join("catalog"), &catalog_scope()).unwrap();
+    let index = prepared();
+    let v: serde_json::Value =
+        serde_json::from_slice(&fs::read(cache.join("catalog-root.json")).unwrap()).unwrap();
+    let root = evidence::Blob {
+        sha256: v["sha256"].as_str().unwrap().into(),
+        bytes: v["bytes"].as_u64().unwrap(),
+    };
+    let candidate = Candidate::verify(
+        cache,
+        &cache.join("retained-indexes"),
+        &root,
+        index.source(),
+        sidecar::ReadLimits::default(),
+    )
+    .unwrap();
+    let context = MutationContext {
+        project_root: cache,
+        storage: &config,
+        overhead_bytes: 64 * 1024,
+    };
+    fs::write(cache.join(format!("{id}.ready")), b"ready").unwrap();
+    wait_for(|| cache.join("go").exists());
+    let key = if mode == "catalog-independent" {
+        id
+    } else {
+        "race"
+    };
+    let result = catalog.admit(&context, key, 0, &candidate);
+    if mode == "catalog-commit-kill" {
+        assert!(result.is_err());
+        fs::write(
+            cache.join(format!("{id}.published")),
+            b"stopped-before-head",
+        )
+        .unwrap();
+        loop {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    let status = match result {
+        Ok(_) => "committed",
+        Err(e) => {
+            let error = e.to_string();
+            assert!(
+                error.contains("revision conflict")
+                    || error.contains("session already has an owner"),
+                "unexpected error: {error}"
+            );
+            "conflict"
+        }
+    };
+    fs::write(cache.join(format!("{id}.result")), status).unwrap();
+}
+
+#[test]
+fn catalog_processes_conflict_on_one_key_without_losing_a_committed_root() {
+    let f = Fixture::new();
+    let (catalog, _config, root) = catalog_setup(&f, &["race"]);
+    let mut first = worker(&f, "first", "catalog-race");
+    let mut second = worker(&f, "second", "catalog-race");
+    wait_for(|| f.cache.join("first.ready").exists() && f.cache.join("second.ready").exists());
+    fs::write(f.cache.join("go"), b"go").unwrap();
+    wait_for(|| first.0.try_wait().unwrap().is_some() && second.0.try_wait().unwrap().is_some());
+    assert!(first.0.wait().unwrap().success());
+    assert!(second.0.wait().unwrap().success());
+    let mut statuses = [
+        fs::read_to_string(f.cache.join("first.result")).unwrap(),
+        fs::read_to_string(f.cache.join("second.result")).unwrap(),
+    ];
+    statuses.sort();
+    assert_eq!(statuses, ["committed", "conflict"]);
+    assert_eq!(catalog.read("race").unwrap().revision, 1);
+    assert!(catalog.read("race").unwrap().root() == Some(root));
+    assert_eq!(
+        protection::collect(&catalog, protection::Limits::default())
+            .unwrap()
+            .protected_nodes(),
+        18
+    );
+}
+
+#[test]
+fn catalog_processes_publish_independent_keys_using_shared_retention_reads() {
+    let f = Fixture::new();
+    let (catalog, _config, _root) = catalog_setup(&f, &["first", "second"]);
+    let mut first = worker(&f, "first", "catalog-independent");
+    let mut second = worker(&f, "second", "catalog-independent");
+    wait_for(|| f.cache.join("first.ready").exists() && f.cache.join("second.ready").exists());
+    fs::write(f.cache.join("go"), b"go").unwrap();
+    wait_for(|| first.0.try_wait().unwrap().is_some() && second.0.try_wait().unwrap().is_some());
+    assert!(first.0.wait().unwrap().success());
+    assert!(second.0.wait().unwrap().success());
+    for key in ["first", "second"] {
+        assert_eq!(catalog.read(key).unwrap().revision, 1);
+        assert_eq!(
+            fs::read_to_string(f.cache.join(format!("{key}.result"))).unwrap(),
+            "committed"
+        );
+    }
+    let snapshot = protection::collect(&catalog, protection::Limits::default()).unwrap();
+    assert_eq!(snapshot.keys(), 2);
+    assert_eq!(snapshot.protected_nodes(), 18);
+}
+
+#[cfg(windows)]
+#[test]
+fn killed_catalog_writer_replays_durable_commit_after_head_replacement_failure() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let f = Fixture::new();
+    let (catalog, config, root) = catalog_setup(&f, &["race"]);
+    let head = f
+        .cache
+        .join("catalog/keys")
+        .join(hash(b"race"))
+        .join("head.json");
+    // Actual Windows sharing failure: permit reads/writes, deny DELETE needed
+    // by MoveFileExW. Fence/decision/state publication still reaches disk.
+    let blocked = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0x1 | 0x2)
+        .open(&head)
+        .unwrap();
+    let mut child = worker(&f, "interrupted-catalog", "catalog-commit-kill");
+    wait_for(|| f.cache.join("interrupted-catalog.ready").exists());
+    fs::write(f.cache.join("go"), b"go").unwrap();
+    wait_for(|| f.cache.join("interrupted-catalog.published").exists());
+    assert!(
+        f.cache
+            .join("catalog/keys")
+            .join(hash(b"race"))
+            .join("decisions/00000000000000000001.json")
+            .is_file()
+    );
+    child.0.kill().unwrap();
+    child.0.wait().unwrap();
+    drop(blocked);
+    assert!(catalog.read("race").is_err());
+    assert!(protection::collect(&catalog, protection::Limits::default()).is_err());
+    let context = MutationContext {
+        project_root: &f.cache,
+        storage: &config,
+        overhead_bytes: 64 * 1024,
+    };
+    let recovered = catalog.recover(&context, "race").unwrap();
+    assert_eq!(recovered.revision, 1);
+    assert!(recovered.root() == Some(root));
+    assert_eq!(
+        protection::collect(&catalog, protection::Limits::default())
+            .unwrap()
+            .protected_nodes(),
+        18
     );
 }

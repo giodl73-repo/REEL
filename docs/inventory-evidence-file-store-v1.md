@@ -101,10 +101,11 @@ publication and reacquisition of that session, partial-file recovery rejection,
 complete-stage exact retry, corrupt existing winners, missing CAS aliases,
 budget exhaustion/recovery, scope mismatch and Windows junction rejection.
 
-All 27 backend suite tests pass locally, including two concurrent writer child
-processes and writers killed after publication and partial staged retirement.
-The complete reel-assets suite passes 375 tests: 195 unit, five prior
-integration, 100 model, 23 source adapter, 25 sidecar and 27 backend.
+All 30 backend suite tests pass locally, including concurrent writers and catalog
+writers, plus termination after publication, partial staged retirement and a
+catalog commit before head replacement. The complete reel-assets suite passes
+395 tests: 212 unit, five prior integration, 100 model, 23 source adapter,
+25 sidecar and 30 backend.
 Strict all-target Clippy, formatting, ROLES
 structure and diff checks pass. This is a Windows local-filesystem validation;
 the Unix-specific symlink/directory-sync paths are not validated by this run.
@@ -112,8 +113,9 @@ the Unix-specific symlink/directory-sync paths are not validated by this run.
 Optional [capacity admission and verified staged-link retirement](inventory-evidence-handoff-v1.md)
 now provide managed begin/recovery, whole-index handoff and separate dry-run/
 bounded execution APIs. Low-level writer APIs retain their external-admission
-contract. Before live adoption, implement the exact source/current-root catalog
-with revisions and wire managed producers/collector protection. Existing
+contract. The [revisioned index catalog](inventory-evidence-catalog-v1.md) now
+offers per-key admission and positive-only collector facts. Before live adoption,
+wire managed producers and complete collector protection coverage. Existing
 collectors are not updated here. Automatic cleanup remains inappropriate;
 shadow planner parity, time/cancellation, physical accounting and platform/device
 crash validation remain separate work.

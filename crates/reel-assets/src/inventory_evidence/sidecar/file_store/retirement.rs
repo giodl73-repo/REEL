@@ -220,6 +220,41 @@ fn verify_staging(
     }
     Ok(())
 }
+
+/// Catalog admission reuses exactly the retained-anchor verification rules.
+/// The descriptor set is private and carries no current-selection authority.
+pub(super) fn verify_anchor(
+    cache: &Path,
+    parent: &Path,
+    root: &Blob,
+    source: &Source,
+    limits: ReadLimits,
+) -> Result<(validation::ValidatedIndex, Blob)> {
+    let cache = checked_directory(cache)?;
+    let parent = checked_directory(parent)?;
+    if parent == cache
+        || !parent.starts_with(&cache)
+        || crate::admission::volume_id(&parent)? != crate::admission::volume_id(&cache)?
+        || !valid_oid(&root.sha256)
+    {
+        return Err("Invalid explicit retained-index scope".into());
+    }
+    let retained = parent.join(&root.sha256);
+    checked_directory(&retained)?;
+    let _owner = reader_owner(&retained.join("owner.lock"))?;
+    let mut reader = ReadOnlyStore::new(&cache, limits.node_bytes)?;
+    let graph = validation::validate(&mut reader, root, source, limits)?;
+    let expected = receipt(root, source, &graph)?;
+    verify_retained(&retained, &graph, &expected)?;
+    let bytes = encode(&expected)?;
+    Ok((
+        graph,
+        Blob {
+            sha256: hash(&bytes),
+            bytes: bytes.len() as u64,
+        },
+    ))
+}
 impl FileStore {
     /// Retain a complete verified index under its exact root hash. All current
     /// staged nodes must belong to this closure; extra/unrelated staging rejects.
@@ -264,7 +299,7 @@ impl FileStore {
         }
         let graph = closure(self, root, source)?;
         let retained = root_directory(self, parent, root)?;
-        let _owner = owner(&retained.join("owner.lock"), false)?;
+        let _owner = reader_owner(&retained.join("owner.lock"))?;
         let receipt = receipt(root, source, &graph)?;
         verify_retained(&retained, &graph, &receipt)?;
         let intent = Intent {
@@ -309,7 +344,7 @@ impl FileStore {
         if encode(&current.intent)? != encode(&plan.intent)? {
             return Err("Retirement plan is stale or for another session".into());
         }
-        let _owner = owner(&plan.intent.retained.join("owner.lock"), false)?;
+        let _owner = reader_owner(&plan.intent.retained.join("owner.lock"))?;
         atomic_control(&self.session.join("retirement.json"), &plan.intent)?;
         let graph = closure(self, &root, &plan.source)?;
         let mut removed = 0;

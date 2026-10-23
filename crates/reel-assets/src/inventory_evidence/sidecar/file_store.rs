@@ -11,6 +11,7 @@ const SESSION_SCHEMA: &str = "reel.inventory-sidecar.session.v1";
 const SEAL_SCHEMA: &str = "reel.inventory-sidecar.seal.v1";
 const CONTROL_BYTES: u64 = 64 * 1024;
 mod capacity;
+pub mod catalog;
 pub mod retirement;
 
 /// Logical staged-byte ceiling, not a filesystem free-space reservation.
@@ -195,6 +196,13 @@ fn owner(path: &Path, create: bool) -> Result<File> {
     }
     let file = options.open(path)?;
     fs2::FileExt::try_lock_exclusive(&file).map_err(|_| "Sidecar session already has an owner")?;
+    Ok(file)
+}
+fn reader_owner(path: &Path) -> Result<File> {
+    plain(path, false)?;
+    let file = OpenOptions::new().read(true).write(true).open(path)?;
+    fs2::FileExt::try_lock_shared(&file)
+        .map_err(|_| "Retained root publication is in progress; retry")?;
     Ok(file)
 }
 fn destination(cache: &Path, blob: &Blob, node_bytes: u64, create: bool) -> Result<PathBuf> {

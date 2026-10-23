@@ -264,3 +264,37 @@ producer/collector wiring, source/current-root catalog revisions, shadow planner
 parity and platform/device durability validation. Existing collectors do not
 automatically honor new anchors. Time/cancellation, exact physical allocation,
 receipt/registry adapters and compact-control retention remain separate work.
+
+## Revisioned index catalog and collector projection increment
+
+Review base: `639bbcdc5ed4ecaf5c93e525a856dfb31bca51f3`, plus new
+`sidecar/file_store/catalog.rs`, `catalog/{protection,tests}.rs`, retained-reader
+integration, `tests/inventory_file_store.rs` and `inventory-evidence-catalog-v1.md`.
+Producer-applied review uses the three infrastructure checklists (version 1) and
+Rights and Provenance. Owner: this implementation lane. No independent review,
+human selection authority or live adoption claimed. Previous hashes remain
+the identities of earlier reviews.
+
+| Role | Severity | Finding/correction and actual evidence |
+| --- | --- | --- |
+| Registry Concurrency and Evidence Integrity | Major corrected | A replaceable head alone can reuse revisions after interruption, deletion or rollback. Immutable predecessor-bound fences, decisions and states precede atomic head replacement. Tombstones retain slots/history; equal-value updates also advance revisions. Missing/newer/pending controls fail ordinary reads. Tests reject stale writers and reset attempts, replay valid commit decisions, and consume an aborted successor without changing its predecessor root. Whole-lineage destruction/rollback still requires an external anchor; no tamper-proof guarantee. |
+| Registry Concurrency and Evidence Integrity | Major corrected | Complete pending records and truncated ones need different recovery semantics. Explicit recovery validates complete pending fences/decisions; absent decisions abort and consume a revision, while complete valid commit intent replays. Partial controls remain errors untouched, not silently repaired or downgraded to abort. Recovery rechecks observed decision identity after acquiring the key; a race requires retry. One successor is processed per call, not a hidden history replay. |
+| Storage Custody and Recovery | Major corrected | Catalog admission must not outlive its actual retained proof. Candidates verify whole retained indexes/source scope/receipts before admission and refresh proof on committed recovery. A real Windows sharing failure blocks head replacement after the durable decision; the writer is killed and recovery preserves its root. Missing retained evidence blocks admission/recovery. This is process/error recovery, not power-loss or independent source-custody proof. |
+| Asset Graph and Version Integrity | Major corrected | An inventory's listed media cannot become live media roots merely because its index is selected. Collector facts protect current INDEX-node closures only; the observed media fixture returns OutsideCatalogScope. Encoded original evidence is separate required provenance without verified-local-custody flags. Outside scope is never zero references/removal permission. Jobs, staging, historical retained anchors and media/draft roots still require their own coverage authorities. |
+| Registry Concurrency and Evidence Integrity | Major corrected | A one-pass root list can miss concurrent key changes or lost membership. Bounded membership/slot cross-check and double collection bracket full retained verification. Projection errors on missing/corrupt/pending evidence, never partial success. Explicit revalidation detects new keys, tombstones and changed revision stamps even when values repeat. This is not an execution lease against a writer after return. |
+| Registry Concurrency and Evidence Integrity | Major corrected | Per-file/node bounds do not bound a large catalog projection. Charge aggregate catalog metadata before reads across both passes and separate aggregate index bytes/nodes/objects across roots. Tests exhaust key, metadata, index-byte, node and object budgets. Current reads touch bounded current/predecessor controls without replaying all historical revisions. Historical compaction is not implemented. |
+| Storage Custody and Recovery | Advisory addressed | Exclusive retained ownership for read verification needlessly conflicts with independent keys using one index. Shared retained readers now coexist; only handoff publication needs exclusive root ownership. Actual child processes race one key (one committed outcome) and update independent keys (both succeed). Shared capacity locks remain short and per-key ownership never blocks another key's I/O. |
+| Rights and Provenance | Advisory addressed | Catalogs initialize only in an explicitly chosen existing private cache directory with caller-admitted project/authority/instance scope and shared-ledger capacity allowance. Source bodies and large descriptor sets stay in metadata assets, not Git. Private snapshots/candidates/projections have no automatic serialization/export. Fixtures use synthetic temporary data only; no daemon, private media, live cache or external service is accessed. |
+
+Validation: all 395 tests pass (212 unit, five prior integration, 100 model,
+23 source adapter, 25 sidecar, 30 backend), plus strict all-target Clippy,
+formatting, ROLES structure and diff checks. The new 17 catalog unit cases and
+three process cases distinguish protocol fixtures from actual OS concurrency
+and interrupted head replacement. Only Windows filesystem branches were run.
+
+Disposition: optional inventory-index catalog and collector-facing positive read
+interface implemented. Existing production collectors remain unchanged. Managed
+producer/config wiring, combined staging/retained/job/media scope coverage and
+shadow planner parity remain before removal integration. Platform/device
+durability, external whole-lineage anchors, history compaction, exact allocation,
+deadlines/cancellation and receipt/registry-format adapters remain separate work.

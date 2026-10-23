@@ -40,6 +40,8 @@ persistent bounded lookups through an explicit immutable store, with an optional
 wired into runtime placement or demotion. Optional
 [capacity-admitted handoff](docs/inventory-evidence-handoff-v1.md) verifies the
 complete index before retiring only redundant staging names.
+The optional [revisioned index catalog](docs/inventory-evidence-catalog-v1.md)
+provides per-key compare-and-swap updates and positive-only collector facts.
 
 ---
 

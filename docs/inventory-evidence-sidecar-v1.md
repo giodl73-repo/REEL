@@ -116,8 +116,8 @@ stale identities, corruption, missing nodes, malformed semantics/routing,
 publication interruption, false store success, byte/node/row budgets, oversized
 metadata, full-depth prefixes and native census/named-report round trips.
 All 25 sidecar tests pass, including complete-closure count/ordinal and missing
-off-path checks. With 195 unit tests, five prior integration, 100 model,
-23 source-adapter and 27 file-backend tests, the full suite passes 375 tests. Strict
+off-path checks. With 212 unit tests, five prior integration, 100 model,
+23 source-adapter and 30 file-backend tests, the full suite passes 395 tests. Strict
 all-target Clippy, formatting, ROLES structure and diff checks pass locally.
 Fixtures read no project cache or private media and do not change runtime pins.
 
@@ -125,5 +125,5 @@ The backend now has bounded-staging, process-concurrency/termination fixtures
 and optional [capacity admission plus verified handoff/retirement](inventory-evidence-handoff-v1.md).
 Whole-index validation is explicit; ordinary queries stay selective. Remaining
 adoption work: managed producer/collector integration, device/platform crash
-tests, trusted source/current-root catalog admission, cancellation/deadlines and
+tests, configuring the optional [revisioned root catalog](inventory-evidence-catalog-v1.md), cancellation/deadlines and
 shadow comparison with existing planners. Receipt/registry adapters remain separate.

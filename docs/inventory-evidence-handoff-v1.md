@@ -100,9 +100,10 @@ cross-session plans. A real child is killed after five of 18 staged names are
 removed; recovery retires the remaining 13 and the index still queries. Other
 sessions remain usable. Only isolated synthetic temporary caches are accessed.
 
-Before live adoption, wire explicit managed producers and collector protection,
-implement the source/current-root catalog with revision semantics, and establish
-shadow planner parity. Existing collectors are not upgraded by these APIs;
+An optional [inventory-index root catalog](inventory-evidence-catalog-v1.md)
+now has per-key revision semantics and a collector-facing positive projection.
+Before live adoption, wire managed producers and complete collector protection
+coverage, and establish shadow planner parity. Existing collectors are not upgraded by these APIs;
 they must honor retained/staged protection. Windows power-loss namespace
 durability, hostile-filesystem path-swap resistance, time/cancellation and exact
 physical allocation remain unproved. Receipt/registry-format adapters remain

@@ -68,7 +68,7 @@ pub struct IndexedLookup {
     pub rows_inspected: usize,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Descriptor {
     sha256: String,
