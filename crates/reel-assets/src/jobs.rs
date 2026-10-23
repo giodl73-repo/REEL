@@ -244,6 +244,15 @@ fn usage(dir: &Path, depth: usize, count: &mut usize) -> Result<u64> {
 }
 
 pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
+    run_seeded(root, manifest, None)
+}
+
+/// Explicit continuation of a trusted native recipe using registered checkpoints.
+pub fn resume(root: &Path, manifest: &Path, checkpoint: &Path) -> Result<Value> {
+    run_seeded(root, manifest, Some(resume::Seed::read(checkpoint)?))
+}
+
+fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Result<Value> {
     let bytes = fs::read(manifest)?;
     if bytes.len() > 256 * 1024 {
         return Err("Job manifest exceeds intake budget".into());
@@ -252,6 +261,18 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
     validate(&job)?;
     let cfg = config(root)?;
     let index = selected(root)?;
+    if let Some(seed) = &seed {
+        seed.validate(&job, &bytes)?;
+        let job_hash = format!("{:x}", Sha256::digest(&bytes));
+        if index.get(&job_hash) != Some(&(bytes.len() as u64))
+            || index.get(&seed.sha256) != Some(&seed.bytes)
+            || seed
+                .assets()
+                .any(|asset| index.get(&asset.sha256) != Some(&asset.bytes))
+        {
+            return Err("Original job, checkpoint descriptor and checkpoint files must be exactly registered".into());
+        }
+    }
     for tool in job.installed_tools.values() {
         if index.get(&tool.sha256) != Some(&tool.bytes) {
             return Err("Installed tool must be exactly registered".into());
@@ -268,6 +289,9 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
         .map_err(|e| format!("Job not started; admission: {e}"))?;
     let mut sources = BTreeMap::new();
     let mut source_guards = Vec::new();
+    if let Some(seed) = &seed {
+        source_guards.extend(seed.pin_registered_sources(&cfg, bytes.len() as u64)?);
+    }
     for tool in job.installed_tools.values() {
         source_guards.push(lifecycle::pin_read_only(&tool.path)?);
         verify(&tool.path, &tool.sha256, tool.bytes)?;
@@ -346,7 +370,15 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
             let target = workspace.join(relative(&output.path)?);
             fs::create_dir_all(target.parent().ok_or("Missing output parent")?)?;
         }
-        for (n, step) in job.steps.iter().enumerate() {
+        if let Some(seed) = &seed {
+            seed.stage(&cfg, &workspace)?;
+        }
+        for (n, step) in job
+            .steps
+            .iter()
+            .enumerate()
+            .skip(seed.as_ref().map_or(0, |s| s.start_step()))
+        {
             let check = || -> Result<()> {
                 if usage(&workspace, 0, &mut 0)? > job.budget_bytes {
                     return Err("Job exceeded declared workspace budget".into());
@@ -411,6 +443,9 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
         "volume_id":reservation.volume_id,"budget_bytes":job.budget_bytes,"workspace":workspace,
         "outputs":retained,"linked_input_bytes":linked_input_bytes,"copied_input_bytes":copied_input_bytes,"daemon_started":false,"original_inputs_modified":false,
         "workspace_retained":true,"creative_authority":"not-granted-by-this-receipt"});
+        if let Some(seed) = &seed {
+            result["checkpoint_resume"] = seed.evidence();
+        }
         fs::write(
             workspace.join("result.json"),
             serde_json::to_vec_pretty(&result)?,
@@ -596,6 +631,7 @@ pub fn discard(root: &Path, id: &str, manifest_oid: &str, incomplete: bool) -> R
 }
 
 mod lifecycle;
+mod resume;
 
 #[cfg(all(test, windows))]
 #[path = "jobs/tests.rs"]
