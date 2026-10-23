@@ -132,3 +132,37 @@ Corrected target file-byte SHA-256 values for this increment:
 - `asset-graph-contracts.md`: `67fa26d63589ffc50ae673a135621dfb5aafb33523c97db5045a07c6939143d5`
 - `graph_architecture.rs`: `6db78b3c4a48455c3e55c7e8c1d3aa577d048a25d9e310a9ab78287496fc6486`
 - `support/graph_scenarios_100.rs`: `e8e2a8cd1875109a2c9bd634c57d856453ae7a30836e23d853e029079be99cb1`
+
+## First real-format adapter
+
+Target: new opt-in `inventory_evidence` library module, integration tests and
+`inventory-evidence-adapter-v1.md`. Method: producer-applied review using the
+three infrastructure roles and Rights and Provenance; no independent or human
+approval claimed. No private source data, current cache inventory or media was
+used. Native producers run only in an isolated synthetic filesystem fixture.
+
+| Role | Finding and result |
+| --- | --- |
+| Asset Graph and Version Integrity | Captured registration/selection-looking diagnostics must not become current graph intent. Adapter exposes captured membership and source locators only. The producer's dependency `coverage_complete` is separately named and never physical-census completeness. |
+| Storage Custody and Recovery | Major corrected during implementation: unregistered objects have no declared-size authority, so native size-match flags can stay true while observed copies differ. Apply descriptor consistency checks only to registered objects; native producer fixture covers both cases. No inventory observation is upgraded to verified custody. |
+| Registry Concurrency and Evidence Integrity | Encoded/decoded identities and declared-length-plus-one limits verify complete sources. Seeded record bounds reject excess objects before decoding the next one; cumulative copy bounds stop within one bounded row. Native census/named producer output, copy metadata, tier mapping and original locators have parity fixtures. No persistent publication/concurrency claim. |
+| Rights and Provenance | Private source, witness and observation types have no automatic serialization. Only a count-only summary is serializable. Reported paths are data, never opened. No implicit network, adapter installation, command or archive resolution exists; a provided reader remains the caller's explicit responsibility. |
+
+Validation: 195 unit tests, five existing integration tests, 100 model scenarios
+and 23 adapter integration tests pass locally. The producer-parity test was
+additionally rechecked after strengthening assertions for the unregistered row
+and tier/link metadata. Strict all-target Clippy, formatting, ROLES structural
+and diff checks pass.
+
+Disposition: read-only library implementation completed; no CLI or existing
+planner integration, cache movement, source rewrite or runtime adoption.
+Preparation is memory-resident with input/record ceilings, not an exact RSS
+bound or constant-memory/persistent shard backend. Deadline/cancellation, catalog
+admission, receipt/registry adapters, durable sidecars and shadow-planner parity
+remain open. These limits are in the operator-facing adapter documentation.
+
+Reviewed target file-byte SHA-256:
+
+- `src/inventory_evidence.rs`: `524e457b4226bdfddb30bf957c9767030dee48a40f99cb93105ead84448274e6`
+- `tests/inventory_evidence.rs`: `79a32b9831260c220b8452ef57612a1bb4678784eaa8de5b9a67c93cc43588d6`
+- `inventory-evidence-adapter-v1.md`: `7d0a4c5559eb53f5f392df86bbdbdfdfe3d48d79831b020133e25f3a0d516129`

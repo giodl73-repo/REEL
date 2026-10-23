@@ -6,6 +6,7 @@ pub mod artifacts;
 pub mod cli;
 pub mod demotion;
 pub mod goldens;
+pub mod inventory_evidence;
 pub mod jobs;
 pub mod manager_review;
 mod output_retention;

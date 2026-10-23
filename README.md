@@ -32,6 +32,9 @@ distinguishing dependencies, inventory membership and historical versions.
 The proposed [asset graph architecture](docs/asset-graph-architecture.md) explores
 shared immutable snapshots, concurrent roots and large evidence adapters through
 executable synthetic scenarios; it does not change production storage behavior.
+An opt-in [read-only inventory evidence adapter](docs/inventory-evidence-adapter-v1.md)
+parses existing native reports with source verification and private provenance;
+it is not wired into runtime placement or demotion.
 
 ---
 

@@ -301,3 +301,6 @@ The subsequent [role review](asset-graph-roles-review.md) records corrections,
 expanded scenarios and the remaining production implementation gates.
 The [100-scenario lessons](asset-graph-scenario-learnings.md) distinguish model
 corrections from confirmed invariants and list the second and third batches.
+The first [read-only native inventory adapter](inventory-evidence-adapter-v1.md)
+now has producer-parity fixtures. It is opt-in, memory-resident and not connected
+to runtime/placement policy; persistent source-bound shards remain future work.
