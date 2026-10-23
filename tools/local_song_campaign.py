@@ -571,7 +571,7 @@ class Campaign:
         self.review(campaign,state)
         print('COMPLETE' if complete else 'ROUND COMPLETE',len(state['qualified']),'qualified slots of',len(ids),len(state['attempts']),'retained takes',flush=True)
 
-    def review(self,campaign,state):
+    def review(self,campaign,state,all_attempts=False):
         def media_view(asset,name,extension):
             source=self.locate(asset)
             if source.parent.parent.name!='sha256' or source.parent.parent.parent.name!='objects':
@@ -582,13 +582,18 @@ class Campaign:
             else:os.link(source,view)  # named disposable same-volume view; no media copy
             return view.as_uri()
         sections=[]
+        entries=[]
         for slot in campaign['slots']:
-            if slot['id'] not in state['qualified']:
+            retained=[a for a in state['attempts'] if a['slot_id']==slot['id']] if all_attempts else []
+            entries.extend([dict(slot,label=slot['label']+' — take '+str(a['attempt']),retained_take=a) for a in retained] or [slot])
+        for slot in entries:
+            result=slot.get('retained_take',state['qualified'].get(slot['id']))
+            if result is None:
                 sections.append('<section><h2>'+html.escape(slot['title']+' — '+slot['label'])+'</h2><p>Recording and lyric qualification pending.</p></section>')
                 continue
-            result=state['qualified'][slot['id']]
-            audio=media_view(result['outputs']['listening'],slot['id'],'mp3')
-            raw=media_view(result['outputs']['recording'],slot['id'],'wav')
+            media_name=result['id'] if all_attempts else slot['id']
+            audio=media_view(result['outputs']['listening'],media_name,'mp3')
+            raw=media_view(result['outputs']['recording'],media_name,'wav')
             analysis=read(self.locate(result['outputs']['lyric-analysis']))
             request=read(self.locate(result['request']))
             guide_note='<p>Audio-guided variation from the generated '+html.escape(request['guide_label'])+' recording.</p>' if request['task']=='cover' else ''
@@ -606,9 +611,12 @@ class Campaign:
             take_note='Short edition.' if edited else 'Take '+str(result['attempt'])+'.'
             sections.append('<section><h2>'+html.escape(slot['title']+' — '+slot['label'])+'</h2><p>'+html.escape(result.get('style',slot['style']))+'</p>'+guide_note+'<audio controls preload="none" src="'+html.escape(audio,quote=True)+'"></audio><p>'+str(result['qualifying_lines'])+'/'+str(result['total_lines'])+' source lines qualify; '+str(result['one_word_gap_lines'])+' with one unrecognized word. '+take_note+'</p>'+order_note+'<p><a href="'+html.escape(raw,quote=True)+'">'+('Edited WAV' if edited else 'Original WAV')+'</a></p>'+prompt+'<details><summary>Line analysis</summary>'+evidence_note+'<table>'+rows+'</table></details></section>')
         page='<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Song auditions A / B / C</title><style>body{font:18px/1.5 system-ui;max-width:960px;margin:2rem auto;padding:1rem;background:#faf7ed;color:#243b32}section{background:white;padding:1.5rem;margin:1.5rem 0;border:1px solid #ccc;border-radius:12px}audio{width:100%}td{padding:.4rem;border-bottom:1px solid #ddd}</style><h1>Song auditions A / B / C</h1><p>Private listening. Every source line has at most one unrecognized word and at least one recognized word in its best diagnostic pass. Repeated lines are allowed. Recognition is evidence; listening and Golden selection remain yours.</p>'+''.join(sections)+'</html>'
-        path=self.work/'review.html';path.write_text(page,encoding='utf-8',newline='\n')
+        if all_attempts:
+            page=page.replace('Every source line has at most one unrecognized word and at least one recognized word in its best diagnostic pass.','This page includes retained takes that have missing lines. Each card reports its actual lyric-screen result; a retained take is not necessarily qualified.')
+        basename='review-all' if all_attempts else 'review'
+        path=self.work/(basename+'.html');path.write_text(page,encoding='utf-8',newline='\n')
         asset=self.ingest(path,'Private static A/B/C audition listening page')
-        self.save('review-asset.json',asset)
+        self.save(basename+'-asset.json',asset)
 
     def restore(self,state_path,lfs_executable,all_attempts=False):
         """Actual local Git LFS restoration with invocation-only configuration.
@@ -664,12 +672,13 @@ def main():
     restore=sub.add_parser('restore');restore.add_argument('--state',required=True);restore.add_argument('--lfs-executable',required=True)
     restore.add_argument('--all-attempts',action='store_true',help='Verify retained failed takes as well as qualifying candidates')
     review=sub.add_parser('review');review.add_argument('--campaign',required=True);review.add_argument('--state',required=True)
+    review.add_argument('--all-attempts',action='store_true',help='Expose retained unqualified takes with their actual line counts, separately from the qualified listening page')
     stop=sub.add_parser('request-stop');stop.add_argument('--clear',action='store_true')
     args=p.parse_args();c=Campaign(args.root,args.assets,args.work,args.metadata_retries)
     if args.operation=='snapshot':c.freeze_runtime(args)
     elif args.operation=='run':c.run(args.campaign,args.runtime_asset,args.backend,args.adopt_backend_revision,args.repeat_after_failures,args.planner_asset,args.generation_route,args.repeat_section_lines,args.phrase_max_words,args.asr_dtype,args.timing_reference_slot,args.focus_missing_lines,args.ctc_runtime_asset,args.audio_guide_slot,args.audio_guide_strength,args.audio_guide_target_slot,args.takes_per_slot,args.audio_guide_noise_strength,args.brief_asset)
     elif args.operation=='restore':c.restore(args.state,args.lfs_executable,args.all_attempts)
-    elif args.operation=='review':c.review(read(args.campaign),read(args.state))
+    elif args.operation=='review':c.review(read(args.campaign),read(args.state),args.all_attempts)
     else:c.save('stop-after-current.json',dict(requested=not args.clear))
 
 
