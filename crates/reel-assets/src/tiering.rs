@@ -194,7 +194,7 @@ pub(crate) fn live(root: &Path, policy: &Policy) -> Result<Live> {
     let (outputs, roots) = accounting::selected_roots(root, &p, &state, &selected(root)?, &cfg)?;
     let mut current = accounting::expand(&state, accounting::retention_roots(&p, &state, &roots)?)?;
     let mut selected = accounting::expand(&state, roots)?;
-    let leased = accounting::expand(&state, state.leases.values().flatten().cloned())?;
+    let leased = accounting::expand_leased(&state, state.leases.values().flatten().cloned())?;
     let mut history = BTreeSet::new();
     for lock in &policy.history_versions {
         history.extend(versions::payload_closure(&state, lock)?);
@@ -876,6 +876,75 @@ pub(crate) mod tests {
         f.save();
         assert_eq!(Fixture::row(&f.run().unwrap(), &h)["class"], "active-lease");
     }
+    #[test]
+    fn classified_reference_working_set_is_held_only_while_explicitly_leased() {
+        let mut f = Fixture::new();
+        let output = f.put(b"compiled movie used by a draft", true);
+        let source_manifest = f.put(b"compiled-source manifest", true);
+        f.version("compiled", &source_manifest);
+        let compiled = f.state.versions.get_mut("compiled@v1").unwrap();
+        compiled.payloads.insert(output.clone());
+        compiled.dependency_contract = Some(versions::DependencyContract {
+            primary_inputs: BTreeSet::new(),
+            outputs: BTreeSet::from([output.clone()]),
+            references: BTreeSet::new(),
+        });
+        let manifest = f.put(b"draft working-set manifest", true);
+        f.version("draft", &manifest);
+        let draft = f.state.versions.get_mut("draft@v1").unwrap();
+        draft.payloads.insert(output.clone());
+        draft.dependency_contract = Some(versions::DependencyContract {
+            primary_inputs: BTreeSet::new(),
+            outputs: BTreeSet::new(),
+            references: BTreeSet::from([output.clone()]),
+        });
+        f.save();
+        f.baseline();
+        assert!(
+            !accounting::expand(&f.state, ["draft@v1".into()])
+                .unwrap()
+                .contains(&output)
+        );
+        assert_ne!(
+            Fixture::row(&f.run().unwrap(), &output)["class"],
+            "active-lease"
+        );
+        f.state
+            .lease("render", BTreeSet::from(["draft@v1".into()]))
+            .unwrap();
+        f.save();
+        let census = accounting::report(f.root()).unwrap();
+        let row = census["objects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["sha256"] == output)
+            .unwrap();
+        assert_eq!(row["leased"], true);
+        let plan = f.run().unwrap();
+        assert_eq!(Fixture::row(&plan, &output)["class"], "active-lease");
+        assert_eq!(Fixture::row(&plan, &output)["proposal"], "hold");
+        assert!(
+            f.state.versions["draft@v1"]
+                .dependency_contract
+                .as_ref()
+                .unwrap()
+                .primary_inputs
+                .is_empty()
+        );
+        f.state.release("render").unwrap();
+        f.save();
+        assert_ne!(
+            Fixture::row(&f.run().unwrap(), &output)["class"],
+            "active-lease"
+        );
+        assert!(
+            !accounting::expand(&f.state, ["draft@v1".into()])
+                .unwrap()
+                .contains(&output)
+        );
+    }
+
     #[test]
     fn baseline_tamper_and_policy_scope_are_rejected() {
         let mut f = Fixture::new();

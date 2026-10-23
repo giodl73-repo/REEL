@@ -374,6 +374,10 @@ fn control(
     Ok((base, Some(index.base_sha256)))
 }
 fn encode_control(root: &Path, control: serde_json::Value) -> Result<Vec<u8>> {
+    // Do not publish a small delta whose expanded state cannot be read back.
+    if serde_json::to_vec(&control)?.len() as u64 > MAX_EXPANDED_INDEX_BYTES {
+        return Err("Expanded version index exceeds budget".into());
+    }
     let path = root.join("registry/versions.json");
     let previous = if path.exists() {
         load(&path)?
@@ -779,6 +783,61 @@ mod tests {
         assert_eq!(after.versions.len(), 30);
         let again = compact(f.root()).unwrap();
         assert_eq!(again["generation"], after.generation);
+    }
+
+    #[test]
+    fn cache_baseline_can_exceed_git_control_budget_without_changing_versions_or_roots() {
+        let mut f = crate::tiering::tests::Fixture::new();
+        let hash = f.put(b"bounded large version control fixture", true);
+        f.version("seed", &hash);
+        compact(f.root()).unwrap();
+        let add = |start, end| {
+            transact(f.root(), |state| {
+                for n in start..end {
+                    let id = format!("technical-custody-{n:04}-{}", "x".repeat(80));
+                    state.register(Version {
+                        logical_id: id.clone(),
+                        version_id: "v1".into(),
+                        manifest_sha256: hash.clone(),
+                        payloads: [hash.clone()].into(),
+                        dependencies: vec![],
+                        deprecated: false,
+                        supersedes: None,
+                        dependency_contract: None,
+                    })?;
+                    state.select(&id, "v1")?;
+                    state.pins.insert(key(&id, "v1"));
+                    state.generation += 1;
+                }
+                Ok(())
+            })
+            .unwrap();
+        };
+        add(0, 400);
+        compact(f.root()).unwrap();
+        add(400, 800);
+        let before = serde_json::to_value(read(f.root()).unwrap()).unwrap();
+        let control_path = f.root().join("registry/versions.json");
+        assert!(fs::metadata(&control_path).unwrap().len() <= 256 * 1024);
+        let receipt = compact(f.root()).unwrap();
+        assert!(receipt["baseline"]["bytes"].as_u64().unwrap() > 256 * 1024);
+        assert!(fs::metadata(&control_path).unwrap().len() < 1024);
+        assert_eq!(
+            serde_json::to_value(read(f.root()).unwrap()).unwrap(),
+            before
+        );
+        let cfg = config(f.root()).unwrap();
+        assert_eq!(read_with(f.root(), Some(&cfg)).unwrap().versions.len(), 801);
+        let good_control = fs::read(&control_path).unwrap();
+        let oversized = serde_json::json!({"current":{"too-large":"x".repeat(MAX_EXPANDED_INDEX_BYTES as usize)}});
+        assert!(encode_control(f.root(), oversized).is_err());
+        assert_eq!(fs::read(&control_path).unwrap(), good_control);
+        let mut invalid: serde_json::Value = serde_json::from_slice(&good_control).unwrap();
+        invalid["base_bytes"] = serde_json::json!(MAX_EXPANDED_INDEX_BYTES + 1);
+        fs::write(&control_path, invalid.to_string()).unwrap();
+        assert!(read(f.root()).is_err());
+        fs::write(&control_path, vec![b' '; 256 * 1024 + 1]).unwrap();
+        assert!(read(f.root()).is_err());
     }
     #[test]
     fn cached_version_index_grows_without_relaxing_git_control_limit() {

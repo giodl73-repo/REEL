@@ -115,6 +115,14 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
         "compact-versions" => versions::compact(root),
         "compact-goldens" => crate::goldens::compact(root),
         "run-job" => crate::jobs::run(root,Path::new(arg(1)?)),
+        "run-job-window" => {
+            if args.len()!=3 {return Err("Usage: run-job-window <original-job.json> <registered-execution-window.json>".into());}
+            crate::jobs::run_with_execution_window(root,Path::new(arg(1)?),Path::new(arg(2)?))
+        },
+        "resume-job" => {
+            if args.len()!=3 {return Err("Usage: resume-job <original-job.json> <registered-checkpoint.json>".into());}
+            crate::jobs::resume(root,Path::new(arg(1)?),Path::new(arg(2)?))
+        },
         "discard-job-scratch" => crate::jobs::discard(root,arg(1)?,arg(2)?,args.get(3).is_some_and(|a|a=="--discard-incomplete")),
         "verify-active" => {
             let oid=arg(1)?;let index=selected(root)?;let size=*index.get(oid).ok_or("Unregistered hash")?;

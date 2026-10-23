@@ -533,12 +533,12 @@ fn legacy_protection(
     tiering::validate_graph(&state, 1_000_000)?;
     let mut protected = crate::accounting::expand(
         &state,
-        state
-            .current
-            .iter()
-            .map(|(id, v)| format!("{id}@{v}"))
-            .chain(state.leases.values().flatten().cloned()),
+        state.current.iter().map(|(id, v)| format!("{id}@{v}")),
     )?;
+    protected.extend(crate::accounting::expand_leased(
+        &state,
+        state.leases.values().flatten().cloned(),
+    )?);
     protected.extend(state.metadata_roots.iter().cloned());
     protected.extend(crate::goldens::control_asset(root)?.map(|(hash, _)| hash));
     if root.join("registry/object-index.json").exists() {
@@ -596,7 +596,7 @@ fn legacy_protection(
         map.validate_selection(root, &state)?;
         map.validate_primary_inputs(&state)?;
         map.filter_authoring_heads(&mut protected);
-        protected.extend(crate::accounting::expand(
+        protected.extend(crate::accounting::expand_leased(
             &state,
             state.leases.values().flatten().cloned(),
         )?);
@@ -1555,9 +1555,19 @@ mod tests {
         for lease in [false, true] {
             let mut c = historical_output_case(false, true);
             if lease {
-                c.f.state
-                    .leases
-                    .insert("actual-job".into(), BTreeSet::from(["old@v1".into()]));
+                let manifest = c.f.put(b"reference-only job working set", true);
+                c.f.version("job-inputs", &manifest);
+                let draft = c.f.state.versions.get_mut("job-inputs@v1").unwrap();
+                draft.payloads.insert(c.h.clone());
+                draft.dependency_contract = Some(crate::versions::DependencyContract {
+                    primary_inputs: BTreeSet::new(),
+                    outputs: BTreeSet::new(),
+                    references: BTreeSet::from([c.h.clone()]),
+                });
+                c.f.state.leases.insert(
+                    "actual-job".into(),
+                    BTreeSet::from(["job-inputs@v1".into()]),
+                );
                 c.f.save();
             } else {
                 c.f.policy["tier_pins"] = json!({&c.h:"hot"});

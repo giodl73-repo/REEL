@@ -343,3 +343,251 @@ fn timeout_retires_workspace_after_descendants_die_and_preserves_pid_evidence() 
     }
     no_scratch(&f);
 }
+
+fn checkpoint_fixture(f: &Fixture) -> (PathBuf, PathBuf, Value) {
+    let (manifest, mut job) = prepare(f, "copy");
+    // The skipped step would fail. Resumption must use the exact original
+    // recipe and the registered checkpoint, rather than re-executing it.
+    job["steps"] = json!([
+        {"tool":"tools/tool.exe","args":["fail","in.bin","out.bin"],"timeout_seconds":10},
+        {"tool":"tools/tool.exe","args":["mutate","prepared/checkpoint.bin","out.bin"],"timeout_seconds":10}
+    ]);
+    let bytes = serde_json::to_vec(&job).unwrap();
+    fs::write(&manifest, &bytes).unwrap();
+    let job_hash = f.put(&bytes, true);
+    let checkpoint_hash = f.put(b"checkpoint", true);
+    let seed = json!({"schema":"reel.native-job-resume.v1","job_sha256":job_hash,
+        "source_job_id":"job-original","start_step":1,
+        "files":{"prepared/checkpoint.bin":{"sha256":checkpoint_hash,"bytes":10}}});
+    let file = f.root().join("checkpoint.json");
+    let bytes = serde_json::to_vec(&seed).unwrap();
+    fs::write(&file, &bytes).unwrap();
+    f.put(&bytes, true);
+    (manifest, file, seed)
+}
+
+#[test]
+fn checkpoint_resume_keeps_recipe_and_canonical_seed_immutable_and_retires_new_job() {
+    let f = Fixture::new();
+    let (manifest, seed_path, seed) = checkpoint_fixture(&f);
+    let original = fs::read(&manifest).unwrap();
+    let result = resume(f.root(), &manifest, &seed_path).unwrap();
+    assert_eq!(result["workspace_retained"], false);
+    assert_eq!(result["manifest_sha256"], seed["job_sha256"]);
+    assert_eq!(result["checkpoint_resume"]["first_executed_step"], 1);
+    assert_eq!(fs::read(&manifest).unwrap(), original);
+    assert_eq!(
+        fs::read(result["outputs"]["copy"]["path"].as_str().unwrap()).unwrap(),
+        b"changed"
+    );
+    let oid = seed["files"]["prepared/checkpoint.bin"]["sha256"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        fs::read(object(&f.root().join("fast"), oid)).unwrap(),
+        b"checkpoint"
+    );
+    let retained = evidence(
+        &f,
+        result["retirement_evidence"]["sha256"].as_str().unwrap(),
+    );
+    assert!(retained["diagnostics"].get("step-0.log").is_none());
+    assert!(retained["diagnostics"]["step-1.log"].is_object());
+    no_scratch(&f);
+}
+
+#[test]
+fn checkpoint_resume_rejects_changed_recipe_scope_escape_and_corruption() {
+    for mode in [
+        "changed-recipe",
+        "alias",
+        "escape",
+        "over-budget",
+        "wrong-step",
+        "corrupt",
+    ] {
+        let f = Fixture::new();
+        let (manifest, seed_path, mut seed) = checkpoint_fixture(&f);
+        match mode {
+            "changed-recipe" => {
+                seed["job_sha256"] = json!("a".repeat(64));
+            }
+            "alias" => {
+                seed["files"] = json!({"in.bin":seed["files"]["prepared/checkpoint.bin"].clone()});
+            }
+            "escape" => {
+                seed["files"] =
+                    json!({"../escape.bin":seed["files"]["prepared/checkpoint.bin"].clone()});
+            }
+            "over-budget" => {
+                seed["files"]["prepared/checkpoint.bin"]["bytes"] = json!(3 * 1024 * 1024);
+            }
+            "wrong-step" => {
+                seed["start_step"] = json!(2);
+            }
+            "corrupt" => {
+                let oid = seed["files"]["prepared/checkpoint.bin"]["sha256"]
+                    .as_str()
+                    .unwrap();
+                fs::write(object(&f.root().join("fast"), oid), b"corruption").unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let bytes = serde_json::to_vec(&seed).unwrap();
+        fs::write(&seed_path, &bytes).unwrap();
+        f.put(&bytes, true);
+        assert!(resume(f.root(), &manifest, &seed_path).is_err(), "{mode}");
+        no_scratch(&f);
+    }
+}
+
+#[test]
+fn registered_recovery_window_extends_only_the_selected_step_and_preserves_recipe() {
+    let f = Fixture::new();
+    let (manifest, seed_path, mut seed) = checkpoint_fixture(&f);
+    let mut job: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    job["steps"][1]["args"] = json!(["hold-copy", "prepared/checkpoint.bin", "out.bin"]);
+    job["steps"][1]["timeout_seconds"] = json!(1);
+    let original = serde_json::to_vec(&job).unwrap();
+    fs::write(&manifest, &original).unwrap();
+    seed["job_sha256"] = json!(f.put(&original, true));
+    let bytes = serde_json::to_vec(&seed).unwrap();
+    fs::write(&seed_path, &bytes).unwrap();
+    f.put(&bytes, true);
+    let error = resume(f.root(), &manifest, &seed_path)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("timed out"), "{error}");
+    assert_eq!(
+        failed_evidence(&f, &error)["result"]["checkpoint_resume"]["execution_window_explicitly_extended"],
+        false
+    );
+
+    seed["schema"] = json!("reel.native-job-resume.v2");
+    seed["step_timeout_seconds"] = json!({"1": 5});
+    let bytes = serde_json::to_vec(&seed).unwrap();
+    fs::write(&seed_path, &bytes).unwrap();
+    f.put(&bytes, true);
+    let result = resume(f.root(), &manifest, &seed_path).unwrap();
+    assert_eq!(
+        result["checkpoint_resume"]["effective_step_timeout_seconds"]["1"],
+        5
+    );
+    assert_eq!(
+        result["checkpoint_resume"]["execution_window_explicitly_extended"],
+        true
+    );
+    assert_eq!(fs::read(&manifest).unwrap(), original);
+    assert_eq!(
+        fs::read(result["outputs"]["copy"]["path"].as_str().unwrap()).unwrap(),
+        b"checkpoint"
+    );
+    no_scratch(&f);
+}
+
+#[test]
+fn recovery_window_rejects_implicit_unbounded_or_unrelated_step_changes() {
+    for (schema, windows) in [
+        ("reel.native-job-resume.v1", json!({"1": 11})),
+        ("reel.native-job-resume.v2", json!({})),
+        ("reel.native-job-resume.v2", json!({"0": 11})),
+        ("reel.native-job-resume.v2", json!({"2": 11})),
+        ("reel.native-job-resume.v2", json!({"1": 0})),
+        ("reel.native-job-resume.v2", json!({"1": 10})),
+        ("reel.native-job-resume.v2", json!({"1": 7201})),
+        ("reel.native-job-resume.v2", json!({"0": 11, "1": 11})),
+    ] {
+        let f = Fixture::new();
+        let (manifest, seed_path, mut seed) = checkpoint_fixture(&f);
+        seed["schema"] = json!(schema);
+        seed["step_timeout_seconds"] = windows.clone();
+        let bytes = serde_json::to_vec(&seed).unwrap();
+        fs::write(&seed_path, &bytes).unwrap();
+        f.put(&bytes, true);
+        let error = resume(f.root(), &manifest, &seed_path)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("scoped recovery execution window"),
+            "{schema} {windows}: {error}"
+        );
+        no_scratch(&f);
+    }
+}
+
+#[test]
+fn fresh_registered_window_runs_all_steps_and_preserves_original_timeout_controls() {
+    let f = Fixture::new();
+    let (manifest, mut job) = prepare(&f, "hold-copy");
+    job["steps"][0]["timeout_seconds"] = json!(1);
+    let original = serde_json::to_vec(&job).unwrap();
+    fs::write(&manifest, &original).unwrap();
+    let hash = f.put(&original, true);
+    let error = run(f.root(), &manifest).unwrap_err().to_string();
+    assert!(error.contains("timed out"), "{error}");
+    let policy = json!({"schema":"reel.native-job-execution-window.v1",
+        "job_sha256":hash,"step_timeout_seconds":{"0":5}});
+    let bytes = serde_json::to_vec(&policy).unwrap();
+    let path = f.root().join("execution-window.json");
+    fs::write(&path, &bytes).unwrap();
+    assert!(run_with_execution_window(f.root(), &manifest, &path).is_err());
+    no_scratch(&f);
+    f.put(&bytes, true);
+    let result = run_with_execution_window(f.root(), &manifest, &path).unwrap();
+    assert!(result.get("checkpoint_resume").is_none());
+    assert_eq!(result["execution_window"]["steps_skipped"], false);
+    assert_eq!(
+        result["execution_window"]["effective_step_timeout_seconds"]["0"],
+        5
+    );
+    assert_eq!(result["manifest_sha256"], hash);
+    assert_eq!(fs::read(&manifest).unwrap(), original);
+    assert_eq!(
+        fs::read(result["outputs"]["copy"]["path"].as_str().unwrap()).unwrap(),
+        b"source"
+    );
+    no_scratch(&f);
+}
+
+#[test]
+fn fresh_window_rejects_changed_identity_extra_fields_and_checkpoint_commands() {
+    for mode in [
+        "schema",
+        "recipe",
+        "extra-field",
+        "empty",
+        "too-long",
+        "multiple",
+        "not-longer",
+        "resume-command",
+    ] {
+        let f = Fixture::new();
+        let (manifest, _) = prepare(&f, "copy");
+        let original = fs::read(&manifest).unwrap();
+        let hash = f.put(&original, true);
+        let mut policy = json!({"schema":"reel.native-job-execution-window.v1",
+            "job_sha256":hash,"step_timeout_seconds":{"0":11}});
+        match mode {
+            "schema" => policy["schema"] = json!("unknown"),
+            "recipe" => policy["job_sha256"] = json!("a".repeat(64)),
+            "extra-field" => policy["files"] = json!({}),
+            "empty" => policy["step_timeout_seconds"] = json!({}),
+            "too-long" => policy["step_timeout_seconds"] = json!({"0":7201}),
+            "multiple" => policy["step_timeout_seconds"] = json!({"0":11,"1":11}),
+            "not-longer" => policy["step_timeout_seconds"] = json!({"0":10}),
+            "resume-command" => {}
+            _ => unreachable!(),
+        }
+        let bytes = serde_json::to_vec(&policy).unwrap();
+        let path = f.root().join("execution-window.json");
+        fs::write(&path, &bytes).unwrap();
+        f.put(&bytes, true);
+        let result = if mode == "resume-command" {
+            resume(f.root(), &manifest, &path)
+        } else {
+            run_with_execution_window(f.root(), &manifest, &path)
+        };
+        assert!(result.is_err(), "{mode}");
+        no_scratch(&f);
+    }
+}
