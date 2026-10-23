@@ -355,3 +355,30 @@ hash-verified cache object and joins the selected delivery closure. Unused keys,
 missing/stale evidence, empty reasons and out-of-scene placement reject before
 delivery output. The generated native job retains source/gain/semantic anchors
 and carries explicit channel/placement intent to the shared scene mixer.
+
+
+## Compact persistent chapter-title overlays
+
+The existing editable-text-template chapter style can optionally use
+hide_number:true, full_scene_duration:true and title_plate. The plate declares
+x/y/width/height pixels, background_rgb and ASS alpha (zero is opaque). For a
+960x540 canvas, one small example is x40/y438/width300/height62 with dark brown
+[44,28,16], zero alpha, zero fades and matching readable title typography.
+
+These are fields of chapter, not scene content. The title_plate is a bounded
+native vector rectangle behind the title. It must fit the canvas and contain the
+title origin. Keep typography and placement in the template, use appropriate
+plate width for selected wording, and verify actual rendered readability.
+It overlays the selected picture and does not count as another cel.
+hide_number suppresses the number event; no chapter number is then required.
+
+full_scene_duration requires verified language-local native scene clocks and
+must not also declare fixed_duration_seconds. The source scene clock remains
+exact in samples. ASS visibility is rounded upward only to its centisecond display
+clock; normal rendering ends at the actual scene duration. With zero fades,
+the title is present through the last scene frame. An episode-conform tail hold
+can retain that frame/title while adding real silence without changing narration.
+
+Absent these optional fields, fixed-duration chapter rendering retains its prior
+behavior. Standalone cards still require a positive fixed duration; full-scene
+visibility cannot guess timing without a verified narrated scene.

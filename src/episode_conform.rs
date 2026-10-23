@@ -241,6 +241,10 @@ pub struct Segment {
     /// Hash-bound source evidence remains unchanged when packages are hydrated.
     #[serde(default)]
     pub imported_source_root: Option<PathBuf>,
+    /// Explicit silent hold after the complete source: repeat its final picture
+    /// and append zero audio, without trimming any selected source content.
+    #[serde(default)]
+    pub tail_hold_frames: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -317,12 +321,181 @@ pub struct SegmentReceipt {
     pub frames: u64,
     pub samples: u64,
     pub audio_padding_samples: u64,
+    #[serde(skip_serializing_if = "u64_is_zero")]
+    pub tail_hold_frames: u64,
+    #[serde(skip_serializing_if = "u64_is_zero")]
+    pub tail_hold_samples: u64,
     pub start_frame: u64,
     pub start_sample: u64,
     pub decoded_picture_sha256: String,
     pub decoded_audio_sha256: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub geometry_verification: Option<GeometryVerification>,
+}
+
+fn u64_is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
+fn hold_samples(
+    frames: u64,
+    start_frame: u64,
+    sample_rate: u32,
+    fps_num: u64,
+    fps_den: u64,
+) -> Result<u64> {
+    if fps_num == 0
+        || fps_den == 0
+        || sample_rate == 0
+        || u128::from(frames) * u128::from(fps_den) > u128::from(fps_num) * 60
+    {
+        bail!("silent picture hold requires a valid clock and at most sixty seconds");
+    }
+    let boundary = |frame: u64| -> Result<u64> {
+        let value = u128::from(frame)
+            .checked_mul(u128::from(sample_rate))
+            .and_then(|v| v.checked_mul(u128::from(fps_den)))
+            .and_then(|v| v.checked_add(u128::from(fps_num) / 2))
+            .context("hold sample clock overflow")?
+            / u128::from(fps_num);
+        u64::try_from(value).context("hold sample clock overflow")
+    };
+    boundary(
+        start_frame
+            .checked_add(frames)
+            .context("hold frame clock overflow")?,
+    )?
+    .checked_sub(boundary(start_frame)?)
+    .context("hold sample clock order")
+}
+
+/// Verify the entire prefix and the added tail independently of the encoder.
+type MediaDigest = (String, u64);
+
+fn append_silent_picture_hold(
+    source: &Path,
+    output: &Path,
+    frames: u64,
+    samples: u64,
+    video_codec: &str,
+) -> Result<(MediaDigest, MediaDigest)> {
+    if frames == 0 || samples == 0 || !matches!(video_codec, "h264" | "ffv1") {
+        bail!("invalid silent picture hold");
+    }
+    let filter = format!("tpad=stop_mode=clone:stop={frames}");
+    let expected_picture = decoded_digest_with_filter(source, true, 0, Some(&filter))?;
+    let expected_audio = decoded_digest_with_padding(source, false, samples)?;
+    let mut encoder = command("ffmpeg");
+    encoder
+        .args(["-v", "error", "-nostdin", "-i"])
+        .arg(source)
+        .args(["-map", "0:v:0", "-map", "0:a:0", "-vf", &filter, "-af"])
+        .arg(format!("apad=pad_len={samples},asetpts=N/SR/TB"));
+    if video_codec == "h264" {
+        encoder.args([
+            "-c:v", "libx264", "-crf", "0", "-preset", "veryfast", "-bf", "0",
+        ]);
+    } else {
+        encoder.args(["-c:v", "ffv1"]);
+    }
+    if !encoder
+        .args([
+            "-pix_fmt",
+            "yuv444p",
+            "-fps_mode",
+            "passthrough",
+            "-c:a",
+            "pcm_s24le",
+        ])
+        .arg(output)
+        .status()?
+        .success()
+    {
+        bail!("silent picture hold encoding failed");
+    }
+    let picture = decoded_digest(output, true)?;
+    let audio = decoded_digest(output, false)?;
+    if picture != expected_picture || audio != expected_audio {
+        bail!("silent picture hold changed source prefix, last frame or zero-audio tail");
+    }
+    Ok((picture, audio))
+}
+
+#[cfg(test)]
+mod silent_hold_tests {
+    use super::*;
+
+    #[test]
+    fn hold_clock_is_bounded_checked_and_uses_global_fractional_frame_boundaries() {
+        assert_eq!(hold_samples(48, 24, 48000, 24, 1).unwrap(), 96000);
+        assert_eq!(hold_samples(60, 17, 44100, 30000, 1001).unwrap(), 88288);
+        assert!(hold_samples(1441, 0, 48000, 24, 1).is_err());
+        assert!(hold_samples(48, u64::MAX, 48000, 24, 1).is_err());
+        assert!(hold_samples(1, u64::MAX - 1, u32::MAX, u64::MAX, u64::MAX).is_err());
+        assert!(hold_samples(1, 0, 48000, 0, 1).is_err());
+    }
+
+    #[test]
+    fn lossless_hold_keeps_the_moving_picture_and_tone_prefix_then_adds_only_last_picture_and_zero_audio()
+     {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source.mkv");
+        assert!(
+            command("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc2=s=32x32:r=24:d=1",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=937:sample_rate=48000:duration=1",
+                    "-c:v",
+                    "ffv1",
+                    "-pix_fmt",
+                    "yuv444p",
+                    "-c:a",
+                    "pcm_s24le",
+                    "-ac",
+                    "2"
+                ])
+                .arg(&source)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let original_picture = decoded_digest(&source, true).unwrap();
+        let original_audio = decoded_digest(&source, false).unwrap();
+        for codec in ["ffv1", "h264"] {
+            let output = temp.path().join(format!("held-{codec}.mkv"));
+            let (picture, audio) =
+                append_silent_picture_hold(&source, &output, 48, 96000, codec).unwrap();
+            assert_eq!(picture.1, 72 * 32 * 32 * 3);
+            assert_eq!(audio.1, 144000 * 6);
+            assert_eq!(
+                decoded_digest_with_filter(&output, true, 0, Some("trim=end_frame=24")).unwrap(),
+                original_picture
+            );
+            let pcm = command("ffmpeg")
+                .args(["-v", "error", "-i"])
+                .arg(&output)
+                .args(["-map", "0:a:0", "-c:a", "pcm_s24le", "-f", "s24le", "-"])
+                .output()
+                .unwrap();
+            assert!(pcm.status.success());
+            let prefix = Sha256::digest(&pcm.stdout[..48000 * 6])
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            assert_eq!(prefix, original_audio.0);
+            assert!(pcm.stdout[48000 * 6..].iter().all(|v| *v == 0));
+            let source_bytes = fs::read(&source).unwrap();
+            assert!(!source_bytes.is_empty());
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -1706,7 +1879,7 @@ pub fn build(
         if selected_facts.sample_rate != manifest.output_sample_rate {
             bail!("normalization sample rate mismatch");
         }
-        let (picture_hash, picture_bytes) = decoded_digest(&selected, true)?;
+        let (mut picture_hash, picture_bytes) = decoded_digest(&selected, true)?;
         let (mut audio_hash, audio_bytes) = decoded_digest(&selected, false)?;
         let frame_bytes = selected_facts.width * selected_facts.height * 3;
         if picture_bytes == 0
@@ -1716,7 +1889,7 @@ pub fn build(
         {
             bail!("decoded segment does not contain complete frames/stereo samples");
         }
-        let frames = picture_bytes / frame_bytes;
+        let mut frames = picture_bytes / frame_bytes;
         let mut samples = audio_bytes / 6;
         let mut geometry_verification = None;
         let (input_frames, input_samples) = if !needs_normalization {
@@ -1843,6 +2016,44 @@ pub fn build(
                 samples = actual.1 / 6;
             }
         }
+        let mut tail_hold_samples = 0;
+        if segment.tail_hold_frames != 0 {
+            let (num, den) = fps_parts(&selected_facts.fps)?;
+            tail_hold_samples = hold_samples(
+                segment.tail_hold_frames,
+                frame_cursor
+                    .checked_add(frames)
+                    .context("hold frame clock overflow")?,
+                manifest.output_sample_rate,
+                num,
+                den,
+            )?;
+            let held = temp.path().join(format!("held-{index:03}.mkv"));
+            let (picture, audio) = append_silent_picture_hold(
+                &selected,
+                &held,
+                segment.tail_hold_frames,
+                tail_hold_samples,
+                target_codec,
+            )?;
+            frames = frames
+                .checked_add(segment.tail_hold_frames)
+                .context("hold frame overflow")?;
+            samples = samples
+                .checked_add(tail_hold_samples)
+                .context("hold sample overflow")?;
+            if picture.1
+                != frames
+                    .checked_mul(frame_bytes)
+                    .context("hold picture overflow")?
+                || audio.1 != samples.checked_mul(6).context("hold audio overflow")?
+            {
+                bail!("silent picture hold has wrong frame or sample count");
+            }
+            selected = held;
+            picture_hash = picture.0;
+            audio_hash = audio.0;
+        }
         records.push(SegmentReceipt {
             kind: if segment.kind == SegmentKind::Scene {
                 "scene"
@@ -1863,6 +2074,8 @@ pub fn build(
             frames,
             samples,
             audio_padding_samples,
+            tail_hold_frames: segment.tail_hold_frames,
+            tail_hold_samples,
             start_frame: frame_cursor,
             start_sample: sample_cursor,
             decoded_picture_sha256: picture_hash,

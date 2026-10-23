@@ -128,6 +128,31 @@ pub struct ChapterStyle {
     pub title: ChapterLineStyle,
     pub fade_in_ms: u32,
     pub fade_out_ms: u32,
+    /// A title-only overlay can suppress the otherwise required chapter number.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub hide_number: bool,
+    /// Follow the verified scene clock instead of a rounded fixed duration.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub full_scene_duration: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_plate: Option<TitlePlate>,
+}
+
+/// A bounded native vector background, not another picture or narration cue.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TitlePlate {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    pub background_rgb: [u8; 3],
+    /// ASS alpha: zero is opaque.
+    pub alpha: u8,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -633,15 +658,40 @@ pub fn compile_scene_layer(
     if definition.kind == "semantic-label" {
         verify_native_line_ownership(&invocation, &lane.cues)?;
     }
-    let compiled = compile_layer(definition, &invocation, &ordered_cues, native)?;
+    let follow_scene = definition.kind == "chapter-title"
+        && definition
+            .chapter
+            .as_ref()
+            .is_some_and(|chapter| chapter.full_scene_duration);
+    let scene_clock = if follow_scene {
+        Some(overlay_clock(native, 0, 100)?)
+    } else {
+        None
+    };
+    // Chapter graphics do not consume poem clocks; the containing scene still
+    // supplies its verified duration independently.
+    let no_line_clocks = BTreeMap::new();
+    let layer_clocks = if definition.kind == "chapter-title" {
+        &no_line_clocks
+    } else {
+        native
+    };
+    let compiled = compile_layer_with_clock(
+        definition,
+        &invocation,
+        &ordered_cues,
+        layer_clocks,
+        scene_clock,
+    )?;
     // A title overlays a narrated scene without replacing its native clock.
     // The ASS still uses the template's fixed visible duration.
-    let (duration_samples, sample_rate) =
-        if definition.kind == "chapter-title" && !lane.cues.is_empty() {
-            overlay_clock(native, compiled.duration_samples, compiled.sample_rate)?
-        } else {
-            (compiled.duration_samples, compiled.sample_rate)
-        };
+    let (duration_samples, sample_rate) = if let Some(clock) = scene_clock {
+        clock
+    } else if definition.kind == "chapter-title" && !lane.cues.is_empty() {
+        overlay_clock(native, compiled.duration_samples, compiled.sample_rate)?
+    } else {
+        (compiled.duration_samples, compiled.sample_rate)
+    };
     Ok((compiled, duration_samples, sample_rate))
 }
 
@@ -683,6 +733,16 @@ pub fn compile_layer(
     invocation: &EditableTextInvocation,
     ordered_cues: &[String],
     alignments: &BTreeMap<String, NativeAlignment>,
+) -> Result<CompiledLayer> {
+    compile_layer_with_clock(template, invocation, ordered_cues, alignments, None)
+}
+
+fn compile_layer_with_clock(
+    template: &EditableTextTemplate,
+    invocation: &EditableTextInvocation,
+    ordered_cues: &[String],
+    alignments: &BTreeMap<String, NativeAlignment>,
+    scene_clock: Option<(u64, u32)>,
 ) -> Result<CompiledLayer> {
     if template.schema != TEMPLATE_SCHEMA
         || invocation.schema != INVOCATION_SCHEMA
@@ -920,20 +980,32 @@ pub fn compile_layer(
         if !invocation.lines.is_empty() || !ordered_cues.is_empty() || !alignments.is_empty() {
             bail!("chapter card cannot carry poem lines or native cue clocks");
         }
-        let duration = template
-            .fixed_duration_seconds
-            .ok_or_else(|| anyhow::anyhow!("chapter template needs fixed duration"))?;
-        if duration == 0
-            || template.panel.is_some()
-            || template.post_poem_title_duration_ms.is_some()
-        {
+        if template.panel.is_some() || template.post_poem_title_duration_ms.is_some() {
             bail!("invalid chapter card template");
         }
         let chapter = template
             .chapter
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("chapter typography missing"))?;
-        if chapter.fade_in_ms.saturating_add(chapter.fade_out_ms) >= duration * 1000 {
+        let end = if chapter.full_scene_duration {
+            if template.fixed_duration_seconds.is_some() {
+                bail!("full-scene chapter cannot also have a fixed duration");
+            }
+            let (samples, rate) =
+                scene_clock.context("full-scene chapter needs verified native scene clocks")?;
+            u64::try_from((u128::from(samples) * 100).div_ceil(u128::from(rate)))
+                .context("chapter scene duration overflow")?
+        } else {
+            u64::from(
+                template
+                    .fixed_duration_seconds
+                    .filter(|seconds| *seconds > 0)
+                    .context("chapter template needs positive fixed duration")?,
+            ) * 100
+        };
+        if u64::from(chapter.fade_in_ms.saturating_add(chapter.fade_out_ms))
+            >= end.saturating_mul(10)
+        {
             bail!("chapter fades consume its entire duration");
         }
         let styles = format!(
@@ -942,23 +1014,56 @@ pub fn compile_layer(
             chapter_style("Chapter", &chapter.title)?
         );
         ass = ass.replace("\n[Events]\n", &format!("\n{styles}[Events]\n"));
-        let number = escape(
-            invocation
-                .chapter_number
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("chapter number missing"))?,
-        )?;
         let title = escape(&invocation.title)?;
-        let end = duration as u64 * 100;
-        ass.push_str(&format!(
-            "Dialogue: 0,0:00:00.00,{},Number,chapter_number,{},0,{},,{{\\fad({},{})}}{}\n",
-            time(end, 100),
-            chapter.number.margin_left,
-            chapter.number.margin_vertical,
-            chapter.fade_in_ms,
-            chapter.fade_out_ms,
-            number
-        ));
+        if let Some(plate) = &chapter.title_plate {
+            let right = plate
+                .x
+                .checked_add(plate.width)
+                .context("title plate overflow")?;
+            let bottom = plate
+                .y
+                .checked_add(plate.height)
+                .context("title plate overflow")?;
+            let baseline = template
+                .canvas_height
+                .checked_sub(chapter.title.margin_vertical)
+                .context("title is outside canvas")?;
+            if plate.width == 0
+                || plate.height == 0
+                || right > template.canvas_width
+                || bottom > template.canvas_height
+                || chapter.title.margin_left < plate.x
+                || chapter.title.margin_left >= right
+                || baseline > bottom
+                || baseline < chapter.title.font_size
+                || baseline.saturating_sub(chapter.title.font_size) < plate.y
+            {
+                bail!("title plate must fit canvas and contain title origin");
+            }
+            let rgb = color(plate.background_rgb);
+            ass.push_str(&format!(
+                "Dialogue: -1,0:00:00.00,{},Panel,title_plate,0,0,0,,{{\\an7\\pos(0,0)\\fad({},{})\\p1\\1c{rgb}\\1a&H{:02X}&}}m {} {} l {right} {} {right} {bottom} {} {bottom}{{\\p0}}\n",
+                time(end,100), chapter.fade_in_ms, chapter.fade_out_ms,
+                plate.alpha, plate.x, plate.y, plate.y, plate.x
+            ));
+        }
+        if !chapter.hide_number {
+            let number = escape(
+                invocation
+                    .chapter_number
+                    .as_deref()
+                    .context("chapter number missing")?,
+            )?;
+            ass.push_str(&format!(
+                "Dialogue: 0,0:00:00.00,{},Number,chapter_number,{},0,{},,{{\\fad({},{})}}{}\n",
+                time(end, 100),
+                chapter.number.margin_left,
+                chapter.number.margin_vertical,
+                chapter.fade_in_ms,
+                chapter.fade_out_ms,
+                number
+            ));
+        }
         ass.push_str(&format!(
             "Dialogue: 1,0:00:00.00,{},Chapter,chapter_title,{},0,{},,{{\\fad({},{})}}{}\n",
             time(end, 100),

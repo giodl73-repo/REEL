@@ -141,6 +141,32 @@ fn ordered_geometry_fixture(
     unspecified: bool,
     color_declaration: bool,
 ) {
+    ordered_geometry_fixture_with_hold(
+        adopt,
+        clock_transition,
+        reuse_cache,
+        mixed,
+        unspecified,
+        color_declaration,
+        0,
+    );
+}
+
+#[test]
+fn explicit_silent_holds_preserve_selected_scene_and_presentation_sources() {
+    ordered_geometry_fixture_with_hold(true, false, false, false, false, false, 48);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ordered_geometry_fixture_with_hold(
+    adopt: bool,
+    clock_transition: bool,
+    reuse_cache: bool,
+    mixed: bool,
+    unspecified: bool,
+    color_declaration: bool,
+    tail_hold_frames: u64,
+) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     fs::write(root.join("clean-picture.bin"), b"selected clean background").unwrap();
@@ -384,6 +410,9 @@ fn ordered_geometry_fixture(
                 "id":id,"master":reference(root,&format!("{id}-{lang}.mkv")),
                 "source_receipt":reference(root,&format!("{id}-{lang}-receipt.json"))
             });
+            if tail_hold_frames != 0 {
+                item["tail_hold_frames"] = tail_hold_frames.into();
+            }
             if id.starts_with("display") {
                 item["source_text_evidence"] = reference(root, &format!("{id}-{lang}-text.json"));
                 if adopt {
@@ -480,11 +509,24 @@ fn ordered_geometry_fixture(
             &fs::read(root.join(format!("output-{lang}/receipt.json"))).unwrap(),
         )
         .unwrap();
-        assert_eq!(receipt["total_frames"], 96);
+        assert_eq!(receipt["total_frames"], 96 + 4 * tail_hold_frames);
         assert_eq!(
             receipt["total_samples"],
-            if clock_transition { 176_400 } else { 192_000 }
+            if clock_transition {
+                176_400
+            } else {
+                192_000 + 4 * tail_hold_frames * 2000
+            }
         );
+        if tail_hold_frames != 0 {
+            for segment in receipt["segments"].as_array().unwrap() {
+                assert_eq!(segment["input_frames"], 24);
+                assert_eq!(segment["frames"], 24 + tail_hold_frames);
+                assert_eq!(segment["tail_hold_frames"], tail_hold_frames);
+                assert_eq!(segment["tail_hold_samples"], tail_hold_frames * 2000);
+                assert_eq!(segment["input_samples"], 48000);
+            }
+        }
         assert_eq!(receipt["decoded_master_matches_ordered_segments"], true);
         assert_eq!(receipt["timestamps_verified"], true);
         if mixed {

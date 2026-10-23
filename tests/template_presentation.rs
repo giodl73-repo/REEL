@@ -6,7 +6,8 @@ use reel_assembly::template_presentation::{
     BylineStyle, ChapterLineStyle, ChapterStyle, DisplaySourceUnit, EditableTextInvocation,
     EditableTextTemplate, INVOCATION_SCHEMA, Panel, PoemLine, PresentationSourceText,
     SCENE_SOURCE_TEXT_SCHEMA_V2, SOURCE_TEXT_SCHEMA, SourceLine, TEMPLATE_SCHEMA, TextEffects,
-    compile_layer, verify_native_line_ownership, verify_source_text,
+    TitlePlate, compile_layer, compile_scene_layer, verify_native_line_ownership,
+    verify_source_text,
 };
 
 fn chapter_line(font_size: u32, margin_left: u32, margin_vertical: u32) -> ChapterLineStyle {
@@ -60,6 +61,9 @@ fn template(kind: &str) -> EditableTextTemplate {
             title: chapter_line(36, 190, 102),
             fade_in_ms: 750,
             fade_out_ms: 750,
+            hide_number: false,
+            full_scene_duration: false,
+            title_plate: None,
         }),
     }
 }
@@ -702,6 +706,72 @@ fn chapter_duration_comes_from_template() {
 }
 
 #[test]
+fn title_only_plate_is_bounded_and_persists_for_the_template_duration() {
+    let invocation = EditableTextInvocation {
+        schema: INVOCATION_SCHEMA.into(),
+        template_id: "test-master".into(),
+        language: "es".into(),
+        title: "Pregón cubano".into(),
+        byline: None,
+        lines: vec![],
+        chapter_number: None,
+    };
+    let mut selected = template("chapter-title");
+    selected.fixed_duration_seconds = Some(35);
+    let chapter = selected.chapter.as_mut().unwrap();
+    chapter.hide_number = true;
+    chapter.fade_in_ms = 0;
+    chapter.fade_out_ms = 0;
+    chapter.title_plate = Some(TitlePlate {
+        x: 170,
+        y: 570,
+        width: 400,
+        height: 80,
+        background_rgb: [44, 28, 16],
+        alpha: 0,
+    });
+    let layer = compile_layer(&selected, &invocation, &[], &BTreeMap::new()).unwrap();
+    assert_eq!(layer.duration_samples, 3500);
+    assert!(!layer.ass.contains("Number,chapter_number"));
+    assert!(layer.ass.contains("0:00:35.00,Panel,title_plate"));
+    assert!(layer.ass.contains("\\1c&H00101C2C\\1a&H00&"));
+    assert!(layer.ass.contains("m 170 570 l 570 570 570 650 170 650"));
+    assert!(layer.ass.contains("{\\fad(0,0)}Pregón cubano"));
+    for plate in [
+        TitlePlate {
+            x: 170,
+            y: 570,
+            width: 0,
+            height: 80,
+            background_rgb: [0; 3],
+            alpha: 0,
+        },
+        TitlePlate {
+            x: 170,
+            y: 570,
+            width: u32::MAX,
+            height: 80,
+            background_rgb: [0; 3],
+            alpha: 0,
+        },
+        TitlePlate {
+            x: 170,
+            y: 610,
+            width: 400,
+            height: 80,
+            background_rgb: [0; 3],
+            alpha: 0,
+        },
+    ] {
+        selected.chapter.as_mut().unwrap().title_plate = Some(plate);
+        assert!(compile_layer(&selected, &invocation, &[], &BTreeMap::new()).is_err());
+    }
+    let old = serde_json::to_value(template("chapter-title")).unwrap();
+    assert!(old["chapter"].get("hide_number").is_none());
+    assert!(old["chapter"].get("title_plate").is_none());
+}
+
+#[test]
 fn rejects_nonmonotonic_or_missing_native_line_anchors() {
     let mut invocation = poem();
     invocation.lines.swap(0, 1);
@@ -804,4 +874,57 @@ fn selected_source_must_match_every_poem_line_and_stanza() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn narrated_title_uses_exact_native_duration_including_fractional_seconds() {
+    use reel_assembly::scene_authoring::Scene;
+    use serde_json::json;
+    let mut raw: serde_json::Value =
+        serde_json::from_slice(include_bytes!("fixtures/scene-authoring/scene.json")).unwrap();
+    raw["presentation_source_scope_ids"] = json!(["title"]);
+    raw["presentation"] = json!({
+        "role":"chapter-title","template_id":"test-master",
+        "content":{"titles":{"es":"Pregón cubano","en":"Pregón cubano"}}
+    });
+    let scene: Scene = serde_json::from_value(raw).unwrap();
+    let source: PresentationSourceText = serde_json::from_value(json!({
+        "schema":SOURCE_TEXT_SCHEMA,"source_authority_id":"source-1",
+        "source_document_sha256":"a".repeat(64),"source_scope_ids":["title"],
+        "language":"es","text_state":"canonical-original","title":"Pregón cubano",
+        "lines":[]
+    }))
+    .unwrap();
+    let mut selected = template("chapter-title");
+    selected.fixed_duration_seconds = None;
+    let chapter = selected.chapter.as_mut().unwrap();
+    chapter.hide_number = true;
+    chapter.full_scene_duration = true;
+    chapter.fade_in_ms = 0;
+    chapter.fade_out_ms = 0;
+    let mut native = BTreeMap::from([(
+        "es-1".into(),
+        NativeAlignment {
+            schema: NATIVE_ALIGNMENT_SCHEMA.into(),
+            language: "es".into(),
+            cue_id: "es-1".into(),
+            selected_take_sha256: "a".repeat(64),
+            sample_rate: 44100,
+            cue_end_sample: 1520568,
+            semantic_markers: BTreeMap::new(),
+        },
+    )]);
+    let (layer, duration, rate) =
+        compile_scene_layer(&scene, &selected, "es", &source, &native).unwrap();
+    assert_eq!((duration, rate), (1520568, 44100));
+    assert_eq!((layer.duration_samples, layer.sample_rate), (3448, 100));
+    assert!(layer.ass.contains("0:00:34.48,Chapter,chapter_title"));
+    native.get_mut("es-1").unwrap().cue_end_sample += 1;
+    let (layer, duration, _) =
+        compile_scene_layer(&scene, &selected, "es", &source, &native).unwrap();
+    assert_eq!(duration, 1520569);
+    assert!(layer.ass.contains("0:00:34.49,Chapter,chapter_title"));
+    assert!(compile_scene_layer(&scene, &selected, "es", &source, &BTreeMap::new()).is_err());
+    selected.fixed_duration_seconds = Some(35);
+    assert!(compile_scene_layer(&scene, &selected, "es", &source, &native).is_err());
 }
