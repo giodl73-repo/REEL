@@ -48,8 +48,10 @@ fn run() -> Result<()> {
             "usage: reel-episode-conform build <manifest.json> --input-root <authoring-root> --asset-root <hydrated-media-root> --output-dir <new-dir>"
         );
     };
-    if !matches!(command.as_str(), "build" | "prepare" | "finish")
-        || input_flag != "--input-root"
+    if !matches!(
+        command.as_str(),
+        "build" | "prepare" | "finish" | "finish-consume-normalized"
+    ) || input_flag != "--input-root"
         || asset_flag != "--asset-root"
         || output_flag != "--output-dir"
     {
@@ -67,11 +69,16 @@ fn run() -> Result<()> {
         );
         return Ok(());
     }
-    if command == "finish" {
+    if matches!(command.as_str(), "finish" | "finish-consume-normalized") {
         if Path::new(input_root).canonicalize()? != Path::new(asset_root).canonicalize()? {
             bail!("finish requires one closed input/asset workspace");
         }
-        let receipt = reel::episode_conform::finish(
+        let finish = if command == "finish-consume-normalized" {
+            reel::episode_conform::finish_consuming_normalized
+        } else {
+            reel::episode_conform::finish
+        };
+        let receipt = finish(
             Path::new(manifest),
             Path::new(asset_root),
             Path::new(output),

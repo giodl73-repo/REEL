@@ -623,7 +623,11 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
     fs::write(phased.join("catalog.json"), catalog_before).unwrap();
     checkpoint["records"][0]["decoded_picture_sha256"] = "0".repeat(64).into();
     write(&prepared.join("prepared.json"), &checkpoint);
-    let changed_expected = run_phase("finish", &prepared, &phased.join("changed-prepared-pixels"));
+    let changed_expected = run_phase(
+        "finish-consume-normalized",
+        &prepared,
+        &phased.join("changed-prepared-pixels"),
+    );
     assert!(!changed_expected.status.success());
     assert!(
         String::from_utf8_lossy(&changed_expected.stderr).contains("differs from selected source")
@@ -652,6 +656,91 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
         .success()
     );
     fs::write(prepared.join("prepared.json"), &checkpoint_bytes).unwrap();
+
+    // The explicit consuming finish must retain all existing validation gates,
+    // preserve every original input/master and remove only generated files.
+    let issued: serde_json::Value = serde_json::from_slice(&checkpoint_bytes).unwrap();
+    let generated = issued["normalized"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["root"] == "prepared")
+        .map(|f| prepared.join(f["file"]["path"].as_str().unwrap()))
+        .collect::<Vec<_>>();
+    assert!(!generated.is_empty());
+    assert!(generated.iter().all(|f| f.is_file())); // Prior failed validation removed nothing.
+    let original_inputs = issued["source_scope"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            let path = phased.join(f["path"].as_str().unwrap());
+            let bytes = fs::read(&path).unwrap();
+            (path, bytes)
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !run_phase(
+            "finish-consume-normalized",
+            &root.join("output"),
+            &phased.join("outside-consume")
+        )
+        .status
+        .success()
+    );
+    assert!(generated.iter().all(|f| f.is_file()));
+    let consumed = phased.join("consumed-finished");
+    let consume_result = run_phase("finish-consume-normalized", &prepared, &consumed);
+    assert!(
+        consume_result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&consume_result.stderr)
+    );
+    let consumed_receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(consumed.join("receipt.json")).unwrap()).unwrap();
+    assert_eq!(
+        consumed_receipt["decoded_master_matches_ordered_segments"],
+        true
+    );
+    assert_eq!(consumed_receipt["timestamps_verified"], true);
+    assert_eq!(
+        consumed_receipt["encoded_delivery"]["full_decode_verified"],
+        true
+    );
+    assert_eq!(consumed_receipt["segments"], final_receipt["segments"]);
+    assert_eq!(
+        consumed_receipt["boundary_findings"],
+        final_receipt["boundary_findings"]
+    );
+    assert_eq!(
+        consumed_receipt["normalization_retirement"]["files"],
+        generated.len()
+    );
+    assert!(
+        consumed_receipt["normalization_retirement"]["bytes"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert!(final_receipt.get("normalization_retirement").is_none());
+    assert!(generated.iter().all(|f| !f.exists()));
+    assert_eq!(fs::read(&assembled).unwrap(), original_assembly);
+    for (path, bytes) in original_inputs {
+        assert_eq!(fs::read(path).unwrap(), bytes);
+    }
+    assert_eq!(
+        fs::read(prepared.join("prepared.json")).unwrap(),
+        checkpoint_bytes
+    );
+    assert!(
+        !run_phase(
+            "finish-consume-normalized",
+            &prepared,
+            &phased.join("repeat-consume")
+        )
+        .status
+        .success()
+    );
 
     fs::write(root.join("source-master.json"), b"altered template").unwrap();
     let stale_source = Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))

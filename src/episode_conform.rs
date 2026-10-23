@@ -362,6 +362,8 @@ pub struct Receipt {
     pub preassembled_master: Option<scene_delivery::FileRef>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub encoded_delivery: Option<EncodedDelivery>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub normalization_retirement: Option<NormalizationRetirement>,
     pub decoded_master_matches_ordered_segments: bool,
     pub timestamps_verified: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -374,6 +376,18 @@ pub struct Receipt {
     pub creative_review_state: String,
     pub segments: Vec<SegmentReceipt>,
     pub publication: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NormalizationRetirement {
+    pub files: usize,
+    pub bytes: u64,
+    pub policy: &'static str,
+}
+
+pub(crate) struct NormalizationRetirementRequest {
+    pub root: PathBuf,
+    pub files: Vec<scene_delivery::FileRef>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1217,7 +1231,18 @@ pub fn prepare(
 }
 
 pub fn finish(prepared: &Path, asset_root: &Path, output: &Path) -> Result<Receipt> {
-    checkpoint::finish(prepared, asset_root, output)
+    checkpoint::finish(prepared, asset_root, output, false)
+}
+
+/// Explicitly consume only generated preparation normalizations after ordered
+/// picture/PCM, timestamp and boundary verification, before compact encoding.
+/// Original declared inputs and the assembled master remain unchanged.
+pub fn finish_consuming_normalized(
+    prepared: &Path,
+    asset_root: &Path,
+    output: &Path,
+) -> Result<Receipt> {
+    checkpoint::finish(prepared, asset_root, output, true)
 }
 
 fn build_internal(
@@ -2080,6 +2105,7 @@ fn build_internal(
         presentation_cache_hits,
         presentation_cache_misses,
         preparation_sha256: None,
+        normalization_retirement: None,
     };
     if preparation_scope.is_some() {
         let snapshot = preparation_scope.context("preparation scope missing")?;
@@ -2101,6 +2127,7 @@ fn build_internal(
 }
 
 pub(crate) struct ConformState {
+    pub normalization_retirement: Option<NormalizationRetirementRequest>,
     pub preparation_sha256: Option<String>,
     pub manifest_bytes: Vec<u8>,
     pub first: MediaFacts,
@@ -2120,6 +2147,7 @@ pub(crate) fn finalize_conform(
     master_external: bool,
 ) -> Result<Receipt> {
     let ConformState {
+        normalization_retirement,
         preparation_sha256,
         manifest_bytes,
         first,
@@ -2215,6 +2243,32 @@ pub(crate) fn finalize_conform(
             });
         }
     }
+    // All source/ordered-content/timestamp/boundary checks above must succeed
+    // before an explicitly requested intermediate can be retired. These are
+    // generated preparation files, never canonical assets or original inputs.
+    let normalization_retirement = if let Some(request) = normalization_retirement {
+        if manifest.compact_delivery.is_none() {
+            bail!("normalization retirement requires compact delivery");
+        }
+        let mut bytes = 0u64;
+        for file in &request.files {
+            let path = scene_delivery::checked_file(&request.root, file)?;
+            if path == master.canonicalize()? {
+                bail!("assembled master cannot be retired as a normalization");
+            }
+            bytes = bytes
+                .checked_add(file.bytes)
+                .context("retirement byte overflow")?;
+            fs::remove_file(path)?;
+        }
+        Some(NormalizationRetirement {
+            files: request.files.len(),
+            bytes,
+            policy: "Explicit generated-normalization consumption after ordered picture/PCM, timestamp and boundary checks; original inputs and assembled master preserved",
+        })
+    } else {
+        None
+    };
     let version = command("ffmpeg").arg("-version").output()?;
     let ffmpeg_version = String::from_utf8_lossy(&version.stdout)
         .lines()
@@ -2376,6 +2430,7 @@ pub(crate) fn finalize_conform(
         master_bytes: fs::metadata(&master)?.len(),
         preassembled_master: manifest.preassembled_master.clone(),
         encoded_delivery,
+        normalization_retirement,
         decoded_master_matches_ordered_segments: true,
         timestamps_verified: true,
         presentation_verification_cache: manifest.reuse_verified_presentations.then(|| {
