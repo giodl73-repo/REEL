@@ -1,7 +1,7 @@
 //! Cue-local authoring clocks over native scene/alignment contracts. No media I/O.
 use super::{
     inspect,
-    project::{MAX_CUES, alignment_role},
+    project::{MAX_CUES, alignment_paths_role, alignment_role, scoped_alignment_role},
 };
 use crate::Result;
 use reel_assembly::{self as assembly, scene_authoring as native};
@@ -9,7 +9,9 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
 const JS_SAFE: u64 = 9_007_199_254_740_991;
+#[derive(Clone)]
 pub struct CueClock {
+    pub language: String,
     pub cue_id: String,
     pub alignment_role: String,
     pub alignment_binding: String,
@@ -39,6 +41,7 @@ pub struct EditPlan {
 pub struct Sequence {
     pub language: String,
     pub cues: Vec<CueClock>,
+    pub other_cues: Vec<CueClock>,
     pub cells: BTreeMap<String, Cell>,
     multi: bool,
     rows: Value,
@@ -62,6 +65,19 @@ fn selected(state: &str) -> bool {
 }
 impl Sequence {
     pub fn new(docs: &BTreeMap<String, Value>, multi: bool) -> Result<Self> {
+        Self::intake(docs, multi, None)
+    }
+    pub fn for_project(
+        docs: &BTreeMap<String, Value>,
+        project: &super::project::Project,
+    ) -> Result<Self> {
+        Self::intake(docs, project.is_multi_cue(), project.language())
+    }
+    fn intake(
+        docs: &BTreeMap<String, Value>,
+        multi: bool,
+        requested: Option<&str>,
+    ) -> Result<Self> {
         if [
             "scene.json",
             "scene-bindings.json",
@@ -78,14 +94,38 @@ impl Sequence {
             &serde_json::to_vec(&docs["scene.json"])?,
             &serde_json::to_vec(&docs["scene-bindings.json"])?,
         )?;
-        if report.imported_evidence || report.languages.len() != 1 || report.cels.len() > 1000 {
-            return Err("Editor needs one bounded ready native language".into());
+        if report.imported_evidence || (requested.is_none() && report.languages.len() != 1) {
+            return Err("Editor requires explicit scope for multiple native languages".into());
+        }
+        let language = if let Some(language) = requested {
+            if !report.languages.iter().any(|known| known == language) {
+                return Err("Selected language is absent from native scene".into());
+            }
+            language.to_owned()
+        } else {
+            report.languages[0].clone()
+        };
+        if report
+            .cels
+            .iter()
+            .filter(|cell| cell.language == language)
+            .count()
+            > 1000
+        {
+            return Err("Editor language exceeds cel budget".into());
         }
         let scene: native::Scene = serde_json::from_value(docs["scene.json"].clone())?;
         let materialized = native::materialize_scene(&scene)?;
-        let language = report.languages[0].clone();
         let lane = &materialized.languages[&language];
-        if lane.cues.is_empty() || lane.cues.len() > MAX_CUES || (!multi && lane.cues.len() != 1) {
+        if lane.cues.is_empty()
+            || (!multi && lane.cues.len() != 1)
+            || materialized
+                .languages
+                .values()
+                .map(|lane| lane.cues.len())
+                .sum::<usize>()
+                > MAX_CUES
+        {
             return Err("Unsupported native cue count".into());
         }
         let bindings: native::ScopedBindings =
@@ -97,7 +137,7 @@ impl Sequence {
         if graph.nodes.len() != 1 || graph.nodes[0].id != scene.scene_id {
             return Err("Editor requires one native scene node".into());
         }
-        let mut clocks = Vec::new();
+        let mut all_clocks = Vec::new();
         let mut alignments = BTreeMap::new();
         let mut alignment_bindings = BTreeSet::new();
         let fps = integer(&docs["profile.json"], "frame_rate_numerator")?;
@@ -105,8 +145,14 @@ impl Sequence {
         if fps == 0 || den == 0 {
             return Err("Invalid native output clock".into());
         }
-        for cue in &lane.cues {
-            let role = if multi {
+        for (cue_language, cue) in materialized
+            .languages
+            .iter()
+            .flat_map(|(language, lane)| lane.cues.iter().map(move |cue| (language, cue)))
+        {
+            let role = if requested.is_some() {
+                scoped_alignment_role(cue_language, &cue.cue_id)
+            } else if multi {
                 alignment_role(&cue.cue_id)
             } else {
                 "alignment.json".into()
@@ -135,7 +181,7 @@ impl Sequence {
             {
                 return Err("Ambiguous or unselected native cue binding".into());
             }
-            native::validate_native_alignment(&alignment, &language, &cue.cue_id, &take.sha256)?;
+            native::validate_native_alignment(&alignment, cue_language, &cue.cue_id, &take.sha256)?;
             if alignment.cue_end_sample > JS_SAFE {
                 return Err("Cue clock exceeds exact browser integer budget".into());
             }
@@ -150,8 +196,16 @@ impl Sequence {
                 }
                 Some(numerator / fps)
             };
-            alignments.insert(cue.cue_id.clone(), alignment.clone());
-            clocks.push(CueClock {
+            let lane_alignments: &mut BTreeMap<String, native::NativeAlignment> =
+                alignments.entry(cue_language.clone()).or_default();
+            if lane_alignments
+                .insert(cue.cue_id.clone(), alignment.clone())
+                .is_some()
+            {
+                return Err("Duplicate native cue alignment".into());
+            }
+            all_clocks.push(CueClock {
+                language: cue_language.clone(),
                 cue_id: cue.cue_id.clone(),
                 alignment_role: role,
                 alignment_binding: key.clone(),
@@ -165,7 +219,7 @@ impl Sequence {
                 .filter(|key| key.starts_with("alignment:"))
                 .cloned()
                 .collect();
-            let expected = clocks
+            let expected = all_clocks
                 .iter()
                 .map(|cue| cue.alignment_role.clone())
                 .collect();
@@ -173,12 +227,50 @@ impl Sequence {
                 return Err("Native cue path set differs from scene cue set".into());
             }
         }
-        let spans = native::compile_native_event_spans(&language, lane, &alignments)?;
+        for (language, lane) in &materialized.languages {
+            native::compile_native_event_spans(language, lane, &alignments[language])?;
+        }
+        if requested.is_some() {
+            let declared: BTreeSet<_> = docs
+                .keys()
+                .filter(|role| role.starts_with("alignment-paths:"))
+                .cloned()
+                .collect();
+            let expected: BTreeSet<_> = materialized
+                .languages
+                .keys()
+                .map(|language| alignment_paths_role(language))
+                .collect();
+            if declared != expected {
+                return Err("Language index scope differs from native scene".into());
+            }
+            for (language, lane) in &materialized.languages {
+                let paths = docs[&alignment_paths_role(language)]
+                    .as_object()
+                    .ok_or("Invalid native language index")?;
+                if paths.keys().map(String::as_str).collect::<BTreeSet<_>>()
+                    != lane
+                        .cues
+                        .iter()
+                        .map(|cue| cue.cue_id.as_str())
+                        .collect::<BTreeSet<_>>()
+                {
+                    return Err("Native language index differs from cue set".into());
+                }
+            }
+        }
+        let spans = native::compile_native_event_spans(&language, lane, &alignments[&language])?;
+        let clocks: Vec<_> = all_clocks
+            .iter()
+            .filter(|cue| cue.language == language)
+            .cloned()
+            .collect();
         let mut cells = BTreeMap::new();
         let mut by_event = BTreeMap::new();
-        for cel in report.cels {
+        for cel in &report.cels {
             let id = cel
                 .shared_semantic_id
+                .clone()
                 .ok_or("Missing shared native event identity")?;
             let slot = graph
                 .slots
@@ -195,7 +287,8 @@ impl Sequence {
                 .iter()
                 .find(|event| event.event_id == cel.event_id)
                 .ok_or("Missing native picture event")?;
-            let cue = lane
+            let cel_lane = &materialized.languages[&cel.language];
+            let cue = cel_lane
                 .cues
                 .iter()
                 .find(|cue| cue.cue_id == cel.cue_id)
@@ -206,20 +299,24 @@ impl Sequence {
                 || revision.asset.sha256 != cel.asset.sha256
                 || event.picture.sha256 != cel.asset.sha256
                 || event.narration.sha256 != take.sha256
+                || event.language != cel.language
                 || !selected(&cel.asset.selection_state)
             {
                 return Err("Native effective picture/take differs from selected graph".into());
+            }
+            if cel.language != language {
+                continue;
             }
             by_event.insert(cel.event_id.clone(), id.clone());
             cells.insert(
                 id.clone(),
                 Cell {
                     semantic_id: id,
-                    cue_id: cel.cue_id,
-                    event_id: cel.event_id,
-                    picture_binding: cel.picture_binding,
-                    picture_slot_id: cel.picture_slot_id,
-                    trigger_id: cel.semantic_trigger_id,
+                    cue_id: cel.cue_id.clone(),
+                    event_id: cel.event_id.clone(),
+                    picture_binding: cel.picture_binding.clone(),
+                    picture_slot_id: cel.picture_slot_id.clone(),
+                    trigger_id: cel.semantic_trigger_id.clone(),
                 },
             );
         }
@@ -228,7 +325,11 @@ impl Sequence {
             .iter()
             .map(|event| event.event_id.as_str())
             .collect();
-        let expected: BTreeSet<_> = cells.values().map(|cell| cell.event_id.as_str()).collect();
+        let expected: BTreeSet<_> = report
+            .cels
+            .iter()
+            .map(|cell| cell.event_id.as_str())
+            .collect();
         let picture_slots: BTreeSet<_> = graph
             .slots
             .iter()
@@ -237,8 +338,9 @@ impl Sequence {
             .collect();
         if graph_ids != expected
             || picture_slots
-                != cells
-                    .values()
+                != report
+                    .cels
+                    .iter()
                     .map(|cell| cell.picture_slot_id.as_str())
                     .collect()
         {
@@ -267,9 +369,14 @@ impl Sequence {
             }
             rows.push(row);
         }
+        let other_cues = all_clocks
+            .into_iter()
+            .filter(|cue| cue.language != language)
+            .collect();
         Ok(Self {
             language,
             cues: clocks,
+            other_cues,
             cells,
             multi,
             rows: json!(rows),

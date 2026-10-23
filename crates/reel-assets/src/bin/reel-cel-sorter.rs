@@ -210,7 +210,7 @@ fn export(spec: &Path) -> Result<()> {
     }
     let project = Project::open(project)?;
     let (docs, hashes) = load(&project)?;
-    let sequence = Sequence::new(&docs, project.is_multi_cue())?;
+    let sequence = Sequence::for_project(&docs, &project)?;
     let r = sequence.rows();
     // Decide the complete declared copy budget before touching any media.
     let plan = preflight(&docs, &r, &s)?;
@@ -238,6 +238,9 @@ fn export(spec: &Path) -> Result<()> {
         .extend(sequence.session_clock().as_object().ok_or("clock")?.clone());
     if let Some(hash) = project.descriptor_sha256() {
         data["expected_project"] = json!(hash);
+    }
+    if let Some(language) = project.language() {
+        data["language"] = json!(language);
     }
     write(&out.join("session.json"), &data)?;
     fs::write(out.join("index.html"), include_str!("../cel_sorter.html"))?;
@@ -957,6 +960,33 @@ mod tests {
         assert!(session.get("end_sample").is_none());
         assert_eq!(session["cues"].as_array().unwrap().len(), 2);
         assert_eq!(session["rows"][0]["samples"], 47);
+    }
+    #[test]
+    fn scoped_export_never_resolves_other_language_media() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let descriptor = multi_fixture(&source);
+        super::cel_fixtures::add_english_lane(&source, &descriptor);
+        let cache = temp.path().join("cache");
+        for body in [
+            b"first".as_slice(),
+            b"second".as_slice(),
+            b"clip".as_slice(),
+        ] {
+            let hash = hash(body);
+            let path = cache.join("objects/sha256").join(&hash[..2]).join(&hash);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, body).unwrap();
+        }
+        let spec = temp.path().join("spec.json");
+        let output = temp.path().join("editor");
+        write(&spec,&json!({"project":descriptor,"output":output,"cache_roots":[cache],"movie":asset(b"clip"),"max_export_copy_bytes":15})).unwrap();
+        export(&spec).unwrap();
+        let session = read(&output.join("session.json")).unwrap();
+        assert_eq!(session["schema"], "reel.cel-sorter-session.v4");
+        assert_eq!(session["language"], "es");
+        assert!(session["images"].get("english-image").is_none());
+        assert_eq!(session["rows"].as_array().unwrap().len(), 4);
     }
     #[test]
     fn delivery_clock_observations_do_not_change_native_editability() {

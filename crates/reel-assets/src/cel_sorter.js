@@ -1,9 +1,16 @@
 'use strict';
 const CelSorter = {
- context(session) {if(!['reel.cel-sorter-session.v1','reel.cel-sorter-session.v2','reel.cel-sorter-session.v3'].includes(session.schema))throw Error('Unsupported editor session');const mapped=session.schema!=='reel.cel-sorter-session.v1';if(mapped?!/^[a-f0-9]{64}$/.test(session.expected_project||''):session.expected_project!==undefined)throw Error('Invalid project version');return mapped?{schema:session.schema==='reel.cel-sorter-session.v3'?'reel.cel-sorter-edit.v3':'reel.cel-sorter-edit.v2',expected_project:session.expected_project}:{schema:'reel.cel-sorter-edit.v1'};},
+ context(session) {
+  const schemas={'reel.cel-sorter-session.v1':'reel.cel-sorter-edit.v1','reel.cel-sorter-session.v2':'reel.cel-sorter-edit.v2','reel.cel-sorter-session.v3':'reel.cel-sorter-edit.v3','reel.cel-sorter-session.v4':'reel.cel-sorter-edit.v4'};
+  if(!Object.hasOwn(schemas,session.schema))throw Error('Unsupported editor session');
+  const mapped=session.schema!=='reel.cel-sorter-session.v1',scoped=session.schema==='reel.cel-sorter-session.v4';
+  if(mapped?!/^[a-f0-9]{64}$/.test(session.expected_project||''):session.expected_project!==undefined)throw Error('Invalid project version');
+  if(scoped?(typeof session.language!=='string'||!session.language.trim()||new TextEncoder().encode(session.language).length>64):session.language!==undefined)throw Error('Invalid language scope');
+  return {schema:schemas[session.schema],...(mapped?{expected_project:session.expected_project}:{}),...(scoped?{language:session.language}:{})};
+ },
  draft(session,rows,notes) {return {...this.context(session),scene_id:session.scene_id,expected_inputs:structuredClone(session.expected_inputs),rows:structuredClone(rows),notes,human_approval:false};},
  locksEqual(a,b) {return !!(a&&b&&!Array.isArray(a)&&!Array.isArray(b)&&typeof a==='object'&&typeof b==='object'&&Object.keys(a).length===Object.keys(b).length&&Object.keys(a).every(k=>Object.hasOwn(b,k)&&typeof a[k]==='string'&&a[k]===b[k]));},
- matches(session,request) {try{const context=this.context(session);return request.schema===context.schema&&request.expected_project===context.expected_project&&request.scene_id===session.scene_id&&this.locksEqual(request.expected_inputs,session.expected_inputs);}catch{return false;}},
+ matches(session,request) {try{const context=this.context(session);return request.language===context.language&&request.schema===context.schema&&request.expected_project===context.expected_project&&request.scene_id===session.scene_id&&this.locksEqual(request.expected_inputs,session.expected_inputs);}catch{return false;}},
  key(session) {this.context(session);return 'reel-cel-sorter:'+(session.schema!=='reel.cel-sorter-session.v1'?session.schema.slice(-2)+':'+session.expected_project+':':'')+JSON.stringify(session.expected_inputs);},
  starts(rows) { let t=0; return rows.map(r=>{const s=t;t+=r.frames;return s;}); },
  clockNotice(session) {const state=session.delivery_clock?.state;return state==='mixed-native-rates'?'Recordings use different sample rates. Delivery needs recordings at one matching sample rate. You can keep editing this draft.':state==='profile-rate-mismatch'?'Recording and delivery sample rates differ. Choose matching recordings or a matching delivery profile before rendering. You can keep editing this draft.':'';},
@@ -40,6 +47,7 @@ const $=id=>document.getElementById(id),session=await fetch('session.json').then
 const fps=session.fps_numerator/session.fps_denominator,sample=CelSorter.sampleMode(session.rows),seconds=sample?session.total_seconds:session.end_sample/session.sample_rate,total=sample?seconds:Math.round(seconds*fps),key=CelSorter.key(session),original=structuredClone(session.rows),history=[];
 let rows=structuredClone(original),notes='',selected=0,drag=null,lastDisplayed=-1;
 try{const saved=JSON.parse(localStorage.getItem(key));if(saved&&CelSorter.valid(saved.rows,original,null)){rows=saved.rows;notes=saved.notes||'';}}catch{}
+$('language-scope').textContent=session.schema==='reel.cel-sorter-session.v4'?'Editing '+session.language+'. Other languages stay unchanged.':'';$('language-scope').hidden=session.schema!=='reel.cel-sorter-session.v4';
 const clockNotice=CelSorter.clockNotice(session);$('delivery-clock').textContent=clockNotice;$('delivery-clock').hidden=!clockNotice;
 $('title').textContent=session.title||'Cel sorter';$('audio').src=session.movie;$('seek').max=seconds;$('notes').value=notes;
 function status(message,error=false){$('status').textContent=message;$('status').className=error?'error':'';}

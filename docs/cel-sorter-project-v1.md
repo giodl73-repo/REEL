@@ -114,3 +114,72 @@ Session `delivery_clock` contains `native_sample_rates`, the optional
 extend the delivery compiler's single-rate contract. A matching observation is
 not a successful compiler/build/media check. The editor displays mismatch
 notices without blocking draft authoring or changing source recordings.
+
+## Scoped language intake
+
+`reel.cel-sorter-project.v3` edits one explicitly named language in a complete
+ready V2 scene. Keep the other lanes in the source; do not strip or convert them.
+Use the five native core roles and explicit routes to every language's existing
+native alignment index:
+
+```json
+{
+  "schema": "reel.cel-sorter-project.v3",
+  "root": "../episode",
+  "language": "es",
+  "files": {
+    "scene.json": "authoring/scene.json",
+    "scene-bindings.json": "bindings/pictures.json",
+    "selected-graph.json": "assembly/graph.json",
+    "selected-pointer.json": "assembly/current.json",
+    "profile.json": "render/profile.json"
+  },
+  "alignment_paths": {
+    "es": "timing/es/paths.json",
+    "en": "timing/en/paths.json"
+  }
+}
+```
+
+Each native index still maps its own cue IDs to filenames relative to that
+index's parent. Its key set must equal that language's cues. All scene languages
+must have an explicit index; no directory crawling or implicit translation occurs.
+The singular `alignment.json` and `alignment-paths.json` file roles are forbidden
+in v3, avoiding two competing routes. Up to 16 language indexes, 128 total cues,
+1000 edited-lane cels, the existing per-control limits and 32 MiB aggregate raw
+control budget apply. Every index retains the 128 KiB limit. Duplicate language
+keys, routes and aliases reject before candidate output.
+
+Cue IDs may repeat in different languages. Captured roles are
+`alignment-paths:<language>` for indexes and `alignment:` followed by the compact
+JSON pair `[language,cue_id]` for alignments. These are unambiguous data keys,
+never filesystem paths. Existing v2 single-language alignment roles stay intact.
+
+Export uses session v4, including `language`; edit v4 binds that language, the
+exact descriptor and all source control hashes, including protected languages.
+Missing/wrong scope, changed protected controls and v1/v2/v3 request downgrades
+reject. The interface names the edited language and keeps other lanes intact.
+Legacy protocols and autosave keys remain supported.
+
+Scoped edits retain shared defaults and use native local picture overrides.
+Reordering changes only local event order. Removing a row narrows the shared
+semantic event's language applicability when another language still uses it;
+only exclusively removed events disappear. Picture slots used by another lane
+cannot be retargeted implicitly. Such substitutions require explicit slot
+separation; removal from the edited lane still retains a protected shared slot.
+
+Before writing, the engine checks protected materialized lanes, graph events,
+selected slot revisions, active closure and asset bindings. Exact captured bytes
+are reused for unchanged controls, preserving alignment formatting and hashes.
+Raw native scene/binding/graph/pointer/alignment buffers also pass their native
+typed parsers before Value normalization can hide duplicate typed fields. The
+new candidate reopens through the same full-scene validation; source files are
+unchanged and existing output directories still refuse.
+
+Rust callers use `Sequence::for_project` for scoped intake and the shared
+`editor::load/apply` API for source checks and application. `Project` can preserve
+captured bytes through `write_draft_from_snapshot`; changing a raw buffer without
+its recorded hash/size refuses. None of these APIs grants publication authority.
+The complete scene/graph hash changes with an edit, so old build receipts remain
+bound to their original snapshots even when the other lane is semantically
+unchanged. Scoped drafts do not select a new Golden or reclaim media.

@@ -297,3 +297,106 @@ fn multi_schema_rejects_legacy_alignment_and_mismatched_control_sets() {
     put(&profile, &config);
     assert!(Project::open(&profile).is_err());
 }
+
+#[test]
+fn unchanged_controls_preserve_exact_snapshot_bytes_and_tampered_raw_buffers_refuse() {
+    let (temp, profile, data) = fixture();
+    let config = get(&profile);
+    let path = data.join(config["files"]["profile.json"].as_str().unwrap());
+    fs::write(&path, b"{\n  \"fixture-role\": \"profile.json\"\n}\n").unwrap();
+    let project = Project::open(&profile).unwrap();
+    let mut snapshot = project.load().unwrap();
+    let output = temp.path().join("raw-draft");
+    project
+        .write_draft_from_snapshot(&output, &snapshot.controls, &json!({}), &snapshot)
+        .unwrap();
+    let next = Project::open(&output.join("cel-sorter-project.json")).unwrap();
+    assert_eq!(next.load().unwrap().hashes, snapshot.hashes);
+    assert_eq!(
+        fs::read(output.join(config["files"]["profile.json"].as_str().unwrap())).unwrap(),
+        fs::read(path).unwrap()
+    );
+    snapshot.raw.get_mut("profile.json").unwrap().push(b' ');
+    let rejected = temp.path().join("tampered");
+    assert!(
+        project
+            .write_draft_from_snapshot(&rejected, &snapshot.controls, &json!({}), &snapshot)
+            .is_err()
+    );
+    assert!(!rejected.exists());
+}
+#[test]
+fn scoped_indexes_keep_identical_local_cue_ids_in_distinct_language_roles() {
+    use reel_assets::cel_source::project::scoped_alignment_role;
+    let (_temp, profile, data) = fixture();
+    let mut config = get(&profile);
+    config["schema"] = json!("reel.cel-sorter-project.v3");
+    config["language"] = json!("es");
+    config["files"]
+        .as_object_mut()
+        .unwrap()
+        .remove("alignment.json");
+    config["alignment_paths"] = json!({"es":"es-paths.json","en":"en-paths.json"});
+    for language in ["es", "en"] {
+        put(
+            &data.join(format!("{language}-paths.json")),
+            &json!({"same":format!("{language}-clock.json")}),
+        );
+        put(
+            &data.join(format!("{language}-clock.json")),
+            &json!({"clock":language}),
+        );
+    }
+    put(&profile, &config);
+    let project = Project::open(&profile).unwrap();
+    let snapshot = project.load().unwrap();
+    assert_eq!(
+        snapshot.controls[&scoped_alignment_role("es", "same")]["clock"],
+        "es"
+    );
+    assert_eq!(
+        snapshot.controls[&scoped_alignment_role("en", "same")]["clock"],
+        "en"
+    );
+    assert_ne!(
+        scoped_alignment_role("a:b", "c"),
+        scoped_alignment_role("a", "b:c")
+    );
+}
+#[test]
+fn scoped_index_route_aliases_escaping_and_duplicate_language_keys_refuse() {
+    let (_temp, profile, data) = fixture();
+    let mut config = get(&profile);
+    config["schema"] = json!("reel.cel-sorter-project.v3");
+    config["language"] = json!("es");
+    config["files"]
+        .as_object_mut()
+        .unwrap()
+        .remove("alignment.json");
+    config["alignment_paths"] = json!({"es":"paths.json","en":"other.json"});
+    put(&data.join("paths.json"), &json!({"cue":"clock.json"}));
+    put(&data.join("other.json"), &json!({"cue":"another.json"}));
+    for route in [
+        "paths.json",
+        "PATHS.JSON",
+        "../outside.json",
+        "C:/outside.json",
+    ] {
+        let mut value = config.clone();
+        value["alignment_paths"]["en"] = json!(route);
+        put(&profile, &value);
+        assert!(Project::open(&profile).is_err());
+    }
+    let raw = serde_json::to_string(&config).unwrap().replace(
+        "\"es\":\"paths.json\"",
+        "\"es\":\"paths.json\",\"es\":\"other.json\"",
+    );
+    fs::write(&profile, raw).unwrap();
+    assert!(
+        Project::open(&profile)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("duplicate")
+    );
+}

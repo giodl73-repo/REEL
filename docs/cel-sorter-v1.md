@@ -99,3 +99,12 @@ Synthetic integration tests apply the native candidate and invoke the actual
 `scene_delivery_compile::compile_to_dir`: same-rate off-frame edits compile,
 and mixed rates fail before creating delivery output. Real media, rendering,
 private compiler acceptance and visual review remain separate producer checks.
+
+Explicit project v3 now opens complete bilingual/multilingual native scenes for
+one scoped language edit; session/edit v4 binds that choice. Other lane controls,
+alignment bytes, selected graph records and referenced slots remain protected.
+See [scoped project intake](cel-sorter-project-v1.md#scoped-language-intake).
+This extends the earlier single-language-source limit; simultaneous linked
+editing and automatic slot forks remain outside this editor. A synthetic
+scoped edit compiles both languages through their separate native indexes.
+Private episode/browser/render acceptance and runtime adoption remain separate.
