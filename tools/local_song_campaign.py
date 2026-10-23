@@ -48,6 +48,22 @@ def revised_caption(slot, briefs):
     return caption
 
 
+def take_dependency_contract(package, output_roles):
+    """Classify a direct audition without turning rendered takes into inputs.
+
+    The native registry still checks exact dependency contracts and rejects
+    output-bearing dependency versions. Historical or compiled inputs need an
+    explicitly authored primary-input successor before using this path.
+    """
+    assets=package['assets']
+    primary_roles={'source','request','runtime','backend','planner','ctc-component','ctc-script','musical-brief-revision'}
+    primary={a['sha256'] for role,a in assets.items() if role in primary_roles}
+    outputs={assets[role]['sha256'] for role in output_roles}
+    if primary & outputs:raise ValueError('Audition input and output identity overlap')
+    references={a['sha256'] for a in assets.values()}-primary-outputs
+    return dict(primary_inputs=sorted(primary),outputs=sorted(outputs),references=sorted(references))
+
+
 class Campaign:
     def __init__(self, root, assets, work, metadata_retries=0):
         self.root=Path(root).resolve()
@@ -356,6 +372,9 @@ class Campaign:
         package_asset=self.asset_json(f'{rid}/package.json',package,'Immutable song audition package for '+rid)
         version=dict(logical_id=package['artifact_id'],version_id=package['version_id'],manifest_sha256=package_asset['sha256'],
             payloads=sorted({row['sha256'] for row in package['assets'].values()}),dependencies=package['dependencies'])
+        profile=self.root/'asset-project.json'
+        if profile.exists() and read(profile).get('require_primary_input_contracts'):
+            version['dependency_contract']=take_dependency_contract(package,out)
         self.call('register-version',self.save(f'{rid}/version.json',version))
         # Protect every retained attempt, not only the qualifying take.
         self.call('pin',version['logical_id'],version['version_id'])
