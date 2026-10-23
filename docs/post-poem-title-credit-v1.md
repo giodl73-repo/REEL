@@ -31,6 +31,15 @@ master's tail frame differs from the clean frame because of the editable ASS
 layer. Title and credit share one tail card, with their source IDs in reading
 order. A different timed sequence would require another selected template.
 
+`reel-scene-authoring compile-delivery` derives this nonspoken tail from the
+selected, hash-verified template receipt. It checks the receipt's scene,
+language, template definition, editable layer, source text and sample rate,
+then emits `tail_duration_samples` and extends the final picture and ASS
+attachments. It leaves the native narration cues and D attachments unchanged;
+do not add an empty narration cue to carry the title interval. Only poem
+templates may extend the scene this way, by at most thirty seconds in whole
+centiseconds. Other presentation receipts must match the native scene clock.
+
 Source IDs and hashes prove the selected input's identity; they do not certify
 its human approval or prove pixels in a final scene master. A selected clean
 picture, full-duration audio, scene delivery receipt, decoded frame review,

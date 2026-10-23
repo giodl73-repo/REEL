@@ -339,6 +339,93 @@ fn presentation_binding<'a>(content: &'a Value, field: &str, language: &str) -> 
         .with_context(|| format!("presentation {field} missing for {language}"))
 }
 
+fn presentation_tail_samples(
+    root: &Path,
+    request: &CompileManifest,
+    scene: &Scene,
+    catalog: &TemplateCatalog,
+    scopes: &[&ScopedBindings],
+    sample_rate: u32,
+    spoken_samples: u64,
+) -> Result<u64> {
+    let Some(presentation) = &scene.presentation else {
+        return Ok(0);
+    };
+    let key = presentation_binding(
+        &presentation.content,
+        "template_receipt_bindings",
+        &request.language,
+    )?;
+    let selected = asset(key, scopes)?;
+    let path = request
+        .template_receipt
+        .as_deref()
+        .context("presentation compile requires template_receipt path")?;
+    let bytes = fs::read(checked(root, path)?)?;
+    if hash(&bytes) != selected.sha256 || bytes.len() as u64 != selected.bytes {
+        bail!("template receipt path differs from selected presentation receipt");
+    }
+    let receipt: Value = serde_json::from_slice(&bytes)?;
+    let template = catalog
+        .templates
+        .iter()
+        .find(|item| item.template_id == presentation.template_id)
+        .context("presentation template missing from catalog")?;
+    let layer = asset(
+        presentation_binding(
+            &presentation.content,
+            "ass_layer_bindings",
+            &request.language,
+        )?,
+        scopes,
+    )?;
+    let source = asset(
+        presentation_binding(
+            &presentation.content,
+            "source_text_bindings",
+            &request.language,
+        )?,
+        scopes,
+    )?;
+    if receipt["schema"] != "reel.editable-layer-compile-receipt.v1"
+        || receipt["scene_id"] != scene.scene_id
+        || receipt["language"] != request.language
+        || receipt["template_id"] != template.template_id
+        || receipt["template_definition_sha256"] != template.definition_sha256
+        || receipt["ass_sha256"] != layer.sha256
+        || receipt["source_text_sha256"] != source.sha256
+        || receipt["sample_rate"].as_u64() != Some(u64::from(sample_rate))
+    {
+        bail!("presentation clock receipt differs from selected source, layer or template");
+    }
+    let tail = receipt["duration_samples"]
+        .as_u64()
+        .context("presentation receipt lacks duration_samples")?
+        .checked_sub(spoken_samples)
+        .context("presentation receipt is shorter than the native scene clock")?;
+    if tail != 0
+        && (!matches!(template.kind.as_str(), "opening-poem" | "internal-poem")
+            || tail > u64::from(sample_rate) * 30
+            || tail
+                .checked_mul(100)
+                .context("presentation tail overflow")?
+                % u64::from(sample_rate)
+                != 0)
+    {
+        bail!("only a bounded whole-centisecond poem title tail may extend native speech");
+    }
+    Ok(tail)
+}
+
+fn scene_end_anchor(cues: &[CueClock], tail_samples: u64) -> Result<Value> {
+    let last = cues.last().context("scene has no cues")?;
+    if tail_samples == 0 {
+        return anchor(last.end, cues);
+    }
+    let offset = i64::try_from(tail_samples).context("scene tail anchor overflows")?;
+    Ok(json!({"kind":"cue-end","cue_id":last.id,"offset_samples":offset}))
+}
+
 fn anchor(sample: u64, cues: &[CueClock]) -> Result<Value> {
     let last = cues.last().context("scene has no cues")?;
     if sample == last.end {
@@ -508,6 +595,18 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         offset = end;
     }
     let duration = offset;
+    let tail_samples = presentation_tail_samples(
+        &root,
+        request,
+        &scene,
+        &catalog,
+        &scopes,
+        profile.sample_rate,
+        duration,
+    )?;
+    let picture_duration = duration
+        .checked_add(tail_samples)
+        .context("scene title tail overflows native clock")?;
     let selected_events = active_scene_events(&graph, &scene.scene_id, &request.language)?;
     if selected_events.len() != lane.events.len() {
         bail!("selected graph does not cover each scene language event");
@@ -594,7 +693,13 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     let mut attachments = Vec::new();
     let mut event_bindings = Vec::new();
     let motion_directions = resolve_motion_direction(&episode, &scene, &request.language)?;
-    for event in &events {
+    for (index, event) in events.iter().enumerate() {
+        let last_picture = index + 1 == events.len();
+        let picture_end = if last_picture {
+            picture_duration
+        } else {
+            event.end
+        };
         let picture_id = delivery_id("p", &event.semantic_id);
         let shot_id = delivery_id("shot", &event.semantic_id);
         shots.push(json!({"id":shot_id,"scene_id":id}));
@@ -612,7 +717,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
             let mut motion = reel_assembly::motioncraft::compile(
                 direction,
                 &safe,
-                event.end - event.start,
+                picture_end - event.start,
                 profile.sample_rate,
                 profile.frame_rate_numerator,
                 profile.frame_rate_denominator,
@@ -623,7 +728,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
                     u128::from(profile.sample_rate) * u128::from(profile.frame_rate_denominator);
                 Ok(u64::try_from(if ceil { n.div_ceil(d) } else { n / d })?)
             };
-            let frames = frame(event.end, event.end == duration)? - frame(event.start, false)?;
+            let frames = frame(picture_end, last_picture)? - frame(event.start, false)?;
             reel_assembly::motioncraft::allocate_delivery_frames(&mut motion, frames)?;
             reel_assembly::motioncraft::validate_camera(&motion)?;
             pictures.last_mut().unwrap()["motion"] = json!({"kind":"phased-camera","plan":motion});
@@ -632,7 +737,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
             "id":picture_id,
             "target":{"kind":"cel","shot_id":shot_id,"cel_id":delivery_id("cel", &event.semantic_id)},
             "start":anchor(event.start,&cues)?,
-            "end":anchor(event.end,&cues)?
+            "end":if last_picture { scene_end_anchor(&cues, tail_samples)? } else { anchor(event.end,&cues)? }
         }));
         event_bindings.push(json!({
             "event_id":event.id,
@@ -924,7 +1029,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
             "id": attachment,
             "target": {"kind":"title","title_id":scene.scene_id},
             "start":anchor(0, &cues)?,
-            "end":anchor(duration, &cues)?
+            "end":scene_end_anchor(&cues, tail_samples)?
         }));
         let mut external = json!({
             "attachment_id": attachment,
@@ -954,7 +1059,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         "narration_cues":narration_cues,
         "audio_events":audio_events
     });
-    let contract = json!({
+    let mut contract = json!({
         "schema":"reel.cue-relative-assembly.v0.1",
         "id":id,
         "sample_rate":profile.sample_rate,
@@ -966,6 +1071,9 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         "cues":contract_cues,
         "attachments":attachments
     });
+    if tail_samples != 0 {
+        contract["tail_duration_samples"] = json!(tail_samples);
+    }
     let dir = output_dir(&root, &request.output_dir)?;
     for name in [
         "production.json",
