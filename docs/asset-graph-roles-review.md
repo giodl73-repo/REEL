@@ -68,3 +68,29 @@ SHA-256 of the reviewed corrected targets (file bytes):
 Role definitions: Asset Graph and Version Integrity v1; Storage Custody and
 Recovery v1; Registry Concurrency and Evidence Integrity v1. Existing craft and
 provenance checklists are those carried by the initial target commit above.
+
+## Draft-contract follow-up
+
+The next design increment adds `asset-graph-contracts.md`; the earlier target
+hashes above remain the identity of the prior review, not the new file versions.
+Method remains producer-applied using the three infrastructure roles and Rights
+and Provenance. This is a design/conformance increment, not adapter deployment.
+
+| Role | Severity | Finding/correction and result |
+| --- | --- | --- |
+| Asset Graph and Version Integrity | Major | Domain-separated model hashes had not stored the domain prefix, making their addresses incompatible with ordinary CAS verification. Store the frame as bytes and hash exactly those bytes. Every model-node address now verifies as ordinary SHA-256; wrong-domain substitution rejects. |
+| Registry Concurrency and Evidence Integrity | Major | A node-read count alone does not bound input size. Charge root and leaf bytes before decode, total query bytes, and every decoded row before emitting matching claims. Exact-byte boundary and nonmatching-row budget cases pass. |
+| Registry Concurrency and Evidence Integrity | Major | The model accepted short/non-ASCII selectors before slicing a hash prefix. Validate the full lowercase SHA-256 subject first; malformed Unicode, short and uppercase selectors return errors without panics. |
+| Storage Custody and Recovery | Advisory | Indexes, witness nodes and staged index-build output have storage/retention cost too. Carry explicit metadata policy, staging protection and no implicit indexing/recovery into the contract. No physical custody behavior is changed or newly proved. |
+| Rights and Provenance | Advisory | Contract claims distinguish captured membership, verification at capture, completed operation and admitted current intent. Source-catalog scope and private/public projections remain explicit; a source record cannot authorize itself or install a parser. Real export/egress tests remain open. |
+
+Twenty-five model scenarios pass, as do strict all-target Clippy, formatting,
+ROLES structural validation and diff checks. Record limits in the model apply
+after decoding an already byte-bounded shard; production streaming allocation,
+time/decompression limits, full canonical codec conformance and legacy-reader
+parity remain explicitly unimplemented. None is marked passed by this review.
+
+New reviewed target file-byte SHA-256 values:
+
+- `asset-graph-contracts.md`: `bdb55cc368a6d11a5b81f8eb8b17fd7fa02eeef475fc887426369849cd02f232`
+- `graph_architecture.rs`: `9f4739378805d61e6e7ce0515d4e25797081bc5f9e1035e14f37f3050a9ccae4`

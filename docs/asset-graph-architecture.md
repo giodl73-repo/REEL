@@ -58,9 +58,12 @@ may rewrite a bounded ancestor path. Measure metadata bytes, node reads and
 write amplification before adopting a specific fanout. Scene ordering is an
 explicit authored property, separate from identity and index partitioning.
 
-Proposed wire contract: versioned node kind, canonical encoding, sorted unique
+The [draft contracts](asset-graph-contracts.md) refine node identity, adapter
+claims, scoped query results and explicit budgets. Proposed wire contract:
+versioned node kind, canonical encoding, sorted unique
 keys, explicit child hashes/byte lengths/types, bounded fanout and total traversal
-budget. Hash a domain separator plus canonical bytes. Define UTF-8 identifier
+budget. Hash exactly the stored frame, including its domain separator and
+canonical bytes, using the existing CAS SHA-256 rule. Define UTF-8 identifier
 and numeric rules; reject ambiguous encodings, duplicate keys and unknown kinds.
 Do not normalize submitted creative text to deduplicate it. The reference model
 uses sorted JSON maps and domain separators only; it is not this wire protocol.

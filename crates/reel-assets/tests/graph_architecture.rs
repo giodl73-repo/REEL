@@ -21,15 +21,20 @@ impl Cas {
     fn put<T: Serialize>(&mut self, domain: &str, value: &T) -> Hash {
         let bytes = serde_json::to_vec(value).unwrap();
         let h = digest(domain, &bytes);
-        self.0.entry(h.clone()).or_insert(bytes);
+        let framed = [domain.as_bytes(), &[0], bytes.as_slice()].concat();
+        self.0.entry(h.clone()).or_insert(framed);
         h
     }
     fn read<T: DeserializeOwned>(&self, domain: &str, h: &str) -> Result<T, String> {
         let bytes = self.0.get(h).ok_or("Missing node")?;
-        if digest(domain, bytes) != h {
+        if format!("{:x}", Sha256::digest(bytes)) != h {
             return Err("Corrupt node".into());
         }
-        serde_json::from_slice(bytes).map_err(|e| e.to_string())
+        let prefix = [domain.as_bytes(), &[0]].concat();
+        let payload = bytes
+            .strip_prefix(prefix.as_slice())
+            .ok_or("Wrong node domain")?;
+        serde_json::from_slice(payload).map_err(|e| e.to_string())
     }
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -239,24 +244,77 @@ struct Lookup {
     reads: usize,
     provenance: Descriptor,
 }
+#[derive(Clone, Copy)]
+struct LookupLimits {
+    node_bytes: usize,
+    total_bytes: usize,
+    records: usize,
+    nodes: usize,
+}
+struct Meter {
+    limits: LookupLimits,
+    bytes: usize,
+    nodes: usize,
+}
+impl Meter {
+    fn read<T: DeserializeOwned>(
+        &mut self,
+        cas: &Cas,
+        domain: &str,
+        hash: &str,
+    ) -> Result<T, String> {
+        let size = cas.0.get(hash).ok_or("Missing node")?.len();
+        let next = self
+            .bytes
+            .checked_add(size)
+            .ok_or("Byte counter overflow")?;
+        if size > self.limits.node_bytes
+            || next > self.limits.total_bytes
+            || self.nodes >= self.limits.nodes
+        {
+            return Err("Lookup resource budget".into());
+        }
+        self.bytes = next;
+        self.nodes += 1;
+        cas.read(domain, hash)
+    }
+}
 impl EvidenceAdapter<'_> {
     fn lookup(&self, subject: &str, budget: usize) -> Result<Lookup, String> {
-        if budget < 1 || self.descriptor.adapter_version != 1 || subject.len() < 2 {
+        self.lookup_limited(
+            subject,
+            LookupLimits {
+                node_bytes: 1024 * 1024,
+                total_bytes: 2 * 1024 * 1024,
+                records: 1000,
+                nodes: budget,
+            },
+        )
+    }
+    fn lookup_limited(&self, subject: &str, limits: LookupLimits) -> Result<Lookup, String> {
+        if limits.nodes < 1
+            || self.descriptor.adapter_version != 1
+            || !reel_assets::valid_oid(subject)
+        {
             return Err("Unsupported adapter or budget/subject".into());
         }
-        let index: EvidenceIndex = self
-            .cas
-            .read("evidence-index-v1", &self.descriptor.source)?;
+        let mut meter = Meter {
+            limits,
+            bytes: 0,
+            nodes: 0,
+        };
+        let index: EvidenceIndex =
+            meter.read(self.cas, "evidence-index-v1", &self.descriptor.source)?;
         if index.project != self.descriptor.project {
             return Err("Evidence project scope mismatch".into());
         }
         let mut claims = Vec::new();
         let mut reads = 1;
         if let Some(h) = index.shards.get(&subject[..2]) {
-            if budget < 2 {
-                return Err("Lookup budget".into());
+            let shard: Vec<Claim> = meter.read(self.cas, "evidence-shard-v1", h)?;
+            if shard.len() > limits.records {
+                return Err("Lookup record budget".into());
             }
-            let shard: Vec<Claim> = self.cas.read("evidence-shard-v1", h)?;
             reads += 1;
             claims.extend(shard.into_iter().filter(|c| c.subject == subject));
         }
@@ -639,4 +697,117 @@ fn different_partition_labels_do_not_prove_independent_custody() {
         "same-disk",
         true
     ));
+}
+
+#[test]
+fn every_model_node_address_is_the_standard_hash_of_its_stored_frame() {
+    let mut cas = Cas::default();
+    snapshot(&mut cas, &episode());
+    evidence(&mut cas, vec![claim(0, true)], false);
+    for (address, bytes) in &cas.0 {
+        assert_eq!(*address, format!("{:x}", Sha256::digest(bytes)));
+    }
+}
+
+#[test]
+fn identical_json_under_another_node_domain_is_not_interchangeable() {
+    let mut cas = Cas::default();
+    let data = BTreeMap::from([("same", 1)]);
+    let a = cas.put("domain-a", &data);
+    let b = cas.put("domain-b", &data);
+    assert_ne!(a, b);
+    assert!(cas.read::<BTreeMap<String, u64>>("domain-b", &a).is_err());
+}
+
+#[test]
+fn byte_budgets_charge_root_and_shard_before_decoding_or_emitting_claims() {
+    let mut cas = Cas::default();
+    let descriptor = evidence(&mut cas, vec![claim(0, true)], true);
+    let index: EvidenceIndex = cas.read("evidence-index-v1", &descriptor.source).unwrap();
+    let root_size = cas.0[&descriptor.source].len();
+    let shard_size = cas.0[index.shards.values().next().unwrap()].len();
+    let adapter = EvidenceAdapter {
+        cas: &cas,
+        descriptor,
+    };
+    let exact = LookupLimits {
+        node_bytes: root_size.max(shard_size),
+        total_bytes: root_size + shard_size,
+        records: 1,
+        nodes: 2,
+    };
+    assert!(
+        adapter
+            .lookup_limited(&claim(0, true).subject, exact)
+            .is_ok()
+    );
+    assert!(
+        adapter
+            .lookup_limited(
+                &claim(0, true).subject,
+                LookupLimits {
+                    total_bytes: exact.total_bytes - 1,
+                    ..exact
+                }
+            )
+            .is_err()
+    );
+    assert!(
+        adapter
+            .lookup_limited(
+                &claim(0, true).subject,
+                LookupLimits {
+                    node_bytes: 1,
+                    ..exact
+                }
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn record_budget_charges_all_decoded_rows_not_only_matching_subjects() {
+    let mut cas = Cas::default();
+    let a = claim(0, true);
+    let mut b = claim(1, true);
+    b.subject = format!("{}{}", &a.subject[..2], &b.subject[2..]);
+    let descriptor = evidence(&mut cas, vec![a.clone(), b], true);
+    let adapter = EvidenceAdapter {
+        cas: &cas,
+        descriptor,
+    };
+    let limits = LookupLimits {
+        node_bytes: 65536,
+        total_bytes: 131072,
+        records: 1,
+        nodes: 2,
+    };
+    assert!(adapter.lookup_limited(&a.subject, limits).is_err());
+    assert_eq!(
+        adapter
+            .lookup_limited(
+                &a.subject,
+                LookupLimits {
+                    records: 2,
+                    ..limits
+                }
+            )
+            .unwrap()
+            .claims
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn invalid_unicode_short_or_uppercase_subjects_are_errors_without_slicing_panics() {
+    let mut cas = Cas::default();
+    let descriptor = evidence(&mut cas, vec![claim(0, true)], false);
+    let adapter = EvidenceAdapter {
+        cas: &cas,
+        descriptor,
+    };
+    for invalid in ["अ", "x", "", &"A".repeat(64)] {
+        assert!(adapter.lookup(invalid, 2).is_err());
+    }
 }
