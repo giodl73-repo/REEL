@@ -204,9 +204,21 @@ fn resolve(file: &RootedFile, prepared: &Path, assets: &Path) -> Result<PathBuf>
     scene_delivery::checked_file(root, &file.file)
 }
 
-pub(super) fn finish(prepared: &Path, assets: &Path, output: &Path) -> Result<Receipt> {
+pub(super) fn finish(
+    prepared: &Path,
+    assets: &Path,
+    output: &Path,
+    consume_normalized: bool,
+) -> Result<Receipt> {
     if output.exists() {
         bail!("episode output must be a new directory");
+    }
+    if consume_normalized
+        && prepared.canonicalize()?.parent() != Some(assets.canonicalize()?.as_path())
+    {
+        bail!(
+            "normalization consumption requires a preparation directly inside its closed workspace"
+        );
     }
     let file = prepared.join("prepared.json");
     if fs::metadata(&file)?.len() > 4 * 1024 * 1024 {
@@ -278,6 +290,53 @@ pub(super) fn finish(prepared: &Path, assets: &Path, output: &Path) -> Result<Re
         .iter()
         .map(|f| resolve(f, prepared, assets))
         .collect::<Result<Vec<_>>>()?;
+    let normalization_retirement = if consume_normalized {
+        let mut files = Vec::new();
+        for file in &checkpoint.normalized {
+            if file.root != "prepared" {
+                continue; // Original immutable input; never consume it.
+            }
+            let parts = file.file.path.components().collect::<Vec<_>>();
+            let name = file
+                .file
+                .path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            let generated_name = name.strip_suffix(".mkv").is_some_and(|n| {
+                ["normalized-", "padded-"].iter().any(|prefix| {
+                    n.strip_prefix(prefix).is_some_and(|index| {
+                        index.len() == 3 && index.bytes().all(|b| b.is_ascii_digit())
+                    })
+                })
+            });
+            if parts.len() != 2
+                || !parts[0].as_os_str().to_string_lossy().starts_with(".tmp")
+                || !generated_name
+            {
+                bail!(
+                    "normalization consumption is restricted to exact generated preparation files"
+                );
+            }
+            let path = resolve(file, prepared, assets)?;
+            if path == master
+                || checkpoint.source_scope.iter().any(|source| {
+                    assets.join(&source.path).canonicalize().ok().as_ref() == Some(&path)
+                })
+            {
+                bail!(
+                    "normalization consumption cannot remove an original input or assembled master"
+                );
+            }
+            files.push(file.file.clone());
+        }
+        Some(NormalizationRetirementRequest {
+            root: prepared.canonicalize()?,
+            files,
+        })
+    } else {
+        None
+    };
     let parent = output
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -288,6 +347,7 @@ pub(super) fn finish(prepared: &Path, assets: &Path, output: &Path) -> Result<Re
         .tempdir_in(parent)?;
     let receipt = finalize_conform(
         ConformState {
+            normalization_retirement,
             preparation_sha256: Some(sha(&bytes)),
             manifest_bytes: checkpoint.manifest_json.into_bytes(),
             first: checkpoint.first,
