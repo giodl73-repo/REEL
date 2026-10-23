@@ -29,6 +29,9 @@ the separate dry-run/application steps.
 The [schema and reference inspector](docs/asset-references-v1.md) exports typed
 contracts and builds a bounded, private offline graph with explicit gaps,
 distinguishing dependencies, inventory membership and historical versions.
+The proposed [asset graph architecture](docs/asset-graph-architecture.md) explores
+shared immutable snapshots, concurrent roots and large evidence adapters through
+executable synthetic scenarios; it does not change production storage behavior.
 
 ---
 
