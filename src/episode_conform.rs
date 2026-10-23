@@ -1251,7 +1251,8 @@ pub fn prepare_batch(
     }
     if output
         .parent()
-        .context("batch output lacks parent")?
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
         .canonicalize()?
         != asset_root.canonicalize()?
     {
