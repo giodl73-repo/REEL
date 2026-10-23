@@ -55,6 +55,12 @@ struct Descriptor {
         skip_serializing_if = "Option::is_none"
     )]
     alignment_paths: Option<BTreeMap<String, String>>,
+    #[serde(
+        default,
+        deserialize_with = "optional_graphs",
+        skip_serializing_if = "Option::is_none"
+    )]
+    protected_graphs: Option<BTreeMap<String, GraphFiles>>,
     #[serde(deserialize_with = "unique_files")]
     files: BTreeMap<String, String>,
 }
@@ -66,26 +72,45 @@ fn optional_files<'de, D: serde::Deserializer<'de>>(
 fn unique_files<'de, D: serde::Deserializer<'de>>(
     decoder: D,
 ) -> std::result::Result<BTreeMap<String, String>, D::Error> {
-    struct Files;
-    impl<'de> serde::de::Visitor<'de> for Files {
-        type Value = BTreeMap<String, String>;
+    unique_map(decoder)
+}
+fn unique_map<'de, D: serde::Deserializer<'de>, V: Deserialize<'de>>(
+    decoder: D,
+) -> std::result::Result<BTreeMap<String, V>, D::Error> {
+    struct Entries<V>(std::marker::PhantomData<V>);
+    impl<'de, V: Deserialize<'de>> serde::de::Visitor<'de> for Entries<V> {
+        type Value = BTreeMap<String, V>;
         fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            f.write_str("unique native control roles")
+            f.write_str("unique native control keys")
         }
         fn visit_map<A: serde::de::MapAccess<'de>>(
             self,
             mut input: A,
         ) -> std::result::Result<Self::Value, A::Error> {
-            let mut files = BTreeMap::new();
-            while let Some((role, path)) = input.next_entry::<String, String>()? {
-                if files.insert(role, path).is_some() {
-                    return Err(serde::de::Error::custom("duplicate native control role"));
+            let mut entries = BTreeMap::new();
+            while let Some((key, value)) = input.next_entry::<String, V>()? {
+                if entries.insert(key, value).is_some() {
+                    return Err(serde::de::Error::custom("duplicate native control key"));
                 }
             }
-            Ok(files)
+            Ok(entries)
         }
     }
-    decoder.deserialize_map(Files)
+    decoder.deserialize_map(Entries(std::marker::PhantomData))
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct GraphFiles {
+    graph: String,
+    pointer: String,
+}
+#[derive(Deserialize)]
+#[serde(transparent)]
+struct ProtectedGraphs(#[serde(deserialize_with = "unique_map")] BTreeMap<String, GraphFiles>);
+fn optional_graphs<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> std::result::Result<Option<BTreeMap<String, GraphFiles>>, D::Error> {
+    Ok(Option::<ProtectedGraphs>::deserialize(decoder)?.map(|ProtectedGraphs(graphs)| graphs))
 }
 
 /// Private local configuration. A content lock is not custody or publication authority.
@@ -98,6 +123,13 @@ pub struct Project {
     multi_cue: bool,
     language: Option<String>,
     declared_alignment_paths: Option<BTreeMap<String, String>>,
+    declared_protected_graphs: Option<BTreeMap<String, GraphFiles>>,
+}
+pub fn protected_graph_role(language: &str) -> String {
+    format!("protected-graph:{language}")
+}
+pub fn protected_pointer_role(language: &str) -> String {
+    format!("protected-pointer:{language}")
 }
 pub fn alignment_paths_role(language: &str) -> String {
     format!("alignment-paths:{language}")
@@ -207,6 +239,7 @@ impl Project {
                 multi_cue: false,
                 language: None,
                 declared_alignment_paths: None,
+                declared_protected_graphs: None,
             });
         }
         plain(input, false)?;
@@ -217,7 +250,8 @@ impl Project {
         )?;
         let descriptor: Descriptor = serde_json::from_slice(&bytes)?;
         let scoped = descriptor.schema == SCOPED_SCHEMA;
-        if scoped != descriptor.alignment_paths.is_some()
+        if (descriptor.protected_graphs.is_some() && !scoped)
+            || scoped != descriptor.alignment_paths.is_some()
             || scoped != descriptor.language.is_some()
             || descriptor
                 .language
@@ -285,7 +319,31 @@ impl Project {
             multi_cue,
             language: descriptor.language,
             declared_alignment_paths: descriptor.alignment_paths,
+            declared_protected_graphs: descriptor.protected_graphs,
         };
+        if let Some(graphs) = project.declared_protected_graphs.clone() {
+            if graphs.is_empty() || graphs.len() > 15 {
+                return Err("Protected graph route count exceeds scope budget".into());
+            }
+            for (language, routes) in graphs {
+                if language.trim().is_empty()
+                    || language.len() > 64
+                    || project.language() == Some(language.as_str())
+                {
+                    return Err("Protected graph cannot replace selected language routes".into());
+                }
+                for (role, path) in [
+                    (protected_graph_role(&language), routes.graph),
+                    (protected_pointer_role(&language), routes.pointer),
+                ] {
+                    relative(&path)?;
+                    if !paths.insert(path.to_lowercase()) {
+                        return Err("Aliased protected graph control path".into());
+                    }
+                    project.files.insert(role, path);
+                }
+            }
+        }
         if multi_cue {
             let indexes: Vec<(Option<String>, String, String)> =
                 if let Some(indexes) = &project.declared_alignment_paths {
@@ -354,6 +412,9 @@ impl Project {
     }
     pub fn descriptor_sha256(&self) -> Option<&str> {
         self.descriptor_sha256.as_deref()
+    }
+    pub fn has_protected_graphs(&self) -> bool {
+        self.declared_protected_graphs.is_some()
     }
     pub fn language(&self) -> Option<&str> {
         self.language.as_deref()
@@ -526,6 +587,7 @@ impl Project {
                     .into(),
                     language: self.language.clone(),
                     alignment_paths: self.declared_alignment_paths.clone(),
+                    protected_graphs: self.declared_protected_graphs.clone(),
                     root: ".".into(),
                     files: self.declared_files.clone(),
                 })?,

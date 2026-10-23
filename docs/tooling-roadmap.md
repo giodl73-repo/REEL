@@ -8,7 +8,7 @@ does not install a binary or retarget an active project/runtime.
 | Area | Available source | Remaining work |
 | --- | --- | --- |
 | Asset/cache foundation | Local LFS, version/dependency accounting, tier planning/review, guarded verified removal, typed references and admitted jobs. Recent main work includes checkpoint resume and registered bounded execution windows (PRs 145, 146, 150). | Adopt exact tested runtime/profile pins per producer. Keep complete demand/custody coverage and explicit removal decisions. An old inventory or CI pass alone grants no deletion authority. |
-| Cel discovery/editor | Shared native reader, Rust load/apply API, static editor export, explicit file maps, effective pictures, notes, version locks, append-only picture revisions and cue-local timing (PRs 147/148). One scoped language in a full multilingual scene, up to 128 total cues; legacy drafts stay compatible. | Browser visual acceptance and one actual private multi-cue episode edit through native compile/render/review and older-version reopen. Explicit runtime adoption follows that proof. Simultaneous linked language editing, inserting new assets and wider media formats remain later extensions. |
+| Cel discovery/editor | Shared native reader, Rust load/apply API, static editor export, explicit file maps, effective pictures, notes, version locks, append-only picture revisions and cue-local timing (PRs 147/148). One scoped language in a full multilingual scene, up to 128 total cues; combined or explicitly separate language graphs. Metadata-only inspection emits a locked edit template. Legacy drafts stay compatible. | Browser visual acceptance, private media/render/review and older-version reopen. A real frozen bilingual episode now passes identity/reorder/removal and both-language native delivery-control compilation. Explicit runtime adoption follows the remaining proof. Simultaneous linked language editing, inserting new assets and wider media formats remain later extensions. |
 | Scene/project adapter | Existing native scene, scoped bindings, measured alignments and delivery compiler. The cel editor routes existing layouts without another scene grammar. | Replace remaining legacy source-repository/Git-blob assumptions with explicit project inputs. Prove one episode and one music-video family without archived builders. |
 | Scene execution | Existing admitted jobs, output retention and explicit resume; native rendering/composition already exist. | Compare the preserved executor against REEL capabilities and port only missing generic operations. Keep source/executable pins and exact output/reference accounting. |
 | Songs, scores and arrangements | Native song generation, music source/analysis/model contracts, MIDI/MusicXML/SVG export, arrangement and printable-score engines. | Authoring UI for phrase/rhythm corrections, lyric underlay, arrangement decisions and finished engraving; explicit musical review. Project adoption of an unreviewed melody draft does not establish finished notation. |
@@ -38,7 +38,9 @@ Cel source/compiler evidence is in [the editor contract](cel-sorter-v1.md),
 [compiler round-trip review](reviews/2026-10-23-cel-compiler-roundtrip.md).
 Public fixtures cover native candidate application and actual delivery-control
 compilation; prior private checks cover metadata-only 40/40/39-event round trips.
-Those results do not certify private multi-cue rendering or browser layout.
+The [separate-graph review](reviews/2026-10-23-cel-episode-graph-files.md)
+records twelve actual compiler checks over a frozen private bilingual episode's
+six candidates. Those results do not certify media, rendering or browser layout.
 
 Further contracts: [typed references](asset-references-v1.md),
 [tier review](asset-tier-review-v1.md), [jobs](asset-jobs-v1.md),

@@ -48,6 +48,13 @@ fn load_snapshot(project: &Project) -> Result<Snapshot> {
     let _: reel_assembly::Graph = serde_json::from_slice(&snapshot.raw["selected-graph.json"])?;
     let _: reel_assembly::SelectedPointer =
         serde_json::from_slice(&snapshot.raw["selected-pointer.json"])?;
+    for (role, raw) in &snapshot.raw {
+        if role.starts_with("protected-graph:") {
+            let _: reel_assembly::Graph = serde_json::from_slice(raw)?;
+        } else if role.starts_with("protected-pointer:") {
+            let _: reel_assembly::SelectedPointer = serde_json::from_slice(raw)?;
+        }
+    }
     let sequence = Sequence::for_project(docs, project)?;
     for cue in sequence.cues.iter().chain(&sequence.other_cues) {
         let _: reel_assembly::scene_authoring::NativeAlignment =
@@ -168,7 +175,7 @@ pub fn apply(project: &Path, request: &Path, out: &Path) -> Result<()> {
         }
         language.push(event);
     }
-    let mut protected_slots: BTreeSet<String> = if scoped {
+    let mut protected_slots: BTreeSet<String> = if scoped && !project.has_protected_graphs() {
         super::inspect(
             &serde_json::to_vec(&snapshot.controls["scene.json"])?,
             &serde_json::to_vec(&snapshot.controls["scene-bindings.json"])?,
@@ -181,7 +188,7 @@ pub fn apply(project: &Path, request: &Path, out: &Path) -> Result<()> {
     } else {
         BTreeSet::new()
     };
-    if scoped {
+    if scoped && !project.has_protected_graphs() {
         for (language, lane) in docs["scene.json"]["languages"]
             .as_object()
             .ok_or("languages")?
@@ -425,6 +432,13 @@ fn preserve_other_lanes(
     }
     if old_assets != new_assets {
         return Err("Edited candidate changed unrelated asset bindings".into());
+    }
+    for (role, value) in before.iter().filter(|(role, _)| {
+        role.starts_with("protected-graph:") || role.starts_with("protected-pointer:")
+    }) {
+        if after.get(role) != Some(value) {
+            return Err("Edited candidate changed another language graph or pointer".into());
+        }
     }
     let old_graph: assembly::Graph = serde_json::from_value(before["selected-graph.json"].clone())?;
     let new_graph: assembly::Graph = serde_json::from_value(after["selected-graph.json"].clone())?;

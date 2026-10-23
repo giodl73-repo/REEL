@@ -108,3 +108,22 @@ This extends the earlier single-language-source limit; simultaneous linked
 editing and automatic slot forks remain outside this editor. A synthetic
 scoped edit compiles both languages through their separate native indexes.
 Private episode/browser/render acceptance and runtime adoption remain separate.
+
+Project v3 also supports explicit separate per-language graph/pointer files via
+[`protected_graphs`](cel-sorter-project-v1.md#separate-language-graph-files).
+Each graph keeps its native domain; protected files are copied byte for byte.
+No source-language stripping or graph merging is required.
+
+For metadata-only intake and a locked identity edit template, use:
+
+```text
+reel-cel-sorter inspect project.json new-private-report.json
+```
+
+The create-new report uses `reel.cel-sorter-inspection.v1` and contains
+`edit_request`, cue `clock` metadata and `media_resolved: false`. It is bounded
+to 2 MiB and contains private identifiers and input hashes: keep it with project
+evidence, outside public tooling source. Standard output contains only counts
+and scope flags. This command reads declared native controls, resolves no media
+and starts no server. It neither exports a browser session nor certifies a
+compiler, render, selection or approval. Existing reports are never overwritten.

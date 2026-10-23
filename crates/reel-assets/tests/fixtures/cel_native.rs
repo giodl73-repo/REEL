@@ -282,3 +282,75 @@ pub fn add_english_lane(project: &Path, descriptor: &Path) {
     config["alignment_paths"] = json!({"es":"timing/paths.json","en":"timing/english-paths.json"});
     fs::write(descriptor, serde_json::to_vec(&config).unwrap()).unwrap();
 }
+
+/// Keep graph files independent; same slot names belong to separate domains.
+pub fn separate_language_graphs(project: &Path, descriptor: &Path) {
+    let read = |name: &str| -> Value {
+        serde_json::from_slice(&fs::read(project.join(name)).unwrap()).unwrap()
+    };
+    let source = read("scene.json");
+    let original = read("selected-graph.json");
+    for language in ["es", "en"] {
+        let mut graph = original.clone();
+        let bindings = source["language_event_bindings"][language]
+            .as_array()
+            .unwrap();
+        let pictures: std::collections::BTreeSet<_> = bindings
+            .iter()
+            .map(|row| row["picture_slot_id"].as_str().unwrap())
+            .collect();
+        let narration: std::collections::BTreeSet<_> = source["languages"][language]["cues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|cue| cue["narration_slot_id"].as_str().unwrap())
+            .collect();
+        graph["events"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|event| event["language"] == language);
+        graph["slots"].as_array_mut().unwrap().retain(|slot| {
+            pictures.contains(slot["slot_id"].as_str().unwrap())
+                || narration.contains(slot["slot_id"].as_str().unwrap())
+        });
+        graph["nodes"][0]["slots"] = json!(
+            graph["slots"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|slot| slot["slot_id"].clone())
+                .collect::<Vec<_>>()
+        );
+        graph["nodes"][0]["events"] = json!(
+            graph["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|event| event["event_id"].clone())
+                .collect::<Vec<_>>()
+        );
+        let typed: reel_assembly::Graph = serde_json::from_value(graph.clone()).unwrap();
+        graph["lock"] = serde_json::to_value(
+            reel_assembly::graph_lock(&typed, &format!("{language}-draft")).unwrap(),
+        )
+        .unwrap();
+        let pointer = json!({"schema":reel_assembly::POINTER_SCHEMA,"logical_id":format!("{language}-current"),"selected_lock":graph["lock"]});
+        fs::write(
+            project.join(format!("{language}-graph.json")),
+            serde_json::to_vec_pretty(&graph).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            project.join(format!("{language}-pointer.json")),
+            serde_json::to_vec_pretty(&pointer).unwrap(),
+        )
+        .unwrap();
+    }
+    let mut config: Value = serde_json::from_slice(&fs::read(descriptor).unwrap()).unwrap();
+    let language = config["language"].as_str().unwrap().to_owned();
+    let other = if language == "es" { "en" } else { "es" };
+    config["files"]["selected-graph.json"] = json!(format!("{language}-graph.json"));
+    config["files"]["selected-pointer.json"] = json!(format!("{language}-pointer.json"));
+    config["protected_graphs"] = json!({other:{"graph":format!("{other}-graph.json"),"pointer":format!("{other}-pointer.json")}});
+    fs::write(descriptor, serde_json::to_vec(&config).unwrap()).unwrap();
+}
