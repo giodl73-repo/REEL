@@ -366,3 +366,32 @@ enrollment, complete provider coverage, representative private-source performanc
 measurement, execution fencing and independently verified retained custody.
 Snapshots never make unknown scope removable. No main merge, live reclamation,
 runtime adoption or media/index payload deletion is part of this increment.
+
+## Named custody verification preflight increment
+
+Review base: `11d7773`, plus `collector/custody.rs`, its CLI entry and private
+command-path helper, `demotion::verify_pair`, collector fixtures, README and
+collector documentation. Producer-applied review uses the three infrastructure
+checklists (version 1) and Rights and Provenance. Owner: this implementation
+lane. No independent review, human approval, installed-runtime adoption or live
+cache access is claimed.
+
+| Role | Severity | Finding/correction and actual evidence |
+| --- | --- | --- |
+| Storage Custody and Recovery | Major corrected | A demand-only shadow does not verify retained bytes. The new explicit preflight hashes exact named hot/retained CAS pairs through the executor's existing streaming/handle verifier. Candidates, sizes and targets derive from native proposals; the complete named batch and two-copy logical byte budget validate before payload I/O. Missing/corrupt copies fail without copy, repair or fallback search. A cold-candidate fixture verifies the named cold root without registering it. |
+| Storage Custody and Recovery | Major corrected | Two paths cannot establish two copies. Physical-identity equality always fails, including hard links across cache paths. Same-volume files require the native policy's explicit exception and are counted separately. Different volumes are not labeled independent failure domains. Real Windows temporary-file fixtures cover alias rejection and same-volume policy; no independent-device validation is claimed. |
+| Asset Graph and Version Integrity | Major corrected | Successful hashes cannot override live demand or become a permanent deletion permit. Held candidates fail before payload access, source cache enrollment is mandatory, and final protection/plan/policy/request/storage checks reject changes. A private deterministic test seam introduces new staging demand or changes controls after hashing; every case rejects success and leaves the hot file. The summary explicitly denies reusable custody proof/removal authority. Complete consumer enrollment and execution fencing remain separate gates. |
+| Registry Concurrency and Evidence Integrity | Advisory addressed | Verification must not serialize unrelated producers or grow a new evidence registry. The command opens only named pairs, requests no DELETE access, creates no journal/receipt, and releases pair handles before final revalidation. No global cache or render lifetime lock is added. Windows handles deny payload mutation during each pair check; earlier pairs are not leased through return. Metadata work retains existing bounds; hard cancellation during metadata traversal/blocking I/O remains open. |
+| Rights and Provenance | Advisory addressed | Verification can touch private media only when explicitly invoked with named candidates. Successful stdout remains fixed-schema/counts/booleans, with zero copies/removals and no per-asset hashes, paths or identities. Executable tests compare filesystem contents before/after success and failure, use empty PATH and reject execution-like fields. This lane used synthetic temporary fixtures only; no live media, archive crawl, daemon, external service or installed binding change occurred. |
+
+Validation: 435 tests pass (227 unit, five prior integration, 100 model,
+23 source adapter, 25 sidecar, 30 backend, 14 managed CLI and 11 collector CLI).
+This increment adds eight executable cases and one unit boundary case. Strict
+all-target Clippy, formatting, ROLES structure and diff checks pass. Windows
+filesystem branches only; no cross-platform/device durability claim.
+
+Disposition: named demand-and-custody preflight implemented. It creates no
+removal authorization or persistent custody asset. Exact unlink integration
+still needs complete enrolled demand, compatible publication/removal fencing,
+and fresh retained-copy guards at the physical operation. No live reclamation,
+main merge or runtime replacement is part of this increment.

@@ -48,6 +48,8 @@ private JSON profile. They do not switch existing producers or enable cleanup.
 The opt-in [combined collector shadow](docs/inventory-evidence-collector-v1.md)
 combines declared consumers, jobs and index protection, then restricts native
 planner proposals without applying removals or refilling held batch slots.
+Its named `collector-verify` preflight freshly hashes hot/retained pairs and
+rechecks demand, without copying, removing or exporting private identities.
 
 ---
 

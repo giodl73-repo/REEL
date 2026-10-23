@@ -17,6 +17,11 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
             .ok_or_else(|| "Missing argument".into())
     };
     match command {
+        "collector-verify" => {
+            if args.len()!=2 {return Err("Usage: collector-verify <private-job.json>".into());}
+            let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+            crate::inventory_evidence::sidecar::file_store::collector::custody::run(root,Path::new(arg(1)?),now)
+        },
         "collector-shadow" => {
             if args.len()!=2 {return Err("Usage: collector-shadow <private-job.json>".into());}
             let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
@@ -237,7 +242,7 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
             versions::transact(root,|s|{s.validate_plan(&plan)?;Ok(json!({"generation":s.generation,"fresh":true,"removal_authorized":false}))})
         },
         "release-reservation" => {admission::release_stale(root,&config(root)?,arg(1)?)?;Ok(json!({"released":arg(1)?}))},
-        _=>Err("Commands include: collector-shadow, inventory-index-init, inventory-index-build, inventory-index-shadow, inventory-index-recover, ingest, register, verify-active, locate, resolve, fetch, register-version, select, deprecate, lease, release-lease, retirement-plan, check-plan, release-reservation".into()),
+        _=>Err("Commands include: collector-verify, collector-shadow, inventory-index-init, inventory-index-build, inventory-index-shadow, inventory-index-recover, ingest, register, verify-active, locate, resolve, fetch, register-version, select, deprecate, lease, release-lease, retirement-plan, check-plan, release-reservation".into()),
     }
 }
 pub fn main() {

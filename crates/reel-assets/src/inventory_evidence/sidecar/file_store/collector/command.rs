@@ -8,7 +8,7 @@ struct Job {
     census: PathBuf,
     protection: Request,
 }
-fn input(root: &Path, path: &Path) -> Result<PathBuf> {
+pub(super) fn input(root: &Path, path: &Path) -> Result<PathBuf> {
     let path = if path.is_absolute() {
         path.to_owned()
     } else {

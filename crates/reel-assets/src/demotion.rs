@@ -278,6 +278,34 @@ fn verify(file: &mut fs::File, hash: &str, bytes: u64, deadline: std::time::Inst
     Ok(())
 }
 
+/// Advisory exact-pair verification using the executor's existing handle and
+/// streaming-hash implementation. No DELETE access, publication or journal.
+pub(crate) fn verify_pair(
+    source: &Path,
+    retained: &Path,
+    hash: &str,
+    bytes: u64,
+    deadline: std::time::Instant,
+) -> Result<()> {
+    let _source_dirs = platform::guard_dirs(source)?;
+    let _retained_dirs = platform::guard_dirs(retained)?;
+    let mut source_file = platform::open(source, false)?;
+    let mut retained_file = platform::open(retained, false)?;
+    let source_id = platform::identity(&source_file)?;
+    let retained_id = platform::identity(&retained_file)?;
+    if source_id.id == retained_id.id {
+        return Err("Source and retained paths alias one physical file".into());
+    }
+    verify(&mut source_file, hash, bytes, deadline)?;
+    verify(&mut retained_file, hash, bytes, deadline)?;
+    if platform::identity(&source_file)?.id != source_id.id
+        || platform::identity(&retained_file)?.id != retained_id.id
+    {
+        return Err("Verified pair identity changed".into());
+    }
+    Ok(())
+}
+
 fn ensure_no_admissions(control: &Path) -> Result<()> {
     if admissions_present(control)? {
         return Err("Live or unreconciled admissions present; redundant-copy removal held".into());

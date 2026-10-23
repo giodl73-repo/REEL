@@ -1,7 +1,7 @@
 use super::*;
 use crate::tiering::tests::Fixture;
 
-fn setup() -> (Fixture, Request) {
+pub(super) fn setup() -> (Fixture, Request) {
     let mut f = Fixture::new();
     f.state.coverage_complete = true;
     f.save();

@@ -100,11 +100,14 @@ impl Fixture {
         }
     }
     fn command(&self) -> Command {
+        self.named_command("collector-shadow")
+    }
+    fn named_command(&self, name: &str) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_reel-assets"));
         c.current_dir(&self.root)
             .arg("--root")
             .arg(&self.root)
-            .arg("collector-shadow")
+            .arg(name)
             .arg(&self.profile)
             .env("PATH", "")
             .env_remove("CAMINOS_TRANSFER_CACHE");
@@ -122,6 +125,25 @@ impl Fixture {
         let mut value: Value = serde_json::from_slice(&fs::read(&self.profile).unwrap()).unwrap();
         change(&mut value);
         fs::write(&self.profile, serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+    fn verification(&self, remove_hold: bool) {
+        if remove_hold {
+            fs::remove_file(
+                self.root
+                    .join("hot/staging/job/objects")
+                    .join(&self.subject),
+            )
+            .unwrap();
+        }
+        self.edit(|v| {
+            v["schema"] = json!("reel.collector-verify-job.v1");
+            v["sha256s"] = json!([self.subject]);
+            v["max_verify_bytes"] = json!(1048576);
+            v["max_seconds"] = json!(60);
+        });
+    }
+    fn verify(&self) -> Output {
+        self.named_command("collector-verify").output().unwrap()
     }
 }
 fn files(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
@@ -141,6 +163,184 @@ fn files(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     let mut result = BTreeMap::new();
     visit(root, root, &mut result);
     result
+}
+
+#[test]
+fn custody_preflight_hashes_named_pairs_without_writes_or_private_export() {
+    let f = Fixture::new();
+    f.verification(true);
+    let before = files(&f.root);
+    let out = f.verify();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let summary: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(summary["verified_pairs"], 1);
+    assert_eq!(
+        summary["verified_payload_bytes"],
+        2 * b"fixture previously used".len()
+    );
+    assert_eq!(summary["same_volume_pairs"], 1);
+    assert_eq!(summary["different_volume_pairs"], 0);
+    assert_eq!(summary["removal_authorized"], false);
+    assert_eq!(summary["reusable_custody_proof"], false);
+    assert_eq!(summary["files_removed"], 0);
+    assert_eq!(summary["payload_bytes_copied"], 0);
+    for (key, value) in summary.as_object().unwrap() {
+        assert!(key == "schema" || value.is_number() || value.is_boolean());
+    }
+    let text = String::from_utf8(out.stdout).unwrap();
+    for private in [&f.subject, "PRIVATE_PROJECT_ID", "fixture previously used"] {
+        assert!(!text.contains(private));
+    }
+    assert_eq!(files(&f.root), before);
+    assert!(!f.root.join("UNAVAILABLE_ARCHIVE").exists());
+}
+
+#[test]
+fn custody_preflight_protection_precedes_payload_access() {
+    let f = Fixture::new();
+    f.verification(false);
+    fs::remove_file(reel_assets::object(&f.root.join("warm"), &f.subject)).unwrap();
+    let before = files(&f.root);
+    let out = f.verify();
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("combined protection"));
+    assert_eq!(files(&f.root), before);
+}
+
+#[test]
+fn custody_preflight_rejects_corrupt_or_missing_source_and_retained_copies() {
+    for cache in ["hot", "warm"] {
+        for missing in [false, true] {
+            let f = Fixture::new();
+            f.verification(true);
+            let path = reel_assets::object(&f.root.join(cache), &f.subject);
+            if missing {
+                fs::remove_file(path).unwrap();
+            } else {
+                fs::write(path, vec![b'x'; b"fixture previously used".len()]).unwrap();
+            }
+            let before = files(&f.root);
+            let out = f.verify();
+            assert!(!out.status.success());
+            assert!(out.stdout.is_empty());
+            assert_eq!(files(&f.root), before);
+        }
+    }
+}
+
+#[test]
+fn custody_preflight_never_counts_hardlink_alias_as_retained_copy() {
+    let f = Fixture::new();
+    f.verification(true);
+    let source = reel_assets::object(&f.root.join("hot"), &f.subject);
+    let retained = reel_assets::object(&f.root.join("warm"), &f.subject);
+    fs::remove_file(&retained).unwrap();
+    fs::hard_link(source, retained).unwrap();
+    let before = files(&f.root);
+    let out = f.verify();
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("one physical file"));
+    assert_eq!(files(&f.root), before);
+}
+
+#[test]
+fn custody_preflight_requires_explicit_same_volume_exception() {
+    let f = Fixture::new();
+    f.verification(true);
+    let path = f.root.join("policy.json");
+    let mut policy: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    policy["allow_same_volume_copies"] = json!(false);
+    fs::write(path, serde_json::to_vec(&policy).unwrap()).unwrap();
+    let before = files(&f.root);
+    let out = f.verify();
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    assert_eq!(files(&f.root), before);
+}
+
+#[test]
+fn custody_preflight_rejects_bad_scopes_duplicates_budgets_and_execution_fields() {
+    for case in 0..10 {
+        let f = Fixture::new();
+        f.verification(true);
+        f.edit(|v| match case {
+            0 => v["sha256s"] = json!([]),
+            1 => v["sha256s"] = json!([f.subject, f.subject]),
+            2 => v["sha256s"] = json!(["bad"]),
+            3 => v["max_verify_bytes"] = json!(1),
+            4 => v["max_seconds"] = json!(0),
+            5 => v["apply"] = json!(true),
+            6 => v["sha256s"] = json!(["e".repeat(64)]),
+            7 => v["protection"]["caches"] = json!([]),
+            8 => v["protection"]["consumers"] = json!([]),
+            _ => v["schema"] = json!("unknown"),
+        });
+        let before = files(&f.root);
+        let out = f.verify();
+        assert!(!out.status.success(), "case {case}");
+        assert!(out.stdout.is_empty());
+        assert_eq!(files(&f.root), before);
+    }
+}
+
+#[test]
+fn custody_preflight_byte_budget_is_checked_before_payload_reads() {
+    let f = Fixture::new();
+    f.verification(true);
+    f.edit(|v| v["max_verify_bytes"] = json!(1));
+    fs::remove_file(reel_assets::object(&f.root.join("warm"), &f.subject)).unwrap();
+    let out = f.verify();
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("byte budget exceeded before payload I/O")
+    );
+}
+
+#[test]
+fn custody_preflight_verifies_only_named_cold_candidate_without_registering_it() {
+    let f = Fixture::new();
+    f.verification(true);
+    let data = b"unregistered prior candidate";
+    let subject = hash(data);
+    for root in [f.root.join("hot"), f.root.join("UNAVAILABLE_ARCHIVE")] {
+        let path = reel_assets::object(&root, &subject);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, data).unwrap();
+    }
+    let raw = serde_json::to_vec(&reel_assets::accounting::report(&f.root).unwrap()).unwrap();
+    fs::write(f.root.join("baseline.json"), &raw).unwrap();
+    let policy = f.root.join("policy.json");
+    let mut value: Value = serde_json::from_slice(&fs::read(&policy).unwrap()).unwrap();
+    value["baseline"] = json!({"sha256":hash(&raw),"bytes":raw.len()});
+    fs::write(policy, serde_json::to_vec(&value).unwrap()).unwrap();
+    f.edit(|v| v["sha256s"] = json!([subject]));
+    let before = files(&f.root);
+    let out = f.verify();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["verified_pairs"], 1);
+    assert_eq!(value["verified_payload_bytes"], data.len() * 2);
+    assert_eq!(files(&f.root), before);
+    // No fallback to the warm tier when a named cold copy disappears.
+    fs::remove_file(reel_assets::object(
+        &f.root.join("UNAVAILABLE_ARCHIVE"),
+        &subject,
+    ))
+    .unwrap();
+    let out = f.verify();
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
 }
 #[test]
 fn actual_reference_planner_shadow_adds_a_hold_without_writes_or_private_output() {

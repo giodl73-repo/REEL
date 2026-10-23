@@ -52,6 +52,60 @@ Successful stdout contains only a fixed schema plus counts and booleans:
 Profiles, identities, paths, hashes, reason sets and diagnostics remain private.
 There is no `--apply` or implicit cleanup.
 
+## Named custody preflight
+
+`reel-assets --root <project> collector-verify <private-job.json>` combines the
+same planner/protection comparison with fresh streaming hashes of exact named
+hot and retained CAS files. Use the shadow-job fields above, change `schema` to
+`reel.collector-verify-job.v1`, and add:
+
+```json
+{
+  "sha256s": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+  "max_verify_bytes": 1073741824,
+  "max_seconds": 120
+}
+```
+
+The entire job still has a 64 KiB limit. Candidates must be unique valid hashes,
+nonempty, at most 512 and within the native policy's batch limit. Sizes and
+targets come from fresh native proposals, not caller-supplied descriptors.
+Only demotion/archive proposals qualify; protected or absent candidates fail.
+The source cache must appear in declared protection scope. The retained tier is
+the policy's history tier for demotion and cold tier for archive proposals.
+Only those exact roots/files are opened. A missing named archive fails; there
+is no source fallback, automatic hydration, registration or payload copy.
+
+The complete named batch's two-copy logical byte cost is checked against
+`max_verify_bytes` and the policy batch limit before payload reads. Each object
+also obeys the configured object-size limit. The command reuses the removal
+engine's existing streaming verifier and read-only file/directory handles,
+without requesting DELETE access or creating a journal. Hashing obeys a deadline;
+capture/planning also check the overall deadline before success, but do not yet
+support hard cancellation during metadata traversal or blocking filesystem I/O.
+
+Two names for one physical file always fail. Same-volume pairs require the
+policy's existing explicit `allow_same_volume_copies` exception; the summary
+counts them separately. Different-volume counts do not establish different
+physical devices or failure domains. Windows handles deny payload writes and
+replacement while a pair is verified; pairs are released before the final
+demand/plan/control recheck. Verification is a scoped observation, not ongoing
+custody or a reusable execution lease.
+
+Success exposes `reel.collector-verify-summary.v1`, pair/byte/volume counts,
+`dry_run: true`, `declared_scope_only: true`, `removal_authorized: false`,
+`reusable_custody_proof: false`, and zero copies/removals. No per-file hashes,
+paths, identity-bearing receipt, or growing inventory is written. The existing
+removal executor cannot consume this summary as authorization. Actual execution
+must still reconcile complete demand and preserve exact custody at unlink time.
+
+Eight additional executable cases cover exact pairs, held candidates before
+payload access, missing/corrupt copies, hard-link aliases, same-volume policy,
+invalid scopes/budgets, cold candidates and no writes/private stdout. One unit
+case changes staging demand, policy, request or storage bindings after hashing
+and proves final checks reject success. These are Windows synthetic fixtures;
+no private media or live cache verification was performed.
+
 ## Protection semantics
 
 The union includes native selected inputs/outputs, working and pinned state,
