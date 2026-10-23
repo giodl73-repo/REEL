@@ -480,6 +480,25 @@ impl Catalog {
         check_node_limit(binding.limits.node_bytes)?;
         Ok(())
     }
+    pub(super) fn producer_preflight(
+        &self,
+        cache: &Path,
+        source: &Source,
+        key: &str,
+        expected: u64,
+    ) -> Result<()> {
+        self.check_manifest()?;
+        if checked_directory(cache)? != self.manifest.cache
+            || source.project_id != self.manifest.project
+            || source.authority_namespace != self.manifest.authority
+        {
+            return Err("Managed producer catalog/source scope mismatch".into());
+        }
+        if self.read(key)?.revision != expected {
+            return Err("Managed producer expected revision conflict".into());
+        }
+        Ok(())
+    }
     pub fn create_key(&self, context: &MutationContext<'_>, key: &str) -> Result<Snapshot> {
         let _reservation = self.reserve(context)?;
         let slot = self.slot(key)?;

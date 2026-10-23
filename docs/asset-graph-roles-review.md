@@ -298,3 +298,37 @@ producer/config wiring, combined staging/retained/job/media scope coverage and
 shadow planner parity remain before removal integration. Platform/device
 durability, external whole-lineage anchors, history compaction, exact allocation,
 deadlines/cancellation and receipt/registry-format adapters remain separate work.
+
+## Managed producer and executable shadow increment
+
+Review base: `0b0fa18f7611960a03c7451d7ff515d8489d0618`, plus
+`sidecar/file_store/managed.rs`, `managed/command.rs`, the bounded catalog
+preflight, `cli.rs`, `tests/inventory_managed_cli.rs`, and
+`inventory-evidence-managed-v1.md`. Producer-applied review uses the three
+infrastructure checklists (version 1) and Rights and Provenance. Owner: this
+implementation lane. No independent review, human approval or installed-runtime
+adoption is claimed. Historical target hashes above remain unchanged.
+
+| Role | Severity | Finding/correction and actual evidence |
+| --- | --- | --- |
+| Registry Concurrency and Evidence Integrity | Major corrected | Library components needed an explicit producer transaction boundary. Managed build now checks catalog scope/revision before source I/O, verifies the named source, reserves shared capacity, builds/seals/retains the index and performs expected-revision admission. Concurrent executable producers never force overwrite; stale revision failure precedes source access/session creation. Failed partial publication retains bounded staging and does not select or retire it. |
+| Asset Graph and Version Integrity | Major corrected | Internally valid hashes/source binding do not establish observation parity with original evidence. The new read-only shadow compares requested rows, copies, ordinals and capture/scope/tier/profile/generation metadata against the verified original source, then checks unchanged catalog revision/root. A deliberately wrong but internally valid/admitted transform is rejected. This is requested adapter-observation parity, not all-row/unqueried integrity, actual media custody or planner-decision parity. |
+| Storage Custody and Recovery | Major corrected | Profile path normalization must not silently lose a tier-specific free-space floor or probe unrelated archives. Only the named output root is normalized in the local config copy, with its floor preserved. Source locations must be configured named roots. Tests keep unrelated archives unavailable and prove init/recovery do not open an offline source; build fails without creating a session. Metadata directories are existing, disjoint same-filesystem children of the chosen cache. |
+| Storage Custody and Recovery | Advisory addressed | Operator recovery must not imply render/job replay or automatic cleanup. Separate init/build/shadow/recover commands run in the existing binary, with no default profile, census refresh, fallback recovery or retirement. Success retains staging and reports zero media copies/no removal authority. Source bytes remain unchanged, including gzip; original source ingestion/registration/custody remain the established asset workflow. |
+| Registry Concurrency and Evidence Integrity | Major corrected | Per-lookup limits do not bound a batch. Shadow enforces subject, aggregate node and aggregate byte limits, rejects duplicate/invalid/empty subjects and emits no success projection on mismatch/budget failure. Filesystem snapshots prove read-only shadow failures and current-revision recovery do not change fixture contents. Complete source preparation remains memory resident and explicitly bounded. |
+| Rights and Provenance | Advisory addressed | Private profiles contain authority/key/path/hash data and must not become scorecards. New stdout schemas expose fixed schema labels and numeric/boolean fields only; tests exclude identity sentinels and non-count values. Private profiles/catalog/witnesses and stderr diagnostics remain private. Unknown profile fields and unsupported source schemas/encodings reject rather than installing a parser or executing instructions. |
+| Storage Custody and Recovery | Advisory addressed | Legacy environment overrides must not redirect the new explicit producer into another cache/tool flow. An executable fixture succeeds with an empty PATH and a conflicting CAMINOS_TRANSFER_CACHE, without creating that destination. New command paths use typed config and filesystem APIs, never legacy fetch, rendering or daemon startup. |
+
+Validation: all 409 tests pass (212 unit, five prior integration, 100 model,
+23 source adapter, 25 sidecar, 30 backend, 14 managed CLI). Actual existing Rust
+census/named producers feed JSON/gzip source assets through the executable.
+Strict all-target Clippy, formatting, ROLES structure and diff checks pass.
+Only isolated synthetic temporary data was accessed; installed aliases/bindings
+and live caches were unchanged.
+
+Disposition: optional managed producer and operator commands wired and tested;
+requested lookup/observation shadow parity established. Project opt-in config,
+combined staging/retained/job/media collector coverage and planner-decision
+shadow comparison remain before removal adoption. Streaming source preparation,
+deadline/cancellation, exact allocation, device durability and control/history
+compaction remain separate work. No existing collector receives deletion authority.

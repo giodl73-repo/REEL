@@ -12,6 +12,7 @@ const SEAL_SCHEMA: &str = "reel.inventory-sidecar.seal.v1";
 const CONTROL_BYTES: u64 = 64 * 1024;
 mod capacity;
 pub mod catalog;
+pub mod managed;
 pub mod retirement;
 
 /// Logical staged-byte ceiling, not a filesystem free-space reservation.

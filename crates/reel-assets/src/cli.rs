@@ -17,6 +17,11 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
             .ok_or_else(|| "Missing argument".into())
     };
     match command {
+        "inventory-index-init" | "inventory-index-build" | "inventory-index-recover" | "inventory-index-shadow" => {
+            let expected=if command=="inventory-index-shadow" {3}else{2};
+            if args.len()!=expected {return Err("Usage: inventory-index-init|inventory-index-build|inventory-index-recover <profile.json> | inventory-index-shadow <profile.json> <exact-subjects.json>".into());}
+            crate::inventory_evidence::sidecar::file_store::managed::command::run(root,command,Path::new(arg(1)?),args.get(2).map(Path::new))
+        },
         "schema-catalogue" => {
             if args.len()!=2 {return Err("Usage: schema-catalogue <new-output.json>".into());}
             let value=crate::references::catalogue()?;
@@ -227,7 +232,7 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
             versions::transact(root,|s|{s.validate_plan(&plan)?;Ok(json!({"generation":s.generation,"fresh":true,"removal_authorized":false}))})
         },
         "release-reservation" => {admission::release_stale(root,&config(root)?,arg(1)?)?;Ok(json!({"released":arg(1)?}))},
-        _=>Err("Commands: ingest, register, verify-active, locate, resolve, fetch, register-version, select, deprecate, lease, release-lease, retirement-plan, check-plan, release-reservation".into()),
+        _=>Err("Commands include: inventory-index-init, inventory-index-build, inventory-index-shadow, inventory-index-recover, ingest, register, verify-active, locate, resolve, fetch, register-version, select, deprecate, lease, release-lease, retirement-plan, check-plan, release-reservation".into()),
     }
 }
 pub fn main() {

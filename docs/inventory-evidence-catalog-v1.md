@@ -123,8 +123,10 @@ prior integration, 100 model, 23 source-adapter, 25 sidecar and 30 backend cases
 ROLES structure and diff checks pass. Windows branches are exercised here;
 Unix-specific filesystem/durability behavior is not established by this run.
 
-Before live adoption, wire managed producers, configure explicit catalog scope,
-combine staging/retained/job/media protection into collector coverage, and run
-shadow comparison against existing plans. Platform/device durability, checkpoint
+Optional [managed producers and shadow commands](inventory-evidence-managed-v1.md)
+now wire named source preparation through catalog admission and compare requested
+lookups against original producer observations. Before live adoption, configure
+project scope, combine staging/retained/job/media collector coverage, and run
+shadow comparison of planner decisions. Platform/device durability, checkpoint
 compaction, exact allocation and receipt/registry-format adapters remain separate.
 Existing production collectors remain unchanged and receive no removal authority.
