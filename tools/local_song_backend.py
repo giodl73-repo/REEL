@@ -81,6 +81,15 @@ def validate_request(request, source):
         raise ValueError('Source-noise strength requires a verified generated cover guide')
     if not 30 <= request['duration_seconds'] <= 600 or not isinstance(request['seed'], int):
         raise ValueError('Invalid bounded duration or seed')
+    instrumental = request.get('instrumental', False)
+    if type(instrumental) is not bool:
+        raise ValueError('Instrumental mode must be an explicit boolean')
+    if instrumental and (request['task'] != 'text2music' or request.get('semantic_planner')
+                         or request['canonical_lyrics'] != '' or request['render_lyrics'] != '[Instrumental]'
+                         or request.get('performance_repetitions', 1) != 1 or request.get('repeat_section_lines')):
+        raise ValueError('Instrumental audition requires direct generation, empty canonical lyrics and the exact instrumental marker')
+    if request['duration_seconds'] > request.get('max_duration_seconds', 600):
+        raise ValueError('Requested duration exceeds its explicit ceiling')
     if source.read_bytes().decode('utf-8') != request['canonical_lyrics']:
         raise ValueError('Canonical lyrics differ from frozen source bytes')
     # Engine stanza tags may change layout, never authored words.
@@ -218,7 +227,7 @@ def generate(request, runtime, source):
         raise RuntimeError(f'ACE initialization failed: {status}')
     params = GenerationParams(
         task_type=request['task'], caption=request['caption'], lyrics=request['render_lyrics'],
-        instrumental=False, vocal_language='es', bpm=None, keyscale='', timesignature='',
+        instrumental=request.get('instrumental', False), vocal_language='es', bpm=None, keyscale='', timesignature='',
         duration=request['duration_seconds'], inference_steps=8, guidance_scale=7.5,
         seed=request['seed'], thinking=False, use_cot_metas=False,
         use_cot_caption=False, use_cot_language=False, use_cot_lyrics=False,
@@ -248,6 +257,7 @@ def generate(request, runtime, source):
         quantization='w8a8_dynamic', compile_model=False, semantic_planner=bool(request.get('semantic_planner')),
         plan=descriptor('plan.json') if request.get('semantic_planner') else None,
         task_type=request['task'],audio_conditioning=guide,
+        instrumental=request.get('instrumental', False),
         audio_cover_strength=params.audio_cover_strength if guide else None,
         cover_noise_strength=params.cover_noise_strength if guide else None,
         duration_locked_to_guide=bool(guide),
@@ -259,6 +269,15 @@ def generate(request, runtime, source):
 def words(text):
     normalized = ''.join(c for c in unicodedata.normalize('NFKD', text.lower()) if not unicodedata.combining(c))
     return re.findall(r'[a-z]+', normalized)
+
+
+def instrumental_report(passes):
+    """Unprompted recognizer output is a listening aid, not proof of vocals."""
+    return dict(schema='reel.instrumental-listening-diagnostic.v1',
+                lyric_gate_applicable=False, passed=None, requested_instrumental=True,
+                recognized_text_present=any(words(p.get('text', '')) for p in passes),
+                recognition_limit='Recognition can hallucinate words over instruments; absence of text does not prove absence of singing or humming.',
+                human_listening='pending', selected=False)
 
 
 def lyric_sections(lyrics,section_lines):
@@ -501,11 +520,12 @@ def analyze(request, runtime, source):
         write(Path('transcripts')/(name+'.json'), dict(raw,source_clock_offset_seconds=offset,canonical_prompt=False,
             batch_size=ASR_BATCH_SIZE,dtype=recognition_dtype,chunk_length_s=chunk,stride_length_s=stride))
         passes.append(dict(name=name, text=raw['text'], tokens=tokens))
-    report = line_report(request['canonical_lyrics'], passes)
-    report.update(schema='reel.song-lyric-diagnostic.v1',candidate_id=request['candidate_id'],
+    report = instrumental_report(passes) if request.get('instrumental', False) else line_report(request['canonical_lyrics'], passes)
+    report.update(candidate_id=request['candidate_id'],
         request=descriptor('request.json'),recording=descriptor('recording.wav'),runtime=descriptor('runtime.json'),
         technical=dict(seconds=seconds,sample_rate=rate,channels=samples.shape[1],peak=peak,rms=rms,complete_decode=True),
         vocal_estimate='Demucs derivative; not an original stem',passes=passes)
+    report.setdefault('schema', 'reel.song-lyric-diagnostic.v1')
     report['recognition_settings']=dict(batch_size=ASR_BATCH_SIZE,dtype=recognition_dtype,num_beams=3,
         conditions=['mix30/5','mix20/3','vocals20/3'],canonical_prompt=False)
     report['requested_complete_poem_passes']=None if request.get('repeat_section_lines') else request.get('performance_repetitions',1)
@@ -514,8 +534,11 @@ def analyze(request, runtime, source):
     with zipfile.ZipFile('transcripts.zip','x',zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(Path('transcripts').glob('*.json')):
             archive.write(path,path.name)
-    print('LYRIC GATE',report['passed'],report['qualifying_lines'],'/',report['total_lines'],
-        'exact',report['exact_lines'],'one-word gaps',report['one_word_gap_lines'],flush=True)
+    if request.get('instrumental', False):
+        print('INSTRUMENTAL: technical checks passed; musical and vocal-absence listening pending', flush=True)
+    else:
+        print('LYRIC GATE',report['passed'],report['qualifying_lines'],'/',report['total_lines'],
+            'exact',report['exact_lines'],'one-word gaps',report['one_word_gap_lines'],flush=True)
 
 
 def main():
