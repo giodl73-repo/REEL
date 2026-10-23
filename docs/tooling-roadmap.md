@@ -1,0 +1,51 @@
+# Reusable authoring tools roadmap
+
+Checkpoint: 2026-10-23. REEL owns generic Rust engines, explicit CLI/UI entry
+points and synthetic fixtures. Project repositories own private declarative
+controls, media, exact versions, authority and delivery choices. Merging source
+does not install a binary or retarget an active project/runtime.
+
+| Area | Available source | Remaining work |
+| --- | --- | --- |
+| Asset/cache foundation | Local LFS, version/dependency accounting, tier planning/review, guarded verified removal, typed references and admitted jobs. Recent main work includes checkpoint resume and registered bounded execution windows (PRs 145, 146, 150). | Adopt exact tested runtime/profile pins per producer. Keep complete demand/custody coverage and explicit removal decisions. An old inventory or CI pass alone grants no deletion authority. |
+| Cel discovery/editor | Shared native reader, Rust load/apply API, static editor export, explicit file maps, effective pictures, notes, version locks, append-only picture revisions and cue-local timing (PRs 147/148). One editable language, up to 128 cues; legacy drafts stay compatible. | Browser visual acceptance and one actual private multi-cue episode edit through native compile/render/review and older-version reopen. Explicit runtime adoption follows that proof. Bilingual linked editing, inserting new assets and wider media formats remain later extensions. |
+| Scene/project adapter | Existing native scene, scoped bindings, measured alignments and delivery compiler. The cel editor routes existing layouts without another scene grammar. | Replace remaining legacy source-repository/Git-blob assumptions with explicit project inputs. Prove one episode and one music-video family without archived builders. |
+| Scene execution | Existing admitted jobs, output retention and explicit resume; native rendering/composition already exist. | Compare the preserved executor against REEL capabilities and port only missing generic operations. Keep source/executable pins and exact output/reference accounting. |
+| Songs, scores and arrangements | Native song generation, music source/analysis/model contracts, MIDI/MusicXML/SVG export, arrangement and printable-score engines. | Authoring UI for phrase/rhythm corrections, lyric underlay, arrangement decisions and finished engraving; explicit musical review. Project adoption of an unreviewed melody draft does not establish finished notation. |
+| Large inventory/graph infrastructure | Separate draft PR144 has bounded index/adapters, revisioned catalog and fenced publication fixtures. | Cache-wide/all-consumer enforcement, cross-domain routing/lock order, safe explicit activation and final canonical unlink remain integration work. Green fixture CI does not close these gaps. Keep separate from routine cel UI adoption. |
+| Speech and episode assembly extensions | Separate draft PR120 (local speech/alignment) and PR128 (bounded lossless assembly). | Their owners must close the documented adoption/review gaps. They are not implicitly merged by the cel-tooling milestone. |
+
+## Next bounded units
+
+1. Close cel-tool adoption with one explicitly chosen private multi-cue scene:
+   open the supplied project, edit within cues, preserve comments, apply to a
+   new candidate, verify exact inputs, compile/render through the existing job
+   system, review, and reopen the previous locked version. Browser layout and
+   media acceptance are distinct from JSON/compiler tests. No automatic server.
+2. Complete explicit scene/project adapter coverage for that episode family and
+   a music-video family; reuse the existing native contracts and execution.
+3. Build the next authoring surface over existing song/score Rust contracts.
+   Start with one correction/underlay/arrangement workflow, not a restoration of
+   per-song builders. Keep source text, recordings and score editions separate.
+4. Continue managed-index/fencing adoption as its own infrastructure task with
+   complete consumer coverage and explicit operational policy. It must not
+   silently activate cache removal or expand the current editing milestone.
+
+## Evidence and boundaries
+
+Cel source/compiler evidence is in [the editor contract](cel-sorter-v1.md),
+[project paths](cel-sorter-project-v1.md) and the
+[compiler round-trip review](reviews/2026-10-23-cel-compiler-roundtrip.md).
+Public fixtures cover native candidate application and actual delivery-control
+compilation; prior private checks cover metadata-only 40/40/39-event round trips.
+Those results do not certify private multi-cue rendering or browser layout.
+
+Further contracts: [typed references](asset-references-v1.md),
+[tier review](asset-tier-review-v1.md), [jobs](asset-jobs-v1.md),
+[checkpoint resume](jobs-checkpoint-resume.md),
+[scene authoring](scene-authoring-v1.md),
+[music export](music-score-export-v0.3.1.md),
+[arrangement plans](music-arrangement-plan-v0.3.10.md) and
+[printable lead sheets](music-printable-lead-sheet-v0.3.16.md).
+Private project port maps should link these contracts and exact source commits;
+large inventories/reports remain assets rather than copied roadmap prose.

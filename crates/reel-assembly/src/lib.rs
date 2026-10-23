@@ -839,6 +839,15 @@ fn selected_slot_asset<'a>(
     Ok(&revision.asset)
 }
 
+/// Compute the existing canonical lock for a validated native graph. This binds
+/// every field and neutralizes the previous lock hash. It does not publish,
+/// advance a pointer, certify asset custody or grant creative approval.
+pub fn graph_lock(graph: &Graph, logical_id: &str) -> Result<ImmutableRef> {
+    valid_id("graph lock", logical_id)?;
+    validate_graph(graph)?;
+    graph_digest_lock(graph, logical_id)
+}
+
 fn graph_digest_lock(graph: &Graph, logical_id: &str) -> Result<ImmutableRef> {
     let mut canonical = graph.clone();
     canonical.lock = ImmutableRef {
