@@ -62,6 +62,15 @@ pub struct RenderOptions {
     pub browser: PathBuf,
     pub output: PathBuf,
     pub clean_picture: bool,
+    /// Keep the exact captured PNG for a single-frame composition.
+    pub poster: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Poster {
+    pub path: String,
+    pub sha256: String,
+    pub bytes: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -98,6 +107,8 @@ pub struct BrowserCompositionReport {
     pub output_bytes: u64,
     pub output_duration_ms: u64,
     pub audio_streams: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poster: Option<Poster>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -355,9 +366,58 @@ fn verify_video_probe(probe: &Value, manifest: &BrowserCompositionManifest) -> R
         .count())
 }
 
+fn validate_poster(options: &RenderOptions, frame_count: u64) -> Result<()> {
+    let Some(poster) = &options.poster else { return Ok(()) };
+    if frame_count != 1 {
+        bail!("a lossless poster requires exactly one composition frame");
+    }
+    if poster.exists() || poster.extension().is_none_or(|ext| !ext.eq_ignore_ascii_case("png")) {
+        bail!("poster must be a new PNG file");
+    }
+    let parent = |path: &Path| path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf();
+    let output_parent = parent(&options.output);
+    let poster_parent = parent(poster);
+    fs::create_dir_all(&output_parent)?;
+    fs::create_dir_all(&poster_parent)?;
+    if output_parent.canonicalize()? != poster_parent.canonicalize()? {
+        bail!("poster must be beside the composition video and receipt");
+    }
+    Ok(())
+}
+
+fn publish_poster(source: &Path, destination: &Path) -> Result<Poster> {
+    let parent = destination.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let mut temp = Builder::new().prefix(".reel-poster-").suffix(".png").tempfile_in(parent)?;
+    std::io::copy(&mut fs::File::open(source)?, &mut temp)?;
+    temp.persist_noclobber(destination)?;
+    Ok(Poster {
+        path: destination.file_name().and_then(|n| n.to_str()).context("non-UTF8 poster name")?.into(),
+        sha256: production::sha256_path(destination)?,
+        bytes: fs::metadata(destination)?.len(),
+    })
+}
+
+fn verify_poster(poster: &Poster, frame: &FrameLineage, root: &Path) -> Result<()> {
+    let relative = relative_path(&poster.path)?;
+    if relative.components().count() != 1 || relative.extension().is_none_or(|ext| !ext.eq_ignore_ascii_case("png")) {
+        bail!("poster must be a sibling file");
+    }
+    let root = root.canonicalize()?;
+    let path = root.join(relative).canonicalize()?;
+    if !path.starts_with(&root) {
+        bail!("poster escapes its receipt directory");
+    }
+    if poster.sha256 != frame.sha256 || poster.bytes != fs::metadata(&path)?.len()
+        || production::sha256_path(path)? != poster.sha256 {
+        bail!("poster differs from the exact captured composition frame");
+    }
+    Ok(())
+}
+
 pub fn render(options: &RenderOptions) -> Result<BrowserCompositionReport> {
     let manifest_path = options.manifest.canonicalize()?;
     let manifest = load_manifest(&manifest_path)?;
+    validate_poster(options, manifest.frame_count)?;
     let root = options.asset_root.canonicalize()?;
     let stage = TempDir::new()?;
     let mut inputs = vec![InputLineage {
@@ -614,6 +674,10 @@ pub fn render(options: &RenderOptions) -> Result<BrowserCompositionReport> {
         bail!("browser composition audio stream binding failed");
     }
     temp.persist(&options.output)?;
+    let poster = options.poster.as_ref().map(|path| publish_poster(&frames_dir.join("frame-00000000.png"), path)).transpose()?;
+    if let Some(poster) = &poster {
+        verify_poster(poster, &frames[0], options.output.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new(".")))?;
+    }
     let report = BrowserCompositionReport {
         schema: ARTIFACT_SCHEMA.into(),
         manifest_sha256: production::sha256_path(&manifest_path)?,
@@ -632,6 +696,7 @@ pub fn render(options: &RenderOptions) -> Result<BrowserCompositionReport> {
         output_bytes: fs::metadata(&options.output)?.len(),
         output_duration_ms,
         audio_streams,
+        poster,
     };
     fs::write(
         options.output.with_extension("browser-artifacts.json"),
@@ -664,6 +729,12 @@ pub fn check(
         {
             bail!("browser composition frame sequence is dropped, duplicated, or reordered");
         }
+    }
+    if let Some(poster) = &report.poster {
+        if report.frame_count != 1 {
+            bail!("poster requires a single-frame composition receipt");
+        }
+        verify_poster(poster, &report.frames[0], report_path.parent().unwrap_or(Path::new(".")))?;
     }
     if !manifest.dynamic_regions.is_empty()
         && report
@@ -715,6 +786,75 @@ pub fn check(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn poster_preserves_capture_bytes_and_rejects_tampering_and_overwrite() {
+        let dir = TempDir::new().unwrap();
+        let source = dir.path().join("capture.png");
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([18, 86, 52, 255])).save(&source).unwrap();
+        let destination = dir.path().join("poster.png");
+        let poster = publish_poster(&source, &destination).unwrap();
+        let frame = FrameLineage {
+            index: 0,
+            sha256: production::sha256_path(&source).unwrap(),
+            sequence_sha256: String::new(),
+            stable_background_sha256: None,
+        };
+        verify_poster(&poster, &frame, dir.path()).unwrap();
+        assert_eq!(fs::read(&source).unwrap(), fs::read(&destination).unwrap());
+        assert!(publish_poster(&source, &destination).is_err());
+        assert_eq!(fs::read(&source).unwrap(), fs::read(&destination).unwrap());
+        fs::write(&destination, b"tampered").unwrap();
+        assert!(verify_poster(&poster, &frame, dir.path()).is_err());
+        let escaped = Poster { path: "../capture.png".into(), ..poster };
+        assert!(verify_poster(&escaped, &frame, dir.path()).is_err());
+    }
+
+    #[test]
+    fn poster_preflight_rejects_animation_existing_files_and_other_directories() {
+        let dir = TempDir::new().unwrap();
+        let mut options = RenderOptions {
+            manifest: "unused".into(), asset_root: dir.path().into(), browser: "unused".into(),
+            output: dir.path().join("composition.mp4"), clean_picture: true,
+            poster: Some(dir.path().join("poster.png")),
+        };
+        assert!(validate_poster(&options, 2).is_err());
+        validate_poster(&options, 1).unwrap();
+        fs::write(options.poster.as_ref().unwrap(), b"keep existing bytes").unwrap();
+        assert!(validate_poster(&options, 1).is_err());
+        options.poster = Some(dir.path().join("other/poster.png"));
+        assert!(validate_poster(&options, 1).is_err());
+        assert_eq!(fs::read(dir.path().join("poster.png")).unwrap(), b"keep existing bytes");
+    }
+
+    #[test]
+    #[ignore = "requires local Chromium-compatible browser and FFmpeg"]
+    fn single_frame_browser_poster_is_the_exact_capture_and_is_rechecked() {
+        let edge = PathBuf::from(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe");
+        assert!(edge.is_file(), "explicit browser integration test needs Edge");
+        let dir = TempDir::new().unwrap();
+        let html = dir.path().join("poster.html");
+        fs::write(&html, "<!doctype html><style>html,body{margin:0;background:#125634}</style>").unwrap();
+        let manifest = BrowserCompositionManifest {
+            schema: MANIFEST_SCHEMA.into(),
+            source: HashedAsset { path: "poster.html".into(), sha256: production::sha256_path(&html).unwrap() },
+            assets: vec![], width: 160, height: 90, fps: 25, frame_count: 1,
+            dynamic_regions: vec![], audio: None,
+        };
+        let manifest_path = dir.path().join("composition.json");
+        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let video = dir.path().join("composition.mp4");
+        let png = dir.path().join("composition.png");
+        let report = render(&RenderOptions { manifest: manifest_path.clone(), asset_root: dir.path().into(),
+            browser: edge, output: video.clone(), clean_picture: true, poster: Some(png.clone()) }).unwrap();
+        let poster = report.poster.unwrap();
+        assert_eq!(poster.sha256, report.frames[0].sha256);
+        assert_eq!(image::open(&png).unwrap().to_rgba8().get_pixel(5, 5).0, [18, 86, 52, 255]);
+        let receipt = video.with_extension("browser-artifacts.json");
+        assert!(check(&receipt, &manifest_path, dir.path(), &video).unwrap().passed);
+        fs::write(&png, b"not the captured frame").unwrap();
+        assert!(check(&receipt, &manifest_path, dir.path(), &video).is_err());
+    }
     #[test]
     fn rejects_parent_paths_and_external_references() {
         assert!(relative_path("../outside.svg").is_err());
@@ -797,6 +937,7 @@ mod tests {
             browser: edge,
             output: output.clone(),
             clean_picture: true,
+            poster: None,
         })
         .unwrap();
         assert_ne!(report.frames[0].sha256, report.frames[1].sha256);

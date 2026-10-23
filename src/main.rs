@@ -201,6 +201,7 @@ fn run_cli() -> Result<()> {
             browser,
             output_path,
             clean_picture,
+            poster,
             output,
         } => {
             let report =
@@ -210,6 +211,7 @@ fn run_cli() -> Result<()> {
                     browser,
                     output: output_path,
                     clean_picture,
+                    poster,
                 })?;
             print_report(&report, output)?;
         }
@@ -2645,6 +2647,9 @@ enum Command {
         /// Hide elements marked .reel-disclosure or data-reel-disclosure.
         #[arg(long)]
         clean_picture: bool,
+        /// Retain the exact captured PNG (single-frame compositions only).
+        #[arg(long)]
+        poster: Option<PathBuf>,
         #[arg(long = "format", value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
