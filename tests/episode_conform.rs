@@ -737,6 +737,7 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
     let batched_prepared = batched.join("prepared");
     let run_batch = || {
         Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
+            .current_dir(&batched)
             .arg("prepare-batch")
             .arg(batched.join("conform.json"))
             .arg("--input-root")
@@ -744,7 +745,7 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
             .arg("--asset-root")
             .arg(&batched)
             .arg("--output-dir")
-            .arg(&batched_prepared)
+            .arg("prepared")
             .arg("--max-segments")
             .arg("2")
             .output()
