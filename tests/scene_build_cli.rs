@@ -1237,6 +1237,84 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
         output.stdout
     };
     assert_ne!(frame("master.mkv"), frame("clean-picture.mkv"));
+
+    // The authoring compiler must produce the same nonspoken tail without a
+    // handwritten contract or a fake extra narration cue.
+    write_json(&root.join("tail-input-graph.json"), &semantic["graph"]);
+    write_json(&root.join("tail-input-pointer.json"), &semantic["pointer"]);
+    compile.graph = "tail-input-graph.json".into();
+    compile.pointer = "tail-input-pointer.json".into();
+    compile.template_receipt = Some("template-tail-receipt.json".into());
+    compile.output_dir = "compiled-native-tail".into();
+    reel::scene_delivery_compile::compile_to_dir(root, &compile).unwrap();
+    let compiled_contract =
+        reel::cue_relative::load(root.join("compiled-native-tail/contract.json")).unwrap();
+    assert_eq!(compiled_contract.tail_duration_samples, 48_000);
+    assert_eq!(compiled_contract.cues.len(), 1);
+    let compiled_clock =
+        reel::cue_relative::compile(&compiled_contract, &root.join("compiled-native-tail"))
+            .unwrap();
+    assert_eq!(compiled_clock.duration_samples, 96_000);
+    assert_eq!(compiled_clock.cues[0].end_sample, 48_000);
+
+    // Place only exact selected synthetic assets into the cache namespace.
+    let selected = bindings["assets"]
+        .as_object()
+        .unwrap()
+        .values()
+        .filter_map(|item| item["sha256"].as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    for entry in fs::read_dir(root).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_file() {
+            let hash = reference_text_bytes(&fs::read(&path).unwrap());
+            if selected.contains(hash.as_str()) {
+                let directory = root.join(format!("objects/sha256/{}", &hash[..2]));
+                fs::create_dir_all(&directory).unwrap();
+                fs::copy(&path, directory.join(hash)).unwrap();
+            }
+        }
+    }
+    let compiled_output = root.join("compiled-tail-output");
+    let result = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
+        .args(["build"])
+        .arg(root)
+        .arg("compiled-native-tail/build.json")
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output-dir")
+        .arg(&compiled_output)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let compiled_receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(compiled_output.join("receipt.json")).unwrap()).unwrap();
+    assert_eq!(compiled_receipt["plan"]["duration_samples"], 96_000);
+
+    let original_receipt = fs::read(root.join("template-tail-receipt.json")).unwrap();
+    let mut wrong_clock: serde_json::Value = serde_json::from_slice(&original_receipt).unwrap();
+    wrong_clock["sample_rate"] = 44_100.into();
+    write_json(&root.join("template-tail-receipt.json"), &wrong_clock);
+    bindings["assets"]["template-receipt"] = asset(
+        "template-receipt",
+        &reference(root, "template-tail-receipt.json"),
+    );
+    write_json(&root.join("scene-bindings.json"), &bindings);
+    compile.output_dir = "reject-wrong-tail-clock".into();
+    assert!(reel::scene_delivery_compile::compile_to_dir(root, &compile).is_err());
+    assert!(!root.join("reject-wrong-tail-clock").exists());
+}
+
+fn reference_text_bytes(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn reference_text(value: &str) -> String {

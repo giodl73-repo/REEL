@@ -80,6 +80,11 @@ wrong byte counts, ambiguous variants, duplicate IDs/bindings/members, unknown
 members, unapproved pool members, source tampering, packet tampering, and output
 overwrite.
 
+Both classic PCM and `WAVE_FORMAT_EXTENSIBLE` integer PCM are accepted. An
+extensible header must include the complete PCM subtype GUID and extension,
+with valid bits equal to the sample container width. Floating-point subtypes,
+truncated extensions and ambiguous partial-width samples remain rejected.
+
 48 kHz, 24-bit WAV and mono point sources are production policy expressed by a
 consumer request, not an implicit creative default. Stereo remains valid when
 the request and catalog explicitly require it.

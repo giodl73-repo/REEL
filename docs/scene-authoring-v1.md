@@ -180,6 +180,13 @@ This check binds the invocation to its selected source authority, while actual
 human review of that authority remains a separate decision. Scene content
 provides language-local text and cue/semantic-marker IDs; the template owns
 canvas, panel, font, colors, and chapter duration.
+Chapter headings may omit `chapter_number` when the selected source is
+unnumbered. The compiler then emits only the title style and event; it does not
+invent a number. A supplied number must remain nonempty, and numbered headings
+retain their existing rendering.
+For a chapter over narrated prose, its fixed display clock remains separate
+from the native dialogue clocks. The receipt preserves the complete scene
+duration, and a heading longer than the narrated scene is rejected.
 The resulting editable ASS layer shows the complete poem from its first frame,
 advances read-state colors at measured native line entrances, and keeps a
 chapter card for its template-defined duration. Its receipt records the exact
