@@ -151,18 +151,23 @@ fn compare_with_roots(
         _ => Value::Null,
     };
     let mut protections: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let mut protect = |root: String, reason: String| -> Result<()> {
-        for hash in hashes(state, &root)? {
+    let mut protect = |root: String, reason: String, leased: bool| -> Result<()> {
+        let payloads = if leased {
+            crate::accounting::expand_leased(state, [root.clone()])?
+        } else {
+            hashes(state, &root)?
+        };
+        for hash in payloads {
             protections.entry(hash).or_default().insert(reason.clone());
         }
         Ok(())
     };
     for root in current_roots {
-        protect(root.clone(), format!("current:{root}"))?;
+        protect(root.clone(), format!("current:{root}"), false)?;
     }
     for (owner, roots) in &state.leases {
         for root in roots {
-            protect(root.clone(), format!("lease:{owner}:{root}"))?;
+            protect(root.clone(), format!("lease:{owner}:{root}"), true)?;
         }
     }
     for hash in &state.metadata_roots {
@@ -1083,6 +1088,47 @@ mod tests {
             deprecated: false,
             dependency_contract: None,
         }
+    }
+
+    #[test]
+    fn leased_compiled_reference_is_not_an_eviction_candidate_until_release() {
+        let h: Vec<_> = (0..5).map(|n| format!("{n:064x}")).collect();
+        let sizes = h.iter().map(|hash| (hash.clone(), 10)).collect();
+        let mut s = State::default();
+        for (name, manifest, payload) in [("v1", 0, 1), ("v2", 2, 3)] {
+            let mut v = version("movie", name, &h[manifest], &[&h[payload]]);
+            v.dependency_contract = Some(crate::versions::DependencyContract {
+                primary_inputs: BTreeSet::new(),
+                outputs: BTreeSet::from([h[payload].clone()]),
+                references: BTreeSet::new(),
+            });
+            s.register(v).unwrap();
+        }
+        let mut draft = version("draft", "v1", &h[4], &[&h[1]]);
+        draft.dependency_contract = Some(crate::versions::DependencyContract {
+            primary_inputs: BTreeSet::new(),
+            outputs: BTreeSet::new(),
+            references: BTreeSet::from([h[1].clone()]),
+        });
+        s.register(draft).unwrap();
+        s.select("movie", "v2").unwrap();
+        let candidates = |s: &State| {
+            compare(s, &sizes, ("movie", "v1"), ("movie", "v2")).unwrap()["eviction_candidate_sha256s"].as_array().unwrap().clone()
+        };
+        assert!(candidates(&s).contains(&json!(h[1])));
+        s.lease("render", BTreeSet::from(["draft@v1".into()]))
+            .unwrap();
+        assert!(!candidates(&s).contains(&json!(h[1])));
+        assert!(
+            s.versions["draft@v1"]
+                .dependency_contract
+                .as_ref()
+                .unwrap()
+                .primary_inputs
+                .is_empty()
+        );
+        s.release("render").unwrap();
+        assert!(candidates(&s).contains(&json!(h[1])));
     }
 
     #[test]

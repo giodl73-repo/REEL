@@ -180,14 +180,33 @@ fn validate(job: &Job) -> Result<()> {
     Ok(())
 }
 
+fn read_workspace_directory(
+    mut read: impl FnMut() -> std::io::Result<fs::ReadDir>,
+) -> std::io::Result<Option<fs::ReadDir>> {
+    // Windows can report ACCESS_DENIED/SHARING_VIOLATION while a temporary
+    // directory is delete-pending. Re-read briefly, then fail closed if it stays
+    // inaccessible. Only NotFound means the directory no longer contributes.
+    for attempt in 0..4 {
+        match read() {
+            Ok(entries) => return Ok(Some(entries)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) if cfg!(windows) && matches!(e.raw_os_error(), Some(5 | 32)) && attempt < 3 => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    unreachable!("bounded directory read always returns after its final attempt")
+}
+
 fn usage(dir: &Path, depth: usize, count: &mut usize) -> Result<u64> {
     if depth > 16 {
         return Err("Job workspace depth exceeded".into());
     }
     let mut size = 0;
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+    let entries = match read_workspace_directory(|| fs::read_dir(dir)) {
+        Ok(Some(entries)) => entries,
+        Ok(None) => return Ok(0),
         Err(e) => {
             return Err(format!("Job monitor cannot enumerate {}: {e}", dir.display()).into());
         }
@@ -225,6 +244,15 @@ fn usage(dir: &Path, depth: usize, count: &mut usize) -> Result<u64> {
 }
 
 pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
+    run_seeded(root, manifest, None)
+}
+
+/// Explicit continuation of a trusted native recipe using registered checkpoints.
+pub fn resume(root: &Path, manifest: &Path, checkpoint: &Path) -> Result<Value> {
+    run_seeded(root, manifest, Some(resume::Seed::read(checkpoint)?))
+}
+
+fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Result<Value> {
     let bytes = fs::read(manifest)?;
     if bytes.len() > 256 * 1024 {
         return Err("Job manifest exceeds intake budget".into());
@@ -233,6 +261,18 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
     validate(&job)?;
     let cfg = config(root)?;
     let index = selected(root)?;
+    if let Some(seed) = &seed {
+        seed.validate(&job, &bytes)?;
+        let job_hash = format!("{:x}", Sha256::digest(&bytes));
+        if index.get(&job_hash) != Some(&(bytes.len() as u64))
+            || index.get(&seed.sha256) != Some(&seed.bytes)
+            || seed
+                .assets()
+                .any(|asset| index.get(&asset.sha256) != Some(&asset.bytes))
+        {
+            return Err("Original job, checkpoint descriptor and checkpoint files must be exactly registered".into());
+        }
+    }
     for tool in job.installed_tools.values() {
         if index.get(&tool.sha256) != Some(&tool.bytes) {
             return Err("Installed tool must be exactly registered".into());
@@ -249,6 +289,9 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
         .map_err(|e| format!("Job not started; admission: {e}"))?;
     let mut sources = BTreeMap::new();
     let mut source_guards = Vec::new();
+    if let Some(seed) = &seed {
+        source_guards.extend(seed.pin_registered_sources(&cfg, bytes.len() as u64)?);
+    }
     for tool in job.installed_tools.values() {
         source_guards.push(lifecycle::pin_read_only(&tool.path)?);
         verify(&tool.path, &tool.sha256, tool.bytes)?;
@@ -327,7 +370,15 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
             let target = workspace.join(relative(&output.path)?);
             fs::create_dir_all(target.parent().ok_or("Missing output parent")?)?;
         }
-        for (n, step) in job.steps.iter().enumerate() {
+        if let Some(seed) = &seed {
+            seed.stage(&cfg, &workspace)?;
+        }
+        for (n, step) in job
+            .steps
+            .iter()
+            .enumerate()
+            .skip(seed.as_ref().map_or(0, |s| s.start_step()))
+        {
             let check = || -> Result<()> {
                 if usage(&workspace, 0, &mut 0)? > job.budget_bytes {
                     return Err("Job exceeded declared workspace budget".into());
@@ -392,6 +443,9 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
         "volume_id":reservation.volume_id,"budget_bytes":job.budget_bytes,"workspace":workspace,
         "outputs":retained,"linked_input_bytes":linked_input_bytes,"copied_input_bytes":copied_input_bytes,"daemon_started":false,"original_inputs_modified":false,
         "workspace_retained":true,"creative_authority":"not-granted-by-this-receipt"});
+        if let Some(seed) = &seed {
+            result["checkpoint_resume"] = seed.evidence();
+        }
         fs::write(
             workspace.join("result.json"),
             serde_json::to_vec_pretty(&result)?,
@@ -577,6 +631,7 @@ pub fn discard(root: &Path, id: &str, manifest_oid: &str, incomplete: bool) -> R
 }
 
 mod lifecycle;
+mod resume;
 
 #[cfg(all(test, windows))]
 #[path = "jobs/tests.rs"]
@@ -603,6 +658,69 @@ mod process {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn workspace_monitor_preserves_counts_and_rejects_persistent_errors() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("input.bin"), [0u8; 23]).unwrap();
+        fs::create_dir(root.path().join("nested")).unwrap();
+        fs::write(root.path().join("nested/output.bin"), [0u8; 31]).unwrap();
+        let mut count = 0;
+        assert_eq!(usage(root.path(), 0, &mut count).unwrap(), 54);
+        assert_eq!(count, 3);
+        assert!(
+            read_workspace_directory(|| Err(std::io::Error::other("permanent read failure")))
+                .is_err()
+        );
+        assert!(
+            read_workspace_directory(|| fs::read_dir(root.path().join("removed")))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn delete_pending_directory_is_retried_but_permanent_access_denied_still_fails() {
+        for code in [5, 32] {
+            let root = tempfile::tempdir().unwrap();
+            let mut calls = 0;
+            let entries = read_workspace_directory(|| {
+                calls += 1;
+                if calls < 3 {
+                    return Err(std::io::Error::from_raw_os_error(code));
+                }
+                fs::read_dir(root.path())
+            })
+            .unwrap();
+            assert!(entries.is_some());
+            assert_eq!(calls, 3);
+            let mut calls = 0;
+            let error = read_workspace_directory(|| {
+                calls += 1;
+                Err(std::io::Error::from_raw_os_error(code))
+            })
+            .unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(code));
+            assert_eq!(calls, 4);
+        }
+        let root = tempfile::tempdir().unwrap();
+        let child = root.path().join("temporary");
+        fs::create_dir(&child).unwrap();
+        let mut calls = 0;
+        assert!(
+            read_workspace_directory(|| {
+                calls += 1;
+                if calls == 1 {
+                    fs::remove_dir(&child).unwrap();
+                    return Err(std::io::Error::from_raw_os_error(5));
+                }
+                fs::read_dir(&child)
+            })
+            .unwrap()
+            .is_none()
+        );
+        assert_eq!(calls, 2);
+    }
     #[test]
     fn workspace_paths_cannot_escape_or_alias_devices() {
         for path in [

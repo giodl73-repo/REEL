@@ -9,11 +9,14 @@ reel-assets --root <project> compact-versions
 ```
 
 The header binds `base_sha256`, `base_bytes`, and an object `patch`. A base is
-exactly one typed State control, at most 256 KiB, authorized by that consumer's
+exactly one typed State control, at most 4 MiB, authorized by that consumer's
 registry. Recursive index bases are rejected. E/D reads verify SHA-256/bytes;
 corruption fails rather than falling through, and archive roots are never used.
-Expanded controls and patch files retain the existing 256-KiB bound. Unknown
-fields, invalid required fields and unsupported schemas fail closed.
+Expanded cache-backed controls share that 4-MiB read bound. The Git descriptor,
+its patch file and each immutable version record retain the 256-KiB file bound;
+repository snapshot/history limits are unchanged. Writers reject an expanded
+state that cannot be read back before publishing a delta. Unknown fields,
+invalid required fields and unsupported schemas fail closed.
 
 Existing flat controls and immutable version-record shards remain readable.
 Subsequent transactions preserve the cached base and write only changed control
@@ -60,10 +63,15 @@ admission presence. Actual `--apply` still refuses live/unreconciled admissions
 and requires the compatible admission protocol or quiescence. Existing legacy
 readers need an explicit tool adoption before they consume a newly compacted
 control; source pin updates and ignored binaries are separate operations.
+Readers predating the cache read-budget separation reject bases larger than
+256 KiB, so adopt the compatible reader before publishing such a baseline.
 
 Fixtures cover exact state preservation, small transactions, corrupt/fallback
 bases, unauthorized and recursive imports, required/unknown patch fields,
 metadata-root protection and read-only explicit legacy consumers.
+They also cover a cache baseline exceeding the Git file limit while preserving
+every version, selection and pin, plus rejection of oversized cache/patch state
+and oversized ordinary control files.
 
 The actual executable is also exercised as a subprocess: copy verification runs
 on its real main-thread stack, with bounded heap hashing buffers, and Windows

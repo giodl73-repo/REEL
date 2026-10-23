@@ -343,3 +343,100 @@ fn timeout_retires_workspace_after_descendants_die_and_preserves_pid_evidence() 
     }
     no_scratch(&f);
 }
+
+fn checkpoint_fixture(f: &Fixture) -> (PathBuf, PathBuf, Value) {
+    let (manifest, mut job) = prepare(f, "copy");
+    // The skipped step would fail. Resumption must use the exact original
+    // recipe and the registered checkpoint, rather than re-executing it.
+    job["steps"] = json!([
+        {"tool":"tools/tool.exe","args":["fail","in.bin","out.bin"],"timeout_seconds":10},
+        {"tool":"tools/tool.exe","args":["mutate","prepared/checkpoint.bin","out.bin"],"timeout_seconds":10}
+    ]);
+    let bytes = serde_json::to_vec(&job).unwrap();
+    fs::write(&manifest, &bytes).unwrap();
+    let job_hash = f.put(&bytes, true);
+    let checkpoint_hash = f.put(b"checkpoint", true);
+    let seed = json!({"schema":"reel.native-job-resume.v1","job_sha256":job_hash,
+        "source_job_id":"job-original","start_step":1,
+        "files":{"prepared/checkpoint.bin":{"sha256":checkpoint_hash,"bytes":10}}});
+    let file = f.root().join("checkpoint.json");
+    let bytes = serde_json::to_vec(&seed).unwrap();
+    fs::write(&file, &bytes).unwrap();
+    f.put(&bytes, true);
+    (manifest, file, seed)
+}
+
+#[test]
+fn checkpoint_resume_keeps_recipe_and_canonical_seed_immutable_and_retires_new_job() {
+    let f = Fixture::new();
+    let (manifest, seed_path, seed) = checkpoint_fixture(&f);
+    let original = fs::read(&manifest).unwrap();
+    let result = resume(f.root(), &manifest, &seed_path).unwrap();
+    assert_eq!(result["workspace_retained"], false);
+    assert_eq!(result["manifest_sha256"], seed["job_sha256"]);
+    assert_eq!(result["checkpoint_resume"]["first_executed_step"], 1);
+    assert_eq!(fs::read(&manifest).unwrap(), original);
+    assert_eq!(
+        fs::read(result["outputs"]["copy"]["path"].as_str().unwrap()).unwrap(),
+        b"changed"
+    );
+    let oid = seed["files"]["prepared/checkpoint.bin"]["sha256"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        fs::read(object(&f.root().join("fast"), oid)).unwrap(),
+        b"checkpoint"
+    );
+    let retained = evidence(
+        &f,
+        result["retirement_evidence"]["sha256"].as_str().unwrap(),
+    );
+    assert!(retained["diagnostics"].get("step-0.log").is_none());
+    assert!(retained["diagnostics"]["step-1.log"].is_object());
+    no_scratch(&f);
+}
+
+#[test]
+fn checkpoint_resume_rejects_changed_recipe_scope_escape_and_corruption() {
+    for mode in [
+        "changed-recipe",
+        "alias",
+        "escape",
+        "over-budget",
+        "wrong-step",
+        "corrupt",
+    ] {
+        let f = Fixture::new();
+        let (manifest, seed_path, mut seed) = checkpoint_fixture(&f);
+        match mode {
+            "changed-recipe" => {
+                seed["job_sha256"] = json!("a".repeat(64));
+            }
+            "alias" => {
+                seed["files"] = json!({"in.bin":seed["files"]["prepared/checkpoint.bin"].clone()});
+            }
+            "escape" => {
+                seed["files"] =
+                    json!({"../escape.bin":seed["files"]["prepared/checkpoint.bin"].clone()});
+            }
+            "over-budget" => {
+                seed["files"]["prepared/checkpoint.bin"]["bytes"] = json!(3 * 1024 * 1024);
+            }
+            "wrong-step" => {
+                seed["start_step"] = json!(2);
+            }
+            "corrupt" => {
+                let oid = seed["files"]["prepared/checkpoint.bin"]["sha256"]
+                    .as_str()
+                    .unwrap();
+                fs::write(object(&f.root().join("fast"), oid), b"corruption").unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let bytes = serde_json::to_vec(&seed).unwrap();
+        fs::write(&seed_path, &bytes).unwrap();
+        f.put(&bytes, true);
+        assert!(resume(f.root(), &manifest, &seed_path).is_err(), "{mode}");
+        no_scratch(&f);
+    }
+}
