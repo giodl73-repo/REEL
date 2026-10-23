@@ -89,6 +89,13 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
                 let mut summary=report;summary.as_object_mut().unwrap().remove("objects");summary["private_report_path"]=json!(path);Ok(summary)
             } else {let mut summary=report;summary.as_object_mut().unwrap().remove("objects");Ok(summary)}
         },
+        "cache-observe" => {
+            if args.len()!=3 {return Err("Usage: cache-observe <exact-hashes.json> <new-private-report.json>".into());}
+            let hashes:BTreeSet<String>=serde_json::from_slice(&crate::tiering::read_bounded(Path::new(arg(1)?),64*1024*1024)?)?;
+            let report=crate::accounting::observe_named(root,&hashes)?;
+            crate::tiering::write_plan(Path::new(arg(2)?),&report)?;
+            Ok(json!({"schema":"reel.asset-named-observation.v1","objects":hashes.len(),"archive_probed":false,"payload_bytes_copied":0,"private_report":arg(2)?}))
+        },
         "artifact-check" | "artifact-verify" => crate::artifacts::check(root,Path::new(arg(1)?),args.get(2).map(String::as_str),command=="artifact-verify"),
         "artifact-locate" => crate::artifacts::locate(root,Path::new(arg(1)?),args.get(3).map(String::as_str),arg(2)?),
         "golden-list" => crate::goldens::list(root,arg(1)?),
@@ -100,6 +107,7 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
         "register" => registry::register(root,Path::new(arg(1)?)),
         "compact-objects" => registry::compact(root),
         "compact-versions" => versions::compact(root),
+        "compact-goldens" => crate::goldens::compact(root),
         "run-job" => crate::jobs::run(root,Path::new(arg(1)?)),
         "discard-job-scratch" => crate::jobs::discard(root,arg(1)?,arg(2)?,args.get(3).is_some_and(|a|a=="--discard-incomplete")),
         "verify-active" => {
@@ -160,13 +168,50 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
             let path=storage.join("objects").join(&oid[..2]).join(&oid[2..4]).join(oid);verify(&path,oid,size)?;
             Ok(json!({"sha256":oid,"bytes":size,"lfs_path":path,"cache_root":reservation.cache_root,"volume_id":reservation.volume_id,"verified":true,"daemon_started":false,"reused_active_object":existing,"payload_bytes_copied":if existing {Some(0u64)} else {None}}))
         },
+        "version-manage" => {
+            if args.len()!=6 && !(args.len()==7 && arg(6)?=="--apply") {return Err("Usage: version-manage <logical-id> <old-version> <new-version> <consumer-scope.json> <new-owned-directory> [--apply]".into());}
+            crate::version_diff::manage(root,arg(1)?,arg(2)?,arg(3)?,Path::new(arg(4)?),Path::new(arg(5)?),args.len()==7)
+        },
+        "version-backup" => {
+            if args.len()!=3 && !(args.len()==4 && arg(3)?=="--apply") {return Err("Usage: version-backup <request.json> <new-private-receipt.json> [--apply]".into());}
+            crate::version_diff::backup(root,Path::new(arg(1)?),Path::new(arg(2)?),args.len()==4)
+        },
+        "tier-backup" => {
+            if args.len()!=3 && !(args.len()==4 && arg(3)?=="--apply") {return Err("Usage: tier-backup <request.json> <new-private-receipt.json> [--apply]".into());}
+            crate::version_diff::backup_tier(root,Path::new(arg(1)?),Path::new(arg(2)?),args.len()==4)
+        },
+        "version-plan" => {
+            if args.len()!=7 {return Err("Usage: version-plan <old-logical-id> <old-version> <new-logical-id> <new-version> <consumer-scope.json> <new-owned-directory>".into());}
+            let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+            crate::version_diff::plan_transition(root,(arg(1)?,arg(2)?),(arg(3)?,arg(4)?),Path::new(arg(5)?),Path::new(arg(6)?),now)
+        },
+        "version-management-check" => {
+            if args.len()!=4 {return Err("Usage: version-management-check <request.json> <apply-result.json> <new-private-receipt.json>".into());}
+            crate::version_diff::management_check(root,Path::new(arg(1)?),Path::new(arg(2)?),Path::new(arg(3)?))
+        },
+        "version-eviction-request" => {
+            if args.len()!=7 {return Err("Usage: version-eviction-request <old-logical-id> <old-version> <new-logical-id> <new-version> <consumer-scope.json> <new-request.json>".into());}
+            let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+            crate::version_diff::eviction_request(root,(arg(1)?,arg(2)?),(arg(3)?,arg(4)?),Path::new(arg(5)?),Path::new(arg(6)?),now)
+        },
+        "version-diff" => {
+            if args.len()!=6 {return Err("Usage: version-diff <old-logical-id> <old-version> <new-logical-id> <new-version> <new-private-report.json>".into());}
+            let report=crate::version_diff::compare_project(root,&versions::read(root)?,&selected(root)?,(arg(1)?,arg(2)?),(arg(3)?,arg(4)?))?;
+            crate::tiering::write_plan(Path::new(arg(5)?),&report)?;
+            Ok(json!({"schema":report["schema"],"added":report["added"].as_array().unwrap().len(),"retained":report["retained"].as_array().unwrap().len(),"dropped":report["dropped"].as_array().unwrap().len(),"eviction_candidates":report["eviction_candidate_sha256s"].as_array().unwrap().len(),"candidate_logical_bytes":report["candidate_logical_bytes"],"removal_authorized":false,"private_report_path":arg(5)?}))
+        },
         "register-version" => {
             let version: versions::Version=serde_json::from_value(load(Path::new(arg(1)?))?)?;
+            if root.join("asset-project.json").exists() && crate::accounting::project(root)?.require_primary_input_contracts && version.dependency_contract.is_none() {return Err("Project requires an explicit primary-input/output/reference contract".into());}
             let index=selected(root)?;
             if !index.contains_key(&version.manifest_sha256) || version.payloads.iter().any(|h|!index.contains_key(h)) { return Err("Version manifest and payload hashes must be registered assets".into()); }
             versions::transact(root,|s|{s.register(version)?;Ok(json!({"generation":s.generation}))})
         },
-        "select" => versions::transact(root,|s|{s.select(arg(1)?,arg(2)?)?;Ok(json!({"generation":s.generation}))}),
+        "unselect" => versions::transact(root,|s|{s.unselect(arg(1)?,arg(2)?)?;Ok(json!({"generation":s.generation,"bytes_removed":0,"immutable_version_retained":true}))}),
+        "select" => versions::transact(root,|s|{
+            if root.join("asset-project.json").exists() && crate::accounting::project(root)?.require_primary_input_contracts && s.versions.get(&format!("{}@{}",arg(1)?,arg(2)?)).is_none_or(|v|v.dependency_contract.is_none()) {return Err("Project requires classified primary-input dependencies before selection".into());}
+            s.select(arg(1)?,arg(2)?)?;Ok(json!({"generation":s.generation}))
+        }),
         "pin" => versions::transact(root,|s|{
             let key=format!("{}@{}",arg(1)?,arg(2)?);
             if !s.versions.contains_key(&key) {return Err("Cannot pin an unknown version".into());}

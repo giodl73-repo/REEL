@@ -36,12 +36,18 @@ pub struct Policy {
     pub cold_tier: String,
     /// Explicit version locks with evidence of actual previous use, not age/deprecation.
     pub history_versions: Vec<versions::Dependency>,
+    /// Optional hash-bound compiled-output placement map. Authoring current
+    /// pointers remain intact; primary inputs and active leases stay protected.
+    #[serde(default)]
+    pub output_retention: Option<Descriptor>,
     pub tier_pins: BTreeMap<String, String>,
     pub max_objects: usize,
     pub max_plan_seconds: u64,
     pub expires_after_seconds: u64,
     pub max_batch_bytes: u64,
     pub max_batch_objects: usize,
+    #[serde(default)]
+    pub allow_same_volume_copies: bool,
 }
 
 #[derive(Deserialize)]
@@ -113,6 +119,7 @@ pub(crate) struct Live {
     generation: u64,
     pub(crate) fingerprint: String,
     profile_hash: String,
+    storage_hash: String,
     project_id: String,
     pub(crate) registered: BTreeMap<String, u64>,
     pub(crate) selected: BTreeSet<String>,
@@ -120,6 +127,7 @@ pub(crate) struct Live {
     pub(crate) leased: BTreeSet<String>,
     pub(crate) controls: BTreeSet<String>,
     pub(crate) history: BTreeSet<String>,
+    pub(crate) archival_outputs: BTreeSet<String>,
     coverage_complete: bool,
 }
 
@@ -144,6 +152,7 @@ pub(crate) fn validate_graph(state: &versions::State, limit: usize) -> Result<()
                 return Err("Cycle in version graph".into());
             }
             let version = state.versions.get(&key).ok_or("Missing graph dependency")?;
+            state.validate_dependency_contract(version)?;
             if !valid_oid(&version.manifest_sha256)
                 || version.payloads.iter().any(|h| !valid_oid(h))
             {
@@ -167,6 +176,9 @@ pub(crate) fn validate_graph(state: &versions::State, limit: usize) -> Result<()
 }
 pub(crate) fn live(root: &Path, policy: &Policy) -> Result<Live> {
     let p = accounting::project(root)?;
+    if policy.output_retention.is_some() && p.project_id != policy.project_id {
+        return Err("Output retention authority cannot override another project".into());
+    }
     let cfg = config(root)?;
     let profile = fs::read(root.join("asset-project.json"))?;
     let raw = fs::read(root.join("registry/versions.json"))?;
@@ -180,15 +192,17 @@ pub(crate) fn live(root: &Path, policy: &Policy) -> Result<Live> {
         return Err("Version graph contains unregistered payloads".into());
     }
     let (outputs, roots) = accounting::selected_roots(root, &p, &state, &selected(root)?, &cfg)?;
-    let selected = accounting::expand(&state, roots)?;
-    let current = accounting::expand(
-        &state,
-        state.current.iter().map(|(id, v)| format!("{id}@{v}")),
-    )?;
+    let mut current = accounting::expand(&state, accounting::retention_roots(&p, &state, &roots)?)?;
+    let mut selected = accounting::expand(&state, roots)?;
     let leased = accounting::expand(&state, state.leases.values().flatten().cloned())?;
     let mut history = BTreeSet::new();
     for lock in &policy.history_versions {
         history.extend(versions::payload_closure(&state, lock)?);
+    }
+    let mut archival_outputs = BTreeSet::new();
+    if let Some(map) = crate::output_retention::load(root, policy)? {
+        map.apply(root, &state, &registered, &mut current, &mut selected)?;
+        archival_outputs.extend(map.outputs.keys().filter(|h| map.is_archival(h)).cloned());
     }
     let doc: Value = serde_json::from_slice(&raw)?;
     let mut controls: BTreeSet<String> = doc["version_records"]
@@ -199,6 +213,8 @@ pub(crate) fn live(root: &Path, policy: &Policy) -> Result<Live> {
         .map(str::to_owned)
         .collect();
     controls.extend(state.metadata_roots.iter().cloned());
+    controls.extend(crate::goldens::control_asset(root)?.map(|(hash, _)| hash));
+    controls.extend(policy.output_retention.iter().map(|a| a.sha256.clone()));
     let index_path = root.join("registry/object-index.json");
     let index_bytes = if index_path.exists() {
         read_bounded(&index_path, 256 * 1024)?
@@ -215,13 +231,15 @@ pub(crate) fn live(root: &Path, policy: &Policy) -> Result<Live> {
         );
     }
     // Capture actual resolved authoring selections as well as registry generations.
+    let storage = fs::read(accounting::relative(root, &p.storage_config)?)?;
     let token = json!({"state":state,"registered":registered,"outputs":outputs,
         "selected":selected,"profile":digest(&profile),"object_index":digest(&index_bytes),"registry_control":digest(&raw),
-        "storage":fs::read(accounting::relative(root,&p.storage_config)?)?});
+        "storage":storage,"controls":&controls});
     Ok(Live {
         generation: state.generation,
         fingerprint: digest(&serde_json::to_vec(&token)?),
         profile_hash: digest(&profile),
+        storage_hash: digest(&storage),
         project_id: p.project_id,
         registered,
         selected,
@@ -229,6 +247,7 @@ pub(crate) fn live(root: &Path, policy: &Policy) -> Result<Live> {
         leased,
         controls,
         history,
+        archival_outputs,
         coverage_complete: state.coverage_complete,
     })
 }
@@ -370,6 +389,7 @@ pub fn plan(root: &Path, policy_path: &Path, census_path: &Path, now: u64) -> Re
         }
         if let Some(v) = &t.volume_id
             && !volumes.insert(v)
+            && !policy.allow_same_volume_copies
         {
             return Err("Active tiers alias one volume; not independent tier copies".into());
         }
@@ -429,6 +449,8 @@ pub fn plan(root: &Path, policy_path: &Path, census_path: &Path, now: u64) -> Re
             ("selected", Some(policy.selected_tier.as_str()))
         } else if before.current.contains(&h) {
             ("current-working-hold", None)
+        } else if before.archival_outputs.contains(&h) {
+            ("archival-output", Some(policy.cold_tier.as_str()))
         } else if before.history.contains(&h) {
             ("previously-used", Some(policy.history_tier.as_str()))
         } else if registered.is_some() {
@@ -461,6 +483,9 @@ pub fn plan(root: &Path, policy_path: &Path, census_path: &Path, now: u64) -> Re
             {
                 estimate = src.allocated_bytes;
             }
+        } else if class == "archival-output" && from.is_some() {
+            proposed = "verify-and-archive-output";
+            reason = "explicit cold disposition for a non-selected compiled output; no previous-use claim";
         } else if class == "selected" {
             proposed = if from.is_some() {
                 "keep-selected"
@@ -481,7 +506,7 @@ pub fn plan(root: &Path, policy_path: &Path, census_path: &Path, now: u64) -> Re
             proposed = "hold";
             reason = "new registration has no baseline physical observation";
         }
-        if proposed == "verify-and-demote" {
+        if proposed == "verify-and-demote" || proposed == "verify-and-archive-output" {
             if candidate_objects >= policy.max_batch_objects
                 || size > policy.max_batch_bytes.saturating_sub(candidate_bytes)
             {
@@ -532,6 +557,7 @@ pub fn plan(root: &Path, policy_path: &Path, census_path: &Path, now: u64) -> Re
         "baseline_input_sha256":encoded_hash,"baseline_input_bytes":encoded_bytes,"baseline_encoding":if compressed{"gzip"}else{"json"},
         "live_generation":before.generation,"live_fingerprint_sha256":before.fingerprint,
         "baseline_profile_sha256":census.profile_sha256,"live_profile_sha256":before.profile_hash,
+        "live_storage_sha256":before.storage_hash,
         "delta":{"new_registered_objects":new_registered,"baseline_unknown_now_registered":newly_registered},
         "coverage_complete":before.coverage_complete,"inventory_scope":"retained baseline plus current registered delta; new unregistered files require explicit census",
         "tiers":policy.tiers,"summary":summary,"objects":rows,
@@ -568,6 +594,23 @@ pub fn write_plan(path: &Path, plan: &Value) -> Result<()> {
 
 /// Freshness check is metadata-only. It never converts an advisory plan into authorization.
 pub fn check_plan(root: &Path, policy_path: &Path, plan_path: &Path, now: u64) -> Result<Value> {
+    check_plan_mode(root, policy_path, plan_path, now, false)
+}
+pub(crate) fn check_transition_plan(
+    root: &Path,
+    policy_path: &Path,
+    plan_path: &Path,
+    now: u64,
+) -> Result<Value> {
+    check_plan_mode(root, policy_path, plan_path, now, true)
+}
+fn check_plan_mode(
+    root: &Path,
+    policy_path: &Path,
+    plan_path: &Path,
+    now: u64,
+    allow_metadata_delta: bool,
+) -> Result<Value> {
     let mut saved: Value = serde_json::from_slice(&read_bounded(plan_path, 512 * 1024 * 1024)?)?;
     let expected = saved["plan_sha256"]
         .as_str()
@@ -602,14 +645,18 @@ pub fn check_plan(root: &Path, policy_path: &Path, plan_path: &Path, now: u64) -
         return Err("Plan is expired or policy changed".into());
     }
     let fresh = live(root, &policy)?;
-    if saved["live_fingerprint_sha256"] != fresh.fingerprint
-        || saved["project_id"] != fresh.project_id
+    let changed = saved["live_fingerprint_sha256"] != fresh.fingerprint;
+    if saved["project_id"] != fresh.project_id
+        || (changed
+            && (!allow_metadata_delta
+                || saved["live_profile_sha256"] != fresh.profile_hash
+                || saved["live_storage_sha256"] != fresh.storage_hash))
     {
         return Err("Registry/selection/config changed since plan".into());
     }
     Ok(
         json!({"schema":"reel.asset-tier-plan-check.v1","plan_sha256":expected,
-        "fresh":true,"live_generation":fresh.generation,"executable":false,"removal_authorized":false,
+        "fresh":!changed,"metadata_delta_reconciled":changed,"live_generation":fresh.generation,"executable":false,"removal_authorized":false,
         "physical_state_revalidated":false,"archive_probed":false}),
     )
 }
@@ -678,6 +725,7 @@ pub(crate) mod tests {
                     dependencies: vec![],
                     supersedes: None,
                     deprecated: false,
+                    dependency_contract: None,
                 })
                 .unwrap();
             self.save();

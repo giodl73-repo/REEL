@@ -45,7 +45,10 @@ fn executable_verifies_on_its_real_main_stack_and_applies_only_on_supported_plat
         format!("{hash}\t{}\n", payload.len()),
     )
     .unwrap();
-    let mut state = versions::State::default();
+    let mut state = versions::State {
+        coverage_complete: true,
+        ..versions::State::default()
+    };
     state
         .register(versions::Version {
             logical_id: "prior".into(),
@@ -55,8 +58,40 @@ fn executable_verifies_on_its_real_main_stack_and_applies_only_on_supported_plat
             dependencies: vec![],
             supersedes: None,
             deprecated: false,
+            dependency_contract: None,
         })
         .unwrap();
+    let new_payload = b"synthetic replacement CLI payload";
+    let new_hash = format!("{:x}", Sha256::digest(new_payload));
+    let path = reel_assets::object(&root.join("hot"), &new_hash);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, new_payload).unwrap();
+    fs::write(
+        root.join("registry/objects.tsv"),
+        format!(
+            "{hash}\t{}\n{new_hash}\t{}\n",
+            payload.len(),
+            new_payload.len()
+        ),
+    )
+    .unwrap();
+    state
+        .register(versions::Version {
+            logical_id: "prior".into(),
+            version_id: "v2".into(),
+            manifest_sha256: new_hash.clone(),
+            payloads: BTreeSet::from([new_hash.clone()]),
+            dependencies: vec![],
+            supersedes: Some("v1".into()),
+            deprecated: false,
+            dependency_contract: Some(versions::DependencyContract {
+                primary_inputs: BTreeSet::from([new_hash]),
+                outputs: BTreeSet::new(),
+                references: BTreeSet::new(),
+            }),
+        })
+        .unwrap();
+    state.select("prior", "v2").unwrap();
     write(
         &root,
         "registry/versions.json",
@@ -80,6 +115,10 @@ fn executable_verifies_on_its_real_main_stack_and_applies_only_on_supported_plat
         "policy.json",
         &json!({"schema":"reel.asset-tier-policy.v1","project_id":"cli-fixture","baseline":{"sha256":format!("{:x}",Sha256::digest(&raw)),"bytes":raw.len()},"tiers":[{"id":"selected","storage":"active","index":0},{"id":"old","storage":"active","index":1},{"id":"cold","storage":"archive","index":0}],"selected_tier":"selected","history_tier":"old","cold_tier":"cold","history_versions":[{"logical_id":"prior","version_id":"v1","manifest_sha256":hash}],"tier_pins":{},"max_objects":100,"max_plan_seconds":60,"expires_after_seconds":600,"max_batch_bytes":1024,"max_batch_objects":10}),
     );
+    let mut fixture_policy: Value =
+        serde_json::from_slice(&fs::read(root.join("policy.json")).unwrap()).unwrap();
+    fixture_policy["allow_same_volume_copies"] = json!(true);
+    write(&root, "policy.json", &fixture_policy);
     let out = run(
         &root,
         &["tier-plan", "policy.json", "baseline.json", "plan.json"],
@@ -92,9 +131,29 @@ fn executable_verifies_on_its_real_main_stack_and_applies_only_on_supported_plat
     let plan: Value = serde_json::from_slice(&fs::read(root.join("plan.json")).unwrap()).unwrap();
     write(
         &root,
-        "request.json",
+        "scope.json",
         &json!({"schema":"reel.asset-demotion-request.v1","policy":root.join("policy.json"),"plan":root.join("plan.json"),"plan_sha256":plan["plan_sha256"],"consumer_roots":[root],"consumer_scope":"all-managed-cache-consumers","sha256s":[hash],"max_verify_bytes":1024,"max_seconds":60,"allow_same_volume_copies":true}),
     );
+    let out = run(
+        &root,
+        &[
+            "version-eviction-request",
+            "prior",
+            "v1",
+            "prior",
+            "v2",
+            "scope.json",
+            "request.json",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let request: Value =
+        serde_json::from_slice(&fs::read(root.join("request.json")).unwrap()).unwrap();
+    assert_eq!(request["sha256s"], json!([hash]));
     let verify = root.join(".local/verify");
     let apply = root.join(".local/apply");
     let out = run(
@@ -109,6 +168,52 @@ fn executable_verifies_on_its_real_main_stack_and_applies_only_on_supported_plat
     let result: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(result["apply"], false);
     assert!(reel_assets::object(&root.join("hot"), &hash).exists());
+    let directory = root.join(".local/manage-cli-dry");
+    let dry = run(
+        &root,
+        &[
+            "version-manage",
+            "prior",
+            "v1",
+            "v2",
+            "scope.json",
+            directory.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        dry.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dry.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&dry.stdout).unwrap()["managed"],
+        false
+    );
+    assert!(reel_assets::object(&root.join("hot"), &hash).exists());
+    if cfg!(windows) {
+        let directory = root.join(".local/manage-cli-apply");
+        let managed = run(
+            &root,
+            &[
+                "version-manage",
+                "prior",
+                "v1",
+                "v2",
+                "scope.json",
+                directory.to_str().unwrap(),
+                "--apply",
+            ],
+        );
+        assert!(
+            managed.status.success(),
+            "{}",
+            String::from_utf8_lossy(&managed.stderr)
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&managed.stdout).unwrap()["managed"],
+            true
+        );
+    }
     let out = run(
         &root,
         &[
@@ -133,4 +238,38 @@ fn executable_verifies_on_its_real_main_stack_and_applies_only_on_supported_plat
         payload
     );
     assert!(!root.join("cold-offline").exists());
+    if cfg!(windows) {
+        fs::write(root.join("applied.json"), &out.stdout).unwrap();
+        let checked = run(
+            &root,
+            &[
+                "version-management-check",
+                "request.json",
+                "applied.json",
+                "management.json",
+            ],
+        );
+        assert!(
+            checked.status.success(),
+            "{}",
+            String::from_utf8_lossy(&checked.stderr)
+        );
+        let receipt: Value = serde_json::from_slice(&checked.stdout).unwrap();
+        assert_eq!(receipt["managed"], true);
+    }
+    assert!(run(&root, &["select", "prior", "v1"]).status.success());
+    let stale = run(
+        &root,
+        &[
+            "version-eviction-request",
+            "prior",
+            "v1",
+            "prior",
+            "v2",
+            "scope.json",
+            "stale-request.json",
+        ],
+    );
+    assert!(!stale.status.success());
+    assert!(!root.join("stale-request.json").exists());
 }
