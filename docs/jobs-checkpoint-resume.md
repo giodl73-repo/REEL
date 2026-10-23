@@ -4,8 +4,8 @@
 creates a fresh admitted workspace from an unchanged, registered original job.
 It copies registered checkpoint files as private working data, then executes the
 original steps beginning at the explicitly selected step. The original job,
-tool pins, inputs, output bounds and workspace budget are unchanged. V1 preserves
-all step timeouts.
+tool pins, inputs and output bounds are unchanged. V1 preserves the workspace
+budget and all step timeouts; newer explicitly registered windows are described below.
 The original workspace is not accessed or removed by this operation.
 
 The checkpoint descriptor uses `reel.native-job-resume.v1` with these fields:
@@ -48,3 +48,37 @@ seconds. It provides no checkpoints and skips no steps. Both original recipe and
 descriptor must be registered and freshly verified in active caches. Results
 and failure diagnostics use a separate `execution_window` evidence field. This
 does not mutate stored recipes, default `run-job`, tools or build checks.
+
+## Explicit temporary workspace windows
+
+`reel.native-job-resume.v3` and `reel.native-job-execution-window.v2` may declare
+`workspace_budget_bytes`, strictly larger than the original recipe's budget and
+at most 16 GiB. This is an explicit per-job operational exception, never a
+default or project-policy update. The descriptor must be registered and bound to
+the exact original job bytes. Obtain the producing project's actual resource
+authorization before invoking it; accepting a descriptor grants no human approval.
+
+The runner reserves and monitors the effective workspace allowance. All existing
+free-space reserves and concurrent reservations remain enforced. Additional
+workspace headroom is also added to the checkpoint scratch intake allowance.
+Canonical input resolution, retained-object size limits, output bounds and
+publication still use the unchanged project policy. The original `job.json`,
+commands, tool pins and final validation steps are unchanged. Results and failure
+evidence identify the effective allowance; successful results also preserve
+`original_budget_bytes`. A window does not silently extend any step timeout.
+
+V3 recovery may additionally seed `metadata_outputs`, keyed by exact original
+output role, for already-produced or freshly checked prerequisite metadata.
+Each must be a registered JSON object, target a declared `.json` output with a
+maximum bound of 1 MiB, and fit that original bound. Media outputs cannot be
+seeded. Ordinary checkpoint files still cannot overlap inputs, outputs or runner
+controls. Metadata is copied privately and its restored role is explicitly
+reported; it is retained evidence, not a newly executed preflight or approval.
+The producer must freshly establish any time-sensitive dependency facts and the
+remaining native steps must validate their checkpoints and final products.
+
+Legacy descriptors reject these fields. A fresh V2 window skips no steps and
+accepts no checkpoint or metadata-output seeds. V3 recovery and fresh V2 windows
+can independently request the existing single bounded timeout window; at least
+one explicit extension is required. Neither command starts a daemon, restores an
+old workspace in place, accesses archives, or changes sharing/publication rights.

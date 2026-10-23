@@ -12,6 +12,10 @@ pub(super) struct Checkpoint {
     files: BTreeMap<String, Asset>,
     #[serde(default)]
     step_timeout_seconds: BTreeMap<usize, u64>,
+    #[serde(default)]
+    workspace_budget_bytes: Option<u64>,
+    #[serde(default)]
+    metadata_outputs: BTreeMap<String, Asset>,
 }
 
 pub(super) struct Seed {
@@ -25,7 +29,10 @@ pub(super) struct Seed {
 struct ExecutionWindow {
     schema: String,
     job_sha256: String,
+    #[serde(default)]
     step_timeout_seconds: BTreeMap<usize, u64>,
+    #[serde(default)]
+    workspace_budget_bytes: Option<u64>,
 }
 
 impl Seed {
@@ -47,7 +54,10 @@ impl Seed {
             return Err("Execution-window descriptor exceeds intake budget".into());
         }
         let window: ExecutionWindow = serde_json::from_slice(&bytes)?;
-        if window.schema != "reel.native-job-execution-window.v1" {
+        if !matches!(
+            window.schema.as_str(),
+            "reel.native-job-execution-window.v1" | "reel.native-job-execution-window.v2"
+        ) {
             return Err("Invalid execution-window schema".into());
         }
         Ok(Self {
@@ -58,6 +68,8 @@ impl Seed {
                 start_step: 0,
                 files: BTreeMap::new(),
                 step_timeout_seconds: window.step_timeout_seconds,
+                workspace_budget_bytes: window.workspace_budget_bytes,
+                metadata_outputs: BTreeMap::new(),
             },
             sha256: format!("{:x}", Sha256::digest(&bytes)),
             bytes: bytes.len() as u64,
@@ -65,7 +77,10 @@ impl Seed {
     }
 
     pub fn evidence_key(&self) -> &'static str {
-        if self.checkpoint.schema == "reel.native-job-execution-window.v1" {
+        if matches!(
+            self.checkpoint.schema.as_str(),
+            "reel.native-job-execution-window.v1" | "reel.native-job-execution-window.v2"
+        ) {
             "execution_window"
         } else {
             "checkpoint_resume"
@@ -79,7 +94,9 @@ impl Seed {
             checkpoint.schema.as_str(),
             "reel.native-job-resume.v1"
                 | "reel.native-job-resume.v2"
+                | "reel.native-job-resume.v3"
                 | "reel.native-job-execution-window.v1"
+                | "reel.native-job-execution-window.v2"
         ) || checkpoint.job_sha256 != format!("{:x}", Sha256::digest(job_bytes))
             || (!policy && !checkpoint.source_job_id.starts_with("job-"))
             || checkpoint.source_job_id.len() > 100
@@ -92,14 +109,39 @@ impl Seed {
             || (policy
                 && (!checkpoint.source_job_id.is_empty()
                     || checkpoint.start_step != 0
-                    || !checkpoint.files.is_empty()))
+                    || !checkpoint.files.is_empty()
+                    || !checkpoint.metadata_outputs.is_empty()))
             || checkpoint.files.len() > 4096
         {
             return Err("Invalid checkpoint identity, coverage or resume step".into());
         }
         let windows = &checkpoint.step_timeout_seconds;
+        let resource_schema = matches!(
+            checkpoint.schema.as_str(),
+            "reel.native-job-resume.v3" | "reel.native-job-execution-window.v2"
+        );
+        if (!resource_schema
+            && (checkpoint.workspace_budget_bytes.is_some()
+                || !checkpoint.metadata_outputs.is_empty()))
+            || checkpoint.workspace_budget_bytes.is_some_and(|budget| {
+                budget <= job.budget_bytes || budget > 16 * 1024 * 1024 * 1024
+            })
+            || checkpoint.metadata_outputs.len() > 16
+        {
+            return Err(
+                "Invalid explicitly scoped workspace budget or metadata output seed".into(),
+            );
+        }
         if (checkpoint.schema == "reel.native-job-resume.v1" && !windows.is_empty())
-            || ((checkpoint.schema == "reel.native-job-resume.v2" || policy) && windows.len() != 1)
+            || (matches!(
+                checkpoint.schema.as_str(),
+                "reel.native-job-resume.v2" | "reel.native-job-execution-window.v1"
+            ) && windows.len() != 1)
+            || (resource_schema
+                && (windows.len() > 1
+                    || (windows.is_empty()
+                        && checkpoint.workspace_budget_bytes.is_none()
+                        && checkpoint.metadata_outputs.is_empty())))
             || windows.iter().any(|(index, seconds)| {
                 *index < checkpoint.start_step
                     || job
@@ -143,14 +185,35 @@ impl Seed {
             names.insert(name);
             add(&mut total, asset.bytes)?;
         }
-        if total > job.scratch_bytes {
-            return Err("Checkpoint files exceed the original scratch budget".into());
+        for (role, asset) in &checkpoint.metadata_outputs {
+            let output = job
+                .outputs
+                .get(role)
+                .ok_or("Unknown seeded metadata output role")?;
+            if !output.path.ends_with(".json")
+                || output.max_bytes > 1024 * 1024
+                || asset.bytes > output.max_bytes
+                || !valid_oid(&asset.sha256)
+            {
+                return Err("Seeded metadata output must be a bounded declared JSON output".into());
+            }
+            add(&mut total, asset.bytes)?;
+        }
+        let scratch = job
+            .scratch_bytes
+            .checked_add(self.workspace_budget(job) - job.budget_bytes)
+            .ok_or("Recovery scratch budget overflow")?;
+        if total > scratch {
+            return Err("Checkpoint files exceed the allowed scratch budget".into());
         }
         Ok(())
     }
 
     pub fn assets(&self) -> impl Iterator<Item = &Asset> {
-        self.checkpoint.files.values()
+        self.checkpoint
+            .files
+            .values()
+            .chain(self.checkpoint.metadata_outputs.values())
     }
 
     pub fn pin_registered_sources(&self, cfg: &crate::Config, job_bytes: u64) -> Result<Vec<File>> {
@@ -171,14 +234,31 @@ impl Seed {
         Ok(guards)
     }
 
-    pub fn stage(&self, cfg: &crate::Config, workspace: &Path) -> Result<()> {
+    pub fn stage(&self, cfg: &crate::Config, workspace: &Path, job: &Job) -> Result<()> {
         // Private copies: subsequent native steps may update checkpoint files.
         // Canonical checkpoint objects and the original staging remain immutable.
-        for (name, asset) in &self.checkpoint.files {
+        let metadata = self
+            .checkpoint
+            .metadata_outputs
+            .iter()
+            .map(|(role, asset)| (job.outputs[role].path.as_str(), asset, true));
+        for (name, asset, is_metadata) in self
+            .checkpoint
+            .files
+            .iter()
+            .map(|(name, asset)| (name.as_str(), asset, false))
+            .chain(metadata)
+        {
             let source = active_existing(cfg, &asset.sha256, asset.bytes)?
                 .ok_or("Checkpoint absent from active caches; no archive access")?;
             let _guard = lifecycle::pin_read_only(&source)?;
             verify(&source, &asset.sha256, asset.bytes)?;
+            if is_metadata {
+                let value: Value = serde_json::from_slice(&fs::read(&source)?)?;
+                if !value.is_object() {
+                    return Err("Seeded metadata output must contain a JSON object".into());
+                }
+            }
             let target = workspace.join(relative(name)?);
             fs::create_dir_all(target.parent().ok_or("Missing checkpoint parent")?)?;
             let mut input = File::open(source)?.take(asset.bytes.saturating_add(1));
@@ -198,6 +278,12 @@ impl Seed {
         self.checkpoint.start_step
     }
 
+    pub fn workspace_budget(&self, job: &Job) -> u64 {
+        self.checkpoint
+            .workspace_budget_bytes
+            .unwrap_or(job.budget_bytes)
+    }
+
     pub fn step_timeout_seconds(&self, index: usize, original: u64) -> u64 {
         self.checkpoint
             .step_timeout_seconds
@@ -207,16 +293,18 @@ impl Seed {
     }
 
     pub fn evidence(&self) -> Value {
+        let workspace = self.checkpoint.workspace_budget_bytes;
         if self.evidence_key() == "execution_window" {
-            return json!({"schema":"reel.native-job-execution-window-evidence.v1",
+            return json!({"schema":if self.checkpoint.schema == "reel.native-job-execution-window.v2" {"reel.native-job-execution-window-evidence.v2"} else {"reel.native-job-execution-window-evidence.v1"},
                 "original_manifest_sha256":self.checkpoint.job_sha256,
                 "policy_descriptor_sha256":self.sha256,
                 "effective_step_timeout_seconds":self.checkpoint.step_timeout_seconds,
                 "first_executed_step":0,"checkpoint_files":0,"steps_skipped":false,
                 "original_manifest_modified":false,"native_build_checks_required":true,
-                "execution_window_explicitly_extended":true,"human_approval":false});
+                "execution_window_explicitly_extended":!self.checkpoint.step_timeout_seconds.is_empty(),
+                "effective_workspace_budget_bytes":workspace,"workspace_budget_explicitly_extended":workspace.is_some(),"human_approval":false});
         }
-        json!({"schema":if self.checkpoint.schema == "reel.native-job-resume.v2" {"reel.native-job-resume-evidence.v2"} else {"reel.native-job-resume-evidence.v1"},
+        json!({"schema":match self.checkpoint.schema.as_str() {"reel.native-job-resume.v3"=>"reel.native-job-resume-evidence.v3","reel.native-job-resume.v2"=>"reel.native-job-resume-evidence.v2",_=>"reel.native-job-resume-evidence.v1"},
             "original_manifest_sha256":self.checkpoint.job_sha256,
             "source_job_id":self.checkpoint.source_job_id,
             "checkpoint_descriptor_sha256":self.sha256,
@@ -226,6 +314,8 @@ impl Seed {
             "original_step_timeout_controls_modified":false,
             "effective_step_timeout_seconds":self.checkpoint.step_timeout_seconds,
             "execution_window_explicitly_extended":!self.checkpoint.step_timeout_seconds.is_empty(),
+            "effective_workspace_budget_bytes":workspace,"workspace_budget_explicitly_extended":workspace.is_some(),
+            "restored_metadata_output_roles":self.checkpoint.metadata_outputs.keys().collect::<Vec<_>>(),
             "copied_checkpoints_independently_verified":true,
             "native_build_checks_required":true,"human_approval":false})
     }
