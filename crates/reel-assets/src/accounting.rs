@@ -139,6 +139,21 @@ pub(crate) fn expand(
     s: &versions::State,
     roots: impl IntoIterator<Item = String>,
 ) -> Result<BTreeSet<String>> {
+    expand_payloads(s, roots, false)
+}
+/// An explicit lease protects every declared byte of its bounded working set,
+/// including compiled references. This does not change any asset's source role.
+pub(crate) fn expand_leased(
+    s: &versions::State,
+    roots: impl IntoIterator<Item = String>,
+) -> Result<BTreeSet<String>> {
+    expand_payloads(s, roots, true)
+}
+fn expand_payloads(
+    s: &versions::State,
+    roots: impl IntoIterator<Item = String>,
+    include_references: bool,
+) -> Result<BTreeSet<String>> {
     let mut found = BTreeSet::new();
     let mut seen = BTreeSet::new();
     let mut queue: Vec<_> = roots.into_iter().collect();
@@ -149,7 +164,11 @@ pub(crate) fn expand(
         let v = s.versions.get(&k).ok_or("Usage root version missing")?;
         found.insert(v.manifest_sha256.clone());
         s.validate_dependency_contract(v)?;
-        found.extend(v.active_payloads());
+        if include_references {
+            found.extend(v.payloads.iter().cloned());
+        } else {
+            found.extend(v.active_payloads());
+        }
         for dep in &v.dependencies {
             let key = version_key(dep);
             let target = s.versions.get(&key).ok_or("Usage dependency missing")?;
@@ -445,7 +464,7 @@ pub fn report_with_progress(root: &Path, mut progress: impl FnMut(usize, usize))
     let current = expand(&state, retention_roots(&p, &state, &golden_roots)?)?;
     let golden = expand(&state, golden_roots)?;
     let pinned = expand(&state, state.pins.iter().cloned())?;
-    let leased = expand(
+    let leased = expand_leased(
         &state,
         state.leases.values().flat_map(|v| v.iter().cloned()),
     )?;
