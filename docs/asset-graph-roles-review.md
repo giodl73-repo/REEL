@@ -489,3 +489,35 @@ before preparation, bind exact retained handoff and preserve demand through
 failure/recovery/staging retirement. Complete producer enrollment, explicit
 demand release and guarded physical removal remain separate work. Main, live
 caches and installed runtime bindings are unchanged.
+
+## Retained native-job enrollment increment
+
+Review base: `a9d83a1`, plus `jobs/publication.rs`, runner/discard/intake changes,
+collector job-control validation, CLI count projection, native-runner/executable
+fixtures and `asset-fenced-jobs-v1.md`. Producer-applied review uses all three
+infrastructure checklists (version 1) and Rights and Provenance. Owner: this
+implementation lane. No independent review, live adoption or complete job-family
+enrollment is claimed. Historical counts/hashes above retain their original scope.
+
+| Role | Severity | Finding/correction and actual evidence |
+| --- | --- | --- |
+| Registry Concurrency and Evidence Integrity | Major corrected for opt-in retained jobs | Native input bytes were resolved before workspace demand existed. New retained-job enrollment publishes synced manifest-bound controls under shared input/CAS-tool fences before source resolution. Fences release before reads/execution, leaving durable intent. An input-fenced fixture with missing payload fails on contention before creating scratch; missing-input and killed-executable fixtures leave collectible demand with no subject lock remaining. |
+| Asset Graph and Version Integrity | Major corrected | New canonical outputs need demand before publication without becoming hidden build inputs. Verified local outputs now acquire shared hashes only to publish compact output intent, then release before CAS verification/copy. Collector reasons separate input from output; output intent remains a hold without a result. Mismatched result roles/hashes/sizes, corrupt controls, wrong manifests and replaced domains reject collection. A fenced-output fixture leaves only local unpublished bytes and requires a fresh explicit job attempt. |
+| Storage Custody and Recovery | Major corrected | Enrollment metadata cannot be an unbudgeted staging tail. Enrolled jobs require budget for exact manifest bytes plus three 64 KiB controls, bounded subjects/output roles, and no-overwrite synced controls/results. Fences never span execution or media copy/hashing. Input and output intent are demand only; unchanged native retained-copy verification and explicit registration remain required before discard. |
+| Registry Concurrency and Evidence Integrity | Major corrected | Intake parsed a second mutable file read after hashing different bytes. Runner/collector decoding now uses the exact bounded intake snapshot, with BOM support; discard also rechecks snapshot size/hash against the registered manifest. This preserves valid native job behavior while rejecting a changed manifest. Existing native execution/timeout/default retirement tests pass. |
+| Storage Custody and Recovery | Major corrected at discard validation boundary | Explicit cleanup must not bypass damaged enrollment. Discard validates the same bound domain and output controls before applying its existing checks. A fixture corrupts the control and observes preserved scratch, explicitly restores the same physical control, then verifies successful discard with zero CAS removals and retained output bytes intact. No new automatic cleanup or canonical unlink is added. |
+| Storage Custody and Recovery | Blocking adoption gate retained | Auto-retirement diagnostics/salvage/evidence are not yet enrolled. The new path therefore requires explicit retain_workspace rather than changing the default or pretending full coverage. This is bounded opt-in retention on success/failure and needs explicit verified discard. Complete consumer/cache policy, cross-domain routing/order and final guarded removal remain open; the old runner and installed runtime are not switched. |
+| Rights and Provenance | Advisory addressed | New CLI success is a fixed schema and typed numeric/boolean allowlist; private native results, roles, paths, hashes and authority stay in controls/API results/stderr. Bad counter types reject projection. Actual executable tests exclude private sentinels. The killed fixture command also proves descendant termination. Only synthetic temporary Rust tools/assets were used, with no production cache/media, external service, daemon, installed binding or main change. |
+
+Validation: 469 tests pass (236 unit, five prior integration, 100 model,
+23 source adapter, 25 sidecar, 30 backend, 19 managed CLI, 11 collector CLI,
+17 fence entries and three new fenced-job CLI cases). Seven native-job unit
+cases and three executable cases are new. After the final discard refinement,
+all 18 native lifecycle tests pass again. Strict all-target Clippy, formatting,
+ROLES structure and diff checks pass. Windows only; no Unix, independent-device,
+power-loss or hostile-program sandbox claim.
+
+Disposition: opt-in retained native jobs now publish typed input/output demand
+around short fences and preserve it through interruption, with validated explicit
+discard. Auto-retiring jobs, complete producer policy and final guarded physical
+removal remain separate work. Live caches and installed bindings are unchanged.

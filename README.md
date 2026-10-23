@@ -57,6 +57,9 @@ domain on publication/recovery. Live removal and complete producer enrollment
 remain separate integration work.
 Enrolled builds also persist exact source-evidence demand before preparation and
 preserve it across failed reads, recovery, retained handoff and staging retirement.
+Optional [enrolled native jobs](docs/asset-fenced-jobs-v1.md) publish durable
+input/output intent before payload access/publication. This first path requires
+explicit retained-workspace jobs; automatic retirement enrollment remains open.
 
 ---
 

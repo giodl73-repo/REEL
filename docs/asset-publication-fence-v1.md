@@ -90,9 +90,13 @@ The collector validates version 2 bindings and stamps their control bytes under
 its metadata budget. Missing or changed fence identity makes capture fail,
 including when no nodes are staged; it never becomes an empty protected scope.
 This does not certify global enrollment. A fresh session/profile can still use
-version 1 when no cache-wide policy forbids it. Native job publication,
+version 1 when no cache-wide policy forbids it. Default/auto-retiring native jobs,
 cross-project source demand, retained/catalog lifecycle cleanup and
 the removal executor still require their respective integration contracts.
+
+Optional [retained native jobs](asset-fenced-jobs-v1.md) now publish input intent
+before source access and output intent before CAS publication, using this same
+domain primitive. Automatic job retirement/salvage is not enrolled by that path.
 
 ## Source demand before preparation
 

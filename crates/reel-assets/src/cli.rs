@@ -124,6 +124,12 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
         "compact-versions" => versions::compact(root),
         "compact-goldens" => crate::goldens::compact(root),
         "run-job" => crate::jobs::run(root,Path::new(arg(1)?)),
+        "run-job-fenced" => {
+            if args.len()!=3 {return Err("Usage: run-job-fenced <manifest.json> <existing-fence-directory>".into());}
+            let domain=crate::inventory_evidence::sidecar::file_store::collector::fence::Domain::open(Path::new(arg(2)?))?;
+            let result=crate::jobs::run_fenced(root,Path::new(arg(1)?),&domain)?;
+            Ok(crate::jobs::publication_summary(&result)?)
+        },
         "discard-job-scratch" => crate::jobs::discard(root,arg(1)?,arg(2)?,args.get(3).is_some_and(|a|a=="--discard-incomplete")),
         "verify-active" => {
             let oid=arg(1)?;let index=selected(root)?;let size=*index.get(oid).ok_or("Unregistered hash")?;

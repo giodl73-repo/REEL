@@ -1,7 +1,270 @@
 //! Real Windows execution in synthetic active caches, without production assets.
 use super::*;
+use crate::inventory_evidence::sidecar::file_store::collector::{self, fence::Mode};
 use crate::tiering::tests::Fixture;
 use std::{process::Command, sync::OnceLock};
+
+fn enrolled(mode: &str) -> (Fixture, PathBuf, Value, Domain) {
+    let mut fixture = Fixture::new();
+    fixture.state.coverage_complete = true;
+    fixture.save();
+    let (manifest, mut job) = prepare(&fixture, mode);
+    job["retain_workspace"] = json!(true);
+    if mode == "mutate" {
+        job["writable_inputs"] = json!(["in.bin"]);
+    }
+    fs::write(&manifest, job.to_string()).unwrap();
+    let directory = fixture.root().join("fast/fence");
+    fs::create_dir(&directory).unwrap();
+    let domain = Domain::initialize(&directory).unwrap();
+    (fixture, manifest, job, domain)
+}
+fn job_scope(fixture: &mut Fixture) -> collector::Request {
+    fixture.baseline();
+    fs::write(
+        fixture.root().join("policy.json"),
+        fixture.policy.to_string(),
+    )
+    .unwrap();
+    let cache = fixture.root().join("fast").canonicalize().unwrap();
+    for name in ["index-staging", "index-retained"] {
+        fs::create_dir_all(cache.join(name)).unwrap();
+    }
+    collector::Request {
+        schema: "reel.collector-protection-scope.v1".into(),
+        caches: vec![collector::CacheScope {
+            cache: cache.clone(),
+            staging_parent: cache.join("index-staging"),
+            retained_parent: cache.join("index-retained"),
+            catalogs: vec![],
+            job_parent: Some(cache.join("staging/caminos")),
+        }],
+        consumers: vec![collector::Consumer {
+            root: fixture.root().canonicalize().unwrap(),
+            policy: fixture.root().join("policy.json"),
+        }],
+        limits: collector::Limits::default(),
+    }
+}
+fn only_workspace(fixture: &Fixture) -> PathBuf {
+    let mut entries = fs::read_dir(fixture.root().join("fast/staging/caminos")).unwrap();
+    let workspace = entries.next().unwrap().unwrap().path();
+    assert!(entries.next().is_none());
+    workspace
+}
+
+#[test]
+fn enrolled_job_publishes_distinct_input_output_demand_and_count_only_summary() {
+    let (mut fixture, manifest, job, domain) = enrolled("mutate");
+    let result = run_fenced(fixture.root(), &manifest, &domain).unwrap();
+    let workspace = PathBuf::from(result["workspace"].as_str().unwrap());
+    assert!(workspace.join("job-publication.json").exists());
+    assert!(workspace.join("job-output-intent.json").exists());
+    assert_eq!(result["workspace_retained"], true);
+    let input = job["inputs"]["in.bin"]["sha256"].as_str().unwrap();
+    let output = result["outputs"]["copy"]["sha256"].as_str().unwrap();
+    assert_ne!(input, output);
+    let scope = job_scope(&mut fixture);
+    let snapshot = collector::capture(&scope).unwrap();
+    assert!(
+        matches!(snapshot.classify(input).unwrap(),collector::Membership::Held(reasons) if reasons.contains(&collector::Reason::JobWorkspaceInput))
+    );
+    assert!(
+        matches!(snapshot.classify(output).unwrap(),collector::Membership::Held(reasons) if reasons.contains(&collector::Reason::JobWorkspaceOutput) && !reasons.contains(&collector::Reason::JobWorkspaceInput))
+    );
+    let summary = publication_summary(&result).unwrap();
+    for (key, value) in summary.as_object().unwrap() {
+        assert!(key == "schema" || value.is_number() || value.is_boolean());
+    }
+    assert!(!summary.to_string().contains(output));
+    assert!(!summary.to_string().contains(input));
+    let mut bad = result.clone();
+    bad["linked_input_bytes"] = json!("PRIVATE_BAD_COUNTER");
+    assert!(publication_summary(&bad).is_err());
+    fs::remove_file(workspace.join("result.json")).unwrap();
+    assert!(snapshot.revalidate().is_err());
+    let intent_only = collector::capture(&scope).unwrap();
+    assert!(matches!(
+        intent_only.classify(output).unwrap(),
+        collector::Membership::Held(_)
+    ));
+    assert_eq!(
+        fs::read(object(&fixture.root().join("fast"), input)).unwrap(),
+        b"source"
+    );
+}
+
+#[test]
+fn enrolled_input_fence_refusal_precedes_workspace_creation_and_input_access() {
+    let (fixture, manifest, job, domain) = enrolled("copy");
+    let input = job["inputs"]["in.bin"]["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let _held = domain
+        .acquire(std::slice::from_ref(&input), Mode::Remove, Duration::ZERO)
+        .unwrap();
+    for cache in ["fast", "history"] {
+        fs::remove_file(object(&fixture.root().join(cache), &input)).unwrap();
+    }
+    let error = run_fenced(fixture.root(), &manifest, &domain)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("Publication fence unavailable"), "{error}");
+    no_scratch(&fixture);
+}
+
+#[test]
+fn enrolled_missing_input_keeps_demand_without_a_lifetime_lock_or_custody_claim() {
+    let (mut fixture, manifest, job, domain) = enrolled("copy");
+    let input = job["inputs"]["in.bin"]["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    for cache in ["fast", "history"] {
+        fs::remove_file(object(&fixture.root().join(cache), &input)).unwrap();
+    }
+    assert!(run_fenced(fixture.root(), &manifest, &domain).is_err());
+    let workspace = only_workspace(&fixture);
+    assert!(workspace.join("job-publication.json").exists());
+    assert!(!workspace.join("in.bin").exists());
+    domain
+        .acquire(std::slice::from_ref(&input), Mode::Remove, Duration::ZERO)
+        .unwrap();
+    let snapshot = collector::capture(&job_scope(&mut fixture)).unwrap();
+    assert!(matches!(
+        snapshot.classify(&input).unwrap(),
+        collector::Membership::Held(_)
+    ));
+}
+
+#[test]
+fn enrolled_output_fence_refuses_before_cas_publication_and_explicit_retry_can_succeed() {
+    let (fixture, manifest, _job, domain) = enrolled("mutate");
+    let output = format!("{:x}", Sha256::digest(b"changed"));
+    let held = domain
+        .acquire(std::slice::from_ref(&output), Mode::Remove, Duration::ZERO)
+        .unwrap();
+    let error = run_fenced(fixture.root(), &manifest, &domain)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("Publication fence unavailable"), "{error}");
+    let workspace = only_workspace(&fixture);
+    assert_eq!(fs::read(workspace.join("out.bin")).unwrap(), b"changed");
+    assert!(!workspace.join("job-output-intent.json").exists());
+    assert!(!object(&fixture.root().join("fast"), &output).exists());
+    assert!(!object(&fixture.root().join("history"), &output).exists());
+    drop(held);
+    let result = run_fenced(fixture.root(), &manifest, &domain).unwrap();
+    assert_eq!(result["outputs"]["copy"]["sha256"], output);
+    assert!(workspace.exists()); // the first failed job is never auto-cleaned/replayed
+}
+
+#[test]
+fn enrolled_collection_rejects_damaged_controls_and_replaced_domain() {
+    for case in 0..5 {
+        let (mut fixture, manifest, _job, domain) = enrolled("copy");
+        let result = run_fenced(fixture.root(), &manifest, &domain).unwrap();
+        let workspace = PathBuf::from(result["workspace"].as_str().unwrap());
+        let scope = job_scope(&mut fixture);
+        let snapshot = collector::capture(&scope).unwrap();
+        match case {
+            0 => fs::remove_file(workspace.join("job-publication.json")).unwrap(),
+            1 => fs::write(workspace.join("job-output-intent.json"), b"{}").unwrap(),
+            2 => {
+                let mut changed = result.clone();
+                changed["outputs"]["copy"]["bytes"] = json!(999);
+                fs::write(workspace.join("result.json"), changed.to_string()).unwrap();
+            }
+            3 => {
+                let path = workspace.join("job-publication.json");
+                let mut changed: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                changed["manifest_sha256"] = json!("e".repeat(64));
+                fs::write(path, changed.to_string()).unwrap();
+            }
+            _ => {
+                drop(domain);
+                fs::rename(
+                    fixture
+                        .root()
+                        .join("fast/fence/asset-publication-fence.v1.lock"),
+                    fixture.root().join("old-domain"),
+                )
+                .unwrap();
+                let _replacement = Domain::initialize(&fixture.root().join("fast/fence")).unwrap();
+            }
+        }
+        assert!(collector::capture(&scope).is_err(), "case {case}");
+        assert!(snapshot.revalidate().is_err());
+    }
+}
+
+#[test]
+fn enrolled_jobs_require_explicit_retention_and_control_budget() {
+    let (fixture, manifest, mut job, domain) = enrolled("copy");
+    job["retain_workspace"] = json!(false);
+    fs::write(&manifest, job.to_string()).unwrap();
+    assert!(
+        run_fenced(fixture.root(), &manifest, &domain)
+            .unwrap_err()
+            .to_string()
+            .contains("explicit retain_workspace")
+    );
+    job["retain_workspace"] = json!(true);
+    job["scratch_bytes"] = json!(0);
+    job["budget_bytes"] = json!(tool().len() as u64 + 6 + 2048);
+    fs::write(&manifest, job.to_string()).unwrap();
+    assert!(
+        run_fenced(fixture.root(), &manifest, &domain)
+            .unwrap_err()
+            .to_string()
+            .contains("publication controls")
+    );
+    no_scratch(&fixture);
+}
+
+#[test]
+fn enrolled_verified_discard_rejects_invalid_binding_and_preserves_cas_after_valid_cleanup() {
+    let (fixture, manifest, _job, domain) = enrolled("mutate");
+    let result = run_fenced(fixture.root(), &manifest, &domain).unwrap();
+    let workspace = PathBuf::from(result["workspace"].as_str().unwrap());
+    let manifest_id = fixture.put(&fs::read(manifest).unwrap(), true);
+    fixture.put(b"changed", true);
+    let control = fixture
+        .root()
+        .join("fast/fence/asset-publication-fence.v1.lock");
+    let original = fs::read(&control).unwrap();
+    fs::write(&control, b"partial").unwrap();
+    assert!(
+        discard(
+            fixture.root(),
+            result["job_id"].as_str().unwrap(),
+            &manifest_id,
+            false
+        )
+        .is_err()
+    );
+    assert!(workspace.exists());
+    assert!(workspace.join("out.bin").exists());
+    fs::write(&control, original).unwrap(); // explicit fixture restoration, never runtime repair
+    let cleaned = discard(
+        fixture.root(),
+        result["job_id"].as_str().unwrap(),
+        &manifest_id,
+        false,
+    )
+    .unwrap();
+    assert_eq!(cleaned["cache_objects_removed"], 0);
+    assert!(!workspace.exists());
+    assert_eq!(
+        fs::read(object(
+            &fixture.root().join("fast"),
+            result["outputs"]["copy"]["sha256"].as_str().unwrap()
+        ))
+        .unwrap(),
+        b"changed"
+    );
+}
 
 fn tool() -> &'static [u8] {
     static TOOL: OnceLock<Vec<u8>> = OnceLock::new();
