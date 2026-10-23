@@ -524,18 +524,44 @@ pub fn backup(
     output: &std::path::Path,
     apply: bool,
 ) -> Result<Value> {
+    backup_scope(root, request_path, output, apply, false)
+}
+
+/// Additive preparation for an exact tier-plan set, including unregistered cold
+/// objects. This never authorizes removal or changes version selections.
+pub fn backup_tier(
+    root: &std::path::Path,
+    request_path: &std::path::Path,
+    output: &std::path::Path,
+    apply: bool,
+) -> Result<Value> {
+    backup_scope(root, request_path, output, apply, true)
+}
+
+fn backup_scope(
+    root: &std::path::Path,
+    request_path: &std::path::Path,
+    output: &std::path::Path,
+    apply: bool,
+    tier_scope: bool,
+) -> Result<Value> {
+    if output.exists() {
+        return Err("Backup report already exists; choose a new private output".into());
+    }
     if apply && !cfg!(windows) {
         return Err("Guarded backup publication is Windows-only in this slice".into());
     }
     let request: crate::demotion::Request =
         serde_json::from_slice(&crate::tiering::read_bounded(request_path, 256 * 1024)?)?;
-    validate_transition(
-        root,
-        request
-            .transition
-            .as_ref()
-            .ok_or("Backup requires an exact managed transition")?,
-    )?;
+    if !tier_scope {
+        validate_transition(
+            root,
+            request
+                .transition
+                .as_ref()
+                .ok_or("Backup requires an exact managed transition")?,
+        )?;
+    }
     let policy: crate::tiering::Policy =
         serde_json::from_slice(&crate::tiering::read_bounded(&request.policy, 256 * 1024)?)?;
     let cfg = crate::config(root)?;
@@ -559,9 +585,42 @@ pub fn backup(
     {
         return Err("Retained cache must be on an independent volume".into());
     }
-    let report = validate_transition(root, request.transition.as_ref().unwrap())?;
-    let candidates: BTreeSet<String> =
-        serde_json::from_value(report["eviction_candidate_sha256s"].clone())?;
+    let mut observed_sizes = BTreeMap::new();
+    let candidates: BTreeSet<String> = if tier_scope {
+        if request.schema != "reel.asset-demotion-request.v1"
+            || request.sha256s.is_empty()
+            || request.sha256s.iter().any(|h| !crate::valid_oid(h))
+            || request.max_seconds == 0
+            || request.max_seconds > 3600
+            || request.max_verify_bytes == 0
+        {
+            return Err("Invalid bounded tier-backup request".into());
+        }
+        crate::demotion::check_source_controls(root, &request, false)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        let checked = crate::tiering::check_plan(root, &request.policy, &request.plan, now)?;
+        if checked["plan_sha256"] != request.plan_sha256 {
+            return Err("Tier-backup plan identity mismatch".into());
+        }
+        let plan: Value = serde_json::from_slice(&crate::tiering::read_bounded(
+            &request.plan,
+            512 * 1024 * 1024,
+        )?)?;
+        for row in plan["objects"]
+            .as_array()
+            .ok_or("Missing planned backup objects")?
+        {
+            let h = row["sha256"].as_str().ok_or("Missing backup hash")?;
+            let n = row["bytes"].as_u64().ok_or("Missing backup bytes")?;
+            observed_sizes.insert(h.to_owned(), n);
+        }
+        observed_sizes.keys().cloned().collect()
+    } else {
+        let report = validate_transition(root, request.transition.as_ref().unwrap())?;
+        serde_json::from_value(report["eviction_candidate_sha256s"].clone())?
+    };
     if !request.sha256s.is_subset(&candidates) || request.sha256s.len() > policy.max_batch_objects {
         return Err("Backup set exceeds the bounded current replacement".into());
     }
@@ -571,7 +630,10 @@ pub fn backup(
     let mut rows = Vec::new();
     let start = std::time::Instant::now();
     for hash in &request.sha256s {
-        let size = *index.get(hash).ok_or("Backup hash is unregistered")?;
+        let size = *index
+            .get(hash)
+            .or_else(|| observed_sizes.get(hash))
+            .ok_or("Backup hash has no registered or frozen-inventory size")?;
         bytes = bytes.checked_add(size).ok_or("Backup byte overflow")?;
         if bytes > request.max_verify_bytes
             || bytes > policy.max_batch_bytes
@@ -628,7 +690,7 @@ pub fn backup(
         }
         rows.push(json!({"sha256":hash,"bytes":size,"retained_path":destination,"already_present":exists,"verified":exists || apply,"copy_required":!exists}));
     }
-    let result = json!({"schema":"reel.asset-version-backup.v1","apply":apply,"objects":rows,"payload_bytes_copied":copied,"source_objects_removed":0,"archive_target_explicit":archive,"next_step":"tier-demote verification and explicit apply, then version-management-check"});
+    let result = json!({"schema":if tier_scope {"reel.asset-tier-backup.v1"}else{"reel.asset-version-backup.v1"},"apply":apply,"objects":rows,"payload_bytes_copied":copied,"source_objects_removed":0,"archive_target_explicit":archive,"next_step":"tier-demote verification and explicit apply; backup alone never authorizes source removal"});
     crate::tiering::write_plan(output, &result)?;
     Ok(result)
 }
@@ -891,6 +953,124 @@ pub fn manage(
 mod tests {
     use super::*;
     use crate::versions::{Dependency, Version};
+
+    fn tier_backup_case() -> (crate::tiering::tests::Fixture, String, std::path::PathBuf) {
+        let mut f = crate::tiering::tests::Fixture::new();
+        let hash = f.put(b"unregistered explicit cold backup", false);
+        std::fs::create_dir(f.root().join("offline-cold")).unwrap();
+        f.baseline();
+        f.run().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let plan = crate::tiering::plan(
+            f.root(),
+            &f.root().join("policy.json"),
+            &f.root().join("baseline.json"),
+            now,
+        )
+        .unwrap();
+        let pp = f.root().join("backup-plan.json");
+        crate::tiering::write_plan(&pp, &plan).unwrap();
+        let request = f.root().join("tier-backup.json");
+        std::fs::write(&request,serde_json::to_vec(&json!({"schema":"reel.asset-demotion-request.v1",
+            "policy":f.root().join("policy.json"),"plan":pp,"plan_sha256":plan["plan_sha256"],
+            "consumer_roots":[f.root().canonicalize().unwrap()],"consumer_scope":"all-managed-cache-consumers",
+            "sha256s":[hash],"retained_tier":"cold","allow_same_volume_copies":true,
+            "max_verify_bytes":1024,"max_seconds":60})).unwrap()).unwrap();
+        (f, hash, request)
+    }
+    #[test]
+    fn generic_tier_backup_dry_run_is_additive_and_not_a_version_transition() {
+        let (f, h, request) = tier_backup_case();
+        let before = std::fs::read(f.root().join("registry/versions.json")).unwrap();
+        let r = backup_tier(f.root(), &request, &f.root().join("backup-dry.json"), false).unwrap();
+        assert_eq!(r["schema"], "reel.asset-tier-backup.v1");
+        assert_eq!(r["payload_bytes_copied"], 0);
+        assert_eq!(r["objects"][0]["copy_required"], true);
+        assert!(crate::object(&f.root().join("fast"), &h).exists());
+        assert!(!crate::object(&f.root().join("offline-cold"), &h).exists());
+        assert_eq!(
+            std::fs::read(f.root().join("registry/versions.json")).unwrap(),
+            before
+        );
+        assert!(backup(f.root(), &request, &f.root().join("wrong-mode.json"), false).is_err());
+    }
+    #[cfg(windows)]
+    #[test]
+    fn generic_tier_backup_verifies_publication_without_registering_or_removing_source() {
+        let (f, h, request) = tier_backup_case();
+        let before = crate::selected(f.root()).unwrap();
+        let r = backup_tier(
+            f.root(),
+            &request,
+            &f.root().join("backup-applied.json"),
+            true,
+        )
+        .unwrap();
+        assert!(r["payload_bytes_copied"].as_u64().unwrap() > 0);
+        crate::verify(
+            &crate::object(&f.root().join("offline-cold"), &h),
+            &h,
+            r["objects"][0]["bytes"].as_u64().unwrap(),
+        )
+        .unwrap();
+        assert!(crate::object(&f.root().join("fast"), &h).exists());
+        assert_eq!(crate::selected(f.root()).unwrap(), before);
+        let again = backup_tier(
+            f.root(),
+            &request,
+            &f.root().join("backup-repeat.json"),
+            true,
+        )
+        .unwrap();
+        assert_eq!(again["payload_bytes_copied"], 0);
+    }
+    #[test]
+    fn generic_tier_backup_holds_corrupt_existing_destination_and_stale_plan() {
+        let (f, h, request) = tier_backup_case();
+        let dest = crate::object(&f.root().join("offline-cold"), &h);
+        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        std::fs::write(&dest, b"corrupt").unwrap();
+        assert!(backup_tier(f.root(), &request, &f.root().join("corrupt.json"), false).is_err());
+        assert_eq!(std::fs::read(&dest).unwrap(), b"corrupt");
+        let (f, h, request) = tier_backup_case();
+        f.put(b"late authorization", true);
+        assert!(
+            backup_tier(
+                f.root(),
+                &request,
+                &f.root().join("stale.json"),
+                cfg!(windows)
+            )
+            .is_err()
+        );
+        assert!(!crate::object(&f.root().join("offline-cold"), &h).exists());
+    }
+    #[test]
+    fn generic_tier_backup_rejects_unknown_hash_and_too_small_budget() {
+        for unknown in [true, false] {
+            let (f, h, request) = tier_backup_case();
+            let mut r: Value = serde_json::from_slice(&std::fs::read(&request).unwrap()).unwrap();
+            if unknown {
+                r["sha256s"] = json!(["f".repeat(64)]);
+            } else {
+                r["max_verify_bytes"] = json!(1);
+            }
+            std::fs::write(&request, serde_json::to_vec(&r).unwrap()).unwrap();
+            assert!(
+                backup_tier(
+                    f.root(),
+                    &request,
+                    &f.root().join("held.json"),
+                    cfg!(windows)
+                )
+                .is_err()
+            );
+            assert!(!crate::object(&f.root().join("offline-cold"), &h).exists());
+        }
+    }
 
     fn version(id: &str, version: &str, manifest: &str, payloads: &[&str]) -> Version {
         Version {

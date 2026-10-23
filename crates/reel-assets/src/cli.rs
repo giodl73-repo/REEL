@@ -176,6 +176,10 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
             if args.len()!=3 && !(args.len()==4 && arg(3)?=="--apply") {return Err("Usage: version-backup <request.json> <new-private-receipt.json> [--apply]".into());}
             crate::version_diff::backup(root,Path::new(arg(1)?),Path::new(arg(2)?),args.len()==4)
         },
+        "tier-backup" => {
+            if args.len()!=3 && !(args.len()==4 && arg(3)?=="--apply") {return Err("Usage: tier-backup <request.json> <new-private-receipt.json> [--apply]".into());}
+            crate::version_diff::backup_tier(root,Path::new(arg(1)?),Path::new(arg(2)?),args.len()==4)
+        },
         "version-plan" => {
             if args.len()!=7 {return Err("Usage: version-plan <old-logical-id> <old-version> <new-logical-id> <new-version> <consumer-scope.json> <new-owned-directory>".into());}
             let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
