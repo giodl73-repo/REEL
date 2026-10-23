@@ -1,5 +1,83 @@
 # Data-driven episode conform
 
+Long native jobs can use two bounded steps with the same checked source closure:
+
+```
+reel-episode-conform prepare conform.json --input-root . --asset-root . --output-dir prepared
+reel-episode-conform finish prepared --input-root . --asset-root . --output-dir out
+```
+
+When normalization itself exceeds one bounded step, a closed native job can
+declare multiple `prepare-batch` steps followed by assembly and finish:
+
+```
+reel-episode-conform prepare-batch conform.json --input-root . --asset-root . --output-dir prepared --max-segments 3
+# Repeat the same command ceil(segment_count / 3) times in the frozen job.
+reel-episode-conform assemble-preparation prepared --asset-root .
+reel-episode-conform finish prepared --input-root . --asset-root . --output-dir out
+```
+
+Each batch performs the existing upstream checks and normalizes only the next
+ordered group. It retains `normalization-progress.json` and verified generated
+media inside the same job workspace. Subsequent batches rehash every original
+input and retained intermediate and require the same manifest, closed job and
+validator/FFmpeg/FFprobe bytes. Completed media is reused without re-encoding.
+The progress record is explicitly incomplete: it has no assembled master,
+`prepared.json`, final receipt or delivery. Assembly rejects incomplete coverage;
+finish still performs all ordered decoded picture/PCM, timestamp, boundary and
+encoded-delivery checks. Existing one-step preparation remains unchanged.
+
+The steps keep the original per-step timeout and operation/storage limits.
+These are checkpoints within one frozen job, not a cross-job resume API.
+Default job retirement still applies on failure; preserving failed debugging
+scratch requires an explicit bounded retention decision and later disposal.
+
+Preparation requires a closed native job workspace (`job.json`). It verifies the
+declared input/tool/inline-file hashes, rejects undeclared files and links, runs
+the complete upstream/normalization checks, and retains its exact normalized
+segments and lossless assembly. `prepared.json` explicitly records that the full
+episode is still unverified. It is neither a final receipt nor creative approval.
+
+Finish rehashes every original input and retained intermediate, requires the same
+validator/FFmpeg/FFprobe bytes, and verifies the prepared order and clocks. It then
+performs the same complete ordered picture/PCM comparisons, timestamp/boundary
+checks, encoding and full encoded-delivery decode as ordinary `build`. The final
+receipt binds `preparation_sha256`; the exact preparation record is copied into
+the final output. Preparation sources remain unchanged. Both steps use the
+existing job limits; this mode does not extend a timeout or omit a check.
+
+An explicit `finish-consume-normalized` command uses the same arguments as
+`finish`. It requires preparation directly inside the same closed job workspace.
+After the complete ordered picture/PCM, timestamp and boundary checks succeed,
+it rehashes and retires only the exact generated `normalized-NNN.mkv` and
+`padded-NNN.mkv` files inside that preparation's temporary subdirectory, before
+compact encoding. Original inputs and the assembled master remain unchanged;
+ordinary `finish` continues to preserve all preparation sources. The final
+receipt records retired file/byte counts. A consumed preparation is one-shot;
+an encoding failure requires fresh preparation. This is temporary execution
+storage, not cache-object deletion, tiering, selection or creative approval.
+
+Preparation directories are owned job scratch. Reusing one after that scratch is
+discarded requires explicit retention of its referenced intermediate bytes; the
+final receipt alone does not claim that those temporary files remain available.
+
+Decoded picture checks use FFmpeg's SHA-256 hash muxer over packed raw video,
+with an independent raw-packet byte/frame counter. Ordered segment cuts count
+decoded frames rather than seeking timestamps. The SHA-256 values are identical
+to the historical raw-video pipe checks; short/extra frames remain errors.
+
+An optional `preassembled_master` FileRef supplies a read-only assembled
+candidate. REEL still validates every current source, compares every ordered
+decoded picture/audio segment, checks geometry/rates/timestamps, and fully decodes
+the final compact delivery. The supplied file is never renamed or deleted.
+Retaining a lossless output makes a separate copy.
+
+A scene segment with `master_proof` may explicitly pin its original checker with
+`master_proof_validator`. This FileRef must match the actual checker bytes and
+the proof's validator SHA-256. All current plan, media-tool, receipt and consumed
+master checks remain mandatory. Omitting it retains the strict current-executable
+check. Neither option grants human approval.
+
 `reel-episode-conform` builds one language-local lossless FFV1/PCM24 master from
 selected scene and presentation masters:
 
@@ -53,6 +131,35 @@ This option skips repeated adoption rebuilding/decoding only: the new episode
 still undergoes ordered picture/audio comparison, timestamp verification and
 full compact-output decoding. Scene receipt checks and creative approval remain
 independent.
+
+### Consume only a verified native scene master
+
+A semantic-scoped direct scene segment may use the exact
+`reel.scene-delivery-receipt.v0.1` as both `source_receipt` and
+`delivery_receipt`, with `semantic_delivery` and `delivery_job` pinned. By
+default, conform freshly checks the complete scene output directory.
+
+For bounded assembly, first issue a native proof while all scene outputs are
+available:
+
+```text
+reel-episode-conform prove-scene <delivery.json> --asset-root <assets> --output-dir <complete-scene-output> --proof-path <new-proof.json>
+```
+
+This performs the full scene check, including every stem, picture, review,
+overlay and master. It writes `reel.scene-master-proof.v1` only on success.
+Retain the complete checked outputs and receipt in asset management. Then add
+`master_proof` as an exact FileRef to the semantic-scoped scene segment. The
+assembly workspace needs only `master.mkv` and `receipt.json` from that output
+set, alongside the exact source inputs, job, semantic selection and proof.
+
+Conform replans and rehashes all current scene inputs, rehashes the selected
+master and receipt, and requires the same validator, FFmpeg and FFprobe hashes
+as the full proof. It still decodes and compares every ordered episode frame
+and audio sample. A changed job, input, plan, master, receipt or tool invalidates
+the proof. This route is unavailable for unscoped, imported, presentation or
+legacy scene-build receipts. It avoids copying unconsumed outputs; it does not
+remove them, approve the movie, or replace the standalone full scene check.
 
 ### Explicit delivery geometry
 
@@ -174,3 +281,33 @@ delivery receipts it rechecks their complete REEL scene-delivery outputs. It
 does not rerun the authoring compiler, independently rebuild presentation
 masters, or prove asset-authority or human approval. Real episode promotion
 must retain those upstream gates.
+
+Long compact deliveries can divide native completion into three bounded steps,
+after `assemble-preparation` has issued the ordinary preparation:
+
+```text
+reel-episode-conform verify-consume-normalized prepared --asset-root .
+reel-episode-conform encode-verified prepared --asset-root .
+reel-episode-conform finish-encoded prepared --input-root . --asset-root . --output-dir out
+```
+
+The first step performs the existing complete ordered picture/PCM, timestamp
+and cut-boundary checks before consuming generated normalizations. It writes
+`prepared/verified-lossless/verification.json`, explicitly marking compact
+delivery pending. It issues no final receipt. The second step encodes the
+unchanged verified master and records its exact bytes in `encoding.json`;
+`full_decode_verified` remains false. Repeating an existing encoding is refused.
+The final step performs the existing fail-on-error full decode, decoded frame
+count, geometry/color, codec, audio sample-rate/channel, frame-rate and duration
+checks before publishing the ordinary `receipt.json` and `episode.mp4` into
+the new output directory. Lossless retention follows the selected profile.
+
+Every stage rehashes the preparation, declared source scope, native job,
+validator, FFmpeg/FFprobe and assembled master. Source, tool, clock, checkpoint
+or encoded-byte changes invalidate continuation. These checkpoints belong to
+one closed native-job workspace; they do not grant human approval or replace
+the final delivery receipt. The final output also includes
+`verified-lossless.json` and `encoding.json` for explicitly declared evidence
+retention. Existing `finish` and `finish-consume-normalized` keep their complete
+validation behavior. A preparation stays pinned to its original executable;
+adopting a new runtime requires a new recipe and preparation.

@@ -37,6 +37,45 @@ fn selected_native_opening_preserves_exact_bytes_and_rechecks_timing() {
 }
 
 #[test]
+fn compact_lossless_adoption_preserves_all_decoded_frames_and_samples() {
+    opening_fixture_with_options(
+        ("ffv1", "yuv444p"),
+        false,
+        false,
+        false,
+        false,
+        (false, None),
+        true,
+    );
+}
+
+#[test]
+fn compact_lossless_excerpt_preserves_exact_selected_frames_and_samples() {
+    opening_fixture_with_options(
+        ("libx264", "yuv420p"),
+        true,
+        false,
+        false,
+        false,
+        (false, None),
+        true,
+    );
+}
+
+#[test]
+fn compact_lossless_audio_repair_keeps_sample_order_and_conform_consumption() {
+    opening_fixture_with_options(
+        ("ffv1", "yuv444p"),
+        true,
+        false,
+        true,
+        true,
+        (false, None),
+        true,
+    );
+}
+
+#[test]
 fn source_excerpt_preserves_exact_selected_frames_and_samples() {
     opening_fixture("libx264", "yuv420p", true, false, false, false, false);
 }
@@ -90,6 +129,27 @@ fn opening_fixture_with_reset(
     repair: bool,
     clock: (bool, Option<u32>),
 ) {
+    opening_fixture_with_options(
+        (codec, pixel_format),
+        excerpt,
+        gapped,
+        audio_gap,
+        repair,
+        clock,
+        false,
+    );
+}
+
+fn opening_fixture_with_options(
+    source: (&str, &str),
+    excerpt: bool,
+    gapped: bool,
+    audio_gap: bool,
+    repair: bool,
+    clock: (bool, Option<u32>),
+    compact: bool,
+) {
+    let (codec, pixel_format) = source;
     let (origin, reset_sample) = clock;
     let prerange_reset = reset_sample.is_some();
     let filter = if audio_gap {
@@ -204,6 +264,9 @@ fn opening_fixture_with_reset(
         "selection_evidence":reference(root,"legacy-receipt.json"),
         "evidence_hash_pointer":"/series_opening/cache_uri"
     });
+    if compact {
+        manifest["lossless_video_encoding"] = json!("h264-lossless");
+    }
     if excerpt {
         manifest["source_range"] = json!({"start_frame":12,"frame_count":24});
         manifest["evidence_range_pointer"] = "/source_range".into();
@@ -250,6 +313,26 @@ fn opening_fixture_with_reset(
     assert_eq!(receipt["samples"], if excerpt { 48000 } else { 96000 });
     assert_eq!(receipt["source_content_matches_lossless_master"], true);
     assert_eq!(receipt["publication"], "not-authorized");
+    if compact {
+        assert_eq!(receipt["lossless_video_encoding"], "h264-lossless");
+        let probe = Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name",
+                "-of",
+                "json",
+            ])
+            .arg(root.join("adopted/master.mkv"))
+            .output()
+            .unwrap();
+        assert!(probe.status.success());
+        let facts: Value = serde_json::from_slice(&probe.stdout).unwrap();
+        assert_eq!(facts["streams"][0]["codec_name"], "h264");
+    }
     if origin {
         assert_eq!(
             receipt["audio_sample_window"]["audio_anchor_sample"],
@@ -307,11 +390,11 @@ fn opening_fixture_with_reset(
         assert!(old.get("audio_sample_window").is_none());
         assert_ne!(old["decoded_audio_sha256"], receipt["decoded_audio_sha256"]);
     }
-    if codec == "ffv1" && !excerpt {
+    if codec == "ffv1" && !excerpt && !compact {
         assert_eq!(receipt["source_sha256"], receipt["master_sha256"]);
         assert_eq!(receipt["source_bytes"], receipt["master_bytes"]);
     }
-    if excerpt {
+    if excerpt || compact {
         assert_eq!(receipt["source_range"], manifest["source_range"]);
         if repair {
             assert_eq!(
@@ -375,7 +458,9 @@ fn opening_fixture_with_reset(
             };
             let source = raw("opening.mkv");
             let adopted = raw("adopted/master.mkv");
-            let (start, end) = if picture {
+            let (start, end) = if !excerpt {
+                (0, source.len())
+            } else if picture {
                 (12 * 64 * 64 * 3, 36 * 64 * 64 * 3)
             } else {
                 if origin {

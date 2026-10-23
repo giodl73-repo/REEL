@@ -1,6 +1,7 @@
 //! Render a data-driven, editable-layer still sequence for episode presentation.
 
 use anyhow::{Context, Result, bail};
+use reel::presentation_adopt::LosslessVideoEncoding;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -44,6 +45,9 @@ struct Manifest {
     episode_id: String,
     language: String,
     role: String,
+    /// Storage encoding only; picture, text and PCM clocks remain unchanged.
+    #[serde(default)]
+    lossless_video_encoding: LosslessVideoEncoding,
     template: FileRef,
     pictures: Vec<FileRef>,
     #[serde(default)]
@@ -208,6 +212,9 @@ struct Receipt {
     audio_treatment: Option<AudioTreatment>,
     #[serde(default)]
     font_sha256: Vec<String>,
+    /// Omitted for legacy FFV1 manifests and receipts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lossless_video_encoding: Option<LosslessVideoEncoding>,
     master_sha256: String,
     master_bytes: u64,
     review_sha256: String,
@@ -283,7 +290,11 @@ fn facts(path: &Path) -> Result<serde_json::Value> {
     Ok(serde_json::from_slice(&output.stdout)?)
 }
 
-fn check_media(path: &Path, template: &Template) -> Result<(u64, u64)> {
+fn check_media(
+    path: &Path,
+    template: &Template,
+    encoding: LosslessVideoEncoding,
+) -> Result<(u64, u64)> {
     let streams = facts(path)?["streams"]
         .as_array()
         .context("missing streams")?
@@ -298,7 +309,11 @@ fn check_media(path: &Path, template: &Template) -> Result<(u64, u64)> {
         .context("missing audio")?;
     let frames = template.frames();
     let samples = frames * template.sample_rate as u64 / template.frame_rate as u64;
-    if video["codec_name"] != "ffv1"
+    let codec = match encoding {
+        LosslessVideoEncoding::Ffv1 => "ffv1",
+        LosslessVideoEncoding::H264Lossless => "h264",
+    };
+    if video["codec_name"] != codec
         || video["width"] != template.width
         || video["height"] != template.height
         || video["nb_read_frames"]
@@ -523,8 +538,16 @@ fn build(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
         "[a]",
         "-frames:v",
         &template.frames().to_string(),
-        "-c:v",
-        "ffv1",
+    ]);
+    cmd.args(match manifest.lossless_video_encoding {
+        LosslessVideoEncoding::Ffv1 => vec!["-c:v", "ffv1"],
+        LosslessVideoEncoding::H264Lossless => {
+            vec![
+                "-c:v", "libx264", "-crf", "0", "-preset", "veryfast", "-bf", "0",
+            ]
+        }
+    });
+    cmd.args([
         "-pix_fmt",
         "yuv444p",
         "-c:a",
@@ -536,7 +559,11 @@ fn build(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
     ])
     .arg(output_dir.join("master.mkv"));
     run(cmd)?;
-    let (frames, samples) = check_media(&output_dir.join("master.mkv"), &template)?;
+    let (frames, samples) = check_media(
+        &output_dir.join("master.mkv"),
+        &template,
+        manifest.lossless_video_encoding,
+    )?;
     run({
         let mut c = Command::new("ffmpeg");
         c.args(["-y", "-v", "error", "-i"])
@@ -581,6 +608,8 @@ fn build(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
             .iter()
             .map(|font| font.sha256.clone())
             .collect(),
+        lossless_video_encoding: (manifest.lossless_video_encoding != LosslessVideoEncoding::Ffv1)
+            .then_some(manifest.lossless_video_encoding),
         master_sha256: hash(&master),
         master_bytes: master.len() as u64,
         review_sha256: hash(&review),
@@ -612,7 +641,11 @@ fn check(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
             bail!("retained font differs from selected font");
         }
     }
-    let (frames, samples) = check_media(&output_dir.join("master.mkv"), &template)?;
+    let (frames, samples) = check_media(
+        &output_dir.join("master.mkv"),
+        &template,
+        manifest.lossless_video_encoding,
+    )?;
     if receipt.schema != "reel.presentation-still-sequence-receipt.v1"
         || receipt.manifest_sha256 != hash(&manifest_bytes)
         || receipt.template_sha256 != manifest.template.sha256
@@ -631,6 +664,9 @@ fn check(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
                 .iter()
                 .map(|font| font.sha256.clone())
                 .collect::<Vec<_>>()
+        || receipt.lossless_video_encoding
+            != (manifest.lossless_video_encoding != LosslessVideoEncoding::Ffv1)
+                .then_some(manifest.lossless_video_encoding)
         || receipt.master_sha256 != hash(&master)
         || receipt.master_bytes != master.len() as u64
         || receipt.review_sha256 != hash(&review)

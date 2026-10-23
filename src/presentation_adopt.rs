@@ -15,6 +15,15 @@ use std::{
 
 pub const SCHEMA: &str = "reel.presentation-adopt.v1";
 
+/// Storage encoding only: both choices must pass decoded source equivalence.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum LosslessVideoEncoding {
+    #[default]
+    Ffv1,
+    H264Lossless,
+}
+
 /// A frame-exact excerpt of a hash-bound source. Audio uses the same rational
 /// frame clock; callers cannot independently shift the spoken performance.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -93,6 +102,8 @@ pub struct Manifest {
     pub audio_clock_repair: Option<AudioClockRepair>,
     #[serde(default)]
     pub audio_range_origin: Option<AudioRangeOrigin>,
+    #[serde(default)]
+    pub lossless_video_encoding: LosslessVideoEncoding,
 }
 
 #[derive(Debug, Deserialize)]
@@ -137,6 +148,8 @@ pub struct Receipt {
     pub audio_range_origin: Option<AudioRangeOrigin>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio_sample_window: Option<AudioSampleWindow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lossless_video_encoding: Option<LosslessVideoEncoding>,
     pub selection_evidence_sha256: Option<String>,
     pub evidence_hash_pointer: Option<String>,
     pub master_sha256: String,
@@ -831,7 +844,10 @@ pub fn build(
         .prefix(".presentation-adopt-")
         .tempdir_in(parent)?;
     let master = stage.path().join("master.mkv");
-    if manifest.source_range.is_none() && is_native_lossless(&source)? {
+    if manifest.lossless_video_encoding == LosslessVideoEncoding::Ffv1
+        && manifest.source_range.is_none()
+        && is_native_lossless(&source)?
+    {
         fs::copy(&source, &master)?;
     } else {
         let mut command = episode_conform::command("ffmpeg");
@@ -863,16 +879,19 @@ pub fn build(
                     resolved_range_filter(range, &definition, false, audio_sample_window.as_ref())?
                 });
         }
+        command.args(["-map", "0:v:0", "-map", "0:a:0", "-fps_mode", "passthrough"]);
+        match manifest.lossless_video_encoding {
+            LosslessVideoEncoding::Ffv1 => {
+                command.args(["-c:v", "ffv1"]);
+            }
+            LosslessVideoEncoding::H264Lossless => {
+                command.args([
+                    "-c:v", "libx264", "-crf", "0", "-preset", "veryfast", "-bf", "0",
+                ]);
+            }
+        }
         let status = command
             .args([
-                "-map",
-                "0:v:0",
-                "-map",
-                "0:a:0",
-                "-fps_mode",
-                "passthrough",
-                "-c:v",
-                "ffv1",
                 "-pix_fmt",
                 "yuv444p",
                 "-c:a",
@@ -977,6 +996,9 @@ pub fn build(
         audio_clock_repair: manifest.audio_clock_repair,
         audio_range_origin: manifest.audio_range_origin,
         audio_sample_window,
+        lossless_video_encoding: (manifest.lossless_video_encoding
+            == LosslessVideoEncoding::H264Lossless)
+            .then_some(manifest.lossless_video_encoding),
         selection_evidence_sha256,
         evidence_hash_pointer: manifest.evidence_hash_pointer,
         master_sha256: episode_conform::file_sha(&master)?,
