@@ -1,6 +1,20 @@
 //! Bounded native preparation custody. Preparation is never a final receipt.
 use super::*;
 
+mod completion;
+
+pub(super) fn verify_preparation(prepared: &Path, assets: &Path) -> Result<()> {
+    completion::verify_preparation(prepared, assets)
+}
+
+pub(super) fn encode_verified(prepared: &Path, assets: &Path) -> Result<()> {
+    completion::encode_verified(prepared, assets)
+}
+
+pub(super) fn finish_encoded(prepared: &Path, assets: &Path, output: &Path) -> Result<Receipt> {
+    completion::finish_encoded(prepared, assets, output)
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RootedFile {
@@ -196,7 +210,8 @@ pub(super) fn snapshot_job_scope(root: &Path) -> Result<Vec<scene_delivery::File
     if fs::metadata(&job)?.len() > 4 * 1024 * 1024 {
         bail!("native job scope is too large");
     }
-    let job: serde_json::Value = serde_json::from_slice(&fs::read(job)?)?;
+    let job_bytes = fs::read(job)?;
+    let job: serde_json::Value = serde_json::from_slice(&job_bytes)?;
     let mut scope = BTreeMap::new();
     let mut total = 0u64;
     for group in ["inputs", "tools"] {
@@ -284,6 +299,13 @@ pub(super) fn snapshot_job_scope(root: &Path) -> Result<Vec<scene_delivery::File
             }
         }
     }
+    let job_file = scene_delivery::FileRef {
+        path: "job.json".into(),
+        sha256: sha(&job_bytes),
+        bytes: job_bytes.len() as u64,
+    };
+    scene_delivery::checked_file(&root, &job_file)?;
+    scope.insert("job.json".into(), job_file);
     Ok(scope.into_values().collect())
 }
 
@@ -363,6 +385,16 @@ pub(super) fn finish(
     assets: &Path,
     output: &Path,
     consume_normalized: bool,
+) -> Result<Receipt> {
+    finish_mode(prepared, assets, output, consume_normalized, false)
+}
+
+fn finish_mode(
+    prepared: &Path,
+    assets: &Path,
+    output: &Path,
+    consume_normalized: bool,
+    defer_compact: bool,
 ) -> Result<Receipt> {
     if output.exists() {
         bail!("episode output must be a new directory");
@@ -499,7 +531,7 @@ pub(super) fn finish(
     let stage = tempfile::Builder::new()
         .prefix(".episode-finish-")
         .tempdir_in(parent)?;
-    let receipt = finalize_conform(
+    let receipt = finalize_conform_mode(
         ConformState {
             normalization_retirement,
             preparation_sha256: Some(sha(&bytes)),
@@ -516,7 +548,11 @@ pub(super) fn finish(
         },
         stage.path(),
         true,
+        defer_compact,
     )?;
+    if defer_compact {
+        completion::save_verified(prepared, assets, &bytes, &receipt, stage.path())?;
+    }
     fs::write(stage.path().join("preparation.json"), bytes)?;
     fs::rename(stage.path(), output)?;
     Ok(receipt)

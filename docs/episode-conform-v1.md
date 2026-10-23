@@ -311,3 +311,33 @@ delivery receipts it rechecks their complete REEL scene-delivery outputs. It
 does not rerun the authoring compiler, independently rebuild presentation
 masters, or prove asset-authority or human approval. Real episode promotion
 must retain those upstream gates.
+
+Long compact deliveries can divide native completion into three bounded steps,
+after `assemble-preparation` has issued the ordinary preparation:
+
+```text
+reel-episode-conform verify-consume-normalized prepared --asset-root .
+reel-episode-conform encode-verified prepared --asset-root .
+reel-episode-conform finish-encoded prepared --input-root . --asset-root . --output-dir out
+```
+
+The first step performs the existing complete ordered picture/PCM, timestamp
+and cut-boundary checks before consuming generated normalizations. It writes
+`prepared/verified-lossless/verification.json`, explicitly marking compact
+delivery pending. It issues no final receipt. The second step encodes the
+unchanged verified master and records its exact bytes in `encoding.json`;
+`full_decode_verified` remains false. Repeating an existing encoding is refused.
+The final step performs the existing fail-on-error full decode, decoded frame
+count, geometry/color, codec, audio sample-rate/channel, frame-rate and duration
+checks before publishing the ordinary `receipt.json` and `episode.mp4` into
+the new output directory. Lossless retention follows the selected profile.
+
+Every stage rehashes the preparation, declared source scope, native job,
+validator, FFmpeg/FFprobe and assembled master. Source, tool, clock, checkpoint
+or encoded-byte changes invalidate continuation. These checkpoints belong to
+one closed native-job workspace; they do not grant human approval or replace
+the final delivery receipt. The final output also includes
+`verified-lossless.json` and `encoding.json` for explicitly declared evidence
+retention. Existing `finish` and `finish-consume-normalized` keep their complete
+validation behavior. A preparation stays pinned to its original executable;
+adopting a new runtime requires a new recipe and preparation.

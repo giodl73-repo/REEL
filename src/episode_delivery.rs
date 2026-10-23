@@ -70,7 +70,7 @@ pub struct BoundaryDecision {
     pub evidence: FileRef,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BoundaryFinding {
     pub left_scene: String,
     pub right_scene: String,
