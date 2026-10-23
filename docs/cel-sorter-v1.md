@@ -32,12 +32,33 @@ not become poem text, subtitles, approval or native scene content.
 
 `reel-cel-sorter apply native-project edit.json new-draft-directory` checks every
 input hash, stable ID, picture binding, and full frame/sample coverage, then
-writes native scene, alignment, bindings, graph and pointer documents. Unknown
-fields survive. The source remains unchanged. Draft alignment bytes must enter
+writes native scene, alignment, bindings, graph and pointer documents. Accepted
+open content and unknown fields in other copied controls survive. The source
+remains unchanged. Draft alignment bytes must enter
 the project's cache before native compiler/build validation. Saving never selects
 a version, renders, approves or publishes. No setup/daemon/server is installed.
 Alignment rebinding uses the original intake hash rather than reopening its
 source path midway through draft application.
+
+Scene and scoped-binding intake now uses the shared native cel source reader
+(including its 1 MiB limit for each of those controls). Native source fields that
+are unsupported reject; accepted presentation content and other copied controls
+remain intact. This is stricter than the original schema-name-only intake.
+Alignment is checked against its native language, cue and selected take identity.
+Its scoped binding must match the exact alignment intake bytes. Native graph and
+pointer validation also rejects a mismatched selection or effective picture.
+
+Preview uses the native effective picture, including a language-local override.
+A no-op draft preserves the shared default and local override separately. When
+substituting a picture, an existing override stays local; events without an
+override update the shared binding. The native draft, graph slot and graph event
+all refer to the edited effective asset. This supports overrides within the
+existing single-language scope; it does not silently enable bilingual editing.
+Changed selected pictures use REEL's append-only revision operation, retaining
+their earlier revisions. Timing-only edits leave those slot revisions intact.
+Draft graph locks use the native canonical graph-lock routine and bind event
+clocks as well as asset selections. A reused slot cannot select different
+assets for two edited events; such an edit holds before creating a draft.
 
 The first bounded port supports one language and one full recording cue, an
 integral frame/sample clock, existing selected cels and ordinary native picture
