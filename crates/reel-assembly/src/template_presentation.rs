@@ -936,29 +936,30 @@ pub fn compile_layer(
         if chapter.fade_in_ms.saturating_add(chapter.fade_out_ms) >= duration * 1000 {
             bail!("chapter fades consume its entire duration");
         }
-        let styles = format!(
-            "{}{}",
-            chapter_style("Number", &chapter.number)?,
-            chapter_style("Chapter", &chapter.title)?
-        );
+        let number = invocation
+            .chapter_number
+            .as_deref()
+            .map(escape)
+            .transpose()?;
+        let mut styles = String::new();
+        if number.is_some() {
+            styles.push_str(&chapter_style("Number", &chapter.number)?);
+        }
+        styles.push_str(&chapter_style("Chapter", &chapter.title)?);
         ass = ass.replace("\n[Events]\n", &format!("\n{styles}[Events]\n"));
-        let number = escape(
-            invocation
-                .chapter_number
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("chapter number missing"))?,
-        )?;
         let title = escape(&invocation.title)?;
         let end = duration as u64 * 100;
-        ass.push_str(&format!(
-            "Dialogue: 0,0:00:00.00,{},Number,chapter_number,{},0,{},,{{\\fad({},{})}}{}\n",
-            time(end, 100),
-            chapter.number.margin_left,
-            chapter.number.margin_vertical,
-            chapter.fade_in_ms,
-            chapter.fade_out_ms,
-            number
-        ));
+        if let Some(number) = number {
+            ass.push_str(&format!(
+                "Dialogue: 0,0:00:00.00,{},Number,chapter_number,{},0,{},,{{\\fad({},{})}}{}\n",
+                time(end, 100),
+                chapter.number.margin_left,
+                chapter.number.margin_vertical,
+                chapter.fade_in_ms,
+                chapter.fade_out_ms,
+                number
+            ));
+        }
         ass.push_str(&format!(
             "Dialogue: 1,0:00:00.00,{},Chapter,chapter_title,{},0,{},,{{\\fad({},{})}}{}\n",
             time(end, 100),
