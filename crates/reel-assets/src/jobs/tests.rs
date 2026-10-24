@@ -591,3 +591,165 @@ fn fresh_window_rejects_changed_identity_extra_fields_and_checkpoint_commands() 
         no_scratch(&f);
     }
 }
+
+#[test]
+fn registered_workspace_window_enforces_effective_cap_without_changing_recipe_or_policy() {
+    let f = Fixture::new();
+    let (manifest, _) = prepare(&f, "workspace-window");
+    let config_path = f.root().join(".local/storage-rust.json");
+    let mut configuration = load(&config_path).unwrap();
+    configuration["capacity"]["max_object_bytes"] = json!(16 * 1024 * 1024);
+    fs::write(&config_path, configuration.to_string()).unwrap();
+    let original = fs::read(&manifest).unwrap();
+    let hash = f.put(&original, true);
+    let error = run(f.root(), &manifest).unwrap_err().to_string();
+    assert!(error.contains("workspace budget"), "{error}");
+    let policy = json!({"schema":"reel.native-job-execution-window.v2",
+        "job_sha256":hash,"workspace_budget_bytes":32*1024*1024});
+    let path = f.root().join("explicit-workspace-policy.json");
+    let bytes = serde_json::to_vec(&policy).unwrap();
+    fs::write(&path, &bytes).unwrap();
+    assert!(run_with_execution_window(f.root(), &manifest, &path).is_err());
+    f.put(&bytes, true);
+    let result = run_with_execution_window(f.root(), &manifest, &path).unwrap();
+    assert_eq!(result["budget_bytes"], 32 * 1024 * 1024);
+    assert_eq!(result["original_budget_bytes"], 16 * 1024 * 1024);
+    assert_eq!(result["manifest_sha256"], hash);
+    assert_eq!(result["execution_window"]["steps_skipped"], false);
+    assert_eq!(
+        result["execution_window"]["workspace_budget_explicitly_extended"],
+        true
+    );
+    assert_eq!(fs::read(&manifest).unwrap(), original);
+    assert_eq!(
+        config(f.root()).unwrap().capacity.max_object_bytes,
+        16 * 1024 * 1024
+    );
+    assert_eq!(
+        fs::read(result["outputs"]["copy"]["path"].as_str().unwrap()).unwrap(),
+        b"source"
+    );
+    no_scratch(&f);
+}
+
+#[test]
+fn recovery_workspace_window_restores_only_bounded_metadata_and_preserves_canonical_sources() {
+    let f = Fixture::new();
+    let (manifest, seed_path, mut seed) = checkpoint_fixture(&f);
+    let mut job = load(&manifest).unwrap();
+    job["outputs"]["startup"] = json!({"path":"startup.json","max_bytes":1024});
+    job["outputs"]["checked-startup"] = json!({"path":"checked-startup.json","max_bytes":1024});
+    job["steps"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"tool":"tools/tool.exe",
+        "args":["copy","startup.json","checked-startup.json"],"timeout_seconds":10}));
+    let original = serde_json::to_vec(&job).unwrap();
+    fs::write(&manifest, &original).unwrap();
+    seed["job_sha256"] = json!(f.put(&original, true));
+    seed["schema"] = json!("reel.native-job-resume.v3");
+    seed["workspace_budget_bytes"] = json!(32 * 1024 * 1024);
+    let checkpoint_contents = vec![3_u8; 3 * 1024 * 1024];
+    let checkpoint_hash = f.put(&checkpoint_contents, true);
+    seed["files"]["prepared/checkpoint.bin"] =
+        json!({"sha256":checkpoint_hash,"bytes":checkpoint_contents.len()});
+    let metadata = br#"{"schema":"synthetic.startup.v1","tool_checked":true}"#;
+    let metadata_hash = f.put(metadata, true);
+    seed["metadata_outputs"] = json!({"startup":{"sha256":metadata_hash,"bytes":metadata.len()}});
+    let bytes = serde_json::to_vec(&seed).unwrap();
+    fs::write(&seed_path, &bytes).unwrap();
+    f.put(&bytes, true);
+    let result = resume(f.root(), &manifest, &seed_path).unwrap();
+    assert_eq!(result["checkpoint_resume"]["first_executed_step"], 1);
+    assert_eq!(
+        result["checkpoint_resume"]["restored_metadata_output_roles"],
+        json!(["startup"])
+    );
+    assert_eq!(
+        result["checkpoint_resume"]["workspace_budget_explicitly_extended"],
+        true
+    );
+    assert_eq!(result["budget_bytes"], 32 * 1024 * 1024);
+    assert_eq!(fs::read(&manifest).unwrap(), original);
+    assert_eq!(
+        fs::read(
+            result["outputs"]["checked-startup"]["path"]
+                .as_str()
+                .unwrap()
+        )
+        .unwrap(),
+        metadata
+    );
+    assert_eq!(
+        fs::read(object(&f.root().join("fast"), &metadata_hash)).unwrap(),
+        metadata
+    );
+    let canonical = seed["files"]["prepared/checkpoint.bin"]["sha256"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        fs::read(object(&f.root().join("fast"), canonical)).unwrap(),
+        checkpoint_contents
+    );
+    no_scratch(&f);
+}
+
+#[test]
+fn workspace_window_rejects_legacy_implicit_equal_smaller_and_over_cap_requests() {
+    for (schema, budget) in [
+        ("reel.native-job-execution-window.v1", 32_u64 * 1024 * 1024),
+        ("reel.native-job-execution-window.v2", 16 * 1024 * 1024),
+        ("reel.native-job-execution-window.v2", 1),
+        (
+            "reel.native-job-execution-window.v2",
+            17 * 1024 * 1024 * 1024,
+        ),
+    ] {
+        let f = Fixture::new();
+        let (manifest, _) = prepare(&f, "copy");
+        let hash = f.put(&fs::read(&manifest).unwrap(), true);
+        let policy = json!({"schema":schema,"job_sha256":hash,"workspace_budget_bytes":budget});
+        let path = f.root().join("invalid-workspace-window.json");
+        let bytes = serde_json::to_vec(&policy).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        f.put(&bytes, true);
+        assert!(run_with_execution_window(f.root(), &manifest, &path).is_err());
+        no_scratch(&f);
+    }
+}
+
+#[test]
+fn metadata_output_seed_cannot_restore_media_oversized_unknown_or_non_json_outputs() {
+    for mode in ["media", "large-bound", "unknown", "invalid-json", "legacy"] {
+        let f = Fixture::new();
+        let (manifest, path, mut seed) = checkpoint_fixture(&f);
+        let mut job = load(&manifest).unwrap();
+        job["outputs"]["startup"] = json!({"path":if mode=="media" {"startup.mp4"} else {"startup.json"},
+            "max_bytes":if mode=="large-bound" {2*1024*1024} else {1024}});
+        let original = serde_json::to_vec(&job).unwrap();
+        fs::write(&manifest, &original).unwrap();
+        seed["job_sha256"] = json!(f.put(&original, true));
+        seed["schema"] = json!(if mode == "legacy" {
+            "reel.native-job-resume.v1"
+        } else {
+            "reel.native-job-resume.v3"
+        });
+        let contents: &[u8] = if mode == "invalid-json" {
+            b"not JSON"
+        } else {
+            br#"{"ok":true}"#
+        };
+        let oid = f.put(contents, true);
+        let role = if mode == "unknown" {
+            "unknown"
+        } else {
+            "startup"
+        };
+        seed["metadata_outputs"] = json!({(role):{"sha256":oid,"bytes":contents.len()}});
+        let bytes = serde_json::to_vec(&seed).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        f.put(&bytes, true);
+        assert!(resume(f.root(), &manifest, &path).is_err(), "{mode}");
+        no_scratch(&f);
+    }
+}
