@@ -1,6 +1,8 @@
 use std::{fs, path::Path, process::Command};
 
-use reel_music::model::{PartRole, PianoVocalScore};
+use reel_music::model::{
+    InstrumentalClef, InstrumentalScore, InstrumentalScorePart, PartRole, PianoVocalScore,
+};
 
 use tempfile::tempdir;
 
@@ -9,6 +11,160 @@ fn run(args: &[&str]) -> std::process::Output {
         .args(args)
         .output()
         .expect("REEL command runs")
+}
+
+fn instrumental_fixture(root: &Path) -> std::path::PathBuf {
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = repository.join("manifests/fixtures/music-model-corrected/model.yaml");
+    let parent = source.parent().unwrap();
+    let mut model = reel_music::model::load(&source).unwrap();
+    model.source.manifest = parent.join(&model.source.manifest);
+    for a in &mut model.analyses {
+        a.manifest = parent.join(&a.manifest);
+    }
+    for layer in &mut model.lyric_layers {
+        layer.path = parent.join(&layer.path);
+    }
+    let mut right = model.parts[0].clone();
+    right.id = "keys-right".into();
+    right.name = "Keys right".into();
+    right.role = PartRole::Harmony;
+    for note in &mut right.notes {
+        note.id = format!("right-{}", note.id);
+        note.midi_note += 12;
+    }
+    right.notes[0].voice = 2;
+    right.notes[0].duration_ticks = 4800;
+    let mut left = model.parts[0].clone();
+    left.id = "keys-left".into();
+    left.name = "Keys left".into();
+    left.role = PartRole::Bass;
+    for note in &mut left.notes {
+        note.id = format!("left-{}", note.id);
+        note.midi_note -= 12;
+    }
+    let mut drums = model.parts[0].clone();
+    drums.id = "percussion".into();
+    drums.name = "Percussion".into();
+    drums.role = PartRole::Rhythm;
+    for note in &mut drums.notes {
+        note.id = format!("drum-{}", note.id);
+        note.midi_note = 38;
+    }
+    model.parts.extend([right, left, drums]);
+    let mut meter = model.meter_map[0].clone();
+    meter.tick = 4800;
+    meter.numerator = 3;
+    model.meter_map.push(meter);
+    model.instrumental_score = Some(InstrumentalScore {
+        title: "Synthetic instrumental score".into(),
+        pickup_ticks: 960,
+        key_fifths: Some(-1),
+        parts: vec![
+            InstrumentalScorePart {
+                id: "lead".into(),
+                name: "Reed".into(),
+                staff_part_ids: vec!["melody".into()],
+                clef: InstrumentalClef::Treble,
+            },
+            InstrumentalScorePart {
+                id: "keys".into(),
+                name: "Keyboard".into(),
+                staff_part_ids: vec!["keys-right".into(), "keys-left".into()],
+                clef: InstrumentalClef::Grand,
+            },
+            InstrumentalScorePart {
+                id: "drums".into(),
+                name: "Percussion".into(),
+                staff_part_ids: vec!["percussion".into()],
+                clef: InstrumentalClef::Percussion,
+            },
+        ],
+    });
+    let path = root.join("instrumental-model.json");
+    fs::write(&path, serde_json::to_vec_pretty(&model).unwrap()).unwrap();
+    reel_music::model::validate(&path).unwrap();
+    path
+}
+
+#[test]
+fn measured_instrumental_export_preserves_parts_ties_and_old_packets() {
+    let temp = tempdir().unwrap();
+    let path = instrumental_fixture(temp.path());
+    let plan = temp.path().join("plan.json");
+    reel_music::export::write(&path, &plan).unwrap();
+    let packet = temp.path().join("packet");
+    let report = reel::music_score::render(&plan, &path, &packet).unwrap();
+    assert_eq!(report.instrumental_score_valid, Some(true));
+    let xml = fs::read_to_string(packet.join("instrumental-score.musicxml")).unwrap();
+    assert!(xml.contains("reel:layout=\"instrumental\""));
+    assert!(xml.contains("<fifths>-1</fifths>"));
+    assert!(xml.contains("<staves>2</staves>"));
+    assert!(xml.contains("<unpitched>"));
+    assert!(xml.contains("<midi-unpitched>39</midi-unpitched>"));
+    assert!(xml.contains("<tie type=\"start\"/>"));
+    assert!(xml.contains("<rest/>"));
+    assert!(!xml.contains("<lyric>"));
+    let tied_note = xml
+        .lines()
+        .find(|line| line.contains("reel:note-id=\"right-") && line.contains("<tie "))
+        .unwrap();
+    assert!(tied_note.find("<tie ").unwrap() < tied_note.find("<voice>").unwrap());
+    assert!(xml.rfind("</score-instrument>").unwrap() < xml.find("<midi-instrument ").unwrap());
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(packet.join("receipt.json")).unwrap()).unwrap();
+    let comparison = &receipt["round_trip"]["instrumental_score"];
+    assert_eq!(comparison["source_notes"], 16);
+    assert_eq!(comparison["score_parts"], 3);
+    assert_eq!(comparison["measures"], 3);
+    assert!(comparison["written_fragments"].as_u64().unwrap() > 16);
+    let mut legacy = reel_music::model::load(&path).unwrap();
+    legacy.instrumental_score = None;
+    let legacy_path = temp.path().join("legacy.json");
+    fs::write(&legacy_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+    let legacy_plan = temp.path().join("legacy-plan.json");
+    reel_music::export::write(&legacy_path, &legacy_plan).unwrap();
+    let old_packet = temp.path().join("old-packet");
+    reel::music_score::render(&legacy_plan, &legacy_path, &old_packet).unwrap();
+    for name in [
+        "score.mid",
+        "score.musicxml",
+        "lead-sheet.svg",
+        "rehearsal-guide.wav",
+    ] {
+        assert_eq!(
+            fs::read(packet.join(name)).unwrap(),
+            fs::read(old_packet.join(name)).unwrap()
+        );
+    }
+    fs::write(
+        packet.join("instrumental-score.musicxml"),
+        xml.replacen("<step>C</step>", "<step>D</step>", 1),
+    )
+    .unwrap();
+    assert!(reel::music_score::check(&packet.join("receipt.json"), &plan, &path, &packet).is_err());
+}
+
+#[test]
+fn instrumental_layout_rejects_omissions_duplicates_bad_clefs_and_keys() {
+    let temp = tempdir().unwrap();
+    let path = instrumental_fixture(temp.path());
+    let model = reel_music::model::load(&path).unwrap();
+    for mutation in 0..5 {
+        let mut bad = model.clone();
+        let score = bad.instrumental_score.as_mut().unwrap();
+        match mutation {
+            0 => {
+                score.parts.pop();
+            }
+            1 => score.parts[2].staff_part_ids[0] = "melody".into(),
+            2 => score.parts[1].staff_part_ids.pop().map(|_| ()).unwrap(),
+            3 => score.parts[0].clef = InstrumentalClef::Percussion,
+            _ => score.key_fifths = Some(8),
+        }
+        fs::write(&path, serde_json::to_vec_pretty(&bad).unwrap()).unwrap();
+        assert!(reel_music::model::validate(&path).is_err());
+    }
 }
 
 #[test]

@@ -7,7 +7,7 @@ class InstrumentalScoreTests(unittest.TestCase):
     def fixture(self):
         return dict(validation_passed=True,programs=dict(acoustic_piano=0,flutes=72),notes=[dict(id=1,start=.173,end=.991,pitch=60,instrument='acoustic_piano'),dict(id=2,start=.231,end=.719,pitch=72,instrument='flutes')])
     def test_polyphony_and_clock_survive_a_nonround_pulse(self):
-        data=self.fixture();old=copy.deepcopy(data);parts,usq,total=note_parts(data,2,113.7,'flutes');proof=verify_source_clock(parts,data,usq);self.assertTrue(proof['every_note_and_pitch_preserved']);self.assertEqual(data,old);self.assertEqual(sum(len(p['notes']) for p in parts),2)
+        data=self.fixture();old=copy.deepcopy(data);parts,usq,total=note_parts(data,2,113.7,'flutes');proof=verify_source_clock(parts,data,usq);self.assertTrue(proof['every_selected_note_and_pitch_preserved']);self.assertEqual(data,old);self.assertEqual(sum(len(p['notes']) for p in parts),2)
     def test_missing_selected_lead_is_rejected(self):
         with self.assertRaises(ValueError):note_parts(self.fixture(),2,120,'violin')
     def test_no_automatic_lead_is_invented(self):
@@ -33,6 +33,11 @@ class InstrumentalScoreTests(unittest.TestCase):
     def test_duplicate_identity_is_rejected(self):
         data=self.fixture();data['notes'][1]['id']=1
         with self.assertRaises(ValueError):note_parts(data,2,120)
+    def test_explicit_part_projection_preserves_every_selected_source_event(self):
+        data=self.fixture();old=copy.deepcopy(data);parts,usq,_=note_parts(data,2,120,'flutes',['acoustic_piano']);proof=verify_source_clock(parts,data,usq,excluded_instruments=['acoustic_piano']);self.assertEqual(data,old);self.assertEqual(proof['notes'],1);self.assertEqual(proof['omitted_source_events'],1);self.assertEqual(parts[0]['notes'][0]['source_id'],2)
+    def test_unknown_exclusion_and_empty_projection_are_rejected(self):
+        with self.assertRaises(ValueError):note_parts(self.fixture(),2,120,None,['drums'])
+        with self.assertRaises(ValueError):note_parts(self.fixture(),2,120,None,['flutes','acoustic_piano'])
 
 
 if __name__=='__main__':unittest.main()

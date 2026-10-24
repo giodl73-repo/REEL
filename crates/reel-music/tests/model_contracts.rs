@@ -342,6 +342,7 @@ fn fixture() -> Fixture {
             ],
         }),
         piano_vocal_score: None,
+        instrumental_score: None,
         expressive_timing: vec![],
         unknowns: vec!["Dynamics and articulation remain unknown.".into()],
         review: ModelReview {
@@ -414,7 +415,6 @@ fn rejects_stale_or_incomplete_lead_sheet_underlay() {
             .contains("unknown melody note")
     );
 
-    let mut model = model;
     model.lead_sheet.as_mut().unwrap().underlay[0].note_ids[0] = "note-1".into();
     model.lead_sheet.as_mut().unwrap().underlay.pop();
     fs::write(&fixture.model, serde_yaml::to_string(&model).unwrap()).unwrap();

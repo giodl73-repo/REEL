@@ -12,7 +12,7 @@ from local_song_piano_arrangement import native
 from local_song_transcribe import ROLES
 
 
-def note_parts(data, duration, bpm, lead_instrument=None):
+def note_parts(data, duration, bpm, lead_instrument=None, excluded_instruments=()):
     if data.get('validation_passed') is not True:
         raise ValueError('Invalid raw capture cannot enter an instrumental score')
     if not 20 <= bpm <= 300 or duration <= 0:
@@ -21,10 +21,15 @@ def note_parts(data, duration, bpm, lead_instrument=None):
     tick = lambda second: round(second * 1e6 / usq * 960)
     groups = collections.defaultdict(list)
     identities = set()
+    names={n['instrument'] for n in data['notes']}
+    if not set(excluded_instruments)<=names:
+        raise ValueError('Excluded source family is absent from measured evidence')
     for note in data['notes']:
         if note['id'] in identities:
             raise ValueError('Duplicate source note identity')
         identities.add(note['id'])
+        if note['instrument'] in excluded_instruments:
+            continue
         if not 0 <= note['start'] < note['end'] <= duration:
             raise ValueError('Source note span exceeds complete recording')
         if not isinstance(note['pitch'], int) or not 0 <= note['pitch'] <= 127:
@@ -50,8 +55,8 @@ def note_parts(data, duration, bpm, lead_instrument=None):
     return parts, usq, tick(duration)
 
 
-def verify_source_clock(parts, data, usq, tolerance=.001):
-    expected={n['id']:n for n in data['notes']};actual={}
+def verify_source_clock(parts, data, usq, tolerance=.001, excluded_instruments=()):
+    expected={n['id']:n for n in data['notes'] if n['instrument'] not in excluded_instruments};actual={}
     for part in parts:
         for n in part['notes']:
             start=n['start_tick']*usq/960e6
@@ -65,7 +70,8 @@ def verify_source_clock(parts, data, usq, tolerance=.001):
     if actual.keys()!=expected.keys():
         raise ValueError('Instrumental projection dropped measured notes')
     return dict(notes=len(actual),maximum_allowed_seconds=tolerance,
-                every_note_and_pitch_preserved=True,source_clock_verified=True)
+                every_selected_note_and_pitch_preserved=True,source_clock_verified=True,
+                omitted_source_events=len(data['notes'])-len(actual),excluded_instruments=list(excluded_instruments))
 
 
 def main():
@@ -77,8 +83,11 @@ def main():
     data=read('notes.json')
     if data['source']!=q['recording']:
         raise ValueError('Measured notes refer to a different recording')
-    parts,usq,total=note_parts(data,q['duration_seconds'],q['tempo_hypothesis_bpm'],q.get('lead_instrument'))
-    clock=verify_source_clock(parts,data,usq)
+    excluded=q.get('excluded_instruments',[])
+    if excluded and not q.get('exclusion_rationale'):
+        raise ValueError('Explicit source-part exclusion needs a retained rationale')
+    parts,usq,total=note_parts(data,q['duration_seconds'],q['tempo_hypothesis_bpm'],q.get('lead_instrument'),excluded)
+    clock=verify_source_clock(parts,data,usq,excluded_instruments=excluded)
     rate=16000;raw=subprocess.check_output([str(ff),'-v','error','-nostdin','-i','original.wav','-ac','1','-ar',str(rate),'-f','f32le','-'])
     samples=len(raw)//4
     if len(raw)%4 or abs(samples/rate-q['duration_seconds'])>1/rate:
@@ -109,7 +118,7 @@ def main():
     lead=next((p for p in native_parts if p['role']=='melody'),None)
     model=dict(schema='reel.music-model.v0.1',model_id=q['artifact_id'],source=binding,analyses=[dict(manifest='analysis.json',manifest_sha256=ar['manifest_sha256'],contract_sha256=ar['contract_sha256'],analysis_id=aid)],authority=authority,musical_timebase=timebase,duration_ticks=total,tempo_map=[dict(tick=0,microseconds_per_quarter=usq,provenance=provenance('pulse-hypothesis','Declared provisional score pulse; exact measured note seconds preserved'))],meter_map=[dict(tick=0,numerator=q['display_meter'][0],denominator=q['display_meter'][1],provenance=provenance('pulse-hypothesis','Unreviewed display meter; no source meter approval inferred'))],form=[dict(id='full-recording',label='Full source; musical sections pending',range=dict(start=0,end=total),provenance=provenance('pulse-hypothesis','Complete Golden extent, not a form transcription'))],parts=native_parts,harmony=[],rhythm_cells=[],hooks=[],lyric_layers=[],lead_sheet=dict(title=q['title']+' | Instrumental working study',melody_part_id=lead['id'],lyric_layer_id=None,underlay=[]) if lead else None,expressive_timing=[],unknowns=limitations,review=dict(status='not-reviewed',required_roles=ROLES,decision_refs=[]))
     write('model.json',model);mr=native(q,'music-model-validate','model.json');native(q,'music-score-export-plan','model.json','--output-path','score-plan.json');native(q,'music-score-export-render','score-plan.json','model.json','--output-dir','rendered');er=native(q,'music-score-export-check','rendered/receipt.json','score-plan.json','model.json','rendered')
-    write('programs.json',programs);write('note-ledger.json',dict(clock=clock,notes=ledger,source_golden=q['golden_lock'],wordless_coro=q.get('wordless_coro',False),human_review=False));write('native-checks.json',dict(source=sr,analysis=ar,model=mr,score_export=er))
+    write('programs.json',programs);write('note-ledger.json',dict(clock=clock,notes=ledger,omitted=[dict(n,reason=q.get('exclusion_rationale')) for n in data['notes'] if n['instrument'] in excluded],source_golden=q['golden_lock'],wordless_coro=q.get('wordless_coro',False),human_review=False));write('native-checks.json',dict(source=sr,analysis=ar,model=mr,score_export=er))
     # The existing generic draft/plan helper expects a display-clock observation.
     # The validated score packet is authoritative here; arrangement dispositions
     # are authored later against the reviewed rhythmic/form model.

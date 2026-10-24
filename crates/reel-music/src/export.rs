@@ -158,6 +158,14 @@ pub fn build(model_path: &Path) -> Result<ScoreExportPlan> {
             adapter_version: "0.1.0".into(),
         });
     }
+    if music.instrumental_score.is_some() {
+        artifacts.push(ArtifactRequest {
+            kind: "instrumental-score-musicxml".into(),
+            filename: "instrumental-score.musicxml".into(),
+            adapter: "reel-measured-instrumental-musicxml".into(),
+            adapter_version: "0.1.0".into(),
+        });
+    }
     Ok(ScoreExportPlan {
         schema: SCHEMA.into(),
         export_id: format!("{}-score-export", music.model_id),
