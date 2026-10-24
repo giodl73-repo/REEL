@@ -158,8 +158,16 @@ fn preflight(
         movie_hash: String::new(),
         recordings: vec![],
     };
-    for row in rows.as_array().ok_or("rows")? {
-        let key = text(row, "picture_binding")?;
+    let mut picture_keys: BTreeSet<String> = rows
+        .as_array()
+        .ok_or("rows")?
+        .iter()
+        .map(|row| text(row, "picture_binding").map(str::to_owned))
+        .collect::<Result<_>>()?;
+    if let Some(sequence) = sequence {
+        picture_keys.extend(sequence.picture_bindings.iter().cloned());
+    }
+    for key in &picture_keys {
         let asset = &docs["scene-bindings.json"]["assets"][key];
         let (hash, bytes) = identity(asset)?;
         if let Some(previous) = plan.assets.get(hash)
@@ -172,7 +180,7 @@ fn preflight(
             .or_insert_with(|| asset.clone());
         plan.pictures.insert(hash.into());
         plan.images
-            .insert(key.into(), json!(format!("media/{hash}.png")));
+            .insert(key.clone(), json!(format!("media/{hash}.png")));
     }
     if spec["media_mode"] == "native-recordings" {
         if !spec["movie"].is_null() {
@@ -316,6 +324,7 @@ fn export_mode(spec: &Path, media: bool) -> Result<()> {
         (serde_json::Map::new(), Value::Null)
     };
     let mut data = json!({"schema":project.session_schema(),"title":s["title"],"scene_id":docs["scene.json"]["scene_id"],"expected_inputs":hashes,"rows":r,"images":images,"fps_numerator":docs["profile.json"]["frame_rate_numerator"],"fps_denominator":docs["profile.json"]["frame_rate_denominator"],"movie":movie});
+    data["picture_choices"] = json!(sequence.picture_bindings);
     if !media {
         data["media_mode"] = json!("controls-only");
     } else if s["media_mode"] == "native-recordings" {
@@ -358,7 +367,7 @@ fn inspect_project(input: &Path, out: &Path) -> Result<()> {
     if let Some(language) = project.language() {
         request["language"] = json!(language);
     }
-    let report = json!({"schema":"reel.cel-sorter-inspection.v1","edit_request":request,"clock":sequence.session_clock(),"media_resolved":false});
+    let report = json!({"schema":"reel.cel-sorter-inspection.v1","edit_request":request,"clock":sequence.session_clock(),"picture_choices":sequence.picture_bindings,"media_resolved":false});
     if serde_json::to_vec(&report)?.len() > 2 * 1024 * 1024 {
         return Err("Private inspection exceeds control budget".into());
     }
@@ -382,6 +391,151 @@ mod cel_fixtures;
 mod tests {
     use super::cel_fixtures::{asset, fixture, graph_asset, multi_fixture, save_graph};
     use super::*;
+    fn candidate_project(root: &Path) -> PathBuf {
+        let descriptor = multi_fixture(root);
+        let mut bindings = read(&root.join("scene-bindings.json")).unwrap();
+        bindings["assets"]["new-picture"] = asset(b"new-picture");
+        fs::write(
+            root.join("scene-bindings.json"),
+            serde_json::to_vec(&bindings).unwrap(),
+        )
+        .unwrap();
+        let mut config = read(&descriptor).unwrap();
+        config["picture_candidates"] = json!(["new-picture"]);
+        fs::write(&descriptor, serde_json::to_vec(&config).unwrap()).unwrap();
+        descriptor
+    }
+    #[test]
+    fn explicit_candidate_pictures_enter_copy_budget_and_controls_without_cache_reads() {
+        let d = tempfile::tempdir().unwrap();
+        let descriptor = candidate_project(&d.path().join("source"));
+        let project = Project::open(&descriptor).unwrap();
+        let (docs, _) = load(&project).unwrap();
+        let sequence = Sequence::for_project(&docs, &project).unwrap();
+        let spec = json!({"media_mode":"native-recordings","max_export_copy_bytes":39});
+        let plan = preflight(&docs, &sequence.rows(), &spec, Some(&sequence)).unwrap();
+        assert!(plan.images.contains_key("new-picture"));
+        assert_eq!(plan.pictures.len(), 3);
+        // first + second + voice + second-voice + new-picture = 39 bytes.
+        assert!(
+            preflight(
+                &docs,
+                &sequence.rows(),
+                &json!({"media_mode":"native-recordings","max_export_copy_bytes":38}),
+                Some(&sequence)
+            )
+            .is_err()
+        );
+        let out = d.path().join("controls");
+        let spec_file = d.path().join("spec.json");
+        write(&spec_file, &json!({"project":descriptor,"output":out})).unwrap();
+        export_mode(&spec_file, false).unwrap();
+        let session = read(&out.join("session.json")).unwrap();
+        assert_eq!(
+            session["picture_choices"],
+            json!(["new-picture", "one", "two"])
+        );
+        assert_eq!(session["images"], json!({}));
+        assert!(!out.join("media").exists());
+    }
+    #[test]
+    fn candidate_pictures_require_valid_explicit_bindings_and_never_admit_new_cels() {
+        let d = tempfile::tempdir().unwrap();
+        let source = d.path().join("source");
+        let descriptor = candidate_project(&source);
+        let original = read(&descriptor).unwrap();
+        for candidates in [
+            json!(["missing"]),
+            json!(["take"]),
+            json!(["clock"]),
+            json!(["new-picture", "new-picture"]),
+            json!([""]),
+            json!(vec!["new-picture"; 129]),
+        ] {
+            let mut config = original.clone();
+            config["picture_candidates"] = candidates;
+            fs::write(&descriptor, serde_json::to_vec(&config).unwrap()).unwrap();
+            assert!(
+                Project::open(&descriptor)
+                    .and_then(|project| load(&project))
+                    .is_err()
+            );
+        }
+        fs::write(&descriptor, serde_json::to_vec(&original).unwrap()).unwrap();
+        let good = read(&source.join("scene-bindings.json")).unwrap();
+        for (key, value) in [
+            ("selection_state", json!("unreviewed")),
+            ("sha256", json!("bad")),
+            ("cache_uri", json!("file://untrusted")),
+            ("bytes", json!(0)),
+            ("logical_id", json!("")),
+        ] {
+            let mut bindings = good.clone();
+            bindings["assets"]["new-picture"][key] = value;
+            fs::write(
+                source.join("scene-bindings.json"),
+                serde_json::to_vec(&bindings).unwrap(),
+            )
+            .unwrap();
+            assert!(load(&Project::open(&descriptor).unwrap()).is_err(), "{key}");
+        }
+        fs::write(
+            source.join("scene-bindings.json"),
+            serde_json::to_vec(&good).unwrap(),
+        )
+        .unwrap();
+        let project = Project::open(&descriptor).unwrap();
+        let (docs, _) = load(&project).unwrap();
+        let sequence = Sequence::for_project(&docs, &project).unwrap();
+        let mut rows = sequence.rows().as_array().unwrap().clone();
+        rows[0]["picture_binding"] = json!("new-picture");
+        sequence.plan(&rows).unwrap();
+        assert!(Sequence::new(&docs, true).unwrap().plan(&rows).is_err());
+        rows[0]["semantic_id"] = json!("new-cel");
+        assert!(sequence.plan(&rows).is_err());
+    }
+    #[test]
+    fn candidate_media_export_verifies_exact_objects_and_refuses_corrupt_earlier_tier() {
+        let d = tempfile::tempdir().unwrap();
+        let descriptor = candidate_project(&d.path().join("source"));
+        let first = d.path().join("first-cache");
+        let second = d.path().join("second-cache");
+        for body in [
+            b"first".as_slice(),
+            b"second",
+            b"voice",
+            b"second-voice",
+            b"new-picture",
+        ] {
+            let h = hash(body);
+            let directory = second.join("objects/sha256").join(&h[..2]);
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(directory.join(h), body).unwrap();
+        }
+        let spec_file = d.path().join("spec.json");
+        let mut spec = json!({"project":descriptor,"output":d.path().join("export"),"cache_roots":[first,second],"media_mode":"native-recordings","max_export_copy_bytes":39});
+        write(&spec_file, &spec).unwrap();
+        export(&spec_file).unwrap();
+        let session = read(&d.path().join("export/session.json")).unwrap();
+        let image = session["images"]["new-picture"].as_str().unwrap();
+        assert_eq!(
+            fs::read(d.path().join("export").join(image)).unwrap(),
+            b"new-picture"
+        );
+        let h = hash(b"new-picture");
+        let directory = first.join("objects/sha256").join(&h[..2]);
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join(h), b"bad-picture").unwrap();
+        spec["output"] = json!(d.path().join("corrupt-export"));
+        fs::write(&spec_file, serde_json::to_vec(&spec).unwrap()).unwrap();
+        assert!(
+            export(&spec_file)
+                .unwrap_err()
+                .to_string()
+                .contains("hash mismatch")
+        );
+        assert!(!d.path().join("corrupt-export").exists());
+    }
     #[test]
     fn native_recordings_copy_selected_takes_without_a_compiled_movie() {
         let d = tempfile::tempdir().unwrap();

@@ -43,6 +43,7 @@ pub struct EditPlan {
     pub markers: BTreeMap<String, BTreeMap<String, u64>>,
 }
 pub struct Sequence {
+    pub picture_bindings: BTreeSet<String>,
     pub language: String,
     pub cues: Vec<CueClock>,
     pub other_cues: Vec<CueClock>,
@@ -75,12 +76,41 @@ impl Sequence {
         docs: &BTreeMap<String, Value>,
         project: &super::project::Project,
     ) -> Result<Self> {
-        Self::intake(
+        let mut sequence = Self::intake(
             docs,
             project.is_multi_cue(),
             project.language(),
             project.has_protected_graphs(),
-        )
+        )?;
+        let bindings: native::ScopedBindings =
+            serde_json::from_value(docs["scene-bindings.json"].clone())?;
+        for key in project.picture_candidates() {
+            let asset = bindings
+                .assets
+                .get(key)
+                .ok_or("Unbound picture candidate")?;
+            if sequence
+                .cues
+                .iter()
+                .chain(&sequence.other_cues)
+                .any(|cue| &cue.take_binding == key || &cue.alignment_binding == key)
+                || !selected(&asset.selection_state)
+                || asset.logical_id.trim().is_empty()
+                || asset.logical_id.len() > 256
+                || asset.bytes == 0
+                || asset.bytes > JS_SAFE
+                || asset.sha256.len() != 64
+                || !asset
+                    .sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                || asset.cache_uri != format!("cache://sha256/{}", asset.sha256)
+            {
+                return Err("Invalid picture candidate identity, state or cue role".into());
+            }
+            sequence.picture_bindings.insert(key.clone());
+        }
+        Ok(sequence)
     }
     fn intake(
         docs: &BTreeMap<String, Value>,
@@ -439,6 +469,10 @@ impl Sequence {
             .filter(|cue| cue.language != language)
             .collect();
         Ok(Self {
+            picture_bindings: cells
+                .values()
+                .map(|cell| cell.picture_binding.clone())
+                .collect(),
             language,
             cues: clocks,
             other_cues,
@@ -490,11 +524,6 @@ impl Sequence {
         if edited.is_empty() || edited.len() > self.cells.len() {
             return Err("Unsupported event insertion or empty scene".into());
         }
-        let pictures: BTreeSet<_> = self
-            .cells
-            .values()
-            .map(|cell| cell.picture_binding.as_str())
-            .collect();
         let mut markers: BTreeMap<_, _> = self
             .cues
             .iter()
@@ -514,7 +543,7 @@ impl Sequence {
             let id = text(row, "semantic_id")?;
             let cell = self.cells.get(id).ok_or("Unknown native event")?;
             let binding = text(row, "picture_binding")?;
-            if !seen.insert(id) || !pictures.contains(binding) {
+            if !seen.insert(id) || !self.picture_bindings.contains(binding) {
                 return Err("Invalid stable event or selected picture".into());
             }
             let index = self

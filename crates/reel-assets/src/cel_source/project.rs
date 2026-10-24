@@ -47,6 +47,8 @@ fn control_budget(role: &str) -> u64 {
 struct Descriptor {
     schema: String,
     root: PathBuf,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    picture_candidates: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     language: Option<String>,
     #[serde(
@@ -115,6 +117,7 @@ fn optional_graphs<'de, D: serde::Deserializer<'de>>(
 
 /// Private local configuration. A content lock is not custody or publication authority.
 pub struct Project {
+    picture_candidates: Vec<String>,
     root: PathBuf,
     files: BTreeMap<String, String>,
     descriptor_sha256: Option<String>,
@@ -225,6 +228,7 @@ impl Project {
         let metadata = fs::symlink_metadata(input)?;
         if metadata.is_dir() {
             return Ok(Self {
+                picture_candidates: Vec::new(),
                 root: root(input)?,
                 files: FILES
                     .iter()
@@ -249,6 +253,20 @@ impl Project {
             64 * 1024,
         )?;
         let descriptor: Descriptor = serde_json::from_slice(&bytes)?;
+        if descriptor.picture_candidates.len() > 128
+            || descriptor
+                .picture_candidates
+                .iter()
+                .any(|key| key.trim().is_empty() || key.len() > 256)
+            || descriptor
+                .picture_candidates
+                .iter()
+                .collect::<BTreeSet<_>>()
+                .len()
+                != descriptor.picture_candidates.len()
+        {
+            return Err("Invalid or excessive picture candidate bindings".into());
+        }
         let scoped = descriptor.schema == SCOPED_SCHEMA;
         if (descriptor.protected_graphs.is_some() && !scoped)
             || scoped != descriptor.alignment_paths.is_some()
@@ -311,6 +329,7 @@ impl Project {
             parent.join(descriptor.root)
         };
         let mut project = Self {
+            picture_candidates: descriptor.picture_candidates,
             root: root(&declared_root)?,
             declared_files: descriptor.files.clone(),
             files: descriptor.files,
@@ -412,6 +431,10 @@ impl Project {
     }
     pub fn descriptor_sha256(&self) -> Option<&str> {
         self.descriptor_sha256.as_deref()
+    }
+    /// Explicit binding keys only; no media discovery or registration authority.
+    pub fn picture_candidates(&self) -> &[String] {
+        &self.picture_candidates
     }
     pub fn has_protected_graphs(&self) -> bool {
         self.declared_protected_graphs.is_some()
@@ -577,6 +600,7 @@ impl Project {
             encoded.push((
                 PROFILE.into(),
                 serde_json::to_vec(&Descriptor {
+                    picture_candidates: self.picture_candidates.clone(),
                     schema: if self.language.is_some() {
                         SCOPED_SCHEMA
                     } else if self.multi_cue {
