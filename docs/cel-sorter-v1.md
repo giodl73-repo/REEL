@@ -105,8 +105,11 @@ Sessions retain the existing edit schema and source locks; `recordings` is
 preview transport metadata and never becomes an input in an edit request.
 Controls-only and compiled-movie exports remain available. Use a matching new
 host binary for exports containing this frontend revision.
-Unsupported clocks/languages/scopes fail explicitly. Insertion of new assets and
-native build validation remain producer operations. Requests and browser downloads/imports are bounded to 2 MiB. The preview is locked stills;
+Unsupported clocks/languages/scopes fail explicitly. Explicit
+[candidate pictures](cel-sorter-project-v1.md#explicit-candidate-pictures) allow
+substitution using newly bound primary pictures. Registry admission, new cel
+identities and native build validation remain producer operations.
+Requests and browser downloads/imports are bounded to 2 MiB. The preview is locked stills;
 it does not simulate rendered motion/VFX. Browser drafts with a temporary duration
 mismatch are retained locally but need fitting before export. The editor is private project output; no
 production pictures, titles or paths belong in REEL source or synthetic tests.

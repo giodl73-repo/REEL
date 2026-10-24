@@ -102,3 +102,13 @@ test('scoped v4 requests bind language and isolate older autosaves',()=>{
  for(const language of [undefined,'',' ','x'.repeat(65)])assert.throws(()=>ui.context({...session,language}));
  assert.throws(()=>ui.context({...old,language:'es'}));
 });
+
+test('explicit picture choices permit substitution without admitting new cel identities',()=>{
+ const pictures=['one','two','candidate'];
+ const changed=[{...rows[0],picture_binding:'candidate',comment:'Keep the new picture'},...rows.slice(1)];
+ assert(!ui.valid(changed,rows,null));assert(ui.valid(changed,rows,null,pictures));
+ const fitted=ui.fit(changed,100,rows,pictures);assert(ui.valid(fitted,rows,100,pictures));
+ assert.equal(fitted[0].comment,'Keep the new picture');
+ assert(!ui.valid([{...changed[0],semantic_id:'new-cel'},...changed.slice(1)],rows,null,pictures));
+ assert(!ui.valid([{...changed[0],picture_binding:'unlisted'},...changed.slice(1)],rows,null,pictures));
+});

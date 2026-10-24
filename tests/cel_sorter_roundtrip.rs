@@ -152,6 +152,72 @@ fn manifest() -> CompileManifest {
     serde_json::from_value(json!({"schema":"reel.scene-delivery-compile.v1","catalog":"catalog.json","episode":"episode.json","scene":"scene.json","policy":"policy.json","season_bindings":"season-bindings.json","episode_bindings":"episode-bindings.json","scene_bindings":"scene-bindings.json","graph":"selected-graph.json","pointer":"selected-pointer.json","alignment_paths":"timing/paths.json","profile":"profile.json","language":"es","delivery_id":"synthetic-edit","delivery_title":"Synthetic native edit","output_dir":"delivery"})).unwrap()
 }
 #[test]
+fn explicit_new_picture_compiles_with_append_only_revision_and_protected_english() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    let descriptor = ready_project(&source, false);
+    fixtures::add_english_lane(&source, &descriptor);
+    let mut bindings = get(&source.join("scene-bindings.json"));
+    bindings["assets"]["candidate-picture"] = fixtures::asset(b"new-primary-picture");
+    put(&source.join("scene-bindings.json"), &bindings);
+    let mut config = get(&descriptor);
+    config["picture_candidates"] = json!(["candidate-picture"]);
+    put(&descriptor, &config);
+    let before = snapshot(&source);
+    let project = Project::open(&descriptor).unwrap();
+    let (docs, locks) = editor::load(&project).unwrap();
+    let mut rows = Sequence::for_project(&docs, &project).unwrap().rows();
+    rows[0]["picture_binding"] = json!("candidate-picture");
+    rows[0]["comment"] = json!("New primary picture, same clock");
+    let request = temp.path().join("request.json");
+    put(
+        &request,
+        &json!({"schema":"reel.cel-sorter-edit.v4","language":"es","scene_id":"synthetic","expected_project":project.descriptor_sha256(),"expected_inputs":locks,"rows":rows}),
+    );
+    let candidate = temp.path().join("candidate");
+    editor::apply(&descriptor, &request, &candidate).unwrap();
+    assert_eq!(snapshot(&source), before);
+    let next_descriptor = candidate.join("cel-sorter-project.json");
+    let next = Project::open(&next_descriptor).unwrap();
+    assert_eq!(next.picture_candidates(), &["candidate-picture"]);
+    editor::load(&next).unwrap();
+    let graph = get(&candidate.join("selected-graph.json"));
+    let slot = graph["slots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|slot| slot["slot_id"] == "p1")
+        .unwrap();
+    assert_eq!(slot["revisions"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        slot["revisions"][0],
+        docs["selected-graph.json"]["slots"][0]["revisions"][0]
+    );
+    assert_eq!(slot["revisions"][1]["supersedes"], "v1");
+    assert_eq!(
+        get(&candidate.join("scene.json"))["language_event_bindings"]["en"],
+        docs["scene.json"]["language_event_bindings"]["en"]
+    );
+    for language in ["es", "en"] {
+        let mut compile = manifest();
+        compile.language = language.into();
+        compile.output_dir = format!("delivery-{language}");
+        if language == "en" {
+            compile.alignment_paths = "timing/english-paths.json".into();
+        }
+        assert_eq!(
+            compile_to_dir(&candidate, &compile).unwrap()["cue_count"],
+            2
+        );
+    }
+    // A palette change changes the project lock and cannot reuse this edit.
+    config["picture_candidates"] = json!([]);
+    put(&descriptor, &config);
+    let stale = temp.path().join("stale");
+    assert!(editor::apply(&descriptor, &request, &stale).is_err());
+    assert!(!stale.exists());
+}
+#[test]
 fn edited_multicue_candidate_compiles_to_delivery_with_exact_cue_anchors_and_revision_lineage() {
     let temp = tempfile::tempdir().unwrap();
     let root = edited_candidate(temp.path(), false);

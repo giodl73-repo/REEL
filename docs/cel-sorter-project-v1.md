@@ -59,6 +59,38 @@ descriptor explicitly. It creates a new candidate directory, refuses existing
 destinations and checks encoded output control limits before creating it.
 Failed I/O can leave an incomplete candidate for explicit reconciliation.
 
+## Explicit candidate pictures
+
+Descriptors v1–v3 may declare `"picture_candidates": ["new-picture"]`.
+Each entry names an existing native `scene-bindings.json` asset key, authored
+and registered by the producer as a primary picture input. This is a bounded
+picture palette, not a file picker or another asset registry. At most 128 unique
+nonempty keys (256 UTF-8 bytes each) are allowed. Undeclared bindings do not
+become choices. Cue takes and alignment bindings cannot be picture candidates.
+The native identity, byte count, cache URI and selected state must be valid;
+the declaration grants no picture, rights or publication approval.
+
+Export a fresh session after changing either bindings or this list. The raw
+descriptor and binding locks protect these choices; editing an old request's
+palette cannot extend its native scope. Older binaries reject the new field
+rather than silently ignoring it. Omitting it preserves existing behavior.
+
+Both media and controls-only sessions expose `picture_choices`. Media export
+freshly verifies and copies these explicitly listed pictures in addition to
+the effective cel pictures, within the same complete copy budget and tier order.
+It does not scan for alternatives or fall through a corrupt earlier tier.
+Controls-only export lists choices without resolving/copying any media.
+
+The existing image selector can substitute a candidate while keeping stable
+cel IDs, comments and cue clocks. Native apply uses the descriptor's allowlist,
+appends a picture revision, and retains previous revisions and protected lanes.
+The candidate descriptor retains the palette for explicit reopening. No media
+is ingested, version selected, render started or cache object removed. The
+producer must register the resulting primary dependency and manage its draft
+lease before execution; this interface does not prove registry/custody coverage.
+New cel identities still require new native events/alignments/graph controls
+and a fresh session; listing a picture does not authorize event insertion.
+
 Embedded native references, including absolute references, remain unchanged.
 Preserving a valid relative layout avoids a converter, but does not certify a
 self-contained compiler project. Only supplied context is copied. Cache/LFS
