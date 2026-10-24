@@ -31,9 +31,19 @@ def duration_pieces(duration,divisions):
     return result
 
 
-def prepare_musicxml(source,target,omit_trailing_silent_measures=False):
+def prepare_musicxml(source,target,omit_trailing_silent_measures=False,page_format=None):
     """Spell identical intervals as explicit tied durations for score-app import."""
     tree=ET.parse(source);root=tree.getroot();pieces=0
+    if page_format is not None:
+        if page_format!='a3':raise ValueError('Unsupported explicit score page format')
+        defaults=root.find('defaults')
+        if defaults is None:
+            defaults=ET.Element('defaults');root.insert(next(i for i,e in enumerate(root) if e.tag in ['credit','part-list']),defaults)
+        for tag in ['scaling','page-layout']:
+            for element in defaults.findall(tag):defaults.remove(element)
+        scaling=ET.Element('scaling');ET.SubElement(scaling,'millimeters').text='7';ET.SubElement(scaling,'tenths').text='40';defaults.insert(0,scaling)
+        layout=ET.SubElement(defaults,'page-layout');ET.SubElement(layout,'page-height').text='2400';ET.SubElement(layout,'page-width').text=str(297*40/7);margins=ET.SubElement(layout,'page-margins',type='both')
+        for tag in ['left-margin','right-margin','top-margin','bottom-margin']:ET.SubElement(margins,tag).text='80'
     for part in root.findall('part'):
         divisions=1
         for measure in part.findall('measure'):
@@ -136,7 +146,7 @@ def main():
     if q['schema']!='reel.instrumental-engraving-request.v1' or q['permissions']!=dict(private_only=True,external_upload=False,public_release=False):raise ValueError('Explicit private engraving request required')
     checked('score.musicxml',q['musicxml']);ms=checked(q['musescore']['path'],q['musescore']);env=os.environ.copy();env['QT_QPA_PLATFORM']='windows:fontengine=freetype';env['QT_LOGGING_RULES']='*.debug=false'
     for item in q['runtime_files']:checked(item['path'],item)
-    fragments=prepare_musicxml('score.musicxml','engraving-input.musicxml',q.get('omit_trailing_silent_measures',False))
+    fragments=prepare_musicxml('score.musicxml','engraving-input.musicxml',q.get('omit_trailing_silent_measures',False),q.get('page_format'))
     for output in ['engraved.pdf','roundtrip.musicxml']:
         proc=subprocess.run([str(ms),'-f','-o',output,'engraving-input.musicxml'],env=env,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=600)
         Path(output+'.log').write_text(proc.stdout+'\n'+proc.stderr,encoding='utf-8')

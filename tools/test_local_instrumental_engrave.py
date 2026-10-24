@@ -32,6 +32,10 @@ class IntervalTests(unittest.TestCase):
     def test_irregular_duration_spelling_is_exact(self):
         for ticks in [1,31,120,360,600,1080,3839]:
             parts=duration_pieces(ticks,960);self.assertEqual(sum(v[0] for v in parts),ticks)
+    def test_large_ensemble_page_keeps_every_note_interval(self):
+        import xml.etree.ElementTree as ET
+        with tempfile.TemporaryDirectory() as d:
+            source=Path(d)/'source.xml';target=Path(d)/'target.xml';source.write_text('<score-partwise><part-list/><part id="P1"><measure><attributes><divisions>960</divisions></attributes><note><pitch><step>C</step><octave>4</octave></pitch><duration>960</duration></note></measure></part></score-partwise>');prepare_musicxml(source,target,page_format='a3');self.assertEqual(intervals(source),intervals(target));self.assertEqual(ET.parse(target).findtext('defaults/page-layout/page-height'),'2400')
 
 
 if __name__=='__main__':unittest.main()
