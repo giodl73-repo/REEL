@@ -221,15 +221,7 @@ pub(crate) fn live(root: &Path, policy: &Policy) -> Result<Live> {
     } else {
         vec![]
     };
-    if !index_bytes.is_empty() {
-        let index: Value = serde_json::from_slice(&index_bytes)?;
-        controls.insert(
-            index["asset"]["sha256"]
-                .as_str()
-                .ok_or("Missing control index hash")?
-                .into(),
-        );
-    }
+    controls.extend(crate::object_index::metadata_roots(root)?);
     // Capture actual resolved authoring selections as well as registry generations.
     let storage = fs::read(accounting::relative(root, &p.storage_config)?)?;
     let token = json!({"state":state,"registered":registered,"outputs":outputs,

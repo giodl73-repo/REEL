@@ -541,15 +541,7 @@ fn legacy_protection(
     )?);
     protected.extend(state.metadata_roots.iter().cloned());
     protected.extend(crate::goldens::control_asset(root)?.map(|(hash, _)| hash));
-    if root.join("registry/object-index.json").exists() {
-        let d = crate::load(&root.join("registry/object-index.json"))?;
-        protected.insert(
-            d["asset"]["sha256"]
-                .as_str()
-                .ok_or("Missing legacy authorization root")?
-                .into(),
-        );
-    }
+    protected.extend(crate::object_index::metadata_roots(root)?);
     let catalog: Value = serde_json::from_slice(&tiering::read_bounded(
         &root.join("catalog.json"),
         256 * 1024,
@@ -602,14 +594,7 @@ fn legacy_protection(
         )?);
         protected.extend(state.metadata_roots.iter().cloned());
         protected.extend(crate::goldens::control_asset(root)?.map(|(hash, _)| hash));
-        if root.join("registry/object-index.json").exists() {
-            protected.insert(
-                crate::load(&root.join("registry/object-index.json"))?["asset"]["sha256"]
-                    .as_str()
-                    .ok_or("Missing legacy authorization root")?
-                    .into(),
-            );
-        }
+        protected.extend(crate::object_index::metadata_roots(root)?);
         protected.extend(policy.output_retention.iter().map(|a| a.sha256.clone()));
     }
     Ok(protected)
@@ -668,15 +653,7 @@ fn cold_protection(root: &Path, limit: usize) -> Result<BTreeSet<String>> {
                 .map(str::to_owned),
         );
     }
-    let path = root.join("registry/object-index.json");
-    if path.exists() {
-        protected.insert(
-            crate::load(&path)?["asset"]["sha256"]
-                .as_str()
-                .ok_or("Missing authorization control hash")?
-                .to_owned(),
-        );
-    }
+    protected.extend(crate::object_index::metadata_roots(root)?);
     Ok(protected)
 }
 
@@ -1495,6 +1472,51 @@ pub fn export_protections(root: &Path, request_path: &Path) -> Result<Value> {
 mod tests {
     use super::*;
     use crate::tiering::tests::Fixture;
+
+    #[test]
+    fn sharded_authorization_leaves_are_protected_by_all_native_lifecycle_consumers() {
+        let f = Fixture::new();
+        let before = fs::read(f.root().join("registry/versions.json")).unwrap();
+        let mut leaves = serde_json::Map::new();
+        let mut hashes = BTreeSet::new();
+        for prefix in ["a", "b"] {
+            let bytes = format!("{}\t5\n", prefix.repeat(64));
+            let hash = f.put(bytes.as_bytes(), false);
+            leaves.insert(prefix.into(), json!({"sha256":hash,"bytes":bytes.len(),"cache_uri":format!("cache://sha256/{hash}")}));
+            hashes.insert(hash);
+        }
+        fs::write(
+            f.root().join("registry/object-index.json"),
+            json!({
+                "schema":"caminos.object-index.v2","leaves":leaves,"rows":2
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let policy: tiering::Policy = serde_json::from_value(f.policy.clone()).unwrap();
+        let cold = cold_protection(f.root(), 100).unwrap();
+        let legacy =
+            legacy_protection(f.root(), &crate::config(f.root()).unwrap(), &policy).unwrap();
+        let live = tiering::live(f.root(), &policy).unwrap();
+        let report = crate::accounting::report(f.root()).unwrap();
+        for hash in hashes {
+            assert!(cold.contains(&hash));
+            assert!(legacy.contains(&hash));
+            assert!(live.controls.contains(&hash));
+            let row = report["objects"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["sha256"] == hash)
+                .unwrap();
+            assert_eq!(row["category"], "registry-control");
+        }
+        assert_eq!(
+            fs::read(f.root().join("registry/versions.json")).unwrap(),
+            before
+        );
+        assert!(!f.root().join("offline-cold").exists());
+    }
 
     fn historical_output_case(selected: bool, archive_authorized: bool) -> Case {
         let mut c = Case::new();
