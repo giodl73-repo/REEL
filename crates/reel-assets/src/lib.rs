@@ -2,6 +2,7 @@ use serde::Deserialize;
 
 pub mod accounting;
 pub mod admission;
+pub mod artifact_export;
 pub mod artifacts;
 pub mod cel_source;
 pub mod cli;
@@ -191,6 +192,21 @@ pub(crate) fn generic_objects_with(
     Ok(map)
 }
 
+pub(crate) fn validate_roots(roots: &[PathBuf], archive: bool, policy: &PathPolicy) -> Result<()> {
+    for path in roots {
+        let text = path.to_string_lossy().replace('/', "\\").to_uppercase();
+        let text = text.strip_prefix("\\\\?\\").unwrap_or(&text);
+        if !path.is_absolute() || text.starts_with("UNC\\") || text.starts_with("\\\\") {
+            return Err("Cache roots must be absolute local paths".into());
+        }
+        if matches!(policy, PathPolicy::LegacyCaminos)
+            && (text.starts_with("G:") || (!archive && text.starts_with("M:")))
+        {
+            return Err("Legacy cache policy: G is forbidden and M is archive-only; other projects can explicitly select configured-local-roots".into());
+        }
+    }
+    Ok(())
+}
 pub fn config(root: &Path) -> Result<Config> {
     let path = if root.join("asset-project.json").exists() {
         accounting::relative(root, &accounting::project(root)?.storage_config)?
@@ -201,20 +217,8 @@ pub fn config(root: &Path) -> Result<Config> {
     if config.cache_roots.is_empty() {
         return Err("At least one active cache root required".into());
     }
-    for (archive, roots) in [(false, &config.cache_roots), (true, &config.archive_roots)] {
-        for path in roots {
-            let text = path.to_string_lossy().replace('/', "\\").to_uppercase();
-            let text = text.strip_prefix("\\\\?\\").unwrap_or(&text);
-            if !path.is_absolute() || text.starts_with("UNC\\") || text.starts_with("\\\\") {
-                return Err("Cache roots must be absolute local paths".into());
-            }
-            if matches!(config.path_policy, PathPolicy::LegacyCaminos)
-                && (text.starts_with("G:") || (!archive && text.starts_with("M:")))
-            {
-                return Err("Legacy cache policy: G is forbidden and M is archive-only; other projects can explicitly select configured-local-roots".into());
-            }
-        }
-    }
+    validate_roots(&config.cache_roots, false, &config.path_policy)?;
+    validate_roots(&config.archive_roots, true, &config.path_policy)?;
     if let Some(transfer) = std::env::var_os("CAMINOS_TRANSFER_CACHE") {
         config.transfer_cache = Some(PathBuf::from(transfer));
     }

@@ -262,6 +262,132 @@ fn artifact_fixture(f: &Fixture) -> PathBuf {
 }
 
 #[test]
+fn artifact_export_restores_an_unselected_version_without_retargeting_or_writable_aliases() {
+    let f = Fixture::new();
+    let record = artifact_fixture(&f);
+    let source = f.put(1, b"cel");
+    let root = f.dir.path();
+    let mut state = versions::read(root).unwrap();
+    state.current.remove("song/one");
+    fs::write(
+        root.join("registry/versions.json"),
+        serde_json::to_vec(&state).unwrap(),
+    )
+    .unwrap();
+    let before = fs::read(root.join("registry/versions.json")).unwrap();
+    let record_before = fs::read(&record).unwrap();
+    let hash = load(&record).unwrap()["versions"][0]["manifest"]["sha256"].clone();
+    let out = root.join("restored");
+    let spec = root.join("export.json");
+    fs::write(&spec,json!({"schema":"reel.artifact-export.v1","record":"songs/one/song.json","version_id":"golden-v1","manifest_sha256":hash,"output":out,"max_copy_bytes":6,"files":[{"role":"recording","path":"recording.wav"},{"role":"recording","path":"another/copy.wav"}]}).to_string()).unwrap();
+    let plan = artifact_export::plan(root, &spec).unwrap();
+    assert_eq!(plan["planned_copy_bytes"], 6);
+    assert_eq!(plan["payload_bytes_copied"], 0);
+    assert!(!out.exists());
+    let result = artifact_export::export(root, &spec).unwrap();
+    assert_eq!(result["payload_bytes_copied"], 6);
+    assert_eq!(result["source_objects_verified"], 1);
+    assert_eq!(fs::read(out.join("recording.wav")).unwrap(), b"cel");
+    fs::write(out.join("recording.wav"), b"edit").unwrap();
+    assert_eq!(fs::read(source).unwrap(), b"cel");
+    assert_eq!(fs::read(&record).unwrap(), record_before);
+    assert_eq!(
+        fs::read(root.join("registry/versions.json")).unwrap(),
+        before
+    );
+    assert_eq!(
+        load(&out.join("artifact-export-receipt.json")).unwrap()["selection_changed"],
+        false
+    );
+    assert!(artifact_export::export(root, &spec).is_err());
+}
+#[test]
+fn artifact_export_rejects_bad_locks_paths_modes_and_budgets_before_output() {
+    let f = Fixture::new();
+    let record = artifact_fixture(&f);
+    let root = f.dir.path();
+    f.put(1, b"cel");
+    let hash = load(&record).unwrap()["versions"][0]["manifest"]["sha256"].clone();
+    let spec = root.join("export.json");
+    let base = json!({"schema":"reel.artifact-export.v1","record":"songs/one/song.json","version_id":"golden-v1","manifest_sha256":hash,"output":root.join("new"),"max_copy_bytes":3,"files":[{"role":"recording","path":"recording.wav"}]});
+    let mut bad = vec![];
+    for path in [
+        "../outside",
+        "/outside",
+        "C:/outside",
+        "folder\\outside",
+        "a/../outside",
+        "AUX.wav",
+        "file:stream",
+        ".git/config",
+        "file.",
+        "folder//name",
+        "artifact-export-receipt.json",
+        "artifact-export-receipt.json/nested",
+    ] {
+        let mut x = base.clone();
+        x["files"][0]["path"] = json!(path);
+        bad.push(x);
+    }
+    for value in [
+        json!([{ "role":"recording","path":"a"},{"role":"recording","path":"a/child"}]),
+        json!([{ "role":"recording","path":"A.wav"},{"role":"recording","path":"a.wav"}]),
+    ] {
+        let mut x = base.clone();
+        x["files"] = value;
+        bad.push(x);
+    }
+    for (key, value) in [
+        ("manifest_sha256", json!("f".repeat(64))),
+        ("version_id", json!("unknown")),
+        ("max_copy_bytes", json!(2)),
+        ("files", json!([])),
+        ("read_roots", json!([])),
+        ("output", json!(f.config.cache_roots[1].join("working"))),
+        ("unexpected", json!(true)),
+    ] {
+        let mut x = base.clone();
+        x[key] = value;
+        bad.push(x);
+    }
+    let mut x = base.clone();
+    x["files"][0]["role"] = json!("unknown");
+    bad.push(x);
+    for x in bad {
+        fs::write(&spec, x.to_string()).unwrap();
+        assert!(
+            artifact_export::export(root, &spec).is_err(),
+            "accepted {x}"
+        );
+        assert!(!root.join("new").exists());
+    }
+}
+#[test]
+fn artifact_export_fails_on_missing_or_corrupt_first_copy_without_archive_recovery() {
+    let f = Fixture::new();
+    let record = artifact_fixture(&f);
+    let root = f.dir.path();
+    f.put(2, b"cel");
+    let spec = root.join("export.json");
+    let hash = load(&record).unwrap()["versions"][0]["manifest"]["sha256"].clone();
+    let request = json!({"schema":"reel.artifact-export.v1","record":"songs/one/song.json","version_id":"golden-v1","manifest_sha256":hash,"output":root.join("new"),"max_copy_bytes":3,"files":[{"role":"recording","path":"take.wav"}]});
+    fs::write(&spec, request.to_string()).unwrap();
+    assert!(artifact_export::export(root, &spec).is_err());
+    assert!(!root.join("new").exists());
+    f.put(1, b"cel");
+    f.put(0, b"bad");
+    assert!(artifact_export::export(root, &spec).is_err());
+    assert!(!root.join("new").exists());
+    let mut explicit = request;
+    explicit["read_roots"] = json!([f.config.cache_roots[1]]);
+    fs::write(&spec, explicit.to_string()).unwrap();
+    assert!(artifact_export::export(root, &spec).is_ok());
+    assert_eq!(
+        fs::read(object(&f.config.cache_roots[0], &f.oid)).unwrap(),
+        b"bad"
+    );
+}
+#[test]
 fn artifact_rejects_a_valid_lock_under_another_logical_identity() {
     let f = Fixture::new();
     let record = artifact_fixture(&f);

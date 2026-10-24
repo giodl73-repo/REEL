@@ -17,6 +17,10 @@ fn run(root: &Path, args: &[String]) -> Result<Value> {
             .ok_or_else(|| "Missing argument".into())
     };
     match command {
+        "artifact-export" | "artifact-export-plan" => {
+            if args.len()!=2 {return Err("Usage: artifact-export <explicit-export-spec.json>".into());}
+            if command=="artifact-export-plan" {crate::artifact_export::plan(root,Path::new(arg(1)?))}else{crate::artifact_export::export(root,Path::new(arg(1)?))}
+        },
         "cel-inspect" => {
             if args.len()!=4 {return Err("Usage: cel-inspect <scene.json> <scoped-bindings.json> <new-private-report.json>".into());}
             let report=crate::cel_source::read(Path::new(arg(1)?),Path::new(arg(2)?))?;
