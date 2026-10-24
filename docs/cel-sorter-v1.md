@@ -8,6 +8,16 @@ Only declared selected images and the movie are resolved. Every file is freshly
 hashed; a corrupt earlier tier fails. Media are independent working copies,
 never writable hard links to canonical objects. No archive lookup or server starts.
 
+For metadata editing without copying a compiled movie or primary media, invoke
+`reel-cel-sorter export-controls spec.json` explicitly. Its spec accepts only
+`project`, new `output` and optional `title`. It emits the same native scoped
+session/source locks with `media_mode: "controls-only"`, empty images and no
+movie. No cache configuration, media lookup or copy is performed. The UI labels
+this mode, hides previews/playback, and keeps navigation on declared recording
+clocks. Editing, comments, cue fitting and draft import/export remain available.
+The normal media export remains separate; controls-only checks never certify
+pictures, playback, rendered output or human visual acceptance.
+
 `project` may name a [versioned file-map descriptor](cel-sorter-project-v1.md)
 instead of the legacy directory. Six native controls are required; compilation
 context is optional. This opens an existing layout without rearranging it and

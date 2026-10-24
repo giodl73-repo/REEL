@@ -202,7 +202,18 @@ fn resolve_plan(
         .collect()
 }
 fn export(spec: &Path) -> Result<()> {
+    export_mode(spec, true)
+}
+fn export_mode(spec: &Path, media: bool) -> Result<()> {
     let s = read(spec)?;
+    if !media
+        && s.as_object()
+            .ok_or("export spec must be an object")?
+            .keys()
+            .any(|key| !["project", "output", "title"].contains(&key.as_str()))
+    {
+        return Err("controls-only spec accepts project, output and title only".into());
+    }
     let project = Path::new(text(&s, "project")?);
     let out = Path::new(text(&s, "output")?);
     if out.exists() {
@@ -212,27 +223,36 @@ fn export(spec: &Path) -> Result<()> {
     let (docs, hashes) = load(&project)?;
     let sequence = Sequence::for_project(&docs, &project)?;
     let r = sequence.rows();
-    // Decide the complete declared copy budget before touching any media.
-    let plan = preflight(&docs, &r, &s)?;
-    let roots: Vec<PathBuf> = s["cache_roots"]
-        .as_array()
-        .ok_or("cache_roots required")?
-        .iter()
-        .map(|v| v.as_str().map(PathBuf::from).ok_or("invalid root"))
-        .collect::<std::result::Result<_, _>>()?;
-    let resolved = resolve_plan(&plan, |asset| resolve(&roots, asset))?;
-    fs::create_dir_all(out.join("media"))?;
-    for h in &plan.pictures {
-        let dest = out.join(format!("media/{h}.png"));
-        link(&resolved[h], &dest, h, integer(&plan.assets[h], "bytes")?)?;
+    let (images, movie) = if media {
+        // Decide the complete declared copy budget before touching any media.
+        let plan = preflight(&docs, &r, &s)?;
+        let roots: Vec<PathBuf> = s["cache_roots"]
+            .as_array()
+            .ok_or("cache_roots required")?
+            .iter()
+            .map(|v| v.as_str().map(PathBuf::from).ok_or("invalid root"))
+            .collect::<std::result::Result<_, _>>()?;
+        let resolved = resolve_plan(&plan, |asset| resolve(&roots, asset))?;
+        fs::create_dir_all(out.join("media"))?;
+        for h in &plan.pictures {
+            let dest = out.join(format!("media/{h}.png"));
+            link(&resolved[h], &dest, h, integer(&plan.assets[h], "bytes")?)?;
+        }
+        link(
+            &resolved[&plan.movie_hash],
+            &out.join("performance.mp4"),
+            &plan.movie_hash,
+            integer(&s["movie"], "bytes")?,
+        )?;
+        (plan.images, json!("performance.mp4"))
+    } else {
+        fs::create_dir_all(out)?;
+        (serde_json::Map::new(), Value::Null)
+    };
+    let mut data = json!({"schema":project.session_schema(),"title":s["title"],"scene_id":docs["scene.json"]["scene_id"],"expected_inputs":hashes,"rows":r,"images":images,"fps_numerator":docs["profile.json"]["frame_rate_numerator"],"fps_denominator":docs["profile.json"]["frame_rate_denominator"],"movie":movie});
+    if !media {
+        data["media_mode"] = json!("controls-only");
     }
-    link(
-        &resolved[&plan.movie_hash],
-        &out.join("performance.mp4"),
-        &plan.movie_hash,
-        integer(&s["movie"], "bytes")?,
-    )?;
-    let mut data = json!({"schema":project.session_schema(),"title":s["title"],"scene_id":docs["scene.json"]["scene_id"],"expected_inputs":hashes,"rows":r,"images":plan.images,"fps_numerator":docs["profile.json"]["frame_rate_numerator"],"fps_denominator":docs["profile.json"]["frame_rate_denominator"],"movie":"performance.mp4"});
     data.as_object_mut()
         .ok_or("session")?
         .extend(sequence.session_clock().as_object().ok_or("clock")?.clone());
@@ -282,7 +302,7 @@ fn inspect_project(input: &Path, out: &Path) -> Result<()> {
 }
 fn main() -> Result<()> {
     let a: Vec<String> = env::args().collect();
-    match a.get(1).map(String::as_str){Some("inspect") if a.len()==4=>inspect_project(Path::new(&a[2]),Path::new(&a[3])),Some("export") if a.len()==3=>export(Path::new(&a[2])),Some("apply") if a.len()==5=>apply(Path::new(&a[2]),Path::new(&a[3]),Path::new(&a[4])),_=>Err("usage: reel-cel-sorter inspect <project> <new-private-report> | export <spec.json> | apply <native-project> <edit.json> <new-draft-dir>".into())}
+    match a.get(1).map(String::as_str){Some("inspect") if a.len()==4=>inspect_project(Path::new(&a[2]),Path::new(&a[3])),Some("export") if a.len()==3=>export(Path::new(&a[2])),Some("export-controls") if a.len()==3=>export_mode(Path::new(&a[2]),false),Some("apply") if a.len()==5=>apply(Path::new(&a[2]),Path::new(&a[3]),Path::new(&a[4])),_=>Err("usage: reel-cel-sorter inspect <project> <new-private-report> | export|export-controls <spec.json> | apply <native-project> <edit.json> <new-draft-dir>".into())}
 }
 
 #[cfg(test)]
@@ -1011,6 +1031,44 @@ mod tests {
         assert_eq!(session["language"], "es");
         assert!(session["images"].get("english-image").is_none());
         assert_eq!(session["rows"].as_array().unwrap().len(), 4);
+    }
+    #[test]
+    fn controls_only_export_preserves_native_scope_without_media_and_refuses_ambiguous_specs() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let descriptor = multi_fixture(&source);
+        super::cel_fixtures::add_english_lane(&source, &descriptor);
+        super::cel_fixtures::separate_language_graphs(&source, &descriptor);
+        let output = temp.path().join("controls");
+        let spec = temp.path().join("export.json");
+        write(
+            &spec,
+            &json!({"project":descriptor,"output":output,"title":"Synthetic controls"}),
+        )
+        .unwrap();
+        export_mode(&spec, false).unwrap();
+        let session = read(&output.join("session.json")).unwrap();
+        assert_eq!(session["media_mode"], "controls-only");
+        assert_eq!(session["language"], "es");
+        assert!(session["movie"].is_null());
+        assert!(session["images"].as_object().unwrap().is_empty());
+        assert_eq!(fs::read_dir(&output).unwrap().count(), 3);
+        let report = temp.path().join("inspection.json");
+        inspect_project(&descriptor, &report).unwrap();
+        let request = read(&report).unwrap()["edit_request"].clone();
+        for key in ["expected_project", "expected_inputs", "rows"] {
+            assert_eq!(session[key], request[key]);
+        }
+        assert!(export_mode(&spec, false).is_err());
+        let bad = temp.path().join("ambiguous.json");
+        let rejected = temp.path().join("rejected");
+        write(
+            &bad,
+            &json!({"project":descriptor,"output":rejected,"movie":asset(b"not read")}),
+        )
+        .unwrap();
+        assert!(export_mode(&bad, false).is_err());
+        assert!(!rejected.exists());
     }
     #[test]
     fn metadata_inspection_handles_separate_graphs_without_media_or_output_overwrite() {
