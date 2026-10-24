@@ -632,12 +632,26 @@ fn validate_parts(
     element_ids: &mut BTreeSet<String>,
     human_corrected: &mut usize,
 ) -> Result<BTreeMap<String, (u64, u64)>> {
+    validate_note_layout(model)?;
+    let mut note_ranges = BTreeMap::new();
+    for part in &model.parts {
+        for note in &part.notes {
+            register_id(element_ids, "notes[].id", &note.id)?;
+            note_ranges.insert(note.id.clone(), (note.start_tick, note.duration_ticks));
+            validate_provenance(&note.provenance, evidence, human_corrected)?;
+        }
+    }
+    Ok(note_ranges)
+}
+
+/// Check native note identities, ranges and order without reading dependencies.
+/// This is not source, evidence, lyric, authority or full model validation.
+pub fn validate_note_layout(model: &MusicModel) -> Result<()> {
     if model.parts.is_empty() {
         bail!("parts must not be empty");
     }
     let mut part_ids = BTreeSet::new();
     let mut note_ids = BTreeSet::new();
-    let mut note_ranges = BTreeMap::new();
     for part in &model.parts {
         register_id(&mut part_ids, "parts[].id", &part.id)?;
         nonempty("parts[].name", &part.name)?;
@@ -647,7 +661,6 @@ fn validate_parts(
         let mut prior_key = None;
         for note in &part.notes {
             register_id(&mut note_ids, "notes[].id", &note.id)?;
-            register_id(element_ids, "notes[].id", &note.id)?;
             if note.voice == 0
                 || note.duration_ticks == 0
                 || note.midi_note > 127
@@ -675,11 +688,9 @@ fn validate_parts(
                 bail!("notes in part {} must use canonical order", part.id);
             }
             prior_key = Some(key);
-            note_ranges.insert(note.id.clone(), (note.start_tick, note.duration_ticks));
-            validate_provenance(&note.provenance, evidence, human_corrected)?;
         }
     }
-    Ok(note_ranges)
+    Ok(())
 }
 
 fn validate_harmony(
