@@ -31,7 +31,9 @@ async function harness(session=fixture()){
 test('exported handlers merge exact spans, save/import/undo and refuse stale drafts',async()=>{
  const h=await harness();assert.equal(h.element('spans').children.length,4);assert.equal(h.element('note-choices').children.length,4);assert.equal(h.element('save').disabled,false);
  h.button(0,'Select span').click();assert.equal(h.element('lyrics').selectionEnd,2);h.element('lyrics').selectionEnd=5;h.element('use').click();assert.equal(h.element('save').disabled,true);
- h.input('span-1 Last note').value='note-2';h.input('span-1 Last note').listeners.change();h.button(1,'Remove span').click();
+ const lastInput=h.input('span-1 Last note'),syllabicInput=h.input('span-1 Syllable treatment');
+ lastInput.value='note-2';lastInput.listeners.change();assert.equal(h.input('span-1 Last note'),lastInput);assert.equal(h.input('span-1 Syllable treatment'),syllabicInput);
+ syllabicInput.value='begin';syllabicInput.listeners.change({target:syllabicInput});assert.equal(h.input('span-1 Syllable treatment'),syllabicInput);h.button(1,'Remove span').click();
  h.element('rationale').value='Whole phrase over the first two notes';h.element('rationale').listeners.change();assert.equal(h.element('save').disabled,false);h.element('save').click();const edit=await h.download();assert.equal(edit.underlay.length,3);assert.deepEqual(edit.underlay[0].note_ids,['note-1','note-2']);assert.equal(edit.underlay[0].text_end_byte,5);assert.equal(edit.lyric_text,undefined);
  h.element('reset').click();assert.equal(h.element('spans').children.length,4);h.element('undo').click();assert.equal(h.element('spans').children.length,3);
  h.element('file').files=[{size:100,text:async()=>JSON.stringify({...edit,expected_lyric_sha256:'c'.repeat(64)})}];await h.element('file').listeners.change();assert.match(h.element('status').textContent,/does not match/);assert.equal(h.element('spans').children.length,3);
