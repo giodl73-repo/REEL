@@ -505,12 +505,7 @@ pub fn report_with_progress(root: &Path, mut progress: impl FnMut(usize, usize))
                 .map(str::to_owned),
         );
     }
-    if root.join("registry/object-index.json").is_file() {
-        let a = bounded(&root.join("registry/object-index.json"))?;
-        if let Some(h) = a["asset"]["sha256"].as_str() {
-            controls.insert(h.to_owned());
-        }
-    }
+    controls.extend(crate::object_index::metadata_roots(root)?);
     let mut hashes: BTreeSet<_> = registered.keys().cloned().collect();
     if hashes.len() > p.max_inventory_objects {
         return Err("Registered inventory exceeds project object budget".into());

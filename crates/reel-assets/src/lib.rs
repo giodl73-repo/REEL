@@ -9,6 +9,7 @@ pub mod demotion;
 pub mod goldens;
 pub mod jobs;
 pub mod manager_review;
+mod object_index;
 mod output_retention;
 pub mod references;
 pub mod registry;
@@ -135,49 +136,37 @@ pub(crate) fn generic_objects_with(
 ) -> Result<HashMap<String, u64>> {
     let mut map = HashMap::new();
     let mut registries = Vec::new();
-    let archive = root.join("registry/object-index.json");
-    if archive.exists() {
-        if fs::metadata(&archive)?.len() > 4096 {
-            return Err("Object index control exceeds budget".into());
-        }
-        let descriptor = load(&archive)?;
-        let asset = &descriptor["asset"];
-        let oid = asset["sha256"]
-            .as_str()
-            .ok_or("Missing object index hash")?;
-        let size = asset["bytes"].as_u64().ok_or("Missing object index size")?;
-        if descriptor["schema"] != "caminos.object-index.v1"
-            || !valid_oid(oid)
-            || size > 4 * 1024 * 1024
-            || asset["cache_uri"] != format!("cache://sha256/{oid}")
-        {
-            return Err("Invalid cache-backed object index".into());
-        }
+    let leaves = object_index::assets(root)?;
+    if !leaves.is_empty() {
         let cfg = if let Some(c) = storage {
             c.clone()
         } else {
             config(root)?
         };
-        let path = active_existing(&cfg, oid, size)?
-            .ok_or("Object index absent from active caches; archive not probed")?;
-        // The index authorizes its own LFS pointer without a circular lookup.
-        add_asset(&mut map, asset)?;
-        registries.push(path);
+        for (prefix, asset) in leaves {
+            let oid = asset["sha256"].as_str().unwrap();
+            let size = asset["bytes"].as_u64().unwrap();
+            let path = active_existing(&cfg, oid, size)?
+                .ok_or("Object index absent from active caches; archive not probed")?;
+            // Leaf descriptors authorize their own pointers without recursion.
+            add_asset(&mut map, &asset)?;
+            registries.push((path, prefix));
+        }
     }
     let legacy = root.join("registry/objects.tsv");
     if legacy.exists() {
-        registries.push(legacy);
+        registries.push((legacy, None));
     }
     let shards = root.join("registry/objects");
     if shards.is_dir() {
         for entry in fs::read_dir(shards)? {
             let path = entry?.path();
             if path.extension().is_some_and(|s| s == "tsv") {
-                registries.push(path);
+                registries.push((path, None));
             }
         }
     }
-    for registry in registries {
+    for (registry, prefix) in registries {
         for line in fs::read_to_string(registry)?
             .lines()
             .filter(|l| !l.is_empty())
@@ -188,6 +177,9 @@ pub(crate) fn generic_objects_with(
             let size: u64 = size.parse()?;
             if !valid_oid(oid) {
                 return Err("Invalid generic registered SHA-256".into());
+            }
+            if prefix.is_some_and(|prefix| oid.as_bytes()[0] != prefix) {
+                return Err("Object index row differs from its leaf prefix".into());
             }
             if let Some(previous) = map.insert(oid.to_owned(), size)
                 && previous != size

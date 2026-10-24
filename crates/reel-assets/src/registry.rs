@@ -1,6 +1,7 @@
 //! Compact per-hash authorization index. Payload metadata stays in LFS manifests.
 use crate::{Result, admission, generic_objects, load, selected, unique, valid_oid, versions};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs, path::Path};
 
 pub fn pointer(oid: &str, size: u64) -> Result<String> {
@@ -160,43 +161,90 @@ pub fn compact(root: &Path) -> Result<Value> {
     }
     let ordered: BTreeMap<_, _> = before.iter().collect();
     let bytes: String = ordered.iter().map(|(h, s)| format!("{h}\t{s}\n")).collect();
-    if bytes.len() > 4 * 1024 * 1024 {
-        return Err("Object index snapshot exceeds budget".into());
-    }
+    let parts = if bytes.len() as u64 <= crate::object_index::MAX_LEAF_BYTES {
+        vec![(None, bytes)]
+    } else {
+        let mut leaves: BTreeMap<String, String> = BTreeMap::new();
+        for (hash, size) in &ordered {
+            use std::fmt::Write;
+            writeln!(
+                leaves.entry(hash[..1].to_owned()).or_default(),
+                "{hash}\t{size}"
+            )?;
+        }
+        if leaves
+            .values()
+            .any(|leaf| leaf.len() as u64 > crate::object_index::MAX_LEAF_BYTES)
+        {
+            return Err("Object index prefix leaf exceeds budget".into());
+        }
+        leaves
+            .into_iter()
+            .map(|(prefix, bytes)| (Some(prefix), bytes))
+            .collect()
+    };
     let local = root.join(".local/object-index-staging");
     fs::create_dir_all(&local)?;
-    let staging = unique(&local, "index.tsv");
-    fs::write(&staging, &bytes)?;
     // Admission has its own lock. Freeze first, then compare under the writer lock.
-    let asset = crate::ingest(root, &staging)?;
+    let mut leaves = serde_json::Map::new();
+    let mut legacy = None;
+    for (prefix, bytes) in parts {
+        let staging = unique(&local, "index.tsv");
+        fs::write(&staging, bytes)?;
+        let asset = crate::ingest(root, &staging)?;
+        let asset =
+            json!({"sha256":asset["sha256"],"bytes":asset["bytes"],"cache_uri":asset["cache_uri"]});
+        if let Some(prefix) = prefix {
+            leaves.insert(prefix, asset);
+        } else {
+            legacy = Some(asset);
+        }
+    }
+    let descriptor = if let Some(asset) = legacy {
+        json!({"schema":"caminos.object-index.v1","asset":asset,
+            "rows":before.len(),"policy":"Explicit snapshot; active E/D only; original rows retained locally and previous snapshots remain authorized"})
+    } else {
+        json!({"schema":"caminos.object-index.v2","leaves":leaves,"rows":before.len(),
+            "policy":"Explicit bounded prefix leaves; configured active caches only; original rows and previous snapshots retained"})
+    };
+    let encoded = serde_json::to_vec(&descriptor)?;
+    if encoded.len() as u64 > crate::object_index::MAX_CONTROL_BYTES {
+        return Err("Object index control exceeds budget".into());
+    }
+    let assets = crate::object_index::descriptor_assets(&descriptor)?;
     let _lock = admission::worktree_lock(root)?;
     if generic_objects(root)? != before {
         return Err("Object registry changed during compaction; no index replaced".into());
     }
-    let oid = asset["sha256"]
-        .as_str()
-        .ok_or("Missing ingested index hash")?;
-    let size = asset["bytes"]
-        .as_u64()
-        .ok_or("Missing ingested index size")?;
-    let descriptor = json!({"schema":"caminos.object-index.v1","asset":{
-        "sha256":oid,"bytes":size,"cache_uri":format!("cache://sha256/{oid}")},
-        "rows":before.len(),"policy":"Explicit snapshot; active E/D only; original rows retained locally and previous snapshots remain authorized"});
-    let pointer_path = root.join("assets/objects/sha256").join(&oid[..2]).join(oid);
-    fs::create_dir_all(pointer_path.parent().ok_or("Missing pointer parent")?)?;
-    let pointer_bytes = pointer(oid, size)?;
-    if pointer_path.exists() && fs::read_to_string(&pointer_path)? != pointer_bytes {
-        return Err("Existing index LFS pointer differs".into());
+    let mut pointers = Vec::new();
+    for (_, asset) in assets {
+        let oid = asset["sha256"].as_str().unwrap();
+        let size = asset["bytes"].as_u64().unwrap();
+        let path = root.join("assets/objects/sha256").join(&oid[..2]).join(oid);
+        let bytes = pointer(oid, size)?;
+        if path.exists() && fs::read_to_string(&path)? != bytes {
+            return Err("Existing index LFS pointer differs".into());
+        }
+        pointers.push((path, bytes));
     }
-    fs::write(&pointer_path, pointer_bytes)?;
+    for (path, bytes) in pointers {
+        fs::create_dir_all(path.parent().ok_or("Missing pointer parent")?)?;
+        fs::write(path, bytes)?;
+    }
     let directory = root.join("registry");
     fs::create_dir_all(&directory)?;
     let temporary = unique(&directory, "object-index");
-    fs::write(&temporary, serde_json::to_vec(&descriptor)?)?;
+    fs::write(&temporary, &encoded)?;
     versions::replace(&temporary, &directory.join("object-index.json"))?;
     // Publishing the verified complete snapshot is the commit point. An
     // interruption before/during retirement merely leaves duplicate equal rows.
-    let originals = root.join(".local/object-index-originals").join(oid);
+    let snapshot_key = descriptor["asset"]["sha256"]
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("{:x}", Sha256::digest(&encoded)));
+    let originals = root
+        .join(".local/object-index-originals")
+        .join(snapshot_key);
     fs::create_dir_all(&originals)?;
     let mut retired = Vec::new();
     let legacy = directory.join("objects.tsv");
@@ -248,6 +296,208 @@ mod tests {
         .unwrap();
         fs::write(r.join("catalog.json"), r#"{"videos":[]}"#).unwrap();
         (t, r)
+    }
+    #[test]
+    fn sharded_snapshot_preserves_large_union_versions_deltas_and_history() {
+        let (_t, r) = compact_fixture();
+        fs::create_dir_all(r.join("registry")).unwrap();
+        let first = "a".repeat(64);
+        fs::write(r.join("registry/objects.tsv"), format!("{first}\t5\n")).unwrap();
+        let old = compact(&r).unwrap()["snapshot"].clone();
+        assert_eq!(old["schema"], "caminos.object-index.v1");
+        versions::transact(&r, |state| {
+            state.register(serde_json::from_value(
+                json!({"logical_id":"fixture","version_id":"v1",
+                "manifest_sha256":first,"payloads":[first]}),
+            )?)?;
+            state.select("fixture", "v1")?;
+            state.pins.insert("fixture@v1".into());
+            state.lease("fixture-owner", ["fixture@v1".into()].into())?;
+            Ok(json!({}))
+        })
+        .unwrap();
+        let versions_before = serde_json::to_value(versions::read(&r).unwrap()).unwrap();
+        let rows: String = (0..62_000)
+            .map(|n| {
+                let hash = format!("{:x}", Sha256::digest(format!("synthetic-{n}")));
+                format!("{hash}\t{}\n", n + 1)
+            })
+            .collect();
+        assert!(rows.len() as u64 > crate::object_index::MAX_LEAF_BYTES);
+        fs::write(r.join("registry/objects.tsv"), rows).unwrap();
+        let before = generic_objects(&r).unwrap();
+        let large = compact(&r).unwrap()["snapshot"].clone();
+        assert_eq!(large["schema"], "caminos.object-index.v2");
+        assert_eq!(large["leaves"].as_object().unwrap().len(), 16);
+        assert!(
+            fs::metadata(r.join("registry/object-index.json"))
+                .unwrap()
+                .len()
+                <= 4096
+        );
+        let after = generic_objects(&r).unwrap();
+        for (hash, size) in &before {
+            assert_eq!(after.get(hash), Some(size));
+        }
+        let mut state = versions::read(&r).unwrap();
+        assert_eq!(serde_json::to_value(&state).unwrap(), versions_before);
+        for asset in large["leaves"].as_object().unwrap().values() {
+            let hash = asset["sha256"].as_str().unwrap();
+            assert!(asset["bytes"].as_u64().unwrap() <= crate::object_index::MAX_LEAF_BYTES);
+            assert!(state.metadata_roots.contains(hash));
+            assert!(after.contains_key(hash));
+        }
+        // A retired consumer cannot make a live index leaf unprotected.
+        let leaf = large["leaves"]
+            .as_object()
+            .unwrap()
+            .values()
+            .next()
+            .unwrap()["sha256"]
+            .as_str()
+            .unwrap();
+        state
+            .register(
+                serde_json::from_value(json!({"logical_id":"retired","version_id":"v1",
+            "manifest_sha256":first,"payloads":[first,leaf],"deprecated":true}))
+                .unwrap(),
+            )
+            .unwrap();
+        let plan = state.retirement_plan("retired", "v1").unwrap();
+        assert!(
+            plan["shared_protected_hashes"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(leaf))
+        );
+        assert_eq!(compact(&r).unwrap()["unchanged"], true);
+        let extra = format!("{:x}", Sha256::digest(b"new-after-large-snapshot"));
+        let manifest = r.join("manifest.json");
+        fs::write(
+            &manifest,
+            json!({"assets":[{"sha256":extra,"bytes":7,
+            "provenance":"synthetic fixture","rights":"fixture","selection_state":"retained"}]})
+            .to_string(),
+        )
+        .unwrap();
+        register(&r, &manifest).unwrap();
+        assert_eq!(generic_objects(&r).unwrap()[&extra], 7);
+        compact(&r).unwrap();
+        let newest = fs::read(r.join("registry/object-index.json")).unwrap();
+        let current = generic_objects(&r).unwrap();
+        for (hash, size) in after {
+            assert_eq!(current.get(&hash), Some(&size));
+        }
+        assert_eq!(current[&extra], 7);
+        // Historical native headers still restore their exact former views.
+        fs::write(r.join("registry/object-index.json"), large.to_string()).unwrap();
+        let restored = generic_objects(&r).unwrap();
+        for (hash, size) in &before {
+            assert_eq!(restored.get(hash), Some(size));
+        }
+        assert!(!restored.contains_key(&extra));
+        fs::write(r.join("registry/object-index.json"), old.to_string()).unwrap();
+        assert_eq!(generic_objects(&r).unwrap()[&first], 5);
+        fs::write(r.join("registry/object-index.json"), newest).unwrap();
+    }
+
+    #[test]
+    fn sharded_reader_honors_profiles_and_rejects_corruption_missing_and_malformed_leaves() {
+        let (_t, r) = compact_fixture();
+        let mut leaves = serde_json::Map::new();
+        for prefix in ["a", "b"] {
+            let f = r.join("leaf.tsv");
+            fs::write(&f, format!("{}\t5\n", prefix.repeat(64))).unwrap();
+            let asset = crate::ingest(&r, &f).unwrap();
+            leaves.insert(prefix.into(), json!({"sha256":asset["sha256"],"bytes":asset["bytes"],"cache_uri":asset["cache_uri"]}));
+        }
+        fs::create_dir_all(r.join("registry")).unwrap();
+        let descriptor = json!({"schema":"caminos.object-index.v2","leaves":leaves,"rows":2});
+        let path = r.join("registry/object-index.json");
+        fs::write(&path, descriptor.to_string()).unwrap();
+        assert_eq!(generic_objects(&r).unwrap()[&"a".repeat(64)], 5);
+        for asset in descriptor["leaves"].as_object().unwrap().values() {
+            let h = asset["sha256"].as_str().unwrap();
+            let e = crate::object(&r.join("E"), h);
+            for tier in ["D", "M"] {
+                let copy = crate::object(&r.join(tier), h);
+                fs::create_dir_all(copy.parent().unwrap()).unwrap();
+                fs::copy(&e, copy).unwrap();
+            }
+            fs::remove_file(e).unwrap();
+        }
+        let cfg = crate::config(&r).unwrap();
+        let profile = crate::Config {
+            cache_roots: vec![r.join("D")],
+            ..cfg.clone()
+        };
+        fs::write(
+            r.join(".local/storage-rust.json"),
+            json!({"cache_roots":[r.join("E")]}).to_string(),
+        )
+        .unwrap();
+        assert!(generic_objects(&r).is_err());
+        assert!(crate::generic_objects_with(&r, Some(&profile)).is_ok());
+        fs::write(
+            r.join(".local/storage-rust.json"),
+            json!({"cache_roots":[r.join("E"),r.join("D")],"archive_roots":[r.join("M")]})
+                .to_string(),
+        )
+        .unwrap();
+        let hash = descriptor["leaves"]["a"]["sha256"].as_str().unwrap();
+        let e = crate::object(&r.join("E"), hash);
+        fs::write(&e, b"corrupt").unwrap();
+        assert!(generic_objects(&r).is_err());
+        fs::remove_file(e).unwrap();
+        let d = crate::object(&r.join("D"), hash);
+        fs::remove_file(&d).unwrap();
+        assert!(generic_objects(&r).is_err()); // Archive-only is never implicit.
+        fs::copy(crate::object(&r.join("M"), hash), d).unwrap();
+        let mut invalid = descriptor.clone();
+        invalid["leaves"]["a"]["bytes"] = json!(crate::object_index::MAX_LEAF_BYTES + 1);
+        fs::write(&path, invalid.to_string()).unwrap();
+        assert!(generic_objects(&r).is_err());
+        invalid = descriptor.clone();
+        invalid["leaves"]["a"] = descriptor["leaves"]["b"].clone();
+        invalid["leaves"].as_object_mut().unwrap().remove("b");
+        fs::write(&path, invalid.to_string()).unwrap();
+        assert!(
+            generic_objects(&r)
+                .unwrap_err()
+                .to_string()
+                .contains("leaf prefix")
+        );
+        invalid = descriptor.clone();
+        invalid["leaves"]["g"] = descriptor["leaves"]["a"].clone();
+        fs::write(&path, invalid.to_string()).unwrap();
+        assert!(generic_objects(&r).is_err());
+        invalid = descriptor.clone();
+        invalid["leaves"]["b"] = descriptor["leaves"]["a"].clone();
+        fs::write(&path, invalid.to_string()).unwrap();
+        assert!(generic_objects(&r).is_err());
+        fs::write(&path, descriptor.to_string()).unwrap();
+        assert!(generic_objects(&r).is_ok());
+    }
+
+    #[test]
+    fn oversized_prefix_leaf_fails_before_snapshot_publication() {
+        let (_t, r) = compact_fixture();
+        fs::create_dir_all(r.join("registry")).unwrap();
+        let rows: String = (0..64_000).map(|n| format!("a{n:063x}\t1\n")).collect();
+        assert!(rows.len() as u64 > crate::object_index::MAX_LEAF_BYTES);
+        fs::write(r.join("registry/objects.tsv"), &rows).unwrap();
+        assert!(
+            compact(&r)
+                .unwrap_err()
+                .to_string()
+                .contains("prefix leaf exceeds budget")
+        );
+        assert!(!r.join("registry/object-index.json").exists());
+        assert_eq!(
+            fs::read_to_string(r.join("registry/objects.tsv")).unwrap(),
+            rows
+        );
+        assert!(!r.join(".local/object-index-staging").exists());
     }
     #[test]
     fn compact_preserves_rows_deltas_snapshots_and_idempotence() {

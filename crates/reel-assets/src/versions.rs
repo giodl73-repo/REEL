@@ -455,7 +455,11 @@ pub fn read(root: &Path) -> Result<State> {
 pub(crate) fn read_with(root: &Path, storage: Option<&crate::Config>) -> Result<State> {
     let path = root.join("registry/versions.json");
     if !path.exists() {
-        return Ok(State::default());
+        let mut state = State::default();
+        state
+            .metadata_roots
+            .extend(crate::object_index::metadata_roots(root)?);
+        return Ok(state);
     }
     if fs::metadata(&path)?.len() > 256 * 1024 {
         return Err("Version control file exceeds budget".into());
@@ -463,6 +467,9 @@ pub(crate) fn read_with(root: &Path, storage: Option<&crate::Config>) -> Result<
     let (control, base) = control(root, load(&path)?, storage)?;
     let mut state: State = serde_json::from_value(control)?;
     state.metadata_roots.extend(base);
+    state
+        .metadata_roots
+        .extend(crate::object_index::metadata_roots(root)?);
     let mut registered = None;
     for (key, oid) in std::mem::take(&mut state.version_records) {
         if !valid_oid(&oid) {
