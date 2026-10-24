@@ -354,6 +354,13 @@ fn apply(project: &Path, request: &Path, out: &Path) -> Result<()> {
     );
     Ok(())
 }
+fn insert_cel(project: &Path, request: &Path, out: &Path) -> Result<()> {
+    reel_assets::cel_source::insert::apply(project, request, out)?;
+    println!(
+        "New native cel source saved; export a fresh session. Selection and approvals unchanged."
+    );
+    Ok(())
+}
 fn inspect_project(input: &Path, out: &Path) -> Result<()> {
     let project = Project::open(input)?;
     let (docs, hashes) = load(&project)?;
@@ -380,7 +387,7 @@ fn inspect_project(input: &Path, out: &Path) -> Result<()> {
 }
 fn main() -> Result<()> {
     let a: Vec<String> = env::args().collect();
-    match a.get(1).map(String::as_str){Some("inspect") if a.len()==4=>inspect_project(Path::new(&a[2]),Path::new(&a[3])),Some("export") if a.len()==3=>export(Path::new(&a[2])),Some("export-controls") if a.len()==3=>export_mode(Path::new(&a[2]),false),Some("apply") if a.len()==5=>apply(Path::new(&a[2]),Path::new(&a[3]),Path::new(&a[4])),_=>Err("usage: reel-cel-sorter inspect <project> <new-private-report> | export|export-controls <spec.json> | apply <native-project> <edit.json> <new-draft-dir>".into())}
+    match a.get(1).map(String::as_str){Some("inspect") if a.len()==4=>inspect_project(Path::new(&a[2]),Path::new(&a[3])),Some("export") if a.len()==3=>export(Path::new(&a[2])),Some("export-controls") if a.len()==3=>export_mode(Path::new(&a[2]),false),Some("apply") if a.len()==5=>apply(Path::new(&a[2]),Path::new(&a[3]),Path::new(&a[4])),Some("insert-cel") if a.len()==5=>insert_cel(Path::new(&a[2]),Path::new(&a[3]),Path::new(&a[4])),_=>Err("usage: reel-cel-sorter inspect <project> <new-private-report> | export|export-controls <spec.json> | apply <native-project> <edit.json> <new-draft-dir> | insert-cel <native-project> <insert.json> <new-source-dir>".into())}
 }
 
 #[cfg(test)]

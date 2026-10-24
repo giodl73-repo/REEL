@@ -23,9 +23,12 @@ pictures into the shared cel selector. Media exports account for and freshly
 verify those pictures; controls-only exports expose the same choices without
 media reads. Native substitution retains append-only revisions and protected
 languages. See [candidate pictures](cel-sorter-project-v1.md#explicit-candidate-pictures).
-New stable cel identities, registry admission/lease enforcement, private browser
-qualification and edited-render execution remain separate work. A source merge
-does not replace installed project binaries.
+An explicit [native cel insertion](cel-insertion-v1.md) operation now splits one
+existing hold using caller-supplied stable identities and native event fragments.
+It preserves recording clocks, old picture revisions and protected languages;
+fresh source/session locks are mandatory. Browser authoring of insertion
+proposals, registry admission/lease enforcement and private new-cel qualification
+remain separate work. A source merge does not replace installed project binaries.
 
 The cel exporter also supports explicit primary-recording playback without a
 compiled preview movie; see the [editor contract](cel-sorter-v1.md). Its browser

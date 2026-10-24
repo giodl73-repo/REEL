@@ -71,7 +71,7 @@ fn optional_files<'de, D: serde::Deserializer<'de>>(
 ) -> std::result::Result<Option<BTreeMap<String, String>>, D::Error> {
     Ok(Option::<NativePaths>::deserialize(decoder)?.map(|NativePaths(paths)| paths))
 }
-fn unique_files<'de, D: serde::Deserializer<'de>>(
+pub(super) fn unique_files<'de, D: serde::Deserializer<'de>>(
     decoder: D,
 ) -> std::result::Result<BTreeMap<String, String>, D::Error> {
     unique_map(decoder)

@@ -108,7 +108,8 @@ host binary for exports containing this frontend revision.
 Unsupported clocks/languages/scopes fail explicitly. Explicit
 [candidate pictures](cel-sorter-project-v1.md#explicit-candidate-pictures) allow
 substitution using newly bound primary pictures. Registry admission, new cel
-identities and native build validation remain producer operations.
+identities have an explicit [native insertion operation](cel-insertion-v1.md);
+registry admission and native build validation remain producer operations.
 Requests and browser downloads/imports are bounded to 2 MiB. The preview is locked stills;
 it does not simulate rendered motion/VFX. Browser drafts with a temporary duration
 mismatch are retained locally but need fitting before export. The editor is private project output; no
