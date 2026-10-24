@@ -29,7 +29,7 @@ pub fn load(project: &Project) -> Result<(BTreeMap<String, Value>, Value)> {
     let snapshot = load_snapshot(project)?;
     Ok((snapshot.controls, snapshot.hashes))
 }
-fn load_snapshot(project: &Project) -> Result<Snapshot> {
+pub(super) fn load_snapshot(project: &Project) -> Result<Snapshot> {
     let snapshot = project.load()?;
     let docs = &snapshot.controls;
     let hashes = &snapshot.hashes;
@@ -385,7 +385,7 @@ pub fn apply(project: &Path, request: &Path, out: &Path) -> Result<()> {
 
 /// Refuse any semantic change to another lane, then retain its original graph
 /// representation too (including explicit null/default spellings).
-fn preserve_other_lanes(
+pub(super) fn preserve_other_lanes(
     before: &BTreeMap<String, Value>,
     after: &mut BTreeMap<String, Value>,
     sequence: &Sequence,

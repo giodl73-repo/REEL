@@ -152,6 +152,85 @@ fn manifest() -> CompileManifest {
     serde_json::from_value(json!({"schema":"reel.scene-delivery-compile.v1","catalog":"catalog.json","episode":"episode.json","scene":"scene.json","policy":"policy.json","season_bindings":"season-bindings.json","episode_bindings":"episode-bindings.json","scene_bindings":"scene-bindings.json","graph":"selected-graph.json","pointer":"selected-pointer.json","alignment_paths":"timing/paths.json","profile":"profile.json","language":"es","delivery_id":"synthetic-edit","delivery_title":"Synthetic native edit","output_dir":"delivery"})).unwrap()
 }
 #[test]
+fn inserted_native_cel_compiles_both_languages_and_preserves_existing_slot_revisions() {
+    for separate in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let initial = ready_project(&temp.path().join("intake"), false);
+        let p = Project::open(&initial).unwrap();
+        let (initial_docs, initial_hashes) = editor::load(&p).unwrap();
+        let normalization = temp.path().join("normalize.json");
+        put(
+            &normalization,
+            &json!({"schema":"reel.cel-sorter-edit.v3","scene_id":"synthetic","expected_project":p.descriptor_sha256(),"expected_inputs":initial_hashes,"rows":Sequence::for_project(&initial_docs,&p).unwrap().rows()}),
+        );
+        editor::apply(&initial, &normalization, &source).unwrap();
+        let descriptor = source.join("cel-sorter-project.json");
+        fixtures::add_english_lane(&source, &descriptor);
+        if separate {
+            fixtures::separate_language_graphs(&source, &descriptor);
+        }
+        let before = snapshot(&source);
+        let project = Project::open(&descriptor).unwrap();
+        let (docs, locks) = editor::load(&project).unwrap();
+        let request = temp.path().join("insert.json");
+        put(
+            &request,
+            &json!({"schema":"reel.cel-sorter-insert.v1","scene_id":"synthetic","language":"es","expected_project":project.descriptor_sha256(),"expected_inputs":locks,"after_semantic_id":"a","split_after_samples":5001,
+            "shared_event":{"semantic_id":"new-cel","canonical_cue_id":"cue","picture_binding":"two","score":{"disposition":"silence"},"language_ids":["es"]},
+            "language_event":{"semantic_id":"new-cel","event_id":"new-event","cue_id":"es-cue","semantic_trigger_id":"new-trigger","picture_slot_id":"new-slot"}}),
+        );
+        let candidate = temp.path().join("candidate");
+        reel_assets::cel_source::insert::apply(&descriptor, &request, &candidate).unwrap();
+        assert_eq!(snapshot(&source), before);
+        let new_project = Project::open(&candidate.join("cel-sorter-project.json")).unwrap();
+        let (after, _) = editor::load(&new_project).unwrap();
+        let rows = Sequence::for_project(&after, &new_project).unwrap().rows();
+        assert_eq!(rows.as_array().unwrap().len(), 5);
+        assert_eq!(rows[0]["samples"], 5001);
+        assert_eq!(rows[1]["samples"], 41999);
+        let new_graph = &after["selected-graph.json"];
+        for slot in docs["selected-graph.json"]["slots"].as_array().unwrap() {
+            assert_eq!(
+                new_graph["slots"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|s| s["slot_id"] == slot["slot_id"])
+                    .unwrap(),
+                slot
+            );
+        }
+        for (language, events) in [("es", 5), ("en", 4)] {
+            let mut compile = manifest();
+            compile.language = language.into();
+            compile.output_dir = format!("delivery-{language}");
+            if separate {
+                compile.graph = format!("{language}-graph.json");
+                compile.pointer = format!("{language}-pointer.json");
+            }
+            if language == "en" {
+                compile.alignment_paths = "timing/english-paths.json".into();
+            }
+            let result = compile_to_dir(&candidate, &compile).unwrap();
+            assert_eq!(result["semantic_event_count"], events);
+            let contract = get(&candidate.join(format!("delivery-{language}/contract.json")));
+            assert_eq!(
+                contract["cues"][0]["duration_samples"],
+                if language == "es" { 96000 } else { 144000 }
+            );
+            assert_eq!(
+                contract["cues"][1]["duration_samples"],
+                if language == "es" { 88000 } else { 136000 }
+            );
+        }
+        assert_eq!(
+            after["scene.json"]["language_event_bindings"]["en"],
+            docs["scene.json"]["language_event_bindings"]["en"]
+        );
+    }
+}
+#[test]
 fn explicit_new_picture_compiles_with_append_only_revision_and_protected_english() {
     let temp = tempfile::tempdir().unwrap();
     let source = temp.path().join("source");
