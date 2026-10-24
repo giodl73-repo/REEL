@@ -332,6 +332,7 @@ fn artifact_export_rejects_bad_locks_paths_modes_and_budgets_before_output() {
     for value in [
         json!([{ "role":"recording","path":"a"},{"role":"recording","path":"a/child"}]),
         json!([{ "role":"recording","path":"A.wav"},{"role":"recording","path":"a.wav"}]),
+        json!([{ "role":"recording","path":"É.wav"},{"role":"recording","path":"é.wav"}]),
     ] {
         let mut x = base.clone();
         x["files"] = value;

@@ -222,7 +222,7 @@ fn execute(root: &Path, spec: &Path, dry_run: bool) -> Result<Value> {
     let mut unique = BTreeMap::new();
     for mapping in &request.files {
         relative(&mapping.path)?;
-        let path = mapping.path.to_ascii_lowercase();
+        let path = mapping.path.to_lowercase();
         if !targets.insert(path.clone()) {
             return Err("Duplicate or reserved export target".into());
         }
@@ -245,7 +245,7 @@ fn execute(root: &Path, spec: &Path, dry_run: bool) -> Result<Value> {
             }
         }
     }
-    let receipt = json!({"schema":"reel.artifact-export-receipt.v1","artifact_id":lock["artifact_id"],"version_id":request.version_id,"manifest_sha256":request.manifest_sha256,"request_sha256":format!("{:x}",Sha256::digest(&raw)),"files":selected,"payload_bytes_copied":total,"source_objects_verified":unique.len(),"archive_probed":false,"cache_payloads_written":0,"selection_changed":false,"creative_authority":"not-granted-by-export"});
+    let receipt = json!({"schema":"reel.artifact-export-receipt.v1","artifact_id":lock["artifact_id"],"version_id":request.version_id,"manifest_sha256":request.manifest_sha256,"request_sha256":format!("{:x}",Sha256::digest(&raw)),"files":selected,"payload_bytes_copied":total,"source_objects_verified":unique.len(),"automatic_archive_lookup":false,"cache_payloads_written":0,"selection_changed":false,"creative_authority":"not-granted-by-export"});
     let receipt_bytes = serde_json::to_vec(&receipt)?;
     if receipt_bytes.len() > 256 * 1024 {
         return Err("Artifact export receipt exceeds budget".into());
@@ -258,7 +258,7 @@ fn execute(root: &Path, spec: &Path, dry_run: bool) -> Result<Value> {
     }
     if dry_run {
         return Ok(
-            json!({"schema":"reel.artifact-export-plan.v1","artifact_id":lock["artifact_id"],"version_id":request.version_id,"manifest_sha256":request.manifest_sha256,"request_sha256":receipt["request_sha256"],"files":selected,"planned_copy_bytes":total,"source_objects_verified":sources.len(),"payload_bytes_copied":0,"cache_payloads_written":0,"selection_changed":false,"archive_probed":false,"copy_authorized":false}),
+            json!({"schema":"reel.artifact-export-plan.v1","artifact_id":lock["artifact_id"],"version_id":request.version_id,"manifest_sha256":request.manifest_sha256,"request_sha256":receipt["request_sha256"],"files":selected,"planned_copy_bytes":total,"source_objects_verified":sources.len(),"payload_bytes_copied":0,"cache_payloads_written":0,"selection_changed":false,"automatic_archive_lookup":false,"copy_authorized":false}),
         );
     }
     fs::create_dir(&output)?;
@@ -283,7 +283,7 @@ fn execute(root: &Path, spec: &Path, dry_run: bool) -> Result<Value> {
     file.write_all(&receipt_bytes)?;
     file.sync_all()?;
     Ok(
-        json!({"schema":"reel.artifact-export-summary.v1","files":selected.len(),"source_objects_verified":sources.len(),"payload_bytes_copied":total,"cache_payloads_written":0,"selection_changed":false,"archive_probed":false,"private_receipt":output.join(RECEIPT)}),
+        json!({"schema":"reel.artifact-export-summary.v1","files":selected.len(),"source_objects_verified":sources.len(),"payload_bytes_copied":total,"cache_payloads_written":0,"selection_changed":false,"automatic_archive_lookup":false,"private_receipt":output.join(RECEIPT)}),
     )
 }
 
