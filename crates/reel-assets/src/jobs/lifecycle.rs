@@ -44,7 +44,7 @@ fn publish(root: &Path, cfg: &crate::Config, cache: &Path, path: &Path) -> Resul
     }
     let oid = format!("{:x}", h.finalize());
     if active_existing(cfg, &oid, size)?.is_none() {
-        recover(root, path, cache, &oid, size)?;
+        recover_job_output(root, path, cache, &oid, size)?;
     }
     Ok(json!({"sha256":oid,"bytes":size,"cache_uri":format!("cache://sha256/{oid}")}))
 }
@@ -208,7 +208,7 @@ pub(super) fn publish_and_retire(
         .create_new(true)
         .open(&registration)?
         .write_all(&serde_json::to_vec(&json!({"assets":assets}))?)?;
-    crate::registry::register(root, &registration)?;
+    crate::registry::register_job_outputs(root, &registration)?;
     // Prove that every retained artifact really exists at its canonical E/D
     // locator before deleting scratch. No archive fallback or reserve override.
     for asset in assets {

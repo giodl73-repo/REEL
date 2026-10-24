@@ -78,6 +78,12 @@ after its manifest and outputs are registered and its reservation is gone.
 The exception must not become an automatic retry/retention policy.
 
 The job budget is a watchdog/admission contract, not an OS filesystem quota.
+
+After media execution, completed-output promotion receipts and retirement
+registration wait up to 30 seconds for the producer metadata lock. They never
+rerun a tool, repeat a media copy while waiting, or release another writer's
+lock. Ordinary metadata and capacity transactions retain their two-second
+wait bound. Publication still fails closed if the bounded wait expires.
 Programs remain responsible for placing intermediates inside staging. Per-job
 cleanup avoids accumulation but does not replace asset version/tiering policy.
 
