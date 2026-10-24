@@ -9,6 +9,7 @@ import json
 import math
 from pathlib import Path
 import random
+import zipfile
 from local_song_backend import checked, descriptor, offline, read, write
 from local_song_piano_arrangement import native
 
@@ -87,6 +88,9 @@ def build(q):
     write('layer-source.json',source);sr=native(q,'music-source-validate','layer-source.json');binding=dict(manifest='layer-source.json',manifest_sha256=sr['manifest_sha256'],contract_sha256=sr['contract_sha256'],decoded_pcm_sha256=source['media']['decoded_pcm_sha256'])
     grouped={};ledgers={};summary=read('transcription-evidence.json')
     for kind in ['piano','guitar','band','voice']:
+        if kind=='voice' and kind not in q['measured']:
+            if q.get('source_mode')!='instrumental':raise ValueError('Only an explicitly instrumental source may omit a vocal layer')
+            grouped[kind]=[];continue
         checked(kind+'-notes.json',q['measured'][kind]);data=read(kind+'-notes.json');groups={}
         if not data.get('validation_passed',False):raise ValueError('Failed source note validation cannot enter a playable layer')
         if data['source']!=(q['vocal_estimate'] if kind=='voice' else q['recording']):raise ValueError('Measured source differs from full Golden')
@@ -122,7 +126,11 @@ def build(q):
         # All source/analysis bindings are relative to the root job directory.
         analysis_name=kind+'-analysis.json';write(analysis_name,analysis);ar=native(q,'music-analysis-validate',analysis_name)
         auth=dict(source['authority'],status='draft-not-reviewed',decision_refs=[])
-        model=dict(schema='reel.music-model.v0.1',model_id=q['artifact_id']+'-'+kind,source=binding,analyses=[dict(manifest=analysis_name,manifest_sha256=ar['manifest_sha256'],contract_sha256=ar['contract_sha256'],analysis_id=aid)],authority=auth,musical_timebase=timebase,duration_ticks=round(model_duration*1000),tempo_map=[dict(tick=0,microseconds_per_quarter=1000000,provenance=provenance('display-clock','Millisecond source clock; not an inferred musical tempo'))],meter_map=[dict(tick=0,numerator=4,denominator=4,provenance=provenance('display-clock','Unreviewed display placeholder'))],form=[dict(id='full-source',label='Complete selected full recording',range=dict(start=0,end=round(duration*1000)),provenance=provenance('display-clock','Exact complete source extent')),dict(id='postroll',label='Established edition postroll',range=dict(start=round(duration*1000),end=round(model_duration*1000)),provenance=provenance('display-clock','Explicit two-second edition postroll; original PCM prefix preserved'))],parts=native_parts,harmony=[],rhythm_cells=[],hooks=[],lyric_layers=[dict(id='canonical-poem',kind='canonical',language='es',path='lyrics.txt',sha256=q['canonical']['sha256'],authority=auth)],lead_sheet=None,expressive_timing=[],unknowns=analysis['limitations'],review=q['review'])
+        lyrics=[]
+        if q.get('canonical'):
+            checked('lyrics.txt',q['canonical']);lyrics=[dict(id='canonical-poem',kind='canonical',language='es',path='lyrics.txt',sha256=q['canonical']['sha256'],authority=auth)]
+        elif q.get('source_mode') not in ['instrumental','wordless-coro']:raise ValueError('A sung source requires its canonical text')
+        model=dict(schema='reel.music-model.v0.1',model_id=q['artifact_id']+'-'+kind,source=binding,analyses=[dict(manifest=analysis_name,manifest_sha256=ar['manifest_sha256'],contract_sha256=ar['contract_sha256'],analysis_id=aid)],authority=auth,musical_timebase=timebase,duration_ticks=round(model_duration*1000),tempo_map=[dict(tick=0,microseconds_per_quarter=1000000,provenance=provenance('display-clock','Millisecond source clock; not an inferred musical tempo'))],meter_map=[dict(tick=0,numerator=4,denominator=4,provenance=provenance('display-clock','Unreviewed display placeholder'))],form=[dict(id='full-source',label='Complete selected full recording',range=dict(start=0,end=round(duration*1000)),provenance=provenance('display-clock','Exact complete source extent')),dict(id='postroll',label='Established edition postroll',range=dict(start=round(duration*1000),end=round(model_duration*1000)),provenance=provenance('display-clock','Explicit two-second edition postroll; original PCM prefix preserved'))],parts=native_parts,harmony=[],rhythm_cells=[],hooks=[],lyric_layers=lyrics,lead_sheet=None,expressive_timing=[],unknowns=analysis['limitations'],review=q['review'])
         model_name=kind+'-model.json';write(model_name,model);mr=native(q,'music-model-validate',model_name);plan_name=kind+'-score-plan.json';native(q,'music-score-export-plan',model_name,'--output-path',plan_name);export_dir=Path('native-export-'+kind);native(q,'music-score-export-render',plan_name,model_name,'--output-dir',str(export_dir));er=native(q,'music-score-export-check',str(export_dir/'receipt.json'),plan_name,model_name,str(export_dir))
         folder.mkdir(exist_ok=True)
         for filename in ['score.mid','score.musicxml','receipt.json']:
@@ -136,6 +144,17 @@ def main():
     offline();q=read('layer-request.json')
     if q['schema']!='reel.recording-derived-arrangement-layers-request.v1' or q['permissions']!=dict(private_only=True,external_upload=False,public_release=False):raise ValueError('Explicit private source-derived layer request required')
     build(q)
+    # One bounded native output retains the complete layer family. Consumers
+    # address exact archive members; this avoids exceeding the job slot limit.
+    with zipfile.ZipFile('layer-payloads.zip','w',compression=zipfile.ZIP_DEFLATED) as archive:
+        for kind in ['piano','guitar','band','voice','spanish_guitar',*q['additional_definitions']]:
+            for suffix in ['analysis.json','model.json','score-plan.json','programs.json','checks.json','draft.json','arrangement-plan.json','omitted.json']:
+                path=Path(kind+'-'+suffix)
+                if path.exists():archive.write(path)
+            for directory in [Path(kind),Path('native-export-'+kind)]:
+                if directory.exists():
+                    for path in sorted(directory.iterdir()):
+                        if path.is_file():archive.write(path)
 
 
 if __name__=='__main__':main()

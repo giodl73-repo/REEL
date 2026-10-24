@@ -173,10 +173,19 @@ def edition(q):
     write('arranged-model.json',model);mr=native(q,'music-model-validate','arranged-model.json');native(q,'music-score-export-plan','arranged-model.json','--output-path','score-plan.json');native(q,'music-score-export-render','score-plan.json','arranged-model.json','--output-dir','native-score');checks=dict(model=mr,score_export=native(q,'music-score-export-check','native-score/receipt.json','score-plan.json','arranged-model.json','native-score'));checks.update(arrangement_plan(q,model,'arranged-model.json',mr,programs,'edition'));write('native-checks.json',checks);write('edition-programs.json',programs)
     assigned_midi('native-score/score.mid',programs,'arrangement.mid')
     for name in ['score.mid','score.musicxml','receipt.json']:os.link(Path('native-score')/name,name)
-    checked('vocals.wav',q['vocal_estimate']);vocal,vr=sf.read('vocals.wav',dtype='float32',always_2d=True)
-    if vr!=rate or vocal.shape!=(round(q['source_duration_seconds']*rate),2):raise ValueError('Exact full-Golden vocal extent differs')
-    padded=np.pad(vocal,((0,frames-len(vocal)),(0,0)));ff=checked(q['ffmpeg']['path'],q['ffmpeg']);metrics=[]
+    instrumental=q.get('source_mode')=='instrumental'
+    if instrumental:
+        if q.get('vocal_estimate') is not None:raise ValueError('Instrumental mode cannot bind an invented vocal stem')
+        padded=np.zeros_like(mix)
+    else:
+        checked('vocals.wav',q['vocal_estimate']);vocal,vr=sf.read('vocals.wav',dtype='float32',always_2d=True)
+        if vr!=rate or vocal.shape!=(round(q['source_duration_seconds']*rate),2):raise ValueError('Exact full-Golden vocal extent differs')
+        padded=np.pad(vocal,((0,frames-len(vocal)),(0,0)))
+    ff=checked(q['ffmpeg']['path'],q['ffmpeg']);metrics=[]
     for mode,audio in [('with_vocals',mix+padded),('without_vocals',mix)]:
+        if instrumental and mode=='without_vocals':
+            for suffix in ['.mp3','.flac']:os.link('with_vocals'+suffix,mode+suffix)
+            metrics.append(dict(metrics[0],mode=mode,identical_instrumental_binding=True));continue
         sf.write(mode+'-input.wav',audio,rate,subtype='FLOAT');metrics.append(dict(mode=mode,**encode_fixed(ff,mode+'-input.wav',mode+'.mp3')))
         subprocess.run([str(ff),'-v','error','-nostdin','-i',mode+'-input.wav','-af','alimiter=limit=0.95:level=false:latency=true','-c:a','flac','-sample_fmt','s32',mode+'.flac'],check=True,capture_output=True)
     write('edition-evidence.json',dict(schema='reel.existing-edition-render.v1',edition=q['style'],source_golden_lock=q['golden_lock'],source_duration_seconds=q['source_duration_seconds'],postroll_seconds=q['postroll_seconds'],duration_seconds=duration,source_vocal=q['vocal_estimate'],vocal_gain=1.0,vocal_regenerated=False,vocal_retimed=False,vocal_repitched=False,components=component_evidence,modes=metrics,mastering=dict(mode='fixed',dynamic_loudnorm_applied=False,limiter_auto_level=False),musical_approval=False));print('BOTH EXISTING-SCHEMA EDITION MODES RENDERED',q['style'],duration,flush=True)

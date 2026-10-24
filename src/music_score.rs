@@ -1506,6 +1506,7 @@ fn write_measure_voice(
 ) -> Result<String> {
     let mut xml = String::new();
     let mut cursor = measure.start;
+    let mut previous_interval = None;
     for note in part.notes.iter().filter(|note| {
         note.voice == voice
             && note.start_tick < measure.end
@@ -1513,6 +1514,11 @@ fn write_measure_voice(
     }) {
         let fragment_start = note.start_tick.max(measure.start);
         let fragment_end = (note.start_tick + note.duration_ticks).min(measure.end);
+        let chord = previous_interval == Some((note.start_tick, note.duration_ticks));
+        if strict_note_order && !chord && fragment_start < cursor {
+            bail!("instrumental voice overlaps without a declared same-interval chord");
+        }
+        previous_interval = Some((note.start_tick, note.duration_ticks));
         if fragment_start > cursor {
             xml.push_str(&write_rest(fragment_start - cursor, voice, staff, ppq));
         }
@@ -1523,6 +1529,9 @@ fn write_measure_voice(
             .map(|_| format!(" reel:midi-note=\"{}\"", note.midi_note))
             .unwrap_or_default();
         xml.push_str(&format!("      <note reel:note-id=\"{}\" reel:start-tick=\"{}\" reel:source-start-tick=\"{}\" reel:source-duration-ticks=\"{}\" reel:velocity=\"{}\"{unpitched_attribute}>", escape(&note.id), fragment_start, note.start_tick, note.duration_ticks, note.velocity));
+        if chord {
+            xml.push_str("<chord/>");
+        }
         if percussion_id.is_some() {
             xml.push_str(&format!("<unpitched><display-step>B</display-step><display-octave>4</display-octave></unpitched><duration>{}</duration>",fragment_end-fragment_start));
         } else {
@@ -1663,7 +1672,10 @@ fn write_musicxml(model: &MusicModel) -> Result<String> {
                 ));
             }
             let mut cursor = 0;
+            let mut previous_interval = None;
             for note in part.notes.iter().filter(|note| note.voice == *voice) {
+                let chord = previous_interval == Some((note.start_tick, note.duration_ticks));
+                previous_interval = Some((note.start_tick, note.duration_ticks));
                 if note.start_tick > cursor {
                     xml.push_str(&format!(
                         "      <forward><duration>{}</duration></forward>\n",
@@ -1671,7 +1683,7 @@ fn write_musicxml(model: &MusicModel) -> Result<String> {
                     ));
                 }
                 let (step, alter, octave) = midi_pitch(note.midi_note);
-                xml.push_str(&format!("      <note reel:start-tick=\"{}\" reel:velocity=\"{}\"><pitch><step>{}</step>{}<octave>{}</octave></pitch><duration>{}</duration><voice>{}</voice></note>\n", note.start_tick, note.velocity, step, if alter == 0 { String::new() } else { format!("<alter>{alter}</alter>") }, octave, note.duration_ticks, note.voice));
+                xml.push_str(&format!("      <note reel:start-tick=\"{}\" reel:velocity=\"{}\">{}<pitch><step>{}</step>{}<octave>{}</octave></pitch><duration>{}</duration><voice>{}</voice></note>\n", note.start_tick, note.velocity, if chord { "<chord/>" } else { "" }, step, if alter == 0 { String::new() } else { format!("<alter>{alter}</alter>") }, octave, note.duration_ticks, note.voice));
                 cursor = note.start_tick + note.duration_ticks;
             }
             if cursor < model.duration_ticks {

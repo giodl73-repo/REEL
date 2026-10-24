@@ -35,6 +35,10 @@ fn instrumental_fixture(root: &Path) -> std::path::PathBuf {
     }
     right.notes[0].voice = 2;
     right.notes[0].duration_ticks = 4800;
+    let mut chord_note = right.notes[0].clone();
+    chord_note.id = "right-chord-extra".into();
+    chord_note.midi_note += 4;
+    right.notes.insert(1, chord_note);
     let mut left = model.parts[0].clone();
     left.id = "keys-left".into();
     left.name = "Keys left".into();
@@ -114,10 +118,11 @@ fn measured_instrumental_export_preserves_parts_ties_and_old_packets() {
     let receipt: serde_json::Value =
         serde_json::from_slice(&fs::read(packet.join("receipt.json")).unwrap()).unwrap();
     let comparison = &receipt["round_trip"]["instrumental_score"];
-    assert_eq!(comparison["source_notes"], 16);
+    assert_eq!(comparison["source_notes"], 17);
     assert_eq!(comparison["score_parts"], 3);
     assert_eq!(comparison["measures"], 3);
-    assert!(comparison["written_fragments"].as_u64().unwrap() > 16);
+    assert!(comparison["written_fragments"].as_u64().unwrap() > 17);
+    assert!(xml.contains("<chord/>"));
     let mut legacy = reel_music::model::load(&path).unwrap();
     legacy.instrumental_score = None;
     let legacy_path = temp.path().join("legacy.json");
