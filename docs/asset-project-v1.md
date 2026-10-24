@@ -197,3 +197,43 @@ requires real private package/LFS restoration fixtures with a pinned tool revisi
 Project-specific authoring web tools and music tooling are separate ports. Their
 interfaces should consume generic declarative scene, asset, arrangement and
 songbook contracts; private catalogues and creative decisions remain upstream.
+
+## Reusing a song or poem output as a source
+
+The default input/output separation stays strict. A completed song's listening
+copy or a poem's reading text can nevertheless be the exact source of another
+artifact. Projects may explicitly declare this in
+`registry/source-output-reuse.json` (`reel.source-output-reuse.v1`). Each entry
+locks one producer version/manifest, one role and hash, and named consumer logical
+IDs. Existing immutable packages and contracts are preserved.
+
+Only `song` recording/listening roles and `poem` reading/body roles are accepted.
+The registered producer package is freshly hash-checked from configured active
+caches; its kind, scope, role and output identity must match the declaration.
+Movie/episode outputs are not eligible. Per-version role separation and the ban
+on dependencies targeting output-containing versions still apply. Removing a
+grant restores the strict cross-version rejection; there is no implicit grant
+from a shared hash, filename, current selection, or imported report.
+
+Example entry (synthetic identities):
+
+```json
+{
+  "schema": "reel.source-output-reuse.v1",
+  "entries": [{
+    "producer": {
+      "logical_id": "song/example",
+      "version_id": "golden-v1",
+      "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "source_kind": "song",
+    "role": "listening",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "consumers": ["music-video/example"]
+  }]
+}
+```
+
+The file is bounded to 256 KiB, 64 entries and 64 named consumers per entry. Loading it
+reads metadata only: it starts no render, hydration, archive recovery or deletion.
+It grants no creative, likeness, voice, licensing or publication approval.
