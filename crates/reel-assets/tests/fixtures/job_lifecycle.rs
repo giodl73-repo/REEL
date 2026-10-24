@@ -4,6 +4,10 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     match args[1].as_str() {
         "copy" => { fs::copy(&args[2], &args[3]).unwrap(); }
+        "new-output-directory" => {
+            fs::create_dir(std::path::Path::new(&args[3]).parent().unwrap()).unwrap();
+            fs::copy(&args[2], &args[3]).unwrap();
+        }
         "mutate" => {
             fs::write(&args[2], b"changed").unwrap();
             fs::copy(&args[2], &args[3]).unwrap();

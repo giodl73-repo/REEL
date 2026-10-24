@@ -35,6 +35,22 @@ installation is verified and pinned read-only; each step rechecks its hash.
 Installed executable bytes are not copied or counted as staging input bytes.
 This contract is for trusted programs, not a security sandbox.
 
+## Native output directories
+
+By default the runner creates declared output parent directories before starting
+steps. A recipe for a native create-new/no-clobber producer may explicitly set
+`"prepare_output_parents": false`. The producer then creates its own output
+directories inside the admitted workspace. This lets the native renderer write
+its full delivery directly, with no shell wrapper or second copy of the tree.
+Files/inputs still prepare their own parent directories; choose separate output
+paths when the producer requires a new directory.
+
+Every retained output must still be declared. Path checks, immutable input
+handles, timeout/workspace bounds, fresh output verification, publication and
+scratch retirement are unchanged. Missing outputs fail; this option never
+permits overwriting an existing input or bypasses a producer's no-clobber check.
+Older runners reject the field; qualify and pin the matching runtime explicitly.
+
 ## Default completion and failure behavior
 
 Normal jobs publish declared outputs, register the exact request and retained
