@@ -1,5 +1,13 @@
 const test=require('node:test');const assert=require('node:assert/strict');const ui=require('../src/cel_sorter.js');
 const rows=[{semantic_id:'a',picture_binding:'one',frames:41},{semantic_id:'b',picture_binding:'two',frames:59}];
+test('native recordings preserve independent cue clocks and exact seek boundaries',()=>{
+ const recordings=[{cue_id:'one',sha256:'a'.repeat(64),src:'media/'+'a'.repeat(64)+'.wav',bytes:100,samples:96,sample_rate:48,start_seconds:0},{cue_id:'two',sha256:'b'.repeat(64),src:'media/'+'b'.repeat(64)+'.wav',bytes:120,samples:88,sample_rate:44,start_seconds:2}];
+ const session={media_mode:'native-recordings',movie:null,recordings,cues:recordings.map(({cue_id,samples,sample_rate,start_seconds})=>({cue_id,samples,sample_rate,start_seconds}))};
+ const actual=ui.recordings(session);assert.deepEqual(ui.recordingAt(actual,1.5),{index:0,local:1.5});assert.deepEqual(ui.recordingAt(actual,2),{index:1,local:0});assert.deepEqual(ui.recordingAt(actual,3.5),{index:1,local:1.5});assert.deepEqual(ui.recordingAt(actual,99),{index:1,local:2});
+ for(const mutate of [s=>s.movie='performance.mp4',s=>s.recordings.pop(),s=>s.recordings[1].cue_id='one',s=>s.recordings[1].start_seconds=1.9,s=>s.recordings[1].sample_rate=48,s=>s.recordings[1].src='../private.wav',s=>s.recordings[1].samples=0,s=>s.recordings[1].bytes=-1]){const bad=structuredClone(session);mutate(bad);assert.throws(()=>ui.recordings(bad));}
+ assert.equal(ui.recordings({media_mode:'controls-only'}),null);assert.equal(ui.recordings({movie:'performance.mp4'}),null);
+ assert.equal(ui.recordings({media_mode:'native-recordings',sample_rate:48,end_sample:96,recordings:[recordings[0]]}).length,1);
+});
 test('frame starts follow reordered holds',()=>assert.deepEqual(ui.starts([...rows].reverse()),[0,59]));
 test('fit is exact, positive and preserves stable identities',()=>{const fit=ui.fit(rows,123);assert.equal(fit.reduce((s,r)=>s+r.frames,0),123);assert.equal(fit[0].semantic_id,'a');assert(fit.every(r=>r.frames>0));assert.equal(rows[0].frames,41);});
 test('reject duplicates, missing coverage and foreign images',()=>{assert(ui.valid(rows,rows,100));assert(!ui.valid([rows[0],rows[0]],rows,82));assert(!ui.valid(rows,rows,99));assert(!ui.valid([{...rows[0],picture_binding:'foreign',frames:100}],rows,100));});

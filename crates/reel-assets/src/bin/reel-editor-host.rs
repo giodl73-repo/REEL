@@ -172,15 +172,25 @@ impl Bundle {
                     .as_object()
                     .ok_or("Missing native image map")?;
                 if session["media_mode"] == "controls-only" {
-                    if !images.is_empty() || !session["movie"].is_null() {
+                    if !images.is_empty()
+                        || !session["movie"].is_null()
+                        || !session["recordings"].is_null()
+                    {
                         return Err("Controls-only session declares media".into());
                     }
                 } else {
-                    if !session["media_mode"].is_null() || session["movie"] != "performance.mp4" {
+                    let native = session["media_mode"] == "native-recordings";
+                    if if native {
+                        !session["movie"].is_null()
+                    } else {
+                        !session["media_mode"].is_null()
+                            || session["movie"] != "performance.mp4"
+                            || !session["recordings"].is_null()
+                    } {
                         return Err("Unsupported cel media route".into());
                     }
                     let folder = root.join("media");
-                    if !images.is_empty() {
+                    if !images.is_empty() || native {
                         let m = fs::symlink_metadata(&folder)?;
                         if !m.is_dir() || m.file_type().is_symlink() {
                             return Err("Media directory must be local and regular".into());
@@ -208,7 +218,7 @@ impl Bundle {
                             return Err("Image route requires a SHA-256 filename".into());
                         }
                         if !assets.contains_key(name) {
-                            if assets.len() >= 515 {
+                            if assets.len() >= 643 {
                                 return Err("Editor resource count exceeds budget".into());
                             }
                             let resource = media(
@@ -228,21 +238,74 @@ impl Bundle {
                             assets.insert(name.into(), resource);
                         }
                     }
-                    let movie = media(
-                        &root,
-                        "performance.mp4",
-                        None,
-                        "video/mp4",
-                        MEDIA_LIMIT - total,
-                        deadline,
-                    )?;
-                    if total
-                        .checked_add(movie.bytes)
-                        .is_none_or(|n| n > MEDIA_LIMIT)
-                    {
-                        return Err("Editor media set exceeds budget".into());
+                    if native {
+                        let recordings = session["recordings"]
+                            .as_array()
+                            .ok_or("Missing native recordings")?;
+                        if recordings.is_empty() || recordings.len() > 128 {
+                            return Err("Native recording count exceeds budget".into());
+                        }
+                        let mut cues = std::collections::BTreeSet::new();
+                        for recording in recordings {
+                            let cue = recording["cue_id"]
+                                .as_str()
+                                .ok_or("Missing recording cue")?;
+                            if cue.is_empty() || cue.len() > 256 || !cues.insert(cue) {
+                                return Err("Invalid or duplicate recording cue".into());
+                            }
+                            let hash = recording["sha256"]
+                                .as_str()
+                                .ok_or("Missing recording hash")?;
+                            let name =
+                                recording["src"].as_str().ok_or("Missing recording route")?;
+                            if hash.len() != 64
+                                || !hash
+                                    .bytes()
+                                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                                || name != format!("media/{hash}.wav")
+                            {
+                                return Err("Recording requires a SHA-256 WAV route".into());
+                            }
+                            if !assets.contains_key(name) {
+                                if assets.len() >= 643 {
+                                    return Err("Editor resource count exceeds budget".into());
+                                }
+                                let resource = media(
+                                    &root,
+                                    name,
+                                    Some(hash),
+                                    "audio/wav",
+                                    MEDIA_LIMIT - total,
+                                    deadline,
+                                )?;
+                                if recording["bytes"].as_u64() != Some(resource.bytes) {
+                                    return Err("Recording byte count mismatch".into());
+                                }
+                                total = total
+                                    .checked_add(resource.bytes)
+                                    .ok_or("Media budget overflow")?;
+                                assets.insert(name.into(), resource);
+                            } else if recording["bytes"].as_u64() != Some(assets[name].bytes) {
+                                return Err("Conflicting recording byte counts".into());
+                            }
+                        }
+                    } else {
+                        let movie = media(
+                            &root,
+                            "performance.mp4",
+                            None,
+                            "video/mp4",
+                            MEDIA_LIMIT - total,
+                            deadline,
+                        )?;
+                        if total
+                            .checked_add(movie.bytes)
+                            .is_none_or(|n| n > MEDIA_LIMIT)
+                        {
+                            return Err("Editor media set exceeds budget".into());
+                        }
+                        assets.insert("performance.mp4".into(), movie);
                     }
-                    assets.insert("performance.mp4".into(), movie);
                 }
             }
             _ => return Err("Unsupported native editor session".into()),
@@ -890,6 +953,47 @@ mod tests {
             vec![b' '; CONTROL_LIMIT as usize + 1],
         )
         .unwrap();
+        assert!(Bundle::open(d.path()).is_err());
+    }
+    #[test]
+    fn native_recordings_are_hashed_bounded_and_confined_to_declared_routes() {
+        let d = fixture("reel.cel-sorter-session.v4");
+        fs::create_dir(d.path().join("media")).unwrap();
+        let body = b"synthetic recording";
+        let hash = format!("{:x}", Sha256::digest(body));
+        let name = format!("media/{hash}.wav");
+        fs::write(d.path().join(&name), body).unwrap();
+        let session = json!({"schema":"reel.cel-sorter-session.v4","media_mode":"native-recordings","movie":null,"images":{},"recordings":[{"cue_id":"one","sha256":hash,"src":name,"bytes":body.len()},{"cue_id":"two","sha256":hash,"src":name,"bytes":body.len()}]});
+        let save = |s: &Value| {
+            fs::write(
+                d.path().join("session.json"),
+                serde_json::to_vec(s).unwrap(),
+            )
+            .unwrap()
+        };
+        save(&session);
+        let bundle = Bundle::open(d.path()).unwrap();
+        assert_eq!(bundle.assets.len(), 4);
+        assert_eq!(bundle.assets[&name].mime, "audio/wav");
+        let response = exchange(&bundle, "GET", &name, "Range: bytes=1-3\r\n");
+        assert!(response.starts_with(b"HTTP/1.1 206"));
+        for (key, value) in [
+            ("src", json!("../private.wav")),
+            ("sha256", json!("f".repeat(64))),
+            ("bytes", json!(1)),
+            ("cue_id", json!("one")),
+        ] {
+            let mut bad = session.clone();
+            bad["recordings"][1][key] = value;
+            save(&bad);
+            assert!(Bundle::open(d.path()).is_err());
+        }
+        let mut bad = session.clone();
+        bad["movie"] = json!("performance.mp4");
+        save(&bad);
+        assert!(Bundle::open(d.path()).is_err());
+        save(&session);
+        fs::write(d.path().join(&name), b"tampered recording").unwrap();
         assert!(Bundle::open(d.path()).is_err());
     }
     #[test]

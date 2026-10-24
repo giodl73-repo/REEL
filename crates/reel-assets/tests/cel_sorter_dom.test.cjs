@@ -1,4 +1,28 @@
 const test=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs');
+test('primary recording UI handles pending seeks, cue transitions and blocked playback',async()=>{
+ class Element {
+  constructor(tag='div'){this.tagName=tag.toUpperCase();this.children=[];this.listeners={};this.dataset={};this.value='';this.classList={toggle(){},add(){},remove(){}};this.paused=true;this.readyState=1;this.currentTime=0;this.duration=2;this.playCalls=0;}
+  append(...items){this.children.push(...items);}replaceChildren(...items){this.children=items;}
+  addEventListener(name,fn,opts={}){(this.listeners[name]??=[]).push({fn,once:opts.once});}
+  emit(name){const events=this.listeners[name]||[];this.listeners[name]=events.filter(e=>!e.once);for(const e of events)e.fn({target:this});}
+  setAttribute(name,value){this[name]=value;}click(){this.emit('click');this.onclick?.();}
+  pause(){this.paused=true;}play(){this.playCalls++;this.paused=false;return this.block?Promise.reject(Error('blocked')):Promise.resolve();}load(){this.readyState=0;this.currentTime=0;}
+ }
+ const elements=new Map(),element=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
+ const document={getElementById:element,createElement:tag=>new Element(tag),querySelectorAll:()=>element('filmstrip').children};
+ const rows=[{semantic_id:'a',picture_binding:'one',cue_id:'first',samples:96,sample_rate:48},{semantic_id:'b',picture_binding:'two',cue_id:'second',samples:88,sample_rate:44}];
+ const recordings=rows.map((r,i)=>({cue_id:r.cue_id,samples:r.samples,sample_rate:r.sample_rate,start_seconds:i*2,sha256:String(i+1).repeat(64),src:'media/'+String(i+1).repeat(64)+'.wav',bytes:100}));
+ const session={schema:'reel.cel-sorter-session.v4',language:'es',expected_project:'a'.repeat(64),expected_inputs:{scene:'locked'},scene_id:'test',rows,images:{one:'one.png',two:'two.png'},cues:recordings,recordings,media_mode:'native-recordings',movie:null,total_seconds:4,fps_numerator:24,fps_denominator:1};
+ let tick;
+ vm.runInNewContext(fs.readFileSync(require.resolve('../src/cel_sorter.js'),'utf8'),{document,fetch:async()=>({ok:true,json:async()=>session}),structuredClone,Blob,TextEncoder,URL,localStorage:{getItem(){},setItem(){}},requestAnimationFrame:fn=>tick=fn,setTimeout,confirm:()=>true});
+ await new Promise(setImmediate);const a=element('audio'),slider=element('seek');assert.equal(a.src,recordings[0].src);assert.match(element('media-notice').textContent,/Primary recordings/);
+ // Rapid seeks while the next cue is loading must apply only the newest target.
+ slider.value=3;slider.oninput();assert.equal(a.src,recordings[1].src);assert.equal(a.readyState,0);slider.value=3.5;slider.oninput();a.readyState=1;a.emit('loadedmetadata');assert.equal(a.currentTime,1.5);tick();assert.match(element('preview').alt,/b/);assert.equal(slider.value,3.5);
+ // A paused seek stays paused. Returning to cue one and ending playback advances.
+ assert.equal(a.playCalls,0);slider.value=0;slider.oninput();a.readyState=1;a.emit('loadedmetadata');assert.equal(a.currentTime,0);a.currentTime=2;a.emit('ended');a.readyState=1;a.emit('loadedmetadata');await new Promise(setImmediate);assert.equal(a.src,recordings[1].src);assert.equal(a.currentTime,0);assert.equal(a.playCalls,1);
+ // Browsers may block resumed playback; preserve the clock and offer Play.
+ a.block=true;slider.value=.5;slider.oninput();a.readyState=1;a.emit('loadedmetadata');await new Promise(setImmediate);assert.match(element('status').textContent,/Press Play/);a.emit('error');assert.match(element('status').textContent,/could not be played/);
+});
 // Execute the exported editor and its handlers against a minimal synthetic DOM.
 // This tests UI wiring; it is not a browser layout, media or visual acceptance test.
 for(const controls of [false,true])for(const scoped of [false,true])test('exported multi-cue UI preserves scope and comments '+(scoped?'v4':'v3')+(controls?' controls-only':' media'),async()=>{

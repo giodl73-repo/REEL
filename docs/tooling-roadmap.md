@@ -1,6 +1,6 @@
 # Reusable authoring tools roadmap
 
-Checkpoint: 2026-10-23. REEL owns generic Rust engines, explicit CLI/UI entry
+Checkpoint: 2026-10-24. REEL owns generic Rust engines, explicit CLI/UI entry
 points and synthetic fixtures. Project repositories own private declarative
 controls, media, exact versions, authority and delivery choices. Merging source
 does not install a binary or retarget an active project/runtime.
@@ -17,6 +17,12 @@ does not install a binary or retarget an active project/runtime.
 | Speech and episode assembly extensions | Separate draft PR120 (local speech/alignment) and PR128 (bounded lossless assembly). | Their owners must close the documented adoption/review gaps. They are not implicitly merged by the cel-tooling milestone. |
 
 ## Next bounded units
+
+The cel exporter also supports explicit primary-recording playback without a
+compiled preview movie; see the [editor contract](cel-sorter-v1.md). Its browser
+preview follows native cue clocks and permits loading pauses between recordings.
+Private Spanish and English movie-transport fixtures are retained in the producing
+project; those automated checks do not grant human picture/listening acceptance.
 
 1. Close cel-tool adoption with one explicitly chosen private multi-cue scene:
    open the supplied project, edit within cues, preserve comments, apply to a
