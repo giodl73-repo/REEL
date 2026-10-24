@@ -30,3 +30,5 @@ source-layer tests cover invalid spans, false lead selection, lost/transposed
 notes, retiming, polyphony and deterministic source preservation. No Rust core
 code changes are needed. Rendering all eight arrangement styles and producing
 readable reviewed books remain downstream qualification work.
+
+`local_song_note_quarantine.py` supports a separately authored bounded subset when a small number of raw model events have invalid spans. It preserves every rejected identity and both raw events, changes no retained pitch/start/end, and leaves the original capture failed. The request declares an absolute count and fraction cap; mass failures cannot pass this path. Seven synthetic tests cover the bounds, event pairing, source extents and immutable valid spans. This is a partial study disposition, not automatic musical acceptance.
