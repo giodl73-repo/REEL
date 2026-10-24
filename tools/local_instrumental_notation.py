@@ -36,13 +36,20 @@ def chord_voices(notes,maximum=4):
     for note in notes:groups.setdefault((note['start_tick'],note['duration_ticks']),[]).append(note)
     ends=[];out=[]
     for (start,length),group in sorted(groups.items()):
-        if len({n['midi_note'] for n in group})!=len(group):raise ValueError('Duplicate pitch in one proposed chord needs explicit review')
-        voice=next((i for i,end in enumerate(ends) if end<=start),len(ends))
-        if voice==len(ends):
-            if len(ends)>=maximum:raise ValueError('Reading score exceeds four independent voices per staff')
-            ends.append(0)
-        ends[voice]=start+length
-        out.extend(dict(note,voice=voice+1) for note in group)
+        # Quantization can put distinct captured unisons on one nominal chord.
+        # Retain every event on an independent voice rather than dropping it.
+        lanes=[]
+        for note in group:
+            lane=next((lane for lane in lanes if all(n['midi_note']!=note['midi_note'] for n in lane)),None)
+            if lane is None:lane=[];lanes.append(lane)
+            lane.append(note)
+        for lane in lanes:
+            voice=next((i for i,end in enumerate(ends) if end<=start),len(ends))
+            if voice==len(ends):
+                if len(ends)>=maximum:raise ValueError('Reading score exceeds independent voice capacity')
+                ends.append(0)
+            ends[voice]=start+length
+            out.extend(dict(note,voice=voice+1) for note in lane)
     return sorted(out,key=lambda n:(n['start_tick'],n['voice'],n['midi_note']))
 
 
@@ -78,6 +85,12 @@ def main():
         piano='piano' in part['name'].lower()
         try:single=chord_voices(notes);dense=False
         except ValueError:single=None;dense=True
+        if part['role']=='rhythm' and dense:
+            colored=chord_voices(notes,32)
+            for block in range((max(n['voice'] for n in colored)+3)//4):
+                pid=part['id']+'-percussion-'+str(block+1);subset=[dict(n,voice=n['voice']-4*block) for n in colored if 4*block<n['voice']<=4*(block+1)]
+                model['parts'].append(dict(part,id=pid,name=part['name']+' '+str(block+1),notes=subset));groups.append(dict(id=pid,name=part['name']+' '+str(block+1),staff_part_ids=[pid],clef='percussion'))
+            continue
         cuts=[]
         if piano or dense:
             for cut in sorted(range(48,77),key=lambda x:abs(x-60)):

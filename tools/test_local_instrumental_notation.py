@@ -18,6 +18,9 @@ class ReadingTests(unittest.TestCase):
         self.assertEqual(nearest(.5),1);self.assertEqual(nearest(-.5),-1)
     def test_chords_share_voice_without_losing_source_notes(self):
         rows=[dict(id=str(i),start_tick=0,duration_ticks=480,midi_note=p,voice=i+1) for i,p in enumerate([60,64,67,72,76])];out=chord_voices(rows);self.assertEqual(len(out),5);self.assertEqual({n['voice'] for n in out},{1});self.assertEqual([n['midi_note'] for n in out],[60,64,67,72,76])
+    def test_captured_unisons_on_same_grid_keep_distinct_events(self):
+        rows=[dict(id=str(i),start_tick=0,duration_ticks=125,midi_note=p,voice=1) for i,p in enumerate([60,60,60,64])];old=copy.deepcopy(rows);out=chord_voices(rows)
+        self.assertEqual(rows,old);self.assertEqual({n['id'] for n in out},{n['id'] for n in rows});self.assertEqual(len(out),4);self.assertEqual(len({n['voice'] for n in out if n['midi_note']==60}),3)
     def test_more_than_four_overlapping_independent_lines_is_rejected(self):
         with self.assertRaises(ValueError):chord_voices([dict(id=str(i),start_tick=i,duration_ticks=480,midi_note=60+i,voice=1) for i in range(5)])
     def test_dense_keyboard_uses_two_staves_without_losing_notes(self):
