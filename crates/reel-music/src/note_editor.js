@@ -43,16 +43,20 @@ if(typeof document!=='undefined')(async()=>{
  function remember(){history.push(structuredClone(edit));if(history.length>30)history.shift();}
  function persist(){try{localStorage.setItem(key,JSON.stringify(edit));}catch{message('Browser storage is unavailable. Save a draft to keep your work.');}}
  function update(){const valid=NoteEditor.valid(session,edit);$('save').disabled=!valid;$('undo').disabled=!history.length;message(valid?'Ready to save an unreviewed draft.':'Check note ranges, order, overlaps, the new model ID and reasons for changed notes.');if(valid)persist();}
- function render(){
-  const selected=$('part').value,part=session.parts.find(p=>p.id===selected),rows=part.notes.map(note=>edit.rows.find(r=>r.part_id===selected&&r.note_id===note.id)),pages=Math.max(1,Math.ceil(rows.length/100));page=Math.min(page,pages-1);
-  $('rows').replaceChildren();$('roll').replaceChildren();
+ function renderRoll(rows){
+  $('roll').replaceChildren();
   for(const row of rows){const rect=document.createElementNS('http://www.w3.org/2000/svg','rect');const finite=Number.isFinite(row.start_tick)&&Number.isFinite(row.duration_ticks)&&Number.isFinite(row.midi_note);if(!finite)continue;
    rect.setAttribute('x',String(Math.max(0,Math.min(960,row.start_tick/session.duration_ticks*960))));rect.setAttribute('y',String(142-row.midi_note/127*136));rect.setAttribute('width',String(Math.max(2,Math.min(960,row.duration_ticks/session.duration_ticks*960))));rect.setAttribute('height','5');rect.setAttribute('fill','#8ed0bd');const title=document.createElementNS('http://www.w3.org/2000/svg','title');title.textContent=row.note_id+' · '+NoteEditor.pitch(row.midi_note);rect.append(title);$('roll').append(rect);
   }
-  for(const row of rows.slice(page*100,(page+1)*100)){const tr=document.createElement('tr'),original=session.edit_request.rows.find(r=>r.part_id===row.part_id&&r.note_id===row.note_id),meta=document.createElement('td');meta.className='note-id';meta.textContent=row.note_id+' · voice '+part.notes.find(n=>n.id===row.note_id).voice;tr.append(meta);if(['midi_note','start_tick','duration_ticks'].some(k=>row[k]!==original[k]))tr.className='changed';
+ }
+ function render(){
+  const selected=$('part').value,part=session.parts.find(p=>p.id===selected),rows=part.notes.map(note=>edit.rows.find(r=>r.part_id===selected&&r.note_id===note.id)),pages=Math.max(1,Math.ceil(rows.length/100));page=Math.min(page,pages-1);
+  $('rows').replaceChildren();renderRoll(rows);
+  for(const row of rows.slice(page*100,(page+1)*100)){const tr=document.createElement('tr'),original=session.edit_request.rows.find(r=>r.part_id===row.part_id&&r.note_id===row.note_id),meta=document.createElement('td');meta.className='note-id';meta.textContent=row.note_id+' · voice '+part.notes.find(n=>n.id===row.note_id).voice;tr.append(meta);
+   const markChanged=()=>{tr.className=['midi_note','start_tick','duration_ticks'].some(k=>row[k]!==original[k])?'changed':'';};markChanged();
    for(const field of ['midi_note','start_tick','duration_ticks','rationale']){const td=document.createElement('td'),input=document.createElement(field==='rationale'?'textarea':'input');input.value=row[field];input.setAttribute('aria-label',row.note_id+' '+field.replaceAll('_',' '));
     if(field!=='rationale'){input.type='number';input.min=field==='duration_ticks'?'1':'0';input.max=field==='midi_note'?'127':String(session.duration_ticks);input.step='1';}else input.maxLength=4096;
-    input.addEventListener('change',()=>{remember();row[field]=field==='rationale'?input.value:input.value.trim()===''?NaN:Number(input.value);update();render();});td.append(input);tr.append(td);
+    input.addEventListener('change',()=>{remember();row[field]=field==='rationale'?input.value:input.value.trim()===''?NaN:Number(input.value);update();markChanged();renderRoll(rows);});td.append(input);tr.append(td);
    }$('rows').append(tr);
   }
   const underlay=session.lead_sheet?.melody_part_id===selected?session.lead_sheet.underlay:[];$('underlay').textContent=underlay.length?`${underlay.length} source-bound lyric spans retained. Lyric text and underlay are unchanged.`:'No lyric underlay edited in this workflow.';

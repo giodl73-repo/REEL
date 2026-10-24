@@ -34,7 +34,9 @@ async function harness(session=fixture()){
 test('actual exported handlers preserve edits through save/import/undo and render hostile labels as text',async()=>{
  const h=await harness();assert.equal(h.element('rows').children.length,4);assert.equal(h.element('save').disabled,false);
  assert.equal(h.element('part').children[0].textContent,'<img src=x onerror=alert(1)> · melody');assert.equal(h.element('roll').children.length,4);
+ const pitchInput=h.input('n0 midi note'),reasonInput=h.input('n0 rationale');
  h.change('n0 midi note','61');assert.equal(h.element('save').disabled,true);
+ assert.equal(h.input('n0 midi note'),pitchInput);assert.equal(h.input('n0 rationale'),reasonInput);assert.equal(h.element('rows').children[0].className,'changed');
  h.change('n0 rationale','Try a semitone higher');assert.equal(h.element('save').disabled,false);
  h.element('save').click();const edit=await h.download();assert.equal(edit.rows[0].midi_note,61);assert.equal(edit.rows[0].rationale,'Try a semitone higher');
  const lastSaved=h.saved.get(Editor.key(fixture()));h.change('n0 duration ticks','11');assert.equal(h.element('save').disabled,true);assert.equal(h.saved.get(Editor.key(fixture())),lastSaved);
