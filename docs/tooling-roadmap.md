@@ -29,6 +29,9 @@ project; those automated checks do not grant human picture/listening acceptance.
    new candidate, verify exact inputs, compile/render through the existing job
    system, review, and reopen the previous locked version. Browser layout and
    media acceptance are distinct from JSON/compiler tests. No automatic server.
+   [Locked artifact export](artifact-export-v1.md) provides an explicit dry run
+   and bounded working copy of selected historical package roles; reopening
+   still requires the matching native tools and semantic checks.
 2. Complete explicit scene/project adapter coverage for that episode family and
    a music-video family; reuse the existing native contracts and execution.
 3. Prove the [note workshop](music-note-editor-v1.md) and

@@ -37,6 +37,11 @@ their pinned runtime and controls until an explicit successor is qualified.
 
 ## Project profile
 
+[Locked artifact export](artifact-export-v1.md) reopens explicitly selected roles
+from a registered version into a new bounded working folder, with a read-only
+plan and independent verified copies. It never changes cache residency or current
+selections and never follows historical references implicitly.
+
 Keep `asset-project.json` in the asset repository. Machine paths belong in an
 ignored local storage file. For example:
 
