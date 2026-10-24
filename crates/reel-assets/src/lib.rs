@@ -288,6 +288,27 @@ impl Drop for Temporary {
 }
 
 pub fn recover(root: &Path, source: &Path, cache: &Path, oid: &str, size: u64) -> Result<PathBuf> {
+    recover_with_publication_wait(root, source, cache, oid, size, false)
+}
+
+pub(crate) fn recover_job_output(
+    root: &Path,
+    source: &Path,
+    cache: &Path,
+    oid: &str,
+    size: u64,
+) -> Result<PathBuf> {
+    recover_with_publication_wait(root, source, cache, oid, size, true)
+}
+
+fn recover_with_publication_wait(
+    root: &Path,
+    source: &Path,
+    cache: &Path,
+    oid: &str,
+    size: u64,
+    completed_job_output: bool,
+) -> Result<PathBuf> {
     if !valid_oid(oid) {
         return Err("Invalid SHA-256".into());
     }
@@ -311,7 +332,11 @@ pub fn recover(root: &Path, source: &Path, cache: &Path, oid: &str, size: u64) -
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => verify(&destination, oid, size)?,
         Err(e) => return Err(e.into()),
     }
-    let _lock = admission::worktree_lock(root)?;
+    let _lock = if completed_job_output {
+        admission::job_publication_lock(root)?
+    } else {
+        admission::worktree_lock(root)?
+    };
     let mut receipt = OpenOptions::new()
         .create(true)
         .append(true)

@@ -64,6 +64,9 @@ pub struct DeliveryProfile {
     pub score_gain_db: f64,
     pub score_fade_in_samples: u64,
     pub score_fade_out_samples: u64,
+    /// Dialogue trims are scoped to this scene language and exact selected take.
+    #[serde(default)]
+    pub dialogue_gain_by_cue: BTreeMap<String, DialogueGain>,
     #[serde(default = "default_sonic_gain_db")]
     pub sonic_gain_db: f64,
     #[serde(default)]
@@ -76,6 +79,23 @@ pub struct DeliveryProfile {
         BTreeMap<String, crate::scene_delivery::AudioChannelMapping>,
     #[serde(default)]
     pub sonic_placement_offsets_by_binding: BTreeMap<String, SonicPlacementOffset>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DialogueGain {
+    pub source_sha256: String,
+    pub gain_db: f64,
+}
+
+fn dialogue_gain_db(profile: &DeliveryProfile, cue: &str, source: &str) -> Result<Option<f64>> {
+    let Some(trim) = profile.dialogue_gain_by_cue.get(cue) else {
+        return Ok(None);
+    };
+    if trim.source_sha256 != source {
+        bail!("dialogue gain for cue {cue} does not match the selected recording");
+    }
+    Ok(Some(trim.gain_db))
 }
 
 #[derive(Deserialize)]
@@ -557,6 +577,16 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         || !profile.score_gain_db.is_finite()
         || !profile.sonic_gain_db.is_finite()
         || profile.sonic_gain_db.abs() > 60.0
+        || profile.dialogue_gain_by_cue.iter().any(|(cue, trim)| {
+            cue.is_empty()
+                || !trim.gain_db.is_finite()
+                || trim.gain_db.abs() > 60.0
+                || trim.source_sha256.len() != 64
+                || !trim
+                    .source_sha256
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        })
         || profile
             .sonic_gain_db_by_binding
             .iter()
@@ -574,6 +604,13 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         .languages
         .get(&request.language)
         .context("requested scene language missing")?;
+    if profile
+        .dialogue_gain_by_cue
+        .keys()
+        .any(|id| !lane.cues.iter().any(|cue| cue.cue_id == *id))
+    {
+        bail!("dialogue gain names a cue outside the selected scene language");
+    }
     let native = compile_native_event_spans(&request.language, lane, &alignments)?;
     let mut cues = Vec::new();
     let mut offset = 0u64;
@@ -779,6 +816,10 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
             "source":format!("objects/sha256/{}/{}", &take.sha256[..2],take.sha256),
             "start_seconds":0
         }));
+        if let Some(gain) = dialogue_gain_db(&profile, &cue.cue_id, &take.sha256)? {
+            audio.last_mut().unwrap()["gain_db"] = json!(gain);
+            audio_events.last_mut().unwrap()["gain_db"] = json!(gain);
+        }
         let speakers = cue
             .take_segments
             .iter()
