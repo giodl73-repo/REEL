@@ -1,9 +1,11 @@
 import copy
 import unittest
-from local_song_recording_layers import notation_voices, filter_layer, guitar_treatment
+from local_song_recording_layers import notation_voices, filter_layer, guitar_treatment,piano_bass_reduction
 
 
 class RecordingLayerTests(unittest.TestCase):
+    def test_declared_bass_reduction_preserves_selected_source_intervals(self):
+        parts=[dict(notes=[dict(id=1,start=0,end=1,pitch=40),dict(id=2,start=0,end=.5,pitch=55),dict(id=3,start=1,end=2,pitch=43),dict(id=4,start=1,end=2,pitch=72)])];prior=copy.deepcopy(parts);out,ledger=piano_bass_reduction(parts,dict(source='piano',selection='lowest-attack',midi_low=28,midi_high=60,program=32),'trio');self.assertEqual(parts,prior);self.assertEqual(out[0]['notes'],[parts[0]['notes'][0],parts[0]['notes'][2]]);self.assertEqual(ledger['excluded_note_ids'],[2,4]);self.assertFalse(ledger['recovered_bass_stem'])
     def test_notation_polyphony_partition_preserves_sounding_events(self):
         notes=[dict(id='a',start_tick=0,duration_ticks=10,midi_note=60),dict(id='b',start_tick=0,duration_ticks=10,midi_note=64),dict(id='c',start_tick=10,duration_ticks=10,midi_note=67)];old=copy.deepcopy(notes);result=notation_voices(notes)
         self.assertEqual(notes,old);self.assertEqual([n['voice'] for n in result],[1,2,1]);self.assertEqual([{k:v for k,v in n.items() if k!='voice'} for n in result],notes)

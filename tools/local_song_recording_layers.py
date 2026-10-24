@@ -78,6 +78,19 @@ def notation_voices(notes,maximum=16):
     return sorted(result,key=lambda n:(n['start_tick'],n['voice'],n['midi_note'],n['id']))
 
 
+def piano_bass_reduction(parts,definition,name):
+    """Declare a bass arrangement from measured piano attacks, not a new stem."""
+    if definition!=dict(source='piano',selection='lowest-attack',midi_low=28,midi_high=60,program=32):raise ValueError('Unsupported explicit piano-bass arrangement definition')
+    candidates=[n for p in parts for n in p['notes'] if 28<=n['pitch']<=60];groups=[]
+    for n in sorted(candidates,key=lambda n:(n['start'],n['pitch'],n['id'])):
+        if not groups or n['start']-groups[-1][0]['start']>.025:groups.append([n])
+        else:groups[-1].append(n)
+    notes=[copy.deepcopy(min(group,key=lambda n:(n['pitch'],n['start'],n['id']))) for group in groups]
+    if not notes:raise ValueError('No measured piano bass attacks available for the declared arrangement')
+    selected={n['id'] for n in notes};ledger=dict(method='Producer-arranged lowest piano attack reassigned to acoustic bass',source_kind='piano',source_note_count=sum(len(p['notes']) for p in parts),selected_note_ids=sorted(selected),excluded_note_ids=sorted(n['id'] for p in parts for n in p['notes'] if n['id'] not in selected),pitches_and_intervals_unchanged=True,recovered_bass_stem=False,human_musical_approval=False)
+    return [dict(id=name+'-piano-bass',source_kind='piano',name='Piano bass reduction',program=32,drums=False,arrangement_role='bass',notes=notes)],ledger
+
+
 def build(q):
     checked('source.json',q['source']);base=read('source.json');duration=q['duration_seconds'];authority=q['authority'];timebase=dict(pulses_per_quarter=1000,rounding='half-away-from-zero')
     # Millisecond display ticks preserve the estimator's 10ms event clock.
@@ -102,7 +115,12 @@ def build(q):
     for part in grouped['guitar']:
         notes,ledger=guitar_treatment(part['notes']);treated.append(dict(part,id='spanish-'+part['name'],program=24,notes=notes));ledgers[part['id']]=ledger
     grouped['spanish_guitar']=treated
-    for name,definition in q['additional_definitions'].items():grouped[name],_=filter_layer(grouped['band'],definition)
+    arrangement_ledgers={}
+    for name,definition in q['additional_definitions'].items():
+        grouped[name],_=filter_layer(grouped['band'],definition)
+        if not grouped[name] and definition.get('fallback'):
+            grouped[name],arrangement_ledgers[name]=piano_bass_reduction(grouped['piano'],definition['fallback'],name)
+    write('source-arrangement-ledger.json',arrangement_ledgers)
     models={};plans={}
     for kind,parts in grouped.items():
         if not parts:
@@ -118,9 +136,11 @@ def build(q):
                 start=round(n['start']*1000);end=round(n['end']*1000)
                 if not 0<=start<end<=round(model_duration*1000):raise ValueError('Arrangement treatment exceeds declared source/postroll extent')
                 oid=f'pitch-{pi:02}-{ni:05}';nid=kind+'-'+oid
-                observations.append(dict(id=oid,analyzer_id='muscriptor-recording',source=dict(start=round(n['start']*rate),end=min(source['media']['timebase']['samples_per_channel'],round(n['end']*rate))),confidence_millionths=0,uncertainty='Uncalibrated model note candidate; no numeric confidence measured; arrangement treatment is explicit where applicable',value=dict(kind='pitch',midi_note=n['pitch'],cents=0)))
-                notes.append(dict(id=nid,voice=voice,start_tick=start,duration_ticks=end-start,midi_note=n['pitch'],velocity=n['velocity'],provenance=provenance(oid,'Recording-derived MuScriptor note; explicit treatment ledger for Spanish guitar and hand-percussion colors')))
-            notes=notation_voices(notes);native_parts.append(dict(id=part['id'],role='rhythm' if part['drums'] else 'melody' if kind=='voice' and q.get('source_mode')=='wordless-coro' else 'vocal' if kind=='voice' else 'harmony',name=part['name'],notes=notes));programs.append(dict(id=part['id'],program=part['program'],drums=part['drums'],name=part['name'],source_kind=part['source_kind']))
+                uncertainty='Producer-arranged piano bass reassignment; not a recovered bass instrument' if part.get('arrangement_role') else 'Uncalibrated model note candidate; no numeric confidence measured; arrangement treatment is explicit where applicable'
+                observations.append(dict(id=oid,analyzer_id='muscriptor-recording',source=dict(start=round(n['start']*rate),end=min(source['media']['timebase']['samples_per_channel'],round(n['end']*rate))),confidence_millionths=0,uncertainty=uncertainty,value=dict(kind='pitch',midi_note=n['pitch'],cents=0)))
+                rationale='Measured piano pitch and interval retained under a declared acoustic-bass reassignment' if part.get('arrangement_role') else 'Recording-derived MuScriptor note; explicit treatment ledger for Spanish guitar and hand-percussion colors'
+                notes.append(dict(id=nid,voice=voice,start_tick=start,duration_ticks=end-start,midi_note=n['pitch'],velocity=n['velocity'],provenance=provenance(oid,rationale)))
+            notes=notation_voices(notes);native_parts.append(dict(id=part['id'],role='rhythm' if part['drums'] else 'bass' if part.get('arrangement_role')=='bass' else 'melody' if kind=='voice' and q.get('source_mode')=='wordless-coro' else 'vocal' if kind=='voice' else 'harmony',name=part['name'],notes=notes));programs.append(dict(id=part['id'],program=part['program'],drums=part['drums'],name=part['name'],source_kind=part['source_kind']))
         source_kind=parts[0]['source_kind'];weights=q['weights_by_kind'][source_kind]
         analysis=dict(schema='reel.music-analysis.v0.1',analysis_id=aid,source=binding,analyzers=[dict(id='muscriptor-recording',adapter='existing-muscriptor-recording-derived',version=q['muscriptor_version'],model_revision=weights['sha256'],parameters_sha256=descriptor('layer-request.json')['sha256'],license='Installed model and source library licenses apply',network_policy='denied')],stems=[],observations=observations,limitations=['Machine transcription requires musical review.','60 BPM and 4/4 are display placeholders, not source tempo/meter findings.','Unsupported source instruments are omitted.'],review=q['review'])
         # All source/analysis bindings are relative to the root job directory.
@@ -147,6 +167,7 @@ def main():
     # One bounded native output retains the complete layer family. Consumers
     # address exact archive members; this avoids exceeding the job slot limit.
     with zipfile.ZipFile('layer-payloads.zip','w',compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.write('source-arrangement-ledger.json')
         for kind in ['piano','guitar','band','voice','spanish_guitar',*q['additional_definitions']]:
             for suffix in ['analysis.json','model.json','score-plan.json','programs.json','checks.json','draft.json','arrangement-plan.json','omitted.json']:
                 path=Path(kind+'-'+suffix)

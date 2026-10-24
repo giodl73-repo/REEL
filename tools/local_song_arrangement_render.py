@@ -201,23 +201,32 @@ def layer(q):
     write('layer-evidence.json',dict(schema='reel.recording-derived-layer-render.v1',source_model=q['model'],source_midi=q['score_midi'],programs=q['programs'],duration_seconds=len(treated)/rate,frames=frames,sample_rate=rate,part_clock_audits=audits,filter=filters,preview=preview,renderer_policy='Existing MS Basic calibration samples; exact native key clocks; fixed-64 samples scaled by (velocity/64)^1.5; no RMS normalization',lossless_float_peak=float(np.max(np.abs(treated))),musical_approval=False));print('SOURCE LAYER RENDERED',q['kind'],len(treated)/rate,flush=True)
 
 
+def component_modes(component):
+    modes=component.get('modes',['with_vocals','without_vocals'])
+    if modes not in [['with_vocals','without_vocals'],['without_vocals']]:
+        raise ValueError('Unsupported edition component mode scope')
+    return modes
+
+
 def edition(q):
     import numpy as np
     import soundfile as sf
     from local_song_recording_layers import arrangement_plan
-    duration=q['duration_seconds'];rate=44100;frames=round(duration*rate);mix=np.zeros((frames,2),dtype=np.float32);model=None;programs=[];analyses=[];seen=set();component_evidence=[]
+    duration=q['duration_seconds'];rate=44100;frames=round(duration*rate);mix=np.zeros((frames,2),dtype=np.float32);without_extra=np.zeros_like(mix);model=None;programs=[];analyses=[];seen=set();component_evidence=[]
     for component in q['components']:
         checked(component['lossless_path'],component['lossless']);checked(component['model_path'],component['model']);checked(component['programs_path'],component['programs'])
         with np.load(component['lossless_path'],allow_pickle=False) as data:
             audio=data['audio'];sr=int(data['sample_rate'])
             if sr!=rate or audio.shape!=(frames,2):raise ValueError('Edition component clock differs')
-            mix+=audio*component['gain']
+            modes=component_modes(component)
+            if modes==['without_vocals']:without_extra+=audio*component['gain']
+            else:mix+=audio*component['gain']
         part_model=read(component['model_path']);part_programs=read(component['programs_path'])
         if model is None:model=copy.deepcopy(part_model);model['parts']=[]
         if part_model['source']!=model['source'] or part_model['duration_ticks']!=model['duration_ticks']:raise ValueError('Edition components use different source clocks')
         for binding in part_model['analyses']:
             if binding['analysis_id'] not in seen:analyses.append(binding);seen.add(binding['analysis_id'])
-        model['parts'].extend(copy.deepcopy(part_model['parts']));programs.extend(part_programs);component_evidence.append(dict(kind=component['kind'],gain=component['gain'],lossless=component['lossless'],model=component['model']))
+        model['parts'].extend(copy.deepcopy(part_model['parts']));programs.extend(part_programs);component_evidence.append(dict(kind=component['kind'],gain=component['gain'],lossless=component['lossless'],model=component['model'],modes=modes))
     if model is None:raise ValueError('No source-supported edition components')
     if len({p['id'] for p in model['parts']})!=len(model['parts']):raise ValueError('Duplicate edition source part')
     model['analyses']=analyses;model['model_id']=q['arrangement_id'];model['authority']=dict(model['authority'],artifact_id=q['arrangement_id'],content_sha256=q['authority']['sha256'])
@@ -231,6 +240,7 @@ def edition(q):
     assigned_midi('native-score/score.mid',programs,'arrangement.mid')
     for name in ['score.mid','score.musicxml','receipt.json']:os.link(Path('native-score')/name,name)
     instrumental=q.get('source_mode')=='instrumental'
+    if instrumental and np.any(without_extra):raise ValueError('Pure instrumental bindings must remain identical')
     if instrumental:
         if q.get('vocal_estimate') is not None:raise ValueError('Instrumental mode cannot bind an invented vocal stem')
         padded=np.zeros_like(mix)
@@ -239,13 +249,13 @@ def edition(q):
         if vr!=rate or vocal.shape!=(round(q['source_duration_seconds']*rate),2):raise ValueError('Exact full-Golden vocal extent differs')
         padded=np.pad(vocal,((0,frames-len(vocal)),(0,0)))
     ff=checked(q['ffmpeg']['path'],q['ffmpeg']);metrics=[]
-    for mode,audio in [('with_vocals',mix+padded),('without_vocals',mix)]:
+    for mode,audio in [('with_vocals',mix+padded),('without_vocals',mix+without_extra)]:
         if instrumental and mode=='without_vocals':
             for suffix in ['.mp3','.flac']:os.link('with_vocals'+suffix,mode+suffix)
             metrics.append(dict(metrics[0],mode=mode,identical_instrumental_binding=True));continue
         sf.write(mode+'-input.wav',audio,rate,subtype='FLOAT');metrics.append(dict(mode=mode,**encode_fixed(ff,mode+'-input.wav',mode+'.mp3')))
         subprocess.run([str(ff),'-v','error','-nostdin','-i',mode+'-input.wav','-af','alimiter=limit=0.95:level=false:latency=true','-c:a','flac','-sample_fmt','s32',mode+'.flac'],check=True,capture_output=True)
-    write('edition-evidence.json',dict(schema='reel.existing-edition-render.v1',edition=q['style'],source_golden_lock=q['golden_lock'],source_duration_seconds=q['source_duration_seconds'],postroll_seconds=q['postroll_seconds'],duration_seconds=duration,source_mode=q.get('source_mode','sung'),source_vocal=q['vocal_estimate'],vocal_gain=None if instrumental else 1.0,instrumental_mode_bindings_identical=instrumental,vocal_regenerated=False,vocal_retimed=False,vocal_repitched=False,components=component_evidence,modes=metrics,mastering=dict(mode='fixed',dynamic_loudnorm_applied=False,limiter_auto_level=False),musical_approval=False));print('BOTH EXISTING-SCHEMA EDITION MODES RENDERED',q['style'],duration,flush=True)
+    write('edition-evidence.json',dict(schema='reel.existing-edition-render.v1',edition=q['style'],source_golden_lock=q['golden_lock'],source_duration_seconds=q['source_duration_seconds'],postroll_seconds=q['postroll_seconds'],duration_seconds=duration,source_mode=q.get('source_mode','sung'),source_vocal=q['vocal_estimate'],vocal_gain=None if instrumental else 1.0,instrumental_mode_bindings_identical=instrumental,vocal_regenerated=False,vocal_retimed=False,vocal_repitched=False,components=component_evidence,score_mode='without_vocals',mode_scoped_instrumental_melody=any(c['modes']==['without_vocals'] for c in component_evidence),modes=metrics,mastering=dict(mode='fixed',dynamic_loudnorm_applied=False,limiter_auto_level=False),musical_approval=False));print('BOTH EXISTING-SCHEMA EDITION MODES RENDERED',q['style'],duration,flush=True)
     with zipfile.ZipFile('edition-score-payloads.zip','w',compression=zipfile.ZIP_DEFLATED) as archive:
         for name in ['arranged-model.json','edition-programs.json','native-checks.json','edition-draft.json','edition-arrangement-plan.json','score-plan.json','edition-evidence.json','arrangement.mid']:
             archive.write(name)

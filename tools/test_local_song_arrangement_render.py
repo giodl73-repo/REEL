@@ -40,6 +40,14 @@ class BatchTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.run_batch(request,lambda q:None)
 
 
+class ComponentScopeTests(unittest.TestCase):
+    def test_shared_default_and_instrumental_melody_scope(self):
+        self.assertEqual(renderer.component_modes({}),['with_vocals','without_vocals'])
+        self.assertEqual(renderer.component_modes(dict(modes=['without_vocals'])),['without_vocals'])
+        for invalid in [[],['with_vocals'],['other'],['without_vocals','with_vocals']]:
+            with self.assertRaises(ValueError):renderer.component_modes(dict(modes=invalid))
+
+
 class PresetKeyTests(unittest.TestCase):
     def test_octave_extension_preserves_target_frequency_without_padding(self):
         import numpy as np
