@@ -2,10 +2,16 @@ import tempfile
 from pathlib import Path
 import unittest
 from fractions import Fraction
-from local_instrumental_engrave import intervals,prepare_musicxml,duration_pieces
+from local_instrumental_engrave import intervals,prepare_musicxml,duration_pieces,text_bounds
 
 
 class IntervalTests(unittest.TestCase):
+    def test_music_metric_overhang_does_not_engulf_in_bounds_chord(self):
+        blocks=[dict(lines=[dict(spans=[dict(text='\ue000',bbox=(20,-19,25,360)),dict(text='Em',bbox=(30,20,45,35))])])]
+        outside,metrics=text_bounds(blocks,612,792);self.assertEqual(outside,[]);self.assertEqual(len(metrics),1)
+        blocks[0]['lines'][0]['spans'][1]['bbox']=(30,-5,45,35)
+        self.assertEqual(len(text_bounds(blocks,612,792)[0]),1)
+
     def parse(self,body):
         with tempfile.TemporaryDirectory() as d:
             p=Path(d)/'score.xml';p.write_text('<score-partwise><part-list/><part id="P1">'+body+'</part></score-partwise>');return intervals(p)

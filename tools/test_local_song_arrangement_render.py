@@ -61,6 +61,17 @@ class PresetKeyTests(unittest.TestCase):
 
 
 class PlayerMidiTests(unittest.TestCase):
+    def test_lossless_stem_delivery_preserves_samples_above_integer_peak(self):
+        import numpy as np
+        import soundfile as sf
+        from local_song_backend import descriptor
+        before=Path.cwd()
+        with tempfile.TemporaryDirectory() as directory:
+            try:
+                os.chdir(directory);audio=np.array([[1.25,-1.25],[.125,-.25],[0,0]],dtype=np.float32);np.savez_compressed('layer-lossless.npz',audio=audio,sample_rate=44100)
+                renderer.lossless_layer_export(dict(lossless=descriptor('layer-lossless.npz'),duration_seconds=3/44100));restored,rate=sf.read('layer.wav',dtype='float32');self.assertEqual(rate,44100);self.assertTrue(np.array_equal(audio,restored));self.assertTrue(json.loads(Path('layer-export-check.json').read_text())['samples_unchanged'])
+            finally:os.chdir(before)
+
     def test_overlapping_unisons_keep_distinct_voice_routes(self):
         import mido
         with tempfile.TemporaryDirectory() as directory:

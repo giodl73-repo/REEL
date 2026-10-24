@@ -118,6 +118,19 @@ def intervals(path):
     return Counter(result)
 
 
+def text_bounds(blocks,width,height):
+    """Inspect text spans; a music glyph's metrics must not engulf chord text."""
+    outside=[];font_overhangs=[]
+    for block in blocks:
+        for line in block.get('lines',[]):
+            for span in line['spans']:
+                box=span['bbox']
+                if box[0]<-1 or box[1]<-1 or box[2]>width+1 or box[3]>height+1:
+                    destination=outside if any(not ch.isspace() and unicodedata.category(ch)!='Co' for ch in span['text']) else font_overhangs
+                    destination.append(list(box))
+    return outside,font_overhangs
+
+
 def main():
     offline();q=read('engraving-request.json')
     if q['schema']!='reel.instrumental-engraving-request.v1' or q['permissions']!=dict(private_only=True,external_upload=False,public_release=False):raise ValueError('Explicit private engraving request required')
@@ -136,10 +149,7 @@ def main():
     document=fitz.open('engraved.pdf');pages=[]
     for i,page in enumerate(document):
         pix=page.get_pixmap(matrix=fitz.Matrix(1.25,1.25),alpha=False);filename='qa-page-'+str(i+1)+'.png';pix.save(filename);data=pix.samples;ink=sum(v<240 for v in data)/len(data)
-        outside=[];font_overhangs=[]
-        for b in page.get_text('blocks'):
-            if b[0]<-1 or b[1]<-1 or b[2]>page.rect.width+1 or b[3]>page.rect.height+1:
-                (outside if any(not ch.isspace() and unicodedata.category(ch)!='Co' for ch in b[4]) else font_overhangs).append(list(b[:4]))
+        outside,font_overhangs=text_bounds(page.get_text('dict')['blocks'],page.rect.width,page.rect.height)
         stride=pix.stride;channels=pix.n;edge_ink=0
         for y in range(pix.height):
             xs=range(pix.width) if y<3 or y>=pix.height-3 else [0,1,2,pix.width-3,pix.width-2,pix.width-1]

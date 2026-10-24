@@ -263,6 +263,19 @@ def edition(q):
             if path.is_file():archive.write(path)
 
 
+def lossless_layer_export(q):
+    import numpy as np
+    import soundfile as sf
+    source=checked('layer-lossless.npz',q['lossless'])
+    with np.load(source,allow_pickle=False) as data:
+        audio=data['audio'];rate=int(data['sample_rate'])
+        if rate!=44100 or audio.shape!=(round(q['duration_seconds']*rate),2) or not np.isfinite(audio).all():raise ValueError('Lossless stem extent or samples differ')
+        sf.write('layer.wav',audio,rate,subtype='FLOAT')
+    restored,restored_rate=sf.read('layer.wav',dtype='float32',always_2d=True)
+    if restored_rate!=rate or not np.array_equal(audio,restored):raise ValueError('Lossless stem export changed samples')
+    write('layer-export-check.json',dict(source=q['lossless'],wav=descriptor('layer.wav'),sample_rate=rate,frames=len(audio),channels=2,float_peak=float(np.max(np.abs(audio))),samples_unchanged=True,gain_applied=False,clipped_to_integer_pcm=False,musical_approval=False))
+
+
 def master(q):
     import numpy as np
     import soundfile as sf
@@ -295,6 +308,7 @@ def main():
             try:
                 if request['stage']=='layer':layer(request)
                 elif request['stage']=='edition':edition(request)
+                elif request['stage']=='lossless-layer-export':lossless_layer_export(request)
                 else:raise ValueError('A sound batch only supports source layers or editions')
             finally:os.chdir(root)
             completed.append(dict(directory=directory,stage=request['stage']));print('BATCH TRACK VERIFIED',directory,len(completed),'of',len(items),flush=True)
@@ -303,6 +317,7 @@ def main():
     elif q['stage']=='layer':layer(q)
     elif q['stage']=='edition':edition(q)
     elif q['stage']=='master':master(q)
+    elif q['stage']=='lossless-layer-export':lossless_layer_export(q)
     else:raise ValueError('Unknown existing-schema render stage')
 
 
