@@ -87,6 +87,24 @@ Unrelated alignment markers survive. Reorder, fit and removal operate within
 each cue; a cue cannot disappear or change its take, sample rate or duration.
 Graph event seconds remain local to their cue; preview concatenates the cue
 clocks in source order. The supplied movie must match that recording order.
+Alternatively, `export` accepts `"media_mode": "native-recordings"` with no
+`movie` field. It copies the exact selected take from each native cue binding
+alongside the pictures, using the same explicit roots, fresh verification and
+copy budget. Repeated takes share one hash-named WAV destination; a picture and
+recording with the same hash still count as two destinations. No movie, audio
+transcode, render, cache discovery or selection change is needed.
+
+This mode previews browser-compatible WAV primary recordings in cue order.
+The native audio controls show one cue; the sequence slider and cel navigation
+seek across cues using their original sample clocks. Playback advances at cue
+end, with a possible loading pause: this is an authoring preview, not gapless
+delivery, mix, Sonic/VFX or final-render proof. Mixed sample rates remain local
+to each cue. A decoder failure or duration mismatch is reported without altering
+the source clock. Playback blocked by browser policy requires pressing Play.
+Sessions retain the existing edit schema and source locks; `recordings` is
+preview transport metadata and never becomes an input in an edit request.
+Controls-only and compiled-movie exports remain available. Use a matching new
+host binary for exports containing this frontend revision.
 Unsupported clocks/languages/scopes fail explicitly. Insertion of new assets and
 native build validation remain producer operations. Requests and browser downloads/imports are bounded to 2 MiB. The preview is locked stills;
 it does not simulate rendered motion/VFX. Browser drafts with a temporary duration

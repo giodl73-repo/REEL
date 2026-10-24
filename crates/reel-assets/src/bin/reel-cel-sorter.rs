@@ -143,13 +143,20 @@ struct MediaPlan {
     pictures: BTreeSet<String>,
     images: serde_json::Map<String, Value>,
     movie_hash: String,
+    recordings: Vec<Value>,
 }
-fn preflight(docs: &BTreeMap<String, Value>, rows: &Value, spec: &Value) -> Result<MediaPlan> {
+fn preflight(
+    docs: &BTreeMap<String, Value>,
+    rows: &Value,
+    spec: &Value,
+    sequence: Option<&Sequence>,
+) -> Result<MediaPlan> {
     let mut plan = MediaPlan {
         assets: BTreeMap::new(),
         pictures: BTreeSet::new(),
         images: serde_json::Map::new(),
         movie_hash: String::new(),
+        recordings: vec![],
     };
     for row in rows.as_array().ok_or("rows")? {
         let key = text(row, "picture_binding")?;
@@ -166,6 +173,44 @@ fn preflight(docs: &BTreeMap<String, Value>, rows: &Value, spec: &Value) -> Resu
         plan.pictures.insert(hash.into());
         plan.images
             .insert(key.into(), json!(format!("media/{hash}.png")));
+    }
+    if spec["media_mode"] == "native-recordings" {
+        if !spec["movie"].is_null() {
+            return Err("Native recordings cannot also declare a compiled movie".into());
+        }
+        let sequence = sequence.ok_or("Native cue clocks required")?;
+        let mut seconds = 0.0;
+        let mut audio_hashes = BTreeSet::new();
+        for cue in &sequence.cues {
+            let asset = &docs["scene-bindings.json"]["assets"][&cue.take_binding];
+            let (hash, bytes) = identity(asset)?;
+            if let Some(previous) = plan.assets.get(hash)
+                && integer(previous, "bytes")? != bytes
+            {
+                return Err("conflicting sizes for one media identity".into());
+            }
+            plan.assets
+                .entry(hash.into())
+                .or_insert_with(|| asset.clone());
+            audio_hashes.insert(hash.to_owned());
+            plan.recordings.push(json!({"cue_id":cue.cue_id,"src":format!("media/{hash}.wav"),"sha256":hash,"bytes":bytes,"samples":cue.alignment.cue_end_sample,"sample_rate":cue.alignment.sample_rate,"start_seconds":seconds}));
+            seconds += cue.alignment.cue_end_sample as f64 / cue.alignment.sample_rate as f64;
+        }
+        let total = plan.pictures.iter().chain(audio_hashes.iter()).try_fold(
+            0u64,
+            |sum, hash| -> Result<u64> {
+                sum.checked_add(integer(&plan.assets[hash], "bytes")?)
+                    .ok_or_else(|| "export size overflow".into())
+            },
+        )?;
+        let budget = integer(spec, "max_export_copy_bytes")?;
+        if budget > 1024 * 1024 * 1024 || total > budget {
+            return Err("explicit editor-copy budget exceeded".into());
+        }
+        return Ok(plan);
+    }
+    if !spec["media_mode"].is_null() {
+        return Err("Unsupported export media mode".into());
     }
     let (movie_hash, movie_bytes) = identity(&spec["movie"])?;
     if let Some(previous) = plan.assets.get(movie_hash)
@@ -223,9 +268,10 @@ fn export_mode(spec: &Path, media: bool) -> Result<()> {
     let (docs, hashes) = load(&project)?;
     let sequence = Sequence::for_project(&docs, &project)?;
     let r = sequence.rows();
+    let mut recordings = vec![];
     let (images, movie) = if media {
         // Decide the complete declared copy budget before touching any media.
-        let plan = preflight(&docs, &r, &s)?;
+        let plan = preflight(&docs, &r, &s, Some(&sequence))?;
         let roots: Vec<PathBuf> = s["cache_roots"]
             .as_array()
             .ok_or("cache_roots required")?
@@ -238,13 +284,33 @@ fn export_mode(spec: &Path, media: bool) -> Result<()> {
             let dest = out.join(format!("media/{h}.png"));
             link(&resolved[h], &dest, h, integer(&plan.assets[h], "bytes")?)?;
         }
-        link(
-            &resolved[&plan.movie_hash],
-            &out.join("performance.mp4"),
-            &plan.movie_hash,
-            integer(&s["movie"], "bytes")?,
-        )?;
-        (plan.images, json!("performance.mp4"))
+        if !plan.movie_hash.is_empty() {
+            link(
+                &resolved[&plan.movie_hash],
+                &out.join("performance.mp4"),
+                &plan.movie_hash,
+                integer(&s["movie"], "bytes")?,
+            )?;
+        }
+        let mut copied = BTreeSet::new();
+        for recording in &plan.recordings {
+            let hash = text(recording, "sha256")?;
+            if copied.insert(hash) {
+                link(
+                    &resolved[hash],
+                    &out.join(text(recording, "src")?),
+                    hash,
+                    integer(recording, "bytes")?,
+                )?;
+            }
+        }
+        let movie = if plan.movie_hash.is_empty() {
+            Value::Null
+        } else {
+            json!("performance.mp4")
+        };
+        recordings = plan.recordings;
+        (plan.images, movie)
     } else {
         fs::create_dir_all(out)?;
         (serde_json::Map::new(), Value::Null)
@@ -252,6 +318,9 @@ fn export_mode(spec: &Path, media: bool) -> Result<()> {
     let mut data = json!({"schema":project.session_schema(),"title":s["title"],"scene_id":docs["scene.json"]["scene_id"],"expected_inputs":hashes,"rows":r,"images":images,"fps_numerator":docs["profile.json"]["frame_rate_numerator"],"fps_denominator":docs["profile.json"]["frame_rate_denominator"],"movie":movie});
     if !media {
         data["media_mode"] = json!("controls-only");
+    } else if s["media_mode"] == "native-recordings" {
+        data["media_mode"] = json!("native-recordings");
+        data["recordings"] = json!(recordings);
     }
     data.as_object_mut()
         .ok_or("session")?
@@ -313,6 +382,63 @@ mod cel_fixtures;
 mod tests {
     use super::cel_fixtures::{asset, fixture, graph_asset, multi_fixture, save_graph};
     use super::*;
+    #[test]
+    fn native_recordings_copy_selected_takes_without_a_compiled_movie() {
+        let d = tempfile::tempdir().unwrap();
+        let source = d.path().join("source");
+        let project = multi_fixture(&source);
+        let cache = d.path().join("cache");
+        for body in [b"first".as_slice(), b"second", b"voice", b"second-voice"] {
+            let h = hash(body);
+            let dir = cache.join("objects/sha256").join(&h[..2]);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join(h), body).unwrap();
+        }
+        let opened = Project::open(&project).unwrap();
+        let (docs, _) = load(&opened).unwrap();
+        let seq = Sequence::for_project(&docs, &opened).unwrap();
+        let out = d.path().join("export");
+        let mut spec = json!({"project":project,"output":out,"cache_roots":[cache],"media_mode":"native-recordings","max_export_copy_bytes":28});
+        let plan = preflight(&docs, &seq.rows(), &spec, Some(&seq)).unwrap();
+        assert_eq!(plan.recordings.len(), 2);
+        assert_eq!(plan.recordings[0]["samples"], 96);
+        assert_eq!(plan.recordings[1]["start_seconds"], 2.0);
+        spec["max_export_copy_bytes"] = json!(27);
+        assert!(
+            preflight(&docs, &seq.rows(), &spec, Some(&seq))
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("budget exceeded")
+        );
+        let spec_path = d.path().join("spec.json");
+        write(&spec_path, &spec).unwrap();
+        assert!(export(&spec_path).is_err());
+        assert!(!out.exists());
+        spec["max_export_copy_bytes"] = json!(28);
+        fs::write(&spec_path, serde_json::to_vec(&spec).unwrap()).unwrap();
+        export(&spec_path).unwrap();
+        let session = read(&out.join("session.json")).unwrap();
+        assert!(session["movie"].is_null());
+        assert_eq!(session["recordings"].as_array().unwrap().len(), 2);
+        assert!(!out.join("performance.mp4").exists());
+        assert_eq!(fs::read_dir(out.join("media")).unwrap().count(), 4);
+        let wav = out.join(format!("media/{}.wav", hash(b"voice")));
+        assert_eq!(fs::read(&wav).unwrap(), b"voice");
+        fs::write(&wav, b"edited").unwrap();
+        assert_eq!(
+            fs::read(
+                cache
+                    .join("objects/sha256")
+                    .join(&hash(b"voice")[..2])
+                    .join(hash(b"voice"))
+            )
+            .unwrap(),
+            b"voice"
+        );
+        spec["movie"] = asset(b"clip");
+        assert!(preflight(&docs, &seq.rows(), &spec, Some(&seq)).is_err());
+    }
     fn media_fixture(project: &Path) -> Value {
         fixture(project);
         let mut bindings = read(&project.join("scene-bindings.json")).unwrap();
@@ -360,7 +486,7 @@ mod tests {
                 .map(|i| json!({"picture_binding":if i%2==0 {"one"} else {"two"}}))
                 .collect::<Vec<_>>()
         );
-        let plan = preflight(&docs, &repeated, &spec).unwrap();
+        let plan = preflight(&docs, &repeated, &spec, None).unwrap();
         let mut calls = BTreeMap::new();
         let resolved = resolve_plan(&plan, |asset| {
             *calls.entry(text(asset, "sha256")?.to_owned()).or_insert(0) += 1;
@@ -375,12 +501,12 @@ mod tests {
         let mut same_movie = spec.clone();
         same_movie["movie"] = asset(b"cell");
         same_movie["max_export_copy_bytes"] = json!(7);
-        assert!(preflight(&docs, &repeated, &same_movie).is_err());
+        assert!(preflight(&docs, &repeated, &same_movie, None).is_err());
         same_movie["max_export_copy_bytes"] = json!(8);
-        assert!(preflight(&docs, &repeated, &same_movie).is_ok());
+        assert!(preflight(&docs, &repeated, &same_movie, None).is_ok());
         same_movie["movie"]["bytes"] = json!(3);
         assert!(
-            preflight(&docs, &repeated, &same_movie)
+            preflight(&docs, &repeated, &same_movie, None)
                 .err()
                 .unwrap()
                 .to_string()

@@ -18,6 +18,7 @@ pub struct CueClock {
     pub cue_id: String,
     pub alignment_role: String,
     pub alignment_binding: String,
+    pub take_binding: String,
     pub alignment: native::NativeAlignment,
     samples_per_frame: Option<u64>,
 }
@@ -250,6 +251,10 @@ impl Sequence {
                 cue_id: cue.cue_id.clone(),
                 alignment_role: role,
                 alignment_binding: key.clone(),
+                take_binding: cue
+                    .take_binding
+                    .clone()
+                    .ok_or("Missing native take binding")?,
                 alignment,
                 samples_per_frame,
             });

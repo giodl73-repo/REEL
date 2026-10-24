@@ -43,7 +43,11 @@ Keep capability URLs and reports private.
 Control resources are bounded to 2 MiB each and frozen in memory. Optional media
 are opened read-only, fingerprinted once under a 1-GiB combined budget and served
 through those handles. Image filenames must match their SHA-256; the exported
-movie has its own fingerprint. Changed media metadata refuses subsequent reads.
+movie has its own fingerprint. Native-recordings previews admit only declared
+`media/<sha256>.wav` routes, checking each hash and byte count. Duplicate cue IDs,
+ambiguous movie/recording modes and more than 128 recordings reject. Repeated
+take routes share one reader. The combined set is bounded to 643 resources and
+the same 1-GiB media budget. Changed media metadata refuses subsequent reads.
 Headers, socket waits and streaming loops are bounded; deadlines are checked
 during verification/serving. Up to 16 request readers run concurrently, with
 accepted sockets explicitly switched to blocking reads and five-second socket
