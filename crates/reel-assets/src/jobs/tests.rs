@@ -96,6 +96,39 @@ fn default_success_shares_inputs_publishes_evidence_and_retires_scratch() {
 }
 
 #[test]
+fn native_output_directory_is_created_by_producer_only_when_explicitly_requested() {
+    let f = Fixture::new();
+    let (manifest, mut job) = prepare(&f, "new-output-directory");
+    job["outputs"]["copy"]["path"] = json!("native/out.bin");
+    job["steps"][0]["args"][2] = json!("native/out.bin");
+    fs::write(&manifest, job.to_string()).unwrap();
+    // Legacy default prepares the directory; a create-new native producer refuses.
+    let error = run(f.root(), &manifest).unwrap_err().to_string();
+    assert!(error.contains("staging retired"), "{error}");
+    no_scratch(&f);
+    job["prepare_output_parents"] = json!(false);
+    fs::write(&manifest, job.to_string()).unwrap();
+    let result = run(f.root(), &manifest).unwrap();
+    assert_eq!(result["workspace_retained"], false);
+    assert_eq!(
+        fs::read(result["outputs"]["copy"]["path"].as_str().unwrap()).unwrap(),
+        b"source"
+    );
+    assert_eq!(result["copied_input_bytes"], 0);
+    no_scratch(&f);
+    // The producer still owns directory creation; a plain copy cannot succeed.
+    job["steps"][0]["args"][0] = json!("copy");
+    fs::write(&manifest, job.to_string()).unwrap();
+    assert!(
+        run(f.root(), &manifest)
+            .unwrap_err()
+            .to_string()
+            .contains("staging retired")
+    );
+    no_scratch(&f);
+}
+
+#[test]
 fn failed_job_salvages_declared_candidate_and_logs_but_retires_intermediates() {
     let f = Fixture::new();
     let (manifest, _) = prepare(&f, "fail");

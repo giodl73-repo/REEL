@@ -60,10 +60,17 @@ struct Job {
     /// Explicit diagnostics exception; normal jobs publish and retire their workspace.
     #[serde(default)]
     retain_workspace: bool,
+    /// Native no-clobber producers create their own new output directories.
+    #[serde(default = "prepare_output_parents_default")]
+    prepare_output_parents: bool,
     #[serde(default)]
     files: BTreeMap<String, String>,
     steps: Vec<Step>,
     outputs: BTreeMap<String, Output>,
+}
+
+fn prepare_output_parents_default() -> bool {
+    true
 }
 
 fn relative(name: &str) -> Result<PathBuf> {
@@ -391,9 +398,11 @@ fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Resul
                 .open(target)?;
             f.write_all(text.as_bytes())?;
         }
-        for output in job.outputs.values() {
-            let target = workspace.join(relative(&output.path)?);
-            fs::create_dir_all(target.parent().ok_or("Missing output parent")?)?;
+        if job.prepare_output_parents {
+            for output in job.outputs.values() {
+                let target = workspace.join(relative(&output.path)?);
+                fs::create_dir_all(target.parent().ok_or("Missing output parent")?)?;
+            }
         }
         if let Some(seed) = &seed {
             seed.stage(&cfg, &workspace, &job)?;
