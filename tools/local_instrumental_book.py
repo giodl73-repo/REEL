@@ -28,7 +28,16 @@ def main():
     for index,e in enumerate(q['entries']):
         checked(e['score_path'],e['score']);paragraphs=[('Escena',small),(e['es'],body),('Scene',small),(e['en'],body),(f"Grabación original / Original recording: {e['seconds']//60}:{e['seconds']%60:02d}",small),(notice,small),(english,small)]
         if e.get('limitations'):paragraphs.append((e['limitations'],small))
-        folder=output/e['slug'];folder.mkdir(exist_ok=True);cover(folder/'notes.pdf',e['title'],paragraphs);doc=fitz.open();doc.insert_pdf(fitz.open(folder/'notes.pdf'));doc.insert_pdf(fitz.open(e['score_path']));target=folder/'score.pdf';doc.save(target,garbage=0,deflate=True);toc.append([1,e['title'],len(combined)+1]);combined.insert_pdf(doc);rows.append(dict(slug=e['slug'],pages=len(doc),pdf=descriptor(target),source_score=e['score'],source_golden_lock=e['golden_lock'],musical_approval=False))
+        folder=output/e['slug'];folder.mkdir(exist_ok=True);target=folder/'score.pdf'
+        if e.get('existing_pdf'):
+            existing=checked(e['existing_path'],e['existing_pdf']);doc=fitz.open(existing)
+        else:
+            cover(folder/'notes.pdf',e['title'],paragraphs);doc=fitz.open();doc.insert_pdf(fitz.open(folder/'notes.pdf'));doc.insert_pdf(fitz.open(e['score_path']))
+        for appendix in e.get('appendices',[]):
+            path=checked(appendix['path'],appendix);doc.insert_pdf(fitz.open(path))
+        if e.get('existing_pdf') and not e.get('appendices'):target.hardlink_to(existing)
+        else:doc.save(target,garbage=0,deflate=True)
+        toc.append([1,e['title'],len(combined)+1]);combined.insert_pdf(doc);rows.append(dict(slug=e['slug'],pages=len(doc),pdf=descriptor(target),source_score=e['score'],source_golden_lock=e['golden_lock'],appendices=e.get('appendices',[]),musical_approval=False))
     combined.set_toc(toc);combined.save(output/'instrumentales-del-libro.pdf',garbage=0,deflate=True)
     qa=[]
     with zipfile.ZipFile('book-rendered-qa.zip','w',compression=zipfile.ZIP_DEFLATED) as archive:

@@ -10,6 +10,9 @@ import math
 import os
 from pathlib import Path
 import subprocess
+import zipfile
+import xml.etree.ElementTree as ET
+from fractions import Fraction
 from local_song_backend import checked, descriptor, offline, read, write
 from local_song_piano_arrangement import native, midi_events, audit_notes, voicing
 
@@ -33,17 +36,18 @@ def native_parts(path):
     import mido
     midi=mido.MidiFile(path);result={}
     for track in midi.tracks:
-        tick=0;part=None;active={};notes=[]
+        tick=0;part=None;active={};notes=[];port=0
         for message in track:
             tick+=message.time
             if message.type=='track_name' and message.name.startswith('REEL_PART:'):
                 part=json.loads(message.name[len('REEL_PART:'):])[0]
+            elif message.type=='midi_port':port=message.port
             elif message.type=='note_on' and message.velocity:
-                key=(message.channel,message.note)
+                key=(port,message.channel,message.note)
                 if key in active:raise ValueError('Native MIDI repeats an unreleased key')
                 active[key]=(tick,message.velocity)
             elif message.type=='note_off' or message.type=='note_on' and not message.velocity:
-                key=(message.channel,message.note)
+                key=(port,message.channel,message.note)
                 if key not in active:raise ValueError('Unmatched native MIDI release')
                 start,velocity=active.pop(key);notes.append((start,tick-start,message.note,velocity,message.channel+1))
         if active:raise ValueError('Native MIDI leaves held notes')
@@ -51,6 +55,22 @@ def native_parts(path):
             if part in result:raise ValueError('Duplicate native MIDI part')
             result[part]=sorted(notes)
     return result
+
+
+def same_preset_sample(samples,pitch,required,rate,maximum_semitones):
+    """Extend a preset's edge keys without changing the requested MIDI pitch."""
+    import numpy as np
+    from scipy.signal import resample_poly
+    choices=[]
+    for key,sample in samples.items():
+        source=int(key[1:]);distance=abs(source-pitch)
+        if distance>maximum_semitones:continue
+        ratio=Fraction(2**((source-pitch)/12)).limit_denominator(10000)
+        if len(sample)*float(ratio)>=math.ceil(required*rate):choices.append((distance,source,key,ratio))
+    if not choices:raise ValueError('No same-preset calibration key has the declared range and usable duration for pitch '+str(pitch))
+    distance,source,key,ratio=min(choices);result=resample_poly(samples[key],ratio.numerator,ratio.denominator,axis=0).astype(np.float32)
+    if len(result)<math.ceil(required*rate) or not np.isfinite(result).all():raise ValueError('Invalid derived same-preset key')
+    return result,dict(pitch=pitch,method='same-preset-key-resampling',source_pitch=source,ratio_numerator=ratio.numerator,ratio_denominator=ratio.denominator,ratio_cents_error=1200*math.log2(float(ratio)/(2**((source-pitch)/12))),sample_frames=len(result),required_sample_seconds=required,source_samples_unchanged=True)
 
 
 def bank(q):
@@ -64,40 +84,76 @@ def bank(q):
         hold=q.get('pitch_holds',{}).get(str(p),3.)
         part.notes.append(pretty_midi.Note(velocity=64,pitch=p,start=cursor,end=cursor+hold));cursor+=hold+3.
     midi.instruments.append(part);midi.write('calibration.mid');env=dict(os.environ);env.pop('QT_QPA_PLATFORM',None)
+    calibration_input='calibration.mid'
+    if q.get('program_policy')=='explicit-native-channel':
+        result=subprocess.run([str(ms),'--sound-profile','MS Basic','-f','-o','calibration-import.mscx','calibration.mid'],env=env,capture_output=True,text=True,encoding='utf-8',timeout=600);Path('calibration-import.log').write_text(result.stdout+'\n'+result.stderr,encoding='utf-8')
+        if result.returncode:raise RuntimeError('Existing sample renderer could not create its editable calibration score')
+        tree=ET.parse('calibration-import.mscx');channels=tree.getroot().findall('.//Part/Instrument/Channel')
+        if not channels:raise ValueError('No explicit native calibration instrument channel')
+        changes=[]
+        for channel in channels:
+            program=channel.find('program');prior=program.attrib.get('value') if program is not None else '0'
+            if program is None:program=ET.SubElement(channel,'program')
+            program.set('value',str(instrument['program']));changes.append(dict(channel=channel.attrib.get('name','normal'),imported_program=prior,requested_program=instrument['program']))
+        tree.write('calibration.mscx',encoding='utf-8',xml_declaration=True);write('calibration-programs.json',dict(policy='Explicit requested General MIDI program in the existing app native instrument channels',changes=changes,notes_changed=False));calibration_input='calibration.mscx'
     for target in ['calibration.wav','roundtrip.mid']:
-        result=subprocess.run([str(ms),'--sound-profile','MS Basic','-f','-o',target,'calibration.mid'],env=env,capture_output=True,text=True,encoding='utf-8',timeout=600);Path(target+'.log').write_text(result.stdout+'\n'+result.stderr,encoding='utf-8')
+        result=subprocess.run([str(ms),'--sound-profile','MS Basic','-f','-o',target,calibration_input],env=env,capture_output=True,text=True,encoding='utf-8',timeout=600);Path(target+'.log').write_text(result.stdout+'\n'+result.stderr,encoding='utf-8')
         if result.returncode:raise RuntimeError('Existing sample renderer failed: '+result.stderr)
     actual=midi_events('roundtrip.mid')
     if sorted(n['pitch'] for n in actual)!=sorted(pitches):raise ValueError('Calibration changed pitches/count')
     import mido
     programs=sorted({m.program for t in mido.MidiFile('roundtrip.mid').tracks for m in t if m.type=='program_change'})
     if not instrument.get('drums') and instrument['program'] not in programs and not (instrument['program']==0 and not programs):raise ValueError('Calibration changed requested instrument program: '+str(programs))
-    audio,rate=sf.read('calibration.wav',dtype='float32',always_2d=True);samples={};ledger=[]
-    for n in actual:
-        a=round(n['start']*rate);b=round(n['end']*rate);probe=np.max(np.abs(audio[a:min(len(audio),a+round(.8*rate))]),axis=1)
-        if not len(probe) or probe.max()<1e-5:raise ValueError('Silent requested instrument calibration')
+    audio,rate=sf.read('calibration.wav',dtype='float32',always_2d=True);samples={};ledger=[];silent=[]
+    for index,n in enumerate(actual):
+        a=round(n['start']*rate);b=round(n['end']*rate)
+        if instrument.get('drums'):
+            # Percussion note-offs do not bound the recorded one-shot decay.
+            # Retain real calibration audio before the next isolated attack.
+            next_start=actual[index+1]['start'] if index+1<len(actual) else len(audio)/rate
+            b=min(len(audio),round(min(n['start']+q.get('pitch_holds',{}).get(str(n['pitch']),3.),next_start-.1)*rate))
+        probe=np.max(np.abs(audio[a:min(len(audio),a+round(.8*rate))]),axis=1)
+        if not len(probe) or probe.max()<1e-5:
+            policy=q.get('silent_pitch_policy',{})
+            if not instrument.get('drums') and policy.get('method')=='same-preset-key-resampling':silent.append(n);continue
+            raise ValueError('Silent requested instrument calibration for pitch '+str(n['pitch']))
         active=np.flatnonzero(probe>max(1e-6,float(probe.max())*.001));attack=a+int(active[0]);sample=audio[attack:b].copy()
-        required=q.get('pitch_holds',{}).get(str(n['pitch']),3.)-.25
-        if len(sample)<round(required*rate):raise ValueError('Sample hold too short')
-        samples['p'+str(n['pitch'])]=sample;ledger.append(dict(pitch=n['pitch'],attack_frame=attack,sample_frames=len(sample),renderer_start_seconds=n['start']))
+        required=q.get('required_sample_seconds',{}).get(str(n['pitch']),q.get('pitch_holds',{}).get(str(n['pitch']),3.)-.25)
+        if len(sample)<round(required*rate):raise ValueError('Sample hold too short for pitch '+str(n['pitch'])+': '+str(len(sample)/rate)+' < '+str(required))
+        samples['p'+str(n['pitch'])]=sample;ledger.append(dict(pitch=n['pitch'],method='native-rendered',attack_frame=attack,sample_frames=len(sample),renderer_start_seconds=n['start'],renderer_key_end_seconds=n['end'],capture_end_frame=b,required_sample_seconds=required,capture_hold_seconds=q.get('pitch_holds',{}).get(str(n['pitch']),3.)))
+    direct=dict(samples)
+    for n in silent:
+        maximum=q['silent_pitch_policy']['maximum_semitones']
+        if not isinstance(maximum,int) or not 1<=maximum<=12:raise ValueError('Same-preset extension is bounded to one octave')
+        required=q.get('required_sample_seconds',{}).get(str(n['pitch']),q.get('pitch_holds',{}).get(str(n['pitch']),3.)-.25);sample,row=same_preset_sample(direct,n['pitch'],required,rate,maximum);samples['p'+str(n['pitch'])]=sample;ledger.append(row)
     np.savez_compressed('samples.npz',**samples);write('bank-evidence.json',dict(schema='reel.instrument-sample-bank.v1',instrument=instrument,sample_rate=rate,calibration_pitches=pitches,ledger=ledger,renderer=q['musescore'],soundfont=q['soundfont'],roundtrip_programs=programs,pitch_count_verified=True,human_timbre_review=False));print('SAMPLE BANK VERIFIED',instrument['name'],len(pitches),flush=True)
 
 
 def assigned_midi(source,programs,target):
     import mido
-    original=native_parts(source);midi=mido.MidiFile(source);instruments={p['id']:p for p in programs};next_channel=0
+    original=native_parts(source);midi=mido.MidiFile(source);instruments={p['id']:p for p in programs};channels=[*range(9),*range(10,16)];next_voice=0;routes={};parts=[]
     for track in midi.tracks:
         identity=next((json.loads(m.name[len('REEL_PART:'):])[0] for m in track if m.type=='track_name' and m.name.startswith('REEL_PART:')),None)
         if identity:
-            part=instruments[identity]
-            if part['drums']:channel=9
-            else:
-                if next_channel==9:next_channel+=1
-                channel=next_channel;next_channel+=1
-                if channel>15:raise ValueError('Player MIDI exceeds General MIDI channels')
+            voices=sorted({m.channel for m in track if not m.is_meta and hasattr(m,'channel')});parts.append((track,identity,voices))
+            if not instruments[identity]['drums']:
+                for voice in voices:routes[(identity,voice)]=(next_voice//15,channels[next_voice%15]);next_voice+=1
+    drum_port=(next_voice+14)//15
+    for track,identity,voices in parts:
+        if instruments[identity]['drums']:
+            for voice in voices:routes[(identity,voice)]=(drum_port,9);drum_port+=1
+    if any(port>127 for port,channel in routes.values()):raise ValueError('Player MIDI exceeds bounded independent voice ports')
+    for track in midi.tracks:
+        identity=next((json.loads(m.name[len('REEL_PART:'):])[0] for m in track if m.type=='track_name' and m.name.startswith('REEL_PART:')),None)
+        if identity:
+            part=instruments[identity];rewritten=[]
+            for voice in sorted({m.channel for m in track if not m.is_meta and hasattr(m,'channel')}):
+                port,channel=routes[(identity,voice)];rewritten.extend([mido.MetaMessage('midi_port',port=port,time=0),mido.Message('program_change',channel=channel,program=part['program'],time=0)])
             for message in track:
-                if not message.is_meta:message.channel=channel
-            track.insert(0,mido.Message('program_change',channel=channel,program=part['program'],time=0))
+                if not message.is_meta and hasattr(message,'channel'):
+                    port,channel=routes[(identity,message.channel)];rewritten.append(mido.MetaMessage('midi_port',port=port,time=message.time));rewritten.append(message.copy(channel=channel,time=0))
+                else:rewritten.append(message)
+            track[:]=rewritten
     midi.save(target)
     sounding=lambda parts:{k:sorted(n[:4] for n in rows) for k,rows in parts.items()}
     if sounding(native_parts(target))!=sounding(original):raise ValueError('Player channel/program assignment changed sounding notes or clocks')
@@ -126,10 +182,11 @@ def layer(q):
         if meta['sample_rate']!=rate or meta['instrument']['program']!=instrument['program'] or meta['instrument'].get('drums',False)!=instrument['drums']:raise ValueError('Wrong source instrument calibration')
         release=round(q.get('release_seconds',.22)*rate);ledger=[]
         with np.load(binding['samples_path'],allow_pickle=False) as samples:
+            loaded={pitch:samples['p'+str(pitch)] for pitch in sorted({n[2] for n in expected})}
             for start,duration,pitch,velocity,voice in expected:
                 a=round(start*scale*rate);b=round((start+duration)*scale*rate);held=b-a;size=min(held+release,frames-a)
                 if not 0<=a<b<=frames:raise ValueError('Source note exceeds declared full edition clock')
-                sample=samples['p'+str(pitch)]
+                sample=loaded[pitch]
                 if size>len(sample):raise ValueError('Calibrated hold too short for the measured note')
                 chunk=sample[:size].copy()*(velocity/64)**1.5
                 if size>held:chunk[held:]*=(np.linspace(1,0,size-held,dtype=np.float32)**2)[:,None]
@@ -188,7 +245,12 @@ def edition(q):
             metrics.append(dict(metrics[0],mode=mode,identical_instrumental_binding=True));continue
         sf.write(mode+'-input.wav',audio,rate,subtype='FLOAT');metrics.append(dict(mode=mode,**encode_fixed(ff,mode+'-input.wav',mode+'.mp3')))
         subprocess.run([str(ff),'-v','error','-nostdin','-i',mode+'-input.wav','-af','alimiter=limit=0.95:level=false:latency=true','-c:a','flac','-sample_fmt','s32',mode+'.flac'],check=True,capture_output=True)
-    write('edition-evidence.json',dict(schema='reel.existing-edition-render.v1',edition=q['style'],source_golden_lock=q['golden_lock'],source_duration_seconds=q['source_duration_seconds'],postroll_seconds=q['postroll_seconds'],duration_seconds=duration,source_vocal=q['vocal_estimate'],vocal_gain=1.0,vocal_regenerated=False,vocal_retimed=False,vocal_repitched=False,components=component_evidence,modes=metrics,mastering=dict(mode='fixed',dynamic_loudnorm_applied=False,limiter_auto_level=False),musical_approval=False));print('BOTH EXISTING-SCHEMA EDITION MODES RENDERED',q['style'],duration,flush=True)
+    write('edition-evidence.json',dict(schema='reel.existing-edition-render.v1',edition=q['style'],source_golden_lock=q['golden_lock'],source_duration_seconds=q['source_duration_seconds'],postroll_seconds=q['postroll_seconds'],duration_seconds=duration,source_mode=q.get('source_mode','sung'),source_vocal=q['vocal_estimate'],vocal_gain=None if instrumental else 1.0,instrumental_mode_bindings_identical=instrumental,vocal_regenerated=False,vocal_retimed=False,vocal_repitched=False,components=component_evidence,modes=metrics,mastering=dict(mode='fixed',dynamic_loudnorm_applied=False,limiter_auto_level=False),musical_approval=False));print('BOTH EXISTING-SCHEMA EDITION MODES RENDERED',q['style'],duration,flush=True)
+    with zipfile.ZipFile('edition-score-payloads.zip','w',compression=zipfile.ZIP_DEFLATED) as archive:
+        for name in ['arranged-model.json','edition-programs.json','native-checks.json','edition-draft.json','edition-arrangement-plan.json','score-plan.json','edition-evidence.json','arrangement.mid']:
+            archive.write(name)
+        for path in sorted(Path('native-score').iterdir()):
+            if path.is_file():archive.write(path)
 
 
 def master(q):
@@ -212,7 +274,22 @@ def main():
     import importlib.metadata
     for name,version in q.get('runtime_packages',{}).items():
         if importlib.metadata.version(name)!=version:raise ValueError('Installed renderer package changed: '+name)
-    if q['stage']=='bank':bank(q)
+    if q['stage']=='batch':
+        items=q['items']
+        if not 1<=len(items)<=14:raise ValueError('A sound-render batch supports one bounded fourteen-track style')
+        root=Path.cwd();completed=[]
+        for item in items:
+            directory=item['directory'];request=item['request']
+            if Path(directory).name!=directory or directory in ['.','..'] or request['schema']!=q['schema'] or request['permissions']!=q['permissions']:raise ValueError('Invalid scoped render batch item')
+            folder=root/directory;folder.mkdir(exist_ok=True);write(folder/'render-request.json',request);os.chdir(folder)
+            try:
+                if request['stage']=='layer':layer(request)
+                elif request['stage']=='edition':edition(request)
+                else:raise ValueError('A sound batch only supports source layers or editions')
+            finally:os.chdir(root)
+            completed.append(dict(directory=directory,stage=request['stage']));print('BATCH TRACK VERIFIED',directory,len(completed),'of',len(items),flush=True)
+        write('batch-report.json',dict(completed=completed,requested=len(items),musical_approval=False))
+    elif q['stage']=='bank':bank(q)
     elif q['stage']=='layer':layer(q)
     elif q['stage']=='edition':edition(q)
     elif q['stage']=='master':master(q)

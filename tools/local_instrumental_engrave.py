@@ -31,7 +31,7 @@ def duration_pieces(duration,divisions):
     return result
 
 
-def prepare_musicxml(source,target):
+def prepare_musicxml(source,target,omit_trailing_silent_measures=False):
     """Spell identical intervals as explicit tied durations for score-app import."""
     tree=ET.parse(source);root=tree.getroot();pieces=0
     for part in root.findall('part'):
@@ -73,6 +73,10 @@ def prepare_musicxml(source,target):
                             for tie in ties:ET.SubElement(notation,'tied',type=tie)
                         output.append(n);pieces+=1
             measure[:]=output
+    if omit_trailing_silent_measures:
+        parts=root.findall('part')
+        while parts and all(len(p.findall('measure'))>1 and not any(n.find('rest') is None for n in p.findall('measure')[-1].findall('note')) for p in parts):
+            for part in parts:part.remove(part.findall('measure')[-1])
     tree.write(target,encoding='utf-8',xml_declaration=True)
     if intervals(source)!=intervals(target):raise ValueError('Explicit duration spelling changed measured intervals')
     return pieces
@@ -119,7 +123,7 @@ def main():
     if q['schema']!='reel.instrumental-engraving-request.v1' or q['permissions']!=dict(private_only=True,external_upload=False,public_release=False):raise ValueError('Explicit private engraving request required')
     checked('score.musicxml',q['musicxml']);ms=checked(q['musescore']['path'],q['musescore']);env=os.environ.copy();env['QT_QPA_PLATFORM']='windows:fontengine=freetype';env['QT_LOGGING_RULES']='*.debug=false'
     for item in q['runtime_files']:checked(item['path'],item)
-    fragments=prepare_musicxml('score.musicxml','engraving-input.musicxml')
+    fragments=prepare_musicxml('score.musicxml','engraving-input.musicxml',q.get('omit_trailing_silent_measures',False))
     for output in ['engraved.pdf','roundtrip.musicxml']:
         proc=subprocess.run([str(ms),'-f','-o',output,'engraving-input.musicxml'],env=env,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=600)
         Path(output+'.log').write_text(proc.stdout+'\n'+proc.stderr,encoding='utf-8')
