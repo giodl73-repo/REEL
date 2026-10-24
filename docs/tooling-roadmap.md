@@ -11,7 +11,7 @@ does not install a binary or retarget an active project/runtime.
 | Cel discovery/editor | Shared native reader, Rust load/apply API, static editor export, explicit file maps, effective pictures, notes, version locks, append-only picture revisions and cue-local timing (PRs 147/148). One scoped language in a full multilingual scene, up to 128 total cues; combined or explicitly separate language graphs. Metadata-only inspection emits a locked edit template. Legacy drafts stay compatible. | Browser visual acceptance, private media/render/review and older-version reopen. A real frozen bilingual episode now passes identity/reorder/removal and both-language native delivery-control compilation. Explicit runtime adoption follows the remaining proof. Simultaneous linked language editing, inserting new assets and wider media formats remain later extensions. |
 | Scene/project adapter | Existing native scene, scoped bindings, measured alignments and delivery compiler. The cel editor routes existing layouts without another scene grammar. | Replace remaining legacy source-repository/Git-blob assumptions with explicit project inputs. Prove one episode and one music-video family without archived builders. |
 | Scene execution | Existing admitted jobs, output retention and explicit resume; native rendering/composition already exist. | Compare the preserved executor against REEL capabilities and port only missing generic operations. Keep source/executable pins and exact output/reference accounting. |
-| Songs, scores and arrangements | Native song generation, music source/analysis/model contracts, MIDI/MusicXML/SVG export, arrangement and printable-score engines. Bounded offline note workshop proposes existing-note pitch/tick edits as new unreviewed native models with exact source locks. | Browser and private-song acceptance; lyric underlay editing, phrase/arrangement decisions and finished engraving. Explicit musical review remains essential. Project adoption of an unreviewed melody draft does not establish finished notation. |
+| Songs, scores and arrangements | Native song generation, music source/analysis/model contracts, MIDI/MusicXML/SVG export, arrangement and printable-score engines. Bounded note and exact-text lyric-underlay workshops create new unreviewed native model proposals with source locks. Selected lyric bytes and authorities remain unchanged. | Browser and private-song acceptance; phrase/arrangement decisions and finished engraving. Explicit musical/lyric review remains essential. Project adoption of an unreviewed melody draft does not establish finished notation. |
 | Large inventory/graph infrastructure | Separate draft PR144 has bounded index/adapters, revisioned catalog and fenced publication fixtures. | Cache-wide/all-consumer enforcement, cross-domain routing/lock order, safe explicit activation and final canonical unlink remain integration work. Green fixture CI does not close these gaps. Keep separate from routine cel UI adoption. |
 | Speech and episode assembly extensions | Separate draft PR120 (local speech/alignment) and PR128 (bounded lossless assembly). | Their owners must close the documented adoption/review gaps. They are not implicitly merged by the cel-tooling milestone. |
 
@@ -24,9 +24,10 @@ does not install a binary or retarget an active project/runtime.
    media acceptance are distinct from JSON/compiler tests. No automatic server.
 2. Complete explicit scene/project adapter coverage for that episode family and
    a music-video family; reuse the existing native contracts and execution.
-3. Prove the [note workshop](music-note-editor-v1.md) on a private song through
-   native validation and score export, with browser and musical review kept
-   separate. Extend explicit lyric-underlay/phrase/arrangement authoring over the
+3. Prove the [note workshop](music-note-editor-v1.md) and
+   [exact-text underlay](music-underlay-editor-v1.md) on a private native model
+   through validation and score export, with browser and musical review kept
+   separate. Extend explicit phrase/arrangement authoring over the
    existing Rust contracts. Keep source text, recordings and score editions separate.
 4. Continue managed-index/fencing adoption as its own infrastructure task with
    complete consumer coverage and explicit operational policy. It must not
