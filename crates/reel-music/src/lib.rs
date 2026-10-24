@@ -11,6 +11,7 @@ pub mod language_adaptation;
 pub mod language_performance;
 pub mod model;
 pub mod model_draft;
+mod model_editor;
 pub mod neutral;
 pub mod note_editor;
 pub mod perspective;
@@ -21,6 +22,7 @@ pub mod repair_render;
 pub mod semantic_import;
 pub mod source;
 pub mod time;
+pub mod underlay_editor;
 
 use std::collections::BTreeSet;
 
