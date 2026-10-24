@@ -17,6 +17,11 @@ def validate(plan, frames, rate):
         raise ValueError('Expected one to three bounded patches')
     if type(plan.get('instrumental', False)) is not bool:
         raise ValueError('Instrumental repaint mode must be boolean')
+    if plan.get('repaint_mode', 'aggressive') not in ['conservative', 'balanced', 'aggressive']:
+        raise ValueError('Unsupported repaint mode')
+    strength = plan.get('repaint_strength', .5)
+    if isinstance(strength, bool) or not isinstance(strength, (int, float)) or not 0 <= strength <= 1:
+        raise ValueError('Repaint strength must be between zero and one')
     previous = 0
     for patch in plan['patches']:
         start, end = patch['start'], patch['end']
@@ -112,7 +117,7 @@ def main():
         context=working[context_start:context_end]
         offset=context_start/rate
         sf.write(source,context,rate,subtype='FLOAT')
-        params=GenerationParams(task_type='repaint',src_audio=source,repainting_start=patch['start']-offset,repainting_end=patch['end']-offset,chunk_mask_mode='explicit',repaint_mode='aggressive',repaint_wav_crossfade_sec=0,caption=plan['caption'],lyrics=patch['lyrics'],instrumental=plan.get('instrumental',False),vocal_language='es',duration=len(context)/rate,inference_steps=8,guidance_scale=7.5,seed=plan['seed']+i,thinking=False,use_cot_metas=False,use_cot_caption=False,use_cot_language=False,use_cot_lyrics=False)
+        params=GenerationParams(task_type='repaint',src_audio=source,repainting_start=patch['start']-offset,repainting_end=patch['end']-offset,chunk_mask_mode='explicit',repaint_mode=plan.get('repaint_mode','aggressive'),repaint_strength=plan.get('repaint_strength',.5),repaint_wav_crossfade_sec=0,caption=plan['caption'],lyrics=patch['lyrics'],instrumental=plan.get('instrumental',False),vocal_language='es',duration=len(context)/rate,inference_steps=8,guidance_scale=7.5,seed=plan['seed']+i,thinking=False,use_cot_metas=False,use_cot_caption=False,use_cot_language=False,use_cot_lyrics=False)
         print('Repaint bounded patch',i,patch['start'],patch['end'],flush=True)
         result=generate_music(handler,None,params,GenerationConfig(batch_size=1,use_random_seed=False,seeds=[params.seed],audio_format='wav'),save_dir=f'generated-{i}')
         if not result.success or len(result.audios)!=1:

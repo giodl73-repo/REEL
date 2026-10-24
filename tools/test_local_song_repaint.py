@@ -4,6 +4,15 @@ from local_song_repaint import splice, validate, validate_source_mode
 
 
 class RepaintTests(unittest.TestCase):
+    def test_source_preservation_controls(self):
+        plan=dict(schema='reel.local-song-repaint.v1',patches=[dict(start=1,end=5,lyrics='[Instrumental]')])
+        for mode in ['conservative','balanced','aggressive']:
+            validate(dict(plan,repaint_mode=mode,repaint_strength=0),100,10)
+            validate(dict(plan,repaint_mode=mode,repaint_strength=1),100,10)
+        for strength in [True,-.1,1.1,float('nan'),'0.5']:
+            with self.assertRaises(ValueError):validate(dict(plan,repaint_strength=strength),100,10)
+        with self.assertRaises(ValueError):validate(dict(plan,repaint_mode='unknown'),100,10)
+
     def test_instrumental_patch_and_source_scope(self):
         permissions=dict(private_only=True,external_upload=False,identifiable_imitation=False,public_release=False)
         plan=dict(schema='reel.local-song-repaint.v1',instrumental=True,permissions=permissions,patches=[dict(start=2,end=7,lyrics='[Instrumental]')])
