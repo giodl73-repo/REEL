@@ -47,6 +47,9 @@ def check(q):
 def main():
     offline();q=read('mix-check-request.json')
     if q['schema']!='reel.arrangement-stem-sum-request.v1' or not 1<=len(q['items'])<=14:raise ValueError('Explicit bounded arrangement mix-check batch required')
+    import importlib.metadata
+    for name,version in q['runtime_packages'].items():
+        if importlib.metadata.version(name)!=version:raise ValueError('Installed mix-check runtime changed: '+name)
     root=Path.cwd()
     for item in q['items']:
         directory=item['directory']
