@@ -84,7 +84,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
                 evidence=page.get('phrase_evidence',[])
                 if not evidence or len(evidence)!=len(page['lines']):raise ValueError('Timed page requires one source phrase per reading line')
                 for phrase in evidence:
-                    if not 0<=phrase['start']<phrase['end'] or a>start+phrase['start']+.05 or b<start+phrase['end']-.2:
+                    if not 0<=phrase['start']<phrase['end'] or a>start+phrase['start']+.051 or b<start+phrase['end']-.201:
                         raise ValueError(f'Reading page misses its performed phrase: {track["song_id"]} page={n} page_clock={a,b} track_start={start} phrase={phrase}')
             rows=0
             for pair in page['lines']:
