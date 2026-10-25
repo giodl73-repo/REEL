@@ -325,6 +325,23 @@ fn export_mode(spec: &Path, media: bool) -> Result<()> {
     };
     let mut data = json!({"schema":project.session_schema(),"title":s["title"],"scene_id":docs["scene.json"]["scene_id"],"expected_inputs":hashes,"rows":r,"images":images,"fps_numerator":docs["profile.json"]["frame_rate_numerator"],"fps_denominator":docs["profile.json"]["frame_rate_denominator"],"movie":movie});
     data["picture_choices"] = json!(sequence.picture_bindings);
+    // Explicit source intent for proposals, never a copy of score/VFX metadata.
+    let anchors = sequence
+        .cells
+        .values()
+        .map(|cell| {
+            let shared = docs["scene.json"]["shared_events"]
+                .as_array()
+                .ok_or("shared events")?
+                .iter()
+                .find(|event| event["semantic_id"] == cell.semantic_id)
+                .ok_or("missing insertion anchor")?;
+            Ok(json!({"semantic_id":cell.semantic_id,"cue_id":cell.cue_id,
+                "canonical_cue_id":text(shared,"canonical_cue_id")?}))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    data["insertion"] = json!({"schema":"reel.cel-sorter-insertion-context.v1",
+        "language":sequence.language,"anchors":anchors});
     if !media {
         data["media_mode"] = json!("controls-only");
     } else if s["media_mode"] == "native-recordings" {

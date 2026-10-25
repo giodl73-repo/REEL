@@ -358,3 +358,91 @@ fn explicitly_listed_picture_candidate_and_native_override_are_supported_without
     assert!(insert::apply(&descriptor, &req, &reject).is_err());
     assert!(!reject.exists());
 }
+
+#[test]
+fn browser_proposal_from_exported_native_session_applies_and_requires_a_fresh_session() {
+    let tool = env!("CARGO_BIN_EXE_reel-cel-sorter");
+    for mode in 0..4 {
+        let temp = tempfile::tempdir().unwrap();
+        let intake = temp.path().join("intake");
+        let input = if mode == 0 {
+            fixtures::fixture(&intake);
+            intake.clone()
+        } else {
+            let descriptor = fixtures::multi_fixture(&intake);
+            if mode >= 2 {
+                fixtures::add_english_lane(&intake, &descriptor);
+            }
+            if mode == 3 {
+                fixtures::separate_language_graphs(&intake, &descriptor);
+            }
+            normalized(
+                &descriptor,
+                &temp.path().join("source"),
+                &temp.path().join("normalize.json"),
+            )
+        };
+        let before = snapshot(&intake);
+        let export = temp.path().join("editor");
+        let spec = temp.path().join("export.json");
+        put(&spec, &json!({"project":input,"output":export}));
+        let run = |args: &[&std::ffi::OsStr]| {
+            let result = std::process::Command::new(tool)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        };
+        run(&["export-controls".as_ref(), spec.as_os_str()]);
+        let session_path = export.join("session.json");
+        let session = get(&session_path);
+        let request_path = temp.path().join("browser-insert.json");
+        let result = std::process::Command::new("node")
+            .arg("-e")
+            .arg("const fs=require('fs'),ui=require(process.argv[1]),s=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));const first=s.rows[0],sample=first.samples!==undefined;const r=ui.insertion(s,s.rows,'',{after:first.semantic_id,split:Math.floor(first[sample?'samples':'frames']/2),picture:s.picture_choices.at(-1),id:'browser-new',score:'silence'});fs.writeFileSync(process.argv[3],JSON.stringify(r));")
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cel_sorter.js"))
+            .arg(&session_path).arg(&request_path).output().expect("Node is required for browser/native contract integration");
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let out = temp.path().join("new-source");
+        run(&[
+            "insert-cel".as_ref(),
+            input.as_os_str(),
+            request_path.as_os_str(),
+            out.as_os_str(),
+        ]);
+        let new_input = if mode == 0 {
+            out.clone()
+        } else {
+            out.join("cel-sorter-project.json")
+        };
+        let fresh = temp.path().join("fresh-editor");
+        put(&spec, &json!({"project":new_input,"output":fresh}));
+        run(&["export-controls".as_ref(), spec.as_os_str()]);
+        let current = get(&fresh.join("session.json"));
+        assert_eq!(
+            current["rows"].as_array().unwrap().len(),
+            session["rows"].as_array().unwrap().len() + 1
+        );
+        assert_ne!(current["expected_inputs"], session["expected_inputs"]);
+        let stale = std::process::Command::new(tool)
+            .arg("insert-cel")
+            .arg(&new_input)
+            .arg(&request_path)
+            .arg(temp.path().join("stale"))
+            .output()
+            .unwrap();
+        assert!(!stale.status.success());
+        assert!(!temp.path().join("stale").exists());
+        assert_eq!(snapshot(&intake), before);
+        assert!(!export.join("media").exists());
+        assert!(!fresh.join("media").exists());
+    }
+}
