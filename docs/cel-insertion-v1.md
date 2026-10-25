@@ -148,3 +148,43 @@ audition. Pending recording-load callbacks are invalidated, and a terminal media
 explicit playback/seek resumes ordinary preview behavior. Media exports still
 require their existing explicit budgets and a matching host build. Audition is
 neither a render nor human visual/listening acceptance.
+
+## Explicit native score roles
+
+New exports add `score_palette` to the existing insertion context. Its `choices`
+list contains native episode roles whose asset binding resolves exactly once
+across scene/episode/season scopes, with an exact selected cache identity. The
+native episode must include this scene and use matching scope IDs. At most 128
+roles are admitted; role IDs are bounded to 128 UTF-8 bytes, and binding/logical
+IDs to 256. Unavailable, ambiguous, unselected or out-of-budget bindings appear
+in `held_roles` with reasons. Malformed palette declarations, duplicate roles and
+invalid episode/scope contexts reject export before media lookup/output creation.
+A missing legacy palette continues to offer silence only.
+
+The form still requires an explicit score choice. **Silence** emits the original
+native disposition. An available **Score role** emits:
+
+```json
+{"disposition":"role","role":"selected-native-role"}
+```
+
+No score binding is guessed or copied from the source cel. The request still uses
+`reel.cel-sorter-insert.v1` and the native `SharedEvent.score` union, with original
+source/language/project locks and no human approval. Rust rechecks the selected
+role from the locked episode/scopes before creating output, independently of any
+browser choice list. Unknown/unavailable roles and changed palette/binding locks
+reject. Existing native `held` draft intent remains available through direct
+native authoring; it is not offered as a build-ready browser choice.
+
+Available here means a declared selected native binding, not verified cache
+presence, input/output classification, lifecycle admission, rights or listening
+acceptance. Register/authorize the effective primary working set and use the
+existing managed-job/compiler checks before rendering. No registry lookup,
+asset promotion, media read/copy, selection, new music or consent occurs during
+metadata export or insertion.
+
+Split audition continues to play the primary recording and pictures only; it
+does not mix the selected score, Sonic or VFX. Native delivery compilation resolves
+the chosen role into an M-bus input over the new cel's exact interval. Other
+language events, role selections, recordings and prior picture revisions remain
+unchanged. Final mix and musical acceptance are separate production steps.

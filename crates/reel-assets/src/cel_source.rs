@@ -8,6 +8,7 @@ use std::{collections::BTreeSet, path::Path};
 pub mod editor;
 pub mod insert;
 pub mod project;
+pub mod score;
 pub mod sequence;
 
 const CONTROL_BYTES: usize = 1024 * 1024;

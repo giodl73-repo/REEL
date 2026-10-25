@@ -276,6 +276,7 @@ fn export_mode(spec: &Path, media: bool) -> Result<()> {
     let (docs, hashes) = load(&project)?;
     let sequence = Sequence::for_project(&docs, &project)?;
     let r = sequence.rows();
+    let score_palette = reel_assets::cel_source::score::choices(&docs)?;
     let mut recordings = vec![];
     let (images, movie) = if media {
         // Decide the complete declared copy budget before touching any media.
@@ -341,7 +342,7 @@ fn export_mode(spec: &Path, media: bool) -> Result<()> {
         })
         .collect::<Result<Vec<_>>>()?;
     data["insertion"] = json!({"schema":"reel.cel-sorter-insertion-context.v1",
-        "language":sequence.language,"anchors":anchors});
+        "language":sequence.language,"anchors":anchors,"score_palette":score_palette});
     if !media {
         data["media_mode"] = json!("controls-only");
     } else if s["media_mode"] == "native-recordings" {

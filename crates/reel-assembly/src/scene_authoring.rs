@@ -1571,6 +1571,31 @@ pub fn resolve_episode_presentation(
     })
 }
 
+/// Resolve exactly one selected native asset without reading media or changing scope.
+pub fn resolve_selected_binding<'a>(
+    key: &str,
+    scopes: &'a [&ScopedBindings],
+) -> Result<&'a AssetRef> {
+    binding(key, scopes)
+}
+
+/// Native episode score-role metadata; bindings are resolved only when used.
+pub fn score_palette_roles(palette: &[ScoreBinding]) -> Result<BTreeMap<String, String>> {
+    let mut roles = BTreeSet::new();
+    let mut result = BTreeMap::new();
+    for score in palette {
+        if !roles.insert(score.role.as_str())
+            || score.theme_id.is_empty()
+            || score.source_poem_id.is_empty()
+            || score.arrangement_id.is_empty()
+        {
+            bail!("invalid episode score palette");
+        }
+        result.insert(score.role.clone(), score.asset_binding.clone());
+    }
+    Ok(result)
+}
+
 fn binding<'a>(key: &str, scopes: &'a [&ScopedBindings]) -> Result<&'a AssetRef> {
     let matches = scopes
         .iter()
@@ -1732,7 +1757,6 @@ pub fn resolve_scene(
     let scopes = [scene_bindings, episode_bindings, season];
     let mut selected_inputs = BTreeMap::new();
     let mut template_definitions = BTreeMap::new();
-    let mut score_roles = BTreeMap::new();
     let required_soundtrack = if let Some(use_) = &scene.presentation {
         let template = use_template(use_, catalog)?;
         if template.soundtrack_requirement.as_deref() == Some("selected-episode-score") {
@@ -1770,17 +1794,7 @@ pub fn resolve_scene(
             selected_inputs.insert(key.clone(), binding(key, &scopes)?.clone());
         }
     }
-    let mut roles = BTreeSet::new();
-    for score in &episode.score_palette {
-        if !roles.insert(score.role.as_str())
-            || score.theme_id.is_empty()
-            || score.source_poem_id.is_empty()
-            || score.arrangement_id.is_empty()
-        {
-            bail!("invalid episode score palette");
-        }
-        score_roles.insert(score.role.clone(), score.asset_binding.clone());
-    }
+    let score_roles = score_palette_roles(&episode.score_palette)?;
     if let Some((role, poem)) = &required_soundtrack {
         if !episode
             .score_palette
