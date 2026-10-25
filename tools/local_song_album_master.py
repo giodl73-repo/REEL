@@ -61,7 +61,7 @@ def pcm24(audio):
     return values.view('u1').reshape(-1, 4)[:, :3].tobytes()
 
 
-def decoded(ff, path, fmt, frame_bytes):
+def decoded(ff, path, fmt, frame_bytes, accumulator=None):
     """Hash the entire decoded stream without retaining another master copy."""
     import numpy as np
     process = subprocess.Popen([str(ff), '-v', 'error', '-nostdin', '-i', str(path),
@@ -71,6 +71,7 @@ def decoded(ff, path, fmt, frame_bytes):
         part = process.stdout.read(1048576)
         if not part: break
         h.update(part); count += len(part)
+        if accumulator is not None: accumulator.update(part)
         if fmt == 'f32le':
             samples = np.frombuffer(part, dtype='<f4')
             if not np.isfinite(samples).all(): raise ValueError('Nonfinite decoded audio')

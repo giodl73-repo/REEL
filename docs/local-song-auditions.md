@@ -284,3 +284,26 @@ non-48-kHz clocks, late-card rejection, and actual rendered-card appearance in
 both columns. The producing project must still bind its exact selected recordings,
 retain actual job/codec evidence and review uncertainty; no human listening or
 new lyrical approval follows from these checks.
+
+
+## Compact chaptered collection copies
+
+`local_song_compact_collection.py` joins explicitly locked album videos into one
+size-bounded listening copy. Source audio is verified against each master PCM
+hash/frame count, joined at exact 48-kHz sample boundaries and encoded once as
+stereo AAC. A pre-encode PCM hash proves that the join did not trim, normalize,
+resample or retime the selected audio. This is a lossy listening derivative,
+not a replacement source or a new musical Golden.
+
+Matching H.264 video streams are copied without encoding. Video-only remuxes
+isolate MP3 priming metadata before concatenation, and declared audio sample
+counts override rounded picture-container durations. Every output video packet
+payload and its shifted presentation clock must match the sources. Chapter
+entrances follow those same sample counts. A complete final decode and strict
+decimal-byte ceiling precede publication; nonmatching streams or an insufficient
+budget fail. Retain source/output packet probes and codec evidence in cache/LFS.
+
+Run `test_local_song_compact_collection.py`; its fractional-duration chapters
+exercise MP3 priming, exact picture payloads/clocks, PCM joins, AAC padding,
+chapter labels and a rejected bitrate budget. Recheck the shared album-master
+fixtures when changing its optional streaming hash accumulator.
