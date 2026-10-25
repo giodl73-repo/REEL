@@ -382,6 +382,30 @@ fn browser_proposal_from_exported_native_session_applies_and_requires_a_fresh_se
                 &temp.path().join("normalize.json"),
             )
         };
+        let source_root = if input.is_dir() {
+            input.as_path()
+        } else {
+            input.parent().unwrap()
+        };
+        add_score_palette(
+            source_root,
+            [
+                "scene-bindings.json",
+                "episode-bindings.json",
+                "season-bindings.json",
+            ][mode % 3],
+        );
+        if !input.is_dir() {
+            let mut config = get(&input);
+            for role in [
+                "episode.json",
+                "episode-bindings.json",
+                "season-bindings.json",
+            ] {
+                config["files"][role] = json!(role);
+            }
+            put(&input, &config);
+        }
         let before = snapshot(&intake);
         let export = temp.path().join("editor");
         let spec = temp.path().join("export.json");
@@ -400,10 +424,24 @@ fn browser_proposal_from_exported_native_session_applies_and_requires_a_fresh_se
         run(&["export-controls".as_ref(), spec.as_os_str()]);
         let session_path = export.join("session.json");
         let session = get(&session_path);
+        assert_eq!(
+            session["insertion"]["score_palette"]["choices"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            session["insertion"]["score_palette"]["held_roles"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
         let request_path = temp.path().join("browser-insert.json");
         let result = std::process::Command::new("node")
             .arg("-e")
-            .arg("const fs=require('fs'),ui=require(process.argv[1]),s=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));const first=s.rows[0],sample=first.samples!==undefined;const r=ui.insertion(s,s.rows,'',{after:first.semantic_id,split:Math.floor(first[sample?'samples':'frames']/2),picture:s.picture_choices.at(-1),id:'browser-new',score:'silence'});fs.writeFileSync(process.argv[3],JSON.stringify(r));")
+            .arg("const fs=require('fs'),ui=require(process.argv[1]),s=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));const first=s.rows[0],sample=first.samples!==undefined;const r=ui.insertion(s,s.rows,'',{after:first.semantic_id,split:Math.floor(first[sample?'samples':'frames']/2),picture:s.picture_choices.at(-1),id:'browser-new',score:'role:theme'});fs.writeFileSync(process.argv[3],JSON.stringify(r));")
             .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cel_sorter.js"))
             .arg(&session_path).arg(&request_path).output().expect("Node is required for browser/native contract integration");
         assert!(
@@ -444,5 +482,134 @@ fn browser_proposal_from_exported_native_session_applies_and_requires_a_fresh_se
         assert_eq!(snapshot(&intake), before);
         assert!(!export.join("media").exists());
         assert!(!fresh.join("media").exists());
+    }
+}
+
+fn add_score_palette(root: &Path, scope: &str) {
+    let mut episode = json!({"schema":"reel.episode-authoring.v1","episode_id":"synthetic-episode","season_id":"synthetic-season","authoring_state":"ready-for-private-build","master_template_id":"synthetic","scene_policy_id":"synthetic","presentation":[],"scene_ids":["synthetic"]});
+    episode["episode_id"] = json!("synthetic-episode");
+    episode["season_id"] = json!("synthetic-season");
+    episode["score_palette"] = json!([
+        {"role":"theme","theme_id":"theme-id","source_poem_id":"poem-id","arrangement_id":"arrangement-id","asset_binding":"score.theme"},
+        {"role":"unavailable","theme_id":"held-theme","source_poem_id":"poem-id","arrangement_id":"arrangement-id","asset_binding":"missing-score"}
+    ]);
+    put(&root.join("episode.json"), &episode);
+    for (name, id) in [
+        ("episode-bindings.json", "synthetic-episode"),
+        ("season-bindings.json", "synthetic-season"),
+    ] {
+        put(
+            &root.join(name),
+            &json!({"schema":"reel.scene-asset-bindings.v1","scope_id":id,"assets":{}}),
+        );
+    }
+    let mut bindings = get(&root.join(scope));
+    bindings["assets"]["score.theme"] = fixtures::asset(b"synthetic-score-primary");
+    put(&root.join(scope), &bindings);
+}
+
+#[test]
+fn selected_native_score_roles_are_explicit_and_unavailable_roles_cannot_be_forged() {
+    for scope in [
+        "scene-bindings.json",
+        "episode-bindings.json",
+        "season-bindings.json",
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        fixtures::fixture(&source);
+        add_score_palette(&source, scope);
+        let before = snapshot(&source);
+        let p = Project::open(&source).unwrap();
+        let (docs, _) = editor::load(&p).unwrap();
+        let choices = reel_assets::cel_source::score::choices(&docs).unwrap();
+        assert_eq!(choices.choices.len(), 1);
+        assert_eq!(choices.choices[0].role, "theme");
+        assert_eq!(choices.held_roles.len(), 1);
+        let mut r = request(&source);
+        r["shared_event"]["score"] = json!({"disposition":"role","role":"theme"});
+        let req = temp.path().join("request.json");
+        put(&req, &r);
+        let out = temp.path().join("out");
+        insert::apply(&source, &req, &out).unwrap();
+        assert_eq!(
+            get(&out.join("scene.json"))["shared_events"][1]["score"],
+            r["shared_event"]["score"]
+        );
+        assert_eq!(snapshot(&source), before);
+        for role in ["unavailable", "invented"] {
+            r["shared_event"]["score"]["role"] = json!(role);
+            put(&req, &r);
+            let bad = temp.path().join(role);
+            assert!(insert::apply(&source, &req, &bad).is_err());
+            assert!(!bad.exists());
+        }
+    }
+}
+
+#[test]
+fn score_admission_rejects_unselected_ambiguous_invalid_and_stale_bindings_before_output() {
+    for mode in 0..10 {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        fixtures::fixture(&source);
+        add_score_palette(&source, "episode-bindings.json");
+        let mut bindings = get(&source.join("episode-bindings.json"));
+        match mode {
+            0 => bindings["assets"]["score.theme"]["selection_state"] = json!("held"),
+            1 => {
+                bindings["assets"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("score.theme");
+            }
+            2 => {
+                let mut duplicate = get(&source.join("season-bindings.json"));
+                duplicate["assets"]["score.theme"] = bindings["assets"]["score.theme"].clone();
+                put(&source.join("season-bindings.json"), &duplicate);
+            }
+            3 => bindings["assets"]["score.theme"]["cache_uri"] = json!("cache://sha256/wrong"),
+            4 => bindings["assets"]["score.theme"]["bytes"] = json!(0),
+            5 => bindings["scope_id"] = json!("wrong-episode"),
+            6 => bindings["assets"]["score.theme"]["logical_id"] = json!("x".repeat(257)),
+            7 => {
+                let mut episode = get(&source.join("episode.json"));
+                let role = episode["score_palette"][0].clone();
+                episode["score_palette"].as_array_mut().unwrap().push(role);
+                put(&source.join("episode.json"), &episode);
+            }
+            9 => {
+                let mut episode = get(&source.join("episode.json"));
+                episode["scene_ids"] = json!(["different-scene"]);
+                put(&source.join("episode.json"), &episode);
+            }
+            _ => {}
+        }
+        put(&source.join("episode-bindings.json"), &bindings);
+        let mut r = request(&source);
+        r["shared_event"]["score"] = json!({"disposition":"role","role":"theme"});
+        if mode == 8 {
+            bindings["assets"]["score.theme"] = fixtures::asset(b"changed-selected-score");
+            put(&source.join("episode-bindings.json"), &bindings);
+        }
+        let before = snapshot(&source);
+        let req = temp.path().join("request.json");
+        put(&req, &r);
+        let out = temp.path().join("out");
+        assert!(insert::apply(&source, &req, &out).is_err(), "mode {mode}");
+        assert!(!out.exists());
+        if [5, 7, 9].contains(&mode) {
+            let export = temp.path().join("rejected-export");
+            let spec = temp.path().join("export.json");
+            put(&spec, &json!({"project":source,"output":export}));
+            let result = std::process::Command::new(env!("CARGO_BIN_EXE_reel-cel-sorter"))
+                .arg("export-controls")
+                .arg(&spec)
+                .output()
+                .unwrap();
+            assert!(!result.status.success());
+            assert!(!export.exists());
+        }
+        assert_eq!(snapshot(&source), before);
     }
 }

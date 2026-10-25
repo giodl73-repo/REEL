@@ -61,6 +61,7 @@ pub fn apply(project: &Path, request: &Path, output: &Path) -> Result<()> {
     }
     let local = &r.language_event;
     let shared = &r.shared_event;
+    super::score::validate(&docs, &shared.score)?;
     if [
         &shared.semantic_id,
         &local.event_id,

@@ -31,7 +31,10 @@ insertion proposal from an unchanged session, with explicit picture/score intent
 Its panel previews both holds and the chosen picture; primary-recording sessions
 can audition that split without changing the source sequence or using an output
 movie as its audio. Browser timing remains approximate.
-Registry admission/lease enforcement and private browser adoption remain separate
+Native palette score roles are now explicit insertion choices, resolved through
+selected scene/episode/season bindings and revalidated by Rust. Primary-only
+audition does not mix that score. Sonic/VFX forms, storage admission/lease
+enforcement and private browser adoption remain separate
 work. A source merge does not replace installed project binaries.
 
 The cel exporter also supports explicit primary-recording playback without a

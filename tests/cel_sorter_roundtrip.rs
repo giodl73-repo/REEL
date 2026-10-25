@@ -436,3 +436,78 @@ fn separate_language_graph_candidates_compile_independently_without_merging_cont
         );
     }
 }
+
+#[test]
+fn native_score_insertion_compiles_only_the_selected_language_and_exact_music_primary() {
+    for scope in [
+        "scene-bindings.json",
+        "episode-bindings.json",
+        "season-bindings.json",
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let descriptor = ready_project(&source, false);
+        fixtures::add_english_lane(&source, &descriptor);
+        if scope == "season-bindings.json" {
+            fixtures::separate_language_graphs(&source, &descriptor);
+        }
+        let mut episode = get(&source.join("episode.json"));
+        episode["score_palette"] = json!([{"role":"theme","theme_id":"theme","source_poem_id":"poem","arrangement_id":"arrangement","asset_binding":"score.theme"}]);
+        put(&source.join("episode.json"), &episode);
+        let score = fixtures::asset(b"original-score-primary");
+        let mut bindings = get(&source.join(scope));
+        bindings["assets"]["score.theme"] = score.clone();
+        put(&source.join(scope), &bindings);
+        let p = Project::open(&descriptor).unwrap();
+        let (docs, locks) = editor::load(&p).unwrap();
+        let sequence = Sequence::for_project(&docs, &p).unwrap();
+        let request = temp.path().join("normalize.json");
+        put(
+            &request,
+            &json!({"schema":"reel.cel-sorter-edit.v4","language":"es","expected_project":p.descriptor_sha256(),"expected_inputs":locks,"scene_id":"synthetic","rows":sequence.rows()}),
+        );
+        let normalized = temp.path().join("normalized");
+        editor::apply(&descriptor, &request, &normalized).unwrap();
+        let input = normalized.join("cel-sorter-project.json");
+        let p = Project::open(&input).unwrap();
+        let (docs, locks) = editor::load(&p).unwrap();
+        let shared = docs["scene.json"]["shared_events"][0].clone();
+        let local = docs["scene.json"]["language_event_bindings"]["es"][0].clone();
+        let insertion = json!({"schema":"reel.cel-sorter-insert.v1","scene_id":"synthetic","language":"es","expected_project":p.descriptor_sha256(),"expected_inputs":locks,"after_semantic_id":shared["semantic_id"],"split_after_samples":24000,"shared_event":{"semantic_id":"scored-new","canonical_cue_id":shared["canonical_cue_id"],"picture_binding":"two","score":{"disposition":"role","role":"theme"},"language_ids":["es"]},"language_event":{"semantic_id":"scored-new","event_id":"scored-new-event","cue_id":local["cue_id"],"semantic_trigger_id":"scored-new-marker","picture_slot_id":"scored-new-slot"},"human_approval":false});
+        let req = temp.path().join("insert.json");
+        put(&req, &insertion);
+        let out = temp.path().join("candidate");
+        let before = snapshot(&normalized);
+        reel_assets::cel_source::insert::apply(&input, &req, &out).unwrap();
+        assert_eq!(snapshot(&normalized), before);
+        for language in ["es", "en"] {
+            let mut m = manifest();
+            m.language = language.into();
+            m.output_dir = format!("compiled-{language}");
+            m.delivery_id = format!("scored-{language}");
+            if language == "en" {
+                m.alignment_paths = "timing/english-paths.json".into();
+            }
+            if scope == "season-bindings.json" {
+                m.graph = format!("{language}-graph.json");
+                m.pointer = format!("{language}-pointer.json");
+            }
+            let receipt = compile_to_dir(&out, &m).unwrap();
+            let job = get(&out.join(format!("compiled-{language}/job.json")));
+            let music = job["audio"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|a| a["bus"] == "M")
+                .collect::<Vec<_>>();
+            if language == "es" {
+                assert_eq!(music.len(), 1);
+                assert_eq!(music[0]["source"]["sha256"], score["sha256"]);
+                assert_eq!(receipt["score_roles"], json!(["theme"]));
+            } else {
+                assert!(music.is_empty());
+                assert_eq!(receipt["score_roles"], json!([]));
+            }
+        }
+    }
+}
