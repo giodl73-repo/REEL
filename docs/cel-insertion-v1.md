@@ -126,3 +126,25 @@ bytes have changed, so a host pinned to older exports must not serve these files
 A secure browser context is required for fresh UUID creation (the explicit
 loopback host provides one). Private browser/producer adoption, human visual
 and listening acceptance and production delivery remain separate checks.
+
+## Audition a proposed split
+
+The insertion panel shows the selected picture when the session already exports
+media, plus both exact frame/sample holds and their displayed durations. In a
+controls-only session it shows timing only. This uses the existing declared image
+map; it does not discover, copy or admit additional media.
+
+**Audition split** is available only for `native-recordings` sessions. After
+choosing valid insertion intent, it plays the source hold from the existing
+primary recording, displays its original picture before the split and the chosen
+new picture after it, then pauses at the hold boundary. It does not use a compiled
+movie as audio for the new proposal. The original sequence and downloaded native
+request stay unchanged. Browser playback timing is approximate; native integer
+clocks, compilation and delivered-frame checks remain authoritative.
+
+Stop, navigation, form edits, draft comments/notes and panel closure cancel the
+audition. Pending recording-load callbacks are invalidated, and a terminal media
+`ended` event cannot silently advance the audition into the next cue. A new
+explicit playback/seek resumes ordinary preview behavior. Media exports still
+require their existing explicit budgets and a matching host build. Audition is
+neither a render nor human visual/listening acceptance.

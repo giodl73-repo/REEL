@@ -28,6 +28,9 @@ existing hold using caller-supplied stable identities and native event fragments
 It preserves recording clocks, old picture revisions and protected languages;
 fresh source/session locks are mandatory. The browser can download a native
 insertion proposal from an unchanged session, with explicit picture/score intent.
+Its panel previews both holds and the chosen picture; primary-recording sessions
+can audition that split without changing the source sequence or using an output
+movie as its audio. Browser timing remains approximate.
 Registry admission/lease enforcement and private browser adoption remain separate
 work. A source merge does not replace installed project binaries.
 
