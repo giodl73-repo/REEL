@@ -28,7 +28,14 @@ fn ffmpeg() -> Command {
 fn source(root: &Path, name: &str, color: &str, sample_rate: u32) {
     let status = ffmpeg()
         .args(["-v", "error", "-f", "lavfi", "-i"])
-        .arg(format!("color=c={color}:s=64x64:r=24:d=1"))
+        .arg(format!(
+            "color=c={color}:s=64x64:r=24:d=1{}",
+            if name == "opening.mkv" {
+                ",setsar=0"
+            } else {
+                ""
+            }
+        ))
         .args(["-f", "lavfi", "-i"])
         .arg(format!(
             "sine=frequency=400:sample_rate={sample_rate}:duration=1"
@@ -514,8 +521,8 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
         }
     }
     let mut phased_manifest = compact.clone();
-    // Square-pixel sources omit the false assumption flag in geometry records.
-    // Preparation must deserialize those records before issuing its checkpoint.
+    // The opening has unspecified SAR. Its explicit square-pixel normalization
+    // must also update the media facts frozen by both preparation paths.
     phased_manifest["output_geometry"] = serde_json::json!({
         "width":64,"height":64,"policy":"preserve-aspect-lanczos",
         "assume_square_for_unspecified_sar":true
@@ -562,7 +569,13 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
     assert_eq!(checkpoint["full_episode_verified"], false);
     let geometry = &checkpoint["records"][0]["geometry_verification"];
     assert!(geometry.is_object());
-    assert!(geometry.get("sample_aspect_ratio_assumed_square").is_none());
+    assert_eq!(geometry["sample_aspect_ratio_assumed_square"], true);
+    assert_eq!(checkpoint["first"]["sample_aspect_ratio"], "1:1");
+    assert!(
+        checkpoint["records"][1]["geometry_verification"]
+            .get("sample_aspect_ratio_assumed_square")
+            .is_none()
+    );
     let assembly_ref = checkpoint["master"]["file"].clone();
     assert_eq!(checkpoint["master"]["root"], "prepared");
     let assembled = prepared.join(assembly_ref["path"].as_str().unwrap());

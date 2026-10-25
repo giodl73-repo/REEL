@@ -2253,6 +2253,9 @@ fn build_internal(
             }
             output_facts.width = u64::from(geometry.width);
             output_facts.height = u64::from(geometry.height);
+            // Preparation records describe the transformed output. An assumed
+            // square source is made explicit by setsar below.
+            output_facts.sample_aspect_ratio = "1:1".into();
             let resized = (facts.width, facts.height) != (output_facts.width, output_facts.height);
             match (resized, assumed_square) {
                 (true, true) => Some(format!(
