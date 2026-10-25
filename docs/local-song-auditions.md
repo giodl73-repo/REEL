@@ -252,3 +252,35 @@ Normalization distributes the source mean across the model's source count.
 Unit checks cover that restoration and reject invalid duration/scope/locks.
 Producing projects retain their actual complete-recording qualification receipts;
 technical qualification does not approve the estimated vocal or a new arrangement.
+
+
+## Recording-timed bilingual album cards
+
+Do not divide a song duration by text length to produce lyric-card timing.
+Instrumental introductions, sung pauses and repeated sections need their actual
+recording clocks. The album exporter accepts `performed-phrase-pages` alongside
+the historical editorial-reading mode. Each displayed pair requires retained
+phrase start/end evidence; the exporter rejects a card entering after its phrase
+or cutting more than 200 ms from its tail. Frame conversion uses the album's declared sample rate.
+
+`local_song_timing_conform.py` compares three non-silent windows before a retained
+timeline crosses encodings. All windows require correlation at least 0.95,
+consistent offsets within 40 ms, and complete duration agreement within 100 ms.
+Apply the measured offset explicitly. Different takes and short/full editions
+require their own evidence, even when their canonical poem is identical.
+
+`local_song_lyric_transcript.py` runs two unprompted word-clock passes through an
+explicitly frozen local recognizer. `local_song_lyric_pages.py` proposes cards
+from retained performance events or phrase candidates, preserving repeats and
+clearing longer gaps. It leads a card by up to 400 ms, keeps paired languages on
+one clock, and records literal evidence for partial/altered phrases. Long held
+syllables are permitted only when explicitly requested for retained timelines.
+When canonical-context preservation is explicitly requested, unmatched lines stay beside a neighboring measured phrase, labelled as context without their own clock. Earlier context may receive a four-second reading lead. Canonical line IDs and text remain unchanged. Unmatched canonical lines receive no invented clock. These are phrase cards,
+not word highlighting or new proof that every canonical word was sung.
+
+Run `test_local_song_lyric_pages.py` and `test_local_song_album_mp4.py`. Tests
+exercise wrong-performance and short/full rejection, repeats, instrumental gaps,
+non-48-kHz clocks, late-card rejection, and actual rendered-card appearance in
+both columns. The producing project must still bind its exact selected recordings,
+retain actual job/codec evidence and review uncertainty; no human listening or
+new lyrical approval follows from these checks.

@@ -29,9 +29,9 @@ def wrapped(text, width=24):
 def reading_labels(plan, check):
     """A fixed bilingual print template over an existing album clock.
 
-    Page holds are editorial reading times, never claimed word entrances.
+    Reading holds may be editorial or explicitly bound to performed phrases.
     """
-    if plan['schema']!='reel.album-bilingual-reading.v1' or plan['mode']!='editorial-reading-pages':raise ValueError('Unsupported bilingual reading')
+    if plan['schema']!='reel.album-bilingual-reading.v1' or plan['mode'] not in ['editorial-reading-pages','performed-phrase-pages']:raise ValueError('Unsupported bilingual reading')
     if [t['song_id'] for t in plan['tracks']]!=[t['song_id'] for t in check['tracks']]:raise ValueError('Bilingual pages belong to a different album')
     seconds=check['duration_seconds'];palette=plan['palette'];ink=rgb(palette['ink']);accent=rgb(palette['accent']);rust=rgb(palette['secondary']);soft=rgb(palette['rule'])
     result='''[Script Info]
@@ -78,8 +78,14 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
         text(start,end,1010,278,'ENGLISH',30,accent,True,'Trebuchet MS')
         pages=reading['pages'];previous=start
         for n,page in enumerate(pages):
-            a,b=page['start_frame']/48000,page['end_frame']/48000
+            a,b=page['start_frame']/check['sample_rate'],page['end_frame']/check['sample_rate']
             if a<previous-.001 or b<=a or a<start or b>end+.001 or not page['lines']:raise ValueError('Invalid reading-page clock')
+            if plan['mode']=='performed-phrase-pages':
+                evidence=page.get('phrase_evidence',[])
+                if not evidence or len(evidence)!=sum(pair.get('timing_status')!='canonical-context-without-own-clock' for pair in page['lines']):raise ValueError('Timed page requires one source phrase per reading line')
+                for phrase in evidence:
+                    if not 0<=phrase['start']<phrase['end'] or a>start+phrase['start']+.051 or b<start+phrase['end']-.201:
+                        raise ValueError(f'Reading page misses its performed phrase: {track["song_id"]} page={n} page_clock={a,b} track_start={start} phrase={phrase}')
             rows=0
             for pair in page['lines']:
                 es,en=wrapped(pair['es']),wrapped(pair['en']);count=max(len(es),len(en))
@@ -89,7 +95,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
                 rows+=count
             text(a,b,1800,966,f'{n+1} / {len(pages)}',25,accent,False,'Trebuchet MS',9)
             previous=b
-        ledger.append(dict(song_id=track['song_id'],mode=reading['mode'],pages=len(pages),timing='editorial reading holds; not karaoke alignment'))
+        ledger.append(dict(song_id=track['song_id'],mode=reading['mode'],pages=len(pages),timing='performed phrase entrances; not word highlighting' if plan['mode']=='performed-phrase-pages' else 'editorial reading holds; not karaoke alignment'))
     return result,ledger
 
 
@@ -155,7 +161,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         reading=read(checked(q['reading_plan']['path'],q['reading_plan']))
         if reading['source_album_check']['sha256']!=q['album_check']['sha256']:raise ValueError('Reading pages use another audio master')
         header,reading_ledger=reading_labels(reading,check);width,height=1920,1080;background='0x'+reading['palette']['paper'].lstrip('#')
-        write('reading-layout-check.json',dict(template='cuban-print-bilingual-v1',canvas=[width,height],body_font_px=64,reading_columns=['Spanish','English'],page_row_limit=7,reading_timing='Editorial reading pages, not word-synced underlay',tracks=reading_ledger))
+        write('reading-layout-check.json',dict(template='cuban-print-bilingual-v1',canvas=[width,height],body_font_px=64,reading_columns=['Spanish','English'],page_row_limit=7,reading_timing=reading['mode'],tracks=reading_ledger))
     Path('labels.ass').write_text(header,encoding='utf-8',newline='\n')
     picture_seconds=math.ceil(seconds*5)/5
     subprocess.run([str(ff),'-v','error','-nostdin','-f','lavfi','-i',f'color=c={background}:s={width}x{height}:r=5:d={picture_seconds}',
