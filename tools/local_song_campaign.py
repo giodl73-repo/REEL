@@ -108,6 +108,8 @@ class Campaign:
         self.brief_asset=None
         self.briefs={}
         self.max_one_word_gap_lines=None
+        self.max_verification_bytes=None
+        self.last_verification_asset=None
 
     def call(self, command, *args, env=None):
         for attempt in range(self.metadata_retries+1):
@@ -417,9 +419,61 @@ class Campaign:
         record_path=self.save(f'{rid}/artifact.json',record)
         return self.summarize_take(slot,attempt,record,record_path)
 
+    def verify_take(self, record_path, version_id):
+        self.last_verification_asset=None
+        budget=self.max_verification_bytes
+        native_limit=None
+        if budget is not None:
+            if type(budget) is not int or budget<=0:raise ValueError('Explicit verification budget must be a positive integer')
+            profile=read(self.root/'asset-project.json');cfg=read(self.root/profile['storage_config']);native_limit=cfg['capacity']['max_object_bytes']
+            if budget<native_limit:raise ValueError('Explicit verification budget must cover the unchanged native per-call limit')
+        try:return self.call('artifact-verify',record_path,version_id)
+        except RuntimeError as error:
+            if self.max_verification_bytes is None or 'Artifact verification exceeds read budget' not in str(error):raise
+        metadata=self.call('artifact-check',record_path,version_id)
+        record=read(record_path);row=next(v for v in record['versions'] if v['version_id']==version_id)
+        definition_path=Path(record_path).parent/'version.json';definition=read(definition_path)
+        if any(definition.get(k)!=v for k,v in [('logical_id',record['artifact_id']),('version_id',version_id),('manifest_sha256',row['manifest']['sha256'])]):
+            raise ValueError('Registration definition differs from the verified take lock')
+        # Idempotent native registration proves the local partition/dependency
+        # declaration is identical to the immutable registered version.
+        self.call('register-version',definition_path)
+        contract=definition.get('dependency_contract')
+        if not isinstance(contract,dict):raise ValueError('Bounded verification requires classified native inputs/outputs')
+        package=read(self.locate(row['manifest']));assets={a['sha256']:a for a in package['assets'].values()}
+        active=set(contract['primary_inputs'])|set(contract['outputs'])
+        if not active<=assets.keys():raise ValueError('Take partition names an undeclared root asset')
+        deps=definition['dependencies']
+        if len(deps)>64:raise ValueError('Dependency verification count exceeds budget')
+        root_bytes=sum(assets[h]['bytes'] for h in active);spent=0;parts=[]
+        if root_bytes>budget:raise ValueError('Explicit verification byte budget exceeded')
+        seen=set()
+        for dep in deps:
+            key=(dep['logical_id'],dep['version_id'],dep['manifest_sha256'])
+            if key in seen:continue
+            seen.add(key)
+            if spent+native_limit+root_bytes>budget:raise ValueError('Insufficient explicit budget for a bounded native dependency verification')
+            located=self.call('verify-active',dep['manifest_sha256']);manifest={k:located[k] for k in ['sha256','bytes']};manifest['cache_uri']='cache://sha256/'+manifest['sha256'];child=read(located['path'])
+            selected=dict(version_id=dep['version_id'],manifest=manifest,version_lock=dep)
+            if 'edition' in child:selected['edition']=child['edition']
+            proxy=self.save('verification/'+dep['manifest_sha256']+'/artifact.json',dict(schema='caminos.artifact-record.v1',artifact_id=dep['logical_id'],kind=child['kind'],current_version=dep['version_id'],public_release=False,versions=[selected]))
+            receipt=self.call('artifact-verify',proxy,dep['version_id'])
+            if receipt.get('fresh_hash_verified') is not True or receipt['verified_bytes']>native_limit:raise ValueError('Native dependency verification did not complete within its existing limit')
+            spent+=receipt['verified_bytes'];parts.append(dict(lock=dep,receipt=receipt))
+        verified=[]
+        for h in sorted(active):
+            expected=assets[h]
+            if spent+expected['bytes']>budget:raise ValueError('Explicit verification byte budget exceeded')
+            observed=self.call('verify-active',h)
+            if observed['bytes']!=expected['bytes']:raise ValueError('Root asset size differs from registered take')
+            spent+=observed['bytes'];verified.append(dict(sha256=h,bytes=observed['bytes']))
+        proof=dict(schema='reel.song-verification-in-parts.v1',method='Native metadata and immutable registration identity; native dependency closure verifications and exact native root input/output hashes',metadata=metadata,version_lock=row['version_lock'],dependency_receipts=parts,root_assets=verified,verified_bytes=spent,explicit_total_budget_bytes=budget,native_per_call_limit_unchanged=native_limit,configuration_changed=False,fresh_hash_verified=True,creative_approval=False)
+        self.last_verification_asset=self.asset_json('verification/'+row['manifest']['sha256']+'/receipt.json',proof,'Explicit bounded native verification in parts; existing per-operation/storage/Git limits unchanged; no corruption fallback or creative approval')
+        return proof
+
     def summarize_take(self,slot,attempt,record,record_path):
         version=record['versions'][0]
-        self.call('artifact-verify',record_path,version['version_id'])
+        self.verify_take(record_path,version['version_id'])
         package_asset=version['manifest']
         package=read(self.locate(package_asset))
         assets=package['assets']
@@ -436,10 +490,11 @@ class Campaign:
             one_word_gap_lines=analysis['one_word_gap_lines'],max_one_word_gap_lines=self.max_one_word_gap_lines,manifest=package_asset,record=record,
             version_lock=record['versions'][0]['version_lock'],outputs=out,request=request_asset,
             job_id=result['job_id'],human_listening='pending')
+        if self.last_verification_asset:summary['verification_receipt']=self.last_verification_asset
         print('DONE',rid,'PASS' if qualified else 'RETRY',f"{analysis['qualifying_lines']}/{analysis['total_lines']} lines",f"{analysis['one_word_gap_lines']} one-word gaps",flush=True)
         return summary
 
-    def run(self, campaign_path, runtime_asset_path, backend, adopt_backend_revision=None,repeat_after_failures=None,planner_asset_path=None,generation_route=None,repeat_section_lines=None,phrase_max_words=None,asr_dtype=None,timing_reference_slot=None,focus_missing_lines=None,ctc_runtime_asset_path=None,audio_guide_slot=None,audio_guide_strength=None,audio_guide_target_slots=None,takes_per_slot=None,audio_guide_noise_strength=None,brief_asset_path=None,max_one_word_gap_lines=None):
+    def run(self, campaign_path, runtime_asset_path, backend, adopt_backend_revision=None,repeat_after_failures=None,planner_asset_path=None,generation_route=None,repeat_section_lines=None,phrase_max_words=None,asr_dtype=None,timing_reference_slot=None,focus_missing_lines=None,ctc_runtime_asset_path=None,audio_guide_slot=None,audio_guide_strength=None,audio_guide_target_slots=None,takes_per_slot=None,audio_guide_noise_strength=None,brief_asset_path=None,max_one_word_gap_lines=None,max_verification_bytes=None):
         if takes_per_slot is not None and (type(takes_per_slot) is not int or not 1<=takes_per_slot<=10):
             raise ValueError('Takes per slot must be between 1 and 10')
         campaign=read(campaign_path)
@@ -468,6 +523,10 @@ class Campaign:
         if state.get('max_one_word_gap_lines')!=cap:
             state.setdefault('acceptance_revisions',[]).append(dict(previous=state.get('max_one_word_gap_lines'),replacement=cap,after_retained_takes=len(state['attempts'])))
         state['max_one_word_gap_lines']=self.max_one_word_gap_lines=cap
+        verification_budget=max_verification_bytes if max_verification_bytes is not None else state.get('max_verification_bytes')
+        if verification_budget is not None and (type(verification_budget) is not int or verification_budget<=0):raise ValueError('Explicit verification budget must be a positive integer')
+        self.max_verification_bytes=verification_budget
+        if verification_budget is not None:state['max_verification_bytes']=verification_budget
         if cap is not None:
             state['qualified']={k:v for k,v in state['qualified'].items() if qualifies(dict(passed=v['qualified'],one_word_gap_lines=v['one_word_gap_lines']),cap)}
         if audio_guide_slot:
@@ -711,6 +770,7 @@ def main():
     run.add_argument('--audio-guide-noise-strength',type=float,help='Explicit installed ACE source initialization: 0 starts from noise, 1 stays closest to the generated guide; separate from conditioning strength')
     run.add_argument('--brief-asset',help='Explicit frozen, source-scoped musical caption revision for pending slots; prior requests and qualified takes stay immutable')
     run.add_argument('--max-one-word-gap-lines',type=int,help='Require complete source-line coverage and at most this many lines with one unrecognized word; preserves original diagnostics')
+    run.add_argument('--max-verification-bytes',type=int,help='Explicit aggregate bound for native verification in parts when a take plus independent model closures exceed the unchanged native per-call limit')
     restore=sub.add_parser('restore');restore.add_argument('--state',required=True);restore.add_argument('--lfs-executable',required=True)
     restore.add_argument('--all-attempts',action='store_true',help='Verify retained failed takes as well as qualifying candidates')
     review=sub.add_parser('review');review.add_argument('--campaign',required=True);review.add_argument('--state',required=True)
@@ -718,7 +778,7 @@ def main():
     stop=sub.add_parser('request-stop');stop.add_argument('--clear',action='store_true')
     args=p.parse_args();c=Campaign(args.root,args.assets,args.work,args.metadata_retries)
     if args.operation=='snapshot':c.freeze_runtime(args)
-    elif args.operation=='run':c.run(args.campaign,args.runtime_asset,args.backend,args.adopt_backend_revision,args.repeat_after_failures,args.planner_asset,args.generation_route,args.repeat_section_lines,args.phrase_max_words,args.asr_dtype,args.timing_reference_slot,args.focus_missing_lines,args.ctc_runtime_asset,args.audio_guide_slot,args.audio_guide_strength,args.audio_guide_target_slot,args.takes_per_slot,args.audio_guide_noise_strength,args.brief_asset,args.max_one_word_gap_lines)
+    elif args.operation=='run':c.run(args.campaign,args.runtime_asset,args.backend,args.adopt_backend_revision,args.repeat_after_failures,args.planner_asset,args.generation_route,args.repeat_section_lines,args.phrase_max_words,args.asr_dtype,args.timing_reference_slot,args.focus_missing_lines,args.ctc_runtime_asset,args.audio_guide_slot,args.audio_guide_strength,args.audio_guide_target_slot,args.takes_per_slot,args.audio_guide_noise_strength,args.brief_asset,args.max_one_word_gap_lines,args.max_verification_bytes)
     elif args.operation=='restore':c.restore(args.state,args.lfs_executable,args.all_attempts)
     elif args.operation=='review':c.review(read(args.campaign),read(args.state),args.all_attempts)
     else:c.save('stop-after-current.json',dict(requested=not args.clear))
