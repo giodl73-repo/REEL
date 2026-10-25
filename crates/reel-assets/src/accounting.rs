@@ -1,6 +1,6 @@
 //! Read-only, project-scoped accounting. Classifications never authorize removal.
 use crate::{Result, admission, artifacts, config, load, object, selected, valid_oid, versions};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -8,7 +8,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Project {
     pub schema: String,
@@ -20,8 +20,20 @@ pub struct Project {
     pub lfs_namespaces: Vec<String>,
     #[serde(default)]
     pub measure_unregistered_physical: bool,
+    #[serde(default)]
+    pub require_primary_input_contracts: bool,
+    #[serde(default)]
+    pub retention_roots: RetentionRoots,
 }
-#[derive(Deserialize)]
+/// Metadata current pointers and working-set roots are separate authorities.
+#[derive(Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum RetentionRoots {
+    #[default]
+    AllCurrent,
+    DeclaredSelections,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Selection {
     pub index: String,
@@ -29,6 +41,10 @@ pub struct Selection {
     pub record_field: String,
     pub format: String,
     pub role_prefixes: Vec<String>,
+    /// Optional per-item immutable edition. Useful when one logical package
+    /// publishes several independent items that must remain selected together.
+    #[serde(default)]
+    pub version_field: Option<String>,
 }
 pub fn relative(root: &Path, name: &str) -> Result<PathBuf> {
     let path = Path::new(name);
@@ -58,10 +74,21 @@ pub fn project(root: &Path) -> Result<Project> {
         || p.project_id.is_empty()
         || p.max_inventory_objects == 0
         || p.max_inventory_objects > 1_000_000
+        || (p.retention_roots == RetentionRoots::DeclaredSelections
+            && (!p.require_primary_input_contracts || p.selections.is_empty()))
     {
         return Err("Invalid asset project profile".into());
     }
     relative(root, &p.storage_config)?;
+    if p.selections.iter().any(|rule| {
+        rule.version_field
+            .as_ref()
+            .is_some_and(|field| field.is_empty() || rule.format != "artifact")
+    }) {
+        return Err(
+            "Explicit version fields require artifact selections and a nonempty field".into(),
+        );
+    }
     for namespace in &p.lfs_namespaces {
         if !namespace.starts_with("lfs/")
             || Path::new(namespace)
@@ -74,12 +101,58 @@ pub fn project(root: &Path) -> Result<Project> {
     }
     Ok(p)
 }
+pub(crate) fn retention_roots(
+    p: &Project,
+    s: &versions::State,
+    declared: &BTreeSet<String>,
+) -> Result<BTreeSet<String>> {
+    if p.retention_roots == RetentionRoots::AllCurrent {
+        return Ok(s
+            .current
+            .iter()
+            .map(|(id, v)| format!("{id}@{v}"))
+            .collect());
+    }
+    if declared.is_empty() || !s.coverage_complete {
+        return Err(
+            "Declared retention roots require nonempty selections and complete coverage".into(),
+        );
+    }
+    for key in declared {
+        let v = s
+            .versions
+            .get(key)
+            .ok_or("Declared retention version missing")?;
+        if v.dependency_contract.is_none() {
+            return Err(
+                "Declared retention roots require classified primary-input contracts".into(),
+            );
+        }
+        s.validate_dependency_contract(v)?;
+    }
+    Ok(declared.clone())
+}
 fn version_key(lock: &versions::Dependency) -> String {
     format!("{}@{}", lock.logical_id, lock.version_id)
 }
 pub(crate) fn expand(
     s: &versions::State,
     roots: impl IntoIterator<Item = String>,
+) -> Result<BTreeSet<String>> {
+    expand_payloads(s, roots, false)
+}
+/// An explicit lease protects every declared byte of its bounded working set,
+/// including compiled references. This does not change any asset's source role.
+pub(crate) fn expand_leased(
+    s: &versions::State,
+    roots: impl IntoIterator<Item = String>,
+) -> Result<BTreeSet<String>> {
+    expand_payloads(s, roots, true)
+}
+fn expand_payloads(
+    s: &versions::State,
+    roots: impl IntoIterator<Item = String>,
+    include_references: bool,
 ) -> Result<BTreeSet<String>> {
     let mut found = BTreeSet::new();
     let mut seen = BTreeSet::new();
@@ -90,7 +163,12 @@ pub(crate) fn expand(
         }
         let v = s.versions.get(&k).ok_or("Usage root version missing")?;
         found.insert(v.manifest_sha256.clone());
-        found.extend(v.payloads.iter().cloned());
+        s.validate_dependency_contract(v)?;
+        if include_references {
+            found.extend(v.payloads.iter().cloned());
+        } else {
+            found.extend(v.active_payloads());
+        }
         for dep in &v.dependencies {
             let key = version_key(dep);
             let target = s.versions.get(&key).ok_or("Usage dependency missing")?;
@@ -125,20 +203,30 @@ pub(crate) fn selected_roots(
                 continue;
             };
             let path = relative(root, record)?;
+            let explicit_version = rule
+                .version_field
+                .as_ref()
+                .map(|field| {
+                    row.get(field)
+                        .and_then(Value::as_str)
+                        .filter(|v| !v.is_empty())
+                        .ok_or("Selected item is missing its explicit immutable version")
+                })
+                .transpose()?;
             let (assets, lock) = match rule.format.as_str() {
                 "artifact" => {
                     let (_, assets) = artifacts::inspect_with(
                         root,
                         Path::new(record),
-                        None,
+                        explicit_version,
                         false,
                         registered,
                         s,
                         cfg,
                     )?;
                     let doc = bounded(&path)?;
-                    let current = doc["current_version"]
-                        .as_str()
+                    let current = explicit_version
+                        .or_else(|| doc["current_version"].as_str())
                         .ok_or("Missing selected artifact version")?;
                     let v = doc["versions"]
                         .as_array()
@@ -186,6 +274,13 @@ pub(crate) fn selected_roots(
                     let hash = a["sha256"].as_str().ok_or("Missing selected output hash")?;
                     if !protected.contains(hash) {
                         return Err("Selected output absent from version closure".into());
+                    }
+                    if let Some(contract) = &s.versions[&version_key(&lock)].dependency_contract
+                        && contract.references.contains(hash)
+                    {
+                        return Err(
+                            "A historical reference cannot be a selected active role".into()
+                        );
                     }
                     outputs.insert(hash.to_owned());
                     matches += 1;
@@ -294,6 +389,66 @@ fn census(
 pub fn report(root: &Path) -> Result<Value> {
     report_with_progress(root, |_, _| {})
 }
+
+/// Observe only named registered hashes after a version change. No CAS walk or archive probe.
+pub fn observe_named(root: &Path, hashes: &BTreeSet<String>) -> Result<Value> {
+    let p = project(root)?;
+    let cfg = config(root)?;
+    let registered = selected(root)?;
+    if hashes.len() > p.max_inventory_objects {
+        return Err("Named inventory exceeds project budget".into());
+    }
+    let before = fs::read(root.join("registry/versions.json"))?;
+    let state = versions::read(root)?;
+    let mut tiers = Vec::new();
+    for (n, cache) in cfg.cache_roots.iter().enumerate() {
+        tiers.push(json!({"tier":n,"root":cache,"volume_id":admission::volume_id(cache)?,"free_bytes":fs2::available_space(cache)?,"total_bytes":fs2::total_space(cache)?}));
+    }
+    let mut rows = Vec::new();
+    for hash in hashes {
+        let size = *registered
+            .get(hash)
+            .ok_or("Named inventory requires registered hashes")?;
+        let mut copies = Vec::new();
+        for (tier, cache) in cfg.cache_roots.iter().enumerate() {
+            let path = object(cache, hash);
+            match fs::symlink_metadata(&path) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(e.into()),
+                Ok(m) if !m.file_type().is_file() || m.len() != size => {
+                    return Err("Named cache object type/size mismatch".into());
+                }
+                Ok(_) => (),
+            }
+            let info = physical(&path, tiers[tier]["volume_id"].as_str().unwrap())?;
+            let mut aliases = 0u64;
+            for ns in &p.lfs_namespaces {
+                let lfs = cache
+                    .join(ns)
+                    .join("objects")
+                    .join(&hash[..2])
+                    .join(&hash[2..4])
+                    .join(hash);
+                match physical(&lfs, tiers[tier]["volume_id"].as_str().unwrap()) {
+                    Ok(alias) if alias.id == info.id => aliases += 1,
+                    Ok(_) => (),
+                    Err(e)
+                        if e.downcast_ref::<std::io::Error>()
+                            .is_some_and(|x| x.kind() == std::io::ErrorKind::NotFound) => {}
+                    Err(e) => return Err(e),
+                }
+            }
+            copies.push(json!({"tier":tier,"bytes":size,"physical_id":info.id,"allocated_bytes":info.allocated,"hard_links":info.links,"known_lfs_hard_links":aliases,"other_hard_links":info.links.saturating_sub(1+aliases)}));
+        }
+        rows.push(json!({"sha256":hash,"bytes":size,"registered":true,"copies":copies}));
+    }
+    if fs::read(root.join("registry/versions.json"))? != before {
+        return Err("Version state changed during named observation; retry".into());
+    }
+    Ok(
+        json!({"schema":"reel.asset-cache-report.v1","project_id":p.project_id,"profile_sha256":crate::tiering::digest(&fs::read(root.join("asset-project.json"))?),"registry_generation":state.generation,"tiers":tiers,"objects":rows,"inventory_scope":"exact named registered hashes only; not a full cache inventory","archive_probed":false}),
+    )
+}
 pub fn report_with_progress(root: &Path, mut progress: impl FnMut(usize, usize)) -> Result<Value> {
     let census_started_unix_seconds = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
@@ -306,13 +461,10 @@ pub fn report_with_progress(root: &Path, mut progress: impl FnMut(usize, usize))
     let state = versions::read(root)?;
     let registered = selected(root)?;
     let (outputs, golden_roots) = selected_roots(root, &p, &state, &registered, &cfg)?;
+    let current = expand(&state, retention_roots(&p, &state, &golden_roots)?)?;
     let golden = expand(&state, golden_roots)?;
-    let current = expand(
-        &state,
-        state.current.iter().map(|(id, v)| format!("{id}@{v}")),
-    )?;
     let pinned = expand(&state, state.pins.iter().cloned())?;
-    let leased = expand(
+    let leased = expand_leased(
         &state,
         state.leases.values().flat_map(|v| v.iter().cloned()),
     )?;
@@ -343,6 +495,7 @@ pub fn report_with_progress(root: &Path, mut progress: impl FnMut(usize, usize))
     }
     let mut controls = BTreeSet::new();
     controls.extend(state.metadata_roots.iter().cloned());
+    controls.extend(crate::goldens::control_asset(root)?.map(|(hash, _)| hash));
     let raw: Value = serde_json::from_slice(&before)?;
     if let Some(records) = raw["version_records"].as_object() {
         controls.extend(
@@ -352,12 +505,7 @@ pub fn report_with_progress(root: &Path, mut progress: impl FnMut(usize, usize))
                 .map(str::to_owned),
         );
     }
-    if root.join("registry/object-index.json").is_file() {
-        let a = bounded(&root.join("registry/object-index.json"))?;
-        if let Some(h) = a["asset"]["sha256"].as_str() {
-            controls.insert(h.to_owned());
-        }
-    }
+    controls.extend(crate::object_index::metadata_roots(root)?);
     let mut hashes: BTreeSet<_> = registered.keys().cloned().collect();
     if hashes.len() > p.max_inventory_objects {
         return Err("Registered inventory exceeds project object budget".into());
@@ -670,6 +818,7 @@ mod tests {
             dependencies: vec![],
             supersedes: None,
             deprecated: false,
+            dependency_contract: None,
         }
     }
     fn row<'a>(r: &'a Value, h: &str) -> &'a Value {
@@ -804,6 +953,38 @@ mod tests {
         assert_eq!(row(&r, &h)["copies"], json!([]));
     }
     #[test]
+    fn cached_golden_history_is_protected_control_and_changes_plan_fingerprint() {
+        let f = Fixture::new();
+        let root = f.root();
+        let path = root.join("registry/goldens.json");
+        fs::write(
+            &path,
+            r#"{"schema":"caminos.golden-history.v1","videos":{}}"#,
+        )
+        .unwrap();
+        crate::goldens::compact(&root).unwrap();
+        let (first, _) = crate::goldens::control_asset(&root).unwrap().unwrap();
+        assert_eq!(
+            row(&report(&root).unwrap(), &first)["category"],
+            "registry-control"
+        );
+        let next = br#"{"schema":"caminos.golden-history.v1","videos":{"one":[]}}"#;
+        let second = f.put(&f.e, next, true);
+        let policy: crate::tiering::Policy=serde_json::from_value(json!({"schema":"reel.asset-tier-policy.v1","project_id":"synthetic","baseline":{"sha256":"a".repeat(64),"bytes":1},"tiers":[],"selected_tier":"hot","history_tier":"history","cold_tier":"cold","history_versions":[],"tier_pins":{},"max_objects":100,"max_plan_seconds":30,"expires_after_seconds":60,"max_batch_bytes":1000,"max_batch_objects":100})).unwrap();
+        let before = crate::tiering::live(&root, &policy).unwrap();
+        assert!(before.controls.contains(&first));
+        assert!(!before.controls.contains(&second));
+        fs::write(
+            &path,
+            crate::registry::pointer(&second, next.len() as u64).unwrap(),
+        )
+        .unwrap();
+        let after = crate::tiering::live(&root, &policy).unwrap();
+        assert_ne!(before.fingerprint, after.fingerprint);
+        assert!(after.controls.contains(&second));
+        assert!(!after.controls.contains(&first));
+    }
+    #[test]
     fn output_profile_marks_only_declared_roles_and_keeps_required_inputs() {
         let f = Fixture::new();
         let out = f.put(&f.e, b"selected", true);
@@ -848,6 +1029,199 @@ mod tests {
             json!("edited-without-new-version");
         fs::write(f.root().join("bindings.json"), changed.to_string()).unwrap();
         assert!(report(&f.root()).is_err());
+    }
+    #[test]
+    fn declared_retention_separates_metadata_current_from_hot_roots_and_keeps_leases() {
+        let f = Fixture::new();
+        let root = f.root();
+        let old = f.put(&f.e, b"old movie", true);
+        let new = f.put(&f.e, b"new movie", true);
+        let cel = f.put(&f.e, b"current primary cel", true);
+        let evidence_manifest = f.put(&f.e, b"review evidence manifest", true);
+        let asset = |hash: &str, bytes: u64| json!({"sha256":hash,"bytes":bytes,"cache_uri":format!("cache://sha256/{hash}")});
+        let old_package_bytes = serde_json::to_vec(&json!({"schema":"caminos.artifact-package.v1","artifact_id":"movie","kind":"video","version_id":"v1","assets":{"delivery/movie":asset(&old,9)}})).unwrap();
+        let old_manifest = f.put(&f.e, &old_package_bytes, true);
+        let package = json!({"schema":"caminos.artifact-package.v1","artifact_id":"movie","kind":"video","version_id":"v2","assets":{"delivery/movie":asset(&new,9),"input/cel":asset(&cel,19)}});
+        let package_bytes = serde_json::to_vec(&package).unwrap();
+        let manifest = f.put(&f.e, &package_bytes, true);
+        let mut state = versions::State {
+            coverage_complete: true,
+            ..Default::default()
+        };
+        let mut v1 = version("movie", "v1", &old_manifest);
+        v1.payloads.insert(old.clone());
+        v1.dependency_contract = Some(versions::DependencyContract {
+            primary_inputs: Default::default(),
+            outputs: [old.clone()].into(),
+            references: Default::default(),
+        });
+        state.register(v1).unwrap();
+        let mut v2 = version("movie", "v2", &manifest);
+        v2.supersedes = Some("v1".into());
+        v2.payloads.extend([new.clone(), cel.clone()]);
+        v2.dependency_contract = Some(versions::DependencyContract {
+            primary_inputs: [cel.clone()].into(),
+            outputs: [new.clone()].into(),
+            references: Default::default(),
+        });
+        state.register(v2).unwrap();
+        state.select("movie", "v2").unwrap();
+        // An old evidence registry still calls its broad custody graph current.
+        let mut evidence = version("evidence", "v1", &evidence_manifest);
+        evidence.payloads.insert(old.clone());
+        state.register(evidence).unwrap();
+        state.select("evidence", "v1").unwrap();
+        f.state(&state);
+        fs::write(root.join("artifact.json"),json!({"schema":"caminos.artifact-record.v1","artifact_id":"movie","kind":"video","current_version":"v2","versions":[{"version_id":"v2","manifest":asset(&manifest,package_bytes.len() as u64),"version_lock":{"logical_id":"movie","version_id":"v2","manifest_sha256":manifest}}]}).to_string()).unwrap();
+        fs::write(
+            root.join("published.json"),
+            json!({"items":[{"record":"artifact.json"}]}).to_string(),
+        )
+        .unwrap();
+        let profile = root.join("asset-project.json");
+        let mut p = load(&profile).unwrap();
+        p["selections"] = json!([{"index":"published.json","entries":"/items","record_field":"record","format":"artifact","role_prefixes":["delivery/"]}]);
+        fs::write(&profile, p.to_string()).unwrap();
+        assert_eq!(
+            row(&report(&root).unwrap(), &old)["required_by_current_version"],
+            true
+        );
+        p["retention_roots"] = json!("declared-selections");
+        fs::write(&profile, p.to_string()).unwrap();
+        assert!(project(&root).is_err()); // typed producer admission is mandatory
+        p["require_primary_input_contracts"] = json!(true);
+        fs::write(&profile, p.to_string()).unwrap();
+        let r = report(&root).unwrap();
+        assert_eq!(row(&r, &old)["required_by_current_version"], false);
+        assert_eq!(row(&r, &new)["required_by_current_version"], true);
+        assert_eq!(row(&r, &cel)["required_by_current_version"], true);
+        assert_eq!(state.current["evidence"], "v1"); // metadata identity remains intact
+        let sizes = selected(&root).unwrap();
+        let diff = crate::version_diff::compare_project(
+            &root,
+            &state,
+            &sizes,
+            ("movie", "v1"),
+            ("movie", "v2"),
+        )
+        .unwrap();
+        assert!(
+            diff["eviction_candidate_sha256s"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(old))
+        );
+        let policy: crate::tiering::Policy = serde_json::from_value(json!({"schema":"reel.asset-tier-policy.v1","project_id":"synthetic","baseline":{"sha256":"a".repeat(64),"bytes":1},"tiers":[],"selected_tier":"hot","history_tier":"history","cold_tier":"cold","history_versions":[],"tier_pins":{},"max_objects":100,"max_plan_seconds":30,"expires_after_seconds":60,"max_batch_bytes":1000,"max_batch_objects":100})).unwrap();
+        let live = crate::tiering::live(&root, &policy).unwrap();
+        assert!(!live.current.contains(&old));
+        assert!(live.selected.contains(&cel));
+        // Separate published items can retain different immutable editions of
+        // a grouped package without retargeting its one metadata-current pointer.
+        let record = root.join("artifact.json");
+        let mut doc = load(&record).unwrap();
+        doc["versions"].as_array_mut().unwrap().push(json!({"version_id":"v1","manifest":asset(&old_manifest,old_package_bytes.len() as u64),"version_lock":{"logical_id":"movie","version_id":"v1","manifest_sha256":old_manifest}}));
+        fs::write(&record, doc.to_string()).unwrap();
+        p["selections"][0]["version_field"] = json!("published_version");
+        fs::write(&profile, p.to_string()).unwrap();
+        assert!(report(&root).is_err()); // explicit editions may not silently default
+        fs::write(root.join("published.json"),json!({"items":[{"record":"artifact.json","published_version":"v1"},{"record":"artifact.json","published_version":"v2"}]}).to_string()).unwrap();
+        assert_eq!(
+            row(&report(&root).unwrap(), &old)["required_by_current_version"],
+            true
+        );
+        assert!(
+            crate::tiering::live(&root, &policy)
+                .unwrap()
+                .current
+                .contains(&old)
+        );
+        let diff = crate::version_diff::compare_project(
+            &root,
+            &state,
+            &sizes,
+            ("movie", "v1"),
+            ("movie", "v2"),
+        )
+        .unwrap();
+        assert!(
+            !diff["eviction_candidate_sha256s"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(old))
+        );
+        assert_eq!(versions::read(&root).unwrap().current["movie"], "v2");
+        p["selections"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("version_field");
+        fs::write(&profile, p.to_string()).unwrap();
+        fs::write(
+            root.join("published.json"),
+            json!({"items":[{"record":"artifact.json"}]}).to_string(),
+        )
+        .unwrap();
+        state
+            .leases
+            .insert("render".into(), ["movie@v1".into()].into());
+        f.state(&state);
+        assert!(
+            crate::tiering::live(&root, &policy)
+                .unwrap()
+                .leased
+                .contains(&old)
+        );
+        let diff = crate::version_diff::compare_project(
+            &root,
+            &state,
+            &sizes,
+            ("movie", "v1"),
+            ("movie", "v2"),
+        )
+        .unwrap();
+        assert!(
+            !diff["eviction_candidate_sha256s"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(old))
+        );
+        state.coverage_complete = false;
+        f.state(&state);
+        assert!(report(&root).is_err());
+        assert!(crate::tiering::live(&root, &policy).is_err());
+        assert!(
+            crate::version_diff::compare_project(
+                &root,
+                &state,
+                &sizes,
+                ("movie", "v1"),
+                ("movie", "v2")
+            )
+            .is_err()
+        );
+        state.coverage_complete = true;
+        let contract = state
+            .versions
+            .get_mut("movie@v2")
+            .unwrap()
+            .dependency_contract
+            .as_mut()
+            .unwrap();
+        contract.outputs.clear();
+        contract.references.insert(new.clone());
+        f.state(&state);
+        assert!(report(&root).is_err()); // publication cannot turn history into a hot role
+        state
+            .versions
+            .get_mut("movie@v2")
+            .unwrap()
+            .dependency_contract = None;
+        f.state(&state);
+        assert!(report(&root).is_err());
+        fs::write(root.join("published.json"), "{\"items\":[]}").unwrap();
+        assert!(report(&root).is_err()); // accidental empty publication cannot evict everything
+        p["retention_roots"] = json!("typo");
+        fs::write(&profile, p.to_string()).unwrap();
+        assert!(project(&root).is_err());
     }
     #[test]
     fn profile_escape_and_inventory_budget_fail_closed() {

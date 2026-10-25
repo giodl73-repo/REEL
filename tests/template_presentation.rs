@@ -702,6 +702,42 @@ fn chapter_duration_comes_from_template() {
 }
 
 #[test]
+fn unnumbered_chapter_preserves_title_without_inventing_number() {
+    let mut invocation = EditableTextInvocation {
+        schema: INVOCATION_SCHEMA.into(),
+        template_id: "test-master".into(),
+        language: "es".into(),
+        title: "Pan con bacalao y tomate".into(),
+        byline: None,
+        lines: vec![],
+        chapter_number: None,
+    };
+    let layer = compile_layer(
+        &template("chapter-title"),
+        &invocation,
+        &[],
+        &BTreeMap::new(),
+    )
+    .unwrap();
+    assert_eq!(layer.duration_samples, 400);
+    assert!(layer.ass.contains("Pan con bacalao y tomate"));
+    assert!(layer.ass.contains("Style: Chapter,Georgia,36"));
+    assert!(!layer.ass.contains("Style: Number,"));
+    assert!(!layer.ass.contains("chapter_number"));
+
+    invocation.chapter_number = Some(" ".into());
+    assert!(
+        compile_layer(
+            &template("chapter-title"),
+            &invocation,
+            &[],
+            &BTreeMap::new(),
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn rejects_nonmonotonic_or_missing_native_line_anchors() {
     let mut invocation = poem();
     invocation.lines.swap(0, 1);

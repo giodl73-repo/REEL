@@ -2,13 +2,110 @@
 use crate::{
     adapters::still_animatic::{
         MAX_NEAR_STATIONARY_FRACTION, MIN_HOLD_STATIONARY_FRACTION, NEAR_STATIONARY_LUMA_THRESHOLD,
-        cadence_values_for_frames,
     },
     scene_delivery::{Job, PictureKind, PictureMotion, Plan},
 };
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
-use std::path::Path;
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
+
+/// Resolve once, then execute that exact native binary for every measurement.
+/// An explicit override never falls back to PATH or WSL.
+pub(crate) fn resolve_analyzer() -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os("REEL_CADENCE_FFMPEG") {
+        return checked_executable(Path::new(&path));
+    }
+    let name = if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
+    for dir in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
+        let path = dir.join(name);
+        if path.is_file() {
+            return checked_executable(&path);
+        }
+    }
+    anyhow::bail!("native cadence FFmpeg not found; set REEL_CADENCE_FFMPEG to an executable path")
+}
+
+fn checked_executable(path: &Path) -> Result<PathBuf> {
+    let resolved = path
+        .canonicalize()
+        .context("cannot resolve native cadence FFmpeg executable")?;
+    if !resolved.is_file() {
+        anyhow::bail!("native cadence FFmpeg path is not a file");
+    }
+    Ok(resolved)
+}
+
+pub(crate) fn native_output(executable: &Path, args: &[String]) -> Result<String> {
+    let output = Command::new(executable)
+        .args(args)
+        .output()
+        .context("cannot execute native cadence FFmpeg")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "native cadence FFmpeg failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    String::from_utf8(output.stdout).context("native cadence FFmpeg wrote non-UTF8 metrics")
+}
+
+fn native_frame_values(
+    executable: &Path,
+    video: &Path,
+    start: u64,
+    end: u64,
+    region: Option<&crate::caption_presentation::PixelRect>,
+) -> Result<Vec<f64>> {
+    if end
+        .checked_sub(start)
+        .is_none_or(|n| !(2..=432_000).contains(&n))
+    {
+        anyhow::bail!("indexed cadence requires 2..432000 frames");
+    }
+    let crop = region.map_or_else(String::new, |region| {
+        format!(
+            "crop={}:{}:{}:{}:exact=1,",
+            region.width, region.height, region.x, region.y
+        )
+    });
+    let output = native_output(
+        executable,
+        &[
+            "-hide_banner".into(),
+            "-loglevel".into(),
+            "error".into(),
+            "-i".into(),
+            video.to_string_lossy().into_owned(),
+            "-vf".into(),
+            format!(
+                "trim=start_frame={start}:end_frame={end},setpts=PTS-STARTPTS,{crop}tblend=all_mode=difference,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-"
+            ),
+            "-f".into(),
+            "null".into(),
+            "-".into(),
+        ],
+    )?;
+    let values = output
+        .lines()
+        .filter_map(|line| line.strip_prefix("lavfi.signalstats.YAVG="))
+        .map(|value| {
+            value
+                .parse::<f64>()
+                .context("invalid native FFmpeg YAVG metric")
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if values.len() as u64 != end - start - 1 || values.iter().any(|v| !v.is_finite() || *v < 0.0) {
+        anyhow::bail!("invalid indexed cadence metrics or transition count");
+    }
+    Ok(values)
+}
 
 fn evaluate(values: &[f64], holds: &[bool]) -> Value {
     let held = holds.iter().filter(|v| **v).count();
@@ -40,8 +137,10 @@ fn evaluate(values: &[f64], holds: &[bool]) -> Value {
 }
 
 pub fn analyze(job: &Job, plan: &Plan, root: &Path) -> Result<Value> {
-    let analyzer_version =
-        crate::adapters::ffmpeg::FfmpegAdapter.run_ffmpeg(&["-version".to_string()], &[])?;
+    crate::scene_delivery::picture_layout(job)?;
+    let analyzer = resolve_analyzer()?;
+    let analyzer_sha256 = crate::sha256_file(&analyzer)?;
+    let analyzer_version = native_output(&analyzer, &["-version".into()])?;
     let analyzer_version = analyzer_version
         .lines()
         .next()
@@ -82,21 +181,44 @@ pub fn analyze(job: &Job, plan: &Plan, root: &Path) -> Result<Value> {
                             &direction.dominant_element,
                             working(local),
                         )?;
-                        Ok((a - b).abs() < 1e-12)
+                        let pa = reel_assembly::motioncraft::pan_at(
+                            direction,
+                            &direction.dominant_element,
+                            working(local - 1),
+                        )?;
+                        let pb = reel_assembly::motioncraft::pan_at(
+                            direction,
+                            &direction.dominant_element,
+                            working(local),
+                        )?;
+                        Ok((a - b).abs() < 1e-12
+                            && (pa.x - pb.x).abs() < 1e-12
+                            && (pa.y - pb.y).abs() < 1e-12)
                     }
                     None => Ok(true),
                     _ => unreachable!(),
                 }
             })
             .collect::<Result<Vec<_>>>()?;
-        let values =
-            cadence_values_for_frames(&root.join("picture.mkv"), span.start_frame, span.end_frame)?;
+        let values = native_frame_values(
+            &analyzer,
+            &root.join("picture.mkv"),
+            span.start_frame,
+            span.end_frame,
+            job.picture_region.as_ref(),
+        )?;
         let mut report = evaluate(&values, &holds);
         report["attachment_id"] = json!(picture.attachment_id);
         report["start_frame"] = json!(span.start_frame);
         report["end_frame_exclusive"] = json!(span.end_frame);
         report["status"] = json!("evaluated");
+        if let Some(region) = &job.picture_region {
+            report["measurement_region"] = serde_json::to_value(region)?;
+        }
         rows.push(report);
+    }
+    if crate::sha256_file(&analyzer)? != analyzer_sha256 {
+        anyhow::bail!("native cadence executable changed during analysis");
     }
     let passed = !rows.is_empty() && rows.iter().all(|row| row["passed"] == true);
     Ok(
@@ -104,7 +226,9 @@ pub fn analyze(job: &Job, plan: &Plan, root: &Path) -> Result<Value> {
         "picture_sha256":crate::sha256_file(&root.join("picture.mkv"))?,
         "fps_numerator":plan.fps_numerator,"fps_denominator":plan.fps_denominator,
         "analyzer_ffmpeg_version":analyzer_version,
-        "analyzer_backend":if cfg!(windows) { "wsl" } else { "native" },
+        "analyzer_backend":"native",
+        "analyzer_executable":analyzer,
+        "analyzer_executable_sha256":analyzer_sha256,
         "near_stationary_luma_threshold":NEAR_STATIONARY_LUMA_THRESHOLD,
         "maximum_moving_near_stationary_fraction":MAX_NEAR_STATIONARY_FRACTION,
         "minimum_hold_stationary_fraction":MIN_HOLD_STATIONARY_FRACTION,
@@ -123,6 +247,40 @@ pub fn checked_report(job_path: &Path, asset_root: &Path, render_root: &Path) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn missing_or_directory_analyzer_rejects_without_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(checked_executable(&dir.path().join("missing.exe")).is_err());
+        assert!(checked_executable(dir.path()).is_err());
+    }
+
+    #[test]
+    #[ignore = "requires native FFmpeg"]
+    fn native_metrics_reject_a_frozen_moving_interval() {
+        let dir = tempfile::tempdir().unwrap();
+        let executable = resolve_analyzer().unwrap();
+        let video = dir.path().join("frozen.mkv");
+        native_output(
+            &executable,
+            &[
+                "-v".into(),
+                "error".into(),
+                "-f".into(),
+                "lavfi".into(),
+                "-i".into(),
+                "color=c=blue:s=64x64:r=24".into(),
+                "-frames:v".into(),
+                "24".into(),
+                "-c:v".into(),
+                "ffv1".into(),
+                video.to_string_lossy().into_owned(),
+            ],
+        )
+        .unwrap();
+        let values = native_frame_values(&executable, &video, 0, 24, None).unwrap();
+        assert_eq!(evaluate(&values, &[false; 23])["passed"], false);
+        assert_eq!(evaluate(&values, &[true; 23])["passed"], true);
+    }
     #[test]
     fn camera_hold_does_not_hide_an_unexpected_moving_phase_freeze() {
         assert_eq!(

@@ -20,6 +20,13 @@ pub const SCENE_SCHEMA_V2: &str = "reel.scene-authoring.v2";
 pub const BINDINGS_SCHEMA: &str = "reel.scene-asset-bindings.v1";
 pub const POLICY_SCHEMA: &str = "reel.scene-policy.v1";
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DialogueChannelMapping {
+    Automatic,
+    DuplicateMono,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScenePolicy {
@@ -126,6 +133,8 @@ pub struct Episode {
     pub scene_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub motion_direction: Option<crate::motioncraft::Direction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dialogue_channel_mapping: Option<DialogueChannelMapping>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -226,6 +235,10 @@ pub struct LanguageEventBinding {
     pub picture_slot_id: String,
     #[serde(default)]
     pub picture_binding_override: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sonic_bindings_override: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vfx_bindings_override: Option<Vec<String>>,
     #[serde(default)]
     pub supersedes_event_id: Option<String>,
 }
@@ -242,6 +255,33 @@ pub struct NativeAlignment {
     pub sample_rate: u32,
     pub cue_end_sample: u64,
     pub semantic_markers: BTreeMap<String, u64>,
+}
+
+/// Validate declared native alignment identity and marker bounds against a
+/// selected take. This does not read/measure audio or certify provider evidence.
+pub fn validate_native_alignment(
+    alignment: &NativeAlignment,
+    language: &str,
+    cue_id: &str,
+    selected_take_sha256: &str,
+) -> Result<()> {
+    if alignment.schema != NATIVE_ALIGNMENT_SCHEMA
+        || language.trim().is_empty()
+        || cue_id.trim().is_empty()
+        || alignment.language != language
+        || alignment.cue_id != cue_id
+        || !sha(selected_take_sha256)
+        || alignment.selected_take_sha256 != selected_take_sha256
+        || alignment.sample_rate == 0
+        || alignment.cue_end_sample == 0
+        || alignment
+            .semantic_markers
+            .iter()
+            .any(|(id, sample)| id.trim().is_empty() || *sample >= alignment.cue_end_sample)
+    {
+        bail!("invalid native alignment identity, selected take, clock or marker bounds");
+    }
+    Ok(())
 }
 
 pub const WORD_TIMING_SCHEMA: &str = "reel.scene-word-timing-evidence.v1";
@@ -915,15 +955,12 @@ pub fn compile_native_event_spans(
         let alignment = alignments
             .get(&cue.cue_id)
             .ok_or_else(|| anyhow::anyhow!("missing native alignment for {}", cue.cue_id))?;
-        if alignment.schema != NATIVE_ALIGNMENT_SCHEMA
-            || alignment.language != language_id
-            || alignment.cue_id != cue.cue_id
-            || !sha(&alignment.selected_take_sha256)
-            || alignment.sample_rate == 0
-            || alignment.cue_end_sample == 0
-        {
-            bail!("invalid native alignment for {}", cue.cue_id);
-        }
+        validate_native_alignment(
+            alignment,
+            language_id,
+            &cue.cue_id,
+            &alignment.selected_take_sha256,
+        )?;
         let events = language
             .events
             .iter()
@@ -1130,6 +1167,8 @@ pub struct Scene {
     pub holds: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub motion_direction: Option<crate::motioncraft::SceneDirection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dialogue_channel_mapping: Option<DialogueChannelMapping>,
 }
 
 /// Resolve explicit direction without changing source, selected assets or clocks.
@@ -1315,8 +1354,14 @@ pub fn materialize_scene(scene: &Scene) -> Result<Scene> {
                         .to_owned(),
                 ),
                 score: event.score.clone(),
-                sonic_bindings: event.sonic_bindings.clone(),
-                vfx_bindings: event.vfx_bindings.clone(),
+                sonic_bindings: binding
+                    .sonic_bindings_override
+                    .clone()
+                    .unwrap_or_else(|| event.sonic_bindings.clone()),
+                vfx_bindings: binding
+                    .vfx_bindings_override
+                    .clone()
+                    .unwrap_or_else(|| event.vfx_bindings.clone()),
             });
         }
         let expected = shared
@@ -1526,6 +1571,31 @@ pub fn resolve_episode_presentation(
     })
 }
 
+/// Resolve exactly one selected native asset without reading media or changing scope.
+pub fn resolve_selected_binding<'a>(
+    key: &str,
+    scopes: &'a [&ScopedBindings],
+) -> Result<&'a AssetRef> {
+    binding(key, scopes)
+}
+
+/// Native episode score-role metadata; bindings are resolved only when used.
+pub fn score_palette_roles(palette: &[ScoreBinding]) -> Result<BTreeMap<String, String>> {
+    let mut roles = BTreeSet::new();
+    let mut result = BTreeMap::new();
+    for score in palette {
+        if !roles.insert(score.role.as_str())
+            || score.theme_id.is_empty()
+            || score.source_poem_id.is_empty()
+            || score.arrangement_id.is_empty()
+        {
+            bail!("invalid episode score palette");
+        }
+        result.insert(score.role.clone(), score.asset_binding.clone());
+    }
+    Ok(result)
+}
+
 fn binding<'a>(key: &str, scopes: &'a [&ScopedBindings]) -> Result<&'a AssetRef> {
     let matches = scopes
         .iter()
@@ -1687,7 +1757,6 @@ pub fn resolve_scene(
     let scopes = [scene_bindings, episode_bindings, season];
     let mut selected_inputs = BTreeMap::new();
     let mut template_definitions = BTreeMap::new();
-    let mut score_roles = BTreeMap::new();
     let required_soundtrack = if let Some(use_) = &scene.presentation {
         let template = use_template(use_, catalog)?;
         if template.soundtrack_requirement.as_deref() == Some("selected-episode-score") {
@@ -1725,17 +1794,7 @@ pub fn resolve_scene(
             selected_inputs.insert(key.clone(), binding(key, &scopes)?.clone());
         }
     }
-    let mut roles = BTreeSet::new();
-    for score in &episode.score_palette {
-        if !roles.insert(score.role.as_str())
-            || score.theme_id.is_empty()
-            || score.source_poem_id.is_empty()
-            || score.arrangement_id.is_empty()
-        {
-            bail!("invalid episode score palette");
-        }
-        score_roles.insert(score.role.clone(), score.asset_binding.clone());
-    }
+    let score_roles = score_palette_roles(&episode.score_palette)?;
     if let Some((role, poem)) = &required_soundtrack {
         if !episode
             .score_palette
@@ -1889,12 +1948,20 @@ pub fn resolve_scene(
             &template_definitions,
             &policy,
         ))?;
+        let fingerprint = if motion.is_empty() {
+            legacy_fingerprint
+        } else {
+            digest(&(legacy_fingerprint, motion))?
+        };
+        let mapping = scene
+            .dialogue_channel_mapping
+            .or(episode.dialogue_channel_mapping);
         language_fingerprints.insert(
             language_id.clone(),
-            if motion.is_empty() {
-                legacy_fingerprint
+            if mapping == Some(DialogueChannelMapping::DuplicateMono) {
+                digest(&(fingerprint, mapping))?
             } else {
-                digest(&(legacy_fingerprint, motion))?
+                fingerprint
             },
         );
     }
@@ -2025,6 +2092,7 @@ mod tests {
             score_palette: vec![],
             scene_ids: vec!["montage".into()],
             motion_direction: None,
+            dialogue_channel_mapping: None,
         };
         let scene = Scene {
             schema: SCENE_SCHEMA.into(),
@@ -2046,6 +2114,7 @@ mod tests {
             continuity_tags: vec![],
             holds: vec![],
             motion_direction: None,
+            dialogue_channel_mapping: None,
         };
         assert_eq!(
             scene

@@ -1,0 +1,87 @@
+# Reusable authoring tools roadmap
+
+Checkpoint: 2026-10-24. REEL owns generic Rust engines, explicit CLI/UI entry
+points and synthetic fixtures. Project repositories own private declarative
+controls, media, exact versions, authority and delivery choices. Merging source
+does not install a binary or retarget an active project/runtime.
+
+| Area | Available source | Remaining work |
+| --- | --- | --- |
+| Browser entry | [Explicit Rust host](editor-host-v1.md) for the native cel, note and underlay exports: loopback/private URL, read-only declared resources, byte ranges and bounded concurrent readers, with idle/lifetime expiry. Private browser fixtures load and download drafts through the real listener. | Adopt the exact launcher binary per project. Default-browser interaction and media/playback/rendered review remain explicit acceptance work. |
+| Asset/cache foundation | Local LFS, version/dependency accounting, tier planning/review, guarded verified removal, typed references and admitted jobs. Recent main work includes checkpoint resume and registered bounded execution windows (PRs 145, 146, 150). | Adopt exact tested runtime/profile pins per producer. Keep complete demand/custody coverage and explicit removal decisions. An old inventory or CI pass alone grants no deletion authority. |
+| Cel discovery/editor | Shared native reader, Rust load/apply API, static editor export, explicit file maps, effective pictures, notes, version locks, append-only picture revisions and cue-local timing (PRs 147/148). One scoped language in a full multilingual scene, up to 128 total cues; combined or explicitly separate language graphs. Metadata-only inspection emits a locked edit template. Legacy drafts stay compatible. | Browser visual acceptance, private media/render/review and older-version reopen. A real frozen bilingual episode now passes identity/reorder/removal and both-language native delivery-control compilation. Explicit runtime adoption follows the remaining proof. Explicit candidate picture substitution is available through locked project bindings. Native stable cel identities and locked browser insertion proposals now split an existing hold; linked language editing, richer event intent and wider media formats remain later extensions. |
+| Scene/project adapter | Existing native scene, scoped bindings, measured alignments and delivery compiler. The cel editor routes existing layouts without another scene grammar. | Replace remaining legacy source-repository/Git-blob assumptions with explicit project inputs. Prove one episode and one music-video family without archived builders. |
+| Scene execution | Existing admitted jobs, output retention and explicit resume; native rendering/composition already exist. | Compare the preserved executor against REEL capabilities and port only missing generic operations. Keep source/executable pins and exact output/reference accounting. |
+| Songs, scores and arrangements | Native song generation, music source/analysis/model contracts, MIDI/MusicXML/SVG export, arrangement and printable-score engines. Bounded note and exact-text lyric-underlay workshops create new unreviewed native model proposals with source locks. A private browser-to-native fixture exercises draft round trips, keyboard controls and responsive layout. Selected lyric bytes and authorities remain unchanged. | Human visual and musical/lyric acceptance, installed-runtime adoption, phrase/arrangement decisions and finished engraving. Project adoption of an unreviewed melody draft does not establish finished notation. |
+| Large inventory/graph infrastructure | Separate draft PR144 has bounded index/adapters, revisioned catalog and fenced publication fixtures. | Cache-wide/all-consumer enforcement, cross-domain routing/lock order, safe explicit activation and final canonical unlink remain integration work. Green fixture CI does not close these gaps. Keep separate from routine cel UI adoption. |
+| Speech and episode assembly extensions | Separate draft PR120 (local speech/alignment) and PR128 (bounded lossless assembly). | Their owners must close the documented adoption/review gaps. They are not implicitly merged by the cel-tooling milestone. |
+
+## Next bounded units
+
+Explicit project descriptors now admit up to 128 named, already-bound candidate
+pictures into the shared cel selector. Media exports account for and freshly
+verify those pictures; controls-only exports expose the same choices without
+media reads. Native substitution retains append-only revisions and protected
+languages. See [candidate pictures](cel-sorter-project-v1.md#explicit-candidate-pictures).
+An explicit [native cel insertion](cel-insertion-v1.md) operation now splits one
+existing hold using caller-supplied stable identities and native event fragments.
+It preserves recording clocks, old picture revisions and protected languages;
+fresh source/session locks are mandatory. The browser can download a native
+insertion proposal from an unchanged session, with explicit picture/score intent.
+Its panel previews both holds and the chosen picture; primary-recording sessions
+can audition that split without changing the source sequence or using an output
+movie as its audio. Browser timing remains approximate.
+Native palette score roles are now explicit insertion choices, resolved through
+selected scene/episode/season bindings and revalidated by Rust. Primary-only
+audition does not mix that score. Explicit Sonic/VFX insertion choices now use
+existing native arrays, with Rust revalidation and declared project candidates.
+[Profile gain proposals](cel-profile-gains-v1.md) now edit two native scalars with
+explicit all-language acknowledgment and exact source locks. Per-binding profile
+authoring, effect playback/rendering, storage admission/lease enforcement
+and private browser adoption remain separate work. A source merge does not replace installed project binaries.
+
+The cel exporter also supports explicit primary-recording playback without a
+compiled preview movie; see the [editor contract](cel-sorter-v1.md). Its browser
+preview follows native cue clocks and permits loading pauses between recordings.
+Private Spanish and English movie-transport fixtures are retained in the producing
+project; those automated checks do not grant human picture/listening acceptance.
+
+1. Close cel-tool adoption with one explicitly chosen private multi-cue scene:
+   open the supplied project, edit within cues, preserve comments, apply to a
+   new candidate, verify exact inputs, compile/render through the existing job
+   system, review, and reopen the previous locked version. Browser layout and
+   media acceptance are distinct from JSON/compiler tests. No automatic server.
+   [Locked artifact export](artifact-export-v1.md) provides an explicit dry run
+   and bounded working copy of selected historical package roles; reopening
+   still requires the matching native tools and semantic checks.
+2. Complete explicit scene/project adapter coverage for that episode family and
+   a music-video family; reuse the existing native contracts and execution.
+3. Prove the [note workshop](music-note-editor-v1.md) and
+   [exact-text underlay](music-underlay-editor-v1.md) on a private native model
+   through validation and score export, with browser and musical review kept
+   separate. Extend explicit phrase/arrangement authoring over the
+   existing Rust contracts. Keep source text, recordings and score editions separate.
+4. Continue managed-index/fencing adoption as its own infrastructure task with
+   complete consumer coverage and explicit operational policy. It must not
+   silently activate cache removal or expand the current editing milestone.
+
+## Evidence and boundaries
+
+Cel source/compiler evidence is in [the editor contract](cel-sorter-v1.md),
+[project paths](cel-sorter-project-v1.md) and the
+[compiler round-trip review](reviews/2026-10-23-cel-compiler-roundtrip.md).
+Public fixtures cover native candidate application and actual delivery-control
+compilation; prior private checks cover metadata-only 40/40/39-event round trips.
+The [separate-graph review](reviews/2026-10-23-cel-episode-graph-files.md)
+records twelve actual compiler checks over a frozen private bilingual episode's
+six candidates. Those results do not certify media, rendering or browser layout.
+
+Further contracts: [typed references](asset-references-v1.md),
+[tier review](asset-tier-review-v1.md), [jobs](asset-jobs-v1.md),
+[checkpoint resume](jobs-checkpoint-resume.md),
+[scene authoring](scene-authoring-v1.md),
+[music export](music-score-export-v0.3.1.md),
+[arrangement plans](music-arrangement-plan-v0.3.10.md) and
+[printable lead sheets](music-printable-lead-sheet-v0.3.16.md).
+Private project port maps should link these contracts and exact source commits;
+large inventories/reports remain assets rather than copied roadmap prose.

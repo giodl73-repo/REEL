@@ -7,6 +7,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[derive(Debug)]
+pub struct AdmissionDenied(pub String);
+impl std::fmt::Display for AdmissionDenied {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "No active cache admitted this operation: {}", self.0)
+    }
+}
+impl std::error::Error for AdmissionDenied {}
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Policy {
@@ -73,6 +82,15 @@ pub fn worktree_lock(root: &Path) -> Result<MetadataLock> {
     )
 }
 
+/// Completed job outputs must survive a busy producer metadata transaction.
+/// This changes only publication waiting, never job execution or capacity locks.
+pub(crate) fn job_publication_lock(root: &Path) -> Result<MetadataLock> {
+    lock_for_budget(
+        &root.join(".local/metadata-control"),
+        std::time::Duration::from_secs(30),
+    )
+}
+
 /// Backward-compatible capacity ledger transaction. Never hold this guard while
 /// hashing, copying, rendering, or updating a worktree registry.
 fn capacity_lock(dir: &Path) -> Result<MetadataLock> {
@@ -89,6 +107,10 @@ pub fn lock_for(dir: &Path, timeout: std::time::Duration) -> Result<MetadataLock
     if timeout > std::time::Duration::from_secs(2) {
         return Err("Metadata transaction wait exceeds two-second bound".into());
     }
+    lock_for_budget(dir, timeout)
+}
+
+fn lock_for_budget(dir: &Path, timeout: std::time::Duration) -> Result<MetadataLock> {
     fs::create_dir_all(dir)?;
     let file = OpenOptions::new()
         .read(true)
@@ -259,11 +281,7 @@ fn reserve_candidates(
             lease: Some(lease),
         });
     }
-    Err(format!(
-        "No active cache admitted this operation: {}",
-        reasons.join("; ")
-    )
-    .into())
+    Err(AdmissionDenied(reasons.join("; ")).into())
 }
 
 pub fn reserve(root: &Path, config: &Config, bytes: u64) -> Result<Reservation> {
@@ -272,6 +290,18 @@ pub fn reserve(root: &Path, config: &Config, bytes: u64) -> Result<Reservation> 
 pub fn reserve_on(root: &Path, config: &Config, cache: &Path, bytes: u64) -> Result<Reservation> {
     if !config.cache_roots.contains(&cache.to_path_buf()) {
         return Err("Destination is not an active cache".into());
+    }
+    reserve_candidates(root, config, &[cache.to_path_buf()], bytes)
+}
+/// Explicit named archival custody, never an automatic admission fallback.
+pub fn reserve_archive_on(
+    root: &Path,
+    config: &Config,
+    cache: &Path,
+    bytes: u64,
+) -> Result<Reservation> {
+    if !config.archive_roots.contains(&cache.to_path_buf()) {
+        return Err("Destination is not a configured archive".into());
     }
     reserve_candidates(root, config, &[cache.to_path_buf()], bytes)
 }

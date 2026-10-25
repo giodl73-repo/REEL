@@ -23,6 +23,15 @@ edit rhythm, sound, and platform fit before renderer work starts.
 The shared Rust [asset custody and cache accounting tools](docs/asset-project-v1.md)
 use a versioned project profile while keeping private media, catalogues and
 reports in their producing asset repository/cache.
+The [asset-manager workflow](docs/asset-manager-workflow-v1.md) includes generic
+project templates, explicit inventory refresh, an offline block-review UI and
+the separate dry-run/application steps.
+The [schema and reference inspector](docs/asset-references-v1.md) exports typed
+contracts and builds a bounded, private offline graph with explicit gaps,
+distinguishing dependencies, inventory membership and historical versions.
+The [native cel source reader](docs/cel-source-inspection-v1.md) discovers stable
+picture events from explicit scene/binding controls across languages and cues,
+without resolving media or assuming a production-repository folder layout.
 
 ---
 

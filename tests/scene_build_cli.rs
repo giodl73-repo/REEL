@@ -335,6 +335,75 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
         compiled_job["pictures"][0]["source"]["sha256"],
         picture["sha256"]
     );
+    // A persisted trim changes only the selected take's level. It cannot be
+    // replayed against a regenerated recording or another scene language.
+    let original_profile = compile.profile.clone();
+    let original_output = compile.output_dir.clone();
+    let mut gain_profile: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join(&original_profile)).unwrap()).unwrap();
+    let cue_id = compiled_job["audio"][0]["cue_id"].as_str().unwrap();
+    gain_profile["dialogue_gain_by_cue"] = serde_json::json!({
+        cue_id: {"source_sha256":compiled_job["audio"][0]["source"]["sha256"],"gain_db":3.0}
+    });
+    write_json(&root.join("dialogue-gain-profile.json"), &gain_profile);
+    compile.profile = "dialogue-gain-profile.json".into();
+    compile.output_dir = "compiled-dialogue-gain".into();
+    let gained = reel::scene_delivery_compile::compile_to_dir(root, &compile).unwrap();
+    assert_ne!(gained["job_sha256"], compilation["job_sha256"]);
+    let gained_job: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("compiled-dialogue-gain/job.json")).unwrap())
+            .unwrap();
+    let gained_production: serde_json::Value = serde_json::from_slice(
+        &fs::read(root.join("compiled-dialogue-gain/production.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(gained_job["audio"][0]["gain_db"], 3.0);
+    assert_eq!(gained_production["audio_events"][0]["gain_db"], 3.0);
+    assert_eq!(
+        gained_job["audio"][0]["source"],
+        compiled_job["audio"][0]["source"]
+    );
+    assert_eq!(gained_job["pictures"], compiled_job["pictures"]);
+    assert_eq!(gained_job["buses"], compiled_job["buses"]);
+    assert_eq!(gained["alignment_sha256"], compilation["alignment_sha256"]);
+    let baseline_plan = reel::scene_delivery::plan(&root.join("compiled-motion/job.json"), root)
+        .unwrap()
+        .1;
+    let gained_plan =
+        reel::scene_delivery::plan(&root.join("compiled-dialogue-gain/job.json"), root)
+            .unwrap()
+            .1;
+    assert_eq!(gained_plan.duration_samples, baseline_plan.duration_samples);
+    assert_eq!(
+        serde_json::to_value(&gained_plan.audio).unwrap(),
+        serde_json::to_value(&baseline_plan.audio).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(&gained_plan.pictures).unwrap(),
+        serde_json::to_value(&baseline_plan.pictures).unwrap()
+    );
+    for (name, bad) in [
+        (
+            "stale-dialogue-gain",
+            serde_json::json!({cue_id:{"source_sha256":"0".repeat(64),"gain_db":3.0}}),
+        ),
+        (
+            "foreign-dialogue-gain",
+            serde_json::json!({"another-language-cue":{"source_sha256":compiled_job["audio"][0]["source"]["sha256"],"gain_db":3.0}}),
+        ),
+        (
+            "excessive-dialogue-gain",
+            serde_json::json!({cue_id:{"source_sha256":compiled_job["audio"][0]["source"]["sha256"],"gain_db":61.0}}),
+        ),
+    ] {
+        gain_profile["dialogue_gain_by_cue"] = bad;
+        write_json(&root.join("dialogue-gain-profile.json"), &gain_profile);
+        compile.output_dir = name.into();
+        assert!(reel::scene_delivery_compile::compile_to_dir(root, &compile).is_err());
+        assert!(!root.join(name).exists());
+    }
+    compile.profile = original_profile;
+    compile.output_dir = original_output;
     // Motion is part of the exact job inside an immutable selected semantic
     // snapshot. Neither current authoring edits nor a stale pointer may reuse
     // that snapshot and publish a successful scene.
@@ -422,6 +491,8 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
     reserved_profile["height"] = 720.into();
     reserved_profile["caption_picture_layout"] =
         serde_json::json!({"profile":"youtube-review","layout":"reserve-caption-band"});
+    reserved_profile["picture_region"] =
+        serde_json::json!({"x":20,"y":30,"width":800,"height":480});
     write_json(&profile_path, &reserved_profile);
     compile.output_dir = "compiled-caption-reservation".into();
     reel::scene_delivery_compile::compile_to_dir(root, &compile).unwrap();
@@ -434,8 +505,10 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
             .unwrap()
             .picture_region
             .height,
-        520
+        480
     );
+    assert_eq!(reserved_job.picture_region.as_ref().unwrap().x, 20);
+    assert_eq!(reserved_job.picture_region.as_ref().unwrap().width, 800);
     assert_eq!(reserved_plan.duration_samples, 48000);
     assert_eq!(reserved_plan.frame_count, 24);
     assert_eq!(
@@ -1233,6 +1306,84 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
         output.stdout
     };
     assert_ne!(frame("master.mkv"), frame("clean-picture.mkv"));
+
+    // The authoring compiler must produce the same nonspoken tail without a
+    // handwritten contract or a fake extra narration cue.
+    write_json(&root.join("tail-input-graph.json"), &semantic["graph"]);
+    write_json(&root.join("tail-input-pointer.json"), &semantic["pointer"]);
+    compile.graph = "tail-input-graph.json".into();
+    compile.pointer = "tail-input-pointer.json".into();
+    compile.template_receipt = Some("template-tail-receipt.json".into());
+    compile.output_dir = "compiled-native-tail".into();
+    reel::scene_delivery_compile::compile_to_dir(root, &compile).unwrap();
+    let compiled_contract =
+        reel::cue_relative::load(root.join("compiled-native-tail/contract.json")).unwrap();
+    assert_eq!(compiled_contract.tail_duration_samples, 48_000);
+    assert_eq!(compiled_contract.cues.len(), 1);
+    let compiled_clock =
+        reel::cue_relative::compile(&compiled_contract, &root.join("compiled-native-tail"))
+            .unwrap();
+    assert_eq!(compiled_clock.duration_samples, 96_000);
+    assert_eq!(compiled_clock.cues[0].end_sample, 48_000);
+
+    // Place only exact selected synthetic assets into the cache namespace.
+    let selected = bindings["assets"]
+        .as_object()
+        .unwrap()
+        .values()
+        .filter_map(|item| item["sha256"].as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    for entry in fs::read_dir(root).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_file() {
+            let hash = reference_text_bytes(&fs::read(&path).unwrap());
+            if selected.contains(hash.as_str()) {
+                let directory = root.join(format!("objects/sha256/{}", &hash[..2]));
+                fs::create_dir_all(&directory).unwrap();
+                fs::copy(&path, directory.join(hash)).unwrap();
+            }
+        }
+    }
+    let compiled_output = root.join("compiled-tail-output");
+    let result = Command::new(env!("CARGO_BIN_EXE_reel-scene-build"))
+        .args(["build"])
+        .arg(root)
+        .arg("compiled-native-tail/build.json")
+        .arg("--asset-root")
+        .arg(root)
+        .arg("--output-dir")
+        .arg(&compiled_output)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let compiled_receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(compiled_output.join("receipt.json")).unwrap()).unwrap();
+    assert_eq!(compiled_receipt["plan"]["duration_samples"], 96_000);
+
+    let original_receipt = fs::read(root.join("template-tail-receipt.json")).unwrap();
+    let mut wrong_clock: serde_json::Value = serde_json::from_slice(&original_receipt).unwrap();
+    wrong_clock["sample_rate"] = 44_100.into();
+    write_json(&root.join("template-tail-receipt.json"), &wrong_clock);
+    bindings["assets"]["template-receipt"] = asset(
+        "template-receipt",
+        &reference(root, "template-tail-receipt.json"),
+    );
+    write_json(&root.join("scene-bindings.json"), &bindings);
+    compile.output_dir = "reject-wrong-tail-clock".into();
+    assert!(reel::scene_delivery_compile::compile_to_dir(root, &compile).is_err());
+    assert!(!root.join("reject-wrong-tail-clock").exists());
+}
+
+fn reference_text_bytes(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn reference_text(value: &str) -> String {

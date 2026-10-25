@@ -238,3 +238,17 @@ historical lookup must be verified by the producing project before adoption.
 
 Review uses producer-applied lyric/vocal, music reconstruction and
 rights/provenance checklists. Machine evidence and human listening stay separate.
+
+## Full-recording vocal estimates
+
+`local_song_vocal_estimate.py` accepts an explicitly pinned original recording,
+local Demucs checkpoint, runtime files/packages and complete duration. It runs
+offline as a declared-output job, checks original bytes before and after, and
+retains the full stereo source clock. No setup or model download is implicit.
+The result is a derivative estimate with possible accompaniment bleed, not an
+original isolated stem or a generated/re-pitched/re-timed performance.
+
+Normalization distributes the source mean across the model's source count.
+Unit checks cover that restoration and reject invalid duration/scope/locks.
+Producing projects retain their actual complete-recording qualification receipts;
+technical qualification does not approve the estimated vocal or a new arrangement.

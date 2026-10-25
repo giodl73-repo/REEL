@@ -183,6 +183,84 @@ pub struct CompiledLayer {
     pub ass: String,
 }
 
+/// The shared scene-to-presentation projection used by rendering and inspection.
+/// This does not compile timing or grant approval.
+pub fn scene_invocation(
+    scene: &crate::scene_authoring::Scene,
+    language: &str,
+    kind: &str,
+) -> Result<EditableTextInvocation> {
+    if !scene.languages.contains_key(language) {
+        bail!("presentation language is outside scene scope");
+    }
+    let use_ = scene
+        .presentation
+        .as_ref()
+        .context("scene has no presentation")?;
+    let content = use_
+        .content
+        .as_object()
+        .context("scene presentation content must be an object")?;
+    let bilingual = scene.languages.len() > 1;
+    let title = content
+        .get("titles")
+        .and_then(|v| v.get(language))
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            (!bilingual)
+                .then(|| content.get("title").and_then(|v| v.as_str()))
+                .flatten()
+        })
+        .context("language-local presentation title missing")?;
+    let line_value = content
+        .get("lines_by_language")
+        .and_then(|v| v.get(language))
+        .or_else(|| (!bilingual).then(|| content.get("lines")).flatten());
+    let lines: Vec<PoemLine> = match line_value {
+        Some(value) => serde_json::from_value(value.clone())?,
+        None => vec![],
+    };
+    if matches!(kind, "opening-poem" | "internal-poem") && lines.is_empty() {
+        bail!("language-local poem lines missing");
+    }
+    let invocation = EditableTextInvocation {
+        schema: INVOCATION_SCHEMA.into(),
+        template_id: use_.template_id.clone(),
+        language: language.to_owned(),
+        title: title.into(),
+        byline: content
+            .get("bylines")
+            .and_then(|value| value.get(language))
+            .and_then(|value| value.as_str())
+            .map(str::to_owned),
+        lines,
+        chapter_number: content
+            .get("chapter_number")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned),
+    };
+    Ok(invocation)
+}
+
+/// Exact native source scope for the editable presentation (not DOCX extraction).
+pub fn scene_presentation_scope(
+    scene: &crate::scene_authoring::Scene,
+    kind: &str,
+) -> Result<Vec<String>> {
+    let mut presentation_scope = scene.source_scope_ids.clone();
+    for source_id in &scene.presentation_source_scope_ids {
+        if source_id.is_empty() || presentation_scope.contains(source_id) {
+            bail!("presentation source scope is empty or duplicates a spoken source ID");
+        }
+        presentation_scope.push(source_id.clone());
+    }
+    if kind == "chapter-title" && !scene.presentation_source_scope_ids.is_empty() {
+        // Chapter wording is sourced by its heading, separately from spoken prose.
+        presentation_scope = scene.presentation_source_scope_ids.clone();
+    }
+    Ok(presentation_scope)
+}
+
 /// Reject a source line anchored to an unrelated selected native performance.
 pub fn verify_native_line_ownership(
     invocation: &EditableTextInvocation,
@@ -346,6 +424,263 @@ fn event(start: u64, end: u64, rate: u32, style: &str, text: &str) -> String {
         time(start, rate),
         time(end, rate)
     )
+}
+
+/// Validate exact template identity/content and soundtrack semantics shared with rendering.
+/// The caller verifies the supplied definition hash against its actual bytes.
+pub fn validate_scene_template(
+    scene: &crate::scene_authoring::Scene,
+    episode_authoring: &crate::scene_authoring::Episode,
+    catalog: &crate::scene_authoring::TemplateCatalog,
+    definition: &EditableTextTemplate,
+    definition_sha256: &str,
+) -> Result<Option<String>> {
+    let use_ = scene
+        .presentation
+        .as_ref()
+        .context("scene has no presentation invocation")?;
+    let template_entry = catalog
+        .templates
+        .iter()
+        .find(|t| t.template_id == use_.template_id)
+        .context("template missing from catalog")?;
+    if !crate::scene_authoring::presentation_template_kind_matches(
+        &use_.role,
+        use_.template_kind.as_deref(),
+        &template_entry.kind,
+    ) {
+        bail!("template role mismatch");
+    }
+    if definition_sha256 != template_entry.definition_sha256 {
+        bail!("template definition hash differs from catalog");
+    }
+    if definition.template_id != template_entry.template_id
+        || definition.kind != template_entry.kind
+        || definition.soundtrack_requirement != template_entry.soundtrack_requirement
+    {
+        bail!("template definition identity mismatch");
+    }
+    let content = use_
+        .content
+        .as_object()
+        .context("scene presentation content must be an object")?;
+    for key in &template_entry.required_content_keys {
+        if !content.contains_key(key) {
+            bail!("scene presentation missing {key}");
+        }
+    }
+    if content.keys().any(|key| {
+        matches!(
+            key.as_str(),
+            "layout" | "font" | "colors" | "duration_seconds" | "panel"
+        )
+    }) {
+        bail!("scene content tries to own template layout");
+    }
+    let mut required_score = None;
+    if let Some(requirement) = &definition.soundtrack_requirement {
+        if requirement != "selected-episode-score" {
+            bail!("unknown template soundtrack requirement");
+        }
+        let role = content
+            .get("score_role")
+            .and_then(|value| value.as_str())
+            .filter(|role| !role.trim().is_empty())
+            .context("soundtrack-required template needs score_role")?;
+        let poem = content
+            .get("poem_id")
+            .and_then(|value| value.as_str())
+            .filter(|poem| !poem.trim().is_empty())
+            .context("soundtrack-required template needs poem_id")?;
+        let score = episode_authoring
+            .score_palette
+            .iter()
+            .find(|score| score.role == role && score.source_poem_id == poem)
+            .context("required soundtrack lacks a poem-matched episode score")?;
+        required_score = Some(score.asset_binding.clone());
+        // A title prelude has no narration events. Its separately rendered
+        // presentation unit consumes the selected, poem-matched score.
+        for (lane_id, lane) in &scene.languages {
+            if definition.kind == "poem-title" {
+                continue;
+            }
+            if !lane.events.iter().any(|event| {
+                matches!(&event.score,
+                crate::scene_authoring::ScoreUse::Role { role: event_role } if event_role == role)
+            }) {
+                bail!("{lane_id} has no event bound to required soundtrack role {role}");
+            }
+        }
+    }
+    Ok(required_score)
+}
+
+/// Compile native line anchors and template clocks in memory; does not render media.
+/// Exact selected source/alignment bytes must be verified by the caller.
+pub fn compile_scene_layer(
+    scene: &crate::scene_authoring::Scene,
+    definition: &EditableTextTemplate,
+    language: &str,
+    source_text: &PresentationSourceText,
+    native: &BTreeMap<String, NativeAlignment>,
+) -> Result<(CompiledLayer, u64, u32)> {
+    let content = scene
+        .presentation
+        .as_ref()
+        .context("scene has no presentation invocation")?
+        .content
+        .as_object()
+        .context("scene presentation content must be an object")?;
+    let invocation = scene_invocation(scene, language, &definition.kind)?;
+    let presentation_scope = scene_presentation_scope(scene, &definition.kind)?;
+    verify_source_text(
+        &invocation,
+        source_text,
+        &scene.source_authority_id,
+        &presentation_scope,
+        &scene.presentation_source_scope_ids,
+    )?;
+    if definition.post_poem_title_duration_ms.is_some()
+        != (source_text.schema == SCENE_SOURCE_TEXT_SCHEMA_V2)
+    {
+        bail!("post-poem title template and per-display V2 source text must agree");
+    }
+    let lane = scene
+        .languages
+        .get(language)
+        .context("scene language missing")?;
+    let ordered_cues = if matches!(
+        definition.kind.as_str(),
+        "opening-poem" | "internal-poem" | "semantic-label"
+    ) {
+        lane.cues
+            .iter()
+            .map(|cue| cue.cue_id.clone())
+            .collect::<Vec<_>>()
+    } else {
+        vec![]
+    };
+    let line_cue_ids = content
+        .get("line_cue_ids")
+        .and_then(|v| v.get(language))
+        .and_then(|v| v.as_array());
+    if matches!(definition.kind.as_str(), "opening-poem" | "internal-poem")
+        && scene.schema != crate::scene_authoring::SCENE_SCHEMA_V2
+        && line_cue_ids.is_none()
+    {
+        bail!("poem needs a language-local line-to-cue map");
+    }
+    if let Some(list) = line_cue_ids {
+        let declared = list
+            .iter()
+            .map(|v| v.as_str().context("line cue ID must be string"))
+            .collect::<Result<Vec<_>>>()?;
+        let actual = invocation
+            .lines
+            .iter()
+            .map(|line| line.cue_id.as_str())
+            .collect::<Vec<_>>();
+        if declared != actual {
+            bail!("line-to-cue map differs from source lines");
+        }
+    }
+    if matches!(definition.kind.as_str(), "opening-poem" | "internal-poem") {
+        let covered = invocation
+            .lines
+            .iter()
+            .map(|line| line.audio_cue_id.as_deref().unwrap_or(&line.cue_id))
+            .collect::<std::collections::BTreeSet<_>>();
+        let selected = ordered_cues
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        if covered != selected {
+            bail!("poem display does not cover every selected native performance");
+        }
+        if invocation
+            .lines
+            .iter()
+            .any(|line| line.audio_cue_id.is_some())
+        {
+            let source_lines = invocation
+                .lines
+                .iter()
+                .map(|line| line.cue_id.as_str())
+                .collect::<Vec<_>>();
+            let canonical = scene
+                .source_scope_ids
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            if source_lines != canonical {
+                bail!(
+                    "continuous poem display must cover canonical source lines once in source order"
+                );
+            }
+        }
+        for line in &invocation.lines {
+            let audio_id = line.audio_cue_id.as_deref().unwrap_or(&line.cue_id);
+            let cue = lane
+                .cues
+                .iter()
+                .find(|cue| cue.cue_id == audio_id)
+                .context("poem line native performance missing")?;
+            if line.cue_id != cue.cue_id && !cue.source_cue_ids.contains(&line.cue_id) {
+                bail!("poem line is outside its native performance source scope");
+            }
+        }
+    }
+    if definition.kind == "semantic-label" {
+        verify_native_line_ownership(&invocation, &lane.cues)?;
+    }
+    // Fixed chapter display is independent of the scene's spoken cue clock.
+    // The native clocks still bound its visibility and determine the receipt.
+    let no_reading_clocks = BTreeMap::new();
+    let reading_clocks = if definition.kind == "chapter-title" {
+        &no_reading_clocks
+    } else {
+        native
+    };
+    let compiled = compile_layer(definition, &invocation, &ordered_cues, reading_clocks)?;
+    // A title overlays a narrated scene without replacing its native clock.
+    // The ASS still uses the template's fixed visible duration.
+    let (duration_samples, sample_rate) =
+        if definition.kind == "chapter-title" && !lane.cues.is_empty() {
+            overlay_clock(native, compiled.duration_samples, compiled.sample_rate)?
+        } else {
+            (compiled.duration_samples, compiled.sample_rate)
+        };
+    Ok((compiled, duration_samples, sample_rate))
+}
+
+fn overlay_clock(
+    clocks: &BTreeMap<String, NativeAlignment>,
+    visible_samples: u64,
+    visible_rate: u32,
+) -> Result<(u64, u32)> {
+    let rate = clocks
+        .values()
+        .next()
+        .context("chapter scene has no native clocks")?
+        .sample_rate;
+    let duration = clocks.values().try_fold(0u64, |sum, clock| {
+        if rate == 0 || clock.sample_rate != rate || clock.cue_end_sample == 0 {
+            bail!("chapter overlay native clocks have inconsistent sample rates or empty duration");
+        }
+        sum.checked_add(clock.cue_end_sample)
+            .context("chapter scene clock overflow")
+    })?;
+    if visible_rate == 0 {
+        bail!("chapter visibility clock has zero sample rate");
+    }
+    let visible = visible_samples
+        .checked_mul(u64::from(rate))
+        .context("chapter visible duration overflow")?
+        / u64::from(visible_rate);
+    if duration < visible {
+        bail!("chapter overlay exceeds its narrated scene");
+    }
+    Ok((duration, rate))
 }
 
 /// Create a portable, editable ASS source. Every poem line is present at the
@@ -609,29 +944,30 @@ pub fn compile_layer(
         if chapter.fade_in_ms.saturating_add(chapter.fade_out_ms) >= duration * 1000 {
             bail!("chapter fades consume its entire duration");
         }
-        let styles = format!(
-            "{}{}",
-            chapter_style("Number", &chapter.number)?,
-            chapter_style("Chapter", &chapter.title)?
-        );
+        let number = invocation
+            .chapter_number
+            .as_deref()
+            .map(escape)
+            .transpose()?;
+        let mut styles = String::new();
+        if number.is_some() {
+            styles.push_str(&chapter_style("Number", &chapter.number)?);
+        }
+        styles.push_str(&chapter_style("Chapter", &chapter.title)?);
         ass = ass.replace("\n[Events]\n", &format!("\n{styles}[Events]\n"));
-        let number = escape(
-            invocation
-                .chapter_number
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("chapter number missing"))?,
-        )?;
         let title = escape(&invocation.title)?;
         let end = duration as u64 * 100;
-        ass.push_str(&format!(
-            "Dialogue: 0,0:00:00.00,{},Number,chapter_number,{},0,{},,{{\\fad({},{})}}{}\n",
-            time(end, 100),
-            chapter.number.margin_left,
-            chapter.number.margin_vertical,
-            chapter.fade_in_ms,
-            chapter.fade_out_ms,
-            number
-        ));
+        if let Some(number) = number {
+            ass.push_str(&format!(
+                "Dialogue: 0,0:00:00.00,{},Number,chapter_number,{},0,{},,{{\\fad({},{})}}{}\n",
+                time(end, 100),
+                chapter.number.margin_left,
+                chapter.number.margin_vertical,
+                chapter.fade_in_ms,
+                chapter.fade_out_ms,
+                number
+            ));
+        }
         ass.push_str(&format!(
             "Dialogue: 1,0:00:00.00,{},Chapter,chapter_title,{},0,{},,{{\\fad({},{})}}{}\n",
             time(end, 100),
@@ -895,4 +1231,61 @@ pub fn compile_layer(
         sample_rate: rate,
         ass,
     })
+}
+
+#[cfg(test)]
+mod scene_clock_tests {
+    use super::*;
+    fn clock(rate: u32, samples: u64) -> NativeAlignment {
+        NativeAlignment {
+            schema: "reel.scene-native-alignment.v1".into(),
+            language: "es".into(),
+            cue_id: "cue".into(),
+            selected_take_sha256: "a".repeat(64),
+            sample_rate: rate,
+            cue_end_sample: samples,
+            semantic_markers: BTreeMap::new(),
+        }
+    }
+    #[test]
+    fn fixed_four_second_display_preserves_full_44100_hz_scene_clock() {
+        let clocks = BTreeMap::from([
+            ("a".into(), clock(44100, 264600)),
+            ("b".into(), clock(44100, 308700)),
+        ]);
+        assert_eq!(overlay_clock(&clocks, 400, 100).unwrap(), (573300, 44100));
+    }
+    #[test]
+    fn rejects_short_scene_mixed_rates_and_overflow() {
+        assert!(
+            overlay_clock(
+                &BTreeMap::from([("a".into(), clock(44100, 44100))]),
+                400,
+                100
+            )
+            .is_err()
+        );
+        assert!(
+            overlay_clock(
+                &BTreeMap::from([
+                    ("a".into(), clock(44100, 264600)),
+                    ("b".into(), clock(48000, 308700))
+                ]),
+                400,
+                100
+            )
+            .is_err()
+        );
+        assert!(
+            overlay_clock(
+                &BTreeMap::from([
+                    ("a".into(), clock(44100, u64::MAX)),
+                    ("b".into(), clock(44100, 1))
+                ]),
+                400,
+                100
+            )
+            .is_err()
+        );
+    }
 }

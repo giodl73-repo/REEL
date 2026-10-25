@@ -73,6 +73,61 @@ See `docs/scene-delivery-v0.1.md`, `docs/reviews/2026-09-09-scene-delivery.md`, 
 
 ## Validation
 
+### 2026-10-21 native alignment metadata inspection
+
+Scene contexts can opt into exact selected alignment JSON checks and native
+semantic-event spans through shared alignment validation/compiler functions.
+Per-language clocks, checked totals and holds stay distinct from actual audio
+measurement, presentation timing and approvals. No media/registry mutation is
+introduced. See `docs/handoff/2026-10-21-native-alignment-inspection.md`.
+
+
+### 2026-10-21 selected presentation source-text checks
+
+Scene contexts can explicitly verify native selected source-text metadata using
+the shared renderer projection and existing wording/stanza/display/cue checks.
+Per-language source holds, draft states, exact authority-document identity and
+all metadata bounds/freshness remain explicit. Original manuscript content,
+audio, render timing and human approval remain separate gates. See
+`docs/handoff/2026-10-21-presentation-source-checks.md`.
+
+
+### 2026-10-21 source-authority and delivery reference contracts
+
+Strict generic records now expose source revisions, declared scope coverage,
+exact delivery subject locks, retained outputs and opaque evidence relationships.
+Source scope/identity and delivery payload membership are checked. Unverified
+semantics stay findings, including for public-audience declarations. No service
+access, release inference, render or cache mutation is introduced. See
+`docs/handoff/2026-10-21-authority-delivery-references.md`.
+
+
+### 2026-10-21 native scene selected-binding reference contexts
+
+Explicit scene contexts now reuse the existing native authoring resolver over
+seven declared metadata documents, including registered cache-backed sources.
+Only its selected inputs become required-asset edges. Presence holds, document
+hashes and native fingerprints remain explicit; no render or approval is
+implied. See `docs/handoff/2026-10-21-native-scene-reference-bindings.md`.
+
+### 2026-10-21 bounded asset schema and reference inspection
+
+Added a Rust schema catalogue, root-scoped reference inspector, strict check,
+direct-reference query and private offline graph view. Native authoring parsers
+are reused. Inventory membership, version custody and exact dependencies retain
+different meanings; unsupported contracts and uninspected fields are findings.
+See `docs/asset-references-v1.md` and the dated handoff/review. No cache mutation,
+archive crawl, daemon or inferred creative/build approval is introduced.
+
+### 2026-10-21 generic asset-manager review workflow
+
+Added explicit inventory refresh with immutable private review inputs, generic
+project templates and configured local root policy. The offline UI supports tier
+filters, size sorting, chosen-block inspection, hold reasons and bounded hash
+previews. Native dry-run/application retains ownership of cache changes. See
+`docs/handoff/2026-10-21-generic-asset-manager-ui.md` for validation and adoption
+limits. Private assets and reports remain in the producing repository/cache.
+
 ```powershell
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
@@ -80,3 +135,12 @@ cargo test --all-targets --all-features
 cargo run --quiet -- validate manifests/fixtures/two-speaker-untimed/planning.yaml --output json
 git diff --check
 ```
+
+### 2026-10-21 selected presentation template inspection
+
+Explicit scene-context template descriptors now opt into shared renderer/native
+content and clock compilation, following selected source and alignment checks.
+Reports retain hash/bytes and scene/overlay clocks without text or ASS. Failed
+languages hold their context; metadata and compilation work remain bounded.
+Real private authoring coverage failures are retained upstream without changing
+historical selections. See [handoff](../../../docs/handoff/2026-10-21-presentation-clock-inspection.md).

@@ -62,6 +62,11 @@ name multiple `source_cue_ids` when translation combines source cues.
 `language_event_bindings.<lang>` maps a shared `semantic_id` to the local cue,
 trigger marker and selected graph event/picture slot. An explicit picture
 binding override is available for a language-specific picture selection.
+`sonic_bindings_override` and `vfx_bindings_override` may be set on a language
+event binding when an effect exists in only one language or differs by language.
+An omitted override inherits the shared list; an explicit empty list means
+silence for that language. The native resolver checks the resulting local
+asset keys and builds each language from its own effect list.
 For V2 poem content, each `lines_by_language` line carries its cue ID;
 `line_cue_ids` is unnecessary. The template compiler checks that the lines
 cover every selected native poem cue exactly once. V1 continues to require
@@ -175,6 +180,13 @@ This check binds the invocation to its selected source authority, while actual
 human review of that authority remains a separate decision. Scene content
 provides language-local text and cue/semantic-marker IDs; the template owns
 canvas, panel, font, colors, and chapter duration.
+Chapter headings may omit `chapter_number` when the selected source is
+unnumbered. The compiler then emits only the title style and event; it does not
+invent a number. A supplied number must remain nonempty, and numbered headings
+retain their existing rendering.
+For a chapter over narrated prose, its fixed display clock remains separate
+from the native dialogue clocks. The receipt preserves the complete scene
+duration, and a heading longer than the narrated scene is rejected.
 The resulting editable ASS layer shows the complete poem from its first frame,
 advances read-state colors at measured native line entrances, and keeps a
 chapter card for its template-defined duration. Its receipt records the exact
@@ -254,6 +266,10 @@ Put Sonic and VFX keys on `shared_events` once. Both language lanes inherit the
 same keys while verified native phrase alignments determine their actual start
 and end samples. Bind each key exactly once in a scoped asset file with a
 logical ID, SHA-256, byte count, `cache://sha256/` URI and selection state.
+For a language-only effect, declare the key in that language's
+`language_event_bindings` override; for a silent language, use an explicit
+empty override. Keep both overrides absent when the shared intent applies to
+both languages.
 `compile-delivery` rejects missing or unselected objects. This technical
 selection does not substitute for project asset authority or creative review.
 
@@ -336,3 +352,13 @@ intentional silent presentations. The audio file still needs its exact hash,
 bytes and cache locator; this requirement does not certify musical continuity
 into the next unit. Choose the prelude excerpt and poem score handoff together
 so the score introduction is not replayed unintentionally.
+Optional delivery-profile `sonic_channel_mappings_by_binding` maps exact used
+Sonic keys to `duplicate-mono` or `downmix-mono-duplicate`. The latter is the
+explicit stereo-to-mono-and-duplicate E compatibility route; absent keys retain
+legacy conversion. `sonic_placement_offsets_by_binding` maps a used key to
+`{samples: 8, evidence_binding: "sonic-placement-evidence", reason: "Measured
+selected historical offset"}`. The evidence binding must resolve to a selected,
+hash-verified cache object and joins the selected delivery closure. Unused keys,
+missing/stale evidence, empty reasons and out-of-scene placement reject before
+delivery output. The generated native job retains source/gain/semantic anchors
+and carries explicit channel/placement intent to the shared scene mixer.

@@ -52,6 +52,8 @@ pub struct DeliveryProfile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption_picture_layout: Option<crate::caption_presentation::CaptionPictureLayoutConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture_region: Option<crate::caption_presentation::PixelRect>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub motion_safe_area: Option<reel_assembly::motioncraft::Rect>,
     #[serde(default)]
     pub still_sequence_encoding: Option<String>,
@@ -62,6 +64,9 @@ pub struct DeliveryProfile {
     pub score_gain_db: f64,
     pub score_fade_in_samples: u64,
     pub score_fade_out_samples: u64,
+    /// Dialogue trims are scoped to this scene language and exact selected take.
+    #[serde(default)]
+    pub dialogue_gain_by_cue: BTreeMap<String, DialogueGain>,
     #[serde(default = "default_sonic_gain_db")]
     pub sonic_gain_db: f64,
     #[serde(default)]
@@ -69,6 +74,36 @@ pub struct DeliveryProfile {
     /// Explicit modes; cache evidence remains owned by scoped asset bindings.
     #[serde(default)]
     pub vfx_render_mode_by_binding: BTreeMap<String, String>,
+    #[serde(default)]
+    pub sonic_channel_mappings_by_binding:
+        BTreeMap<String, crate::scene_delivery::AudioChannelMapping>,
+    #[serde(default)]
+    pub sonic_placement_offsets_by_binding: BTreeMap<String, SonicPlacementOffset>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DialogueGain {
+    pub source_sha256: String,
+    pub gain_db: f64,
+}
+
+fn dialogue_gain_db(profile: &DeliveryProfile, cue: &str, source: &str) -> Result<Option<f64>> {
+    let Some(trim) = profile.dialogue_gain_by_cue.get(cue) else {
+        return Ok(None);
+    };
+    if trim.source_sha256 != source {
+        bail!("dialogue gain for cue {cue} does not match the selected recording");
+    }
+    Ok(Some(trim.gain_db))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SonicPlacementOffset {
+    pub samples: i64,
+    pub evidence_binding: String,
+    pub reason: String,
 }
 
 fn default_sonic_gain_db() -> f64 {
@@ -152,6 +187,9 @@ fn close_delivery_graph(
                 Lane::Sonic
             },
         ));
+        if !row["placement_offset"].is_null() {
+            media.push((&row["placement_offset"]["evidence"], Lane::Sonic));
+        }
     }
     for row in job["external_layers"].as_array().into_iter().flatten() {
         media.push((&row["evidence"], Lane::Presentation));
@@ -321,6 +359,93 @@ fn presentation_binding<'a>(content: &'a Value, field: &str, language: &str) -> 
         .with_context(|| format!("presentation {field} missing for {language}"))
 }
 
+fn presentation_tail_samples(
+    root: &Path,
+    request: &CompileManifest,
+    scene: &Scene,
+    catalog: &TemplateCatalog,
+    scopes: &[&ScopedBindings],
+    sample_rate: u32,
+    spoken_samples: u64,
+) -> Result<u64> {
+    let Some(presentation) = &scene.presentation else {
+        return Ok(0);
+    };
+    let key = presentation_binding(
+        &presentation.content,
+        "template_receipt_bindings",
+        &request.language,
+    )?;
+    let selected = asset(key, scopes)?;
+    let path = request
+        .template_receipt
+        .as_deref()
+        .context("presentation compile requires template_receipt path")?;
+    let bytes = fs::read(checked(root, path)?)?;
+    if hash(&bytes) != selected.sha256 || bytes.len() as u64 != selected.bytes {
+        bail!("template receipt path differs from selected presentation receipt");
+    }
+    let receipt: Value = serde_json::from_slice(&bytes)?;
+    let template = catalog
+        .templates
+        .iter()
+        .find(|item| item.template_id == presentation.template_id)
+        .context("presentation template missing from catalog")?;
+    let layer = asset(
+        presentation_binding(
+            &presentation.content,
+            "ass_layer_bindings",
+            &request.language,
+        )?,
+        scopes,
+    )?;
+    let source = asset(
+        presentation_binding(
+            &presentation.content,
+            "source_text_bindings",
+            &request.language,
+        )?,
+        scopes,
+    )?;
+    if receipt["schema"] != "reel.editable-layer-compile-receipt.v1"
+        || receipt["scene_id"] != scene.scene_id
+        || receipt["language"] != request.language
+        || receipt["template_id"] != template.template_id
+        || receipt["template_definition_sha256"] != template.definition_sha256
+        || receipt["ass_sha256"] != layer.sha256
+        || receipt["source_text_sha256"] != source.sha256
+        || receipt["sample_rate"].as_u64() != Some(u64::from(sample_rate))
+    {
+        bail!("presentation clock receipt differs from selected source, layer or template");
+    }
+    let tail = receipt["duration_samples"]
+        .as_u64()
+        .context("presentation receipt lacks duration_samples")?
+        .checked_sub(spoken_samples)
+        .context("presentation receipt is shorter than the native scene clock")?;
+    if tail != 0
+        && (!matches!(template.kind.as_str(), "opening-poem" | "internal-poem")
+            || tail > u64::from(sample_rate) * 30
+            || tail
+                .checked_mul(100)
+                .context("presentation tail overflow")?
+                % u64::from(sample_rate)
+                != 0)
+    {
+        bail!("only a bounded whole-centisecond poem title tail may extend native speech");
+    }
+    Ok(tail)
+}
+
+fn scene_end_anchor(cues: &[CueClock], tail_samples: u64) -> Result<Value> {
+    let last = cues.last().context("scene has no cues")?;
+    if tail_samples == 0 {
+        return anchor(last.end, cues);
+    }
+    let offset = i64::try_from(tail_samples).context("scene tail anchor overflows")?;
+    Ok(json!({"kind":"cue-end","cue_id":last.id,"offset_samples":offset}))
+}
+
 fn anchor(sample: u64, cues: &[CueClock]) -> Result<Value> {
     let last = cues.last().context("scene has no cues")?;
     if sample == last.end {
@@ -452,6 +577,16 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         || !profile.score_gain_db.is_finite()
         || !profile.sonic_gain_db.is_finite()
         || profile.sonic_gain_db.abs() > 60.0
+        || profile.dialogue_gain_by_cue.iter().any(|(cue, trim)| {
+            cue.is_empty()
+                || !trim.gain_db.is_finite()
+                || trim.gain_db.abs() > 60.0
+                || trim.source_sha256.len() != 64
+                || !trim
+                    .source_sha256
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        })
         || profile
             .sonic_gain_db_by_binding
             .iter()
@@ -459,13 +594,23 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     {
         bail!("invalid scene delivery profile");
     }
-    if let Some(layout) = &profile.caption_picture_layout {
-        crate::caption_presentation::resolve_picture_layout(layout, profile.width, profile.height)?;
-    }
+    crate::caption_presentation::resolve_scene_picture_layout(
+        profile.caption_picture_layout.as_ref(),
+        profile.picture_region.as_ref(),
+        profile.width,
+        profile.height,
+    )?;
     let lane = scene
         .languages
         .get(&request.language)
         .context("requested scene language missing")?;
+    if profile
+        .dialogue_gain_by_cue
+        .keys()
+        .any(|id| !lane.cues.iter().any(|cue| cue.cue_id == *id))
+    {
+        bail!("dialogue gain names a cue outside the selected scene language");
+    }
     let native = compile_native_event_spans(&request.language, lane, &alignments)?;
     let mut cues = Vec::new();
     let mut offset = 0u64;
@@ -487,6 +632,18 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         offset = end;
     }
     let duration = offset;
+    let tail_samples = presentation_tail_samples(
+        &root,
+        request,
+        &scene,
+        &catalog,
+        &scopes,
+        profile.sample_rate,
+        duration,
+    )?;
+    let picture_duration = duration
+        .checked_add(tail_samples)
+        .context("scene title tail overflows native clock")?;
     let selected_events = active_scene_events(&graph, &scene.scene_id, &request.language)?;
     if selected_events.len() != lane.events.len() {
         bail!("selected graph does not cover each scene language event");
@@ -573,7 +730,13 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     let mut attachments = Vec::new();
     let mut event_bindings = Vec::new();
     let motion_directions = resolve_motion_direction(&episode, &scene, &request.language)?;
-    for event in &events {
+    for (index, event) in events.iter().enumerate() {
+        let last_picture = index + 1 == events.len();
+        let picture_end = if last_picture {
+            picture_duration
+        } else {
+            event.end
+        };
         let picture_id = delivery_id("p", &event.semantic_id);
         let shot_id = delivery_id("shot", &event.semantic_id);
         shots.push(json!({"id":shot_id,"scene_id":id}));
@@ -591,7 +754,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
             let mut motion = reel_assembly::motioncraft::compile(
                 direction,
                 &safe,
-                event.end - event.start,
+                picture_end - event.start,
                 profile.sample_rate,
                 profile.frame_rate_numerator,
                 profile.frame_rate_denominator,
@@ -602,7 +765,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
                     u128::from(profile.sample_rate) * u128::from(profile.frame_rate_denominator);
                 Ok(u64::try_from(if ceil { n.div_ceil(d) } else { n / d })?)
             };
-            let frames = frame(event.end, event.end == duration)? - frame(event.start, false)?;
+            let frames = frame(picture_end, last_picture)? - frame(event.start, false)?;
             reel_assembly::motioncraft::allocate_delivery_frames(&mut motion, frames)?;
             reel_assembly::motioncraft::validate_camera(&motion)?;
             pictures.last_mut().unwrap()["motion"] = json!({"kind":"phased-camera","plan":motion});
@@ -611,7 +774,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
             "id":picture_id,
             "target":{"kind":"cel","shot_id":shot_id,"cel_id":delivery_id("cel", &event.semantic_id)},
             "start":anchor(event.start,&cues)?,
-            "end":anchor(event.end,&cues)?
+            "end":if last_picture { scene_end_anchor(&cues, tail_samples)? } else { anchor(event.end,&cues)? }
         }));
         event_bindings.push(json!({
             "event_id":event.id,
@@ -640,12 +803,23 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
             "bus":"D",
             "cue_id":cue.cue_id
         }));
+        if scene
+            .dialogue_channel_mapping
+            .or(episode.dialogue_channel_mapping)
+            == Some(reel_assembly::scene_authoring::DialogueChannelMapping::DuplicateMono)
+        {
+            audio.last_mut().unwrap()["channel_mapping"] = json!("duplicate-mono");
+        }
         audio_events.push(json!({
             "id":cue.cue_id,
             "role":"narration",
             "source":format!("objects/sha256/{}/{}", &take.sha256[..2],take.sha256),
             "start_seconds":0
         }));
+        if let Some(gain) = dialogue_gain_db(&profile, &cue.cue_id, &take.sha256)? {
+            audio.last_mut().unwrap()["gain_db"] = json!(gain);
+            audio_events.last_mut().unwrap()["gain_db"] = json!(gain);
+        }
         let speakers = cue
             .take_segments
             .iter()
@@ -741,6 +915,14 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     {
         bail!("scene delivery profile has an unused Sonic gain binding");
     }
+    if profile
+        .sonic_channel_mappings_by_binding
+        .keys()
+        .chain(profile.sonic_placement_offsets_by_binding.keys())
+        .any(|key| !used_sonic.contains(key))
+    {
+        bail!("scene delivery profile has an unused Sonic channel/placement binding");
+    }
     for (index, event) in events.iter().enumerate() {
         if event.sonic_bindings.iter().collect::<BTreeSet<_>>().len() != event.sonic_bindings.len()
         {
@@ -766,6 +948,27 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
                 "source_start_sample": 0,
                 "gain_db": sonic_gain_db(&profile, key)
             }));
+            if let Some(mapping) = profile.sonic_channel_mappings_by_binding.get(key) {
+                audio.last_mut().unwrap()["channel_mapping"] = serde_json::to_value(mapping)?;
+            }
+            if let Some(offset) = profile.sonic_placement_offsets_by_binding.get(key) {
+                if offset.reason.trim().is_empty() {
+                    bail!("Sonic placement offset needs an explicit reason");
+                }
+                let evidence = asset(&offset.evidence_binding, &scopes)?;
+                let reference: crate::scene_delivery::FileRef =
+                    serde_json::from_value(media_ref(evidence))?;
+                crate::scene_delivery::checked_file(&root, &reference)?;
+                crate::scene_delivery::audio_placement_samples(
+                    event.start,
+                    events[run_end - 1].end,
+                    duration,
+                    offset.samples,
+                )?;
+                audio.last_mut().unwrap()["placement_offset"] = json!({
+                    "samples":offset.samples, "reason":offset.reason, "evidence":media_ref(evidence)
+                });
+            }
             audio_events.push(json!({
                 "id": attachment,
                 "role": "effect",
@@ -867,7 +1070,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
             "id": attachment,
             "target": {"kind":"title","title_id":scene.scene_id},
             "start":anchor(0, &cues)?,
-            "end":anchor(duration, &cues)?
+            "end":scene_end_anchor(&cues, tail_samples)?
         }));
         let mut external = json!({
             "attachment_id": attachment,
@@ -897,7 +1100,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         "narration_cues":narration_cues,
         "audio_events":audio_events
     });
-    let contract = json!({
+    let mut contract = json!({
         "schema":"reel.cue-relative-assembly.v0.1",
         "id":id,
         "sample_rate":profile.sample_rate,
@@ -909,6 +1112,9 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         "cues":contract_cues,
         "attachments":attachments
     });
+    if tail_samples != 0 {
+        contract["tail_duration_samples"] = json!(tail_samples);
+    }
     let dir = output_dir(&root, &request.output_dir)?;
     for name in [
         "production.json",
@@ -946,6 +1152,9 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
     });
     if let Some(layout) = &profile.caption_picture_layout {
         job["caption_picture_layout"] = serde_json::to_value(layout)?;
+    }
+    if let Some(region) = &profile.picture_region {
+        job["picture_region"] = serde_json::to_value(region)?;
     }
     let (job_sha, job_bytes) = write_new(&dir, "job.json", &job)?;
     let source_selected_graph_lock = graph.lock.clone();

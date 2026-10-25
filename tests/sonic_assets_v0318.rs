@@ -35,6 +35,65 @@ fn write_json(path: &Path, value: &Value) {
     fs::write(path, serde_json::to_vec_pretty(value).unwrap()).unwrap();
 }
 
+fn extensible_pcm24(samples: u32, channels: u16) -> Vec<u8> {
+    let mut bytes = wav(samples, channels);
+    bytes[16..20].copy_from_slice(&40u32.to_le_bytes());
+    bytes[20..22].copy_from_slice(&0xfffeu16.to_le_bytes());
+    let mut extension = Vec::new();
+    extension.extend_from_slice(&22u16.to_le_bytes());
+    extension.extend_from_slice(&24u16.to_le_bytes());
+    extension.extend_from_slice(&(if channels == 1 { 4u32 } else { 3u32 }).to_le_bytes());
+    extension.extend_from_slice(&[
+        1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71,
+    ]);
+    bytes.splice(36..36, extension);
+    let riff_size = u32::try_from(bytes.len() - 8).unwrap();
+    bytes[4..8].copy_from_slice(&riff_size.to_le_bytes());
+    bytes
+}
+
+#[test]
+fn resolves_extensible_pcm24_and_rejects_float_or_invalid_extensions() {
+    let temp = tempdir().unwrap();
+    let (mut catalog, mut request, _) = fixture(temp.path(), "selected-private-production", false);
+    let audio = extensible_pcm24(48000, 2);
+    let source = temp.path().join("motor.wav");
+    let geometry = json!({"sample_rate_hz":48000,"bit_depth":24,"channels":2,"sample_count":48000});
+    catalog["assets"][0]["variants"][0]["geometry"] = geometry.clone();
+    request["bindings"][0]["required_geometry"] = geometry;
+    let catalog_path = temp.path().join("catalog.json");
+    let request_path = temp.path().join("request.json");
+    write_json(&request_path, &request);
+    let mut resolve = |bytes: &[u8]| {
+        fs::write(&source, bytes).unwrap();
+        catalog["assets"][0]["variants"][0]["sha256"] = json!(sha(bytes));
+        catalog["assets"][0]["variants"][0]["bytes"] = json!(bytes.len());
+        write_json(&catalog_path, &catalog);
+        sonic_assets::resolve(
+            &sonic_assets::load_catalog(&catalog_path).unwrap(),
+            &sonic_assets::load_request(&request_path).unwrap(),
+        )
+    };
+    let (resolution, receipt) = resolve(&audio).unwrap();
+    assert_eq!(resolution.selections[0].geometry.channels, 2);
+    assert_eq!(resolution.selections[0].geometry.bit_depth, 24);
+    assert_eq!(resolution.selections[0].geometry.sample_count, 48000);
+    assert!(!receipt.grants_approval);
+
+    // The GUID distinguishes integer PCM from extensible IEEE float.
+    let mut float = audio.clone();
+    float[44] = 3;
+    assert!(resolve(&float).is_err());
+    for (offset, value) in [(36, 21), (36, 23), (38, 0), (38, 25), (59, 0)] {
+        let mut invalid = audio.clone();
+        invalid[offset] = value;
+        assert!(resolve(&invalid).is_err(), "invalid extension at {offset}");
+    }
+    let mut truncated = wav(48000, 2);
+    truncated[20..22].copy_from_slice(&0xfffeu16.to_le_bytes());
+    assert!(resolve(&truncated).is_err());
+}
+
 fn fixture(root: &Path, state: &str, fixture: bool) -> (Value, Value, Vec<u8>) {
     let audio = wav(48_000, 1);
     fs::write(root.join("motor.wav"), &audio).unwrap();

@@ -864,11 +864,33 @@ fn inspect_pcm_wav(path: &Path) -> Result<AudioGeometry> {
             if size < 16 {
                 bail!("invalid WAV fmt chunk");
             }
+            let mut audio_format = u16::from_le_bytes(bytes[start..start + 2].try_into().unwrap());
+            let bit_depth = u16::from_le_bytes(bytes[start + 14..start + 16].try_into().unwrap());
+            if audio_format == 0xfffe {
+                if size < 40 {
+                    bail!("invalid WAV extensible fmt chunk");
+                }
+                let extension_size =
+                    u16::from_le_bytes(bytes[start + 16..start + 18].try_into().unwrap());
+                let valid_bits =
+                    u16::from_le_bytes(bytes[start + 18..start + 20].try_into().unwrap());
+                const PCM_SUBFORMAT: [u8; 16] = [
+                    1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71,
+                ];
+                if extension_size < 22
+                    || 18 + usize::from(extension_size) > size
+                    || valid_bits != bit_depth
+                    || bytes[start + 24..start + 40] != PCM_SUBFORMAT
+                {
+                    bail!("sonic WAV extensible format must declare full-width integer PCM");
+                }
+                audio_format = 1;
+            }
             format = Some((
-                u16::from_le_bytes(bytes[start..start + 2].try_into().unwrap()),
+                audio_format,
                 u16::from_le_bytes(bytes[start + 2..start + 4].try_into().unwrap()),
                 u32::from_le_bytes(bytes[start + 4..start + 8].try_into().unwrap()),
-                u16::from_le_bytes(bytes[start + 14..start + 16].try_into().unwrap()),
+                bit_depth,
             ));
         } else if id == b"data" {
             data_bytes = Some(size as u64);

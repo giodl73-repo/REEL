@@ -1,0 +1,23 @@
+{
+  "schema": "reel.asset-tier-policy.v1",
+  "project_id": "example-project",
+  "baseline": {
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "bytes": 0
+  },
+  "tiers": [
+    {"id": "working", "storage": "active", "index": 0},
+    {"id": "history", "storage": "active", "index": 1},
+    {"id": "archive", "storage": "archive", "index": 0}
+  ],
+  "selected_tier": "working",
+  "history_tier": "history",
+  "cold_tier": "archive",
+  "history_versions": [],
+  "tier_pins": {},
+  "max_objects": 500000,
+  "max_plan_seconds": 300,
+  "expires_after_seconds": 3600,
+  "max_batch_bytes": 1073741824,
+  "max_batch_objects": 256
+}

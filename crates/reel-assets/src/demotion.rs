@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
     pub schema: String,
@@ -33,6 +33,10 @@ pub struct Request {
     pub source_controls: BTreeMap<String, String>,
     #[serde(default)]
     pub allow_same_volume_copies: bool,
+    /// Opt in to verifying and removing each independent physical source copy.
+    /// Each group must have a complete known link set and its own source proof.
+    #[serde(default)]
+    pub allow_independent_source_copies: bool,
     /// Explicit cold custody operation; omitted preserves history-only behavior.
     #[serde(default)]
     pub retained_tier: Option<String>,
@@ -44,9 +48,21 @@ pub struct Request {
     /// occur in the hash-bound verified index. Worktree paths are never inferred.
     #[serde(default)]
     pub source_alias_namespaces: Vec<String>,
+    /// Exact retained-copy removal may coexist with unrelated producer reservations.
+    /// Current references, file handles, alias counts and final controls still apply.
+    #[serde(default)]
+    pub allow_live_admissions: bool,
+    #[serde(default)]
+    pub transition: Option<crate::version_diff::Transition>,
+    #[serde(default)]
+    pub history_fallback_to_archive: bool,
+    /// Explicitly archive only historical compiled outputs named by the policy's
+    /// output-retention map. This is independent of a render-version transition.
+    #[serde(default)]
+    pub archive_outputs: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ColdIndexRef {
     pub path: PathBuf,
@@ -84,7 +100,7 @@ struct SourceProof {
 }
 
 #[derive(Serialize, Clone)]
-struct Identity {
+pub(crate) struct Identity {
     id: String,
     links: u64,
     allocated: u64,
@@ -92,7 +108,7 @@ struct Identity {
 }
 
 #[cfg(windows)]
-mod platform {
+pub(crate) mod platform {
     use super::*;
     use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
     use windows_sys::Win32::Storage::FileSystem::*;
@@ -207,7 +223,7 @@ mod platform {
     }
 }
 #[cfg(not(windows))]
-mod platform {
+pub(crate) mod platform {
     use super::*;
     pub fn open(path: &Path, _remove: bool) -> Result<fs::File> {
         Ok(fs::File::open(path)?)
@@ -353,10 +369,24 @@ fn metadata_snapshot(root: &Path, hold: bool) -> Result<(String, Vec<fs::File>)>
 }
 
 fn metadata_snapshot_kind(root: &Path, hold: bool, cold: bool) -> Result<(String, Vec<fs::File>)> {
+    let snapshot = control_snapshot(root, hold, cold)?;
+    Ok((snapshot.token, snapshot.guards))
+}
+
+struct ControlSnapshot {
+    token: String,
+    paths: BTreeSet<PathBuf>,
+    guards: Vec<fs::File>,
+}
+
+fn metadata_paths(root: &Path, cold: bool) -> Result<BTreeSet<PathBuf>> {
     let mut paths = BTreeSet::from([
         PathBuf::from("registry/versions.json"),
         PathBuf::from("registry/object-index.json"),
     ]);
+    if !cold && root.join("registry/goldens.json").exists() {
+        paths.insert(PathBuf::from("registry/goldens.json"));
+    }
     let modern = root.join("asset-project.json").exists();
     let rules = if modern {
         let p = crate::accounting::project(root)?;
@@ -372,6 +402,7 @@ fn metadata_snapshot_kind(root: &Path, hold: bool, cold: bool) -> Result<(String
                 record_field: "bindings".into(),
                 format: "bindings".into(),
                 role_prefixes: vec![],
+                version_field: None,
             }]
         } else {
             p.selections
@@ -383,6 +414,7 @@ fn metadata_snapshot_kind(root: &Path, hold: bool, cold: bool) -> Result<(String
             record_field: "bindings".into(),
             format: "bindings".into(),
             role_prefixes: vec!["delivery/".into()],
+            version_field: None,
         }]
     };
     for rule in rules {
@@ -422,12 +454,44 @@ fn metadata_snapshot_kind(root: &Path, hold: bool, cold: bool) -> Result<(String
             }
         }
     }
-    let mut hashes = BTreeMap::new();
-    let mut guards = vec![];
-    for path in paths {
-        if !root.join(&path).exists() && path == Path::new("registry/object-index.json") {
+    paths
+        .retain(|path| path != Path::new("registry/object-index.json") || root.join(path).exists());
+    Ok(paths)
+}
+
+/// Freeze authoring selections, not unrelated authorization additions or leases.
+/// Every participating consumer must still match this before an output hold is waived.
+pub(crate) fn output_selection_stamp(
+    root: &Path,
+    state: &crate::versions::State,
+) -> Result<String> {
+    let mut documents = BTreeMap::new();
+    for p in metadata_paths(root, false)? {
+        if p == Path::new("registry/versions.json")
+            || p == Path::new("registry/object-index.json")
+            || p == Path::new("registry/objects.tsv")
+            || (p.starts_with("registry/objects") && p.extension().is_some_and(|e| e == "tsv"))
+        {
             continue;
         }
+        let name = p
+            .to_str()
+            .ok_or("Non-UTF8 output selection control")?
+            .replace('\\', "/");
+        let path = crate::accounting::relative(root, &name)?;
+        let bytes = tiering::read_bounded(&path, 4 * 1024 * 1024)?;
+        documents.insert(name, tiering::digest(&bytes));
+    }
+    Ok(tiering::digest(&serde_json::to_vec(
+        &json!({"current":state.current,"documents":documents}),
+    )?))
+}
+
+fn control_snapshot(root: &Path, hold: bool, cold: bool) -> Result<ControlSnapshot> {
+    let paths = metadata_paths(root, cold)?;
+    let mut hashes = BTreeMap::new();
+    let mut guards = vec![];
+    for path in &paths {
         let s = path
             .to_str()
             .ok_or("Non-UTF8 control path")?
@@ -453,30 +517,31 @@ fn metadata_snapshot_kind(root: &Path, hold: bool, cold: bool) -> Result<(String
             guards.push(file);
         }
     }
-    Ok((tiering::digest(&serde_json::to_vec(&hashes)?), guards))
+    Ok(ControlSnapshot {
+        token: tiering::digest(&serde_json::to_vec(&hashes)?),
+        paths,
+        guards,
+    })
 }
 
-fn legacy_protection(root: &Path, cfg: &crate::Config) -> Result<BTreeSet<String>> {
+fn legacy_protection(
+    root: &Path,
+    cfg: &crate::Config,
+    policy: &tiering::Policy,
+) -> Result<BTreeSet<String>> {
     let state = crate::versions::read_with(root, Some(cfg))?;
     tiering::validate_graph(&state, 1_000_000)?;
     let mut protected = crate::accounting::expand(
         &state,
-        state
-            .current
-            .iter()
-            .map(|(id, v)| format!("{id}@{v}"))
-            .chain(state.leases.values().flatten().cloned()),
+        state.current.iter().map(|(id, v)| format!("{id}@{v}")),
     )?;
-    protected.extend(state.metadata_roots);
-    if root.join("registry/object-index.json").exists() {
-        let d = crate::load(&root.join("registry/object-index.json"))?;
-        protected.insert(
-            d["asset"]["sha256"]
-                .as_str()
-                .ok_or("Missing legacy authorization root")?
-                .into(),
-        );
-    }
+    protected.extend(crate::accounting::expand_leased(
+        &state,
+        state.leases.values().flatten().cloned(),
+    )?);
+    protected.extend(state.metadata_roots.iter().cloned());
+    protected.extend(crate::goldens::control_asset(root)?.map(|(hash, _)| hash));
+    protected.extend(crate::object_index::metadata_roots(root)?);
     let catalog: Value = serde_json::from_slice(&tiering::read_bounded(
         &root.join("catalog.json"),
         256 * 1024,
@@ -519,10 +584,50 @@ fn legacy_protection(root: &Path, cfg: &crate::Config) -> Result<BTreeSet<String
             }
         }
     }
+    if let Some(map) = crate::output_retention::load(root, policy)? {
+        map.validate_selection(root, &state)?;
+        map.validate_primary_inputs(&state)?;
+        map.filter_authoring_heads(&mut protected);
+        protected.extend(crate::accounting::expand_leased(
+            &state,
+            state.leases.values().flatten().cloned(),
+        )?);
+        protected.extend(state.metadata_roots.iter().cloned());
+        protected.extend(crate::goldens::control_asset(root)?.map(|(hash, _)| hash));
+        protected.extend(crate::object_index::metadata_roots(root)?);
+        protected.extend(policy.output_retention.iter().map(|a| a.sha256.clone()));
+    }
     Ok(protected)
 }
 fn metadata_token(root: &Path) -> Result<String> {
     Ok(metadata_snapshot(root, false)?.0)
+}
+
+fn check_legacy_output_scope(root: &Path, consumer: &Path, policy: &tiering::Policy) -> Result<()> {
+    if policy.output_retention.is_none()
+        || consumer.join("asset-project.json").exists()
+        || root.canonicalize()? == consumer.canonicalize()?
+    {
+        return Ok(());
+    }
+    let common = |p: &Path| -> Result<PathBuf> {
+        let q = std::process::Command::new("git")
+            .arg("-C")
+            .arg(p)
+            .args(["rev-parse", "--git-common-dir"])
+            .output()?;
+        if !q.status.success() {
+            return Err("Cannot bind legacy output-retention consumer".into());
+        }
+        let s = String::from_utf8(q.stdout)?;
+        Ok(p.join(s.trim()).canonicalize()?)
+    };
+    if common(root)? != common(consumer)? {
+        return Err(
+            "Output retention authority cannot override a foreign legacy repository".into(),
+        );
+    }
+    Ok(())
 }
 
 /// Cold exclusion is stronger than selection: every authorized object and
@@ -548,15 +653,7 @@ fn cold_protection(root: &Path, limit: usize) -> Result<BTreeSet<String>> {
                 .map(str::to_owned),
         );
     }
-    let path = root.join("registry/object-index.json");
-    if path.exists() {
-        protected.insert(
-            crate::load(&path)?["asset"]["sha256"]
-                .as_str()
-                .ok_or("Missing authorization control hash")?
-                .to_owned(),
-        );
-    }
+    protected.extend(crate::object_index::metadata_roots(root)?);
     Ok(protected)
 }
 
@@ -587,11 +684,35 @@ fn register_cold(archive: &Path, hash: &str, bytes: u64, path: &Path) -> Result<
         guards.extend(platform::guard_dirs(&dir.join("custody-anchor"))?);
     }
     let name = format!("{hash}.json");
-    let receipt = json!({"schema":"reel.cold-custody.v1","sha256":hash,"bytes":bytes,
+    let mut receipt = json!({"schema":"reel.cold-custody.v1","sha256":hash,"bytes":bytes,
         "cache_uri":format!("cache://sha256/{hash}"),"cold_path":path,
-        "retention_state":"cold-registered","provenance":"Unregistered active-cache object; original provenance unknown",
+        "retention_state":"cold-registered","provenance":"Exact retained custody; source provenance and selection remain in immutable project records",
         "recovery":"Explicit named-object recovery only; ordinary active lookup does not probe this archive",
         "not_a_permanent_retention_pin":true});
+    let existing = dir.join(&name);
+    if existing.exists() {
+        let prior: Value = serde_json::from_slice(&tiering::read_bounded(&existing, 16 * 1024)?)?;
+        for field in [
+            "schema",
+            "sha256",
+            "bytes",
+            "cache_uri",
+            "retention_state",
+            "not_a_permanent_retention_pin",
+        ] {
+            if prior[field] != receipt[field] {
+                return Err("Cold custody receipt conflicts with exact retained object".into());
+            }
+        }
+        let old_path = prior["cold_path"]
+            .as_str()
+            .ok_or("Missing prior cold custody locator")?;
+        if Path::new(old_path).canonicalize()? != path.canonicalize()? {
+            return Err("Cold custody locator differs from retained object".into());
+        }
+        // Preserve the original intake provenance instead of rewriting history.
+        receipt = prior;
+    }
     stamp(&dir, &name, &receipt)?;
     let file = platform::open(&dir.join(&name), false)?;
     if crate::load(&dir.join(&name))? != receipt {
@@ -632,6 +753,24 @@ pub fn run(
     let started = std::time::Instant::now();
     let request_bytes = tiering::read_bounded(request_path, 256 * 1024)?;
     let req: Request = serde_json::from_slice(&request_bytes)?;
+    let transition_report = if let Some(t) = &req.transition {
+        let report = crate::version_diff::validate_transition(root, t)?;
+        let candidates: BTreeSet<String> =
+            serde_json::from_value(report["eviction_candidate_sha256s"].clone())?;
+        if !req.sha256s.is_subset(&candidates) {
+            return Err(
+                "Removal set includes hashes outside the current version replacement".into(),
+            );
+        }
+        Some(report)
+    } else {
+        None
+    };
+    if req.allow_live_admissions && transition_report.is_none() && !req.archive_outputs {
+        return Err(
+            "Concurrent historical eviction requires an exact classified version transition".into(),
+        );
+    }
     let deadline = started
         .checked_add(std::time::Duration::from_secs(req.max_seconds))
         .ok_or("Invalid deadline")?;
@@ -640,13 +779,25 @@ pub fn run(
     let policy_bytes = tiering::read_bounded(&req.policy, 256 * 1024)?;
     let policy: tiering::Policy = serde_json::from_slice(&policy_bytes)?;
     policy.validate(&cfg)?;
-    let cold = match req.retained_tier.as_deref() {
+    let retained_archive = match req.retained_tier.as_deref() {
         None => false,
         Some(id) if id == policy.history_tier => false,
         Some(id) if id == policy.cold_tier => true,
         _ => return Err("Retained tier must be the configured history or cold tier".into()),
     };
-    if !cold && req.verified_cold_index.is_some() {
+    if req.archive_outputs {
+        let map = crate::output_retention::load(root, &policy)?
+            .ok_or("Historical outputs require an explicit output retention map")?;
+        if !retained_archive
+            || req.transition.is_some()
+            || req.sha256s.iter().any(|h| !map.is_archival(h))
+        {
+            return Err("Historical output request exceeds its explicit archive scope".into());
+        }
+    }
+    let archive_history = retained_archive && (req.transition.is_some() || req.archive_outputs);
+    let cold = retained_archive && !archive_history;
+    if !retained_archive && req.verified_cold_index.is_some() {
         return Err("Verified cold index is valid only for explicit cold custody".into());
     }
     let normal_relative = |s: &str| {
@@ -660,14 +811,15 @@ pub fn run(
             .source_alias_namespaces
             .iter()
             .any(|s| !normal_relative(s))
-        || (!req.source_alias_namespaces.is_empty() && (!cold || req.verified_cold_index.is_none()))
+        || (!req.source_alias_namespaces.is_empty()
+            && (!retained_archive || req.verified_cold_index.is_none()))
     {
         return Err(
             "Cold alias namespaces require an explicit verified index and normal relative paths"
                 .into(),
         );
     }
-    if apply && !cold {
+    if apply && !cold && !req.allow_live_admissions {
         let _guard = admission::lock(&control)?;
         ensure_no_admissions(&control)?;
     }
@@ -686,7 +838,11 @@ pub fn run(
     {
         return Err("Invalid demotion request/scope/budget".into());
     }
-    let fresh = tiering::check_plan(root, &req.policy, &req.plan, now)?;
+    let fresh = if req.allow_live_admissions {
+        tiering::check_transition_plan(root, &req.policy, &req.plan, now)?
+    } else {
+        tiering::check_plan(root, &req.policy, &req.plan, now)?
+    };
     if fresh["plan_sha256"] != req.plan_sha256 {
         return Err("Request plan identity mismatch".into());
     }
@@ -703,7 +859,9 @@ pub fn run(
         let row = planned
             .get(h.as_str())
             .ok_or("Object absent from saved plan")?;
-        let eligible = if cold {
+        let eligible = if req.archive_outputs {
+            row["proposal"] == "verify-and-archive-output" && row["class"] == "archival-output"
+        } else if cold {
             row["proposal"] == "register-and-archive-first"
                 && row["class"] == "unregistered-cold-candidate"
         } else {
@@ -752,6 +910,7 @@ pub fn run(
     protection_policy.history_versions.clear();
     let mut consumer_tokens = BTreeMap::new();
     for consumer in &consumers {
+        check_legacy_output_scope(root, consumer, &policy)?;
         if !consumer.join("asset-project.json").is_file() {
             if !legacy.contains(consumer) {
                 return Err(format!(
@@ -761,11 +920,11 @@ pub fn run(
                 .into());
             }
             let before = metadata_token(consumer)?;
-            let protected = legacy_protection(consumer, &cfg)?;
+            let protected = legacy_protection(consumer, &cfg, &policy)?;
             if let Some(h) = req.sha256s.iter().find(|h| protected.contains(*h)) {
                 return Err(format!("Object protected by legacy managed consumer: {h}").into());
             }
-            if !cold && metadata_token(consumer)? != before {
+            if !cold && !req.allow_live_admissions && metadata_token(consumer)? != before {
                 return Err("Legacy consumer changed during reconciliation".into());
             }
             consumer_tokens.insert(consumer.clone(), before);
@@ -799,7 +958,10 @@ pub fn run(
                 return Err(format!("Object protected by managed consumer: {h}").into());
             }
         }
-        if !cold && metadata_snapshot_kind(consumer, false, cold)?.0 != before {
+        if !cold
+            && !req.allow_live_admissions
+            && metadata_snapshot_kind(consumer, false, cold)?.0 != before
+        {
             return Err("Consumer changed during protection reconciliation".into());
         }
         consumer_tokens.insert(consumer.clone(), before);
@@ -837,7 +999,7 @@ pub fn run(
         &json!({"request_sha256":tiering::digest(&request_bytes),"apply":apply,"plan_sha256":req.plan_sha256}),
     )?;
     let hot = &cfg.cache_roots[policy.tier(&policy.selected_tier).index];
-    let warm = if cold {
+    let warm = if retained_archive {
         &cfg.archive_roots[policy.tier(&policy.cold_tier).index]
     } else {
         &cfg.cache_roots[policy.tier(&policy.history_tier).index]
@@ -875,12 +1037,19 @@ pub fn run(
     }
     let free_before = fs2::available_space(hot)?;
     let mut results = vec![];
+    let mut verification_budget_used = 0u64;
     for h in &req.sha256s {
         if started.elapsed().as_secs() >= req.max_seconds {
             return Err("Demotion time budget exceeded; resume the named journal".into());
         }
         let row = planned[h.as_str()];
         let size = row["bytes"].as_u64().unwrap();
+        verification_budget_used = verification_budget_used
+            .checked_add(size)
+            .ok_or("Verification budget overflow")?;
+        if verification_budget_used > req.max_verify_bytes {
+            return Err("Physical-copy verification budget exceeded".into());
+        }
         let destination = object(warm, h);
         let _dest_dirs = platform::guard_dirs(&destination)?;
         let mut retained = platform::open(&destination, false)?;
@@ -941,7 +1110,9 @@ pub fn run(
         paths.retain(|p| seen_paths.insert(p.clone()));
         let mut guards = vec![];
         let mut links = vec![];
-        let mut source_id: Option<Identity> = None;
+        let mut source_ids: BTreeMap<String, Identity> = BTreeMap::new();
+        let mut source_link_counts: BTreeMap<String, u64> = BTreeMap::new();
+        let mut source_proofs: BTreeMap<String, &str> = BTreeMap::new();
         let mut source_verification = "source-already-absent";
         for path in &paths {
             match fs::symlink_metadata(path) {
@@ -956,11 +1127,16 @@ pub fn run(
             if info.bytes != size {
                 return Err("Fresh hot copy size mismatch".into());
             }
-            if let Some(id) = &source_id {
-                if id.id != info.id {
+            if !source_ids.contains_key(&info.id) {
+                if !source_ids.is_empty() && !req.allow_independent_source_copies {
                     return Err("Independent LFS copy needs a separate action; held".into());
                 }
-            } else {
+                verification_budget_used = verification_budget_used
+                    .checked_add(size)
+                    .ok_or("Verification budget overflow")?;
+                if verification_budget_used > req.max_verify_bytes {
+                    return Err("Physical-copy verification budget exceeded".into());
+                }
                 let unchanged = if req
                     .verified_cold_index
                     .as_ref()
@@ -990,18 +1166,90 @@ pub fn run(
                     verify(&mut file, h, size, deadline)?;
                     "fresh-sha256"
                 };
-                source_id = Some(info.clone());
+                source_proofs.insert(info.id.clone(), source_verification);
+                source_ids.insert(info.id.clone(), info.clone());
             }
-            links.push((path.clone(), file));
+            *source_link_counts.entry(info.id.clone()).or_default() += 1;
+            links.push((path.clone(), file, info.id));
         }
-        if let Some(id) = &source_id
-            && (id.links != links.len() as u64 || id.id == retained_id.id)
-        {
-            return Err("Unmanaged aliases or identical retained file; held".into());
+        for id in source_ids.values() {
+            if id.links != source_link_counts[&id.id] || id.id == retained_id.id {
+                return Err("Unmanaged aliases or identical retained file; held".into());
+            }
         }
+        // Durable archive writes can be arbitrarily slow. They are additive:
+        // a valid custody receipt is useful even if the final removal is held.
+        // Never keep the shared metadata lock while waiting for that storage.
+        let proof = json!({"sha256":h,"bytes":size,"retained_path":destination,"retained_identity":retained_id,"verified":true,
+            "retained_verification":retained_verification,
+            "verified_cold_index_sha256":req.verified_cold_index.as_ref().map(|r|&r.sha256)});
+        stamp(journal, &format!("{h}-retained.json"), &proof)?;
+        let _cold_custody = if retained_archive && apply {
+            Some(register_cold(warm, h, size, &destination)?)
+        } else {
+            None
+        };
+        checkpoint("after-cold-registration")?;
         checkpoint("before-lock")?;
+        let _request_guard = platform::open(request_path, false)?;
+        let _policy_guard = platform::open(&req.policy, false)?;
+        if fs::read(request_path)? != request_bytes || fs::read(&req.policy)? != policy_bytes {
+            return Err("Demotion request/policy changed".into());
+        }
+        let _source_controls = check_source_controls(root, &req, apply)?;
+        let mut prepared_controls = BTreeMap::new();
+        if cold || req.allow_live_admissions {
+            for (consumer, token) in &mut consumer_tokens {
+                let before = metadata_snapshot_kind(consumer, false, cold)?.0;
+                if before != *token {
+                    // Refresh expensive registry graphs without serializing
+                    // capacity admission or unrelated producers' metadata.
+                    let protected = if consumer.join("asset-project.json").is_file() {
+                        let other_cfg = config(consumer)?;
+                        if other_cfg.cache_roots != cfg.cache_roots
+                            || admission::control(consumer, &other_cfg)?.canonicalize()? != control
+                        {
+                            return Err("Consumer cache/coordination changed".into());
+                        }
+                        if cold {
+                            cold_protection(consumer, policy.max_objects)?
+                        } else {
+                            let view = tiering::live(consumer, &protection_policy)?;
+                            view.current
+                                .into_iter()
+                                .chain(view.selected)
+                                .chain(view.leased)
+                                .chain(view.controls)
+                                .collect()
+                        }
+                    } else if legacy.contains(consumer) {
+                        legacy_protection(consumer, &cfg, &policy)?
+                    } else {
+                        return Err("Cold consumer compatibility changed".into());
+                    };
+                    if req.sha256s.iter().any(|hash| protected.contains(hash)) {
+                        return Err(
+                            "Cold object became protected or registered before removal".into()
+                        );
+                    }
+                }
+                // On Windows these handles deny writes and path replacement.
+                // The final transaction checks the *set* as well, so a newly
+                // created authorization shard cannot evade the held handles.
+                // Managed historical transitions freeze content only after acquiring
+                // writer domains, so a concurrent publisher cannot fail a rename on
+                // our pre-lock read handles. Changed tokens still hold removal.
+                let snapshot = control_snapshot(consumer, apply && cold, cold)?;
+                if snapshot.token != before {
+                    return Err("Consumer changed during cold protection preparation".into());
+                }
+                *token = before;
+                prepared_controls.insert(consumer.clone(), snapshot);
+            }
+        }
+        checkpoint("after-protection-preparation")?;
         let _state_lock = if apply {
-            Some(if cold {
+            Some(if cold || req.allow_live_admissions {
                 admission::lock_for(&control, std::time::Duration::from_secs(2))?
             } else {
                 admission::lock(&control)?
@@ -1018,50 +1266,26 @@ pub fn run(
                 _writer_guards.push(admission::worktree_lock(consumer)?);
             }
         }
-        if apply && !cold {
+        if apply && !cold && !req.allow_live_admissions {
             ensure_no_admissions(&control)?;
         }
         if consumer_registration(root, &consumers, &inactive)? != registration {
             return Err("Registered worktree set changed; discard stale request".into());
         }
-        let _request_guard = platform::open(request_path, false)?;
-        let _policy_guard = platform::open(&req.policy, false)?;
-        if fs::read(request_path)? != request_bytes || fs::read(&req.policy)? != policy_bytes {
-            return Err("Demotion request/policy changed".into());
-        }
-        let _source_controls = check_source_controls(root, &req, apply)?;
         let mut control_guards = vec![];
         for (consumer, token) in &consumer_tokens {
+            if cold && apply {
+                let prepared = &prepared_controls[consumer];
+                if metadata_paths(consumer, true)? != prepared.paths {
+                    return Err("Consumer control set changed before removal".into());
+                }
+                continue;
+            }
             let (fresh, held) = metadata_snapshot_kind(consumer, apply, cold)?;
             if fresh != *token {
-                if !cold {
-                    return Err(
-                        "Managed consumer changed before removal; discard stale request".into(),
-                    );
-                }
-                // New unrelated registrations must not stop cold cleanup. The
-                // exact current metadata is held here: re-evaluate this object,
-                // including every registered hash, instead of waiving freshness.
-                if consumer.join("asset-project.json").is_file() {
-                    let other_cfg = config(consumer)?;
-                    if other_cfg.cache_roots != cfg.cache_roots
-                        || admission::control(consumer, &other_cfg)?.canonicalize()? != control
-                    {
-                        return Err("Consumer cache/coordination changed".into());
-                    }
-                    if cold_protection(consumer, policy.max_objects)?.contains(h) {
-                        return Err(
-                            "Cold object became protected or registered before removal".into()
-                        );
-                    }
-                } else if !legacy.contains(consumer)
-                    || legacy_protection(consumer, &cfg)?.contains(h)
-                {
-                    return Err("Cold object became protected by legacy consumer".into());
-                }
-                if metadata_snapshot_kind(consumer, false, cold)?.0 != fresh {
-                    return Err("Consumer changed during exact cold protection refresh".into());
-                }
+                return Err(
+                    "Managed consumer changed before removal; discard stale request".into(),
+                );
             }
             control_guards.extend(held);
         }
@@ -1075,19 +1299,6 @@ pub fn run(
         {
             return Err("Plan expired before removal".into());
         }
-        let proof = json!({"sha256":h,"bytes":size,"retained_path":destination,"retained_identity":retained_id,"verified":true,
-            "retained_verification":retained_verification,
-            "verified_cold_index_sha256":req.verified_cold_index.as_ref().map(|r|&r.sha256)});
-        stamp(journal, &format!("{h}-retained.json"), &proof)?;
-        // Cold custody is separate from the active registry. Publish it before
-        // the first source unlink, while the exact independently verified cold
-        // object and all selection metadata remain locked against replacement.
-        let _cold_custody = if cold && apply {
-            Some(register_cold(warm, h, size, &destination)?)
-        } else {
-            None
-        };
-        checkpoint("after-cold-registration")?;
         // Recover a crash between handle deletion and the completion stamp.
         // Absence is observed, not attributed to this process or counted twice.
         for path in &paths {
@@ -1110,14 +1321,19 @@ pub fn run(
             }
         }
         let mut removed = 0usize;
-        for (path, file) in links {
+        let mut removed_by_identity: BTreeMap<String, u64> = BTreeMap::new();
+        for (path, file, identity) in links {
             let key = tiering::digest(path.to_string_lossy().as_bytes());
             let intent = json!({"sha256":h,"path":path,"plan_sha256":req.plan_sha256,"retained_copy_verified":true});
             if apply {
                 stamp(journal, &format!("{h}-{key}-intent.json"), &intent)?;
                 // Recheck hard-link count after every completed unlink. A new alias holds the rest.
                 let info = platform::identity(&file)?;
-                if info.links != source_id.as_ref().unwrap().links - removed as u64 {
+                if info.id != identity
+                    || info.links
+                        != source_ids[&identity].links
+                            - removed_by_identity.get(&identity).copied().unwrap_or(0)
+                {
                     return Err("Source alias count changed; remaining removals held".into());
                 }
                 platform::assert_path(&file, &path)?;
@@ -1130,22 +1346,34 @@ pub fn run(
                 }
                 stamp(journal, &format!("{h}-{key}-done.json"), &intent)?;
                 removed += 1;
+                *removed_by_identity.entry(identity).or_default() += 1;
             }
         }
+        let removed_allocation = source_ids.values().try_fold(0u64, |sum, id| {
+            sum.checked_add(id.allocated).ok_or("Allocation overflow")
+        })?;
         results.push(json!({"sha256":h,"bytes":size,"verified_history_copy":destination,"hot_links_removed":removed,
             "retained_verification":retained_verification,
             "source_verification":source_verification,
-            "hot_copy_already_absent":source_id.is_none(),"estimated_removed_allocation":if apply&&removed>0{source_id.as_ref().map(|s|s.allocated)}else{None}}));
+            "source_physical_copies":source_ids.len(),"source_copy_verifications":source_proofs,
+            "hot_copy_already_absent":source_ids.is_empty(),"estimated_removed_allocation":if apply&&removed>0{Some(removed_allocation)}else{None}}));
     }
     let free_after = fs2::available_space(hot)?;
     let result = json!({"schema":"reel.asset-demotion-result.v1","apply":apply,"plan_sha256":req.plan_sha256,
         "objects":results,"free_bytes_before":free_before,"free_bytes_after":free_after,
         "observed_free_space_delta":i128::from(free_after)-i128::from(free_before),
-        "free_space_delta_is_exclusively_attributed":false,"archive_probed":cold,
-        "cold_custody_registered":cold && apply,"last_copy_retired":false});
+        "free_space_delta_is_exclusively_attributed":false,"archive_probed":retained_archive,
+        "cold_custody_registered":retained_archive && apply,"historical_archive_retention":archive_history,"last_copy_retired":false});
     let mut result = result;
     result["admissions_present_at_completion"] = json!(admissions_present(&control)?);
     result["removal_authorized"] = json!(apply);
+    result["request_sha256"] = json!(tiering::digest(&request_bytes));
+    result["version_transition"] = serde_json::to_value(&req.transition)?;
+    result["version_comparison"] = transition_report
+        .as_ref()
+        .map(crate::version_diff::comparison_summary)
+        .transpose()?
+        .unwrap_or(Value::Null);
     // Resume may observe fewer links/free-space changes; keep earlier receipts intact.
     let out = crate::unique(journal, "result");
     tiering::write_plan(&out, &result)?;
@@ -1191,6 +1419,7 @@ pub fn export_protections(root: &Path, request_path: &Path) -> Result<Value> {
     let mut hashes: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     let mut consumers = vec![];
     for (n, path) in active.iter().enumerate() {
+        check_legacy_output_scope(root, path, &policy)?;
         let before = metadata_token(path)?;
         let protected = if path.join("asset-project.json").exists() {
             let other = config(path)?;
@@ -1208,7 +1437,7 @@ pub fn export_protections(root: &Path, request_path: &Path) -> Result<Value> {
             if !legacy.contains(path) {
                 return Err("Legacy consumer must be explicitly declared".into());
             }
-            legacy_protection(path, &cfg)?
+            legacy_protection(path, &cfg, &policy)?
         };
         for h in protected {
             hashes.entry(h).or_default().push(n);
@@ -1216,8 +1445,10 @@ pub fn export_protections(root: &Path, request_path: &Path) -> Result<Value> {
         if metadata_token(path)? != before {
             return Err("Consumer changed during protection export".into());
         }
-        consumers
-            .push(json!({"root":path,"fingerprint_sha256":before,"legacy":legacy.contains(path)}));
+        let state = crate::versions::read_with(path, Some(&cfg))?;
+        let output_selection = output_selection_stamp(path, &state)?;
+        consumers.push(json!({"root":path,"fingerprint_sha256":before,
+            "output_selection_sha256":output_selection,"legacy":legacy.contains(path)}));
     }
     if consumer_registration(root, &active, &inactive)? != registration
         || fs::read(request_path)? != raw
@@ -1241,6 +1472,237 @@ pub fn export_protections(root: &Path, request_path: &Path) -> Result<Value> {
 mod tests {
     use super::*;
     use crate::tiering::tests::Fixture;
+
+    #[test]
+    fn sharded_authorization_leaves_are_protected_by_all_native_lifecycle_consumers() {
+        let f = Fixture::new();
+        let before = fs::read(f.root().join("registry/versions.json")).unwrap();
+        let mut leaves = serde_json::Map::new();
+        let mut hashes = BTreeSet::new();
+        for prefix in ["a", "b"] {
+            let bytes = format!("{}\t5\n", prefix.repeat(64));
+            let hash = f.put(bytes.as_bytes(), false);
+            leaves.insert(prefix.into(), json!({"sha256":hash,"bytes":bytes.len(),"cache_uri":format!("cache://sha256/{hash}")}));
+            hashes.insert(hash);
+        }
+        fs::write(
+            f.root().join("registry/object-index.json"),
+            json!({
+                "schema":"caminos.object-index.v2","leaves":leaves,"rows":2
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let policy: tiering::Policy = serde_json::from_value(f.policy.clone()).unwrap();
+        let cold = cold_protection(f.root(), 100).unwrap();
+        let legacy =
+            legacy_protection(f.root(), &crate::config(f.root()).unwrap(), &policy).unwrap();
+        let live = tiering::live(f.root(), &policy).unwrap();
+        let report = crate::accounting::report(f.root()).unwrap();
+        for hash in hashes {
+            assert!(cold.contains(&hash));
+            assert!(legacy.contains(&hash));
+            assert!(live.controls.contains(&hash));
+            let row = report["objects"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["sha256"] == hash)
+                .unwrap();
+            assert_eq!(row["category"], "registry-control");
+        }
+        assert_eq!(
+            fs::read(f.root().join("registry/versions.json")).unwrap(),
+            before
+        );
+        assert!(!f.root().join("offline-cold").exists());
+    }
+
+    fn historical_output_case(selected: bool, archive_authorized: bool) -> Case {
+        let mut c = Case::new();
+        c.f.state.select("old", "v1").unwrap();
+        c.f.save();
+        let bytes = fs::metadata(c.e()).unwrap().len();
+        let map = serde_json::to_vec(&json!({"schema":"reel.output-retention-map.v1",
+            "project_id":"fixture","consumer_selections":{c.f.root().canonicalize().unwrap().to_string_lossy().as_ref():output_selection_stamp(c.f.root(),&c.f.state).unwrap()},
+            "outputs":{&c.h:{"bytes":bytes,"selected":selected,"archive_authorized":archive_authorized}}})).unwrap();
+        let hash = c.f.put(&map, true);
+        c.f.policy["output_retention"] = json!({"sha256":hash,"bytes":map.len()});
+        let dest = object(&c.f.root().join("offline-cold"), &c.h);
+        fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        fs::copy(c.e(), dest).unwrap();
+        c.f.baseline();
+        let plan = c.f.run().unwrap();
+        let mut req = crate::load(&c.request).unwrap();
+        tiering::write_plan(&c.f.root().join("output-plan.json"), &plan).unwrap();
+        req["plan"] = json!(c.f.root().join("output-plan.json"));
+        req["plan_sha256"] = plan["plan_sha256"].clone();
+        req["retained_tier"] = json!("cold");
+        req["archive_outputs"] = json!(true);
+        req["allow_live_admissions"] = json!(true);
+        fs::write(&c.request, req.to_string()).unwrap();
+        c
+    }
+
+    #[test]
+    fn historical_output_scope_separates_authoring_head_from_hot_placement() {
+        let mut c = historical_output_case(false, true);
+        let r = c.run(false).unwrap();
+        assert_eq!(r["historical_archive_retention"], true);
+        assert_eq!(
+            crate::versions::read(c.f.root()).unwrap().current["old"],
+            "v1"
+        );
+        assert!(c.e().exists());
+        c.journal =
+            c.f.root()
+                .canonicalize()
+                .unwrap()
+                .join(".local/output-apply-journal");
+        let applied = c.run(cfg!(windows));
+        assert!(applied.is_ok(), "{applied:?}");
+        assert_eq!(c.e().exists(), !cfg!(windows));
+        assert!(object(&c.f.root().join("offline-cold"), &c.h).exists());
+    }
+    #[test]
+    fn selected_and_unproven_outputs_never_enter_historical_scope() {
+        for (selected, used) in [(true, true), (false, false)] {
+            let c = historical_output_case(selected, used);
+            assert!(c.run(cfg!(windows)).is_err());
+            assert!(c.e().exists());
+        }
+    }
+    #[test]
+    fn historical_output_map_does_not_override_job_leases_or_tier_pins() {
+        for lease in [false, true] {
+            let mut c = historical_output_case(false, true);
+            if lease {
+                let manifest = c.f.put(b"reference-only job working set", true);
+                c.f.version("job-inputs", &manifest);
+                let draft = c.f.state.versions.get_mut("job-inputs@v1").unwrap();
+                draft.payloads.insert(c.h.clone());
+                draft.dependency_contract = Some(crate::versions::DependencyContract {
+                    primary_inputs: BTreeSet::new(),
+                    outputs: BTreeSet::new(),
+                    references: BTreeSet::from([c.h.clone()]),
+                });
+                c.f.state.leases.insert(
+                    "actual-job".into(),
+                    BTreeSet::from(["job-inputs@v1".into()]),
+                );
+                c.f.save();
+            } else {
+                c.f.policy["tier_pins"] = json!({&c.h:"hot"});
+            }
+            let p = c.f.run().unwrap();
+            let row = p["objects"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|v| v["sha256"] == c.h)
+                .unwrap();
+            assert_eq!(row["proposal"], "hold");
+            assert!(c.run(cfg!(windows)).is_err());
+            assert!(c.e().exists());
+        }
+    }
+    #[test]
+    fn corrupt_or_foreign_output_control_holds_before_removal() {
+        for corrupt in [false, true] {
+            let mut c = historical_output_case(false, true);
+            let a = c.f.policy["output_retention"].clone();
+            if corrupt {
+                fs::write(
+                    object(
+                        &config(c.f.root()).unwrap().cache_roots[0],
+                        a["sha256"].as_str().unwrap(),
+                    ),
+                    b"corrupt",
+                )
+                .unwrap();
+            } else {
+                c.f.policy["project_id"] = json!("foreign");
+            }
+            assert!(c.f.run().is_err());
+            assert!(c.e().exists());
+        }
+    }
+    #[test]
+    fn output_selection_freeze_holds_reselection_but_allows_unrelated_authorization() {
+        let c = historical_output_case(false, true);
+        c.f.put(b"unrelated newly authorized input", true);
+        assert!(c.run(false).is_ok());
+
+        let mut c = historical_output_case(false, true);
+        let other = c.f.put(b"another authoring selection", true);
+        c.f.version("another", &other);
+        c.f.state.select("another", "v1").unwrap();
+        c.f.save();
+        let error = c.run(cfg!(windows)).unwrap_err().to_string();
+        assert!(error.contains("selection changed"), "{error}");
+        assert!(c.e().exists());
+    }
+    #[test]
+    fn output_classification_conflicting_with_primary_input_never_relaxes_protection() {
+        let mut c = historical_output_case(false, true);
+        c.f.state
+            .versions
+            .get_mut("old@v1")
+            .unwrap()
+            .dependency_contract = Some(crate::versions::DependencyContract {
+            primary_inputs: BTreeSet::from([c.h.clone()]),
+            outputs: BTreeSet::new(),
+            references: BTreeSet::new(),
+        });
+        c.f.save();
+        let error = c.run(cfg!(windows)).unwrap_err().to_string();
+        assert!(error.contains("primary input"), "{error}");
+        assert!(c.e().exists());
+    }
+    #[test]
+    fn existing_cold_intake_provenance_is_preserved_with_exact_custody() {
+        let c = cold_case();
+        let archive = c.f.root().join("offline-cold");
+        let object_path = object(&archive, &c.h);
+        drop(
+            register_cold(
+                &archive,
+                &c.h,
+                fs::metadata(&object_path).unwrap().len(),
+                &object_path,
+            )
+            .unwrap(),
+        );
+        let path = archive
+            .join("snapshots/reel-assets-cold-v1")
+            .join(&c.h[..2])
+            .join(format!("{}.json", c.h));
+        let mut prior = crate::load(&path).unwrap();
+        prior["provenance"] = json!("original intake classification remains historical");
+        fs::write(&path, serde_json::to_vec(&prior).unwrap()).unwrap();
+        let before = fs::read(&path).unwrap();
+        drop(
+            register_cold(
+                &archive,
+                &c.h,
+                fs::metadata(&object_path).unwrap().len(),
+                &object_path,
+            )
+            .unwrap(),
+        );
+        assert_eq!(fs::read(&path).unwrap(), before);
+        prior["bytes"] = json!(0);
+        fs::write(&path, serde_json::to_vec(&prior).unwrap()).unwrap();
+        assert!(
+            register_cold(
+                &archive,
+                &c.h,
+                fs::metadata(&object_path).unwrap().len(),
+                &object_path
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn cold_guard_protects_all_authorization_and_version_refs_without_reading_unrelated_authoring()
@@ -1568,6 +2030,101 @@ mod tests {
     }
     #[cfg(windows)]
     #[test]
+    fn cold_custody_preparation_allows_parallel_admission_and_registration() {
+        let c = cold_case();
+        let root = c.f.root().to_path_buf();
+        TEST_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move |stage| {
+                if stage == "after-cold-registration" {
+                    let root = root.clone();
+                    std::thread::spawn(move || {
+                        (|| -> Result<()> {
+                            let cfg = config(&root)?;
+                            let _reservation = admission::reserve(&root, &cfg, 8)?;
+                            let request = root.join("parallel-registration.json");
+                            fs::write(
+                                &request,
+                                json!({"assets":[{"sha256":"e".repeat(64),"bytes":1,
+                                    "provenance":"synthetic parallel producer",
+                                    "rights":"synthetic fixture",
+                                    "selection_state":"unselected"}]})
+                                .to_string(),
+                            )?;
+                            crate::registry::register(&root, &request)?;
+                            Ok(())
+                        })()
+                        .map_err(|error| error.to_string())
+                    })
+                    .join()
+                    .expect("parallel producer panicked")?;
+                }
+                Ok(())
+            }));
+        });
+        let result = c.run(true);
+        TEST_HOOK.with(|hook| *hook.borrow_mut() = None);
+        assert!(result.is_ok(), "{result:?}");
+        assert!(!c.e().exists());
+        assert!(
+            crate::selected(c.f.root())
+                .unwrap()
+                .contains_key(&"e".repeat(64))
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cold_commit_rejects_new_authorization_shard_after_guard_preparation() {
+        let c = cold_case();
+        let root = c.f.root().to_path_buf();
+        let hash = c.h.clone();
+        TEST_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move |stage| {
+                if stage == "after-protection-preparation" {
+                    let dir = root.join("registry/objects");
+                    fs::create_dir_all(&dir)?;
+                    fs::write(
+                        dir.join(format!("{}.tsv", &hash[..2])),
+                        format!("{hash}\t26\n"),
+                    )?;
+                }
+                Ok(())
+            }));
+        });
+        let result = c.run(true);
+        TEST_HOOK.with(|hook| *hook.borrow_mut() = None);
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("control set changed")
+        );
+        assert!(c.e().exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cold_prepared_controls_exclude_existing_control_replacement() {
+        let c = cold_case();
+        let root = c.f.root().to_path_buf();
+        TEST_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move |stage| {
+                if stage == "after-protection-preparation" {
+                    let path = root.join("registry/versions.json");
+                    assert!(fs::write(&path, b"changed").is_err());
+                    assert!(fs::rename(&path, path.with_extension("moved")).is_err());
+                }
+                Ok(())
+            }));
+        });
+        let result = c.run(true);
+        TEST_HOOK.with(|hook| *hook.borrow_mut() = None);
+        assert!(result.is_ok(), "{result:?}");
+        assert!(!c.e().exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn reviewed_project_controls_exclude_writers_and_reject_new_declarations() {
         let c = Case::new();
         let path = c.f.root().join("manager.json");
@@ -1691,6 +2248,7 @@ mod tests {
                 dependencies: vec![],
                 supersedes: None,
                 deprecated: false,
+                dependency_contract: None,
             })
             .unwrap();
         state.select("old", "v1").unwrap();
@@ -1829,6 +2387,98 @@ mod tests {
         fs::copy(c.e(), alias).unwrap();
         assert!(c.run(cfg!(windows)).is_err());
         assert!(c.e().exists());
+    }
+    fn independent_copy_case() -> Case {
+        let c = Case::new();
+        let alias = c.lfs();
+        fs::create_dir_all(alias.parent().unwrap()).unwrap();
+        fs::copy(c.e(), alias).unwrap();
+        let mut req = crate::load(&c.request).unwrap();
+        req["allow_independent_source_copies"] = json!(true);
+        fs::write(&c.request, req.to_string()).unwrap();
+        c
+    }
+    #[test]
+    fn independent_copies_require_separate_hashes_and_budget_before_removal() {
+        let mut c = independent_copy_case();
+        let result = c.run(false).unwrap();
+        assert_eq!(result["objects"][0]["source_physical_copies"], 2);
+        assert_eq!(
+            result["objects"][0]["source_copy_verifications"]
+                .as_object()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(c.e().exists() && c.lfs().exists());
+        let mut req = crate::load(&c.request).unwrap();
+        req["max_verify_bytes"] = json!(fs::metadata(c.e()).unwrap().len() * 2);
+        fs::write(&c.request, req.to_string()).unwrap();
+        c.journal =
+            c.f.root()
+                .canonicalize()
+                .unwrap()
+                .join(".local/budget-journal");
+        assert!(
+            c.run(false)
+                .unwrap_err()
+                .to_string()
+                .contains("Physical-copy verification budget")
+        );
+        assert!(c.e().exists() && c.lfs().exists());
+    }
+    #[test]
+    fn corrupt_independent_copy_or_unknown_link_holds_all_source_groups() {
+        let c = independent_copy_case();
+        let mut bytes = fs::read(c.lfs()).unwrap();
+        bytes[0] ^= 1;
+        fs::write(c.lfs(), bytes).unwrap();
+        assert!(c.run(cfg!(windows)).is_err());
+        assert!(c.e().exists() && c.lfs().exists());
+        let c = independent_copy_case();
+        fs::hard_link(c.lfs(), c.f.root().join("unmanaged-independent-alias")).unwrap();
+        assert!(c.run(cfg!(windows)).is_err());
+        assert!(c.e().exists() && c.lfs().exists());
+    }
+    #[cfg(windows)]
+    #[test]
+    fn independent_copy_apply_counts_each_physical_group_once_and_resumes() {
+        let c = independent_copy_case();
+        let before = platform::identity(&platform::open(&c.e(), false).unwrap())
+            .unwrap()
+            .allocated
+            + platform::identity(&platform::open(&c.lfs(), false).unwrap())
+                .unwrap()
+                .allocated;
+        let r = c.run(true).unwrap();
+        assert_eq!(r["objects"][0]["hot_links_removed"], 2);
+        assert_eq!(r["objects"][0]["estimated_removed_allocation"], before);
+        assert!(!c.e().exists() && !c.lfs().exists());
+        assert!(c.d().exists());
+        let again = c.run(true).unwrap();
+        assert_eq!(again["objects"][0]["hot_links_removed"], 0);
+        assert_eq!(again["objects"][0]["hot_copy_already_absent"], true);
+    }
+    #[cfg(windows)]
+    #[test]
+    fn interrupted_independent_copy_removal_reverifies_remaining_group() {
+        let c = independent_copy_case();
+        TEST_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(|stage| {
+                if stage == "after-unlink" {
+                    return Err("synthetic interruption between physical groups".into());
+                }
+                Ok(())
+            }));
+        });
+        let interrupted = c.run(true);
+        TEST_HOOK.with(|hook| *hook.borrow_mut() = None);
+        assert!(interrupted.is_err());
+        assert!(!c.e().exists() && c.lfs().exists() && c.d().exists());
+        let resumed = c.run(true).unwrap();
+        assert_eq!(resumed["objects"][0]["source_physical_copies"], 1);
+        assert_eq!(resumed["objects"][0]["hot_links_removed"], 1);
+        assert!(!c.lfs().exists() && c.d().exists());
     }
     #[cfg(windows)]
     #[test]

@@ -1,0 +1,8 @@
+{
+  "schema": "reel.asset-manager-project.v1",
+  "policy": "operations/cache-policy.json",
+  "active_branches": ["main"],
+  "inactive_branches": [],
+  "legacy_branches": [],
+  "max_verify_seconds": 300
+}

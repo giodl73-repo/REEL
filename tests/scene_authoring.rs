@@ -49,6 +49,33 @@ fn motion_direction() -> reel_assembly::motioncraft::Direction {
 }
 
 #[test]
+fn dialogue_channel_mapping_is_optional_fingerprinted_and_scene_overridable() {
+    use reel_assembly::scene_authoring::DialogueChannelMapping;
+    let (catalog, mut episode, mut scene, policy, season, eb, sb) = subject();
+    let resolve = |episode: &Episode, scene: &Scene| {
+        resolve_scene(&catalog, episode, scene, &policy, &season, &eb, &sb).unwrap()
+    };
+    let legacy = resolve(&episode, &scene);
+    assert!(
+        serde_json::to_value(&episode)
+            .unwrap()
+            .get("dialogue_channel_mapping")
+            .is_none()
+    );
+    episode.dialogue_channel_mapping = Some(DialogueChannelMapping::DuplicateMono);
+    let duplicated = resolve(&episode, &scene);
+    assert_ne!(legacy.fingerprint_sha256, duplicated.fingerprint_sha256);
+    scene.dialogue_channel_mapping = Some(DialogueChannelMapping::Automatic);
+    assert_eq!(
+        legacy.fingerprint_sha256,
+        resolve(&episode, &scene).fingerprint_sha256
+    );
+    let mut invalid = serde_json::to_value(scene).unwrap();
+    invalid["dialogue_channel_mapping"] = serde_json::json!("unknown");
+    assert!(serde_json::from_value::<Scene>(invalid).is_err());
+}
+
+#[test]
 fn motion_authoring_is_optional_fingerprinted_and_scoped() {
     use reel_assembly::scene_authoring::resolve_motion_direction;
     let (catalog, mut episode, mut scene, policy, season, eb, sb) = subject();
@@ -240,6 +267,8 @@ fn v2_owns_effects_once_and_compiles_language_local_triggers() {
                 spoken_trigger_occurrence: None,
                 picture_slot_id: old.picture_slot_id,
                 picture_binding_override: None,
+                sonic_bindings_override: None,
+                vfx_bindings_override: None,
                 supersedes_event_id: None,
             }],
         );
@@ -298,6 +327,42 @@ fn v2_owns_effects_once_and_compiles_language_local_triggers() {
             if language == "es" { 48_000 } else { 72_000 }
         );
     }
+    // An explicit empty override preserves Spanish silence without discarding
+    // the selected English effect from the shared semantic event.
+    scene.language_event_bindings.get_mut("es").unwrap()[0].sonic_bindings_override = Some(vec![]);
+    scene.language_event_bindings.get_mut("es").unwrap()[0].vfx_bindings_override = Some(vec![]);
+    let scoped = materialize_scene(&scene).unwrap();
+    assert!(scoped.languages["es"].events[0].sonic_bindings.is_empty());
+    assert!(scoped.languages["es"].events[0].vfx_bindings.is_empty());
+    assert_eq!(
+        scoped.languages["en"].events[0].vfx_bindings,
+        vec!["vfx.dust"]
+    );
+
+    // A language-only effect can also be declared when the shared route is
+    // silent in both languages by default.
+    scene.shared_events[0].vfx_bindings.clear();
+    scene.language_event_bindings.get_mut("es").unwrap()[0].vfx_bindings_override = None;
+    scene.language_event_bindings.get_mut("en").unwrap()[0].vfx_bindings_override =
+        Some(vec!["vfx.dust".into()]);
+    let scoped = materialize_scene(&scene).unwrap();
+    assert!(scoped.languages["es"].events[0].vfx_bindings.is_empty());
+    assert_eq!(
+        scoped.languages["en"].events[0].vfx_bindings,
+        vec!["vfx.dust"]
+    );
+    let resolved = resolve_scene(
+        &catalog,
+        &episode,
+        &scene,
+        &policy,
+        &season,
+        &episode_bindings,
+        &scene_bindings,
+    )
+    .unwrap();
+    assert!(resolved.selected_inputs.contains_key("vfx.dust"));
+
     let mut duplicate = scene;
     duplicate.languages.get_mut("es").unwrap().events = native.languages["es"].events.clone();
     assert!(materialize_scene(&duplicate).is_err());

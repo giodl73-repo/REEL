@@ -9,14 +9,22 @@ use std::{
     path::Path,
 };
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Dependency {
     pub logical_id: String,
     pub version_id: String,
     pub manifest_sha256: String,
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DependencyContract {
+    pub primary_inputs: BTreeSet<String>,
+    pub outputs: BTreeSet<String>,
+    /// Provenance/history/approval records are retained, but are not build inputs.
+    pub references: BTreeSet<String>,
+}
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Version {
     pub logical_id: String,
@@ -29,6 +37,47 @@ pub struct Version {
     pub supersedes: Option<String>,
     #[serde(default)]
     pub deprecated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dependency_contract: Option<DependencyContract>,
+}
+impl Version {
+    /// Legacy rows remain conservatively protected until explicitly reclassified.
+    pub fn active_payloads(&self) -> BTreeSet<String> {
+        self.dependency_contract.as_ref().map_or_else(
+            || self.payloads.clone(),
+            |c| c.primary_inputs.union(&c.outputs).cloned().collect(),
+        )
+    }
+}
+/// The active verification scope of a classified version. Legacy callers keep
+/// their declared-asset verification behavior; no archive reads occur here.
+pub(crate) fn verification_payloads(
+    state: &State,
+    lock: &Dependency,
+    registered: &std::collections::HashMap<String, u64>,
+) -> Result<Option<BTreeMap<String, u64>>> {
+    let key = format!("{}@{}", lock.logical_id, lock.version_id);
+    let version = state
+        .versions
+        .get(&key)
+        .ok_or("Verification version missing")?;
+    if version.manifest_sha256 != lock.manifest_sha256 {
+        return Err("Verification manifest lock mismatch".into());
+    }
+    if version.dependency_contract.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(
+        crate::accounting::expand(state, [key])?
+            .into_iter()
+            .map(|hash| {
+                let bytes = registered
+                    .get(&hash)
+                    .ok_or("Unregistered active artifact dependency")?;
+                Ok((hash, *bytes))
+            })
+            .collect::<Result<_>>()?,
+    ))
 }
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -48,6 +97,70 @@ fn key(id: &str, version: &str) -> String {
     format!("{id}@{version}")
 }
 impl State {
+    pub fn validate_dependency_contract(&self, version: &Version) -> Result<()> {
+        let mut queue = vec![version];
+        let mut seen = BTreeSet::new();
+        while let Some(version) = queue.pop() {
+            if !seen.insert(key(&version.logical_id, &version.version_id)) {
+                continue;
+            }
+            let Some(contract) = &version.dependency_contract else {
+                continue;
+            };
+            let classified: BTreeSet<_> = contract
+                .primary_inputs
+                .iter()
+                .chain(&contract.outputs)
+                .chain(&contract.references)
+                .cloned()
+                .collect();
+            let mut payloads = version.payloads.clone();
+            payloads.remove(&version.manifest_sha256);
+            let mut classified_without_manifest = classified.clone();
+            classified_without_manifest.remove(&version.manifest_sha256);
+            if classified.iter().any(|h| !valid_oid(h))
+                || payloads != classified_without_manifest
+                || !contract.primary_inputs.is_disjoint(&contract.outputs)
+                || !contract.primary_inputs.is_disjoint(&contract.references)
+                || !contract.outputs.is_disjoint(&contract.references)
+            {
+                return Err(
+                    "Every payload must have exactly one primary-input, output or reference role"
+                        .into(),
+                );
+            }
+            for dep in &version.dependencies {
+                let target = self
+                    .versions
+                    .get(&key(&dep.logical_id, &dep.version_id))
+                    .ok_or("Dependency version missing")?;
+                let inputs = target.dependency_contract.as_ref().ok_or(
+                    "Primary-input dependency cannot target an unclassified legacy version",
+                )?;
+                if target.manifest_sha256 != dep.manifest_sha256 {
+                    return Err("Dependency manifest hash mismatch".into());
+                }
+                if !inputs.outputs.is_empty() {
+                    return Err("Compiled/output versions cannot be dependencies; use primary inputs and retain output references separately".into());
+                }
+                queue.push(target);
+            }
+            for existing in self
+                .versions
+                .values()
+                .filter_map(|v| v.dependency_contract.as_ref())
+            {
+                if !contract.primary_inputs.is_disjoint(&existing.outputs)
+                    || !contract.outputs.is_disjoint(&existing.primary_inputs)
+                {
+                    return Err(
+                        "A declared output cannot also be registered as a primary input".into(),
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
     pub fn register(&mut self, version: Version) -> Result<()> {
         if version.logical_id.is_empty()
             || version.version_id.is_empty()
@@ -74,6 +187,7 @@ impl State {
         {
             return Err("Superseded version missing".into());
         }
+        self.validate_dependency_contract(&version)?;
         self.versions.insert(k, version);
         self.generation += 1;
         Ok(())
@@ -86,6 +200,7 @@ impl State {
         if v.deprecated {
             return Err("Cannot select deprecated version for new use".into());
         }
+        self.validate_dependency_contract(v)?;
         self.current.insert(id.into(), version.into());
         self.generation += 1;
         Ok(())
@@ -95,6 +210,14 @@ impl State {
             .get_mut(&key(id, version))
             .ok_or("Version missing")?
             .deprecated = true;
+        self.generation += 1;
+        Ok(())
+    }
+    pub fn unselect(&mut self, id: &str, expected: &str) -> Result<()> {
+        if self.current.get(id).is_none_or(|v| v != expected) {
+            return Err("Current selection changed; refusing stale withdrawal".into());
+        }
+        self.current.remove(id);
         self.generation += 1;
         Ok(())
     }
@@ -111,7 +234,7 @@ impl State {
         self.generation += 1;
         Ok(())
     }
-    fn closure(&self, roots: impl Iterator<Item = String>) -> Result<BTreeSet<String>> {
+    pub(crate) fn closure(&self, roots: impl Iterator<Item = String>) -> Result<BTreeSet<String>> {
         let mut found = BTreeSet::new();
         let mut queue: Vec<_> = roots.collect();
         while let Some(k) = queue.pop() {
@@ -164,6 +287,9 @@ struct Index {
     patch: serde_json::Value,
 }
 
+// Cached metadata can grow independently of the small Git control/patch file.
+const MAX_EXPANDED_INDEX_BYTES: u64 = 4 * 1024 * 1024;
+
 fn baseline(
     root: &Path,
     index: &Index,
@@ -171,7 +297,7 @@ fn baseline(
 ) -> Result<serde_json::Value> {
     if index.schema != "caminos.version-index.v2"
         || !valid_oid(&index.base_sha256)
-        || index.base_bytes > 256 * 1024
+        || index.base_bytes > MAX_EXPANDED_INDEX_BYTES
         || !index.patch.is_object()
     {
         return Err("Invalid version-index baseline".into());
@@ -241,13 +367,17 @@ fn control(
     let index: Index = serde_json::from_value(value)?;
     let mut base = baseline(root, &index, storage)?;
     merge(&mut base, &index.patch);
-    if serde_json::to_vec(&base)?.len() > 256 * 1024 {
+    if serde_json::to_vec(&base)?.len() as u64 > MAX_EXPANDED_INDEX_BYTES {
         return Err("Expanded version index exceeds budget".into());
     }
     let _: State = serde_json::from_value(base.clone())?;
     Ok((base, Some(index.base_sha256)))
 }
 fn encode_control(root: &Path, control: serde_json::Value) -> Result<Vec<u8>> {
+    // Do not publish a small delta whose expanded state cannot be read back.
+    if serde_json::to_vec(&control)?.len() as u64 > MAX_EXPANDED_INDEX_BYTES {
+        return Err("Expanded version index exceeds budget".into());
+    }
     let path = root.join("registry/versions.json");
     let previous = if path.exists() {
         load(&path)?
@@ -325,7 +455,11 @@ pub fn read(root: &Path) -> Result<State> {
 pub(crate) fn read_with(root: &Path, storage: Option<&crate::Config>) -> Result<State> {
     let path = root.join("registry/versions.json");
     if !path.exists() {
-        return Ok(State::default());
+        let mut state = State::default();
+        state
+            .metadata_roots
+            .extend(crate::object_index::metadata_roots(root)?);
+        return Ok(state);
     }
     if fs::metadata(&path)?.len() > 256 * 1024 {
         return Err("Version control file exceeds budget".into());
@@ -333,6 +467,9 @@ pub(crate) fn read_with(root: &Path, storage: Option<&crate::Config>) -> Result<
     let (control, base) = control(root, load(&path)?, storage)?;
     let mut state: State = serde_json::from_value(control)?;
     state.metadata_roots.extend(base);
+    state
+        .metadata_roots
+        .extend(crate::object_index::metadata_roots(root)?);
     let mut registered = None;
     for (key, oid) in std::mem::take(&mut state.version_records) {
         if !valid_oid(&oid) {
@@ -532,6 +669,7 @@ mod tests {
             dependencies: vec![],
             supersedes: None,
             deprecated: false,
+            dependency_contract: None,
         }
     }
     #[test]
@@ -551,6 +689,68 @@ mod tests {
             s.retirement_plan("cel", "v1").unwrap()["removal_authorized"],
             false
         );
+        assert!(s.unselect("cel", "stale").is_err());
+        assert_eq!(s.current["cel"], "v1");
+        s.unselect("cel", "v1").unwrap();
+        assert!(!s.current.contains_key("cel"));
+        assert_eq!(s.retirement_plan("cel", "v1").unwrap()["protected"], true);
+    }
+    #[test]
+    fn typed_dependencies_reject_outputs_and_keep_provenance_out_of_active_inputs() {
+        let mut s = State::default();
+        let mut primary = version("cel", "v1", 'b');
+        primary.dependency_contract = Some(DependencyContract {
+            primary_inputs: primary.payloads.clone(),
+            outputs: BTreeSet::new(),
+            references: BTreeSet::new(),
+        });
+        s.register(primary).unwrap();
+        let mut compiled = version("episode", "v1", 'c');
+        compiled.payloads = BTreeSet::from(["d".repeat(64), "e".repeat(64)]);
+        compiled.dependency_contract = Some(DependencyContract {
+            primary_inputs: BTreeSet::new(),
+            outputs: BTreeSet::from(["d".repeat(64)]),
+            references: BTreeSet::from(["e".repeat(64)]),
+        });
+        compiled.dependencies.push(Dependency {
+            logical_id: "cel".into(),
+            version_id: "v1".into(),
+            manifest_sha256: "b".repeat(64),
+        });
+        s.register(compiled.clone()).unwrap();
+        let active = crate::accounting::expand(&s, ["episode@v1".into()]).unwrap();
+        assert!(active.contains(&"a".repeat(64)) && active.contains(&"d".repeat(64)));
+        assert!(!active.contains(&"e".repeat(64)));
+        let mut invalid = compiled.clone();
+        invalid.version_id = "v2".into();
+        invalid.dependencies = vec![Dependency {
+            logical_id: "episode".into(),
+            version_id: "v1".into(),
+            manifest_sha256: "c".repeat(64),
+        }];
+        assert!(
+            s.register(invalid)
+                .unwrap_err()
+                .to_string()
+                .contains("cannot be dependencies")
+        );
+        let mut disguised = version("disguised", "v1", 'f');
+        disguised.payloads = BTreeSet::from(["d".repeat(64)]);
+        disguised.dependency_contract = Some(DependencyContract {
+            primary_inputs: disguised.payloads.clone(),
+            outputs: BTreeSet::new(),
+            references: BTreeSet::new(),
+        });
+        assert!(s.register(disguised).is_err());
+        let mut ambiguous = compiled;
+        ambiguous.version_id = "v3".into();
+        ambiguous
+            .dependency_contract
+            .as_mut()
+            .unwrap()
+            .primary_inputs
+            .insert("d".repeat(64));
+        assert!(s.register(ambiguous).is_err());
     }
     #[test]
     fn version_index_compaction_preserves_state_and_small_transaction_patches() {
@@ -590,6 +790,104 @@ mod tests {
         assert_eq!(after.versions.len(), 30);
         let again = compact(f.root()).unwrap();
         assert_eq!(again["generation"], after.generation);
+    }
+
+    #[test]
+    fn cache_baseline_can_exceed_git_control_budget_without_changing_versions_or_roots() {
+        let mut f = crate::tiering::tests::Fixture::new();
+        let hash = f.put(b"bounded large version control fixture", true);
+        f.version("seed", &hash);
+        compact(f.root()).unwrap();
+        let add = |start, end| {
+            transact(f.root(), |state| {
+                for n in start..end {
+                    let id = format!("technical-custody-{n:04}-{}", "x".repeat(80));
+                    state.register(Version {
+                        logical_id: id.clone(),
+                        version_id: "v1".into(),
+                        manifest_sha256: hash.clone(),
+                        payloads: [hash.clone()].into(),
+                        dependencies: vec![],
+                        deprecated: false,
+                        supersedes: None,
+                        dependency_contract: None,
+                    })?;
+                    state.select(&id, "v1")?;
+                    state.pins.insert(key(&id, "v1"));
+                    state.generation += 1;
+                }
+                Ok(())
+            })
+            .unwrap();
+        };
+        add(0, 400);
+        compact(f.root()).unwrap();
+        add(400, 800);
+        let before = serde_json::to_value(read(f.root()).unwrap()).unwrap();
+        let control_path = f.root().join("registry/versions.json");
+        assert!(fs::metadata(&control_path).unwrap().len() <= 256 * 1024);
+        let receipt = compact(f.root()).unwrap();
+        assert!(receipt["baseline"]["bytes"].as_u64().unwrap() > 256 * 1024);
+        assert!(fs::metadata(&control_path).unwrap().len() < 1024);
+        assert_eq!(
+            serde_json::to_value(read(f.root()).unwrap()).unwrap(),
+            before
+        );
+        let cfg = config(f.root()).unwrap();
+        assert_eq!(read_with(f.root(), Some(&cfg)).unwrap().versions.len(), 801);
+        let good_control = fs::read(&control_path).unwrap();
+        let oversized = serde_json::json!({"current":{"too-large":"x".repeat(MAX_EXPANDED_INDEX_BYTES as usize)}});
+        assert!(encode_control(f.root(), oversized).is_err());
+        assert_eq!(fs::read(&control_path).unwrap(), good_control);
+        let mut invalid: serde_json::Value = serde_json::from_slice(&good_control).unwrap();
+        invalid["base_bytes"] = serde_json::json!(MAX_EXPANDED_INDEX_BYTES + 1);
+        fs::write(&control_path, invalid.to_string()).unwrap();
+        assert!(read(f.root()).is_err());
+        fs::write(&control_path, vec![b' '; 256 * 1024 + 1]).unwrap();
+        assert!(read(f.root()).is_err());
+    }
+    #[test]
+    fn cached_version_index_grows_without_relaxing_git_control_limit() {
+        let f = crate::tiering::tests::Fixture::new();
+        let mut state = State::default();
+        for n in 0..3000 {
+            state
+                .current
+                .insert(format!("artifact/{n:04}/{}", "x".repeat(80)), "v1".into());
+        }
+        let bytes = serde_json::to_vec(&state).unwrap();
+        assert!(bytes.len() > 256 * 1024);
+        let hash = f.put(&bytes, true);
+        let index = Index {
+            schema: "caminos.version-index.v2".into(),
+            base_sha256: hash,
+            base_bytes: bytes.len() as u64,
+            patch: serde_json::json!({}),
+        };
+        let value = serde_json::to_value(&index).unwrap();
+        assert!(control(f.root(), value.clone(), None).is_ok());
+        fs::write(
+            f.root().join("registry/versions.json"),
+            serde_json::to_vec(&value).unwrap(),
+        )
+        .unwrap();
+        assert!(read(f.root()).is_ok());
+        assert!(
+            encode_control(f.root(), serde_json::to_value(&state).unwrap())
+                .unwrap()
+                .len()
+                < 1024
+        );
+        let mut oversized = serde_json::to_value(&state).unwrap();
+        oversized["current"]["large"] =
+            serde_json::json!("x".repeat(MAX_EXPANDED_INDEX_BYTES as usize));
+        assert!(encode_control(f.root(), oversized.clone()).is_err());
+        let mut changed = value.clone();
+        changed["patch"] = oversized;
+        assert!(control(f.root(), changed, None).is_err());
+        let mut changed = value;
+        changed["base_bytes"] = serde_json::json!(MAX_EXPANDED_INDEX_BYTES + 1);
+        assert!(control(f.root(), changed, None).is_err());
     }
     #[test]
     fn version_baseline_corruption_stops_and_explicit_storage_is_read_only() {

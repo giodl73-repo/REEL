@@ -426,4 +426,90 @@ fn compiles_selected_poem_from_scene_content_and_rejects_changed_definition() {
     let label_ass = fs::read_to_string(dir.join("label-valid.ass")).unwrap();
     assert!(label_ass.contains("\\pos(640,680)"));
     assert!(label_ass.contains("1937"));
+
+    // A chapter overlays a narrated scene: its visible interval is fixed,
+    // while the receipt retains the complete native dialogue clock.
+    let chapter_line = json!({
+        "font_name":"Georgia","font_size":36,"primary_rgb":[255,244,228],
+        "outline_rgb":[11,16,22],"outline_alpha":32,
+        "shadow_rgb":[0,0,0],"shadow_alpha":96,"outline_width":2.0,
+        "shadow_depth":1.0,"margin_left":80,"margin_vertical":80
+    });
+    let mut chapter_definition = definition.clone();
+    chapter_definition["template_id"] = json!("chapter-v1");
+    chapter_definition["kind"] = json!("chapter-title");
+    chapter_definition["panel"] = Value::Null;
+    chapter_definition["byline"] = Value::Null;
+    chapter_definition["fixed_duration_seconds"] = json!(1);
+    chapter_definition["chapter"] = json!({
+        "number":chapter_line,"title":chapter_line,
+        "fade_in_ms":100,"fade_out_ms":100
+    });
+    let mut chapter_alignment = alignment.clone();
+    chapter_alignment["cue_end_sample"] = json!(72_000);
+    write(&dir.join("es-alignment.json"), &chapter_alignment);
+    let alignment_bytes = fs::read(dir.join("es-alignment.json")).unwrap();
+    scene_bindings["assets"]["es.alignment"]["sha256"] = sha(&alignment_bytes).into();
+    scene_bindings["assets"]["es.alignment"]["bytes"] = json!(alignment_bytes.len());
+    scene_bindings["assets"]["es.alignment"]["cache_uri"] =
+        format!("cache://sha256/{}", sha(&alignment_bytes)).into();
+    scene["presentation_source_scope_ids"] = json!(["chapter-heading"]);
+    scene["languages"]["es"]["cues"][0]["source_cue_ids"] = json!(["source-block-1"]);
+    scene["presentation"] = json!({
+        "role":"chapter-title","template_id":"chapter-v1",
+        "content":{"titles":{"es":"Source heading","en":"Source heading"},
+            "chapter_number":null,
+            "source_text_bindings":{"es":"es.poem.source","en":"en.poem.source"}}
+    });
+    let mut chapter_source = json!({
+        "schema":"reel.presentation-source-text.v1","source_authority_id":"source-1",
+        "source_document_sha256":"a".repeat(64),"source_scope_ids":["chapter-heading"],
+        "language":"es","text_state":"project-draft-review-held","title":"Source heading",
+        "byline":null,"chapter_number":null,"lines":[]
+    });
+    for (suffix, number) in [("unnumbered", Value::Null), ("numbered", json!("7"))] {
+        scene["presentation"]["content"]["chapter_number"] = number.clone();
+        chapter_source["chapter_number"] = number;
+        write(&dir.join("scene.json"), &scene);
+        write(&dir.join("source-text.json"), &chapter_source);
+        let source_bytes = fs::read(dir.join("source-text.json")).unwrap();
+        scene_bindings["assets"]["es.poem.source"]["sha256"] = sha(&source_bytes).into();
+        scene_bindings["assets"]["es.poem.source"]["bytes"] = json!(source_bytes.len());
+        scene_bindings["assets"]["es.poem.source"]["cache_uri"] =
+            format!("cache://sha256/{}", sha(&source_bytes)).into();
+        write(&dir.join("bindings.json"), &scene_bindings);
+        write(&dir.join("definition.json"), &chapter_definition);
+        catalog["templates"][3]["definition_sha256"] =
+            sha(&fs::read(dir.join("definition.json")).unwrap()).into();
+        catalog["templates"][3]["required_content_keys"] = json!(["titles"]);
+        write(&dir.join("catalog.json"), &catalog);
+        let result = run(
+            &format!("chapter-{suffix}.ass"),
+            &format!("chapter-{suffix}.json"),
+        );
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let ass = fs::read_to_string(dir.join(format!("chapter-{suffix}.ass"))).unwrap();
+        assert!(ass.contains("0:00:01.00,Chapter,chapter_title"));
+        assert_eq!(ass.contains("chapter_number"), suffix == "numbered");
+        let receipt: Value =
+            serde_json::from_slice(&fs::read(dir.join(format!("chapter-{suffix}.json"))).unwrap())
+                .unwrap();
+        assert_eq!(receipt["duration_samples"], 72_000);
+        assert_eq!(receipt["sample_rate"], 24_000);
+    }
+    chapter_definition["fixed_duration_seconds"] = json!(4);
+    write(&dir.join("definition.json"), &chapter_definition);
+    catalog["templates"][3]["definition_sha256"] =
+        sha(&fs::read(dir.join("definition.json")).unwrap()).into();
+    write(&dir.join("catalog.json"), &catalog);
+    assert!(
+        !run("chapter-too-long.ass", "chapter-too-long.json")
+            .status
+            .success()
+    );
+    assert!(!dir.join("chapter-too-long.ass").exists());
 }

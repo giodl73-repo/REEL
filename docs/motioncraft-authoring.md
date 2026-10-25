@@ -1,13 +1,15 @@
 # Motioncraft authoring and scene execution
 
 Implementation status: phased camera authoring, compilation, actual scene
-rendering and indexed review extraction are implemented on `codex/motioncraft`.
+rendering and indexed review extraction shipped in Phase 1 (REEL ac296362).
 Explicit native-duration fitting and transformed protected-region checks are
 also implemented, with a typed visual brief carried into review evidence.
 Matched study renders and a verified package/clean landscape reproduction are
-available; see [study handoff](motioncraft-study-handoff.md). CAIMITOS adapter
-deployment, the consumer canary and final goal
-acceptance are still outstanding.
+available; see [study handoff](motioncraft-study-handoff.md). Phase 1 CAIMITOS
+deployment and the consumer canary are recorded in that repository. Phase 2 on
+`codex/motioncraft-phase-2` adds native Windows cadence, portable comparisons
+and focal-anchor/pan execution; Phase 2 consumer adoption, layer validation and
+complete episode qualification remain open.
 The [simulated study comparison](../signals/roles/check/reel-motioncraft-queue-comparison-2026-10-05.md)
 records the bounded playback/score evaluation; it is not creative approval.
 
@@ -72,13 +74,15 @@ needs a fixed duration rather than proportional fitting.
 
 Working phase spans are zero-based and inclusive. The native narration clock
 remains in exact samples; the direction's whole duration must align within
-half a working frame. Gaps retain the prior zoom. Adjacent phases must keep
-continuous zoom; moving one-frame phases and moving `hold` phases are rejected.
+half a working frame. Gaps retain the prior zoom/pan. Adjacent phases must keep
+continuous zoom/pan; moving one-frame phases and moving `hold` phases are rejected.
 Curves are linear, ease-in, ease-out and cosine ease-in-out. Reduced motion
-keeps the camera at zoom 1 without changing audio or reading duration.
+keeps the camera at zoom 1 and zero pan without changing audio or reading duration.
 
 The first scene treatment supports one dominant element with `role: camera`
-and centered zoom from 1 to 4 on an uncropped still. This is explicit renderer
+and bounded zoom from 1 to 4 with optional focal anchor and pan on an uncropped
+still. See [the focal-camera contract](motioncraft-focal-camera-contract.md).
+This is explicit renderer
 capability: other roles, video sources, crops, legacy motion groups and source
 frame offsets are rejected. A phase kind describes purpose, not a separate
 unimplemented effect such as opacity. Typographic/shape entrances must not be
@@ -186,7 +190,14 @@ After rendering, run `reel-scene-cadence <job.json> --asset-root <assets>
 existing motion-check luma analyzer and thresholds. The command first verifies
 the scene receipt, then measures exact adjacent delivery frames. Reports bind
 the job and picture hashes and record the actual analyzer backend/FFmpeg
-version separately from the native rendering runtime; output is no-clobber and belongs outside the render
+version separately from the native rendering runtime. Motioncraft cadence uses
+native FFmpeg on Windows and Linux, without a WSL fallback. Set
+`REEL_CADENCE_FFMPEG` to an explicit executable path, or let it resolve FFmpeg
+from PATH. An invalid explicit override rejects rather than falling back.
+The report records the canonical executable path and SHA-256 and rejects an
+executable that changes during analysis. These local evidence reports include
+machine paths; do not treat them as sanitized public receipts.
+Output is no-clobber and belongs outside the render
 directory. A failed check retains its report and exits nonzero.
 
 Only an unlayered still camera treatment can grant whole-frame hold allowances.
@@ -206,3 +217,10 @@ Rollback uses the previous authored revision and its existing delivery package;
 no old file or render is overwritten. The implementation tests prove this
 path in REEL's synthetic scene harness; CAIMITOS's own adapter adoption remains
 a separate required completion gate.
+
+
+## Selected narration channel mapping
+
+For bounded soundtrack qualification, `scene_delivery::render_audio` and `check_audio` consume the same exact scene job, native plan and mixer as full scene delivery. They produce and verify PCM24 D/M/E/mix plus `audio-receipt.json`, without rendering pictures. The distinct `reel.scene-audio-receipt.v0.1` schema binds the exact job, source plan, output hashes and decoded sample clocks; it cannot replace a complete scene receipt or qualify captions, effects, picture cadence or episode context. Existing authoring fields and full rendering behavior remain unchanged. Validate the consumer's capacity forecast before rendering each bounded sound unit.
+
+`episode.json` may set `"dialogue_channel_mapping": "duplicate-mono"` to preserve a selected mono performance at its source level in both stereo channels. A `scene.json` override takes precedence; `"automatic"` explicitly restores legacy automatic conversion. With both fields absent, output and fingerprints preserve legacy behavior. This setting affects only D attachments, not music or effects, and leaves source identity, sample clocks, gains and fades unchanged. Unknown values reject during authoring; duplicate-mono rendering rejects a non-mono source. The resolved choice is included in scene identity and reaches native `audio[].channel_mapping`. Technical mapping does not select a creative mix.

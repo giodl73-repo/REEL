@@ -2,16 +2,22 @@ use serde::Deserialize;
 
 pub mod accounting;
 pub mod admission;
+pub mod artifact_export;
 pub mod artifacts;
+pub mod cel_source;
 pub mod cli;
 pub mod demotion;
 pub mod goldens;
 pub mod jobs;
 pub mod manager_review;
+mod object_index;
+mod output_retention;
+pub mod references;
 pub mod registry;
 pub mod scenes;
 pub mod tier_review;
 pub mod tiering;
+pub mod version_diff;
 pub mod versions;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -26,8 +32,20 @@ use std::{
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Deserialize, Clone, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum PathPolicy {
+    /// Compatibility for existing consumers that have not adopted a generic profile.
+    #[default]
+    LegacyCaminos,
+    /// Tier roles and explicit configured roots define placement, independent of drive letters.
+    ConfiguredLocalRoots,
+}
+
+#[derive(Deserialize, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
+    pub path_policy: PathPolicy,
     pub cache_roots: Vec<PathBuf>,
     #[serde(default)]
     pub archive_roots: Vec<PathBuf>,
@@ -119,49 +137,37 @@ pub(crate) fn generic_objects_with(
 ) -> Result<HashMap<String, u64>> {
     let mut map = HashMap::new();
     let mut registries = Vec::new();
-    let archive = root.join("registry/object-index.json");
-    if archive.exists() {
-        if fs::metadata(&archive)?.len() > 4096 {
-            return Err("Object index control exceeds budget".into());
-        }
-        let descriptor = load(&archive)?;
-        let asset = &descriptor["asset"];
-        let oid = asset["sha256"]
-            .as_str()
-            .ok_or("Missing object index hash")?;
-        let size = asset["bytes"].as_u64().ok_or("Missing object index size")?;
-        if descriptor["schema"] != "caminos.object-index.v1"
-            || !valid_oid(oid)
-            || size > 4 * 1024 * 1024
-            || asset["cache_uri"] != format!("cache://sha256/{oid}")
-        {
-            return Err("Invalid cache-backed object index".into());
-        }
+    let leaves = object_index::assets(root)?;
+    if !leaves.is_empty() {
         let cfg = if let Some(c) = storage {
             c.clone()
         } else {
             config(root)?
         };
-        let path = active_existing(&cfg, oid, size)?
-            .ok_or("Object index absent from active caches; archive not probed")?;
-        // The index authorizes its own LFS pointer without a circular lookup.
-        add_asset(&mut map, asset)?;
-        registries.push(path);
+        for (prefix, asset) in leaves {
+            let oid = asset["sha256"].as_str().unwrap();
+            let size = asset["bytes"].as_u64().unwrap();
+            let path = active_existing(&cfg, oid, size)?
+                .ok_or("Object index absent from active caches; archive not probed")?;
+            // Leaf descriptors authorize their own pointers without recursion.
+            add_asset(&mut map, &asset)?;
+            registries.push((path, prefix));
+        }
     }
     let legacy = root.join("registry/objects.tsv");
     if legacy.exists() {
-        registries.push(legacy);
+        registries.push((legacy, None));
     }
     let shards = root.join("registry/objects");
     if shards.is_dir() {
         for entry in fs::read_dir(shards)? {
             let path = entry?.path();
             if path.extension().is_some_and(|s| s == "tsv") {
-                registries.push(path);
+                registries.push((path, None));
             }
         }
     }
-    for registry in registries {
+    for (registry, prefix) in registries {
         for line in fs::read_to_string(registry)?
             .lines()
             .filter(|l| !l.is_empty())
@@ -173,6 +179,9 @@ pub(crate) fn generic_objects_with(
             if !valid_oid(oid) {
                 return Err("Invalid generic registered SHA-256".into());
             }
+            if prefix.is_some_and(|prefix| oid.as_bytes()[0] != prefix) {
+                return Err("Object index row differs from its leaf prefix".into());
+            }
             if let Some(previous) = map.insert(oid.to_owned(), size)
                 && previous != size
             {
@@ -183,6 +192,21 @@ pub(crate) fn generic_objects_with(
     Ok(map)
 }
 
+pub(crate) fn validate_roots(roots: &[PathBuf], archive: bool, policy: &PathPolicy) -> Result<()> {
+    for path in roots {
+        let text = path.to_string_lossy().replace('/', "\\").to_uppercase();
+        let text = text.strip_prefix("\\\\?\\").unwrap_or(&text);
+        if !path.is_absolute() || text.starts_with("UNC\\") || text.starts_with("\\\\") {
+            return Err("Cache roots must be absolute local paths".into());
+        }
+        if matches!(policy, PathPolicy::LegacyCaminos)
+            && (text.starts_with("G:") || (!archive && text.starts_with("M:")))
+        {
+            return Err("Legacy cache policy: G is forbidden and M is archive-only; other projects can explicitly select configured-local-roots".into());
+        }
+    }
+    Ok(())
+}
 pub fn config(root: &Path) -> Result<Config> {
     let path = if root.join("asset-project.json").exists() {
         accounting::relative(root, &accounting::project(root)?.storage_config)?
@@ -193,20 +217,8 @@ pub fn config(root: &Path) -> Result<Config> {
     if config.cache_roots.is_empty() {
         return Err("At least one active cache root required".into());
     }
-    for (archive, roots) in [(false, &config.cache_roots), (true, &config.archive_roots)] {
-        for path in roots {
-            let text = path.to_string_lossy().replace('/', "\\").to_uppercase();
-            let text = text.strip_prefix("\\\\?\\").unwrap_or(&text);
-            if !path.is_absolute()
-                || text.starts_with("UNC\\")
-                || text.starts_with("\\\\")
-                || text.starts_with("G:")
-                || (!archive && text.starts_with("M:"))
-            {
-                return Err("Cache roots must be absolute local paths; G is forbidden and M is archive-only".into());
-            }
-        }
-    }
+    validate_roots(&config.cache_roots, false, &config.path_policy)?;
+    validate_roots(&config.archive_roots, true, &config.path_policy)?;
     if let Some(transfer) = std::env::var_os("CAMINOS_TRANSFER_CACHE") {
         config.transfer_cache = Some(PathBuf::from(transfer));
     }
@@ -272,6 +284,27 @@ impl Drop for Temporary {
 }
 
 pub fn recover(root: &Path, source: &Path, cache: &Path, oid: &str, size: u64) -> Result<PathBuf> {
+    recover_with_publication_wait(root, source, cache, oid, size, false)
+}
+
+pub(crate) fn recover_job_output(
+    root: &Path,
+    source: &Path,
+    cache: &Path,
+    oid: &str,
+    size: u64,
+) -> Result<PathBuf> {
+    recover_with_publication_wait(root, source, cache, oid, size, true)
+}
+
+fn recover_with_publication_wait(
+    root: &Path,
+    source: &Path,
+    cache: &Path,
+    oid: &str,
+    size: u64,
+    completed_job_output: bool,
+) -> Result<PathBuf> {
     if !valid_oid(oid) {
         return Err("Invalid SHA-256".into());
     }
@@ -295,14 +328,15 @@ pub fn recover(root: &Path, source: &Path, cache: &Path, oid: &str, size: u64) -
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => verify(&destination, oid, size)?,
         Err(e) => return Err(e.into()),
     }
-    // Serialize this producer receipt with its own metadata only.
-    let _lock = admission::worktree_lock(root)?;
+    let _lock = if completed_job_output {
+        admission::job_publication_lock(root)?
+    } else {
+        admission::worktree_lock(root)?
+    };
     let mut receipt = OpenOptions::new()
-        .read(true)
         .create(true)
         .append(true)
         .open(root.join(".local/cache-promotions.jsonl"))?;
-    fs2::FileExt::lock_exclusive(&receipt)?;
     let mut line = serde_json::to_vec(
         &json!({"sha256": oid, "bytes": size, "source": source, "destination": destination, "sha256_verified": true, "creative_authority": "not-granted-by-this-receipt"}),
     )?;

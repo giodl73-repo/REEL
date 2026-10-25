@@ -1,5 +1,8 @@
 # Verified redundant hot-copy removal
 
+For replacement versions, start with [version comparison](asset-version-diff-v1.md)
+to restrict a request to dropped hashes rather than reclaiming unrelated historical assets.
+
 This explicit Windows command supplements the read-only tier planner:
 
 ```text
@@ -26,6 +29,15 @@ policy/storage admission. Optional `allow_same_volume_copies` defaults false;
 enabling it permits distinct physical copies on one volume and never claims
 independent backup. Synthetic isolated fixtures use that option deliberately.
 
+`allow_independent_source_copies` is a separate opt-in, default false. It permits
+multiple physical source groups within the already scoped CAS/LFS/indexed alias
+paths. Every group is independently hashed (or matches its own exact unchanged
+source proof), has a complete known hard-link set, and is distinct from the
+retained copy. All groups pass before the first unlink. The verification budget
+charges the retained object plus each physical source group, including reused
+proofs. Receipts report each source verification and count allocation once per
+physical group. An unknown link or corrupt independent copy holds the object.
+
 ## Protection and concurrency
 
 All declared consumers must have a supported asset project profile and matching
@@ -39,17 +51,33 @@ completed/quiescent. A newly created undeclared worktree holds maintenance.
 This is not global discovery of unrelated repositories. Legacy consumers require a compatible protection export
 or scoped reader before inclusion can succeed. Do not silently omit a live lane.
 
-Apply refuses any live or unreconciled admission entries. The shared job runner
+Historical-tier apply refuses any live or unreconciled admission entries. The shared job runner
 now reserves before resolving sources, avoiding source paths captured before a
 maintenance admission boundary. Before production rollout, participating readers
 must use that protocol or be quiescent; old binaries do not acquire new behavior
 from a Git merge. Existing jobs are never stopped or their reservations cleared.
 
+Explicit unregistered-object cold custody uses the stronger exclusion of every
+authorized hash and every version reference in every declared consumer. It may
+coexist with unrelated admissions and registrations. A newly protected target
+holds removal; unrelated new registrations are reconciled without freezing
+other producers for a complete registry graph read.
+
+Cold custody receipts, payload verification and protection-graph preparation run
+outside the shared metadata lock. Prepared Windows control handles deny writes
+and replacement. The final locked transaction rechecks consumer registration and
+the complete control-path set, including newly created authorization shards,
+before unlinking. Changed controls hold maintenance rather than extending the
+global lock to refresh graphs. A valid additive custody receipt may therefore
+exist even when the later source removal is held. It does not assert that any
+source link was removed. Already-running older binaries retain their original
+locking behavior; adoption requires the newly built executable.
+
 Hashing happens outside the short coordination lock. Immediately before each
 object's removals, the command rechecks admissions, plan expiry, policy/request
 and consumer metadata tokens. On Windows it holds those control files against
 write/replace while removing the exact opened source links. Unknown hard links,
-independent LFS copies, readonly copies, unexpected types, reparse ancestors,
+independent LFS copies without explicit opt-in, readonly copies, unexpected types, reparse ancestors,
 corrupt/missing destinations and changed alias counts all hold/fail closed.
 
 The verified retained file remains open denying write/delete until removal and
