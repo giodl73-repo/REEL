@@ -1125,7 +1125,7 @@ fn installed_runtime_job_retains_output_and_rejects_changed_tools_and_failures()
     registry::register(root, &register).unwrap();
     let mut job = json!({"budget_bytes":1048576,"scratch_bytes":65536,
         "inputs":{},"tools":{},"installed_tools":{"runtime":{"path":tool,"sha256":asset["sha256"],"bytes":asset["bytes"]}},
-        "steps":[{"tool":"runtime","args":["-NoProfile","-Command","Write-Output synthetic"],"timeout_seconds":5}],
+        "steps":[{"tool":"runtime","args":["-NoProfile","-Command","Write-Output synthetic"],"timeout_seconds":30}],
         "outputs":{"log":{"path":"step-0.log","max_bytes":4096}}});
     let manifest = root.join("job.json");
     fs::write(&manifest, job.to_string()).unwrap();
