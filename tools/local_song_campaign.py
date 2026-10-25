@@ -63,6 +63,13 @@ def qualifies(analysis, max_one_word_gap_lines=None):
     return bool(analysis['passed'] and (max_one_word_gap_lines is None or analysis['one_word_gap_lines']<=max_one_word_gap_lines))
 
 
+def reference_lyric_focus(package, focus):
+    # The submitted request already freezes the derived prompt. Its prior
+    # diagnostic is provenance, never a compiled take dependency/build input.
+    package['assets']['prior-lyric-analysis']=focus['analysis']
+    package['lyric_focus_reference']=focus['version_lock']
+
+
 def take_dependency_contract(package, output_roles):
     """Classify a direct audition without turning rendered takes into inputs.
 
@@ -376,8 +383,7 @@ class Campaign:
             package['assets']['timing-reference-request']=self.timing_reference['request']
             package['dependencies'].append(self.timing_reference['version_lock'])
         if self.lyric_focus:
-            package['assets']['prior-lyric-analysis']=self.lyric_focus['analysis']
-            package['dependencies'].append(self.lyric_focus['version_lock'])
+            reference_lyric_focus(package,self.lyric_focus)
         if self.ctc_runtime:
             package['assets'].update({'ctc-component':self.ctc_runtime['component'],'ctc-script':self.ctc_runtime['script']})
             package['dependencies'].append(self.ctc_runtime['version_lock'])

@@ -1,11 +1,23 @@
 import tempfile
 import unittest
 from pathlib import Path
-from local_song_campaign import Campaign, qualifies, stanza_roles
+from local_song_campaign import Campaign, qualifies, stanza_roles, reference_lyric_focus, take_dependency_contract
 from local_song_backend import validate_request, descriptor
 
 
 class AcceptanceTests(unittest.TestCase):
+    def test_prior_compiled_analysis_remains_provenance(self):
+        source=dict(logical_id='source/poem',version_id='v1',manifest_sha256='a'*64)
+        compiled=dict(logical_id='take/previous',version_id='v1',manifest_sha256='b'*64)
+        report=dict(sha256='c'*64,bytes=100)
+        package=dict(assets={'source':dict(sha256='d'*64)},dependencies=[source])
+        reference_lyric_focus(package,dict(analysis=report,version_lock=compiled))
+        contract=take_dependency_contract(package,[])
+        self.assertEqual(package['dependencies'],[source])
+        self.assertEqual(package['lyric_focus_reference'],compiled)
+        self.assertIn(report['sha256'],contract['references'])
+        self.assertNotIn(report['sha256'],contract['primary_inputs'])
+
     def test_complete_coverage_still_required(self):
         self.assertFalse(qualifies(dict(passed=False,one_word_gap_lines=0),3))
         self.assertTrue(qualifies(dict(passed=True,one_word_gap_lines=3),3))
