@@ -324,3 +324,13 @@ recorded in state acceptance revisions, take summaries and package metadata;
 original recognition reports stay intact. Tightening the cap rechecks previously
 qualified slots. Human musical selection remains separate. Run
 `test_local_song_acceptance.py` and the existing backend/campaign fixtures.
+
+For a fresh take whose combined independent model closures exceed the native
+single-call read cap, `--max-verification-bytes` explicitly opts into bounded
+verification in parts. Native metadata checks and a read-only native self-diff
+provide the authoritative immutable active closure, including manifests and typed
+primary/output objects. Every exact object passes native active-cache hashing
+within the unchanged per-call cap. No registration replay is needed. A separate
+receipt records the aggregate byte budget and all checks. Storage and Git limits
+are unchanged; corruption, mismatched identity and insufficient budget fail.
+Historical references stay deferred. Run `test_local_song_verify_parts.py`.
