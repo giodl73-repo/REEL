@@ -34,7 +34,7 @@ def revised_caption(slot, briefs):
     revision=briefs.get(slot['id'])
     if revision is None:return slot['caption']
     if not isinstance(revision,dict):raise ValueError('Musical brief revision must be an object')
-    if set(revision)-{'source','source_lock','caption','repeat_section_lines','phrase_max_words'}:
+    if set(revision)-{'source','source_lock','caption','repeat_section_lines','phrase_max_words','stanza_roles','duration_seconds','max_duration_seconds'}:
         raise ValueError('Unknown musical brief revision field')
     if revision.get('source')!=slot['source'] or revision.get('source_lock')!=slot['source_lock']:
         raise ValueError('Musical brief revision belongs to another source/version')
@@ -45,7 +45,32 @@ def revised_caption(slot, briefs):
         raise ValueError('Unsupported scoped repeated-section layout')
     if 'phrase_max_words' in revision and (type(revision['phrase_max_words']) is not int or not 4<=revision['phrase_max_words']<=16):
         raise ValueError('Unsupported scoped phrase size')
+    for key in ['duration_seconds','max_duration_seconds']:
+        if key in revision and (type(revision[key]) not in (int,float) or not 30<=revision[key]<=480):
+            raise ValueError('Scoped duration must be between 30 and 480 seconds')
     return caption
+
+
+def stanza_roles(render, roles):
+    if not isinstance(roles,list) or not roles or any(r not in ('Verse','Chorus','Bridge') for r in roles):
+        raise ValueError('Stanza roles must be Verse, Chorus or Bridge')
+    if len(re.findall(r'^\[Verse\]$',render,re.M))!=len(roles):
+        raise ValueError('Stanza role count differs from the unchanged source layout')
+    remaining=iter(roles)
+    return re.sub(r'^\[Verse\]$',lambda m:'['+next(remaining)+']',render,flags=re.M)
+
+
+def qualifies(analysis, max_one_word_gap_lines=None):
+    if max_one_word_gap_lines is not None and (type(max_one_word_gap_lines) is not int or max_one_word_gap_lines<0):
+        raise ValueError('One-word gap line cap must be a nonnegative integer')
+    return bool(analysis['passed'] and (max_one_word_gap_lines is None or analysis['one_word_gap_lines']<=max_one_word_gap_lines))
+
+
+def reference_lyric_focus(package, focus):
+    # The submitted request already freezes the derived prompt. Its prior
+    # diagnostic is provenance, never a compiled take dependency/build input.
+    package['assets']['prior-lyric-analysis']=focus['analysis']
+    package['lyric_focus_reference']=focus['version_lock']
 
 
 def take_dependency_contract(package, output_roles):
@@ -82,6 +107,7 @@ class Campaign:
         self.audio_guide=None
         self.brief_asset=None
         self.briefs={}
+        self.max_one_word_gap_lines=None
 
     def call(self, command, *args, env=None):
         for attempt in range(self.metadata_retries+1):
@@ -212,9 +238,10 @@ class Campaign:
         section_lines=brief.get('repeat_section_lines',self.repeat_section_lines)
         # Canonical words stay immutable under every explicit rendering policy.
         render=format_lyrics(lyrics,join_single_word_continuations=attempt>1,max_phrase_words=phrase_words)
-        duration=min(480,slot['duration_seconds']+15*((attempt-1)//3))
-        ceiling=slot.get('max_duration_seconds')
-        if ceiling is not None and (isinstance(ceiling,bool) or not isinstance(ceiling,(int,float)) or not slot['duration_seconds'] <= ceiling <= 480):
+        initial_duration=brief.get('duration_seconds',slot['duration_seconds'])
+        duration=min(480,initial_duration+15*((attempt-1)//3))
+        ceiling=brief.get('max_duration_seconds',slot.get('max_duration_seconds'))
+        if ceiling is not None and (isinstance(ceiling,bool) or not isinstance(ceiling,(int,float)) or not initial_duration <= ceiling <= 480):
             raise ValueError('Duration ceiling must be between the initial duration and 480 seconds')
         repetition={}
         if slot['id'] in self.briefs:repetition['musical_brief_revision']=dict(asset=self.brief_asset,slot_id=slot['id'])
@@ -285,6 +312,12 @@ class Campaign:
                 raise ValueError('Reference duration exceeds the candidate duration ceiling')
             duration=min(duration,ceiling)
             repetition['max_duration_seconds']=ceiling
+        roles=brief.get('stanza_roles')
+        if roles is not None:
+            if task!='text2music' or repetition.get('performance_repetitions',1)!=1:
+                raise ValueError('Explicit stanza roles require one direct unchanged source pass')
+            render=stanza_roles(render,roles)
+            repetition['stanza_roles']=roles
         return dict(schema='reel.local-song-request.v1',candidate_id=f"{slot['id']}-take-{attempt:03d}",
             slot_id=slot['id'],title=slot['title'],source=slot['source'],source_lock=slot['source_lock'],
             canonical_lyrics=lyrics,render_lyrics=render,caption=caption,duration_seconds=duration,
@@ -344,7 +377,8 @@ class Campaign:
         package=dict(schema='caminos.artifact-package.v1',artifact_id='song-audition/'+slot['id'],kind='song',
             version_id=f'take-{attempt:03d}',edition='full',assets=dict(out,request=request_asset,runtime=runtime_asset,
             source=slot['source'],backend=backend_asset,job=manifest_asset,job_result=result_asset),
-            dependencies=[slot['source_lock'],runtime_asset['version_lock']],selection_status='lyric-screen-qualified' if analysis['passed'] else 'lyric-screen-retry',
+            dependencies=[slot['source_lock'],runtime_asset['version_lock']],selection_status='lyric-screen-qualified' if qualifies(analysis,self.max_one_word_gap_lines) else 'lyric-screen-retry',
+            campaign_acceptance=dict(max_one_word_gap_lines=self.max_one_word_gap_lines,original_line_gate_passed=analysis['passed']),
             human_listening='pending',public_release=False)
         if self.planner_asset:
             package['assets']['planner']=self.planner_asset
@@ -353,8 +387,7 @@ class Campaign:
             package['assets']['timing-reference-request']=self.timing_reference['request']
             package['dependencies'].append(self.timing_reference['version_lock'])
         if self.lyric_focus:
-            package['assets']['prior-lyric-analysis']=self.lyric_focus['analysis']
-            package['dependencies'].append(self.lyric_focus['version_lock'])
+            reference_lyric_focus(package,self.lyric_focus)
         if self.ctc_runtime:
             package['assets'].update({'ctc-component':self.ctc_runtime['component'],'ctc-script':self.ctc_runtime['script']})
             package['dependencies'].append(self.ctc_runtime['version_lock'])
@@ -397,15 +430,16 @@ class Campaign:
         analysis=read(self.locate(assets['lyric-analysis']))
         result=read(self.locate(assets['job_result']))
         out={role:assets[role] for role in ['recording','listening','generation','generation-log','analysis-log','vocal-estimate','lyric-analysis','transcripts']}
-        summary=dict(id=rid,slot_id=slot['id'],attempt=attempt,qualified=analysis['passed'],
+        qualified=qualifies(analysis,self.max_one_word_gap_lines)
+        summary=dict(id=rid,slot_id=slot['id'],attempt=attempt,qualified=qualified,
             exact_lines=analysis['exact_lines'],qualifying_lines=analysis['qualifying_lines'],total_lines=analysis['total_lines'],
-            one_word_gap_lines=analysis['one_word_gap_lines'],manifest=package_asset,record=record,
+            one_word_gap_lines=analysis['one_word_gap_lines'],max_one_word_gap_lines=self.max_one_word_gap_lines,manifest=package_asset,record=record,
             version_lock=record['versions'][0]['version_lock'],outputs=out,request=request_asset,
             job_id=result['job_id'],human_listening='pending')
-        print('DONE',rid,'PASS' if analysis['passed'] else 'RETRY',f"{analysis['qualifying_lines']}/{analysis['total_lines']} lines",flush=True)
+        print('DONE',rid,'PASS' if qualified else 'RETRY',f"{analysis['qualifying_lines']}/{analysis['total_lines']} lines",f"{analysis['one_word_gap_lines']} one-word gaps",flush=True)
         return summary
 
-    def run(self, campaign_path, runtime_asset_path, backend, adopt_backend_revision=None,repeat_after_failures=None,planner_asset_path=None,generation_route=None,repeat_section_lines=None,phrase_max_words=None,asr_dtype=None,timing_reference_slot=None,focus_missing_lines=None,ctc_runtime_asset_path=None,audio_guide_slot=None,audio_guide_strength=None,audio_guide_target_slots=None,takes_per_slot=None,audio_guide_noise_strength=None,brief_asset_path=None):
+    def run(self, campaign_path, runtime_asset_path, backend, adopt_backend_revision=None,repeat_after_failures=None,planner_asset_path=None,generation_route=None,repeat_section_lines=None,phrase_max_words=None,asr_dtype=None,timing_reference_slot=None,focus_missing_lines=None,ctc_runtime_asset_path=None,audio_guide_slot=None,audio_guide_strength=None,audio_guide_target_slots=None,takes_per_slot=None,audio_guide_noise_strength=None,brief_asset_path=None,max_one_word_gap_lines=None):
         if takes_per_slot is not None and (type(takes_per_slot) is not int or not 1<=takes_per_slot<=10):
             raise ValueError('Takes per slot must be between 1 and 10')
         campaign=read(campaign_path)
@@ -429,6 +463,13 @@ class Campaign:
                     reason=adopt_backend_revision,qualified_slots_preserved=sorted(state['qualified'])))
                 state['backend']=backend_asset
         else:state=dict(campaign=campaign_asset,runtime=runtime_asset,backend=backend_asset,attempts=[],qualified={})
+        cap=state.get('max_one_word_gap_lines') if max_one_word_gap_lines is None else max_one_word_gap_lines
+        qualifies(dict(passed=False,one_word_gap_lines=0),cap)
+        if state.get('max_one_word_gap_lines')!=cap:
+            state.setdefault('acceptance_revisions',[]).append(dict(previous=state.get('max_one_word_gap_lines'),replacement=cap,after_retained_takes=len(state['attempts'])))
+        state['max_one_word_gap_lines']=self.max_one_word_gap_lines=cap
+        if cap is not None:
+            state['qualified']={k:v for k,v in state['qualified'].items() if qualifies(dict(passed=v['qualified'],one_word_gap_lines=v['one_word_gap_lines']),cap)}
         if audio_guide_slot:
             if audio_guide_slot not in state['qualified']:raise ValueError('Audio guide must already qualify')
             donor=state['qualified'][audio_guide_slot];req=read(self.locate(donor['request']))
@@ -669,6 +710,7 @@ def main():
     run.add_argument('--takes-per-slot',type=int,choices=range(1,11),help='Complete a bounded serial round before returning; pending slots remain pending and qualified slots stay fixed')
     run.add_argument('--audio-guide-noise-strength',type=float,help='Explicit installed ACE source initialization: 0 starts from noise, 1 stays closest to the generated guide; separate from conditioning strength')
     run.add_argument('--brief-asset',help='Explicit frozen, source-scoped musical caption revision for pending slots; prior requests and qualified takes stay immutable')
+    run.add_argument('--max-one-word-gap-lines',type=int,help='Require complete source-line coverage and at most this many lines with one unrecognized word; preserves original diagnostics')
     restore=sub.add_parser('restore');restore.add_argument('--state',required=True);restore.add_argument('--lfs-executable',required=True)
     restore.add_argument('--all-attempts',action='store_true',help='Verify retained failed takes as well as qualifying candidates')
     review=sub.add_parser('review');review.add_argument('--campaign',required=True);review.add_argument('--state',required=True)
@@ -676,7 +718,7 @@ def main():
     stop=sub.add_parser('request-stop');stop.add_argument('--clear',action='store_true')
     args=p.parse_args();c=Campaign(args.root,args.assets,args.work,args.metadata_retries)
     if args.operation=='snapshot':c.freeze_runtime(args)
-    elif args.operation=='run':c.run(args.campaign,args.runtime_asset,args.backend,args.adopt_backend_revision,args.repeat_after_failures,args.planner_asset,args.generation_route,args.repeat_section_lines,args.phrase_max_words,args.asr_dtype,args.timing_reference_slot,args.focus_missing_lines,args.ctc_runtime_asset,args.audio_guide_slot,args.audio_guide_strength,args.audio_guide_target_slot,args.takes_per_slot,args.audio_guide_noise_strength,args.brief_asset)
+    elif args.operation=='run':c.run(args.campaign,args.runtime_asset,args.backend,args.adopt_backend_revision,args.repeat_after_failures,args.planner_asset,args.generation_route,args.repeat_section_lines,args.phrase_max_words,args.asr_dtype,args.timing_reference_slot,args.focus_missing_lines,args.ctc_runtime_asset,args.audio_guide_slot,args.audio_guide_strength,args.audio_guide_target_slot,args.takes_per_slot,args.audio_guide_noise_strength,args.brief_asset,args.max_one_word_gap_lines)
     elif args.operation=='restore':c.restore(args.state,args.lfs_executable,args.all_attempts)
     elif args.operation=='review':c.review(read(args.campaign),read(args.state),args.all_attempts)
     else:c.save('stop-after-current.json',dict(requested=not args.clear))

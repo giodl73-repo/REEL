@@ -307,3 +307,20 @@ Run `test_local_song_compact_collection.py`; its fractional-duration chapters
 exercise MP3 priming, exact picture payloads/clocks, PCM joins, AAC padding,
 chapter labels and a rejected bitrate budget. Recheck the shared album-master
 fixtures when changing its optional streaming hash accumulator.
+
+## Scoped stanza roles and stricter line acceptance
+
+A frozen musical brief may declare `stanza_roles`, one `Verse`, `Chorus` or
+`Bridge` per original stanza. This changes engine tags only; canonical Spanish
+bytes and word order remain unchanged and the backend validates them. Roles
+require a single direct source pass, with no supplied repeated sections or guide.
+The same explicit pending-slot revision may set `duration_seconds` and
+`max_duration_seconds`; invalid bounds or a duration above its declared ceiling
+fail before generation. The original campaign and completed takes stay immutable.
+
+`run --max-one-word-gap-lines 3` retains the original complete-line gate and
+additionally limits the number of lines with one unrecognized word. The cap is
+recorded in state acceptance revisions, take summaries and package metadata;
+original recognition reports stay intact. Tightening the cap rechecks previously
+qualified slots. Human musical selection remains separate. Run
+`test_local_song_acceptance.py` and the existing backend/campaign fixtures.
