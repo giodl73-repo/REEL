@@ -84,8 +84,8 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
             for pair in page['lines']:
                 es,en=wrapped(pair['es']),wrapped(pair['en']);count=max(len(es),len(en))
                 if rows+count>7:raise ValueError('Reading page is too crowded for the phone template')
-                text(a,b,118,340+rows*78,r'\N'.join(es),64)
-                text(a,b,1010,340+rows*78,r'\N'.join(en),64)
+                for line_index,line in enumerate(es):text(a,b,118,340+(rows+line_index)*78,line,64)
+                for line_index,line in enumerate(en):text(a,b,1010,340+(rows+line_index)*78,line,64)
                 rows+=count
             text(a,b,1800,966,f'{n+1} / {len(pages)}',25,accent,False,'Trebuchet MS',9)
             previous=b

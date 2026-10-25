@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import numpy as np
 
 from local_song_backend import descriptor
 from local_song_album_mp4 import build, reading_labels, wrapped
@@ -34,16 +35,29 @@ class AlbumMp4Tests(unittest.TestCase):
                 Path('album-check.json').write_text(json.dumps(check),encoding='utf-8')
                 Path('chapters.ffmetadata').write_text(';FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/48000\nSTART=0\nEND=144000\ntitle=Primero\n[CHAPTER]\nTIMEBASE=1/48000\nSTART=144000\nEND=288000\ntitle=Después\n',encoding='utf-8')
                 q=dict(schema='reel.local-song-album-mp4.v1',title=check['title'],permissions=dict(private_only=True,external_upload=False,public_release=False),ffmpeg=dict(path=str(ff),**descriptor(ff)),ffprobe=dict(path=str(fp),**descriptor(fp)),font=dict(path=str(font),**descriptor(font)),audio=descriptor('album.mp3'),chapters=descriptor('chapters.ffmetadata'),album_check=descriptor('album-check.json'))
-                plan=dict(schema='reel.album-bilingual-reading.v1',mode='editorial-reading-pages',source_album_check=q['album_check'],palette=dict(paper='#F5EAD4',ink='#3D2B24',accent='#2C6462',secondary='#A95F46',rule='#C4AE87'),tracks=[dict(song_id='one',mode='sung',pages=[dict(start_frame=0,end_frame=144000,lines=[dict(es='Bajo un cielo azul',en='Under a blue sky'),dict(es='Canta la palma',en='The palm sings')])]),dict(song_id='two',mode='instrumental',pages=[])])
+                plan=dict(schema='reel.album-bilingual-reading.v1',mode='editorial-reading-pages',source_album_check=q['album_check'],palette=dict(paper='#F5EAD4',ink='#3D2B24',accent='#2C6462',secondary='#A95F46',rule='#C4AE87'),tracks=[dict(song_id='one',mode='sung',pages=[dict(start_frame=0,end_frame=144000,lines=[dict(es='Un recuerdo delicado de una mañana junto al mar de Cuba',en='A delicate memory of the quiet and beautiful Cuban countryside'),dict(es='La palma canta',en='The palm sings')])]),dict(song_id='two',mode='instrumental',pages=[])])
                 Path('reading.json').write_text(json.dumps(plan),encoding='utf-8');q['reading_plan']=dict(path='reading.json',**descriptor('reading.json'))
                 Path('mp4-request.json').write_text(json.dumps(q),encoding='utf-8');build(q)
                 result=json.loads(Path('mp4-check.json').read_text(encoding='utf-8'))
                 self.assertTrue(result['all_audio_packet_payloads_exact']);self.assertTrue(result['full_decode']);self.assertEqual(result['track_count'],2)
                 self.assertGreater(result['audio_packet_count'],200)
                 self.assertIn('Primero (uno)',Path('labels.ass').read_text(encoding='utf-8'))
-                self.assertIn('Under a blue sky',Path('labels.ass').read_text(encoding='utf-8'))
+                self.assertIn('Cuban countryside',Path('labels.ass').read_text(encoding='utf-8'))
                 self.assertEqual(result['video']['height'],1080)
                 self.assertEqual(result['decoded_pcm_identity'],check['mp3_decode'])
+                # Inspect rendered pixels without displaying a screenshot: the
+                # two columns must each contain four separated text rows.
+                raw=subprocess.check_output([str(ff),'-v','error','-ss','1','-i','master.mp4','-frames:v','1','-f','rawvideo','-pix_fmt','rgb24','-'])
+                frame=np.frombuffer(raw,dtype='u1').reshape(1080,1920,3)
+                for left in [118,1010]:
+                    crop=frame[335:932,left:left+792]
+                    ink=(crop[:,:,0]<100)&(crop[:,:,1]<90)&(crop[:,:,2]<80)
+                    occupied=np.flatnonzero(ink.sum(axis=1)>3)
+                    # Thin descender/diacritic strokes can fall below the ink
+                    # threshold inside one line; merge those small islands.
+                    groups=np.split(occupied,np.where(np.diff(occupied)>12)[0]+1)
+                    self.assertEqual(len(groups),4,[(int(g[0]),int(g[-1])) for g in groups])
+                    self.assertTrue(all(b[0]-a[-1]>8 for a,b in zip(groups,groups[1:])))
             finally:os.chdir(previous)
 
 
