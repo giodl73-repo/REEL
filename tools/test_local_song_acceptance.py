@@ -41,6 +41,16 @@ class AcceptanceTests(unittest.TestCase):
             self.assertIn('[Chorus]\nVuelve la luz.',request['render_lyrics'])
             self.assertEqual(request['canonical_lyrics'],source.read_bytes().decode('utf-8'))
             validate_request(request,source)
+            c.briefs['example-a'].update(duration_seconds=150,max_duration_seconds=150)
+            longer=c.request(slot,4)
+            self.assertEqual(longer['duration_seconds'],150)
+            self.assertEqual(longer['max_duration_seconds'],150)
+            self.assertEqual(slot['duration_seconds'],120)
+            self.assertEqual(longer['canonical_lyrics'],request['canonical_lyrics'])
+            validate_request(longer,source)
+            c.briefs['example-a']['max_duration_seconds']=120
+            with self.assertRaises(ValueError):c.request(slot,4)
+            c.briefs['example-a']['max_duration_seconds']=150
             c.briefs['example-a']['stanza_roles']=['Verse']
             with self.assertRaises(ValueError):c.request(slot,1)
 

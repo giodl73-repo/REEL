@@ -314,6 +314,9 @@ A frozen musical brief may declare `stanza_roles`, one `Verse`, `Chorus` or
 `Bridge` per original stanza. This changes engine tags only; canonical Spanish
 bytes and word order remain unchanged and the backend validates them. Roles
 require a single direct source pass, with no supplied repeated sections or guide.
+The same explicit pending-slot revision may set `duration_seconds` and
+`max_duration_seconds`; invalid bounds or a duration above its declared ceiling
+fail before generation. The original campaign and completed takes stay immutable.
 
 `run --max-one-word-gap-lines 3` retains the original complete-line gate and
 additionally limits the number of lines with one unrecognized word. The cap is

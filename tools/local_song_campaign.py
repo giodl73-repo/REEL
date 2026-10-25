@@ -34,7 +34,7 @@ def revised_caption(slot, briefs):
     revision=briefs.get(slot['id'])
     if revision is None:return slot['caption']
     if not isinstance(revision,dict):raise ValueError('Musical brief revision must be an object')
-    if set(revision)-{'source','source_lock','caption','repeat_section_lines','phrase_max_words','stanza_roles'}:
+    if set(revision)-{'source','source_lock','caption','repeat_section_lines','phrase_max_words','stanza_roles','duration_seconds','max_duration_seconds'}:
         raise ValueError('Unknown musical brief revision field')
     if revision.get('source')!=slot['source'] or revision.get('source_lock')!=slot['source_lock']:
         raise ValueError('Musical brief revision belongs to another source/version')
@@ -45,6 +45,9 @@ def revised_caption(slot, briefs):
         raise ValueError('Unsupported scoped repeated-section layout')
     if 'phrase_max_words' in revision and (type(revision['phrase_max_words']) is not int or not 4<=revision['phrase_max_words']<=16):
         raise ValueError('Unsupported scoped phrase size')
+    for key in ['duration_seconds','max_duration_seconds']:
+        if key in revision and (type(revision[key]) not in (int,float) or not 30<=revision[key]<=480):
+            raise ValueError('Scoped duration must be between 30 and 480 seconds')
     return caption
 
 
@@ -235,9 +238,10 @@ class Campaign:
         section_lines=brief.get('repeat_section_lines',self.repeat_section_lines)
         # Canonical words stay immutable under every explicit rendering policy.
         render=format_lyrics(lyrics,join_single_word_continuations=attempt>1,max_phrase_words=phrase_words)
-        duration=min(480,slot['duration_seconds']+15*((attempt-1)//3))
-        ceiling=slot.get('max_duration_seconds')
-        if ceiling is not None and (isinstance(ceiling,bool) or not isinstance(ceiling,(int,float)) or not slot['duration_seconds'] <= ceiling <= 480):
+        initial_duration=brief.get('duration_seconds',slot['duration_seconds'])
+        duration=min(480,initial_duration+15*((attempt-1)//3))
+        ceiling=brief.get('max_duration_seconds',slot.get('max_duration_seconds'))
+        if ceiling is not None and (isinstance(ceiling,bool) or not isinstance(ceiling,(int,float)) or not initial_duration <= ceiling <= 480):
             raise ValueError('Duration ceiling must be between the initial duration and 480 seconds')
         repetition={}
         if slot['id'] in self.briefs:repetition['musical_brief_revision']=dict(asset=self.brief_asset,slot_id=slot['id'])
