@@ -49,7 +49,7 @@ def event_occurrences(lines, events, allow_long_holds=False):
     return rows
 
 
-def timed_pages(occurrences, lines, track_start, track_end, sample_rate, wrap):
+def timed_pages(occurrences, lines, track_start, track_end, sample_rate, wrap, preserve_context=False):
     ordered=sorted(occurrences,key=lambda x:(x['end'],x['start']))
     for row in ordered:
         if not 0<=row['start']<row['end']<=track_end-track_start+.1:raise ValueError('Phrase outside exact recording clock')
@@ -61,9 +61,20 @@ def timed_pages(occurrences, lines, track_start, track_end, sample_rate, wrap):
         if candidate>scores[-1]:scores.append(candidate);paths.append(paths[previous]+[row])
         else:scores.append(scores[-1]);paths.append(paths[-1])
     accepted=paths[-1]
+    context={}
+    present={x['line'] for x in accepted}
+    if preserve_context:
+        for number,pair in enumerate(lines,1):
+            if number in present or any(normalized(lines[n-1]['es'])==normalized(pair['es']) for n in present):continue
+            before=[n for n in present if n<number]
+            anchor=max(before) if before else min(present)
+            context.setdefault(anchor,[]).append(dict(pair,canonical_line_number=pair.get('canonical_line_number',number),reading_line_index=number,timing_status='canonical-context-without-own-clock'))
+    def displayed(row):
+        pairs=[dict(lines[row['line']-1],canonical_line_number=lines[row['line']-1].get('canonical_line_number',row['line']),reading_line_index=row['line'])]+context.get(row['line'],[])
+        return sorted(pairs,key=lambda p:p['reading_line_index'])
     chunks=[];chunk=[];rows=0
     for row in accepted:
-        pair=lines[row['line']-1];needed=max(len(wrap(pair['es'])),len(wrap(pair['en'])))
+        needed=sum(max(len(wrap(pair['es'])),len(wrap(pair['en']))) for pair in displayed(row))
         if needed>7:raise ValueError('Bilingual phrase exceeds phone page')
         if chunk and (rows+needed>7 or len(chunk)>=3 or row['start']-chunk[-1]['end']>3 or row['line']<=chunk[-1]['line'] or row['start']-chunk[0]['start']>14):
             chunks.append(chunk);chunk=[];rows=0
@@ -71,11 +82,12 @@ def timed_pages(occurrences, lines, track_start, track_end, sample_rate, wrap):
     if chunk:chunks.append(chunk)
     pages=[]
     for i,chunk in enumerate(chunks):
-        start=max(track_start,track_start+chunk[0]['start']-.4,track_start+max(x['end'] for x in chunks[i-1])-.2 if i else track_start)
+        lead=4.0 if any(p['reading_line_index']<chunk[0]['line'] for p in displayed(chunk[0])) else .4
+        start=max(track_start,track_start+chunk[0]['start']-lead,track_start+max(x['end'] for x in chunks[i-1])-.2 if i else track_start)
         stop=min(track_end,track_start+max(x['end'] for x in chunk)+1.0)
         if i+1<len(chunks):stop=min(stop,max(track_start+chunks[i+1][0]['start']-.4,track_start+max(x['end'] for x in chunk)-.2))
         if stop<=start:raise ValueError('Overlapping lyric page clocks')
         pages.append(dict(start_frame=round(start*sample_rate),end_frame=round(stop*sample_rate),
-                          lines=[dict(lines[x['line']-1],canonical_line_number=x['line']) for x in chunk],
-                          phrase_evidence=chunk,timing='performed-phrase-entrances',lead_seconds=.4))
+                          lines=[pair for x in chunk for pair in displayed(x)],
+                          phrase_evidence=chunk,timing='performed-phrase-entrances',lead_seconds=lead))
     return pages,accepted

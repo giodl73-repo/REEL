@@ -82,7 +82,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
             if a<previous-.001 or b<=a or a<start or b>end+.001 or not page['lines']:raise ValueError('Invalid reading-page clock')
             if plan['mode']=='performed-phrase-pages':
                 evidence=page.get('phrase_evidence',[])
-                if not evidence or len(evidence)!=len(page['lines']):raise ValueError('Timed page requires one source phrase per reading line')
+                if not evidence or len(evidence)!=sum(pair.get('timing_status')!='canonical-context-without-own-clock' for pair in page['lines']):raise ValueError('Timed page requires one source phrase per reading line')
                 for phrase in evidence:
                     if not 0<=phrase['start']<phrase['end'] or a>start+phrase['start']+.051 or b<start+phrase['end']-.201:
                         raise ValueError(f'Reading page misses its performed phrase: {track["song_id"]} page={n} page_clock={a,b} track_start={start} phrase={phrase}')

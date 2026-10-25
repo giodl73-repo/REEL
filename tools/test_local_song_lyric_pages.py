@@ -27,6 +27,15 @@ class LyricClockTests(unittest.TestCase):
         pages[1]['start_frame']=round(131*44100)
         with self.assertRaisesRegex(ValueError,'misses its performed phrase'):reading_labels(plan,check)
 
+    def test_canonical_context_keeps_unrecognized_words_without_inventing_an_onset(self):
+        lines=[dict(es='Apertura sin reloj',en='Opening without a clock'),dict(es='La frase medida',en='The measured phrase'),dict(es='Contexto conservado',en='Retained context')]
+        found=[dict(line=2,start=15.,end=18.,score=1.)]
+        pages,accepted=timed_pages(found,lines,0,30,48000,wrapped,preserve_context=True)
+        self.assertEqual([p['es'] for p in pages[0]['lines']],[p['es'] for p in lines])
+        self.assertEqual(len(pages[0]['phrase_evidence']),1)
+        self.assertEqual(pages[0]['start_frame'],11*48000)
+        self.assertEqual(len([p for p in pages[0]['lines'] if p.get('timing_status')]),2)
+
     def test_missing_words_get_no_invented_clock(self):
         rows=event_occurrences([dict(es='Una frase completamente ausente',en='A missing phrase')],[dict(text='otro',start=1.,end=2.)])
         self.assertEqual(rows[0]['occurrences'],[])

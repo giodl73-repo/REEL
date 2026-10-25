@@ -275,7 +275,7 @@ from retained performance events or phrase candidates, preserving repeats and
 clearing longer gaps. It leads a card by up to 400 ms, keeps paired languages on
 one clock, and records literal evidence for partial/altered phrases. Long held
 syllables are permitted only when explicitly requested for retained timelines.
-Unmatched canonical lines receive no invented clock. These are phrase cards,
+When canonical-context preservation is explicitly requested, unmatched lines stay beside a neighboring measured phrase, labelled as context without their own clock. Earlier context may receive a four-second reading lead. Canonical line IDs and text remain unchanged. Unmatched canonical lines receive no invented clock. These are phrase cards,
 not word highlighting or new proof that every canonical word was sung.
 
 Run `test_local_song_lyric_pages.py` and `test_local_song_album_mp4.py`. Tests
