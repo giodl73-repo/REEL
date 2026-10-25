@@ -429,45 +429,28 @@ class Campaign:
             if budget<native_limit:raise ValueError('Explicit verification budget must cover the unchanged native per-call limit')
         try:return self.call('artifact-verify',record_path,version_id)
         except RuntimeError as error:
-            if self.max_verification_bytes is None or 'Artifact verification exceeds read budget' not in str(error):raise
+            if budget is None or 'Artifact verification exceeds read budget' not in str(error):raise
         metadata=self.call('artifact-check',record_path,version_id)
         record=read(record_path);row=next(v for v in record['versions'] if v['version_id']==version_id)
-        definition_path=Path(record_path).parent/'version.json';definition=read(definition_path)
-        if any(definition.get(k)!=v for k,v in [('logical_id',record['artifact_id']),('version_id',version_id),('manifest_sha256',row['manifest']['sha256'])]):
-            raise ValueError('Registration definition differs from the verified take lock')
-        # Idempotent native registration proves the local partition/dependency
-        # declaration is identical to the immutable registered version.
-        self.call('register-version',definition_path)
-        contract=definition.get('dependency_contract')
-        if not isinstance(contract,dict):raise ValueError('Bounded verification requires classified native inputs/outputs')
-        package=read(self.locate(row['manifest']));assets={a['sha256']:a for a in package['assets'].values()}
-        active=set(contract['primary_inputs'])|set(contract['outputs'])
-        if not active<=assets.keys():raise ValueError('Take partition names an undeclared root asset')
-        deps=definition['dependencies']
-        if len(deps)>64:raise ValueError('Dependency verification count exceeds budget')
-        root_bytes=sum(assets[h]['bytes'] for h in active);spent=0;parts=[]
-        if root_bytes>budget:raise ValueError('Explicit verification byte budget exceeded')
-        seen=set()
-        for dep in deps:
-            key=(dep['logical_id'],dep['version_id'],dep['manifest_sha256'])
-            if key in seen:continue
-            seen.add(key)
-            if spent+native_limit+root_bytes>budget:raise ValueError('Insufficient explicit budget for a bounded native dependency verification')
-            located=self.call('verify-active',dep['manifest_sha256']);manifest={k:located[k] for k in ['sha256','bytes']};manifest['cache_uri']='cache://sha256/'+manifest['sha256'];child=read(located['path'])
-            selected=dict(version_id=dep['version_id'],manifest=manifest,version_lock=dep)
-            if 'edition' in child:selected['edition']=child['edition']
-            proxy=self.save('verification/'+dep['manifest_sha256']+'/artifact.json',dict(schema='caminos.artifact-record.v1',artifact_id=dep['logical_id'],kind=child['kind'],current_version=dep['version_id'],public_release=False,versions=[selected]))
-            receipt=self.call('artifact-verify',proxy,dep['version_id'])
-            if receipt.get('fresh_hash_verified') is not True or receipt['verified_bytes']>native_limit:raise ValueError('Native dependency verification did not complete within its existing limit')
-            spent+=receipt['verified_bytes'];parts.append(dict(lock=dep,receipt=receipt))
-        verified=[]
-        for h in sorted(active):
-            expected=assets[h]
-            if spent+expected['bytes']>budget:raise ValueError('Explicit verification byte budget exceeded')
-            observed=self.call('verify-active',h)
-            if observed['bytes']!=expected['bytes']:raise ValueError('Root asset size differs from registered take')
-            spent+=observed['bytes'];verified.append(dict(sha256=h,bytes=observed['bytes']))
-        proof=dict(schema='reel.song-verification-in-parts.v1',method='Native metadata and immutable registration identity; native dependency closure verifications and exact native root input/output hashes',metadata=metadata,version_lock=row['version_lock'],dependency_receipts=parts,root_assets=verified,verified_bytes=spent,explicit_total_budget_bytes=budget,native_per_call_limit_unchanged=native_limit,configuration_changed=False,fresh_hash_verified=True,creative_approval=False)
+        # A self-diff is the existing read-only native active-closure query.
+        # It includes manifests and typed primary/output payloads, not history.
+        report_path=self.work/'verification'/(row['manifest']['sha256'][:16]+'-'+str(time.time_ns())+'.json')
+        report_path.parent.mkdir(parents=True,exist_ok=True)
+        self.call('version-diff',record['artifact_id'],version_id,record['artifact_id'],version_id,report_path)
+        native=read(report_path)
+        if native.get('schema')!='reel.asset-version-diff.v1' or native['old_manifest_sha256']!=row['manifest']['sha256'] or native['new_manifest_sha256']!=row['manifest']['sha256'] or native['added'] or native['dropped']:
+            raise ValueError('Native active closure differs from the verified take lock')
+        objects=native['retained']
+        if not objects or len(objects)>4096 or len({a['sha256'] for a in objects})!=len(objects):raise ValueError('Native verification object budget exceeded')
+        if row['manifest']['sha256'] not in {a['sha256'] for a in objects}:raise ValueError('Native closure omits its selected manifest')
+        total=sum(a['bytes'] for a in objects)
+        if total>budget:raise ValueError('Explicit verification byte budget exceeded')
+        if any(a['bytes']>native_limit for a in objects):raise ValueError('Native verification object exceeds the unchanged per-call limit')
+        for expected in objects:
+            observed=self.call('verify-active',expected['sha256'])
+            if observed['bytes']!=expected['bytes']:raise ValueError('Active object size differs from native closure')
+        native_asset=self.reuse_or_ingest(report_path,'Exact read-only native self-diff active verification closure; no selection, registration replay, deprecation or removal')
+        proof=dict(schema='reel.song-verification-in-parts.v1',method='Native artifact metadata, authoritative native self-diff active closure, and fresh native per-object active-cache hashes',metadata=metadata,version_lock=row['version_lock'],native_closure=native_asset,verified_objects=len(objects),verified_bytes=total,explicit_total_budget_bytes=budget,native_per_call_limit_unchanged=native_limit,configuration_changed=False,fresh_hash_verified=True,creative_approval=False)
         self.last_verification_asset=self.asset_json('verification/'+row['manifest']['sha256']+'/receipt.json',proof,'Explicit bounded native verification in parts; existing per-operation/storage/Git limits unchanged; no corruption fallback or creative approval')
         return proof
 
