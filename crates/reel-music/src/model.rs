@@ -50,6 +50,8 @@ pub struct MusicModel {
     pub lead_sheet: Option<LeadSheet>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub piano_vocal_score: Option<PianoVocalScore>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instrumental_score: Option<InstrumentalScore>,
     #[serde(default)]
     pub expressive_timing: Vec<ExpressiveTiming>,
     pub unknowns: Vec<String>,
@@ -222,6 +224,34 @@ pub struct PianoVocalScore {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct InstrumentalScore {
+    pub title: String,
+    pub parts: Vec<InstrumentalScorePart>,
+    #[serde(default)]
+    pub pickup_ticks: u64,
+    pub key_fifths: Option<i8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstrumentalScorePart {
+    pub id: String,
+    pub name: String,
+    pub staff_part_ids: Vec<String>,
+    pub clef: InstrumentalClef,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InstrumentalClef {
+    Treble,
+    Bass,
+    Percussion,
+    Grand,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct LyricUnderlay {
     pub id: String,
     pub note_ids: Vec<String>,
@@ -345,6 +375,7 @@ fn validate_loaded(path: &Path, model: &MusicModel) -> Result<ValidationReport> 
     validate_lyrics(path, model)?;
     validate_lead_sheet(path, model)?;
     validate_piano_vocal_score(model)?;
+    validate_instrumental_score(model)?;
     validate_expressive_timing(model, &evidence, &note_ids, &mut human_corrected)?;
     unique_nonempty("unknowns", &model.unknowns)?;
     validate_review(&model.review)?;
@@ -518,6 +549,78 @@ fn validate_piano_vocal_score(model: &MusicModel) -> Result<()> {
     if score.pickup_ticks >= full_measure_ticks || score.pickup_ticks >= model.duration_ticks {
         bail!(
             "piano_vocal_score pickup_ticks must be zero or shorter than the first full measure and model duration"
+        );
+    }
+    Ok(())
+}
+
+fn validate_instrumental_score(model: &MusicModel) -> Result<()> {
+    let Some(score) = &model.instrumental_score else {
+        return Ok(());
+    };
+    nonempty("instrumental_score.title", &score.title)?;
+    if score.parts.is_empty() {
+        bail!("instrumental_score requires nonempty parts");
+    }
+    if score
+        .key_fifths
+        .is_some_and(|value| !(-7..=7).contains(&value))
+    {
+        bail!("instrumental_score key_fifths must be within -7..7");
+    }
+    let mut groups = BTreeSet::new();
+    let mut covered = BTreeSet::new();
+    for group in &score.parts {
+        nonempty("instrumental_score part id", &group.id)?;
+        nonempty("instrumental_score part name", &group.name)?;
+        if !groups.insert(&group.id) {
+            bail!("instrumental_score duplicate part id");
+        }
+        let expected = if group.clef == InstrumentalClef::Grand {
+            2
+        } else {
+            1
+        };
+        if group.staff_part_ids.len() != expected {
+            bail!("instrumental_score grand staff needs two source parts; other clefs need one");
+        }
+        for id in &group.staff_part_ids {
+            if !covered.insert(id) {
+                bail!("instrumental_score repeats a source part");
+            }
+            if !model
+                .parts
+                .iter()
+                .any(|part| &part.id == id && !part.notes.is_empty())
+            {
+                bail!("instrumental_score refers to an absent or empty source part");
+            }
+            if group.clef == InstrumentalClef::Percussion
+                && !model
+                    .parts
+                    .iter()
+                    .any(|part| &part.id == id && part.role == PartRole::Rhythm)
+            {
+                bail!("instrumental_score percussion clef requires a rhythm source part");
+            }
+        }
+    }
+    if covered.len() != model.parts.len() {
+        bail!("instrumental_score must represent every model part exactly once");
+    }
+    let meter = &model.meter_map[0];
+    let numerator = u64::from(model.musical_timebase.pulses_per_quarter)
+        .checked_mul(4)
+        .and_then(|value| value.checked_mul(u64::from(meter.numerator)))
+        .ok_or_else(|| anyhow::anyhow!("instrumental_score measure duration overflow"))?;
+    if numerator % u64::from(meter.denominator) != 0 {
+        bail!("instrumental_score meter is not integral at declared PPQ");
+    }
+    if score.pickup_ticks >= numerator / u64::from(meter.denominator)
+        || score.pickup_ticks >= model.duration_ticks
+    {
+        bail!(
+            "instrumental_score pickup must be shorter than its first full measure and source duration"
         );
     }
     Ok(())

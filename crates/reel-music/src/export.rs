@@ -92,12 +92,16 @@ pub fn build(model_path: &Path) -> Result<ScoreExportPlan> {
         bail!("MIDI v0.1 export supports note voices 1 through 16");
     }
     for part in &music.parts {
-        let mut voice_ends = BTreeMap::new();
+        let mut voice_spans = BTreeMap::new();
+        let mut chord_pitches = std::collections::BTreeSet::new();
         for note in &part.notes {
             let end = note.start_tick + note.duration_ticks;
-            if voice_ends
+            if voice_spans
                 .get(&note.voice)
-                .is_some_and(|prior_end| note.start_tick < *prior_end)
+                .is_some_and(|(prior_start, prior_end)| {
+                    note.start_tick < *prior_end
+                        && (note.start_tick != *prior_start || end != *prior_end)
+                })
             {
                 bail!(
                     "MusicXML v0.1 export requires non-overlapping notes within part {} voice {}",
@@ -105,7 +109,10 @@ pub fn build(model_path: &Path) -> Result<ScoreExportPlan> {
                     note.voice
                 );
             }
-            voice_ends.insert(note.voice, end);
+            if !chord_pitches.insert((note.voice, note.start_tick, end, note.midi_note)) {
+                bail!("MusicXML export rejects duplicate pitches in the same chord");
+            }
+            voice_spans.insert(note.voice, (note.start_tick, end));
         }
     }
     let lyric_layers = music
@@ -155,6 +162,14 @@ pub fn build(model_path: &Path) -> Result<ScoreExportPlan> {
             kind: "piano-vocal-musicxml".into(),
             filename: "piano-vocal.musicxml".into(),
             adapter: "reel-piano-vocal-musicxml".into(),
+            adapter_version: "0.1.0".into(),
+        });
+    }
+    if music.instrumental_score.is_some() {
+        artifacts.push(ArtifactRequest {
+            kind: "instrumental-score-musicxml".into(),
+            filename: "instrumental-score.musicxml".into(),
+            adapter: "reel-measured-instrumental-musicxml".into(),
             adapter_version: "0.1.0".into(),
         });
     }

@@ -87,3 +87,86 @@ The checked-in synthetic fixture contains no private BERTICA material. CLI and
 tamper tests prove atomic publication, deterministic guide bytes, independent
 MIDI and MusicXML note re-import, optional lead-sheet regeneration, and
 rejection after an exported pitch or lyric syllable changes.
+
+
+## Optional offline melody evidence adapter
+
+`tools/local_song_transcribe.py` is an explicit trusted-job adapter into the
+existing source, analysis and editable-model contracts. It takes hash-bound full
+recording and estimated-vocal WAVs, canonical text, source authority, a frozen
+native REEL executable, and an installed dependency manifest. It uses unprompted
+pYIN on the vocal estimate and YIN on the original mixture. Stable pitch runs,
+frame probabilities, mixture agreement, parameters and complete source duration
+remain separate evidence assets. Unknown frames and short unstable runs do not
+become invented sustained notes. The canonical poem is not supplied to either
+pitch estimator.
+
+The native Rust source/model validators and MIDI/MusicXML/SVG renderer/checker
+remain authoritative for their structural contracts. The adapter creates a
+private unreviewed melody model; the global beat estimate, provisional 4/4 display
+grid, missed notes, octave errors, accompaniment bleed, repeated-note segmentation,
+lyric underlay and musical form all require subsequent review. Tempo may be heard
+at half or double the estimated pulse. No harmony, accompaniment, selected key,
+source edits or musical/notation approval are inferred from a passing export.
+
+Inputs and outputs are explicit native job assets. No automatic downloads,
+service, upload, checkout search, Golden selection or cache management is added.
+The rehearsal oscillator and first SVG are diagnostic views, not a performance
+or a completed engraved songbook.
+
+
+After a draft is accepted, `tools/local_song_line_alignment.py` can produce
+source-clock line-to-note candidates from the exact original independent lyric
+recognition and the unchanged model. It checks the transcription/source binding,
+keeps each lexical candidate within one recognition pass, and honors explicit
+owner-confirmed performance omissions. Canonical corrections remain distinct
+from performed-source wording. Confirmed presence without a trustworthy clock
+stays unresolved. This report assigns no syllables, edits no pitches/audio, and
+does not substitute a best recognition span for completed lyric underlay.
+
+`tools/local_song_word_underlay.py` advances those exact source-bound candidates
+to an editable word-to-note proposal ledger. It retains UTF-8 performed-text
+ranges, independent-pass token IDs, repeated phrase alternatives and unchanged
+note IDs. Missing words stay unmapped; shared pitch runs and token reuse across
+lines require articulation/phrase review. Explicit listening windows may narrow
+an unresolved line without declaring expected words independently recognized.
+This is a partial underlay draft, not syllable segmentation or a new MusicModel.
+Native lead-sheet validation requires every melody note mapped exactly once;
+do not evade that contract by filling unknown singing with invented syllables.
+
+`tools/local_song_syllable_study.py` can make a separately named **partial study**
+from independently exact, nonoverlapping phrase candidates. It uses the already
+installed Spanish CTC acoustic model offline to align expected characters. This
+is constrained timing, never an independent lyric-presence check. Orthographic
+syllable proposals preserve the original text; musical vowel grouping remains
+open. The distinction between spelling conventions and actual articulation is
+described by [RAE/ASALE](https://www.rae.es/ortograf%C3%ADa-b%C3%A1sica/uso-de-la-tilde/las-reglas-de-acentuaci%C3%B3n-gr%C3%A1fica/la-acentuaci%C3%B3n-gr%C3%A1fica-de-las-palabras-con-secuencias-voc%C3%A1licas).
+
+The new study model includes only intersections of parent pitch runs with
+supported proposed syllable clocks. An explicit articulation ledger binds every
+derived interval/pitch to its unchanged parent; uncovered parent note IDs and
+unmapped syllables stay in the evidence. Original full source extent and
+canonical poem are retained. The native validator and exporters check this
+partial model, MIDI, MusicXML and SVG, without certifying complete melody or
+engraving. Never select the partial study as a replacement for an accepted
+full melody, nor treat an omitted study note as an accepted performance omission.
+
+An explicit extension may add bounded gap clocks while retaining an exact prior
+study/equivalent expected-text lock. Freeze each independent candidate, pair of
+neighbor anchor IDs, or actual owner-confirmed presence plus retained listening
+context. These scopes propose timing; they do not manufacture independent word
+recognition. Reject overlaps with retained phrase clocks, accepted omissions,
+unbound Unicode text and wrong recording/model bindings. Only new windows go
+through CTC; merge the old timing evidence by chronological UTF-8 rebasing and
+verify every prior parent-note/articulation interval is preserved. Keep the
+independent word-clock limitations even when a constrained timing proposal is
+available. The accepted full recording and melody remain separate and unchanged.
+
+When a combined job cannot fit available admission headroom, explicit
+`analysis_only` construction and `local_song_study_export.py` export jobs may be
+separate. The first stage never claims native validation. The second verifies
+the exact model/expected-text hashes and uses an explicitly pinned installed
+native runtime, then performs the normal validation and export/re-import checks.
+Retain both actual native job receipts and label any composed result as staged;
+do not relabel an admission-refused combined job as successful. Budget each
+stage's complete inputs, scratch and atomic output coexistence independently.

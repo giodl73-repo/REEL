@@ -342,6 +342,7 @@ fn fixture() -> Fixture {
             ],
         }),
         piano_vocal_score: None,
+        instrumental_score: None,
         expressive_timing: vec![],
         unknowns: vec!["Dynamics and articulation remain unknown.".into()],
         review: ModelReview {
