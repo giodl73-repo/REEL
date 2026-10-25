@@ -80,7 +80,7 @@ pub(super) fn unique_files<'de, D: serde::Deserializer<'de>>(
 ) -> std::result::Result<BTreeMap<String, String>, D::Error> {
     unique_map(decoder)
 }
-fn unique_map<'de, D: serde::Deserializer<'de>, V: Deserialize<'de>>(
+pub(super) fn unique_map<'de, D: serde::Deserializer<'de>, V: Deserialize<'de>>(
     decoder: D,
 ) -> std::result::Result<BTreeMap<String, V>, D::Error> {
     struct Entries<V>(std::marker::PhantomData<V>);

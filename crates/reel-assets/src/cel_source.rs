@@ -8,6 +8,7 @@ use std::{collections::BTreeSet, path::Path};
 pub mod editor;
 pub mod effects;
 pub mod insert;
+pub mod profile;
 pub mod project;
 pub mod score;
 pub mod sequence;

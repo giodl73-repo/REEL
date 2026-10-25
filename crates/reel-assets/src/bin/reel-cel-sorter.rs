@@ -327,6 +327,8 @@ fn export_mode(spec: &Path, media: bool) -> Result<()> {
     };
     let mut data = json!({"schema":project.session_schema(),"title":s["title"],"scene_id":docs["scene.json"]["scene_id"],"expected_inputs":hashes,"rows":r,"images":images,"fps_numerator":docs["profile.json"]["frame_rate_numerator"],"fps_denominator":docs["profile.json"]["frame_rate_denominator"],"movie":movie});
     data["picture_choices"] = json!(sequence.picture_bindings);
+    data["profile_controls"] =
+        reel_assets::cel_source::profile::context(&docs).unwrap_or(Value::Null);
     // Explicit source intent for proposals, never a copy of score/VFX metadata.
     let anchors = sequence
         .cells
@@ -406,7 +408,7 @@ fn inspect_project(input: &Path, out: &Path) -> Result<()> {
 }
 fn main() -> Result<()> {
     let a: Vec<String> = env::args().collect();
-    match a.get(1).map(String::as_str){Some("inspect") if a.len()==4=>inspect_project(Path::new(&a[2]),Path::new(&a[3])),Some("export") if a.len()==3=>export(Path::new(&a[2])),Some("export-controls") if a.len()==3=>export_mode(Path::new(&a[2]),false),Some("apply") if a.len()==5=>apply(Path::new(&a[2]),Path::new(&a[3]),Path::new(&a[4])),Some("insert-cel") if a.len()==5=>insert_cel(Path::new(&a[2]),Path::new(&a[3]),Path::new(&a[4])),_=>Err("usage: reel-cel-sorter inspect <project> <new-private-report> | export|export-controls <spec.json> | apply <native-project> <edit.json> <new-draft-dir> | insert-cel <native-project> <insert.json> <new-source-dir>".into())}
+    match a.get(1).map(String::as_str){Some("inspect") if a.len()==4=>inspect_project(Path::new(&a[2]),Path::new(&a[3])),Some("export") if a.len()==3=>export(Path::new(&a[2])),Some("export-controls") if a.len()==3=>export_mode(Path::new(&a[2]),false),Some("apply") if a.len()==5=>apply(Path::new(&a[2]),Path::new(&a[3]),Path::new(&a[4])),Some("apply-profile") if a.len()==5=>reel_assets::cel_source::profile::apply(Path::new(&a[2]),Path::new(&a[3]),Path::new(&a[4])),Some("insert-cel") if a.len()==5=>insert_cel(Path::new(&a[2]),Path::new(&a[3]),Path::new(&a[4])),_=>Err("usage: reel-cel-sorter inspect <project> <new-private-report> | export|export-controls <spec.json> | apply <native-project> <edit.json> <new-draft-dir> | insert-cel <native-project> <insert.json> <new-source-dir> | apply-profile <native-project> <profile-edit.json> <new-source-dir>".into())}
 }
 
 #[cfg(test)]
