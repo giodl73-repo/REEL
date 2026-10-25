@@ -188,3 +188,29 @@ does not mix the selected score, Sonic or VFX. Native delivery compilation resol
 the chosen role into an M-bus input over the new cel's exact interval. Other
 language events, role selections, recordings and prior picture revisions remain
 unchanged. Final mix and musical acceptance are separate production steps.
+
+## Explicit Sonic and VFX intent
+
+New insertion contexts include `effects.sonic` and `effects.vfx`, each with
+`choices` and unavailable `held` diagnostics. Choices come from effective events
+in the selected language plus explicitly named project candidates. Unused bound
+assets and effects used only by another language are not inferred as candidates.
+Each kind admits at most 128 distinct binding keys, each at most 256 UTF-8 bytes.
+Bindings resolve exactly once across the declared native scene/episode/season
+scopes and must carry selected, valid cache identities. Declared external scopes
+must match the episode context. No registry lookup or media read is performed.
+
+The panel starts with all effects unchecked. Checking a binding emits the
+existing native `SharedEvent.sonic_bindings` or `vfx_bindings` array. No second
+scene format or request version is introduced. Rust independently revalidates
+both shared arrays and any language overrides, including defaults hidden by an
+empty override. Duplicate, unavailable, foreign, wrong-kind or stale choices
+reject before source output. A binding explicitly admitted in both categories
+can be chosen for either; candidate category is intent, not media inspection.
+Project candidates survive ordinary edits and insertion into a new directory.
+
+Split audition still plays only primary recordings and pictures. Sonic playback,
+VFX rendering, profile authoring, primary-input classification, cache admission,
+rights and human acceptance remain separate native/managed production checks.
+Delivery compilation resolves Sonic into the E bus and VFX into an external layer
+using its exact selected evidence identity and existing profile render mode.
