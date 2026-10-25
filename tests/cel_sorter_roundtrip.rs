@@ -596,3 +596,98 @@ fn native_effect_insertion_compiles_exact_inputs_only_in_selected_language() {
         }
     }
 }
+
+#[test]
+fn profile_gain_candidate_compiles_all_acknowledged_languages_and_keeps_overrides_and_dialogue() {
+    let t = tempfile::tempdir().unwrap();
+    let source = t.path().join("source");
+    let descriptor = ready_project(&source, false);
+    fixtures::add_english_lane(&source, &descriptor);
+    fixtures::separate_language_graphs(&source, &descriptor);
+    let mut episode = get(&source.join("episode.json"));
+    episode["score_palette"] = json!([{"role":"theme","theme_id":"theme","source_poem_id":"poem","arrangement_id":"arrangement","asset_binding":"score.theme"}]);
+    put(&source.join("episode.json"), &episode);
+    let mut bindings = get(&source.join("scene-bindings.json"));
+    for key in ["score.theme", "sonic.default", "sonic.fixed"] {
+        bindings["assets"][key] = fixtures::asset(key.as_bytes());
+    }
+    put(&source.join("scene-bindings.json"), &bindings);
+    let mut scene = get(&source.join("scene.json"));
+    for event in scene["shared_events"].as_array_mut().unwrap() {
+        event["score"] = json!({"disposition":"role","role":"theme"});
+        event["sonic_bindings"] = json!(["sonic.default", "sonic.fixed"]);
+    }
+    put(&source.join("scene.json"), &scene);
+    let mut profile = get(&source.join("profile.json"));
+    profile["sonic_gain_db_by_binding"] = json!({"sonic.fixed":-12});
+    put(&source.join("profile.json"), &profile);
+    let p = Project::open(&descriptor).unwrap();
+    let (d, h) = editor::load(&p).unwrap();
+    let req = t.path().join("normalize.json");
+    put(
+        &req,
+        &json!({"schema":"reel.cel-sorter-edit.v4","language":"es","expected_project":p.descriptor_sha256(),"expected_inputs":h,"scene_id":"synthetic","rows":Sequence::for_project(&d,&p).unwrap().rows()}),
+    );
+    let normalized = t.path().join("normalized");
+    editor::apply(&descriptor, &req, &normalized).unwrap();
+    let input = normalized.join("cel-sorter-project.json");
+    let p = Project::open(&input).unwrap();
+    let (d, h) = editor::load(&p).unwrap();
+    put(
+        &req,
+        &json!({"schema":"reel.cel-sorter-profile-edit.v1","scene_id":"synthetic","expected_project":p.descriptor_sha256(),"expected_inputs":h,"affected_languages":["en","es"],"acknowledge_shared_profile":true,"changes":{"score_gain_db":-24,"sonic_gain_db":-30},"human_approval":false}),
+    );
+    let before = snapshot(&normalized);
+    let out = t.path().join("candidate");
+    reel_assets::cel_source::profile::apply(&input, &req, &out).unwrap();
+    assert_eq!(snapshot(&normalized), before);
+    for language in ["es", "en"] {
+        let mut m = manifest();
+        m.language = language.into();
+        m.output_dir = format!("compiled-{language}");
+        m.graph = format!("{language}-graph.json");
+        m.pointer = format!("{language}-pointer.json");
+        if language == "en" {
+            m.alignment_paths = "timing/english-paths.json".into();
+        }
+        compile_to_dir(&normalized, &m).unwrap();
+        compile_to_dir(&out, &m).unwrap();
+        let old = get(&normalized.join(format!("compiled-{language}/job.json")));
+        let new = get(&out.join(format!("compiled-{language}/job.json")));
+        assert_eq!(old["pictures"], new["pictures"]);
+        assert_eq!(old["external_layers"], new["external_layers"]);
+        let dialogue = |j: &Value| {
+            j["audio"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|a| a["bus"] == "D")
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(dialogue(&old), dialogue(&new));
+        let music = new["audio"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|a| a["bus"] == "M")
+            .collect::<Vec<_>>();
+        assert!(!music.is_empty());
+        assert!(music.iter().all(|a| a["gain_db"] == -24.0));
+        let sonic = new["audio"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|a| a["bus"] == "E")
+            .collect::<Vec<_>>();
+        assert_eq!(sonic.len(), 2);
+        for a in sonic {
+            let fixed = a["source"]["sha256"] == bindings["assets"]["sonic.fixed"]["sha256"];
+            assert_eq!(a["gain_db"], json!(if fixed { -12.0 } else { -30.0 }));
+        }
+        assert_eq!(
+            d["profile.json"]["sample_rate"],
+            get(&out.join("profile.json"))["sample_rate"]
+        );
+    }
+}

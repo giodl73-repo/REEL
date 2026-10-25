@@ -1,5 +1,14 @@
 'use strict';
 const CelSorter = {
+ profile(session,rows,notes,{changes,acknowledge}) {
+  const p=session.profile_controls,c=this.context(session);
+  if(p?.schema!=='reel.cel-sorter-profile-context.v1'||!Array.isArray(p.affected_languages)||!p.affected_languages.length||p.affected_languages.length>16||p.affected_languages.some(l=>typeof l!=='string'||!l)||new Set(p.affected_languages).size!==p.affected_languages.length)throw Error('Native profile controls unavailable.');
+  if(JSON.stringify(rows)!==JSON.stringify(session.rows)||notes)throw Error('Save and apply your existing draft, then reopen a fresh session before proposing profile changes.');
+  if(acknowledge!==true)throw Error('Acknowledge every affected language before downloading a profile proposal.');
+  if(!changes||Array.isArray(changes)||!Object.keys(changes).length||Object.keys(changes).length>2||Object.entries(changes).some(([k,v])=>!['score_gain_db','sonic_gain_db'].includes(k)||typeof v!=='number'||!Number.isFinite(v)||Math.abs(v)>60))throw Error('Choose score/Sonic gains between -60 and 60 dB.');
+  if(Object.entries(changes).every(([k,v])=>p[k]===v))throw Error('Profile proposal has no change.');
+  return {schema:'reel.cel-sorter-profile-edit.v1',scene_id:session.scene_id,expected_inputs:structuredClone(session.expected_inputs),...(c.expected_project?{expected_project:c.expected_project}:{}),affected_languages:structuredClone(p.affected_languages),acknowledge_shared_profile:true,changes:structuredClone(changes),human_approval:false};
+ },
  context(session) {
   const schemas={'reel.cel-sorter-session.v1':'reel.cel-sorter-edit.v1','reel.cel-sorter-session.v2':'reel.cel-sorter-edit.v2','reel.cel-sorter-session.v3':'reel.cel-sorter-edit.v3','reel.cel-sorter-session.v4':'reel.cel-sorter-edit.v4'};
   if(!Object.hasOwn(schemas,session.schema))throw Error('Unsupported editor session');
@@ -93,6 +102,14 @@ function showInsertionPicture(binding,alt){if(insertionPicture!==binding){$('ins
 function stopInsertionAudition(finished=false){if(!insertionAudition)return;if(finished)insertionEndGuard=recordingIndex;insertionAudition=null;++loadGeneration;pendingTime=null;$('audio').pause();$('insert-stop').disabled=true;if(media&&session.images[$('insert-picture').value]){showInsertionPicture($('insert-picture').value,'Proposed cel picture');}}
 function tickInsertionAudition(){if(!insertionAudition)return;const t=position(),span=insertionAudition;if(t<span.start-0.05||t>=span.end){stopInsertionAudition(t>=span.end);status('Split audition stopped. The source sequence is unchanged.');return;}const next=t>=span.split_at;showInsertionPicture(next?span.picture:span.source_picture,next?'Proposed new cel during audition':'Original cel prefix during audition');}
 const canInsert=session.insertion?.schema==='reel.cel-sorter-insertion-context.v1';
+const profile=session.profile_controls;
+$('profile-panel').hidden=profile?.schema!=='reel.cel-sorter-profile-context.v1';
+if(!$('profile-panel').hidden){
+ $('profile-scope').textContent='Scene-wide profile. Affected languages: '+profile.affected_languages.join(', ')+'. Recording clocks, fades and per-binding overrides stay fixed.';
+ for(const kind of ['score','sonic']){const field='profile-'+kind,input=$(field),toggle=$(field+'-edit');input.value=profile[kind+'_gain_db']??'';input.disabled=true;toggle.checked=false;toggle.onchange=()=>{stopInsertionAudition();input.disabled=!toggle.checked;};input.oninput=()=>stopInsertionAudition();}
+ $('profile-ack').checked=false;
+ $('profile-save').onclick=()=>{try{const changes={};for(const kind of ['score','sonic'])if($('profile-'+kind+'-edit').checked){const raw=String($('profile-'+kind).value).trim();changes[kind+'_gain_db']=raw?Number(raw):NaN;}const request=CelSorter.profile(session,rows,$('notes').value,{changes,acknowledge:$('profile-ack').checked});stopInsertionAudition();download(request,'profile-edit');status('Profile proposal downloaded. Apply with apply-profile to a new candidate; compile every affected language.');}catch(e){status(e.message,true);}};
+}
 $('new-cel').hidden=!canInsert;$('insertion-panel').hidden=!canInsert;
 if(canInsert){
  $('insert-play').hidden=!recordings;$('insert-stop').hidden=!recordings;$('insert-stop').disabled=true;$('insert-audition-notice').textContent=recordings?'Audition uses the primary recording and these two pictures. Preview timing is approximate; native clocks remain authoritative.':media?'Picture preview only. Split audio audition requires a primary-recordings session.':'Timing preview only. This session has no media.';
