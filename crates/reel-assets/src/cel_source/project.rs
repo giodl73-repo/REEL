@@ -49,6 +49,10 @@ struct Descriptor {
     root: PathBuf,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     picture_candidates: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    sonic_candidates: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    vfx_candidates: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     language: Option<String>,
     #[serde(
@@ -118,6 +122,8 @@ fn optional_graphs<'de, D: serde::Deserializer<'de>>(
 /// Private local configuration. A content lock is not custody or publication authority.
 pub struct Project {
     picture_candidates: Vec<String>,
+    sonic_candidates: Vec<String>,
+    vfx_candidates: Vec<String>,
     root: PathBuf,
     files: BTreeMap<String, String>,
     descriptor_sha256: Option<String>,
@@ -229,6 +235,8 @@ impl Project {
         if metadata.is_dir() {
             return Ok(Self {
                 picture_candidates: Vec::new(),
+                sonic_candidates: Vec::new(),
+                vfx_candidates: Vec::new(),
                 root: root(input)?,
                 files: FILES
                     .iter()
@@ -266,6 +274,19 @@ impl Project {
                 != descriptor.picture_candidates.len()
         {
             return Err("Invalid or excessive picture candidate bindings".into());
+        }
+        for keys in [&descriptor.sonic_candidates, &descriptor.vfx_candidates] {
+            if keys.len() > 128
+                || keys.iter().any(|k| {
+                    k.is_empty()
+                        || k.trim() != k
+                        || k.len() > 256
+                        || k.chars().any(char::is_control)
+                })
+                || keys.iter().collect::<BTreeSet<_>>().len() != keys.len()
+            {
+                return Err("Invalid or excessive effect candidate bindings".into());
+            }
         }
         let scoped = descriptor.schema == SCOPED_SCHEMA;
         if (descriptor.protected_graphs.is_some() && !scoped)
@@ -330,6 +351,8 @@ impl Project {
         };
         let mut project = Self {
             picture_candidates: descriptor.picture_candidates,
+            sonic_candidates: descriptor.sonic_candidates,
+            vfx_candidates: descriptor.vfx_candidates,
             root: root(&declared_root)?,
             declared_files: descriptor.files.clone(),
             files: descriptor.files,
@@ -435,6 +458,12 @@ impl Project {
     /// Explicit binding keys only; no media discovery or registration authority.
     pub fn picture_candidates(&self) -> &[String] {
         &self.picture_candidates
+    }
+    pub fn sonic_candidates(&self) -> &[String] {
+        &self.sonic_candidates
+    }
+    pub fn vfx_candidates(&self) -> &[String] {
+        &self.vfx_candidates
     }
     pub fn has_protected_graphs(&self) -> bool {
         self.declared_protected_graphs.is_some()
@@ -601,6 +630,8 @@ impl Project {
                 PROFILE.into(),
                 serde_json::to_vec(&Descriptor {
                     picture_candidates: self.picture_candidates.clone(),
+                    sonic_candidates: self.sonic_candidates.clone(),
+                    vfx_candidates: self.vfx_candidates.clone(),
                     schema: if self.language.is_some() {
                         SCOPED_SCHEMA
                     } else if self.multi_cue {

@@ -33,9 +33,10 @@ can audition that split without changing the source sequence or using an output
 movie as its audio. Browser timing remains approximate.
 Native palette score roles are now explicit insertion choices, resolved through
 selected scene/episode/season bindings and revalidated by Rust. Primary-only
-audition does not mix that score. Sonic/VFX forms, storage admission/lease
-enforcement and private browser adoption remain separate
-work. A source merge does not replace installed project binaries.
+audition does not mix that score. Explicit Sonic/VFX insertion choices now use
+existing native arrays, with Rust revalidation and declared project candidates.
+Effect playback/rendering, profile authoring, storage admission/lease enforcement
+and private browser adoption remain separate work. A source merge does not replace installed project binaries.
 
 The cel exporter also supports explicit primary-recording playback without a
 compiled preview movie; see the [editor contract](cel-sorter-v1.md). Its browser

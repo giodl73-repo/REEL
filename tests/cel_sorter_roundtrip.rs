@@ -511,3 +511,88 @@ fn native_score_insertion_compiles_only_the_selected_language_and_exact_music_pr
         }
     }
 }
+
+#[test]
+fn native_effect_insertion_compiles_exact_inputs_only_in_selected_language() {
+    for scope in [
+        "scene-bindings.json",
+        "episode-bindings.json",
+        "season-bindings.json",
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let descriptor = ready_project(&source, false);
+        fixtures::add_english_lane(&source, &descriptor);
+        if scope == "season-bindings.json" {
+            fixtures::separate_language_graphs(&source, &descriptor);
+        }
+        let sonic = fixtures::asset(b"sonic-primary");
+        let recipe = fixtures::asset(br#"{"schema":"reel.timed-picture-transform.v1","zoom_step":0.0001,"zoom_max":1.01,"translation":{"amplitude_x_pixels":1.0,"amplitude_y_pixels":1.0,"period_frames":24}}"#);
+        let mut bindings = get(&source.join(scope));
+        bindings["assets"]["sonic.test"] = sonic.clone();
+        bindings["assets"]["vfx.test"] = recipe.clone();
+        put(&source.join(scope), &bindings);
+        let mut config = get(&descriptor);
+        config["sonic_candidates"] = json!(["sonic.test"]);
+        config["vfx_candidates"] = json!(["vfx.test"]);
+        put(&descriptor, &config);
+        let mut profile = get(&source.join("profile.json"));
+        profile["vfx_render_mode_by_binding"] = json!({"vfx.test":"timed-picture-transform"});
+        put(&source.join("profile.json"), &profile);
+        let p = Project::open(&descriptor).unwrap();
+        let (docs, locks) = editor::load(&p).unwrap();
+        let request = temp.path().join("normalize.json");
+        put(
+            &request,
+            &json!({"schema":"reel.cel-sorter-edit.v4","language":"es","expected_project":p.descriptor_sha256(),"expected_inputs":locks,"scene_id":"synthetic","rows":Sequence::for_project(&docs,&p).unwrap().rows()}),
+        );
+        let normalized = temp.path().join("normalized");
+        editor::apply(&descriptor, &request, &normalized).unwrap();
+        let input = normalized.join("cel-sorter-project.json");
+        let p = Project::open(&input).unwrap();
+        let (docs, locks) = editor::load(&p).unwrap();
+        let shared = &docs["scene.json"]["shared_events"][0];
+        let local = &docs["scene.json"]["language_event_bindings"]["es"][0];
+        let req = temp.path().join("insert.json");
+        put(
+            &req,
+            &json!({"schema":"reel.cel-sorter-insert.v1","scene_id":"synthetic","language":"es","expected_project":p.descriptor_sha256(),"expected_inputs":locks,"after_semantic_id":shared["semantic_id"],"split_after_samples":24000,"shared_event":{"semantic_id":"effect-new","canonical_cue_id":shared["canonical_cue_id"],"picture_binding":"two","score":{"disposition":"silence"},"language_ids":["es"],"sonic_bindings":["sonic.test"],"vfx_bindings":["vfx.test"]},"language_event":{"semantic_id":"effect-new","event_id":"effect-new-event","cue_id":local["cue_id"],"semantic_trigger_id":"effect-new-marker","picture_slot_id":"effect-new-slot"},"human_approval":false}),
+        );
+        let before = snapshot(&normalized);
+        let out = temp.path().join("candidate");
+        reel_assets::cel_source::insert::apply(&input, &req, &out).unwrap();
+        assert_eq!(snapshot(&normalized), before);
+        for language in ["es", "en"] {
+            let mut m = manifest();
+            m.language = language.into();
+            m.output_dir = format!("compiled-{language}");
+            m.delivery_id = format!("effects-{language}");
+            if language == "en" {
+                m.alignment_paths = "timing/english-paths.json".into();
+            }
+            if scope == "season-bindings.json" {
+                m.graph = format!("{language}-graph.json");
+                m.pointer = format!("{language}-pointer.json");
+            }
+            compile_to_dir(&out, &m).unwrap();
+            let job = get(&out.join(format!("compiled-{language}/job.json")));
+            let effects = job["audio"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|a| a["bus"] == "E")
+                .collect::<Vec<_>>();
+            let layers = job["external_layers"].as_array().unwrap();
+            if language == "es" {
+                assert_eq!(effects.len(), 1);
+                assert_eq!(effects[0]["source"]["sha256"], sonic["sha256"]);
+                assert_eq!(layers.len(), 1);
+                assert_eq!(layers[0]["evidence"]["sha256"], recipe["sha256"]);
+                assert_eq!(layers[0]["render_mode"], "timed-picture-transform");
+            } else {
+                assert!(effects.is_empty());
+                assert!(layers.is_empty());
+            }
+        }
+    }
+}

@@ -39,20 +39,7 @@ pub fn choices(docs: &BTreeMap<String, Value>) -> Result<Palette> {
     if roles.is_empty() {
         return Ok(Palette::default());
     }
-    let episode: native::Episode = serde_json::from_value(docs["episode.json"].clone())?;
-    if episode.schema != native::EPISODE_SCHEMA
-        || !matches!(
-            episode.authoring_state.as_str(),
-            "ready-for-private-build" | "scene-build-context"
-        )
-        || docs["scene.json"]["episode_id"].as_str() != Some(episode.episode_id.as_str())
-        || !episode
-            .scene_ids
-            .iter()
-            .any(|id| docs["scene.json"]["scene_id"].as_str() == Some(id.as_str()))
-    {
-        return Err("Score palette is outside the native episode build context".into());
-    }
+    episode_context(docs)?;
     let mut scopes = Vec::new();
     for (file, expected) in [
         ("scene-bindings.json", &docs["scene.json"]["scene_id"]),
@@ -121,4 +108,29 @@ pub fn validate(docs: &BTreeMap<String, Value>, score: &native::ScoreUse) -> Res
         return Err("Score role lacks a unique selected native palette binding".into());
     }
     Ok(())
+}
+
+pub(super) fn episode_context(docs: &BTreeMap<String, Value>) -> Result<native::Episode> {
+    let scene = docs
+        .get("scene.json")
+        .ok_or("Missing native scene context")?;
+    let episode: native::Episode = serde_json::from_value(
+        docs.get("episode.json")
+            .ok_or("Missing native episode context")?
+            .clone(),
+    )?;
+    if episode.schema != native::EPISODE_SCHEMA
+        || !matches!(
+            episode.authoring_state.as_str(),
+            "ready-for-private-build" | "scene-build-context"
+        )
+        || scene["episode_id"].as_str() != Some(episode.episode_id.as_str())
+        || !episode
+            .scene_ids
+            .iter()
+            .any(|id| scene["scene_id"].as_str() == Some(id.as_str()))
+    {
+        return Err("Score palette is outside the native episode build context".into());
+    }
+    Ok(episode)
 }

@@ -248,3 +248,19 @@ Captured roles are `protected-graph:<language>` and
 alignment/index controls remain unchanged in the candidate. The emitted project
 descriptor retains the explicit map. Session/edit v4 already locks the complete
 descriptor and all controls; no alternate request grammar is introduced.
+
+## Explicit effect candidates
+
+All existing project descriptor versions accept optional `sonic_candidates` and
+`vfx_candidates` arrays of already-bound native asset keys. Each list has at most
+128 distinct nonempty trimmed keys, with no control characters and at most 256
+UTF-8 bytes per key. The existing 64 KiB descriptor budget still applies. Empty
+lists may be omitted; output descriptors preserve nonempty lists.
+
+These lists explicitly admit insertion choices alongside effects already used
+by the selected language. They do not import an asset, discover files, select a
+version or authorize its storage/rights. Rust resolves each choice through the
+declared native binding scopes and rechecks it against source/descriptor locks.
+Unavailable or ambiguous bindings are held. An effect used only by a protected
+language remains outside this selector unless explicitly listed. See
+[effect insertion](cel-insertion-v1.md#explicit-sonic-and-vfx-intent).

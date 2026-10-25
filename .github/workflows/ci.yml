@@ -40,7 +40,7 @@ jobs:
           cargo clippy -p reel-assets --all-targets --locked -- -D warnings
           cargo test -p reel-assets --all-targets --locked
       - name: Check offline cache review interactions
-        run: node --test crates/reel-assets/tests/tier_review_ui.test.cjs crates/reel-assets/tests/reference_review_ui.test.cjs crates/reel-assets/tests/cel_sorter_ui.test.cjs crates/reel-assets/tests/cel_sorter_dom.test.cjs crates/reel-assets/tests/cel_insertion_ui.test.cjs
+        run: node --test crates/reel-assets/tests/tier_review_ui.test.cjs crates/reel-assets/tests/reference_review_ui.test.cjs crates/reel-assets/tests/cel_sorter_ui.test.cjs crates/reel-assets/tests/cel_sorter_dom.test.cjs crates/reel-assets/tests/cel_insertion_ui.test.cjs crates/reel-assets/tests/cel_effects_ui.test.cjs
       - name: Check offline native note editing interactions
         run: node --test crates/reel-music/tests/note_editor_ui.test.cjs crates/reel-music/tests/underlay_editor_ui.test.cjs
       - name: Verify compiled scene delivery samples, stems, frames and tamper rejection
