@@ -17,6 +17,7 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Operation {
+    CompileNative { request: PathBuf, output: PathBuf },
     Plan { job: PathBuf },
     Render { job: PathBuf, output: PathBuf },
     RenderAudio { job: PathBuf, output: PathBuf },
@@ -25,12 +26,26 @@ enum Operation {
 }
 fn run() -> Result<()> {
     let args = Args::parse();
+    if let Operation::CompileNative { request, output } = &args.command {
+        let mut source = Source::open(Profile::read(&args.profile)?)?;
+        let result = reel::tig_scene::compile(
+            &mut source,
+            &reel::tig_scene::Request::read(request)?,
+            output,
+        )?;
+        println!(
+            "{}",
+            serde_json::json!({"schema":"reel.tig-scene-result.experimental-1","source_checkpoint":source.checkpoint(),"complete_semantic_coverage":false,"result":result})
+        );
+        return Ok(());
+    }
     let job_path = match &args.command {
         Operation::Plan { job }
         | Operation::Render { job, .. }
         | Operation::RenderAudio { job, .. }
         | Operation::Check { job, .. }
         | Operation::CheckAudio { job, .. } => job,
+        Operation::CompileNative { .. } => unreachable!(),
     };
     let job_path = job_path
         .canonicalize()
@@ -39,6 +54,7 @@ fn run() -> Result<()> {
     let mut source = Source::open(Profile::read(&args.profile)?)?;
     let inputs = source.prepare(&job)?;
     let result = match args.command {
+        Operation::CompileNative { .. } => unreachable!(),
         Operation::Plan { .. } => {
             serde_json::to_value(scene_delivery::plan_with_inputs(&job_path, &inputs)?.1)?
         }

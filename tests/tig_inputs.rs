@@ -210,7 +210,7 @@ fn vendored_runtime_source_matches_exact_upstream_pin() {
         serde_json::from_slice(&fs::read(root.join("source-pin.json")).unwrap()).unwrap();
     assert_eq!(
         manifest["commit"],
-        "12757c21e9f896946b21a6a0dca653bf61177e5b"
+        "7e43e272eb6e96f6b6b464b9b2ee267dd5d3cf9c"
     );
     let mut listed = std::collections::BTreeSet::new();
     let mut total = 0;
@@ -257,7 +257,187 @@ fn vendored_runtime_source_matches_exact_upstream_pin() {
     actual.insert("LICENSE".into());
     assert_eq!(listed, actual);
     assert_eq!(listed.len(), 45);
-    assert_eq!(total, 480962);
+    assert_eq!(total, 481289);
+}
+
+fn native_scene_fixture() -> (Fixture, reel::tig_scene::Request) {
+    let mut f = Fixture::new();
+    let root = f.root();
+    let cached = |bytes: &[u8]| {
+        let object = Object::from_bytes(bytes);
+        fs::write(
+            root.join("cache/objects").join(object.sha256.as_str()),
+            bytes,
+        )
+        .unwrap();
+        object
+    };
+    let load = |name: &str| -> Value {
+        serde_json::from_slice(&fs::read(root.join(name)).unwrap()).unwrap()
+    };
+    for name in ["cel-a", "cel-b", "cue-main", "alignment"] {
+        let path = format!("records/{name}.tig");
+        let mut record = load(&path);
+        record["status"] = json!({"selection_state":"selected-private-production"});
+        if name == "alignment" {
+            let bytes = serde_json::to_vec(&json!({"schema":"reel.scene-native-alignment.v1","language":"es","cue_id":"es-1","selected_take_sha256":load("records/cue-main.tig")["selected"]["sha256"],"sample_rate":48000,"cue_end_sample":48000,"semantic_markers":{"first-line":0,"second-line":24000}})).unwrap();
+            record["streams"][0]["object"] = serde_json::to_value(cached(&bytes)).unwrap();
+        }
+        write(root, &path, &record);
+    }
+    let schema = Object::from_bytes(&fs::read(root.join("definitions/authored.json")).unwrap());
+    let definition = write(
+        root,
+        "definitions/scene.json",
+        &json!({"schema":"tig.definition.design-1","id":"types/scene","authored_schema":schema,"authoring":{"properties":["scene_id","binding_ids"],"required":["scene_id","binding_ids"],"defaults":{}},"stream_rules":{},"semantic_rules":{}}),
+    );
+    let scene = json!({"schema":"reel.scene-authoring.v1","scene_id":"scene-1","episode_id":"episode-1","authoring_state":"ready-for-private-build","source_scope_ids":["source-block"],"source_authority_id":"synthetic-source","holds":["Private review remains external"],
+    "languages":{"es":{"cues":[{"cue_id":"es-1","source_id":"source-block","exact_text_sha256":"a".repeat(64),"narration_slot_id":"narration","take_binding":"take","phrase_alignment_binding":"alignment"}],"events":[
+        {"event_id":"first","cue_id":"es-1","semantic_trigger_id":"first-line","picture_slot_id":"p-a","picture_binding":"a","score":{"disposition":"silence"}},
+        {"event_id":"second","cue_id":"es-1","semantic_trigger_id":"second-line","picture_slot_id":"p-b","picture_binding":"b","score":{"disposition":"silence"}}
+    ]}}});
+    let selected = cached(&serde_json::to_vec(&scene).unwrap());
+    let mut streams = Vec::new();
+    for (slot, value) in [
+        (
+            "catalog.json",
+            json!({"schema":"reel.scene-template-catalog.v1","templates":[]}),
+        ),
+        (
+            "episode.json",
+            json!({"schema":"reel.episode-authoring.v1","episode_id":"episode-1","season_id":"season-1","authoring_state":"scene-build-context","master_template_id":"master","scene_policy_id":"policy","presentation":[],"score_palette":[],"scene_ids":["scene-1"]}),
+        ),
+        (
+            "policy.json",
+            json!({"schema":"reel.scene-policy.v1","policy_id":"policy","target_composition_seconds_min":0.5,"target_composition_seconds_max":2.0,"hard_unchanged_composition_seconds_max":2.0,"semantic_cuts_required":true}),
+        ),
+        (
+            "profile.json",
+            json!({"schema":"reel.scene-delivery-profile.v1","width":64,"height":64,"sample_rate":48000,"frame_rate_numerator":24,"frame_rate_denominator":1,"max_composition_samples":96000,"score_gain_db":-18,"score_fade_in_samples":0,"score_fade_out_samples":0}),
+        ),
+    ] {
+        streams.push(json!({"slot":slot,"role":"native-control","group":"control","object":cached(&serde_json::to_vec(&value).unwrap())}));
+    }
+    // This retained old binding object is deliberately unavailable and unusable.
+    streams.push(json!({"slot":"bindings.json","role":"old-evidence","group":"evidence","object":Object::from_bytes(b"unavailable old bindings")}));
+    write(
+        root,
+        "records/scene.tig",
+        &json!({"schema":"tig.instance.design-1","id":"scene/native","definition":{"id":"types/scene","sha256":definition.sha256,"bytes":definition.bytes},"authored":{"scene_id":"scene-1","binding_ids":{"a":{"id":"cel/a"},"b":{"id":"cel/b"},"take":{"id":"cue/main"},"alignment":{"id":"alignment/main"}}},"selected":selected,"streams":streams,"status":{"new_production_approval":false},"metadata":{}}),
+    );
+    git(root, &["add", "records", "definitions"]);
+    git(root, &["commit", "-m", "synthetic native scene controls"]);
+    f.profile["commit"] = json!(git(root, &["rev-parse", "HEAD"]));
+    f.profile["admitted"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id":"types/scene","object":definition,"payload":{"kind":"selected"}}));
+    let request = serde_json::from_value(json!({"schema":"reel.tig-native-scene.experimental-1","scene_id":"scene/native","scene_definition":"types/scene","primary_definitions":["types/media","types/alignment"],"language":"es","controls":{"catalog":"catalog.json","episode":"episode.json","policy":"policy.json","profile":"profile.json"},"delivery_id":"native","delivery_title":"Synthetic native scene"})).unwrap();
+    (f, request)
+}
+
+#[test]
+fn native_scene_compiles_fresh_leaf_versions_without_changing_parent_or_old_view() {
+    let (mut f, request) = native_scene_fixture();
+    let parent = fs::read(f.root().join("records/scene.tig")).unwrap();
+    let mut old_view = f.source();
+    let first = f.root().join("native-first");
+    let result = reel::tig_scene::compile(&mut old_view, &request, &first).unwrap();
+    assert_eq!(result["semantic_event_count"], 2);
+    assert_eq!(old_view.byte_requests(), 6);
+    let job = |dir: &Path| -> Value {
+        serde_json::from_slice(&fs::read(dir.join("delivery/job.json")).unwrap()).unwrap()
+    };
+    let old_job = job(&first);
+    let cli_profile = f.root().join("native-profile.json");
+    fs::write(&cli_profile, serde_json::to_vec(&f.profile).unwrap()).unwrap();
+    let cli_request = f.root().join("native-request.json");
+    fs::write(&cli_request, serde_json::to_vec(&request).unwrap()).unwrap();
+    let cli_dir = f.root().join("native-cli");
+    let cli = Command::new(env!("CARGO_BIN_EXE_reel-tig-scene"))
+        .arg("--profile")
+        .arg(&cli_profile)
+        .arg("compile-native")
+        .arg(&cli_request)
+        .arg(&cli_dir)
+        .output()
+        .unwrap();
+    assert!(
+        cli.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cli.stderr)
+    );
+    let cli_receipt: Value = serde_json::from_slice(&cli.stdout).unwrap();
+    assert_eq!(cli_receipt["complete_semantic_coverage"], false);
+    assert_eq!(job(&cli_dir), old_job);
+    assert_eq!(old_job["pictures"][1]["source"]["path"], "cel/b");
+    assert_eq!(old_job["audio"][0]["source"]["path"], "cue/main");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(first.join("scene.json")).unwrap()).unwrap()["holds"],
+        json!(["Private review remains external"])
+    );
+    let replacement = picture([0, 255, 0]);
+    let pin = Object::from_bytes(&replacement);
+    fs::write(
+        f.root().join("cache/objects").join(pin.sha256.as_str()),
+        replacement,
+    )
+    .unwrap();
+    let mut leaf: Value =
+        serde_json::from_slice(&fs::read(f.root().join("records/cel-b.tig")).unwrap()).unwrap();
+    leaf["selected"] = serde_json::to_value(&pin).unwrap();
+    write(f.root(), "records/cel-b.tig", &leaf);
+    git(f.root(), &["add", "records"]);
+    git(f.root(), &["commit", "-m", "change only cel B"]);
+    f.profile["commit"] = json!(git(f.root(), &["rev-parse", "HEAD"]));
+    let next = f.root().join("native-next");
+    reel::tig_scene::compile(&mut f.source(), &request, &next).unwrap();
+    let next_job = job(&next);
+    assert_eq!(next_job["pictures"][0], old_job["pictures"][0]);
+    assert_eq!(next_job["audio"], old_job["audio"]);
+    assert_eq!(
+        next_job["pictures"][1]["source"]["sha256"],
+        pin.sha256.as_str()
+    );
+    assert_ne!(
+        next_job["pictures"][1]["source"],
+        old_job["pictures"][1]["source"]
+    );
+    assert_eq!(
+        fs::read(f.root().join("records/scene.tig")).unwrap(),
+        parent
+    );
+    let replay = f.root().join("native-replay");
+    reel::tig_scene::compile(&mut old_view, &request, &replay).unwrap();
+    assert_eq!(job(&replay), old_job);
+    assert_eq!(old_view.active_readers(), 0);
+    assert!(reel::tig_scene::compile(&mut f.source(), &request, &next).is_err());
+}
+
+#[test]
+fn native_scene_rejects_draft_leaf_and_wrong_primary_type_before_byte_io() {
+    let (mut f, mut request) = native_scene_fixture();
+    request.primary_definitions = vec!["types/alignment".into()];
+    let mut source = f.source();
+    let output = f.root().join("refused");
+    assert!(reel::tig_scene::compile(&mut source, &request, &output).is_err());
+    assert_eq!(source.byte_requests(), 0);
+    assert!(!output.exists());
+    request.primary_definitions.push("types/media".into());
+    let mut leaf: Value =
+        serde_json::from_slice(&fs::read(f.root().join("records/cel-b.tig")).unwrap()).unwrap();
+    leaf["status"]["selection_state"] = json!("draft");
+    write(f.root(), "records/cel-b.tig", &leaf);
+    git(f.root(), &["add", "records"]);
+    git(
+        f.root(),
+        &["commit", "-m", "draft state with unchanged media"],
+    );
+    f.profile["commit"] = json!(git(f.root(), &["rev-parse", "HEAD"]));
+    let mut source = f.source();
+    assert!(reel::tig_scene::compile(&mut source, &request, &output).is_err());
+    assert_eq!(source.byte_requests(), 0);
+    assert!(!output.exists());
 }
 
 #[test]

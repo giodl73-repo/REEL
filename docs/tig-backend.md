@@ -1,5 +1,8 @@
 # Native Tig backend
 
+For deriving fresh native scene bindings and compiling directly from Tig, see
+[Compile a native scene from Tig](tig-native-scene.md).
+
 Implementation scope: an optional Rust `tig` feature and explicit-profile
 `reel-tig-scene` binary consume committed Tig IDs through the existing scene
 input-provider interface. The source dependency is pinned and vendored; see

@@ -159,6 +159,48 @@ impl Source {
     pub fn active_readers(&self) -> u32 {
         self.cache.active_readers()
     }
+    pub(crate) fn record(&self, id: &str) -> Result<tig_assets::resolve::Resolved> {
+        token(id, 256)?;
+        let asset = self.snapshot.resolve_id(id)?;
+        let admission = self
+            .admitted
+            .get(&asset.definition().id)
+            .ok_or_else(|| anyhow!("definition not admitted"))?;
+        if admission.object != asset.definition().object {
+            bail!("definition pin changed");
+        }
+        Ok(asset)
+    }
+    /// Resolve current binding metadata in this captured view, without media IO.
+    /// Selection status is project data, not a grant of production authority.
+    pub fn resolve_asset(&self, id: &str) -> Result<AssetRef> {
+        let asset = self.record(id)?;
+        let admission = &self.admitted[&asset.definition().id];
+        let object = match &admission.payload {
+            Payload::Selected => asset.selected()?,
+            Payload::Stream { slot } => asset.stream(slot)?,
+        };
+        let state = asset
+            .status()
+            .get("selection_state")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow!("asset has no native selection state"))?;
+        token(state, 128)?;
+        Ok(AssetRef {
+            logical_id: id.into(),
+            sha256: object.sha256.as_str().into(),
+            bytes: object.bytes,
+            cache_uri: format!("cache://sha256/{}", object.sha256.as_str()),
+            selection_state: state.into(),
+        })
+    }
+    pub(crate) fn read_metadata(&mut self, object: &Object, max_bytes: usize) -> Result<Vec<u8>> {
+        if max_bytes > JOB_BYTES_MAX || object.bytes > max_bytes as u64 {
+            bail!("metadata exceeds byte budget");
+        }
+        let mut held = self.cache.open_verified(object)?;
+        read_held(&mut held, max_bytes)
+    }
     fn expected(&self, file: &FileRef) -> Result<(String, Object)> {
         let id = logical(&file.path)?;
         let asset = self.snapshot.resolve_id(&id)?;
@@ -194,6 +236,27 @@ impl Source {
         let (_, object) = self.expected(&file)?;
         let mut held = self.cache.open_verified(&object)?;
         read_held(&mut held, max_bytes)
+    }
+    /// Hold an explicit subset of exact input pins, for compiler evidence.
+    /// This is not a full job admission; render callers must use prepare(job).
+    pub fn prepare_files(&mut self, files: &[FileRef]) -> Result<Inputs> {
+        if !cfg!(windows) || self.required != RequiredProtection::PreventMutation {
+            bail!("mandatory path protection unavailable");
+        }
+        let mut inputs = Inputs {
+            checkpoint: self.checkpoint().clone(),
+            names: BTreeMap::new(),
+            sizes: BTreeMap::new(),
+            held: BTreeMap::new(),
+        };
+        for file in files {
+            self.register(&mut inputs, file)?;
+        }
+        let names = inputs.names.keys().cloned().collect::<Vec<_>>();
+        for name in names {
+            self.ensure(&mut inputs, &name)?;
+        }
+        Ok(inputs)
     }
     fn register(&self, inputs: &mut Inputs, file: &FileRef) -> Result<()> {
         let (name, object) = self.expected(file)?;

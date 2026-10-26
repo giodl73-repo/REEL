@@ -68,6 +68,8 @@ pub mod sprite_materializer;
 pub mod sung_lyric_alignment;
 #[cfg(feature = "tig")]
 pub mod tig_inputs;
+#[cfg(feature = "tig")]
+pub mod tig_scene;
 pub mod voice_consistency;
 pub mod voice_performance;
 
