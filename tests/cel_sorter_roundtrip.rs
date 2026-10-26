@@ -155,8 +155,7 @@ fn manifest() -> CompileManifest {
 #[test]
 fn compiler_asset_ids_preserve_selected_pins_and_native_timing() {
     let temp = tempfile::tempdir().unwrap();
-    let root = temp.path().join("source");
-    ready_project(&root, false);
+    let root = edited_candidate(temp.path(), false);
     let mut request = manifest();
     request.output_dir = "legacy".into();
     compile_to_dir(&root, &request).unwrap();
@@ -207,6 +206,77 @@ fn compiler_asset_ids_preserve_selected_pins_and_native_timing() {
     request.output_dir = "refused".into();
     assert!(compile_to_dir(&root, &request).is_err());
 }
+#[test]
+fn compiler_asset_id_placement_evidence_uses_the_input_provider() {
+    use reel::scene_delivery::{FileRef, InputFiles};
+    use std::cell::Cell;
+    struct Evidence {
+        expected: FileRef,
+        path: PathBuf,
+        calls: Cell<usize>,
+    }
+    impl InputFiles for Evidence {
+        fn verified_path(&self, item: &FileRef) -> anyhow::Result<PathBuf> {
+            assert_eq!(item, &self.expected);
+            let object = fixtures::asset(&fs::read(&self.path)?);
+            anyhow::ensure!(object["sha256"] == item.sha256 && object["bytes"] == item.bytes);
+            self.calls.set(self.calls.get() + 1);
+            Ok(self.path.clone())
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let root = edited_candidate(temp.path(), false);
+    let mut bindings = get(&root.join("scene-bindings.json"));
+    bindings["assets"]["sonic.test"] = fixtures::asset(b"synthetic sound");
+    let evidence = fixtures::asset(b"synthetic placement decision");
+    bindings["assets"]["placement.decision"] = evidence.clone();
+    put(&root.join("scene-bindings.json"), &bindings);
+    let mut scene = get(&root.join("scene.json"));
+    scene["shared_events"][0]["sonic_bindings"] = json!(["sonic.test"]);
+    put(&root.join("scene.json"), &scene);
+    let mut profile = get(&root.join("profile.json"));
+    profile["asset_paths"] = json!("asset-id");
+    profile["sonic_placement_offsets_by_binding"] = json!({"sonic.test":{
+        "samples":0,"reason":"synthetic placement check","evidence_binding":"placement.decision"
+    }});
+    put(&root.join("profile.json"), &profile);
+    let path = root.join("placement.json");
+    fs::write(&path, b"synthetic placement decision").unwrap();
+    let provider = Evidence {
+        expected: serde_json::from_value(json!({"path":evidence["logical_id"],"sha256":evidence["sha256"],"bytes":evidence["bytes"]})).unwrap(),
+        path,
+        calls: Cell::new(0),
+    };
+    let mut request = manifest();
+    request.output_dir = "local-refused".into();
+    assert!(compile_to_dir(&root, &request).is_err());
+    request.output_dir = "provider".into();
+    reel::scene_delivery_compile::compile_to_dir_with_inputs(&root, &request, &provider).unwrap();
+    assert_eq!(provider.calls.get(), 1);
+    let job = get(&root.join("provider/job.json"));
+    let effect = job["audio"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["bus"] == "E")
+        .unwrap();
+    assert_eq!(
+        effect["placement_offset"]["evidence"]["path"],
+        evidence["logical_id"]
+    );
+    let production = get(&root.join("provider/production.json"));
+    let event = production["audio_events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["role"] == "effect")
+        .unwrap();
+    assert_eq!(
+        event["source"],
+        bindings["assets"]["sonic.test"]["logical_id"]
+    );
+}
+
 #[test]
 fn inserted_native_cel_compiles_both_languages_and_preserves_existing_slot_revisions() {
     for separate in [false, true] {
