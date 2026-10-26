@@ -198,7 +198,7 @@ Project-specific authoring web tools and music tooling are separate ports. Their
 interfaces should consume generic declarative scene, asset, arrangement and
 songbook contracts; private catalogues and creative decisions remain upstream.
 
-## Reusing a song or poem output as a source
+## Reusing a song, poem or picture output as a source
 
 The default input/output separation stays strict. A completed song's listening
 copy or a poem's reading text can nevertheless be the exact source of another
@@ -207,7 +207,11 @@ artifact. Projects may explicitly declare this in
 locks one producer version/manifest, one role and hash, and named consumer logical
 IDs. Existing immutable packages and contracts are preserved.
 
-Only `song` recording/listening roles and `poem` reading/body roles are accepted.
+Only `song` recording/listening roles, `poem` reading/body roles and a `picture`
+package's exact `image` role are accepted. A picture grant uses
+`"source_kind": "picture"`; a project must first qualify the still as a native
+picture source and freeze its provenance in that typed package. A correction
+review package, thumbnail role or compiled review ZIP is not a picture producer.
 The registered producer package is freshly hash-checked from configured active
 caches; its kind, scope, role and output identity must match the declaration.
 Movie/episode outputs are not eligible. Per-version role separation and the ban
@@ -237,3 +241,9 @@ Example entry (synthetic identities):
 The file is bounded to 256 KiB, 64 entries and 64 named consumers per entry. Loading it
 reads metadata only: it starts no render, hydration, archive recovery or deletion.
 It grants no creative, likeness, voice, licensing or publication approval.
+
+Picture reuse supports, for example, a retained generated still becoming the
+primary picture source of a revised scene. The old output version and its
+bytes remain immutable; only the named consumer receives the source grant.
+This metadata check is not image decoding, semantic scene validation or human
+picture approval. Movie and episode outputs remain ineligible.

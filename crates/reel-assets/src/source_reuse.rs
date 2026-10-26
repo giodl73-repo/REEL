@@ -1,4 +1,4 @@
-//! Explicit reuse of a pinned song/poem source role, without rewriting old custody.
+//! Explicit reuse of a pinned song/poem/picture source role, without rewriting old custody.
 use crate::{
     Config, Result,
     versions::{Dependency, State},
@@ -24,6 +24,7 @@ pub struct Policy {
 pub enum SourceKind {
     Song,
     Poem,
+    Picture,
 }
 
 impl SourceKind {
@@ -31,6 +32,7 @@ impl SourceKind {
         match self {
             Self::Song => "song",
             Self::Poem => "poem",
+            Self::Picture => "picture",
         }
     }
     fn permits(&self, role: &str) -> bool {
@@ -40,6 +42,7 @@ impl SourceKind {
                 role,
                 "reading/es" | "reading/en" | "spanish-corrected-body" | "english-translated-body"
             ),
+            Self::Picture => role == "image",
         }
     }
 }
@@ -286,6 +289,57 @@ mod tests {
             ))
             .is_err()
         );
+    }
+    #[test]
+    fn picture_source_requires_exact_picture_producer_image_role_and_consumer() {
+        let (mut state, mut package, mut policy) = fixture();
+        package["kind"] = json!("picture");
+        package["assets"]["image"] = package["assets"]["listening"].take();
+        policy["entries"][0]["source_kind"] = json!("picture");
+        policy["entries"][0]["role"] = json!("image");
+        let before = serde_json::to_vec(&state).unwrap();
+        let grants = validate(
+            &state,
+            serde_json::from_value(policy.clone()).unwrap(),
+            |_| Ok(package.clone()),
+        )
+        .unwrap();
+        state.source_inputs = grants.inputs;
+        state
+            .validate_dependency_contract(&version("film", true))
+            .unwrap();
+        assert!(
+            state
+                .validate_dependency_contract(&version("other-film", true))
+                .is_err()
+        );
+        assert_eq!(before, serde_json::to_vec(&state).unwrap());
+        for kind in [
+            "episode",
+            "music-video",
+            "private-cel-correction-approval-package",
+        ] {
+            let mut wrong = package.clone();
+            wrong["kind"] = json!(kind);
+            assert!(
+                validate(
+                    &state,
+                    serde_json::from_value(policy.clone()).unwrap(),
+                    |_| { Ok(wrong.clone()) }
+                )
+                .is_err()
+            );
+        }
+        for role in ["delivery/movie", "output/review.zip", "thumbnail"] {
+            let mut wrong = policy.clone();
+            wrong["entries"][0]["role"] = json!(role);
+            assert!(
+                validate(&state, serde_json::from_value(wrong).unwrap(), |_| {
+                    Ok(package.clone())
+                })
+                .is_err()
+            );
+        }
     }
     #[test]
     fn cached_package_is_freshly_verified_and_never_recovered_from_archive() {
