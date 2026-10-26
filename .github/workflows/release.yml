@@ -15,9 +15,11 @@ jobs:
           - os: ubuntu-latest
             artifact: reel-linux-x86_64
             binary: target/release/reel
+            tig_binary: target/release/reel-tig-scene
           - os: windows-latest
             artifact: reel-windows-x86_64
             binary: target/release/reel.exe
+            tig_binary: target/release/reel-tig-scene.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -30,12 +32,16 @@ jobs:
           token: ${{ github.token }}
       - run: cargo test --all-targets --all-features
       - run: cargo test -p reel-assets --all-targets --locked
-      - run: cargo build --release --locked
+      - run: cargo build --release --locked --features tig
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.binary }}
+          path: |
+            ${{ matrix.binary }}
+            ${{ matrix.tig_binary }}
       - uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.binary }}
+          files: |
+            ${{ matrix.binary }}
+            ${{ matrix.tig_binary }}
           generate_release_notes: true
