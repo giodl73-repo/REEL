@@ -77,7 +77,7 @@ def produce(request, output):
         c.setFont('BookText',8);c.drawRightString(width-36,25,str(len(pages)+1))
 
     line('SONGBOOK',48,720,12)
-    line('Four full Goldens',48,674,31)
+    line(request.get('heading','Four full Goldens'),48,674,31)
     line('Poems by '+request['author'],48,640,14)
     y=wrap('Complete Spanish poems, original full recordings and editable notation studies.',48,595,500,13,20)
     y=wrap('Producer-applied working edition. Musical review pending. The recordings are selected Goldens; the proposed scores are not approved final engravings.',48,y-22,500,12,19)
@@ -143,11 +143,11 @@ def produce(request, output):
             phrases=[p for p in evidence['phrases'] if p['line']==number]
             syll=[s for s in evidence['syllables'] if s['line']==number]
             buttons=' '.join(f'<button data-audio="{audio_id}" data-start="{max(0,p["source_span_seconds"][0]-.6):.4f}" data-end="{p["source_span_seconds"][1]+.6:.4f}">{p["source_span_seconds"][0]:.1f}s</button>' for p in phrases)
-            gaps=' · '.join(s['text'] for s in syll if not s['note_ids'])
+            gaps=' Â· '.join(s['text'] for s in syll if not s['note_ids'])
             status='Accepted omission; retained for future rendition' if number in omitted else f'{sum(bool(s["note_ids"]) for s in syll)}/{len(syll)} syllable proposals overlap recovered notes'
             rows.append(f'<tr><td>{number}</td><td>{html.escape(text)}</td><td>{buttons}<p>{html.escape(status)}</p>'+('<p class="gap">Unmapped: '+html.escape(gaps)+'</p>' if gaps else '')+'</td></tr>')
-        links=' · '.join(f'<a href="{html.escape(rel(checked(entry[role])),quote=True)}">{label}</a>' for role,label in [('musicxml','Editable MusicXML'),('midi','MIDI'),('svg','Native SVG study')])
-        sections.append(f'<section><h2>{html.escape(title)}</h2><p>{html.escape(entry["edition"])} · {html.escape(entry["duration"])}</p><p>{html.escape(entry["status"])}</p><audio id="{audio_id}" controls preload="metadata" src="{rel(audio)}"></audio><details><summary>Partial notation diagnostic guide</summary><audio controls preload="none" src="{rel(guide)}"></audio><p>Simple oscillator guide; unmapped passages are silent.</p></details><p>{links}</p><table><tr><th>Line</th><th>Complete canonical poem</th><th>Listen / study gaps</th></tr>'+''.join(rows)+'</table></section>')
+        links=' Â· '.join(f'<a href="{html.escape(rel(checked(entry[role])),quote=True)}">{label}</a>' for role,label in [('musicxml','Editable MusicXML'),('midi','MIDI'),('svg','Native SVG study')])
+        sections.append(f'<section><h2>{html.escape(title)}</h2><p>{html.escape(entry["edition"])} Â· {html.escape(entry["duration"])}</p><p>{html.escape(entry["status"])}</p><audio id="{audio_id}" controls preload="metadata" src="{rel(audio)}"></audio><details><summary>Partial notation diagnostic guide</summary><audio controls preload="none" src="{rel(guide)}"></audio><p>Simple oscillator guide; unmapped passages are silent.</p></details><p>{links}</p><table><tr><th>Line</th><th>Complete canonical poem</th><th>Listen / study gaps</th></tr>'+''.join(rows)+'</table></section>')
     c.save()
     from pypdf import PdfReader, PdfWriter
     writer=PdfWriter();writer.clone_document_from_reader(PdfReader(pdf))

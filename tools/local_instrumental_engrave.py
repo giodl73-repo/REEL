@@ -31,6 +31,16 @@ def duration_pieces(duration,divisions):
     return result
 
 
+def has_exact_duration_type(note, divisions):
+    values={'whole':4,'half':2,'quarter':1,'eighth':Fraction(1,2),'16th':Fraction(1,4),'32nd':Fraction(1,8),'64th':Fraction(1,16),'128th':Fraction(1,32),'256th':Fraction(1,64),'512th':Fraction(1,128),'1024th':Fraction(1,256)}
+    value=values.get(note.findtext('type'))
+    if value is None:return False
+    value=Fraction(value)*sum((Fraction(1,2**d) for d in range(len(note.findall('dot'))+1)),Fraction(0))
+    mod=note.find('time-modification')
+    if mod is not None:value*=Fraction(int(mod.findtext('normal-notes')),int(mod.findtext('actual-notes')))
+    return value==Fraction(int(note.findtext('duration')),divisions)
+
+
 def prepare_musicxml(source,target,omit_trailing_silent_measures=False,page_format=None):
     """Spell identical intervals as explicit tied durations for score-app import."""
     tree=ET.parse(source);root=tree.getroot();pieces=0
@@ -54,6 +64,8 @@ def prepare_musicxml(source,target,omit_trailing_silent_measures=False,page_form
                 if child.tag!='note':output.append(child);continue
                 group=[child]
                 while index<len(children) and children[index].tag=='note' and children[index].find('chord') is not None:group.append(children[index]);index+=1
+                if all(has_exact_duration_type(n,divisions) for n in group):
+                    output.extend(group);pieces+=len(group);continue
                 durations={int(n.findtext('duration')) for n in group}
                 if len(durations)!=1:raise ValueError('A chord has unequal note lengths')
                 segments=duration_pieces(durations.pop(),divisions)
@@ -61,10 +73,11 @@ def prepare_musicxml(source,target,omit_trailing_silent_measures=False,page_form
                     for ni,original in enumerate(group):
                         n=copy.deepcopy(original);old_ties={t.attrib['type'] for t in n.findall('tie')};rest=n.find('rest') is not None
                         for element in list(n):
-                            if element.tag in ['chord','duration','tie','voice','type','dot','time-modification','staff']:n.remove(element)
+                            if element.tag in ['chord','duration','tie','voice','type','dot','time-modification','staff','beam']:n.remove(element)
                         notation=n.find('notations')
                         if notation is not None:
-                            for tied in notation.findall('tied'):notation.remove(tied)
+                            for tied in list(notation):
+                                if tied.tag in ['tied','tuplet']:notation.remove(tied)
                             if not list(notation):n.remove(notation);notation=None
                         if ni:n.insert(0,ET.Element('chord'))
                         order=next((j+1 for j,e in enumerate(n) if e.tag in ['pitch','unpitched','rest']),len(n));new=[]
@@ -81,6 +94,10 @@ def prepare_musicxml(source,target,omit_trailing_silent_measures=False,page_form
                         if ties:
                             if notation is None:notation=ET.SubElement(n,'notations')
                             for tie in ties:ET.SubElement(notation,'tied',type=tie)
+                        if modification:
+                            if notation is None:notation=ET.SubElement(n,'notations')
+                            ET.SubElement(notation,'tuplet',type='start',bracket='no')
+                            ET.SubElement(notation,'tuplet',type='stop')
                         output.append(n);pieces+=1
             measure[:]=output
     if omit_trailing_silent_measures:

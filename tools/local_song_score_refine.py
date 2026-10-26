@@ -73,8 +73,17 @@ def main():
     from local_song_backend import descriptor
     sr=read('source.json')['media']['timebase']['sample_rate_hz'];aid=parent['model_id']+'-frame-refinement'
     analysis=dict(schema='reel.music-analysis.v0.1',analysis_id=aid,source=parent['source'],analyzers=[dict(id='retained-frames',adapter='retained-pyin-original-yin-agreement',version='1',model_revision='no-new-model-or-estimation',parameters_sha256=descriptor('refinement-parameters.json')['sha256'],license='Original analysis/library licenses retained',network_policy='denied')],stems=[],observations=[dict(id=a['observation_id'],analyzer_id='retained-frames',source=dict(start=round(a['start']*sr),end=round(a['end']*sr)),confidence_millionths=round(a['confidence']*1e6),uncertainty='Short acoustic run and forced-text timing; unreviewed notation',value=dict(kind='pitch',midi_note=a['midi_note'],cents=0)) for a in added],limitations=['No new independently recognized words.','Short supported runs remain pitch/articulation proposals; unresolved gaps remain open.'],review=dict(status='not-reviewed',required_roles=ROLES,decision_refs=[]))
-    write('refinement-analysis.json',analysis);ar=native('music-analysis-validate','refinement-analysis.json')
-    model['analyses'].append(dict(manifest='refinement-analysis.json',manifest_sha256=ar['manifest_sha256'],contract_sha256=ar['contract_sha256'],analysis_id=aid))
+    if added:
+        write('refinement-analysis.json',analysis);ar=native('music-analysis-validate','refinement-analysis.json')
+        model['analyses'].append(dict(manifest='refinement-analysis.json',manifest_sha256=ar['manifest_sha256'],contract_sha256=ar['contract_sha256'],analysis_id=aid))
+    else:
+        # No supported run is a valid conservative result, not a music-analysis
+        # document with an invalid empty observation list. Keep existing source
+        # analyses and every note/underlay tuple, and export the unchanged study.
+        ar=dict(skipped=True,reason='No additional supported pitch observations',existing_analyses_unchanged=True)
+        write('refinement-analysis.json',dict(schema='reel.song-score-refinement-no-additions.v1',
+              source=parent['source'],parent_model=q['model'],added_observations=0,
+              retained_notes_unchanged=True,unsupported_gaps_retained=True))
     model['unknowns']+=analysis['limitations'];write('model.json',model);write('syllable-study.json',ev)
     checks=dict(analysis=ar,model=native('music-model-validate','model.json'))
     native('music-score-export-plan','model.json','--output-path','score-plan.json');native('music-score-export-render','score-plan.json','model.json','--output-dir','rendered');checks['export']=native('music-score-export-check','rendered/receipt.json','score-plan.json','model.json','rendered');write('native-checks.json',checks)
