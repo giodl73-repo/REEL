@@ -1,0 +1,33 @@
+[package]
+name = "tig-git"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+assets = ["dep:tig-assets"]
+
+[dependencies]
+tig-core = { path = "../tig-core" }
+tig-store = { path = "../tig-store" }
+tig-assets = { path = "../tig-assets", optional = true }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sha1 = "=0.11.0"
+getrandom = "=0.4.3"
+fs2 = "=0.4.3"
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+
+[[bin]]
+name = "tig-lfs"
+path = "src/bin/tig-lfs.rs"
+
+[[bin]]
+name = "tig-resolve"
+path = "src/bin/tig-resolve.rs"
+required-features = ["assets"]

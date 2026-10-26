@@ -11,6 +11,7 @@ exports/
 
 # Local scratch
 /.work/
+/.local/
 .DS_Store
 Thumbs.db
 *.tmp

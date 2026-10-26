@@ -66,6 +66,8 @@ pub mod sprite_choreography;
 pub mod sprite_library;
 pub mod sprite_materializer;
 pub mod sung_lyric_alignment;
+#[cfg(feature = "tig")]
+pub mod tig_inputs;
 pub mod voice_consistency;
 pub mod voice_performance;
 

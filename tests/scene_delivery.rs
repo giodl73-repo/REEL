@@ -701,14 +701,46 @@ fn real_mapped_input_provider_matches_local_pixels_and_pcm_and_rejects_stale_pin
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let mut job = fixture(root);
+    let font = [
+        "C:/Windows/Fonts/arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    .into_iter()
+    .map(Path::new)
+    .find(|p| p.is_file())
+    .expect("fixture font");
+    fs::copy(font, root.join("selected.ttf")).unwrap();
+    let mut contract: Value =
+        serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
+    contract["attachments"].as_array_mut().unwrap().push(json!({
+        "id":"editable-title", "target":{"kind":"title","title_id":"example"},
+        "start":{"kind":"cue-start","cue_id":"a"},"end":{"kind":"cue-end","cue_id":"b"}
+    }));
+    write_json(&root.join("contract.json"), &contract);
+    fs::write(root.join("panel.ass"), "[Script Info]\nScriptType: v4.00+\nPlayResX: 64\nPlayResY: 64\n[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\nStyle: Text,Arial,16,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,1,0,5,0,0,0,1\n[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\nDialogue: 0,0:00:00.00,0:00:02.00,Text,,0,0,0,,TEST\n").unwrap();
+    job["contract"] = file(root, "contract.json");
+    job["external_layers"] = json!([{"attachment_id":"editable-title","reason":"Selected native title",
+        "evidence":file(root,"panel.ass"),"font":file(root,"selected.ttf"),"render_mode":"ass-overlay"}]);
     let path = root.join("job.json");
+    write_json(&path, &job);
     let baseline = root.join("local");
     scene_delivery::render(&path, root, &baseline).unwrap();
-    let inputs = map_media_inputs(root, &mut job);
+    let mut inputs = map_media_inputs(root, &mut job);
+    for (field, id) in [("evidence", "scene:ass"), ("font", "scene:font")] {
+        let mut actual: scene_delivery::FileRef =
+            serde_json::from_value(job["external_layers"][0][field].clone()).unwrap();
+        actual.path = root.join(&actual.path);
+        inputs.files.insert(id.into(), actual);
+        job["external_layers"][0][field]["path"] = json!(id);
+    }
     write_json(&path, &job);
     let mapped = root.join("mapped");
     scene_delivery::render_with_inputs(&path, &inputs, &mapped).unwrap();
     scene_delivery::check_with_inputs(&path, &inputs, &mapped).unwrap();
+    let font_hash = job["external_layers"][0]["font"]["sha256"]
+        .as_str()
+        .unwrap();
+    assert!(mapped.join("fonts").join(font_hash).is_file());
     assert_picture_frames_match(
         &baseline,
         &mapped,

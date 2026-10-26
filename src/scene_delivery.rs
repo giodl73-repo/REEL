@@ -1139,6 +1139,76 @@ fn indexed_layer_source_name(layer: &ExternalLayer, index: usize) -> String {
     }
 }
 
+// Opaque provider IDs are not local filenames (a colon may create an ADS on
+// Windows). Preserve existing portable basenames; otherwise use the byte pin.
+fn font_stage_name(font: &FileRef) -> Result<&str> {
+    if let Some(name) = font.path.file_name().and_then(|name| name.to_str()) {
+        let stem = name
+            .split('.')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_uppercase();
+        let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || ["COM", "LPT"].iter().any(|prefix| {
+                stem.strip_prefix(prefix)
+                    .is_some_and(|n| n.len() == 1 && matches!(n.as_bytes()[0], b'1'..=b'9'))
+            });
+        if !name.is_empty()
+            && !reserved
+            && !name.ends_with(['.', ' '])
+            && !name
+                .chars()
+                .any(|c| c.is_control() || "\\:<>\"|?*".contains(c))
+        {
+            return Ok(name);
+        }
+    }
+    if font.sha256.len() != 64
+        || !font
+            .sha256
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        bail!("unsafe font staging name and invalid byte pin");
+    }
+    Ok(&font.sha256)
+}
+
+#[cfg(test)]
+mod provider_font_names {
+    use super::*;
+    #[test]
+    fn opaque_ids_cannot_create_reserved_paths_or_windows_streams() {
+        for id in [
+            "scene:font",
+            "CON",
+            "LPT1.ttf",
+            "font.",
+            "font ",
+            "font|source",
+        ] {
+            let font = FileRef {
+                path: id.into(),
+                sha256: "a".repeat(64),
+                bytes: 1,
+            };
+            assert_eq!(font_stage_name(&font).unwrap(), font.sha256);
+        }
+        let local = FileRef {
+            path: "fonts/Arial Regular.ttf".into(),
+            sha256: "a".repeat(64),
+            bytes: 1,
+        };
+        assert_eq!(font_stage_name(&local).unwrap(), "Arial Regular.ttf");
+        let invalid = FileRef {
+            path: "font:source".into(),
+            sha256: "bad".into(),
+            bytes: 1,
+        };
+        assert!(font_stage_name(&invalid).is_err());
+    }
+}
+
 fn copy_ass_layer(
     root: &Path,
     asset_root: &(impl InputFiles + ?Sized),
@@ -1148,10 +1218,7 @@ fn copy_ass_layer(
     fs::copy(asset_root.verified_path(&layer.evidence)?, root.join(name))?;
     if let Some(font) = &layer.font {
         fs::create_dir(root.join("fonts"))?;
-        let name = font
-            .path
-            .file_name()
-            .context("selected font has no file name")?;
+        let name = font_stage_name(font)?;
         fs::copy(
             asset_root.verified_path(font)?,
             root.join("fonts").join(name),
@@ -2097,10 +2164,7 @@ pub fn render_with_inputs(
         );
     }
     if let Some(layer) = overlays.iter().find_map(|layer| layer.font.as_ref()) {
-        let name = layer
-            .path
-            .file_name()
-            .context("selected font has no file name")?;
+        let name = font_stage_name(layer)?;
         let relative = Path::new("fonts").join(name);
         let p = root.join(&relative);
         outputs.insert(
@@ -2363,12 +2427,9 @@ fn check_impl(
     let font_name = overlays
         .iter()
         .find_map(|layer| layer.font.as_ref())
-        .map(|font| {
-            format!(
-                "fonts/{}",
-                font.path.file_name().unwrap_or_default().to_string_lossy()
-            )
-        });
+        .map(font_stage_name)
+        .transpose()?
+        .map(|name| format!("fonts/{name}"));
     if let Some(name) = font_name.as_deref() {
         expected.insert(name.to_string());
     }

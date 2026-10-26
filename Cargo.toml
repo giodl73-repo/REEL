@@ -25,9 +25,19 @@ image = { version = "0.25.9", default-features = false, features = ["png", "pnm"
 same-file = "1.0.6"
 reel-music = { path = "crates/reel-music" }
 reel-assembly = { path = "crates/reel-assembly" }
+tig-core = { path = "vendor/tig/crates/tig-core", optional = true }
+tig-assets = { path = "vendor/tig/crates/tig-assets", optional = true }
+tig-git = { path = "vendor/tig/crates/tig-git", features = ["assets"], optional = true }
+tig-store = { path = "vendor/tig/crates/tig-store", optional = true }
 
 [features]
 test-fixtures = []
+tig = ["dep:tig-core", "dep:tig-assets", "dep:tig-git", "dep:tig-store"]
+
+[[bin]]
+name = "reel-tig-scene"
+path = "src/bin/reel-tig-scene.rs"
+required-features = ["tig"]
 
 [[bin]]
 name = "fake_c2patool"
@@ -36,6 +46,7 @@ required-features = ["test-fixtures"]
 
 [workspace]
 members = ["crates/reel-music", "crates/reel-assembly", "crates/reel-assets"]
+exclude = ["vendor/tig"]
 resolver = "3"
 
 [dev-dependencies]
