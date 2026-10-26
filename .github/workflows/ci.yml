@@ -47,6 +47,8 @@ jobs:
         run: cargo test --test scene_delivery real_delivery_preserves_sample_offset_stems_frames_and_rejects_tamper -- --ignored --exact
       - name: Verify injected scene inputs preserve pictures and PCM through independent checks
         run: cargo test --test scene_delivery real_mapped_input_provider_matches_local_pixels_and_pcm_and_rejects_stale_pins -- --ignored --exact
+      - name: Verify native media comparison catches content, color, clock and length changes
+        run: cargo test --test media_parity native_media_parity_detects_content_color_clock_and_length_changes --locked -- --ignored --exact
       - name: Verify native Tig source guards and versioned scene rendering
         if: runner.os == 'Windows'
         run: cargo test --features tig --test tig_inputs native_tig_cli_renders_two_cels_shared_cue_then_replaces_only_cel_b --locked -- --ignored --exact

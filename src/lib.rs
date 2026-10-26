@@ -36,6 +36,7 @@ pub mod exposure_sheet;
 pub mod film_presentation_overlay;
 pub mod imported_presentation_overlay;
 pub mod imported_scene_proof;
+pub mod media_parity;
 pub mod motioncraft_cadence;
 pub mod motioncraft_comparison;
 pub mod motioncraft_layers;

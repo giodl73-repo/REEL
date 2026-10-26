@@ -771,6 +771,29 @@ fn native_tig_cli_renders_two_cels_shared_cue_then_replaces_only_cel_b() {
             .status
             .success()
     );
+    let baseline = f.add(
+        "delivery/reference",
+        &fs::read(f.root().join("exports/first/master.mkv")).unwrap(),
+    );
+    f.commit();
+    write(f.root(), "profile.json", &f.profile);
+    write(
+        f.root(),
+        "reference.json",
+        &reference("delivery/reference", &baseline),
+    );
+    let comparison = cli(
+        f.root(),
+        &["compare", "job.json", "exports/first", "reference.json"],
+    );
+    assert!(
+        comparison.status.success(),
+        "{}",
+        String::from_utf8_lossy(&comparison.stderr)
+    );
+    let compared: Value = serde_json::from_slice(&comparison.stdout).unwrap();
+    assert_eq!(compared["result"]["equal"], true);
+    assert_eq!(compared["result"]["approval_transferred"], false);
     let updated = f.add("cel/b", &picture([0, 255, 0]));
     f.commit();
     write(f.root(), "profile.json", &f.profile);
@@ -788,6 +811,14 @@ fn native_tig_cli_renders_two_cels_shared_cue_then_replaces_only_cel_b() {
         "{}",
         String::from_utf8_lossy(&next.stderr)
     );
+    let comparison = cli(
+        f.root(),
+        &["compare", "job.json", "exports/next", "reference.json"],
+    );
+    assert!(!comparison.status.success());
+    let compared: Value = serde_json::from_slice(&comparison.stdout).unwrap();
+    assert_eq!(compared["result"]["picture_planes_equal"], false);
+    assert_eq!(compared["result"]["pcm_equal"], true);
     let decode = |folder: &str, name: &str, audio: bool| {
         let mut command = Command::new("ffmpeg");
         command
