@@ -32,6 +32,8 @@ distinguishing dependencies, inventory membership and historical versions.
 The [native cel source reader](docs/cel-source-inspection-v1.md) discovers stable
 picture events from explicit scene/binding controls across languages and cues,
 without resolving media or assuming a production-repository folder layout.
+The native [asset input reader](docs/tig-asset-inputs.md) accepts logical IDs
+through an injected resolver such as Tig, preserving exact scoped byte pins.
 
 ---
 
