@@ -22,6 +22,19 @@ Git LFS transfer protocol; uploads are refused. Opening a repository starts
 neither program. Existing explicit recovery commands remain separate from the
 accounting command, which never probes archive roots or copies payloads.
 
+Authorization snapshots keep the V1 single-leaf representation through 4 MiB.
+Larger snapshots use `caminos.object-index.v2`: a root of at most 4 KiB names up
+to sixteen hexadecimal prefix leaves, each limited to 4 MiB. This bounds the
+whole snapshot at 64 MiB while keeping bulk authorization rows in cache/LFS.
+Readers verify every declared leaf and its row prefixes, then apply legacy TSV
+deltas with the same conflicting-size checks. These are typed metadata leaves,
+not recursive imports. A prefix that exceeds its own bound fails before
+publication. Compaction preserves versions, selections, pins, leases and original
+control rows; all current leaves are protected registry control objects.
+Historical V1 and V2 headers remain independently readable from their retained
+leaves. Adopt a V2-capable runtime before selecting a V2 root; existing jobs keep
+their pinned runtime and controls until an explicit successor is qualified.
+
 ## Project profile
 
 Keep `asset-project.json` in the asset repository. Machine paths belong in an

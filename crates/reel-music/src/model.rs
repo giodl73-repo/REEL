@@ -377,6 +377,25 @@ fn validate_loaded(path: &Path, model: &MusicModel) -> Result<ValidationReport> 
 }
 
 fn validate_lead_sheet(path: &Path, model: &MusicModel) -> Result<()> {
+    let text = model
+        .lead_sheet
+        .as_ref()
+        .and_then(|sheet| sheet.lyric_layer_id.as_ref())
+        .map(|id| {
+            let layer = model
+                .lyric_layers
+                .iter()
+                .find(|layer| &layer.id == id)
+                .ok_or_else(|| anyhow::anyhow!("lead_sheet.lyric_layer_id is unknown"))?;
+            Ok::<_, anyhow::Error>(fs::read_to_string(source::resolve(path, &layer.path))?)
+        })
+        .transpose()?;
+    validate_lead_sheet_underlay(model, text.as_deref())
+}
+
+/// Validate native underlay against supplied exact lyric text without file I/O.
+/// The caller must verify lyric identity; this is not full model/authority validation.
+pub fn validate_lead_sheet_underlay(model: &MusicModel, text: Option<&str>) -> Result<()> {
     let Some(lead_sheet) = &model.lead_sheet else {
         return Ok(());
     };
@@ -395,13 +414,13 @@ fn validate_lead_sheet(path: &Path, model: &MusicModel) -> Result<()> {
         }
         return Ok(());
     };
-    let layer = model
+    model
         .lyric_layers
         .iter()
         .find(|layer| &layer.id == layer_id)
         .ok_or_else(|| anyhow::anyhow!("lead_sheet.lyric_layer_id is unknown"))?;
-    let lyric_path = source::resolve(path, &layer.path);
-    let text = fs::read_to_string(lyric_path)?;
+    let text = text
+        .ok_or_else(|| anyhow::anyhow!("Exact lyric text is required for underlay validation"))?;
     if lead_sheet.underlay.is_empty() {
         bail!("lead_sheet with lyrics requires underlay");
     }
@@ -435,9 +454,12 @@ fn validate_lead_sheet(path: &Path, model: &MusicModel) -> Result<()> {
             let tick = *note_starts.get(note_id.as_str()).ok_or_else(|| {
                 anyhow::anyhow!("lead_sheet underlay references an unknown melody note")
             })?;
-            if !mapped_notes.insert(note_id.as_str()) || (index > 0 && tick < prior_note_tick) {
+            if mapped_notes.contains(note_id.as_str())
+                || (!mapped_notes.is_empty() && tick < prior_note_tick)
+            {
                 bail!("lead_sheet underlay notes must be unique and source ordered");
             }
+            mapped_notes.insert(note_id.as_str());
             prior_note_tick = tick;
         }
     }

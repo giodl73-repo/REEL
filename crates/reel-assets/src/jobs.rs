@@ -298,7 +298,19 @@ fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Resul
     }
     // Reserve before resolving source paths: maintenance can then hold all
     // admitted readers, instead of racing a path captured before admission.
-    let reservation = admission::reserve(root, &cfg, job.budget_bytes)
+    let workspace_budget = seed
+        .as_ref()
+        .map_or(job.budget_bytes, |seed| seed.workspace_budget(&job));
+    // A registered per-job window affects reservation and working space only.
+    // Canonical object resolution/publication still uses the unchanged policy.
+    let mut reservation_cfg = cfg.clone();
+    if workspace_budget > job.budget_bytes {
+        reservation_cfg.capacity.max_object_bytes = reservation_cfg
+            .capacity
+            .max_object_bytes
+            .max(workspace_budget);
+    }
+    let reservation = admission::reserve(root, &reservation_cfg, workspace_budget)
         .map_err(|e| format!("Job not started; admission: {e}"))?;
     let mut sources = BTreeMap::new();
     let mut source_guards = Vec::new();
@@ -384,7 +396,7 @@ fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Resul
             fs::create_dir_all(target.parent().ok_or("Missing output parent")?)?;
         }
         if let Some(seed) = &seed {
-            seed.stage(&cfg, &workspace)?;
+            seed.stage(&cfg, &workspace, &job)?;
         }
         for (n, step) in job
             .steps
@@ -393,7 +405,7 @@ fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Resul
             .skip(seed.as_ref().map_or(0, |s| s.start_step()))
         {
             let check = || -> Result<()> {
-                if usage(&workspace, 0, &mut 0)? > job.budget_bytes {
+                if usage(&workspace, 0, &mut 0)? > workspace_budget {
                     return Err("Job exceeded declared workspace budget".into());
                 }
                 Ok(())
@@ -455,11 +467,14 @@ fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Resul
         }
         let mut result = json!({"schema":"caminos.production-job-result.v1","job_id":reservation.id,
         "manifest_sha256":format!("{:x}",Sha256::digest(&bytes)),"cache_root":reservation.cache_root,
-        "volume_id":reservation.volume_id,"budget_bytes":job.budget_bytes,"workspace":workspace,
+        "volume_id":reservation.volume_id,"budget_bytes":workspace_budget,"workspace":workspace,
         "outputs":retained,"linked_input_bytes":linked_input_bytes,"copied_input_bytes":copied_input_bytes,"daemon_started":false,"original_inputs_modified":false,
         "workspace_retained":true,"creative_authority":"not-granted-by-this-receipt"});
         if let Some(seed) = &seed {
             result[seed.evidence_key()] = seed.evidence();
+            if workspace_budget != job.budget_bytes {
+                result["original_budget_bytes"] = json!(job.budget_bytes);
+            }
         }
         fs::write(
             workspace.join("result.json"),

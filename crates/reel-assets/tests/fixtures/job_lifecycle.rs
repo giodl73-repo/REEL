@@ -23,6 +23,11 @@ fn main() {
             thread::sleep(Duration::from_secs(2));
             fs::copy(&args[2], &args[3]).unwrap();
         }
+        "workspace-window" => {
+            fs::write("transient.bin", vec![7; 20 * 1024 * 1024]).unwrap();
+            thread::sleep(Duration::from_secs(2));
+            fs::copy(&args[2], &args[3]).unwrap();
+        }
         "unlink-originals" => {
             for p in &args[4..] { fs::remove_file(p).unwrap(); }
             fs::copy(&args[2], &args[3]).unwrap();

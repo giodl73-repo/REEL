@@ -251,3 +251,18 @@ The generated local fixture uses color images, silent dialogue and a short signa
 It tests an off-millisecond 123-sample event, a native cue boundary at sample 48,001,
 unchanged-composition detection, bus omission, exact D/M/E sum, native recast,
 overwrite refusal and tamper rejection. No consumer media or literary text is used.
+
+## Persisted dialogue trims
+
+The native `reel.scene-delivery-profile.v1` compiler accepts an optional
+`dialogue_gain_by_cue` map. Each entry names a cue in the selected scene language
+and contains `source_sha256` for its exact selected recording and `gain_db`.
+The compiler carries the gain into both the delivery audio event and production
+manifest. It rejects stale recording hashes, foreign cue IDs, nonfinite gains
+and gains outside ±60 dB. An omitted map leaves the existing compiled job bytes
+unchanged.
+
+This is a source-bound mix setting, not a loudness target or automatic mastering
+decision. Gain-only edits preserve the selected source file, alignments and
+native sample/frame spans. Measure the resulting D/M/E mix and headroom before
+selecting a balanced delivery; a saved gain alone is not a listening approval.

@@ -85,6 +85,8 @@ lineage; project asset/version registration and selection remain separate. The
 CLI success summary contains only counts and validation-state flags. It performs
 no upload, rendering, runtime installation, cache registration or reclamation.
 
-Next slices: explicit source-bound lyric-underlay editing, phrase/arrangement
-decisions and musical/engraving review. Browser and private-song acceptance are
-still open; this source increment does not declare runtime adoption.
+The separate [exact-text underlay workflow](music-underlay-editor-v1.md) now
+supports source-bound lyric-span proposals; note session/edit v1 still keeps
+underlay unchanged. Phrase/arrangement decisions and musical/engraving review
+remain follow-up work. Browser and private-song acceptance are still open;
+source availability does not declare runtime adoption.

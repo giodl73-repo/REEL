@@ -335,6 +335,75 @@ fn one_command_build_renders_and_checks_an_independent_scene() {
         compiled_job["pictures"][0]["source"]["sha256"],
         picture["sha256"]
     );
+    // A persisted trim changes only the selected take's level. It cannot be
+    // replayed against a regenerated recording or another scene language.
+    let original_profile = compile.profile.clone();
+    let original_output = compile.output_dir.clone();
+    let mut gain_profile: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join(&original_profile)).unwrap()).unwrap();
+    let cue_id = compiled_job["audio"][0]["cue_id"].as_str().unwrap();
+    gain_profile["dialogue_gain_by_cue"] = serde_json::json!({
+        cue_id: {"source_sha256":compiled_job["audio"][0]["source"]["sha256"],"gain_db":3.0}
+    });
+    write_json(&root.join("dialogue-gain-profile.json"), &gain_profile);
+    compile.profile = "dialogue-gain-profile.json".into();
+    compile.output_dir = "compiled-dialogue-gain".into();
+    let gained = reel::scene_delivery_compile::compile_to_dir(root, &compile).unwrap();
+    assert_ne!(gained["job_sha256"], compilation["job_sha256"]);
+    let gained_job: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("compiled-dialogue-gain/job.json")).unwrap())
+            .unwrap();
+    let gained_production: serde_json::Value = serde_json::from_slice(
+        &fs::read(root.join("compiled-dialogue-gain/production.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(gained_job["audio"][0]["gain_db"], 3.0);
+    assert_eq!(gained_production["audio_events"][0]["gain_db"], 3.0);
+    assert_eq!(
+        gained_job["audio"][0]["source"],
+        compiled_job["audio"][0]["source"]
+    );
+    assert_eq!(gained_job["pictures"], compiled_job["pictures"]);
+    assert_eq!(gained_job["buses"], compiled_job["buses"]);
+    assert_eq!(gained["alignment_sha256"], compilation["alignment_sha256"]);
+    let baseline_plan = reel::scene_delivery::plan(&root.join("compiled-motion/job.json"), root)
+        .unwrap()
+        .1;
+    let gained_plan =
+        reel::scene_delivery::plan(&root.join("compiled-dialogue-gain/job.json"), root)
+            .unwrap()
+            .1;
+    assert_eq!(gained_plan.duration_samples, baseline_plan.duration_samples);
+    assert_eq!(
+        serde_json::to_value(&gained_plan.audio).unwrap(),
+        serde_json::to_value(&baseline_plan.audio).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(&gained_plan.pictures).unwrap(),
+        serde_json::to_value(&baseline_plan.pictures).unwrap()
+    );
+    for (name, bad) in [
+        (
+            "stale-dialogue-gain",
+            serde_json::json!({cue_id:{"source_sha256":"0".repeat(64),"gain_db":3.0}}),
+        ),
+        (
+            "foreign-dialogue-gain",
+            serde_json::json!({"another-language-cue":{"source_sha256":compiled_job["audio"][0]["source"]["sha256"],"gain_db":3.0}}),
+        ),
+        (
+            "excessive-dialogue-gain",
+            serde_json::json!({cue_id:{"source_sha256":compiled_job["audio"][0]["source"]["sha256"],"gain_db":61.0}}),
+        ),
+    ] {
+        gain_profile["dialogue_gain_by_cue"] = bad;
+        write_json(&root.join("dialogue-gain-profile.json"), &gain_profile);
+        compile.output_dir = name.into();
+        assert!(reel::scene_delivery_compile::compile_to_dir(root, &compile).is_err());
+        assert!(!root.join(name).exists());
+    }
+    compile.profile = original_profile;
+    compile.output_dir = original_output;
     // Motion is part of the exact job inside an immutable selected semantic
     // snapshot. Neither current authoring edits nor a stale pointer may reuse
     // that snapshot and publish a successful scene.
