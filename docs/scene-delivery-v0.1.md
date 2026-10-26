@@ -5,6 +5,10 @@ execution path. A consumer supplies selected pictures or precomposed motion clip
 native cue audio, music/effect excerpts, and explicit D/M/E policies. The renderer
 uses `CompiledAttachment` samples directly; it does not resolve anchors again.
 
+Rust applications can supply [exact input providers](scene-input-providers.md),
+including held Tig byte readers, through the `*_with_inputs` entry points. The
+CLI continues to use the explicit local asset root shown below.
+
 ```console
 reel scene-delivery-plan scene.yaml --asset-root local-assets --output-path plan.json
 reel scene-delivery-render scene.yaml --asset-root local-assets --output-dir scene-result
