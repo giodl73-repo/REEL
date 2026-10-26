@@ -610,6 +610,147 @@ fn file(root: &Path, name: &str) -> Value {
     json!({"path":name,"sha256":Sha256::digest(&b).iter().map(|b| format!("{b:02x}")).collect::<String>(),"bytes":b.len()})
 }
 
+/// Synthetic provider contract fixture. Actual Tig guard lifetimes are qualified
+/// separately; this backend exercises logical names and exact pin checks.
+struct MappedInputs {
+    files: std::collections::BTreeMap<std::path::PathBuf, scene_delivery::FileRef>,
+    requests: std::cell::RefCell<Vec<std::path::PathBuf>>,
+}
+
+impl scene_delivery::InputFiles for MappedInputs {
+    fn verified_path(
+        &self,
+        expected: &scene_delivery::FileRef,
+    ) -> anyhow::Result<std::path::PathBuf> {
+        self.requests.borrow_mut().push(expected.path.clone());
+        let actual = self
+            .files
+            .get(&expected.path)
+            .ok_or_else(|| anyhow::anyhow!("unmapped input"))?;
+        if actual.sha256 != expected.sha256 || actual.bytes != expected.bytes {
+            anyhow::bail!("stale input binding");
+        }
+        let bytes = fs::read(&actual.path)?;
+        let sha = Sha256::digest(&bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+        if sha != expected.sha256 || bytes.len() as u64 != expected.bytes {
+            anyhow::bail!("corrupt fixture bytes");
+        }
+        Ok(actual.path.clone())
+    }
+}
+
+fn map_media_inputs(root: &Path, job: &mut Value) -> MappedInputs {
+    let mut files = std::collections::BTreeMap::new();
+    for section in ["pictures", "audio"] {
+        for (index, entry) in job[section].as_array_mut().unwrap().iter_mut().enumerate() {
+            let mut actual: scene_delivery::FileRef =
+                serde_json::from_value(entry["source"].clone()).unwrap();
+            actual.path = root.join(&actual.path);
+            let logical = format!("asset-ids/{section}/{index}");
+            assert!(!root.join(&logical).exists());
+            entry["source"]["path"] = json!(logical);
+            files.insert(logical.into(), actual);
+        }
+    }
+    MappedInputs {
+        files,
+        requests: Default::default(),
+    }
+}
+
+#[test]
+fn mapped_inputs_preserve_plan_clocks_and_refuse_missing_or_stale_pins_before_output() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let mut job = fixture(root);
+    let path = root.join("job.json");
+    let (_, baseline) = scene_delivery::plan(&path, root).unwrap();
+    let inputs = map_media_inputs(root, &mut job);
+    write_json(&path, &job);
+    assert!(scene_delivery::plan(&path, root).is_err());
+    let (_, mapped) = scene_delivery::plan_with_inputs(&path, &inputs).unwrap();
+    let mut expected = serde_json::to_value(&baseline).unwrap();
+    let mapped = serde_json::to_value(&mapped).unwrap();
+    // The explicit job names changed; all resolved clocks/bindings stay equal.
+    expected["job_sha256"] = mapped["job_sha256"].clone();
+    assert_eq!(expected, mapped);
+    assert_eq!(inputs.requests.borrow().len(), 5);
+    for name in inputs.files.keys() {
+        assert!(inputs.requests.borrow().contains(name));
+    }
+    let output = root.join("not-published");
+    let empty = MappedInputs {
+        files: Default::default(),
+        requests: Default::default(),
+    };
+    assert!(scene_delivery::render_with_inputs(&path, &empty, &output).is_err());
+    assert!(!output.exists());
+    job["pictures"][0]["source"]["sha256"] = json!("0".repeat(64));
+    write_json(&path, &job);
+    assert!(scene_delivery::render_with_inputs(&path, &inputs, &output).is_err());
+    assert!(scene_delivery::render_audio_with_inputs(&path, &inputs, &output).is_err());
+    assert!(!output.exists());
+}
+
+#[test]
+#[ignore = "requires native FFmpeg; injected input parity and independent checks"]
+fn real_mapped_input_provider_matches_local_pixels_and_pcm_and_rejects_stale_pins() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let mut job = fixture(root);
+    let path = root.join("job.json");
+    let baseline = root.join("local");
+    scene_delivery::render(&path, root, &baseline).unwrap();
+    let inputs = map_media_inputs(root, &mut job);
+    write_json(&path, &job);
+    let mapped = root.join("mapped");
+    scene_delivery::render_with_inputs(&path, &inputs, &mapped).unwrap();
+    scene_delivery::check_with_inputs(&path, &inputs, &mapped).unwrap();
+    assert_picture_frames_match(
+        &baseline,
+        &mapped,
+        &["picture.mkv", "master.mkv", "review.mp4"],
+    );
+    let decode = |folder: &Path, name: &str| {
+        let output = Command::new("ffmpeg")
+            .args(["-v", "error", "-nostdin", "-i"])
+            .arg(folder.join(name))
+            .args(["-map", "0:a:0", "-acodec", "pcm_s24le", "-f", "s24le", "-"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output.stdout
+    };
+    for name in ["D.wav", "M.wav", "E.wav", "mix.wav", "master.mkv"] {
+        assert_eq!(
+            decode(&baseline, name),
+            decode(&mapped, name),
+            "PCM differs for {name}"
+        );
+    }
+    let audio = root.join("audio-only");
+    scene_delivery::render_audio_with_inputs(&path, &inputs, &audio).unwrap();
+    scene_delivery::check_audio_with_inputs(&path, &inputs, &audio).unwrap();
+    for name in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
+        assert_eq!(decode(&baseline, name), decode(&audio, name));
+    }
+    let receipt = fs::read(mapped.join("receipt.json")).unwrap();
+    assert!(!String::from_utf8_lossy(&receipt).contains(root.to_str().unwrap()));
+    job["audio"][0]["source"]["sha256"] = json!("0".repeat(64));
+    write_json(&path, &job);
+    assert!(scene_delivery::check_with_inputs(&path, &inputs, &mapped).is_err());
+    let rejected = root.join("stale-not-published");
+    assert!(scene_delivery::render_with_inputs(&path, &inputs, &rejected).is_err());
+    assert!(!rejected.exists());
+}
+
 #[test]
 #[ignore = "requires native FFmpeg; explicit mono channel mapping"]
 fn duplicate_mono_preserves_source_level_and_rejects_stereo() {

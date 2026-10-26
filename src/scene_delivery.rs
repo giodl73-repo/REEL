@@ -334,6 +334,31 @@ pub struct Plan {
     pub creative_authority: String,
 }
 
+/// Exact file access supplied for one synchronous scene delivery operation.
+///
+/// Custom providers must verify each requested hash/size and retain effective
+/// byte/path protection for their entire borrowed lifetime, including subprocess
+/// reads and independent checks. Return an error if protection is unavailable.
+/// A bare cached path or cooperative read handle is insufficient. Implementations
+/// are trusted adapters; REEL cannot sandbox incorrect lifetime/integrity claims.
+/// Path/PathBuf preserve the historical local-root checks without adding guards.
+/// Provider locations are not serialized into the job or its receipts.
+pub trait InputFiles {
+    fn verified_path(&self, item: &FileRef) -> Result<PathBuf>;
+}
+
+impl InputFiles for Path {
+    fn verified_path(&self, item: &FileRef) -> Result<PathBuf> {
+        checked_file(self, item)
+    }
+}
+
+impl InputFiles for PathBuf {
+    fn verified_path(&self, item: &FileRef) -> Result<PathBuf> {
+        self.as_path().verified_path(item)
+    }
+}
+
 pub(crate) fn checked_file(root: &Path, item: &FileRef) -> Result<PathBuf> {
     if item.path.is_absolute()
         || item
@@ -370,12 +395,15 @@ pub(crate) fn checked_file(root: &Path, item: &FileRef) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn timed_overlay_source<'a>(root: &Path, layer: &'a ExternalLayer) -> Result<&'a FileRef> {
+fn timed_overlay_source<'a>(
+    root: &(impl InputFiles + ?Sized),
+    layer: &'a ExternalLayer,
+) -> Result<&'a FileRef> {
     match (&layer.render_source, &layer.derivation_receipt) {
         (None, None) => Ok(&layer.evidence),
         (Some(source), Some(receipt_ref)) => {
-            checked_file(root, source)?;
-            let receipt_path = checked_file(root, receipt_ref)?;
+            root.verified_path(source)?;
+            let receipt_path = root.verified_path(receipt_ref)?;
             let receipt: TimedOverlayDerivation = serde_json::from_slice(&fs::read(receipt_path)?)?;
             if receipt.schema != "reel.timed-overlay-derivation.v1"
                 || receipt.selected_evidence != layer.evidence
@@ -386,7 +414,7 @@ fn timed_overlay_source<'a>(root: &Path, layer: &'a ExternalLayer) -> Result<&'a
                 bail!("timed overlay derivation does not bind selected evidence and source");
             }
             for input in &receipt.inputs {
-                checked_file(root, input)?;
+                root.verified_path(input)?;
             }
             Ok(source)
         }
@@ -410,6 +438,14 @@ pub fn picture_layout(
 }
 
 pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
+    plan_with_inputs(job_path, asset_root)
+}
+
+/// Plan against exact inputs retained by the borrowed provider.
+pub fn plan_with_inputs(
+    job_path: &Path,
+    asset_root: &(impl InputFiles + ?Sized),
+) -> Result<(Job, Plan)> {
     let job_bytes = fs::read(job_path)?;
     let mut job: Job = serde_yaml::from_slice(&job_bytes)?;
     if job.schema != "reel.scene-delivery.v0.1" || !nonempty(&job.id) {
@@ -532,7 +568,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         if !nonempty(&p.attention) || a.start_sample != cursor || a.end_sample <= a.start_sample {
             bail!("picture attention missing or coverage gap/overlap");
         }
-        checked_file(asset_root, &p.source)?;
+        asset_root.verified_path(&p.source)?;
         if p.kind == PictureKind::Still && p.source_start_frame != 0 {
             bail!("still pictures cannot have a source frame offset");
         }
@@ -676,7 +712,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         {
             bail!("invalid audio span/fades");
         }
-        checked_file(asset_root, &event.source)?;
+        asset_root.verified_path(&event.source)?;
         if matches!(
             event.channel_mapping,
             Some(AudioChannelMapping::DownmixMonoDuplicate)
@@ -718,7 +754,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
             if event.bus != "E" || !nonempty(&offset.reason) {
                 bail!("audio placement offsets require an E event and an explicit reason");
             }
-            checked_file(asset_root, &offset.evidence)?;
+            asset_root.verified_path(&offset.evidence)?;
             (rendered.start_sample, rendered.end_sample) = audio_placement_samples(
                 anchor.start_sample,
                 anchor.end_sample,
@@ -783,15 +819,15 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         {
             bail!("invalid external layer; primary picture/audio cannot be omitted");
         }
-        checked_file(asset_root, &layer.evidence)?;
+        asset_root.verified_path(&layer.evidence)?;
         if let Some(font) = &layer.font {
-            checked_file(asset_root, font)?;
+            asset_root.verified_path(font)?;
         }
         match layer.render_mode {
             ExternalLayerRenderMode::AssOverlay => {
                 // Content-addressed cache objects have a hash for a filename,
                 // so the ASS format cannot be inferred from the extension.
-                let ass = fs::read_to_string(checked_file(asset_root, &layer.evidence)?)?;
+                let ass = fs::read_to_string(asset_root.verified_path(&layer.evidence)?)?;
                 if !ass
                     .trim_start_matches('\u{feff}')
                     .starts_with("[Script Info]")
@@ -822,7 +858,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                     );
                 }
                 let recipe: PictureTransformRecipe =
-                    serde_json::from_slice(&fs::read(checked_file(asset_root, &layer.evidence)?)?)?;
+                    serde_json::from_slice(&fs::read(asset_root.verified_path(&layer.evidence)?)?)?;
                 if recipe.schema != "reel.timed-picture-transform.v1" {
                     bail!("wrong picture transform recipe schema");
                 }
@@ -867,7 +903,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
                     delivery_frames,
                     explicit_picture_frames,
                 )?;
-                let source = checked_file(asset_root, timed_overlay_source(asset_root, layer)?)?;
+                let source = asset_root.verified_path(timed_overlay_source(asset_root, layer)?)?;
                 let info = probe(&source)?;
                 let video = info["streams"]
                     .as_array()
@@ -985,7 +1021,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
             );
         }
         let recipe: PictureTransformRecipe =
-            serde_json::from_slice(&fs::read(checked_file(asset_root, &first.evidence)?)?)?;
+            serde_json::from_slice(&fs::read(asset_root.verified_path(&first.evidence)?)?)?;
         let mut windows = transforms
             .iter()
             .map(|layer| {
@@ -1010,7 +1046,7 @@ pub fn plan(job_path: &Path, asset_root: &Path) -> Result<(Job, Plan)> {
         });
     }
     if let Some(camera) = &job.post_compose_camera {
-        checked_file(asset_root, &camera.evidence)?;
+        asset_root.verified_path(&camera.evidence)?;
         if !camera.zoom_step.is_finite()
             || camera.zoom_step <= 0.0
             || !camera.zoom_max.is_finite()
@@ -1103,8 +1139,13 @@ fn indexed_layer_source_name(layer: &ExternalLayer, index: usize) -> String {
     }
 }
 
-fn copy_ass_layer(root: &Path, asset_root: &Path, layer: &ExternalLayer, name: &str) -> Result<()> {
-    fs::copy(checked_file(asset_root, &layer.evidence)?, root.join(name))?;
+fn copy_ass_layer(
+    root: &Path,
+    asset_root: &(impl InputFiles + ?Sized),
+    layer: &ExternalLayer,
+    name: &str,
+) -> Result<()> {
+    fs::copy(asset_root.verified_path(&layer.evidence)?, root.join(name))?;
     if let Some(font) = &layer.font {
         fs::create_dir(root.join("fonts"))?;
         let name = font
@@ -1112,7 +1153,7 @@ fn copy_ass_layer(root: &Path, asset_root: &Path, layer: &ExternalLayer, name: &
             .file_name()
             .context("selected font has no file name")?;
         fs::copy(
-            checked_file(asset_root, font)?,
+            asset_root.verified_path(font)?,
             root.join("fonts").join(name),
         )?;
     }
@@ -1586,7 +1627,16 @@ const AUDIO_OUTPUTS: [&str; 4] = ["D.wav", "M.wav", "E.wav", "mix.wav"];
 /// Render native D/M/E/mix for independent soundtrack qualification without
 /// producing scene pictures. All job/source bindings are still planned.
 pub fn render_audio(job_path: &Path, asset_root: &Path, output: &Path) -> Result<AudioReceipt> {
-    let (job, plan) = plan(job_path, asset_root)?;
+    render_audio_with_inputs(job_path, asset_root, output)
+}
+
+/// Use exact inputs retained by the borrowed provider through this operation.
+pub fn render_audio_with_inputs(
+    job_path: &Path,
+    asset_root: &(impl InputFiles + ?Sized),
+    output: &Path,
+) -> Result<AudioReceipt> {
+    let (job, plan) = plan_with_inputs(job_path, asset_root)?;
     if output.exists() {
         bail!("audio output already exists; use a new directory");
     }
@@ -1633,7 +1683,7 @@ pub fn render_audio(job_path: &Path, asset_root: &Path, output: &Path) -> Result
         root.join("audio-receipt.json"),
         serde_json::to_vec_pretty(&receipt)?,
     )?;
-    let verified = check_audio(job_path, asset_root, root)?;
+    let verified = check_audio_with_inputs(job_path, asset_root, root)?;
     fs::rename(root, output)?;
     Ok(verified)
 }
@@ -1641,7 +1691,16 @@ pub fn render_audio(job_path: &Path, asset_root: &Path, output: &Path) -> Result
 /// Verify an audio-only receipt, its exact job/plan and four decoded PCM clocks.
 /// This receipt cannot be consumed as a complete scene-delivery receipt.
 pub fn check_audio(job_path: &Path, asset_root: &Path, output: &Path) -> Result<AudioReceipt> {
-    let (_, plan) = plan(job_path, asset_root)?;
+    check_audio_with_inputs(job_path, asset_root, output)
+}
+
+/// Use exact inputs retained by the borrowed provider through this operation.
+pub fn check_audio_with_inputs(
+    job_path: &Path,
+    asset_root: &(impl InputFiles + ?Sized),
+    output: &Path,
+) -> Result<AudioReceipt> {
+    let (_, plan) = plan_with_inputs(job_path, asset_root)?;
     let receipt: AudioReceipt =
         serde_json::from_slice(&fs::read(output.join("audio-receipt.json"))?)?;
     if receipt.schema != "reel.scene-audio-receipt.v0.1"
@@ -1680,7 +1739,16 @@ pub fn check_audio(job_path: &Path, asset_root: &Path, output: &Path) -> Result<
 }
 
 pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receipt> {
-    let (job, plan) = plan(job_path, asset_root)?;
+    render_with_inputs(job_path, asset_root, output)
+}
+
+/// Use exact inputs retained by the borrowed provider through this operation.
+pub fn render_with_inputs(
+    job_path: &Path,
+    asset_root: &(impl InputFiles + ?Sized),
+    output: &Path,
+) -> Result<Receipt> {
+    let (job, plan) = plan_with_inputs(job_path, asset_root)?;
     if job
         .still_sequence_encoding
         .as_deref()
@@ -1732,7 +1800,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         let p = &job.pictures[start];
         let s = &plan.pictures[start];
         let group_frames = plan.pictures[end - 1].end_frame - s.start_frame;
-        let path = checked_file(asset_root, &p.source)?;
+        let path = asset_root.verified_path(&p.source)?;
         let info = probe(&path)?;
         let stream = info["streams"]
             .as_array()
@@ -1883,7 +1951,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                         .find(|span| span.attachment_id == layer.attachment_id)
                         .context("timed overlay span missing")?;
                     let source =
-                        checked_file(asset_root, timed_overlay_source(asset_root, layer)?)?;
+                        asset_root.verified_path(timed_overlay_source(asset_root, layer)?)?;
                     if decoded_video_frames(&source)? < span.end_frame - span.start_frame {
                         bail!("timed overlay lacks frames for its selected span");
                     }
@@ -1922,7 +1990,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
                     .iter()
                     .find(|span| span.attachment_id == layer.attachment_id)
                     .context("timed overlay span missing")?;
-                let source = checked_file(asset_root, timed_overlay_source(asset_root, layer)?)?;
+                let source = asset_root.verified_path(timed_overlay_source(asset_root, layer)?)?;
                 if decoded_video_frames(&source)? < span.end_frame - span.start_frame {
                     bail!("timed overlay lacks frames for its selected span");
                 }
@@ -2063,7 +2131,7 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
         root.join("receipt.json"),
         serde_json::to_vec_pretty(&receipt)?,
     )?;
-    let verified = check(job_path, asset_root, root)?;
+    let verified = check_with_inputs(job_path, asset_root, root)?;
     if serde_json::to_vec(&receipt.outputs)? != serde_json::to_vec(&verified.outputs)? {
         bail!("render and independent check disagree on output bytes");
     }
@@ -2072,7 +2140,12 @@ pub fn render(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Recei
     Ok(verified)
 }
 
-fn render_audio_stems(job: &Job, plan: &Plan, asset_root: &Path, root: &Path) -> Result<()> {
+fn render_audio_stems(
+    job: &Job,
+    plan: &Plan,
+    asset_root: &(impl InputFiles + ?Sized),
+    root: &Path,
+) -> Result<()> {
     for bus in ["D", "M", "E"] {
         let mut inputs = Vec::new();
         let mut filters = Vec::new();
@@ -2084,7 +2157,7 @@ fn render_audio_stems(job: &Job, plan: &Plan, asset_root: &Path, root: &Path) ->
             .zip(&plan.audio)
             .filter(|(a, _)| a.bus == bus)
         {
-            let path = checked_file(asset_root, &event.source)?;
+            let path = asset_root.verified_path(&event.source)?;
             let info = probe(&path)?;
             let streams = info["streams"]
                 .as_array()
@@ -2202,6 +2275,15 @@ fn render_audio_stems(job: &Job, plan: &Plan, asset_root: &Path, root: &Path) ->
 }
 
 pub fn check(job_path: &Path, asset_root: &Path, output: &Path) -> Result<Receipt> {
+    check_with_inputs(job_path, asset_root, output)
+}
+
+/// Use exact inputs retained by the borrowed provider through this operation.
+pub fn check_with_inputs(
+    job_path: &Path,
+    asset_root: &(impl InputFiles + ?Sized),
+    output: &Path,
+) -> Result<Receipt> {
     check_impl(job_path, asset_root, output, true)
 }
 
@@ -2218,11 +2300,11 @@ pub(crate) fn recheck_native_receipt(
 
 fn check_impl(
     job_path: &Path,
-    asset_root: &Path,
+    asset_root: &(impl InputFiles + ?Sized),
     output: &Path,
     decode_media: bool,
 ) -> Result<Receipt> {
-    let (job, plan) = plan(job_path, asset_root)?;
+    let (job, plan) = plan_with_inputs(job_path, asset_root)?;
     let receipt: Receipt = serde_json::from_slice(&fs::read(output.join("receipt.json"))?)?;
     if receipt.schema != "reel.scene-delivery-receipt.v0.1"
         || serde_json::to_value(&receipt.plan)? != serde_json::to_value(&plan)?
@@ -2382,7 +2464,7 @@ fn check_impl(
                 {
                     bail!("rendered presentation font differs from selected font");
                 }
-                let ass = fs::read_to_string(checked_file(asset_root, &layer.evidence)?)?;
+                let ass = fs::read_to_string(asset_root.verified_path(&layer.evidence)?)?;
                 let frames = ass_visibility_frames(
                     &ass,
                     plan.fps_numerator,
@@ -2455,7 +2537,7 @@ fn check_impl(
                         bail!("rendered presentation font differs from selected font");
                     }
                 }
-                let ass = fs::read_to_string(checked_file(asset_root, &layer.evidence)?)?;
+                let ass = fs::read_to_string(asset_root.verified_path(&layer.evidence)?)?;
                 let frames = ass_visibility_frames(
                     &ass,
                     plan.fps_numerator,
