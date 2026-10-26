@@ -43,3 +43,12 @@ updates, followed by an explicit passing real CLI render/version/replay run.
 Workspace all-target/all-feature warnings-denied Clippy, no-default-feature library
 compilation, formatting and whitespace checks pass. Exact-head Windows/Linux CI
 is still a merge obligation; full readiness requirements remain OPEN.
+
+Actual-fixture finding corrected: asset IDs/definition IDs are bounded opaque
+tokens, while Git scope/placement paths have separate portable-path constraints.
+The source's colon-separated IDs now resolve unchanged. A regression captures
+opaque IDs through real Git. Font output naming was also isolated from opaque
+IDs: valid legacy basenames remain unchanged; unsafe names use the exact byte pin.
+The real mapped-provider test now includes an opaque ASS/font ID and preserves
+decoded pixels/PCM. Final targeted count: 13 passed/one ignored, with the real
+native CLI case separately passed; warnings-denied Clippy remains required again.

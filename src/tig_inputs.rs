@@ -91,8 +91,14 @@ fn logical(path: &Path) -> Result<String> {
     let value = path
         .to_str()
         .ok_or_else(|| anyhow!("non-Unicode asset ID"))?;
-    LogicalPath::parse(value).map_err(|_| anyhow!("invalid portable asset ID"))?;
+    token(value, 256)?;
     Ok(value.to_owned())
+}
+fn token(value: &str, max: usize) -> Result<()> {
+    if value.is_empty() || value.len() > max || value.chars().any(char::is_control) {
+        bail!("invalid bounded asset token");
+    }
+    Ok(())
 }
 
 /// One bounded immutable metadata view and an explicit existing-byte provider.
@@ -113,9 +119,9 @@ impl Source {
         }
         let mut admitted = BTreeMap::new();
         for entry in profile.admitted {
-            LogicalPath::parse(&entry.id).map_err(|_| anyhow!("invalid definition ID"))?;
+            token(&entry.id, 256)?;
             if let Payload::Stream { slot } = &entry.payload
-                && (slot.is_empty() || slot.len() > 128)
+                && (slot.is_empty() || slot.len() > 128 || slot.chars().any(char::is_control))
             {
                 bail!("invalid stream selector");
             }

@@ -190,7 +190,7 @@ impl Fixture {
         .unwrap();
         write(
             self.root(),
-            &format!("records/{}.tig", id.replace('/', "-")),
+            &format!("records/{}.tig", id.replace(['/', ':'], "-")),
             &json!({"schema":"tig.instance.design-1","id":id,"definition":{"id":"types/media","sha256":self.media.sha256,"bytes":self.media.bytes},"authored":{},"streams":[],"selected":object,"status":{},"metadata":{}}),
         );
         object
@@ -422,6 +422,39 @@ fn prepared_inputs_deduplicate_guard_bytes_and_survive_source_drop() {
     assert!(inputs.verified_path(&wrong).is_err());
     drop(inputs);
     assert!(fs::OpenOptions::new().write(true).open(path).is_ok());
+}
+
+#[cfg(windows)]
+#[test]
+fn opaque_asset_and_definition_ids_are_not_local_filesystem_paths() {
+    let mut f = Fixture::new();
+    let id = "scene:picture.p01";
+    let object = f.add(id, &picture([255, 0, 0]));
+    let mut definition: Value =
+        serde_json::from_slice(&fs::read(f.root().join("definitions/media.json")).unwrap())
+            .unwrap();
+    definition["id"] = json!("types:media");
+    let pin = write(f.root(), "definitions/media.json", &definition);
+    for entry in fs::read_dir(f.root().join("records")).unwrap() {
+        let path = entry.unwrap().path();
+        let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        if record["definition"]["id"] == "types/media" {
+            record["definition"] =
+                json!({"id":"types:media","sha256":pin.sha256,"bytes":pin.bytes});
+            fs::write(path, serde_json::to_vec(&record).unwrap()).unwrap();
+        }
+    }
+    f.profile["admitted"][0]["id"] = json!("types:media");
+    f.profile["admitted"][0]["object"] = serde_json::to_value(pin).unwrap();
+    f.profile["byte_source"]["required"] = json!("prevent-mutation");
+    git(f.root(), &["add", "definitions/media.json"]);
+    f.commit();
+    f.job["pictures"][0]["source"] = reference(id, &object);
+    let job: Job = serde_json::from_value(f.job.clone()).unwrap();
+    let inputs = f.source().prepare(&job).unwrap();
+    let physical = inputs.verified_path(&job.pictures[0].source).unwrap();
+    assert_eq!(fs::read(physical).unwrap(), picture([255, 0, 0]));
+    assert!(!f.root().join("scene:picture.p01").exists());
 }
 
 #[cfg(windows)]

@@ -43,8 +43,10 @@ JSON reports the captured metadata checkpoint, input-name/verified-object counts
 the normal REEL plan/receipt, and `complete_semantic_coverage: false`. Cache paths
 are not added to that result. Operational errors remain private diagnostics.
 
-Each job `FileRef.path` is the exact portable Tig ID, such as `cel/ending` or
-`cue/014`; its hash and byte count remain mandatory. Job/contract/production
+Each job `FileRef.path` is the exact opaque Tig asset ID, such as `cel/ending`,
+`cue/014` or `scene:picture.p01`; its hash and byte count remain mandatory. Asset
+and definition IDs follow Tig's bounded token contract, not filesystem pathname
+rules. Git namespace scopes remain portable paths. Job/contract/production
 metadata are still explicit local files, not automatically materialized from Tig.
 The CLI resolves a relative job filename to an absolute file before REEL uses
 its parent directory, preserving local contract-relative lookup.
@@ -127,3 +129,11 @@ target passed 12 tests with its one external-tool case ignored; that real CLI ca
 was then executed explicitly and passed. Workspace all-target/all-feature Clippy
 with warnings denied, the no-default-feature library build, formatting and
 whitespace checks pass. Current-head Windows/Linux CI remains required for merge.
+
+The first actual scene fixture exposed colon-separated source IDs. The adapter
+now preserves those IDs instead of applying placement-path restrictions to them.
+An additional test resolves opaque asset/definition IDs from actual Git metadata.
+Font staging preserves valid existing basenames and uses the byte hash when an
+opaque ID would make an unsafe/reserved filename; real mapped rendering with an
+opaque font/ASS ID matches the local pixels and PCM. The final backend target has
+13 passing tests/one ignored case, plus the explicit passing real CLI case.
