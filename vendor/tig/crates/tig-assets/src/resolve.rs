@@ -32,6 +32,7 @@ pub struct Resolved {
     selected: Option<Object>,
     streams: Vec<StreamBinding>,
     authored: Arc<Map<String, Value>>,
+    status: Arc<Map<String, Value>>,
 }
 
 #[derive(Clone, Debug)]
@@ -58,6 +59,7 @@ impl Resolved {
             },
             selected: value.selected.as_ref().map(|p| p.object()),
             authored: Arc::new(value.authored.clone()),
+            status: Arc::new(value.status.clone()),
             streams: value
                 .streams
                 .iter()
@@ -94,6 +96,11 @@ impl Resolved {
     }
     pub fn authored(&self) -> &Map<String, Value> {
         &self.authored
+    }
+    /// Project-owned values from this exact record revision. This does not
+    /// interpret eligibility or grant production, publication or removal authority.
+    pub fn status(&self) -> &Map<String, Value> {
+        &self.status
     }
     pub fn complete_semantic_coverage(&self) -> bool {
         false

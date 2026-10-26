@@ -1,7 +1,7 @@
 {
   "schema": "reel.vendored-source.v1",
   "repository": "https://github.com/giodl73-repo/tig",
-  "commit": "12757c21e9f896946b21a6a0dca653bf61177e5b",
+  "commit": "7e43e272eb6e96f6b6b464b9b2ee267dd5d3cf9c",
   "license": "MIT",
   "scope": "Cargo manifests and Rust src files; upstream bytes unchanged; external test suites and documentation omitted",
   "files": [
@@ -42,8 +42,8 @@
     },
     {
       "path": "crates/tig-assets/src/resolve.rs",
-      "bytes": 3533,
-      "sha256": "430ff4ccb306185cd04896dd81fb5debfcca7fa16ea83e9c59300f2ae916ace3"
+      "bytes": 3860,
+      "sha256": "3170370b73207b700dba61d2981e48999f2e5df4f5e9209ec13c1ce962e438f0"
     },
     {
       "path": "crates/tig-core/Cargo.toml",
