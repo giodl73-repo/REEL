@@ -151,6 +151,132 @@ fn edited_candidate(temp: &Path, mixed: bool) -> PathBuf {
 fn manifest() -> CompileManifest {
     serde_json::from_value(json!({"schema":"reel.scene-delivery-compile.v1","catalog":"catalog.json","episode":"episode.json","scene":"scene.json","policy":"policy.json","season_bindings":"season-bindings.json","episode_bindings":"episode-bindings.json","scene_bindings":"scene-bindings.json","graph":"selected-graph.json","pointer":"selected-pointer.json","alignment_paths":"timing/paths.json","profile":"profile.json","language":"es","delivery_id":"synthetic-edit","delivery_title":"Synthetic native edit","output_dir":"delivery"})).unwrap()
 }
+
+#[test]
+fn compiler_asset_ids_preserve_selected_pins_and_native_timing() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = edited_candidate(temp.path(), false);
+    let mut request = manifest();
+    request.output_dir = "legacy".into();
+    compile_to_dir(&root, &request).unwrap();
+    let legacy = get(&root.join("legacy/job.json"));
+    let mut profile = get(&root.join("profile.json"));
+    profile["asset_paths"] = json!("asset-id");
+    put(&root.join("profile.json"), &profile);
+    request.output_dir = "native".into();
+    compile_to_dir(&root, &request).unwrap();
+    let mut native = get(&root.join("native/job.json"));
+    let bindings = get(&root.join("scene-bindings.json"));
+    let mut count = 0;
+    for lane in ["pictures", "audio"] {
+        let old = legacy[lane].as_array().unwrap();
+        let next = native[lane].as_array_mut().unwrap();
+        assert_eq!(old.len(), next.len());
+        for (old, next) in old.iter().zip(next) {
+            let source = &mut next["source"];
+            let selected = bindings["assets"]
+                .as_object()
+                .unwrap()
+                .values()
+                .find(|asset| {
+                    asset["logical_id"] == source["path"] && asset["sha256"] == source["sha256"]
+                })
+                .expect("source must name a selected binding");
+            assert_eq!(source["bytes"], selected["bytes"]);
+            assert_eq!(source["sha256"], old["source"]["sha256"]);
+            assert!(
+                old["source"]["path"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("objects/sha256/")
+            );
+            source["path"] = old["source"]["path"].clone();
+            assert_eq!(next, old, "only source path representation may differ");
+            count += 1;
+        }
+    }
+    assert!(
+        count >= 4,
+        "fixture must exercise pictures and shared cue recordings"
+    );
+    assert_eq!(native["contract"], legacy["contract"]);
+    // Unsupported modes must fail instead of guessing how to resolve bytes.
+    profile["asset_paths"] = json!("automatic-latest");
+    put(&root.join("profile.json"), &profile);
+    request.output_dir = "refused".into();
+    assert!(compile_to_dir(&root, &request).is_err());
+}
+#[test]
+fn compiler_asset_id_placement_evidence_uses_the_input_provider() {
+    use reel::scene_delivery::{FileRef, InputFiles};
+    use std::cell::Cell;
+    struct Evidence {
+        expected: FileRef,
+        path: PathBuf,
+        calls: Cell<usize>,
+    }
+    impl InputFiles for Evidence {
+        fn verified_path(&self, item: &FileRef) -> anyhow::Result<PathBuf> {
+            assert_eq!(item, &self.expected);
+            let object = fixtures::asset(&fs::read(&self.path)?);
+            anyhow::ensure!(object["sha256"] == item.sha256 && object["bytes"] == item.bytes);
+            self.calls.set(self.calls.get() + 1);
+            Ok(self.path.clone())
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let root = edited_candidate(temp.path(), false);
+    let mut bindings = get(&root.join("scene-bindings.json"));
+    bindings["assets"]["sonic.test"] = fixtures::asset(b"synthetic sound");
+    let evidence = fixtures::asset(b"synthetic placement decision");
+    bindings["assets"]["placement.decision"] = evidence.clone();
+    put(&root.join("scene-bindings.json"), &bindings);
+    let mut scene = get(&root.join("scene.json"));
+    scene["shared_events"][0]["sonic_bindings"] = json!(["sonic.test"]);
+    put(&root.join("scene.json"), &scene);
+    let mut profile = get(&root.join("profile.json"));
+    profile["asset_paths"] = json!("asset-id");
+    profile["sonic_placement_offsets_by_binding"] = json!({"sonic.test":{
+        "samples":0,"reason":"synthetic placement check","evidence_binding":"placement.decision"
+    }});
+    put(&root.join("profile.json"), &profile);
+    let path = root.join("placement.json");
+    fs::write(&path, b"synthetic placement decision").unwrap();
+    let provider = Evidence {
+        expected: serde_json::from_value(json!({"path":evidence["logical_id"],"sha256":evidence["sha256"],"bytes":evidence["bytes"]})).unwrap(),
+        path,
+        calls: Cell::new(0),
+    };
+    let mut request = manifest();
+    request.output_dir = "local-refused".into();
+    assert!(compile_to_dir(&root, &request).is_err());
+    request.output_dir = "provider".into();
+    reel::scene_delivery_compile::compile_to_dir_with_inputs(&root, &request, &provider).unwrap();
+    assert_eq!(provider.calls.get(), 1);
+    let job = get(&root.join("provider/job.json"));
+    let effect = job["audio"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["bus"] == "E")
+        .unwrap();
+    assert_eq!(
+        effect["placement_offset"]["evidence"]["path"],
+        evidence["logical_id"]
+    );
+    let production = get(&root.join("provider/production.json"));
+    let event = production["audio_events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["role"] == "effect")
+        .unwrap();
+    assert_eq!(
+        event["source"],
+        bindings["assets"]["sonic.test"]["logical_id"]
+    );
+}
+
 #[test]
 fn inserted_native_cel_compiles_both_languages_and_preserves_existing_slot_revisions() {
     for separate in [false, true] {
