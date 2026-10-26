@@ -47,6 +47,9 @@ pub struct CompileManifest {
 #[serde(deny_unknown_fields)]
 pub struct DeliveryProfile {
     pub schema: String,
+    /// Explicit producer representation; legacy jobs keep cache-relative names.
+    #[serde(default)]
+    pub asset_paths: AssetPaths,
     pub width: u32,
     pub height: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -79,6 +82,14 @@ pub struct DeliveryProfile {
         BTreeMap<String, crate::scene_delivery::AudioChannelMapping>,
     #[serde(default)]
     pub sonic_placement_offsets_by_binding: BTreeMap<String, SonicPlacementOffset>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AssetPaths {
+    #[default]
+    CacheRelative,
+    AssetId,
 }
 
 #[derive(Deserialize)]
@@ -341,9 +352,17 @@ fn asset<'a>(key: &str, scopes: &[&'a ScopedBindings]) -> Result<&'a AssetRef> {
     Ok(item)
 }
 
-fn media_ref(item: &AssetRef) -> Value {
+fn media_path(item: &AssetRef, mode: AssetPaths) -> String {
+    match mode {
+        AssetPaths::CacheRelative => {
+            format!("objects/sha256/{}/{}", &item.sha256[..2], item.sha256)
+        }
+        AssetPaths::AssetId => item.logical_id.clone(),
+    }
+}
+fn media_ref(item: &AssetRef, mode: AssetPaths) -> Value {
     json!({
-        "path":format!("objects/sha256/{}/{}", &item.sha256[..2], item.sha256),
+        "path":media_path(item, mode),
         "sha256":item.sha256,
         "bytes":item.bytes
     })
@@ -487,6 +506,16 @@ fn score_role(score: &ScoreUse) -> Result<Option<String>> {
 
 /// This writes new files only. It never guesses phrase clocks or creative assets.
 pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
+    compile_to_dir_with_inputs(root, request, root)
+}
+
+/// Compile local controls while resolving any media evidence through the same
+/// exact-pin input provider used by the renderer. The caller owns its guards.
+pub fn compile_to_dir_with_inputs(
+    root: &Path,
+    request: &CompileManifest,
+    inputs: &(impl crate::scene_delivery::InputFiles + ?Sized),
+) -> Result<Value> {
     if request.schema != "reel.scene-delivery-compile.v1" {
         bail!("unsupported scene delivery compile schema");
     }
@@ -742,7 +771,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         shots.push(json!({"id":shot_id,"scene_id":id}));
         pictures.push(json!({
             "attachment_id":picture_id,
-            "source":media_ref(&event.picture),
+            "source":media_ref(&event.picture, profile.asset_paths),
             "kind":"still",
             "attention":format!("source concept {}; private audition",event.semantic_id)
         }));
@@ -799,7 +828,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         let attachment = format!("d-{}", cue.cue_id);
         audio.push(json!({
             "attachment_id":attachment,
-            "source":media_ref(take),
+            "source":media_ref(take, profile.asset_paths),
             "bus":"D",
             "cue_id":cue.cue_id
         }));
@@ -813,7 +842,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         audio_events.push(json!({
             "id":cue.cue_id,
             "role":"narration",
-            "source":format!("objects/sha256/{}/{}", &take.sha256[..2],take.sha256),
+            "source":media_path(take, profile.asset_paths),
             "start_seconds":0
         }));
         if let Some(gain) = dialogue_gain_db(&profile, &cue.cue_id, &take.sha256)? {
@@ -879,7 +908,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         }
         audio.push(json!({
             "attachment_id":attachment,
-            "source":media_ref(score),
+            "source":media_ref(score, profile.asset_paths),
             "bus":"M",
             "source_start_sample":0,
             "gain_db":profile.score_gain_db,
@@ -889,7 +918,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         audio_events.push(json!({
             "id":attachment,
             "role":"music",
-            "source":format!("objects/sha256/{}/{}", &score.sha256[..2],score.sha256),
+            "source":media_path(score, profile.asset_paths),
             "start_seconds":0
         }));
         attachments.push(json!({
@@ -943,7 +972,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
             let attachment = format!("{}-{}", delivery_id("e", &event.semantic_id), position + 1);
             audio.push(json!({
                 "attachment_id": attachment,
-                "source": media_ref(sonic),
+                "source": media_ref(sonic, profile.asset_paths),
                 "bus": "E",
                 "source_start_sample": 0,
                 "gain_db": sonic_gain_db(&profile, key)
@@ -957,8 +986,8 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
                 }
                 let evidence = asset(&offset.evidence_binding, &scopes)?;
                 let reference: crate::scene_delivery::FileRef =
-                    serde_json::from_value(media_ref(evidence))?;
-                crate::scene_delivery::checked_file(&root, &reference)?;
+                    serde_json::from_value(media_ref(evidence, profile.asset_paths))?;
+                inputs.verified_path(&reference)?;
                 crate::scene_delivery::audio_placement_samples(
                     event.start,
                     events[run_end - 1].end,
@@ -966,13 +995,13 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
                     offset.samples,
                 )?;
                 audio.last_mut().unwrap()["placement_offset"] = json!({
-                    "samples":offset.samples, "reason":offset.reason, "evidence":media_ref(evidence)
+                    "samples":offset.samples, "reason":offset.reason, "evidence":media_ref(evidence, profile.asset_paths)
                 });
             }
             audio_events.push(json!({
                 "id": attachment,
                 "role": "effect",
-                "source": format!("objects/sha256/{}/{}", &sonic.sha256[..2], sonic.sha256),
+                "source": media_path(sonic, profile.asset_paths),
                 "start_seconds": 0
             }));
             attachments.push(json!({
@@ -1026,7 +1055,7 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
             external_layers.push(json!({
                 "attachment_id": attachment,
                 "reason": format!("Selected semantic VFX for {}", event.semantic_id),
-                "evidence": media_ref(overlay),
+                "evidence": media_ref(overlay, profile.asset_paths),
                 "render_mode": mode
             }));
             for binding in &mut event_bindings[index..run_end] {
@@ -1075,11 +1104,11 @@ pub fn compile_to_dir(root: &Path, request: &CompileManifest) -> Result<Value> {
         let mut external = json!({
             "attachment_id": attachment,
             "reason": format!("Editable {} master", presentation.role),
-            "evidence": media_ref(layer),
+            "evidence": media_ref(layer, profile.asset_paths),
             "render_mode": "ass-overlay"
         });
         if let Some(font) = font {
-            external["font"] = media_ref(font);
+            external["font"] = media_ref(font, profile.asset_paths);
         }
         external_layers.push(external);
         for binding in &mut event_bindings {
@@ -1257,12 +1286,32 @@ fn active_scene_events<'a>(
 #[cfg(test)]
 mod tests {
     use super::{
-        CueClock, DeliveryProfile, Graph, ScopedBindings, SelectedPointer, active_scene_events,
-        anchor, close_delivery_graph, delivery_id, presentation_binding, score_role,
-        selected_closure, sonic_gain_db,
+        AssetPaths, CueClock, DeliveryProfile, Graph, ScopedBindings, SelectedPointer,
+        active_scene_events, anchor, close_delivery_graph, delivery_id, media_ref,
+        presentation_binding, score_role, selected_closure, sonic_gain_db,
     };
     use reel_assembly::scene_authoring::ScoreUse;
     use serde_json::json;
+
+    #[test]
+    fn asset_id_representation_keeps_opaque_ids_and_exact_pins() {
+        let item = serde_json::from_value(json!({
+            "logical_id":"scene:sonic.thunder.es", "sha256":"a".repeat(64),
+            "cache_uri":format!("cache://sha256/{}", "a".repeat(64)),
+            "bytes":256, "selection_state":"selected-private-production"
+        }))
+        .unwrap();
+        let legacy = media_ref(&item, AssetPaths::default());
+        let native = media_ref(&item, AssetPaths::AssetId);
+        assert_eq!(
+            legacy["path"],
+            format!("objects/sha256/aa/{}", "a".repeat(64))
+        );
+        assert_eq!(native["path"], "scene:sonic.thunder.es");
+        assert_eq!(native["sha256"], legacy["sha256"]);
+        assert_eq!(native["bytes"], legacy["bytes"]);
+        assert!(serde_json::from_value::<AssetPaths>(json!("automatic-latest")).is_err());
+    }
 
     #[test]
     fn sonic_gain_override_preserves_the_default_for_other_bindings() {

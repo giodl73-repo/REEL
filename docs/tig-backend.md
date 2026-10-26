@@ -48,6 +48,21 @@ Each job `FileRef.path` is the exact opaque Tig asset ID, such as `cel/ending`,
 and definition IDs follow Tig's bounded token contract, not filesystem pathname
 rules. Git namespace scopes remain portable paths. Job/contract/production
 metadata are still explicit local files, not automatically materialized from Tig.
+When compiling native scene metadata, set `"asset_paths": "asset-id"` in the
+`reel.scene-delivery-profile.v1` profile. The compiler emits each selected
+binding's `logical_id` in job and production source fields, retaining its exact
+SHA-256 and byte count. This applies to pictures, recordings, music, sonic
+effects, placement evidence, overlay evidence and fonts. Pass the generated job
+to `reel-tig-scene` with the explicit source profile above. Omitted `asset_paths`
+keeps the existing cache-relative representation; unknown modes fail.
+
+This option changes source representation only. It does not refresh stale
+bindings, choose a revision or materialize scene controls. A job whose expected
+pin differs from the captured Tig selection refuses before reading media.
+For compiler-time sonic placement evidence, library callers use
+`compile_to_dir_with_inputs` with an exact-pin `InputFiles` provider kept alive
+for the call. The original `compile_to_dir` retains local-root verification.
+
 The CLI resolves a relative job filename to an absolute file before REEL uses
 its parent directory, preserving local contract-relative lookup.
 
