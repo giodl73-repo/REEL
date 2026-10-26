@@ -2,7 +2,7 @@ import tempfile
 from pathlib import Path
 import unittest
 from fractions import Fraction
-from local_instrumental_engrave import intervals,prepare_musicxml,duration_pieces,text_bounds
+from local_instrumental_engrave import intervals,prepare_musicxml,duration_pieces,text_bounds,has_exact_duration_type
 
 
 class IntervalTests(unittest.TestCase):
@@ -19,6 +19,13 @@ class IntervalTests(unittest.TestCase):
     def test_chords_ties_backup_and_divisions(self):
         x=self.parse('<measure><attributes><divisions>2</divisions></attributes><note><pitch><step>C</step><octave>4</octave></pitch><duration>2</duration><tie type="start"/></note><note><chord/><pitch><step>E</step><octave>4</octave></pitch><duration>2</duration></note><backup><duration>2</duration></backup><note><pitch><step>G</step><octave>3</octave></pitch><duration>2</duration><voice>2</voice></note></measure><measure><note><pitch><step>C</step><octave>4</octave></pitch><duration>2</duration><tie type="stop"/></note></measure>')
         self.assertEqual(x[(0,60,Fraction(0),Fraction(2))],1);self.assertEqual(x[(0,64,Fraction(0),Fraction(1))],1);self.assertEqual(sum(x.values()),3)
+
+    def test_existing_exact_tuplet_spelling_is_preserved(self):
+        import xml.etree.ElementTree as ET
+        with tempfile.TemporaryDirectory() as d:
+            source=Path(d)/'source.xml';target=Path(d)/'target.xml'
+            source.write_text('<score-partwise><part-list/><part id="P1"><measure><attributes><divisions>10080</divisions></attributes><note><pitch><step>C</step><octave>4</octave></pitch><duration>4032</duration><type>eighth</type><time-modification><actual-notes>5</actual-notes><normal-notes>4</normal-notes></time-modification><notations><tuplet type="start"/><tuplet type="stop"/></notations></note></measure></part></score-partwise>')
+            prepare_musicxml(source,target);self.assertEqual(intervals(source),intervals(target));self.assertEqual(len(ET.parse(target).findall('.//note')),1);self.assertTrue(has_exact_duration_type(ET.parse(target).find('.//note'),10080))
 
     def test_broken_ties_rejected(self):
         with self.assertRaises(ValueError):self.parse('<measure><note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><tie type="stop"/></note></measure>')
