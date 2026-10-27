@@ -29,6 +29,8 @@ use tig_store::source_claims::Selection;
 
 pub const SCHEMA: &str = "reel.tig-native-scene.experimental-1";
 const METADATA_MAX: u64 = 16 * 1024 * 1024;
+mod scoped;
+pub use scoped::{freeze_language_context, restore_language_context};
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -456,12 +458,29 @@ fn snapshot_graph(
     Ok((graph, pointer))
 }
 
-/// Materialize bounded metadata and compile into a NEW private local directory.
-/// The full native scene is resolved, including its declared language matrix.
-/// No primary media copies, cache writes, selection or publication are performed.
-pub fn compile(source: &mut Source, request: &Request, output: &Path) -> Result<Value> {
+struct NativeState {
+    parent: tig_assets::resolve::Resolved,
+    required: graph::ProductionRequirements,
+    total: u64,
+    scene_bytes: Vec<u8>,
+    scene: Scene,
+    bindings: ScopedBindings,
+    controls: BTreeMap<&'static str, Vec<u8>>,
+    pins: BTreeMap<&'static str, Object>,
+    empty_episode: ScopedBindings,
+    empty_season: ScopedBindings,
+    resolved_scene: scene_authoring::ResolvedScene,
+}
+struct LanguageScope {
+    roots: BTreeSet<String>,
+    profiles: Vec<Profile>,
+    required: graph::ProductionRequirements,
+    native_authoring: String,
+    profile: Value,
+    evidence: Vec<FileRef>,
+}
+fn read_source(source: &mut Source, request: &Request) -> Result<NativeState> {
     request.validate()?;
-    source.check_native_context(&descriptor(request)?)?;
     let parent = source.record(&request.scene_id)?;
     if parent.definition().id != request.scene_definition {
         bail!("scene definition differs from admitted protocol");
@@ -548,6 +567,123 @@ pub fn compile(source: &mut Source, request: &Request, output: &Path) -> Result<
         &empty_episode,
         &bindings,
     )?;
+    Ok(NativeState {
+        parent,
+        required,
+        total,
+        scene_bytes,
+        scene,
+        bindings,
+        controls,
+        pins,
+        empty_episode,
+        empty_season,
+        resolved_scene,
+    })
+}
+fn derive_scope(
+    source: &mut Source,
+    request: &Request,
+    state: &NativeState,
+) -> Result<LanguageScope> {
+    let NativeState {
+        parent,
+        scene,
+        bindings,
+        controls,
+        resolved_scene,
+        ..
+    } = state;
+    let references = parent
+        .authored()
+        .get("binding_ids")
+        .and_then(Value::as_object)
+        .context("scene binding_ids missing")?;
+    let mut profile: Value = serde_json::from_slice(&controls["profile.json"])?;
+    profile
+        .as_object_mut()
+        .context("profile is not an object")?
+        .insert("asset_paths".into(), json!("asset-id"));
+    let typed_profile: DeliveryProfile = serde_json::from_value(profile.clone())?;
+    if typed_profile.schema != "reel.scene-delivery-profile.v1" {
+        bail!("unsupported native delivery profile schema");
+    }
+    let mut language_keys: BTreeSet<_> = resolved_scene
+        .inputs_for_language(&request.language)
+        .context("resolved scene language missing")?
+        .keys()
+        .cloned()
+        .collect();
+    let current = scene_authoring::materialize_scene(scene)?;
+    let mut evidence = Vec::new();
+    for event in &current.languages[&request.language].events {
+        for key in &event.sonic_bindings {
+            if let Some(offset) = typed_profile.sonic_placement_offsets_by_binding.get(key) {
+                language_keys.insert(offset.evidence_binding.clone());
+                let asset = binding(bindings, Some(&offset.evidence_binding))?;
+                evidence.push(FileRef {
+                    path: asset.logical_id.clone().into(),
+                    sha256: asset.sha256.clone(),
+                    bytes: asset.bytes,
+                });
+            }
+        }
+    }
+    // Native semantic membership resolves through the one authored map into
+    // exact current roots, without one graph rule per binding.
+    let mut language_roots = BTreeSet::from([request.scene_id.clone()]);
+    for key in &language_keys {
+        let id = references
+            .get(key)
+            .and_then(|r| r.get("id"))
+            .and_then(Value::as_str)
+            .context("native language input missing from authored binding map")?;
+        language_roots.insert(id.to_owned());
+    }
+    let mut language_profiles = production_profiles(source, request)?;
+    language_profiles[0].rules.clear();
+    let language_required = source.production_requirements_for_ids(
+        &language_roots,
+        &language_profiles,
+        query_limits(),
+    )?;
+    Ok(LanguageScope {
+        roots: language_roots,
+        profiles: language_profiles,
+        required: language_required,
+        native_authoring: resolved_scene.language_fingerprints[&request.language].clone(),
+        profile,
+        evidence,
+    })
+}
+/// Materialize bounded metadata and compile into a NEW private local directory.
+/// The full native scene is resolved, including its declared language matrix.
+/// No primary media copies, cache writes, selection or publication are performed.
+pub fn compile(source: &mut Source, request: &Request, output: &Path) -> Result<Value> {
+    request.validate()?;
+    source.check_native_context(&descriptor(request)?)?;
+    let state = read_source(source, request)?;
+    let scope = derive_scope(source, request, &state)?;
+    let NativeState {
+        parent,
+        required,
+        mut total,
+        scene_bytes,
+        scene,
+        bindings,
+        controls,
+        pins,
+        empty_episode,
+        empty_season,
+        ..
+    } = state;
+    let LanguageScope {
+        required: language_required,
+        native_authoring,
+        profile,
+        evidence,
+        ..
+    } = scope;
     let mut alignment_bytes = BTreeMap::new();
     let alignments = crate::scene_authoring_inputs::read_verified_alignments_from_assets(
         &scene,
@@ -567,62 +703,17 @@ pub fn compile(source: &mut Source, request: &Request, output: &Path) -> Result<
         },
     )?;
     let (graph, pointer) = snapshot_graph(&scene, &request.language, &bindings, &alignments)?;
-    let mut profile: Value = serde_json::from_slice(&controls["profile.json"])?;
-    profile
-        .as_object_mut()
-        .context("profile is not an object")?
-        .insert("asset_paths".into(), json!("asset-id"));
-    let typed_profile: DeliveryProfile = serde_json::from_value(profile.clone())?;
-    let mut language_keys: BTreeSet<_> = resolved_scene
-        .inputs_for_language(&request.language)
-        .context("resolved scene language missing")?
-        .keys()
-        .cloned()
-        .collect();
-    let current = scene_authoring::materialize_scene(&scene)?;
-    let mut evidence = Vec::new();
-    for event in &current.languages[&request.language].events {
-        for key in &event.sonic_bindings {
-            if let Some(offset) = typed_profile.sonic_placement_offsets_by_binding.get(key) {
-                language_keys.insert(offset.evidence_binding.clone());
-                let asset = binding(&bindings, Some(&offset.evidence_binding))?;
-                evidence.push(FileRef {
-                    path: asset.logical_id.clone().into(),
-                    sha256: asset.sha256.clone(),
-                    bytes: asset.bytes,
-                });
-            }
-        }
-    }
     let template = request
         .controls
         .template_receipt
         .as_ref()
         .map(|slot| -> Result<Vec<u8>> { metadata(source, parent.stream(slot)?, &mut total) })
         .transpose()?;
-    // Native semantic membership resolves through the one authored map into
-    // exact current roots, without one graph rule per binding.
-    let mut language_roots = BTreeSet::from([request.scene_id.clone()]);
-    for key in &language_keys {
-        let id = references
-            .get(key)
-            .and_then(|r| r.get("id"))
-            .and_then(Value::as_str)
-            .context("native language input missing from authored binding map")?;
-        language_roots.insert(id.to_owned());
-    }
-    let mut language_profiles = production_profiles(source, request)?;
-    language_profiles[0].rules.clear();
-    let language_required = source.production_requirements_for_ids(
-        &language_roots,
-        &language_profiles,
-        query_limits(),
-    )?;
     let language_scope = json!({
         "source_checkpoint":language_required.checkpoint(),
         "admission_sha256":language_required.admission(),
         "binding_sha256":language_required.binding_digest(),
-        "native_semantic_sha256":resolved_scene.language_fingerprints[&request.language],
+        "native_semantic_sha256":native_authoring,
         "primary_objects":language_required.primary(),
         "control_objects":language_required.controls(),
         "interpretation_objects":language_required.metadata(),

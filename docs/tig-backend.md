@@ -169,3 +169,25 @@ use Payload::Selected {}. Frozen native descriptors retain exact adapter identit
 For the separate optional writer over existing enrolled caches, see
 [existing-cache publication](tig-publication.md). It uses Tig's publication
 protocol without initializing a new data cache or changing this read-only API.
+
+## Native language context candidates
+
+The optional SDK `tig_scene::freeze_language_context` derives a language's exact
+current roots from native scene semantics and its authored binding map. It keeps
+the original scene and declared controls, selected primary inputs, alignments and
+Sonic placement evidence. Callers supply a bounded metadata NodeStore, finish it
+and independently reopen/read it before considering adoption.
+
+`tig_scene::restore_language_context` takes an independently admitted
+`ArchiveProfile`, the original native `Request`, the saved selection and metadata
+store. It checks the request/adapter descriptor, reads and hash-checks the named
+controls through the enrolled byte provider, derives membership again and compares
+the complete saved requirements and roots. It can replay without the original
+Git checkout; opaque controls must still be available in the enrolled caches.
+Missing or corrupt controls refuse. No cache is created or hydrated.
+
+The returned source is bound to scoped-context mode. Legacy native compilation
+and recipe APIs refuse it; active producer/job integration is subsequent work.
+The context is a metadata candidate, not media availability, execution, release,
+global protection or eviction authority. For evidence and limits, see the
+[scoped context review](reviews/2026-10-27-tig-scoped-context.md).

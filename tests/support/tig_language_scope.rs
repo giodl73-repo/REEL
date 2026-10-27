@@ -1,4 +1,6 @@
 use super::*;
+#[path = "tig_scoped_context.rs"]
+mod scoped_context;
 use std::collections::BTreeSet;
 
 fn cached(f: &Fixture, raw: &[u8]) -> Object {
