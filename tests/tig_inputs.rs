@@ -222,7 +222,7 @@ fn vendored_runtime_source_matches_exact_upstream_pin() {
         serde_json::from_slice(&fs::read(root.join("source-pin.json")).unwrap()).unwrap();
     assert_eq!(
         manifest["commit"],
-        "fc2a9ddb9d49f20fb52a09bd1f2598a30b9bb65e"
+        "00a74efe0b843a9d38f12682ba3fc409f808619a"
     );
     let mut listed = std::collections::BTreeSet::new();
     let mut total = 0;
@@ -267,9 +267,10 @@ fn vendored_runtime_source_matches_exact_upstream_pin() {
     let mut actual = std::collections::BTreeSet::new();
     walk(&root, &root, &mut actual);
     actual.insert("LICENSE".into());
+    actual.insert("Cargo.lock".into());
     assert_eq!(listed, actual);
-    assert_eq!(listed.len(), 51);
-    assert_eq!(total, 549444);
+    assert_eq!(listed.len(), 54);
+    assert_eq!(total, 580343);
 }
 
 #[test]

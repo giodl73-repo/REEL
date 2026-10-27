@@ -165,6 +165,10 @@ pub fn exercise(
     let original_record = fs::read(root.join("records/native-output.tig")).unwrap();
     let template =
         json!({"id":"delivery/native-scene","object":Object::from_bytes(&original_record)});
+    let git_base = super::git(root, &["rev-parse", "HEAD"]);
+    let git_handoff = json!({"git_executable":locate("git"),"repository":root,"base":git_base,
+        "identity":{"name":"Fixture","email":"fixture@example.invalid","unix_seconds":1700000000},"message":"native record candidate",
+        "paths":{"delivery/native-scene":"records/native-output.tig"},"protection":"prevent-mutation"});
     let path = root.join("native-cli-profile.json");
     let run = || {
         Command::new(&binary)
@@ -235,6 +239,22 @@ pub fn exercise(
         );
         assert!(!cache.join("staging/caminos").exists());
     }
+    let mut bad_handoff = profile.clone();
+    bad_handoff["worker"]["record_outputs"] =
+        json!([{"output":"master.mkv","template":template,"selector":{"kind":"selected"}}]);
+    bad_handoff["worker"]["git_handoff"] = git_handoff.clone();
+    bad_handoff["worker"]["git_handoff"]["paths"] = json!({});
+    fs::write(&path, serde_json::to_vec(&bad_handoff).unwrap()).unwrap();
+    let rejected = run();
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("map every candidate"));
+    assert_eq!(
+        SourceJournal::open(&journal_root, &witness)
+            .unwrap()
+            .checkpoint(),
+        witness
+    );
+    assert!(!cache.join("staging/caminos").exists());
     fs::write(&path, serde_json::to_vec(&profile).unwrap()).unwrap();
     for name in [".git", "records", "definitions"] {
         fs::rename(root.join(name), root.join(format!("cli-offline-{name}"))).unwrap();
@@ -351,6 +371,7 @@ pub fn exercise(
             .is_none()
     );
     drop(journal);
+    let mut handoff_result = None;
     for mode in ["plan-only", "automatic"] {
         let mut automatic = profile.clone();
         automatic["source_id"] = json!(format!("native-cli-{mode}"));
@@ -366,6 +387,7 @@ pub fn exercise(
                 {"output":"master.mkv","template":template,"selector":{"kind":"selected"}},
                 {"output":"master.mkv","template":template,"selector":{"kind":"stream","slot":"es"},"stream_class":{"role":"compiled-output","group":"language"}}
             ]);
+            automatic["worker"]["git_handoff"] = git_handoff.clone();
         }
         fs::write(&path, serde_json::to_vec(&automatic).unwrap()).unwrap();
         let completed = Command::new(&binary)
@@ -441,7 +463,7 @@ pub fn exercise(
         if mode == "automatic" {
             assert_eq!(completed["result"]["budget_bytes"], profile["budget_bytes"]);
             let rendered = completed["result"]["outputs"].as_object().unwrap();
-            assert_eq!(rendered.len(), reference.outputs.len() + 5);
+            assert_eq!(rendered.len(), reference.outputs.len() + 6);
             for item in rendered.values() {
                 let bytes =
                     ByteIdentity::observe_file(Path::new(item["path"].as_str().unwrap())).unwrap();
@@ -451,6 +473,7 @@ pub fn exercise(
         }
         if mode == "automatic" {
             check_candidates(root, &completed, &original_record, &template);
+            handoff_result = Some(completed.clone());
         }
         assert!(
             fs::read_dir(cache.join("staging/caminos"))
@@ -465,4 +488,103 @@ pub fn exercise(
     for name in [".git", "records", "definitions"] {
         fs::rename(root.join(format!("cli-offline-{name}")), root.join(name)).unwrap();
     }
+    check_git_handoff(
+        root,
+        &handoff_result.unwrap(),
+        &git_base,
+        &original_record,
+        &cache,
+    );
+}
+
+fn check_git_handoff(root: &Path, completed: &Value, base: &str, original: &[u8], cache: &Path) {
+    use tig_store::existing::{ByteSource, ReadCache};
+    let tool = std::env::var_os("REEL_TEST_TIG_PROPOSE")
+        .map(std::path::PathBuf::from)
+        .expect(
+            "explicit pinned REEL_TEST_TIG_PROPOSE executable required for native handoff fixture",
+        );
+    let exported = &completed["record_candidates"]["git_proposal"];
+    let mut requests = ReadCache::new(
+        serde_json::from_value(
+            json!({"places":[{"root":cache,"layout":"reel-cas"}],"required":"prevent-mutation"}),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let request_guard = requests
+        .open_verified(&serde_json::from_value(exported["object"].clone()).unwrap())
+        .unwrap();
+    let profile = Path::new(exported["retained_path"].as_str().unwrap());
+    request_guard
+        .with_path(|p| assert_eq!(p.canonicalize().unwrap(), profile.canonicalize().unwrap()))
+        .unwrap();
+    let bytes = fs::read(profile).unwrap();
+    assert_eq!(json!(Object::from_bytes(&bytes)), exported["object"]);
+    let value: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["base"], base);
+    assert_eq!(
+        value["byte_source"]["places"],
+        json!([{"root":cache,"layout":"reel-cas"}])
+    );
+    assert_eq!(
+        value["changes"][0]["expected"],
+        json!(Object::from_bytes(original))
+    );
+    assert_eq!(
+        value["changes"][0]["object"],
+        completed["record_candidates"]["records"][0]["record"]
+    );
+    assert_eq!(
+        fs::read(root.join("records/native-output.tig")).unwrap(),
+        original
+    );
+    let index = fs::read(root.join(".git/index")).unwrap();
+    let objects = super::git(root, &["count-objects", "-v"]);
+    let run = |action: &str| {
+        let output = request_guard
+            .with_path(|p| Command::new(&tool).arg(action).arg(p).output().unwrap())
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    let checked = run("check");
+    assert!(checked["proposal"].is_null());
+    assert_eq!(super::git(root, &["count-objects", "-v"]), objects);
+    let proposed = run("create");
+    assert_eq!(run("create")["proposal"], proposed["proposal"]);
+    assert_eq!(super::git(root, &["rev-parse", "HEAD"]), base);
+    assert_eq!(fs::read(root.join(".git/index")).unwrap(), index);
+    assert_eq!(
+        fs::read(root.join("records/native-output.tig")).unwrap(),
+        original
+    );
+    super::git(
+        root,
+        &[
+            "cherry-pick",
+            proposed["proposal"]["commit"].as_str().unwrap(),
+        ],
+    );
+    let applied = fs::read(root.join("records/native-output.tig")).unwrap();
+    assert_eq!(
+        json!(Object::from_bytes(&applied)),
+        value["changes"][0]["object"]
+    );
+    assert!(
+        serde_json::from_slice::<Value>(&applied).unwrap()["status"]
+            .as_object()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        fs::read_dir(cache.join("staging/caminos"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
 }

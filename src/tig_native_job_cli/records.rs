@@ -37,16 +37,24 @@ struct Template {
 pub(super) struct Prepared {
     specs: Vec<Spec>,
     templates: BTreeMap<String, Template>,
+    handoff: Option<handoff::Handoff>,
+    roots: Vec<PathBuf>,
 }
 fn path(id: &str) -> String {
     format!("records/{}.tig", Digest::blob(id.as_bytes()).as_str())
 }
 pub(super) fn artifacts(worker: &Worker) -> Result<BTreeMap<String, u64>> {
     validate_specs(&worker.record_outputs)?;
+    if let Some(handoff) = &worker.git_handoff {
+        handoff.validate(&worker.record_outputs)?;
+    }
     if worker.record_outputs.is_empty() {
         return Ok(BTreeMap::new());
     }
     let mut result = BTreeMap::from([(CLAIM.into(), BYTES), (INDEX.into(), BYTES)]);
+    if worker.git_handoff.is_some() {
+        result.insert(handoff::FILE.into(), BYTES);
+    }
     for spec in &worker.record_outputs {
         result.insert(path(&spec.template.id), BYTES);
     }
@@ -139,12 +147,18 @@ fn bind(value: &Instance, template: &Template) -> Result<tig_assets::native::Bou
     }
     Ok(Instance::parse(&bytes)?.bind(&template.definition, &template.schema)?)
 }
-pub(super) fn prepare(worker: &Worker, context: &ProductionContext) -> Result<Prepared> {
+pub(super) fn prepare(
+    worker: &Worker,
+    context: &ProductionContext,
+    roots: &[PathBuf],
+) -> Result<Prepared> {
     artifacts(worker)?;
     if worker.record_outputs.is_empty() {
         return Ok(Prepared {
             specs: vec![],
             templates: BTreeMap::new(),
+            handoff: None,
+            roots: vec![],
         });
     }
     let profile: ArchiveProfile = serde_json::from_value(worker.source.clone())?;
@@ -166,6 +180,12 @@ pub(super) fn prepare(worker: &Worker, context: &ProductionContext) -> Result<Pr
     let mut prepared = Prepared {
         specs: worker.record_outputs.clone(),
         templates: BTreeMap::new(),
+        handoff: worker.git_handoff.clone(),
+        roots: if worker.git_handoff.is_some() {
+            roots.to_vec()
+        } else {
+            vec![]
+        },
     };
     let mut slots = BTreeSet::new();
     for spec in &worker.record_outputs {
@@ -262,11 +282,24 @@ pub(super) fn prepare(worker: &Worker, context: &ProductionContext) -> Result<Pr
             object: claim_placeholder.clone(),
         });
     }
+    let handoff_shape = prepared
+        .handoff
+        .as_ref()
+        .map(|h| {
+            h.profile(
+                record_shapes
+                    .iter()
+                    .map(|r| (r.asset_id.as_str(), &r.template.object, &r.object)),
+                &prepared.roots,
+            )
+        })
+        .transpose()?;
     let index_shape = CandidateSet {
         schema: "reel.native-record-candidate-set.experimental-1".into(),
         claim: claim_placeholder,
         receipt: receipt_placeholder,
         records: record_shapes,
+        git_proposal: handoff_shape.as_deref().map(Object::from_bytes),
     };
     if identity::canonical_json(&serde_json::to_value(index_shape)?)?.len() > BYTES as usize {
         bail!("native candidate index exceeds preflight budget");
@@ -288,6 +321,8 @@ struct CandidateSet {
     claim: Object,
     receipt: Object,
     records: Vec<CandidateRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    git_proposal: Option<Object>,
 }
 fn write(name: &str, bytes: &[u8]) -> Result<()> {
     if bytes.len() > BYTES as usize {
@@ -405,17 +440,33 @@ pub(super) fn emit(prepared: &Prepared, candidate: &RenderedCandidate) -> Result
         });
         bytes_by_path.insert(name, bytes);
     }
+    let handoff_bytes = prepared
+        .handoff
+        .as_ref()
+        .map(|h| {
+            h.profile(
+                records
+                    .iter()
+                    .map(|r| (r.asset_id.as_str(), &r.template.object, &r.object)),
+                &prepared.roots,
+            )
+        })
+        .transpose()?;
     let set = CandidateSet {
         schema: "reel.native-record-candidate-set.experimental-1".into(),
         claim: claim.object().clone(),
         receipt: candidate.receipt_object().clone(),
         records,
+        git_proposal: handoff_bytes.as_deref().map(Object::from_bytes),
     };
     let index = identity::canonical_json(&serde_json::to_value(set)?)?;
     if index.len() > BYTES as usize {
         bail!("native candidate index exceeds budget");
     }
     fs::create_dir("records")?;
+    if let Some(bytes) = &handoff_bytes {
+        write(handoff::FILE, bytes)?;
+    }
     for (name, bytes) in bytes_by_path {
         write(&name, &bytes)?;
     }
@@ -465,6 +516,27 @@ pub(super) fn readback(
         .iter()
         .map(|(id, t)| (id.clone(), t.instance.clone()))
         .collect();
+    let git_profile = if let Some(h) = &prepared.handoff {
+        let bytes = h.profile(
+            set.records
+                .iter()
+                .map(|r| (r.asset_id.as_str(), &r.template.object, &r.object)),
+            &prepared.roots,
+        )?;
+        let object = Object::from_bytes(&bytes);
+        if set.git_proposal.as_ref() != Some(&object)
+            || verified.object(handoff::FILE)? != &object
+            || verified.bytes(phase, handoff::FILE, BYTES as usize)? != bytes
+        {
+            bail!("retained native Git handoff differs");
+        }
+        Some(json!({"object":object,"retained_path":phase.value["outputs"][handoff::FILE]["path"]}))
+    } else {
+        if set.git_proposal.is_some() {
+            bail!("unrequested native Git handoff");
+        }
+        None
+    };
     for spec in &prepared.specs {
         assign(
             expected.get_mut(&spec.template.id).unwrap(),
@@ -530,7 +602,7 @@ pub(super) fn readback(
         phase.revision,
     )?;
     Ok(Some(
-        json!({"schema":"reel.native-record-candidates-readback.experimental-1","claim":claim.object(),"receipt":set.receipt,"index":verified.object(INDEX)?,"records":exported,"current_selection":false,"complete_semantic_coverage":false}),
+        json!({"schema":"reel.native-record-candidates-readback.experimental-1","claim":claim.object(),"receipt":set.receipt,"index":verified.object(INDEX)?,"records":exported,"git_proposal":git_profile,"current_selection":false,"complete_semantic_coverage":false}),
     ))
 }
 
