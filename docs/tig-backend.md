@@ -233,6 +233,7 @@ rebuilds the projection policy before replaying a claim. It reads enrolled named
 controls/alignments and writes new candidate scratch; it can work with Git offline.
 Legacy/projected claims and context modes never silently fall back to one another.
 A returned unsigned claimed recipe match proves neither execution nor output
-bytes, runtime/environment availability, approval or custody. Active job/CLI
-adoption remains subsequent work. See the
+bytes, runtime/environment availability, approval or custody. Explicit managed
+execution uses `JobPlan::from_render_context` and held runtime components; CLI
+adoption and complete coverage remain subsequent work. See the
 [projected recipe review](reviews/2026-10-27-tig-projected-native-recipe.md).
