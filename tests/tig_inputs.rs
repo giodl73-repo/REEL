@@ -2,6 +2,9 @@
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_candidate_publication.rs"]
 mod candidate_publication;
+#[cfg(all(windows, feature = "tig-publication"))]
+#[path = "support/tig_native_job.rs"]
+mod native_job;
 #[cfg(windows)]
 use reel::scene_delivery::{FileRef, InputFiles};
 use reel::{
@@ -213,7 +216,7 @@ fn vendored_runtime_source_matches_exact_upstream_pin() {
         serde_json::from_slice(&fs::read(root.join("source-pin.json")).unwrap()).unwrap();
     assert_eq!(
         manifest["commit"],
-        "96177878c7db238958c20a5faf1eec9bcfd6f438"
+        "fc2a9ddb9d49f20fb52a09bd1f2598a30b9bb65e"
     );
     let mut listed = std::collections::BTreeSet::new();
     let mut total = 0;
@@ -259,8 +262,8 @@ fn vendored_runtime_source_matches_exact_upstream_pin() {
     walk(&root, &root, &mut actual);
     actual.insert("LICENSE".into());
     assert_eq!(listed, actual);
-    assert_eq!(listed.len(), 50);
-    assert_eq!(total, 537367);
+    assert_eq!(listed.len(), 51);
+    assert_eq!(total, 549444);
 }
 
 #[test]
@@ -853,6 +856,24 @@ fn native_render_candidate_claims_only_independently_checked_matching_bytes() {
             .unwrap()
     };
     let bind = |pin: &Object| bind_as("delivery/scene", pin);
+    #[cfg(feature = "tig-publication")]
+    {
+        let plan = reel::tig_scene_production::jobs::JobPlan::from_context(
+            &mut source,
+            &request,
+            &context,
+            &programs,
+        )
+        .unwrap();
+        native_job::exercise(
+            &plan,
+            &mut source,
+            &mut owners,
+            f.root(),
+            (&metadata, &checkpoint),
+            bind_as,
+        );
+    }
     let original = fs::read(output.join("master.mkv")).unwrap();
     let subject = bind(&Object::from_bytes(&original));
     let mapping = || OutputBinding {

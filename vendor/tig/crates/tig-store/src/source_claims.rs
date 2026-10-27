@@ -429,6 +429,10 @@ impl SourceJournal {
     pub fn checkpoint(&self) -> Checkpoint {
         self.state.head.clone()
     }
+    /// Stable authority identity across revisions/reopen, not a current-state fence.
+    pub fn identity(&self) -> &Digest {
+        &self.state.head.genesis
+    }
     fn sync(&mut self) -> Result<()> {
         if self.poisoned {
             return Err(Error::NeedsRecovery);

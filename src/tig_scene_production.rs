@@ -21,6 +21,8 @@ use tig_git::source::native::context::ProductionContext;
 mod publication;
 #[cfg(feature = "tig-publication")]
 pub use publication::{Publication, PublishedCandidate};
+#[cfg(feature = "tig-publication")]
+pub mod jobs;
 
 /// Explicit project mapping; no inference from filenames, language or status.
 pub struct OutputBinding<'a> {
@@ -146,15 +148,12 @@ pub fn render_with_programs(
     )
 }
 
-fn render_inner(
+fn context_recipe(
     source: &mut Source,
     request: &Request,
     context: &ProductionContext,
     producer: &Object,
-    programs: Option<&crate::media_runtime::BoundPrograms>,
-    job_directory: &Path,
-    output: &Path,
-) -> Result<RenderedCandidate> {
+) -> Result<Plan> {
     let recipe = tig_scene::recipe(source, request, producer)?;
     let requirements = context.requirements();
     if recipe.checkpoint() != requirements.checkpoint()
@@ -164,6 +163,19 @@ fn render_inner(
     {
         bail!("render source/request differs from frozen native context");
     }
+    Ok(recipe)
+}
+
+fn render_inner(
+    source: &mut Source,
+    request: &Request,
+    context: &ProductionContext,
+    producer: &Object,
+    programs: Option<&crate::media_runtime::BoundPrograms>,
+    job_directory: &Path,
+    output: &Path,
+) -> Result<RenderedCandidate> {
+    let recipe = context_recipe(source, request, context, producer)?;
     if job_directory.exists() || output.exists() {
         bail!("native candidate requires new job and output directories");
     }

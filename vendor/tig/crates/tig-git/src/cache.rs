@@ -252,8 +252,26 @@ fn optional_metadata(path: &Path) -> Result<Option<fs::Metadata>> {
 fn key(s: &str) -> Result<Key> {
     Key::parse(s).map_err(|_| AgentError::InvalidProfile)
 }
-fn map_ledger(_: LedgerError) -> AgentError {
-    AgentError::Capacity
+fn map_ledger(error: LedgerError) -> AgentError {
+    match error {
+        LedgerError::Busy | LedgerError::NeedsProbe => AgentError::Busy,
+        LedgerError::Capacity(
+            tig_core::capacity::CapacityError::Insufficient
+            | tig_core::capacity::CapacityError::Budget,
+        )
+        | LedgerError::Budget => AgentError::Capacity,
+        _ => AgentError::State,
+    }
+}
+const CONTENTION_ATTEMPTS: usize = 32;
+fn contention_delay(op: &str, attempt: usize) -> Duration {
+    // Operation-specific jitter breaks synchronized probe/retry schedules between
+    // processes. This bounds waits, not potentially blocking provider IO.
+    let seed = op
+        .bytes()
+        .fold(0u64, |n, b| n.wrapping_mul(31).wrapping_add(u64::from(b)));
+    let jitter = seed.wrapping_add((attempt as u64).wrapping_mul(13)) % 17;
+    Duration::from_millis((2u64 << attempt.min(5)) + jitter)
 }
 fn admit(place: &Place, op: &str, window: u64, floor: u64) -> Result<JournalRef> {
     admit_with(place, op, window, floor, |_, _| Ok(()))
@@ -265,7 +283,7 @@ fn admit_with(
     floor: u64,
     mut after_probe: impl FnMut(&mut CapacityLedger, usize) -> tig_store::ledger::Result<()>,
 ) -> Result<JournalRef> {
-    for attempt in 0..8 {
+    for attempt in 0..CONTENTION_ATTEMPTS {
         let result = (|| {
             let mut l =
                 CapacityLedger::open(&place.admission.ledger_root, &place.admission.checkpoint)?;
@@ -301,15 +319,15 @@ fn admit_with(
                     tig_core::capacity::CapacityError::Stale
                     | tig_core::capacity::CapacityError::UnknownObservation,
                 ),
-            ) => std::thread::sleep(Duration::from_millis(2 << attempt)),
+            ) => std::thread::sleep(contention_delay(op, attempt)),
             Err(e) => return Err(map_ledger(e)),
         }
     }
-    Err(AgentError::Capacity)
+    Err(AgentError::Busy)
 }
 
 fn settle(place: &Place, op: &str, allocation: &JournalRef) -> Result<()> {
-    for attempt in 0..8 {
+    for attempt in 0..CONTENTION_ATTEMPTS {
         let result =
             CapacityLedger::open(&place.admission.ledger_root, &place.admission.checkpoint)
                 .and_then(|mut l| {
@@ -321,11 +339,11 @@ fn settle(place: &Place, op: &str, allocation: &JournalRef) -> Result<()> {
                 });
         match result {
             Ok(_) => return Ok(()),
-            Err(LedgerError::Busy) => std::thread::sleep(Duration::from_millis(2 << attempt)),
+            Err(LedgerError::Busy) => std::thread::sleep(contention_delay(op, attempt)),
             Err(e) => return Err(map_ledger(e)),
         }
     }
-    Err(AgentError::Capacity)
+    Err(AgentError::Busy)
 }
 fn verify(path: &Path, object: &Object) -> Result<()> {
     regular(path)?;
@@ -401,8 +419,7 @@ impl DownloadBackend for CacheBackend {
 #[cfg(test)]
 mod admission_race_tests {
     use super::*;
-    #[test]
-    fn superseded_probe_is_resampled_without_a_global_lock() {
+    fn fixture() -> (tempfile::TempDir, Place) {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("ledger");
         let mut ledger =
@@ -433,6 +450,13 @@ mod admission_race_tests {
                 job,
             },
         };
+        (temp, place)
+    }
+    #[test]
+    fn superseded_probe_is_resampled_without_a_global_lock() {
+        let (_temp, place) = fixture();
+        let root = place.admission.ledger_root.clone();
+        let checkpoint = place.admission.checkpoint.clone();
         let mut attempts = Vec::new();
         let allocation = admit_with(&place, "test-admission", 65_536, 65_536, |_, attempt| {
             attempts.push(attempt);
@@ -450,5 +474,53 @@ mod admission_race_tests {
         .unwrap();
         assert_eq!(attempts, vec![0, 1]);
         settle(&place, "test-admission", &allocation).unwrap();
+    }
+
+    #[test]
+    fn longer_transient_contention_resamples_then_succeeds_without_a_global_lock() {
+        let (_temp, place) = fixture();
+        let mut attempts = Vec::new();
+        let allocation = admit_with(&place, "busy-client", 65_536, 65_536, |_, attempt| {
+            attempts.push(attempt);
+            if attempt < 9 {
+                Err(LedgerError::Busy)
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap();
+        assert_eq!(attempts, (0..10).collect::<Vec<_>>());
+        settle(&place, "busy-client", &allocation).unwrap();
+    }
+
+    #[test]
+    fn admission_distinguishes_capacity_state_and_bounded_contention_without_weakening_checks() {
+        let (_temp, place) = fixture();
+        let mut calls = 0;
+        assert!(matches!(
+            admit_with(&place, "real-budget", 65_536, 65_536, |_, _| {
+                calls += 1;
+                Err(LedgerError::Budget)
+            }),
+            Err(AgentError::Capacity)
+        ));
+        assert_eq!(calls, 1);
+        calls = 0;
+        assert!(matches!(
+            admit_with(&place, "always-busy", 65_536, 65_536, |_, _| {
+                calls += 1;
+                Err(LedgerError::Busy)
+            }),
+            Err(AgentError::Busy)
+        ));
+        assert_eq!(calls, 32);
+        assert_eq!(map_ledger(LedgerError::Corrupt), AgentError::State);
+        for attempt in 0..32 {
+            assert!(contention_delay("client-a", attempt) <= Duration::from_millis(80));
+            assert_ne!(
+                contention_delay("client-a", attempt),
+                contention_delay("client-b", attempt)
+            );
+        }
     }
 }

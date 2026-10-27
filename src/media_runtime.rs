@@ -196,6 +196,7 @@ pub struct BoundPrograms {
     programs: BTreeMap<MediaProgram, PathBuf>,
     manifest: Vec<u8>,
     identity: ByteIdentity,
+    components: BTreeMap<String, ByteIdentity>,
 }
 impl BoundPrograms {
     pub fn bind(bindings: &Bindings) -> Result<Self> {
@@ -236,7 +237,7 @@ impl BoundPrograms {
         for file in bindings.dependencies.values() {
             held.push(hold(&file.path, &pin(file))?.1);
         }
-        let manifest = serde_json::to_vec(&Manifest {
+        let declared = Manifest {
             schema: "reel.declared-media-runtime.experimental-1",
             host: bindings.host.clone(),
             programs: BTreeMap::from([
@@ -249,7 +250,21 @@ impl BoundPrograms {
                 .map(|(name, file)| (name.clone(), pin(file)))
                 .collect(),
             complete_environment: false,
-        })?;
+        };
+        let mut components = BTreeMap::from([("host".into(), declared.host.clone())]);
+        components.extend(
+            declared
+                .programs
+                .iter()
+                .map(|(name, pin)| (format!("programs/{name}"), pin.clone())),
+        );
+        components.extend(
+            declared
+                .dependencies
+                .iter()
+                .map(|(name, pin)| (format!("dependencies/{name}"), pin.clone())),
+        );
+        let manifest = serde_json::to_vec(&declared)?;
         if manifest.len() > 65_536 {
             bail!("runtime manifest exceeds budget");
         }
@@ -262,6 +277,7 @@ impl BoundPrograms {
             ]),
             manifest,
             identity,
+            components,
         })
     }
     pub fn manifest_bytes(&self) -> &[u8] {
@@ -269,6 +285,13 @@ impl BoundPrograms {
     }
     pub fn identity(&self) -> &ByteIdentity {
         &self.identity
+    }
+    /// Identities derived from this held declaration, without private paths.
+    /// These pins alone are not transferable protection or retained custody.
+    pub fn components(&self) -> impl Iterator<Item = (&str, &ByteIdentity)> {
+        self.components
+            .iter()
+            .map(|(name, pin)| (name.as_str(), pin))
     }
     pub fn with_inputs<'a, T: InputFiles + ?Sized>(
         &'a self,
