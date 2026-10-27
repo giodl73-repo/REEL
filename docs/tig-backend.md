@@ -165,3 +165,7 @@ Payload selectors are exact: {"kind":"selected"} accepts no additional fields;
 selector carrying a slot/role or a stream selector with unknown fields refuses
 before source opening. Valid JSON shape is unchanged; Rust selected variants now
 use Payload::Selected {}. Frozen native descriptors retain exact adapter identity.
+
+For the separate optional writer over existing enrolled caches, see
+[existing-cache publication](tig-publication.md). It uses Tig's publication
+protocol without initializing a new data cache or changing this read-only API.

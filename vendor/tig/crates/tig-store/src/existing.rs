@@ -377,6 +377,7 @@ fn root_spelling(path: &Path) -> Result<()> {
     }
     #[cfg(windows)]
     if !matches!(path.components().next(),Some(Component::Prefix(p)) if matches!(p.kind(),std::path::Prefix::Disk(_)|std::path::Prefix::VerbatimDisk(_)))
+        || !matches!(path.components().nth(1), Some(Component::RootDir))
     {
         return Err(Error::Invalid);
     }
@@ -411,7 +412,9 @@ fn directories(path: &Path, strict: bool) -> Result<Option<Vec<File>>> {
     let mut cursor = PathBuf::new();
     for component in path.parent().ok_or(Error::Invalid)?.components() {
         cursor.push(component.as_os_str());
-        if !cursor.is_absolute() {
+        // A verbatim drive prefix can report absolute before RootDir is pushed;
+        // opening that incomplete prefix is not an ordinary directory lookup.
+        if matches!(component, Component::Prefix(_)) || !cursor.is_absolute() {
             continue;
         }
         let meta = match fs::symlink_metadata(&cursor) {
