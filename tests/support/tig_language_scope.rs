@@ -1,4 +1,6 @@
 use super::*;
+#[path = "tig_render_context.rs"]
+mod render_context;
 #[path = "tig_scoped_context.rs"]
 mod scoped_context;
 use std::collections::BTreeSet;

@@ -29,7 +29,9 @@ use tig_store::source_claims::Selection;
 
 pub const SCHEMA: &str = "reel.tig-native-scene.experimental-1";
 const METADATA_MAX: u64 = 16 * 1024 * 1024;
+mod render_context;
 mod scoped;
+pub use render_context::{freeze_render_context, restore_render_context};
 pub use scoped::{compile_language_context, freeze_language_context, restore_language_context};
 
 #[derive(Deserialize, Serialize)]
@@ -668,6 +670,14 @@ fn compile_with_descriptor(
     output: &Path,
     descriptor: &[u8],
 ) -> Result<Value> {
+    compile_with_scope(source, request, output, descriptor).map(|(receipt, _)| receipt)
+}
+fn compile_with_scope(
+    source: &mut Source,
+    request: &Request,
+    output: &Path,
+    descriptor: &[u8],
+) -> Result<(Value, LanguageScope)> {
     request.validate()?;
     source.check_native_context(descriptor)?;
     let state = read_source(source, request)?;
@@ -691,7 +701,7 @@ fn compile_with_descriptor(
         profile,
         evidence,
         ..
-    } = scope;
+    } = &scope;
     let mut alignment_bytes = BTreeMap::new();
     let alignments = crate::scene_authoring_inputs::read_verified_alignments_from_assets(
         &scene,
@@ -735,7 +745,7 @@ fn compile_with_descriptor(
         }
     }
     put(output, "scene.json", &scene_bytes)?;
-    json_file(output, "profile.json", &profile)?;
+    json_file(output, "profile.json", profile)?;
     json_file(output, "scene-bindings.json", &bindings)?;
     json_file(output, "episode-bindings.json", &empty_episode)?;
     json_file(output, "season-bindings.json", &empty_season)?;
@@ -770,8 +780,9 @@ fn compile_with_descriptor(
     if evidence.is_empty() {
         scene_delivery_compile::compile_to_dir(output, &compile)
     } else {
-        let inputs = source.prepare_files(&evidence)?;
+        let inputs = source.prepare_files(evidence)?;
         scene_delivery_compile::compile_to_dir_with_inputs(output, &compile, &inputs)
     }
     .map_err(|error| anyhow!("native scene compilation refused: {error}"))
+    .map(|receipt| (receipt, scope))
 }
