@@ -210,7 +210,7 @@ fn vendored_runtime_source_matches_exact_upstream_pin() {
         serde_json::from_slice(&fs::read(root.join("source-pin.json")).unwrap()).unwrap();
     assert_eq!(
         manifest["commit"],
-        "78b593a134f1e8d1a64fa47177376bb101be36da"
+        "e3d80bb266421b048bc6233bf1b8f716d0482cf2"
     );
     let mut listed = std::collections::BTreeSet::new();
     let mut total = 0;
@@ -256,8 +256,8 @@ fn vendored_runtime_source_matches_exact_upstream_pin() {
     walk(&root, &root, &mut actual);
     actual.insert("LICENSE".into());
     assert_eq!(listed, actual);
-    assert_eq!(listed.len(), 47);
-    assert_eq!(total, 509862);
+    assert_eq!(listed.len(), 50);
+    assert_eq!(total, 537089);
 }
 
 #[test]
@@ -519,6 +519,138 @@ fn native_requirements_are_metadata_only_and_recorded_in_existing_private_source
     );
 }
 
+#[test]
+fn native_recipe_binds_explicit_producer_and_request_without_payload_reads() {
+    let (f, mut request) = native_scene_fixture();
+    let producer = Object::from_bytes(b"externally admitted synthetic producer package");
+    let mut source = f.source();
+    let original = reel::tig_scene::recipe(&mut source, &request, &producer).unwrap();
+    assert_eq!(original.nodes().len(), 5);
+    assert!(!original.complete_semantic_coverage());
+    let upgraded = reel::tig_scene::recipe(
+        &mut source,
+        &request,
+        &Object::from_bytes(b"different producer package"),
+    )
+    .unwrap();
+    assert_ne!(upgraded.fingerprint(), original.fingerprint());
+    assert_eq!(upgraded.nodes(), original.nodes());
+    request.language = "en".into();
+    let english = reel::tig_scene::recipe(&mut source, &request, &producer).unwrap();
+    assert_ne!(english.fingerprint(), original.fingerprint());
+    assert_ne!(
+        english.operation().parameters,
+        original.operation().parameters
+    );
+    assert_eq!(english.nodes(), original.nodes());
+    request.language = "es".into();
+    request.delivery_title = "Another title".into();
+    assert_ne!(
+        reel::tig_scene::recipe(&mut source, &request, &producer)
+            .unwrap()
+            .fingerprint(),
+        original.fingerprint()
+    );
+    request.controls.template_receipt = Some("missing-control".into());
+    assert!(reel::tig_scene::recipe(&mut source, &request, &producer).is_err());
+    request.controls.template_receipt = None;
+    request.delivery_title = "x".repeat(65_536);
+    assert!(reel::tig_scene::recipe(&mut source, &request, &producer).is_err());
+    request.delivery_title.clear();
+    let unsafe_producer = Object {
+        sha256: producer.sha256.clone(),
+        bytes: u64::MAX,
+    };
+    assert!(reel::tig_scene::recipe(&mut source, &request, &unsafe_producer).is_err());
+    request.primary_definitions.clear();
+    assert!(reel::tig_scene::recipe(&mut source, &request, &producer).is_err());
+    assert_eq!(source.byte_requests(), 0);
+    assert_eq!(source.active_readers(), 0);
+}
+
+#[test]
+fn native_recipe_distinguishes_production_changes_from_annotation_and_status() {
+    for change in [
+        "annotation",
+        "status",
+        "cel",
+        "cue",
+        "control",
+        "scene",
+        "bindings",
+        "scene-id",
+    ] {
+        let (mut f, request) = native_scene_fixture();
+        let producer = Object::from_bytes(b"synthetic producer");
+        let mut old = f.source();
+        let before = reel::tig_scene::recipe(&mut old, &request, &producer).unwrap();
+        let file = match change {
+            "annotation" | "status" | "cel" => "records/cel-b.tig",
+            "cue" => "records/cue-main.tig",
+            _ => "records/scene.tig",
+        };
+        let mut record: Value =
+            serde_json::from_slice(&fs::read(f.root().join(file)).unwrap()).unwrap();
+        match change {
+            "annotation" => record["metadata"]["review_note"] = json!("new private note"),
+            "status" => record["status"]["selection_state"] = json!("held"),
+            "cel" | "cue" | "scene" => {
+                record["selected"] =
+                    serde_json::to_value(Object::from_bytes(change.as_bytes())).unwrap();
+            }
+            "control" => {
+                let control = record["streams"]
+                    .as_array_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .find(|stream| stream["slot"] == "profile.json")
+                    .unwrap();
+                control["object"] =
+                    serde_json::to_value(Object::from_bytes(b"changed profile bytes")).unwrap();
+            }
+            "bindings" => {
+                let a = record["authored"]["binding_ids"]["a"].clone();
+                record["authored"]["binding_ids"]["a"] =
+                    record["authored"]["binding_ids"]["b"].clone();
+                record["authored"]["binding_ids"]["b"] = a;
+            }
+            "scene-id" => record["authored"]["scene_id"] = json!("another-scene"),
+            _ => unreachable!(),
+        }
+        write(f.root(), file, &record);
+        git(f.root(), &["add", "records"]);
+        git(
+            f.root(),
+            &["commit", "-m", "change one production or annotation field"],
+        );
+        f.profile["commit"] = json!(git(f.root(), &["rev-parse", "HEAD"]));
+        let mut current = f.source();
+        let after = reel::tig_scene::recipe(&mut current, &request, &producer).unwrap();
+        assert_ne!(before.checkpoint(), after.checkpoint(), "{change}");
+        assert_ne!(before.binding(), after.binding(), "{change}");
+        assert_eq!(
+            before.fingerprint() == after.fingerprint(),
+            matches!(change, "annotation" | "status"),
+            "{change}"
+        );
+        assert_eq!(
+            reel::tig_scene::recipe(&mut old, &request, &producer)
+                .unwrap()
+                .fingerprint(),
+            before.fingerprint(),
+            "older captured source must remain independent: {change}"
+        );
+        if change == "status" {
+            // Recipe equality cannot turn an ineligible leaf into a usable input.
+            let output = f.root().join("must-not-compile");
+            assert!(reel::tig_scene::compile(&mut current, &request, &output).is_err());
+            assert!(!output.exists());
+        }
+        assert_eq!(old.byte_requests(), 0, "{change}");
+        assert_eq!(current.byte_requests(), 0, "{change}");
+    }
+}
+
 fn archived_profile(
     f: &Fixture,
     archive: Object,
@@ -615,6 +747,8 @@ fn frozen_native_job_survives_main_advancement_provider_reopen_and_git_unavailab
     };
     let (mut f, request) = native_scene_fixture();
     let mut old = f.source();
+    let producer = Object::from_bytes(b"synthetic admitted native producer package");
+    let old_recipe = reel::tig_scene::recipe(&mut old, &request, &producer).unwrap();
     let first = f.root().join("context-before");
     reel::tig_scene::compile(&mut old, &request, &first).unwrap();
     let runtime = tempfile::tempdir().unwrap();
@@ -633,6 +767,10 @@ fn frozen_native_job_survives_main_advancement_provider_reopen_and_git_unavailab
     let old_context =
         reel::tig_scene::freeze_context(&mut old, &request, &mut store, TreeLimits::default())
             .unwrap();
+    assert_eq!(
+        old_recipe.operation().parameters,
+        Object::from_bytes(old_context.descriptor())
+    );
     assert_eq!(old.byte_requests(), before);
     let old_profile = archived_profile(&f, old_context.archive().clone(), old.checkpoint().clone());
     let bytes = picture([0, 255, 0]);
@@ -650,6 +788,8 @@ fn frozen_native_job_survives_main_advancement_provider_reopen_and_git_unavailab
     git(f.root(), &["commit", "-m", "replace only cel B"]);
     f.profile["commit"] = json!(git(f.root(), &["rev-parse", "HEAD"]));
     let mut new = f.source();
+    let new_recipe = reel::tig_scene::recipe(&mut new, &request, &producer).unwrap();
+    assert_ne!(old_recipe.fingerprint(), new_recipe.fingerprint());
     let new_context =
         reel::tig_scene::freeze_context(&mut new, &request, &mut store, TreeLimits::default())
             .unwrap();
@@ -673,8 +813,11 @@ fn frozen_native_job_survives_main_advancement_provider_reopen_and_git_unavailab
         .unwrap();
     }
     let mut nodes = MetadataReader::open(&metadata, &checkpoint).unwrap();
-    for (profile, context) in [(&old_profile, &old_context), (&new_profile, &new_context)] {
-        let (source, replay) = reel::tig_scene::restore_context(
+    for (profile, context, expected_recipe) in [
+        (&old_profile, &old_context, &old_recipe),
+        (&new_profile, &new_context, &new_recipe),
+    ] {
+        let (mut source, replay) = reel::tig_scene::restore_context(
             profile.clone(),
             &request,
             context.selection(),
@@ -685,6 +828,11 @@ fn frozen_native_job_survives_main_advancement_provider_reopen_and_git_unavailab
         assert_eq!(source.byte_requests(), 0);
         assert_eq!(replay.requirements(), context.requirements());
         assert_eq!(replay.descriptor(), context.descriptor());
+        let recipe = reel::tig_scene::recipe(&mut source, &request, &producer).unwrap();
+        assert_eq!(recipe.fingerprint(), expected_recipe.fingerprint());
+        assert_eq!(recipe.checkpoint(), expected_recipe.checkpoint());
+        assert_eq!(recipe.binding(), expected_recipe.binding());
+        assert_eq!(source.byte_requests(), 0);
     }
     // Explicit readback precedes owner adoption. This journal is fixture-only.
     let key = |value: &str| Key::parse(value).unwrap();
@@ -787,6 +935,7 @@ fn frozen_native_job_survives_main_advancement_provider_reopen_and_git_unavailab
             ..serde_json::from_value(serde_json::to_value(&request).unwrap()).unwrap()
         };
         let refused = f.root().join(format!("{name}-wrong-request"));
+        assert!(reel::tig_scene::recipe(&mut source, &changed, &producer).is_err());
         assert!(reel::tig_scene::compile(&mut source, &changed, &refused).is_err());
         assert_eq!(source.byte_requests(), 0);
         assert!(!refused.exists());

@@ -9,6 +9,8 @@ use tig_core::{
     identity::{Error, Result, canonical_json},
 };
 
+pub mod recipe;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EdgeKind {
@@ -639,15 +641,15 @@ fn build_cycle(graph: &Graph) -> Option<Reference> {
         .map(|(r, _)| r.clone())
 }
 
+fn feed(hash: &mut Sha256, value: &impl Serialize) -> Result<()> {
+    let value =
+        serde_json::to_value(value).map_err(|_| Error("invalid graph hash value".into()))?;
+    let bytes = canonical_json(&value)?;
+    hash.update((bytes.len() as u64).to_be_bytes());
+    hash.update(bytes);
+    Ok(())
+}
 fn binding_digest(graph: &Graph) -> Result<Digest> {
-    fn feed(hash: &mut Sha256, value: &impl Serialize) -> Result<()> {
-        let value =
-            serde_json::to_value(value).map_err(|_| Error("invalid graph hash value".into()))?;
-        let bytes = canonical_json(&value)?;
-        hash.update((bytes.len() as u64).to_be_bytes());
-        hash.update(bytes);
-        Ok(())
-    }
     let mut hash = Sha256::new();
     hash.update(b"TIG\0native-binding\0experimental-1\0");
     feed(&mut hash, &graph.admission)?;

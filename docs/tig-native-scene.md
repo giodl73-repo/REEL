@@ -181,3 +181,36 @@ custody. Physical execution guards remain separate. Canonical output dependencie
 remain forbidden; optional derived-output cache reuse needs its own validated
 recipe and execution leases. The owner journal still reports incomplete global
 claims, and no context or job completion grants cache-removal authority.
+
+## Declared scene recipe
+
+`reel::tig_scene::recipe(&mut source, &request, &producer_object)` returns Tig's
+immutable recipe Plan without reading payloads, rendering or opening a provider.
+It uses the same request-derived Production graph as requirements and contexts;
+there is no separately authored input list. It consumes the scene's authored
+`scene_id` and `binding_ids`, qualified primary payloads, selected scene content,
+and exact named controls. Primary authored scalar fields are explicitly excluded:
+the current compiler reads their payloads and selection eligibility, not scalar
+production parameters. Changing compiler consumption requires updating this rule.
+
+The operation binds the exact private context descriptor as parameters, including
+language, delivery request and adapter/vendor pins. The caller supplies an explicit
+producer package/runtime Object. This method does not inspect that package or
+prove that it names the executing REEL binary, FFmpeg, fonts or shared libraries.
+It is a declared whole-scene recipe, not complete runtime closure or minimal
+language/variant consumption. Different language requests conservatively produce
+different recipes even while their declared whole-scene primary sets coincide.
+
+Annotation-only and selection-status changes preserve recipe identity while exact
+source provenance changes. Compilation still enforces current selection eligibility:
+a matching recipe cannot authorize a held input. Changing a cel, cue, control,
+consumed scene field, producer or request invalidates the declared recipe.
+An archived/frozen source can reconstruct the original recipe with Git unavailable;
+a changed request on a restored context refuses before payload IO.
+
+No result is selected, delivered or physically protected by a matching recipe.
+Connecting an actual completed render, verified output bytes and retained tool
+closure to Tig's produced claim remains a separate integration step. Historical
+approved masters without a native claim remain selected history, not fabricated
+producer evidence. Existing cache/job admission and independent custody checks
+remain required; no metadata-only recipe comparison grants removal authority.
