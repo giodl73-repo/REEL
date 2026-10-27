@@ -68,7 +68,7 @@ pub struct Admission {
 #[derive(Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Payload {
-    Selected,
+    Selected {},
     Stream { slot: String },
 }
 
@@ -325,7 +325,7 @@ impl Source {
         let asset = self.record(id)?;
         let admission = &self.admitted[&asset.definition().id];
         let object = match &admission.payload {
-            Payload::Selected => asset.selected()?,
+            Payload::Selected {} => asset.selected()?,
             Payload::Stream { slot } => asset.stream(slot)?,
         };
         let state = asset
@@ -360,7 +360,7 @@ impl Source {
             bail!("definition pin changed");
         }
         let object = match &admitted.payload {
-            Payload::Selected => asset.selected()?,
+            Payload::Selected {} => asset.selected()?,
             Payload::Stream { slot } => asset.stream(slot)?,
         };
         if object.sha256.as_str() != file.sha256 || object.bytes != file.bytes {

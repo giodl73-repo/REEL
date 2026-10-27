@@ -159,3 +159,9 @@ Font staging preserves valid existing basenames and uses the byte hash when an
 opaque ID would make an unsafe/reserved filename; real mapped rendering with an
 opaque font/ASS ID matches the local pixels and PCM. The final backend target has
 13 passing tests/one ignored case, plus the explicit passing real CLI case.
+
+Payload selectors are exact: {"kind":"selected"} accepts no additional fields;
+{"kind":"stream","slot":"en"} explicitly chooses that named stream. A selected
+selector carrying a slot/role or a stream selector with unknown fields refuses
+before source opening. Valid JSON shape is unchanged; Rust selected variants now
+use Payload::Selected {}. Frozen native descriptors retain exact adapter identity.
