@@ -33,6 +33,7 @@ pub struct Resolved {
     streams: Vec<StreamBinding>,
     authored: Arc<Map<String, Value>>,
     status: Arc<Map<String, Value>>,
+    metadata: Arc<Map<String, Value>>,
 }
 
 #[derive(Clone, Debug)]
@@ -60,6 +61,7 @@ impl Resolved {
             selected: value.selected.as_ref().map(|p| p.object()),
             authored: Arc::new(value.authored.clone()),
             status: Arc::new(value.status.clone()),
+            metadata: Arc::new(value.metadata.clone()),
             streams: value
                 .streams
                 .iter()
@@ -101,6 +103,11 @@ impl Resolved {
     /// interpret eligibility or grant production, publication or removal authority.
     pub fn status(&self) -> &Map<String, Value> {
         &self.status
+    }
+    /// Private project metadata from this exact record. Values and evidence pins
+    /// are data, not authority; Debug and command output do not expose this map.
+    pub fn metadata(&self) -> &Map<String, Value> {
+        &self.metadata
     }
     pub fn complete_semantic_coverage(&self) -> bool {
         false
