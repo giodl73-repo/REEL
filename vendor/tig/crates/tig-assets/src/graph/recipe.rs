@@ -4,6 +4,7 @@ use super::*;
 use crate::native::BoundInstance;
 use serde_json::json;
 
+pub mod assessment;
 pub mod produced;
 
 /// Additional recipe lookup/graph work; traversal depth was checked by Graph.
@@ -42,6 +43,61 @@ pub struct Consumption {
     pub definition_id: String,
     pub definition: Object,
     pub fields: BTreeSet<String>,
+}
+
+/// Explicit consumed subset of the graph's captured payloads, per definition.
+/// Retention and graph provenance remain unchanged. Never inferred from a claim.
+#[derive(Clone, Serialize)]
+pub struct PayloadConsumption {
+    pub definition_id: String,
+    pub definition: Object,
+    pub selected: bool,
+    pub slots: BTreeSet<String>,
+}
+impl std::fmt::Debug for PayloadConsumption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PayloadConsumption")
+            .field("selected", &self.selected)
+            .field("slots", &self.slots.len())
+            .finish()
+    }
+}
+
+fn captures_selected(payloads: &Payloads) -> bool {
+    matches!(
+        payloads,
+        Payloads::SelectedObject | Payloads::Named { selected: true, .. }
+    )
+}
+fn captures_stream(payloads: &Payloads, slot: &str, role: &str, group: &str) -> bool {
+    match payloads {
+        Payloads::Streams { roles, groups, .. } => roles.contains(role) && groups.contains(group),
+        Payloads::Named { slots, .. } => slots.contains(slot),
+        _ => false,
+    }
+}
+fn check_subset(
+    bound: &BoundInstance,
+    profile: &Profile,
+    policy: &PayloadConsumption,
+) -> Result<()> {
+    let instance = bound.instance().value();
+    require(
+        !policy.selected || (captures_selected(&profile.payloads) && instance.selected.is_some()),
+        "uncaptured selected payload",
+    )?;
+    for slot in &policy.slots {
+        let stream = instance
+            .streams
+            .iter()
+            .find(|s| &s.slot == slot)
+            .ok_or_else(|| Error("missing consumed slot".into()))?;
+        require(
+            captures_stream(&profile.payloads, &stream.slot, &stream.role, &stream.group),
+            "uncaptured consumed slot",
+        )?;
+    }
+    Ok(())
 }
 
 /// Private exact provenance accompanies the declared consumed-input fingerprint.
@@ -141,7 +197,12 @@ fn read(
     Ok((bound, cost))
 }
 
-fn base(bound: &BoundInstance, profile: &Profile, consumption: &Consumption) -> Result<Digest> {
+fn base(
+    bound: &BoundInstance,
+    profile: &Profile,
+    consumption: &Consumption,
+    projection: Option<&PayloadConsumption>,
+) -> Result<Digest> {
     let instance = bound.instance().value();
     let definition = bound.definition().value();
     require(
@@ -164,11 +225,16 @@ fn base(bound: &BoundInstance, profile: &Profile, consumption: &Consumption) -> 
         feed(&mut hash, &(field, value))?;
     }
     // Preserve payload roles and order, rather than hashing an unordered set.
-    feed(&mut hash, &profile.payloads)?;
-    let selected = match &profile.payloads {
-        Payloads::SelectedObject => true,
-        Payloads::Named { selected, .. } => *selected,
-        _ => false,
+    let selected = if let Some(policy) = projection {
+        check_subset(bound, profile, policy)?;
+        feed(
+            &mut hash,
+            &json!({"schema":"tig.native-consumed-payloads.experimental-1","selected":policy.selected,"slots":policy.slots}),
+        )?;
+        policy.selected
+    } else {
+        feed(&mut hash, &profile.payloads)?;
+        captures_selected(&profile.payloads)
     };
     if selected {
         feed(&mut hash, &instance.selected)?;
@@ -176,12 +242,11 @@ fn base(bound: &BoundInstance, profile: &Profile, consumption: &Consumption) -> 
     let streams: Vec<_> = instance
         .streams
         .iter()
-        .filter(|stream| match &profile.payloads {
-            Payloads::Streams { roles, groups, .. } => {
-                roles.contains(&stream.role) && groups.contains(&stream.group)
-            }
-            Payloads::Named { slots, .. } => slots.contains(&stream.slot),
-            _ => false,
+        .filter(|stream| {
+            projection.map_or_else(
+                || captures_stream(&profile.payloads, &stream.slot, &stream.role, &stream.group),
+                |policy| policy.slots.contains(&stream.slot),
+            )
         })
         .collect();
     hash.update((streams.len() as u64).to_be_bytes());
@@ -203,6 +268,48 @@ pub fn plan(
     consumption: &[Consumption],
     operation: &Operation,
     limits: Limits,
+) -> Result<Plan> {
+    plan_inner(
+        graph,
+        source,
+        profiles,
+        consumption,
+        operation,
+        limits,
+        None,
+    )
+}
+
+/// Hash an independently admitted consumed payload subset while retaining the
+/// original graph's complete captured requirements and provenance. Producers
+/// remain responsible for declaring all consumed semantic fields/parameters.
+pub fn plan_with_payloads(
+    graph: &Graph,
+    source: &mut impl Source,
+    profiles: &[Profile],
+    consumption: &[Consumption],
+    payloads: &[PayloadConsumption],
+    operation: &Operation,
+    limits: Limits,
+) -> Result<Plan> {
+    plan_inner(
+        graph,
+        source,
+        profiles,
+        consumption,
+        operation,
+        limits,
+        Some(payloads),
+    )
+}
+fn plan_inner(
+    graph: &Graph,
+    source: &mut impl Source,
+    profiles: &[Profile],
+    consumption: &[Consumption],
+    operation: &Operation,
+    limits: Limits,
+    payloads: Option<&[PayloadConsumption]>,
 ) -> Result<Plan> {
     let required = graph.production_requirements()?;
     limits.validate()?;
@@ -270,9 +377,52 @@ pub fn plan(
             "duplicate consumption policy",
         )?;
     }
-    let consumption = Digest::blob(&canonical_json(
-        &json!({"schema":"tig.native-consumption.experimental-1","definitions":fields.values().collect::<Vec<_>>(),"operation":operation}),
-    )?);
+    let mut projected = BTreeMap::new();
+    if let Some(policies) = payloads {
+        require(
+            policies.len() == admitted.len(),
+            "complete payload policy required",
+        )?;
+        for policy in policies {
+            Reference {
+                id: policy.definition_id.clone(),
+                object: policy.definition.clone(),
+            }
+            .validate()?;
+            let profile = admitted
+                .get(&policy.definition)
+                .filter(|p| p.definition_id == policy.definition_id)
+                .ok_or_else(|| Error("unadmitted payload definition".into()))?;
+            require(policy.slots.len() <= 256, "consumed slot budget")?;
+            require(
+                !policy.selected || captures_selected(&profile.payloads),
+                "uncaptured selected payload",
+            )?;
+            for slot in &policy.slots {
+                require(
+                    !slot.is_empty() && slot.len() <= 128 && !slot.chars().any(char::is_control),
+                    "invalid consumed slot",
+                )?;
+                match &profile.payloads {
+                    Payloads::Named { slots, .. } => {
+                        require(slots.contains(slot), "uncaptured consumed slot")?
+                    }
+                    Payloads::Streams { .. } => {}
+                    _ => return Err(Error("uncaptured consumed slot".into())),
+                }
+            }
+            require(
+                projected.insert(&policy.definition, policy).is_none(),
+                "duplicate payload policy",
+            )?;
+        }
+    }
+    let consumption_document = if payloads.is_some() {
+        json!({"schema":"tig.native-consumption.experimental-2","definitions":fields.values().collect::<Vec<_>>(),"payloads":projected.values().collect::<Vec<_>>(),"operation":operation})
+    } else {
+        json!({"schema":"tig.native-consumption.experimental-1","definitions":fields.values().collect::<Vec<_>>(),"operation":operation})
+    };
+    let consumption = Digest::blob(&canonical_json(&consumption_document)?);
     // All policy checks above precede extra source IO.
     let mut bases = BTreeMap::new();
     let mut bytes_read = 0;
@@ -303,7 +453,19 @@ pub fn plan(
                     .and_then(Option::as_ref),
             "recipe payload substitution",
         )?;
-        bases.insert(reference.clone(), base(&bound, profile, policy)?);
+        let projection = if payloads.is_some() {
+            Some(
+                *projected
+                    .get(definition)
+                    .ok_or_else(|| Error("payload policy missing".into()))?,
+            )
+        } else {
+            None
+        };
+        bases.insert(
+            reference.clone(),
+            base(&bound, profile, policy, projection)?,
+        );
     }
     let mut outgoing: BTreeMap<&Reference, Vec<&Edge>> = BTreeMap::new();
     let mut parents: BTreeMap<&Reference, Vec<&Reference>> = BTreeMap::new();

@@ -24,15 +24,50 @@ fn read(path: &str) -> Result<Vec<u8>> {
 }
 
 fn run(args: &[String]) -> Result<()> {
-    if !matches!(args.first().map(String::as_str), Some("inspect" | "stream"))
-        || (args[0] == "inspect" && args.len() != 4)
+    if !matches!(
+        args.first().map(String::as_str),
+        Some("inspect" | "stream" | "validate" | "validate-contract")
+    ) || (args[0] == "inspect" && args.len() != 4)
         || (args[0] == "stream" && args.len() != 5)
+        || (matches!(args[0].as_str(), "validate" | "validate-contract") && args.len() != 5)
     {
-        return Err(Error("usage: tig-record inspect INSTANCE DEFINITION SCHEMA | stream INSTANCE DEFINITION SCHEMA SLOT".into()));
+        return Err(Error("usage: tig-record inspect INSTANCE DEFINITION SCHEMA | stream INSTANCE DEFINITION SCHEMA SLOT | validate[-contract] INSTANCE DEFINITION SCHEMA DIALECT".into()));
+    }
+    #[cfg(not(feature = "schema"))]
+    if matches!(args[0].as_str(), "validate" | "validate-contract") {
+        return Err(Error("schema feature required".into()));
     }
     let instance = Instance::parse(&read(&args[1])?)?;
-    let bound = instance.bind(&read(&args[2])?, &read(&args[3])?)?;
-    let output = if args[0] == "stream" {
+    let definition = read(&args[2])?;
+    let schema = read(&args[3])?;
+    let bound = instance.bind(&definition, &schema)?;
+    let output = if matches!(args[0].as_str(), "validate" | "validate-contract") {
+        #[cfg(feature = "schema")]
+        {
+            let dialect = args[4]
+                .parse()
+                .map_err(|_| Error("invalid schema dialect".into()))?;
+            if args[0] == "validate-contract" {
+                let engine =
+                    tig_assets::contracts::Contract::compile(bound.definition(), &schema, dialect)
+                        .map_err(|e| Error(e.to_string()))?;
+                let checked = engine.check(&bound).map_err(|e| Error(e.to_string()))?;
+                json!({"schema":"tig.local-contract-check.experimental-1","instance":checked.instance(),"definition":checked.definition(),
+                    "authored_schema":checked.authored_schema(),"policy":checked.policy(),"authored_schema_validated":true,
+                    "local_contracts_validated":true,"complete_semantic_coverage":false,"payload_verified":false})
+            } else {
+                let engine =
+                    tig_assets::schema::Schema::compile(bound.definition(), &schema, dialect)
+                        .map_err(|e| Error(e.to_string()))?;
+                let checked = engine.check(&bound).map_err(|e| Error(e.to_string()))?;
+                json!({"schema":"tig.authored-schema-check.experimental-1","instance":checked.instance(),
+                "definition":checked.definition(),"authored_schema":checked.authored_schema(),"policy":checked.policy(),
+                "authored_schema_validated":true,"complete_semantic_coverage":false,"payload_verified":false})
+            }
+        }
+        #[cfg(not(feature = "schema"))]
+        unreachable!()
+    } else if args[0] == "stream" {
         let stream = bound
             .instance()
             .value()

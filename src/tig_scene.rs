@@ -31,7 +31,9 @@ pub const SCHEMA: &str = "reel.tig-native-scene.experimental-1";
 const METADATA_MAX: u64 = 16 * 1024 * 1024;
 mod render_context;
 mod scoped;
-pub use render_context::{freeze_render_context, restore_render_context};
+pub use render_context::{
+    freeze_render_context, render_recipe, restore_render_claim, restore_render_context,
+};
 pub use scoped::{compile_language_context, freeze_language_context, restore_language_context};
 
 #[derive(Deserialize, Serialize)]

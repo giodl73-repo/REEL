@@ -65,10 +65,17 @@ struct Prepared {
     entries: BTreeMap<LogicalPath, Object>,
     roles: BTreeMap<Role, BTreeSet<Object>>,
 }
-fn prepare(admission: &Admission<'_>, limits: TreeLimits) -> Result<Prepared> {
+fn prepare(
+    admission: &Admission<'_>,
+    variants: Option<&super::variants::Packet>,
+    limits: TreeLimits,
+) -> Result<Prepared> {
     let context = admission.context;
     let plan = admission.plan;
     let required = context.requirements();
+    if variants.is_some_and(|packet| packet.source() != context.selection()) {
+        return Err(Error::Integrity);
+    }
     if admission.runtime.len() > 64
         || admission
             .output
@@ -110,7 +117,7 @@ fn prepare(admission: &Admission<'_>, limits: TreeLimits) -> Result<Prepared> {
             return Err(Error::Integrity);
         }
     }
-    let header = identity::canonical_json(&serde_json::json!({
+    let mut header = serde_json::json!({
         "schema":"tig.native-job-context.experimental-1",
         "source":context.selection(),"checkpoint":plan.checkpoint(),
         "admission":plan.admission(),"binding":plan.binding(),
@@ -118,8 +125,13 @@ fn prepare(admission: &Admission<'_>, limits: TreeLimits) -> Result<Prepared> {
         "operation":plan.operation(),"runtime":admission.runtime.len(),
         "claim":admission.output.as_ref().map(|o|o.claim.object()),
         "evidence":admission.output.as_ref().map_or(0,|o|o.attachments.len()),
-    }))
-    .map_err(|_| Error::Invalid)?;
+    });
+    if let Some(packet) = variants {
+        header["schema"] = "tig.native-job-context.experimental-2".into();
+        header["variants"] =
+            serde_json::to_value(packet.selection()).map_err(|_| Error::Invalid)?;
+    }
+    let header = identity::canonical_json(&header).map_err(|_| Error::Invalid)?;
     let header_object = Object::from_bytes(&header);
     let mut entries = BTreeMap::from([
         (path("job/identity")?, header_object.clone()),
@@ -154,6 +166,13 @@ fn prepare(admission: &Admission<'_>, limits: TreeLimits) -> Result<Prepared> {
         context.policy().clone(),
         plan.operation().parameters.clone(),
     ]);
+    if let Some(packet) = variants {
+        entries.insert(path("source/variants")?, packet.selection().root.clone());
+        roles
+            .get_mut(&Role::Interpretation)
+            .unwrap()
+            .extend(packet.objects().iter().cloned());
+    }
     roles
         .get_mut(&Role::Runtime)
         .unwrap()
@@ -232,7 +251,25 @@ pub fn freeze(
     store: &mut impl NodeStore,
     limits: TreeLimits,
 ) -> Result<JobContext> {
-    let prepared = prepare(admission, limits)?;
+    freeze_inner(admission, None, store, limits)
+}
+/// Attach an independently checked variant packet to this exact job source.
+/// Candidate finish/readback and owner adoption remain external.
+pub fn freeze_with_variants(
+    admission: &Admission<'_>,
+    variants: &super::variants::Packet,
+    store: &mut impl NodeStore,
+    limits: TreeLimits,
+) -> Result<JobContext> {
+    freeze_inner(admission, Some(variants), store, limits)
+}
+fn freeze_inner(
+    admission: &Admission<'_>,
+    variants: Option<&super::variants::Packet>,
+    store: &mut impl NodeStore,
+    limits: TreeLimits,
+) -> Result<JobContext> {
+    let prepared = prepare(admission, variants, limits)?;
     let header = put(store, &prepared.header)?;
     if let Some(output) = &admission.output {
         put(store, output.claim.bytes())?;
@@ -255,7 +292,26 @@ pub fn restore(
     store: &mut impl NodeStore,
     limits: TreeLimits,
 ) -> Result<JobContext> {
-    let prepared = prepare(admission, limits)?;
+    restore_inner(selection, admission, None, store, limits)
+}
+/// Restore only with an already replay-checked packet and exact job admission.
+pub fn restore_with_variants(
+    selection: &Selection,
+    admission: &Admission<'_>,
+    variants: &super::variants::Packet,
+    store: &mut impl NodeStore,
+    limits: TreeLimits,
+) -> Result<JobContext> {
+    restore_inner(selection, admission, Some(variants), store, limits)
+}
+fn restore_inner(
+    selection: &Selection,
+    admission: &Admission<'_>,
+    variants: Option<&super::variants::Packet>,
+    store: &mut impl NodeStore,
+    limits: TreeLimits,
+) -> Result<JobContext> {
+    let prepared = prepare(admission, variants, limits)?;
     let header = Object::from_bytes(&prepared.header);
     if selection.context != header.sha256 {
         return Err(Error::Integrity);

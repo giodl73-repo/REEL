@@ -2,6 +2,8 @@
 use super::*;
 
 const RENDER_SCHEMA: &str = "reel.tig-native-render-context.experimental-1";
+const OPERATION: &str = "reel.native-language.render.experimental-1";
+const SEMANTICS: &[u8] = b"reel.native-language.render.experimental-1:derived-language-roots;leaf-payloads;compiled-contracts-and-native-authoring-in-frozen-parameters;full-retained-controls;explicit-producer";
 const INPUTS: [(&str, &str); 3] = [
     ("production.json", "production_sha256"),
     ("contract.json", "contract_sha256"),
@@ -53,17 +55,165 @@ fn check_parameters(raw: &[u8], request: &Request) -> Result<()> {
     Ok(())
 }
 
+fn operation(producer: &Object, descriptor: &[u8]) -> graph::recipe::Operation {
+    graph::recipe::Operation {
+        name: OPERATION.into(),
+        semantics: Object::from_bytes(SEMANTICS).sha256,
+        producer: producer.clone(),
+        parameters: Object::from_bytes(descriptor),
+    }
+}
+fn consumption(profiles: &[Profile]) -> Vec<graph::recipe::Consumption> {
+    profiles
+        .iter()
+        .map(|profile| graph::recipe::Consumption {
+            definition_id: profile.definition_id.clone(),
+            definition: profile.definition.clone(),
+            fields: BTreeSet::new(),
+        })
+        .collect()
+}
+fn payloads(
+    profiles: &[Profile],
+    request: &Request,
+) -> Result<Vec<graph::recipe::PayloadConsumption>> {
+    profiles
+        .iter()
+        .map(|profile| {
+            let (selected, slots) = if profile.definition_id == request.scene_definition {
+                (false, BTreeSet::new())
+            } else {
+                match &profile.payloads {
+                    Payloads::SelectedObject => (true, BTreeSet::new()),
+                    Payloads::Named { selected, slots } => (*selected, slots.clone()),
+                    _ => bail!("unsupported native primary payload policy"),
+                }
+            };
+            Ok(graph::recipe::PayloadConsumption {
+                definition_id: profile.definition_id.clone(),
+                definition: profile.definition.clone(),
+                selected,
+                slots,
+            })
+        })
+        .collect()
+}
+
+/// Recompile into NEW private scratch and derive a projected metadata recipe.
+/// Retains all scoped controls/requirements; never proves producer execution,
+/// complete environment/semantic coverage, eligibility of generated inputs or
+/// output custody. The caller independently admits `producer`.
+pub fn render_recipe(
+    source: &mut Source,
+    request: &Request,
+    context: &ProductionContext,
+    producer: &Object,
+    output: &Path,
+) -> Result<graph::recipe::Plan> {
+    check_parameters(context.descriptor(), request)?;
+    source.check_native_context(context.descriptor())?;
+    if source.checkpoint() != context.requirements().checkpoint()
+        || !context
+            .roots()
+            .contains(source.record(&request.scene_id)?.reference())
+    {
+        bail!("render recipe source differs from frozen context");
+    }
+    let (descriptor, scope) =
+        prepare_with_descriptor(source, request, output, context.descriptor())?;
+    let roots = scope
+        .roots
+        .iter()
+        .map(|id| source.record(id).map(|r| r.reference().clone()))
+        .collect::<Result<BTreeSet<_>>>()?;
+    if descriptor != context.descriptor()
+        || &roots != context.roots()
+        || &scope.required != context.requirements()
+    {
+        bail!("render recipe differs from original native interpretation");
+    }
+    source.projected_recipe_for_ids(
+        &scope.roots,
+        &scope.profiles,
+        &consumption(&scope.profiles),
+        &payloads(&scope.profiles, request)?,
+        &operation(producer, &descriptor),
+        query_limits(),
+    )
+}
+
+/// Replay original projected correspondence after independent native recompilation.
+/// Original archive/request/producer admission is required. Writes candidate
+/// scratch, reads enrolled controls/alignments, never renders or adopts a job.
+/// The returned unsigned claim remains no evidence of execution or byte custody.
+pub fn restore_render_claim<'a>(
+    profile: ArchiveProfile,
+    request: &Request,
+    producer: &Object,
+    claim: &'a graph::recipe::produced::Claim,
+    output: &Path,
+    store: &mut impl NodeStore,
+    limits: TreeLimits,
+) -> Result<(Source, produced::ReplayedClaim<'a>)> {
+    if claim.operation().name != OPERATION
+        || claim.operation().semantics != Object::from_bytes(SEMANTICS).sha256
+        || &claim.operation().producer != producer
+    {
+        bail!("projected render claim operation differs from admission");
+    }
+    let native = profile.limits;
+    let selection = Selection {
+        root: claim.context().root.clone(),
+        context: claim.context().identity.clone(),
+    };
+    let (mut source, context, scope) =
+        restore_with_scope(profile, request, &selection, output, store, limits)?;
+    let operation = operation(producer, context.descriptor());
+    if claim.operation() != &operation {
+        bail!("projected render claim parameters differ from admission");
+    }
+    let fields = consumption(&scope.profiles);
+    let payloads = payloads(&scope.profiles, request)?;
+    let query = query_limits();
+    let admission = produced::Admission {
+        profiles: &scope.profiles,
+        consumption: &fields,
+        operation: &operation,
+        native,
+        tree: limits,
+        query,
+        recipe: graph::recipe::Limits {
+            nodes: query.nodes,
+            edges: query.edges,
+            bytes: query.bytes,
+        },
+    };
+    let replay = source.replay_produced_with_payloads(claim, &admission, &payloads, store)?;
+    if replay.context().selection() != context.selection() {
+        bail!("projected render claim context differs from native admission");
+    }
+    Ok((source, replay))
+}
+
 fn prepare(
     source: &mut Source,
     request: &Request,
     output: &Path,
 ) -> Result<(Vec<u8>, LanguageScope)> {
-    let (receipt, scope) = compile_with_scope(
+    prepare_with_descriptor(
         source,
         request,
         output,
         &scoped::scoped_descriptor(request)?,
-    )?;
+    )
+}
+fn prepare_with_descriptor(
+    source: &mut Source,
+    request: &Request,
+    output: &Path,
+    admitted: &[u8],
+) -> Result<(Vec<u8>, LanguageScope)> {
+    let (receipt, scope) = compile_with_scope(source, request, output, admitted)?;
     let mut descriptor = parameters(request, tig_core::Digest::parse(&scope.native_authoring)?)?;
     for (name, field) in INPUTS {
         let mut bytes = Vec::new();
@@ -118,6 +268,17 @@ pub fn restore_render_context(
     store: &mut impl NodeStore,
     limits: TreeLimits,
 ) -> Result<(Source, ProductionContext)> {
+    restore_with_scope(profile, request, selection, output, store, limits)
+        .map(|(source, context, _)| (source, context))
+}
+fn restore_with_scope(
+    profile: ArchiveProfile,
+    request: &Request,
+    selection: &Selection,
+    output: &Path,
+    store: &mut impl NodeStore,
+    limits: TreeLimits,
+) -> Result<(Source, ProductionContext, LanguageScope)> {
     let stored = tig_git::source::native::context::read_descriptor(selection, store, limits)?;
     check_parameters(&stored, request)?;
     let archive = profile.archive.clone();
@@ -148,5 +309,5 @@ pub fn restore_render_context(
         bail!("render context differs from admitted native interpretation");
     }
     source.bind_native_context(context.descriptor());
-    Ok((source, context))
+    Ok((source, context, scope))
 }

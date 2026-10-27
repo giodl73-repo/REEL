@@ -8,6 +8,7 @@ publish = false
 
 [features]
 assets = ["dep:tig-assets"]
+schema = ["assets", "tig-assets/schema"]
 
 [dependencies]
 tig-core = { path = "../tig-core" }
