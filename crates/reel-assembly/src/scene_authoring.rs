@@ -1413,6 +1413,16 @@ pub struct ResolvedScene {
     pub scene_policy_id: String,
     pub language_fingerprints: BTreeMap<String, String>,
     pub fingerprint_sha256: String,
+    // Derived once by the native resolver. Do not serialize another inventory.
+    #[serde(skip)]
+    language_inputs: BTreeMap<String, BTreeMap<String, AssetRef>>,
+}
+impl ResolvedScene {
+    /// Exact native binding keys used by one language, including timing and
+    /// presentation dependencies. Not media availability or custody evidence.
+    pub fn inputs_for_language(&self, language: &str) -> Option<&BTreeMap<String, AssetRef>> {
+        self.language_inputs.get(language)
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1808,6 +1818,7 @@ pub fn resolve_scene(
         bail!("scene has no language lanes");
     }
     let mut language_fingerprints = BTreeMap::new();
+    let mut inputs_by_language = BTreeMap::new();
     for (language_id, language) in &scene.languages {
         let mut language_inputs = BTreeMap::new();
         let mut used_scores = BTreeMap::<String, &ScoreBinding>::new();
@@ -1964,6 +1975,7 @@ pub fn resolve_scene(
                 fingerprint
             },
         );
+        inputs_by_language.insert(language_id.clone(), language_inputs);
     }
     let fingerprint_sha256 = digest(&(&scene.scene_id, &language_fingerprints))?;
     Ok(ResolvedScene {
@@ -1974,6 +1986,7 @@ pub fn resolve_scene(
         scene_policy_id: policy.policy_id.clone(),
         language_fingerprints,
         fingerprint_sha256,
+        language_inputs: inputs_by_language,
     })
 }
 

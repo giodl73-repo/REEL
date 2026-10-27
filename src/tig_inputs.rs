@@ -242,6 +242,26 @@ impl Source {
         let query = self.production_query(root, profiles, limits)?;
         Ok(graph::resolve(&mut self.snapshot, &query, profiles)?.production_requirements()?)
     }
+    /// Explicit native-consumer roots at this exact captured source. No byte IO.
+    pub(crate) fn production_requirements_for_ids(
+        &mut self,
+        roots: &std::collections::BTreeSet<String>,
+        profiles: &[graph::Profile],
+        limits: graph::Limits,
+    ) -> Result<graph::ProductionRequirements> {
+        if roots.is_empty() || roots.len() > limits.nodes {
+            bail!("native root scope exceeds graph budget");
+        }
+        let first = roots
+            .first()
+            .ok_or_else(|| anyhow!("native root scope empty"))?;
+        let mut query = self.production_query(first, profiles, limits)?;
+        query.roots = roots
+            .iter()
+            .map(|id| self.record(id).map(|r| r.reference().clone()))
+            .collect::<Result<_>>()?;
+        Ok(graph::resolve(&mut self.snapshot, &query, profiles)?.production_requirements()?)
+    }
     pub(crate) fn production_recipe(
         &mut self,
         root: &str,
