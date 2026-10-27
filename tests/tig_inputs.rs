@@ -3,6 +3,9 @@
 #[path = "support/tig_candidate_publication.rs"]
 mod candidate_publication;
 #[cfg(all(windows, feature = "tig-publication"))]
+#[path = "support/tig_native_cli.rs"]
+mod native_cli;
+#[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_native_job.rs"]
 mod native_job;
 #[cfg(all(windows, feature = "tig-publication"))]
@@ -890,6 +893,15 @@ fn native_render_candidate_claims_only_independently_checked_matching_bytes() {
     assert_eq!(claim.outputs(), &[subject.subject().clone()]);
     #[cfg(feature = "tig-publication")]
     let claim = candidate_publication::exercise(&candidate, &subject, f.root(), bind_as);
+    #[cfg(feature = "tig-publication")]
+    native_cli::exercise(
+        f.root(),
+        &request,
+        context.selection(),
+        (&metadata, &checkpoint),
+        json!({"schema":reel::tig_inputs::ARCHIVE_PROFILE_SCHEMA,"archive":context.archive(),"checkpoint":source.checkpoint(),"admitted":f.profile["admitted"],"byte_source":f.profile["byte_source"]}),
+        candidate.receipt(),
+    );
     drop(reader);
     for name in [".git", "records", "definitions"] {
         fs::rename(
