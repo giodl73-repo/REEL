@@ -651,6 +651,221 @@ fn native_recipe_distinguishes_production_changes_from_annotation_and_status() {
     }
 }
 
+#[test]
+fn native_render_candidate_refuses_foreign_context_before_payload_or_output_io() {
+    use tig_core::tree::{MemoryNodes, TreeLimits};
+    let (mut f, mut request) = native_scene_fixture();
+    let producer = Object::from_bytes(b"synthetic admitted producer");
+    let mut source = f.source();
+    let context = reel::tig_scene::freeze_context(
+        &mut source,
+        &request,
+        &mut MemoryNodes::default(),
+        TreeLimits::default(),
+    )
+    .unwrap();
+    let job = f.root().join("must-not-create-job");
+    let output = f.root().join("must-not-render");
+    request.language = "en".into();
+    assert!(
+        reel::tig_scene_production::render(
+            &mut source,
+            &request,
+            &context,
+            &producer,
+            &job,
+            &output
+        )
+        .is_err()
+    );
+    assert_eq!(source.byte_requests(), 0);
+    request.language = "es".into();
+    let file = "records/cel-b.tig";
+    let mut record: Value =
+        serde_json::from_slice(&fs::read(f.root().join(file)).unwrap()).unwrap();
+    record["metadata"]["note"] = json!("same recipe, different source context");
+    write(f.root(), file, &record);
+    git(f.root(), &["add", "records"]);
+    git(f.root(), &["commit", "-m", "advance source context only"]);
+    f.profile["commit"] = json!(git(f.root(), &["rev-parse", "HEAD"]));
+    let mut advanced = f.source();
+    assert_eq!(
+        reel::tig_scene::recipe(&mut source, &request, &producer)
+            .unwrap()
+            .fingerprint(),
+        reel::tig_scene::recipe(&mut advanced, &request, &producer)
+            .unwrap()
+            .fingerprint()
+    );
+    assert!(
+        reel::tig_scene_production::render(
+            &mut advanced,
+            &request,
+            &context,
+            &producer,
+            &job,
+            &output
+        )
+        .is_err()
+    );
+    assert_eq!(advanced.byte_requests(), 0);
+    assert!(!job.exists());
+    assert!(!output.exists());
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "requires native FFmpeg; native render-to-candidate-claim handoff"]
+fn native_render_candidate_claims_only_independently_checked_matching_bytes() {
+    use reel::tig_scene_production::{self, OutputBinding};
+    use tig_assets::{
+        graph::Reference,
+        graph::recipe::produced::{BoundSubject, Claim, Selector},
+        native::Instance,
+    };
+    use tig_core::tree::TreeLimits;
+    use tig_store::{
+        Key,
+        metadata::{MetadataReader, MetadataStore},
+        source_claims::{Command as OwnerCommand, SourceJournal},
+    };
+    let (mut f, request) = native_scene_fixture();
+    f.profile["byte_source"]["required"] = json!("prevent-mutation");
+    let producer = Object::from_bytes(b"synthetic explicit producer, not a full runtime closure");
+    let mut source = f.source();
+    let metadata = f.root().join("native-job-metadata");
+    let mut store = MetadataStore::create(
+        &metadata,
+        tig_store::metadata::Limits {
+            nodes: 8192,
+            bytes: 8 * 1024 * 1024,
+            database_bytes: 16 * 1024 * 1024,
+            min_free_bytes: 65536,
+        },
+    )
+    .unwrap();
+    let context =
+        reel::tig_scene::freeze_context(&mut source, &request, &mut store, TreeLimits::default())
+            .unwrap();
+    let profile = archived_profile(&f, context.archive().clone(), source.checkpoint().clone());
+    let checkpoint = store.finish().unwrap();
+    drop(store);
+    drop(source);
+    let mut reader = MetadataReader::open(&metadata, &checkpoint).unwrap();
+    let (mut source, context) = reel::tig_scene::restore_context(
+        profile,
+        &request,
+        context.selection(),
+        &mut reader,
+        TreeLimits::default(),
+    )
+    .unwrap();
+    let key = |s: &str| Key::parse(s).unwrap();
+    let mut owners =
+        SourceJournal::create(&f.root().join("job-owner"), key("fixture"), key("epoch")).unwrap();
+    let prepared = owners
+        .apply(
+            key("prepare"),
+            OwnerCommand::Prepare {
+                source: key("job"),
+                owner: key("test"),
+                expected_revision: 0,
+                selection: context.selection().clone(),
+            },
+        )
+        .unwrap();
+    owners
+        .apply(
+            key("adopt"),
+            OwnerCommand::Adopt {
+                source: key("job"),
+                owner: key("test"),
+                expected_revision: 1,
+                prepared: prepared.reference,
+            },
+        )
+        .unwrap();
+    let job = f.root().join("rendered-native-job");
+    let output = f.root().join("rendered-native-output");
+    let candidate =
+        tig_scene_production::render(&mut source, &request, &context, &producer, &job, &output)
+            .unwrap();
+    assert_eq!(source.active_readers(), 0);
+    assert_eq!(
+        candidate.recipe().operation().parameters,
+        Object::from_bytes(context.descriptor())
+    );
+    assert_eq!(
+        candidate.receipt_object(),
+        &Object::from_bytes(&fs::read(output.join("receipt.json")).unwrap())
+    );
+    assert!(candidate.claim(&[]).is_err());
+    let schema = fs::read(f.root().join("definitions/authored.json")).unwrap();
+    let definition = serde_json::to_vec(&json!({"schema":"tig.definition.design-1","id":"types/output","authored_schema":Object::from_bytes(&schema),"authoring":{"properties":[],"required":[],"defaults":{}},"stream_rules":{},"semantic_rules":{}})).unwrap();
+    let admission = Reference {
+        id: "types/output".into(),
+        object: Object::from_bytes(&definition),
+    };
+    let bind = |pin: &Object| {
+        let record = serde_json::to_vec(&json!({"schema":"tig.instance.design-1","id":"delivery/scene","definition":{"id":admission.id,"sha256":admission.object.sha256,"bytes":admission.object.bytes},"authored":{},"selected":pin,"streams":[],"status":{},"metadata":{}})).unwrap();
+        let bound = Instance::parse(&record)
+            .unwrap()
+            .bind(&definition, &schema)
+            .unwrap();
+        BoundSubject::bind(&bound, &admission, Selector::Selected {})
+            .unwrap()
+            .unwrap()
+    };
+    let original = fs::read(output.join("master.mkv")).unwrap();
+    let subject = bind(&Object::from_bytes(&original));
+    let mapping = || OutputBinding {
+        output_name: "master.mkv",
+        subject: &subject,
+    };
+    let claim = candidate.claim(&[mapping()]).unwrap();
+    let claim = Claim::parse(claim.object(), claim.bytes()).unwrap();
+    claim.check_plan(candidate.recipe()).unwrap();
+    assert_eq!(claim.context().root, context.selection().root);
+    assert_eq!(claim.outputs(), &[subject.subject().clone()]);
+    assert!(candidate.claim(&[mapping(), mapping()]).is_err());
+    assert!(
+        candidate
+            .claim(&[OutputBinding {
+                output_name: "unknown",
+                subject: &subject
+            }])
+            .is_err()
+    );
+    let wrong = bind(&Object::from_bytes(b"foreign candidate"));
+    assert!(
+        candidate
+            .claim(&[OutputBinding {
+                output_name: "master.mkv",
+                subject: &wrong
+            }])
+            .is_err()
+    );
+    let oversized: Vec<_> = std::iter::repeat_with(mapping).take(257).collect();
+    assert!(candidate.claim(&oversized).is_err());
+    let mut same_size_damage = original.clone();
+    same_size_damage[0] ^= 1;
+    fs::write(output.join("master.mkv"), same_size_damage).unwrap();
+    assert!(candidate.claim(&[mapping()]).is_err());
+    fs::write(output.join("master.mkv"), b"damaged after render").unwrap();
+    assert!(candidate.claim(&[mapping()]).is_err());
+    fs::write(output.join("master.mkv"), original).unwrap();
+    assert!(candidate.claim(&[mapping()]).is_ok());
+    let receipt = fs::read(output.join("receipt.json")).unwrap();
+    fs::write(output.join("receipt.json"), b"changed receipt").unwrap();
+    assert!(candidate.claim(&[mapping()]).is_err());
+    fs::write(output.join("receipt.json"), receipt).unwrap();
+    assert!(
+        tig_scene_production::render(&mut source, &request, &context, &producer, &job, &output)
+            .is_err()
+    );
+    assert!(!owners.obligations(10).unwrap().complete_claim_coverage());
+}
+
 fn archived_profile(
     f: &Fixture,
     archive: Object,

@@ -71,6 +71,8 @@ pub mod sung_lyric_alignment;
 pub mod tig_inputs;
 #[cfg(feature = "tig")]
 pub mod tig_scene;
+#[cfg(feature = "tig")]
+pub mod tig_scene_production;
 pub mod voice_consistency;
 pub mod voice_performance;
 
