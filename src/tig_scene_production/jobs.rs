@@ -1,6 +1,8 @@
 //! Explicit native job ownership over existing metadata/journal/provider ports.
 //! Resource protection is scoped, not global availability, custody or deletion.
-use super::{OutputBinding, Publication, PublishedCandidate, RenderedCandidate, context_recipe};
+use super::{
+    OutputBinding, Publication, PublishedCandidate, RecipeMode, RenderedCandidate, context_recipe,
+};
 use crate::{media_runtime::BoundPrograms, tig_inputs::Source, tig_scene::Request};
 use anyhow::{Result, bail};
 use reel_assets::admission;
@@ -34,6 +36,7 @@ pub struct JobPlan<'a> {
     programs: &'a BoundPrograms,
     recipe: Plan,
     runtime: BTreeMap<LogicalPath, Object>,
+    mode: RecipeMode,
 }
 pub struct Readback<'p, 'a> {
     plan: &'p JobPlan<'a>,
@@ -94,6 +97,29 @@ impl<'a> JobPlan<'a> {
     ) -> Result<Self> {
         let producer = object(programs.identity())?;
         let recipe = context_recipe(source, request, context, &producer)?;
+        Self::with_recipe(request, context, programs, recipe, RecipeMode::Declared)
+    }
+    /// Explicit compiled-context planning; writes only new preparation scratch.
+    /// Caller must still finish/read back and protect the resulting job resources.
+    pub fn from_render_context(
+        source: &mut Source,
+        request: &'a Request,
+        context: &'a ProductionContext,
+        programs: &'a BoundPrograms,
+        preparation: &Path,
+    ) -> Result<Self> {
+        let producer = object(programs.identity())?;
+        let recipe =
+            crate::tig_scene::render_recipe(source, request, context, &producer, preparation)?;
+        Self::with_recipe(request, context, programs, recipe, RecipeMode::Projected)
+    }
+    fn with_recipe(
+        request: &'a Request,
+        context: &'a ProductionContext,
+        programs: &'a BoundPrograms,
+        recipe: Plan,
+        mode: RecipeMode,
+    ) -> Result<Self> {
         // Component names are opaque labels, not paths. Hash them so valid
         // dependency labels cannot create reserved-name or prefix collisions.
         let runtime = programs
@@ -111,6 +137,7 @@ impl<'a> JobPlan<'a> {
             programs,
             recipe,
             runtime,
+            mode,
         })
     }
     pub fn recipe(&self) -> &Plan {
@@ -321,7 +348,11 @@ impl ProtectedJob<'_, '_> {
         output: &Path,
     ) -> Result<ManagedCandidate> {
         self.planned(journal)?;
-        let candidate = super::render_with_programs(
+        let render = match self.plan.mode {
+            RecipeMode::Declared => super::render_with_programs,
+            RecipeMode::Projected => super::render_projected_with_programs,
+        };
+        let candidate = render(
             source,
             self.plan.request,
             self.plan.context,
@@ -329,6 +360,15 @@ impl ProtectedJob<'_, '_> {
             job_directory,
             output,
         )?;
+        let recipe = candidate.recipe();
+        if recipe.fingerprint() != self.plan.recipe.fingerprint()
+            || recipe.checkpoint() != self.plan.recipe.checkpoint()
+            || recipe.binding() != self.plan.recipe.binding()
+            || recipe.admission() != self.plan.recipe.admission()
+            || recipe.operation() != self.plan.recipe.operation()
+        {
+            bail!("native managed candidate differs from planned recipe");
+        }
         self.planned(journal)?;
         Ok(ManagedCandidate {
             stamp: self.stamp.clone(),

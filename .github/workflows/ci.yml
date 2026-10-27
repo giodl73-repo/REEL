@@ -63,6 +63,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --features tig-publication --test tig_inputs native_render_candidate_claims_only_independently_checked_matching_bytes --locked -- --ignored --exact
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --features tig-publication --test tig_inputs language_scope::projected_jobs::projected_managed_render_publishes_and_replays_checked_claim --locked -- --ignored --exact
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify explicit mono duplication preserves source level and rejects stereo
         run: cargo test --test scene_delivery duplicate_mono_preserves_source_level_and_rejects_stereo -- --ignored --exact
       - name: Verify independent native audio matches full-scene stems and rejects stale evidence
