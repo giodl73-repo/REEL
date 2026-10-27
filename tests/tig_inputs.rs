@@ -743,6 +743,8 @@ fn native_render_candidate_claims_only_independently_checked_matching_bytes() {
     };
     let (mut f, request) = native_scene_fixture();
     f.profile["byte_source"]["required"] = json!("prevent-mutation");
+    #[cfg(feature = "tig-publication")]
+    native_cli::seed(&mut f);
     let native_file = |path: std::path::PathBuf| {
         let path = path.canonicalize().unwrap();
         let identity = reel::media_runtime::ByteIdentity::observe_file(&path).unwrap();

@@ -29,6 +29,8 @@ use tig_store::{
 const PROFILE_SCHEMA: &str = "reel.tig-native-job-profile.experimental-1";
 const TICKET_SCHEMA: &str = "reel.tig-native-worker.experimental-1";
 mod planning;
+mod records;
+mod retained;
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 enum Mode {
@@ -48,6 +50,8 @@ struct Worker {
     outputs: BTreeMap<String, u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     output_budget: Option<planning::Budget>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    record_outputs: Vec<records::Spec>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -76,6 +80,11 @@ struct Profile {
     timeout_seconds: u64,
 }
 fn read<T: DeserializeOwned>(path: &Path, max: usize, expected: Option<&Object>) -> Result<T> {
+    Ok(serde_json::from_value(identity::parse_json(&read_bytes(
+        path, max, expected,
+    )?)?)?)
+}
+fn read_bytes(path: &Path, max: usize, expected: Option<&Object>) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     fs::File::open(path)?
         .take(max as u64 + 1)
@@ -86,7 +95,7 @@ fn read<T: DeserializeOwned>(path: &Path, max: usize, expected: Option<&Object>)
     if expected.is_some_and(|pin| *pin != Object::from_bytes(&bytes)) {
         bail!("native worker admission bytes differ");
     }
-    Ok(serde_json::from_value(identity::parse_json(&bytes)?)?)
+    Ok(bytes)
 }
 fn pin(programs: &BoundPrograms) -> Result<Object> {
     Ok(Object {
@@ -205,6 +214,7 @@ fn execute(path: &Path, only_plan: bool) -> Result<Value> {
     }
     let programs = BoundPrograms::bind(&profile.worker.runtime)?;
     let (mut source, context) = restore(&profile.worker)?;
+    let templates = records::prepare(&profile.worker, &context)?;
     let plan = JobPlan::from_context(&mut source, &profile.worker.request, &context, &programs)?;
     let mut spec = Phase {
         mode: if automatic { Mode::Plan } else { Mode::Render },
@@ -227,7 +237,12 @@ fn execute(path: &Path, only_plan: bool) -> Result<Value> {
         &spec,
     )?;
     if !automatic {
-        return Ok(summary(&first.value, &journal));
+        let exported = records::readback(&templates, &profile, &plan, &first, &mut journal)?;
+        let mut result = summary(&first.value, &journal);
+        if let Some(exported) = exported {
+            result["record_candidates"] = exported;
+        }
+        return Ok(result);
     }
     let (report, minimum) = planning::readback(&profile, &plan, &programs, &first, &mut journal)?;
     if only_plan {
@@ -254,6 +269,10 @@ fn execute(path: &Path, only_plan: bool) -> Result<Value> {
         &spec,
     )?;
     let mut result = summary(&rendered.value, &journal);
+    if let Some(exported) = records::readback(&templates, &profile, &plan, &rendered, &mut journal)?
+    {
+        result["record_candidates"] = exported;
+    }
     result["planning"] = serde_json::to_value(report)?;
     result["planning_result"] = first.value;
     Ok(result)
@@ -307,7 +326,7 @@ fn execute_phase(
     } else {
         profile.budget_bytes
     };
-    let outputs: BTreeMap<_, _> = if spec.mode == Mode::Plan {
+    let mut outputs: BTreeMap<_, _> = if spec.mode == Mode::Plan {
         BTreeMap::from([(
             "planning.json".into(),
             json!({"path":"planning.json","max_bytes":65_536}),
@@ -329,6 +348,12 @@ fn execute_phase(
             )))
             .collect()
     };
+    if spec.mode == Mode::Render {
+        records::check_names(&profile.worker, &output_names(&profile.worker)?)?;
+        for (name, max) in records::artifacts(&profile.worker)? {
+            outputs.insert(name.clone(), json!({"path":name,"max_bytes":max}));
+        }
+    }
     let request = serde_json::to_vec(&json!({
         "output_count_limit":512,"budget_bytes":workspace_budget,"scratch_bytes":scratch_budget,
         "inputs":{},"tools":{},"installed_tools":{"worker":{"path":std::env::current_exe()?.canonicalize()?,"sha256":profile.worker.runtime.host.sha256,"bytes":profile.worker.runtime.host.bytes}},
@@ -407,6 +432,7 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
         bail!("native worker runtime differs");
     }
     let (mut source, context) = restore(&ticket.admission)?;
+    let record_templates = records::prepare(&ticket.admission, &context)?;
     let plan = JobPlan::from_context(&mut source, &ticket.admission.request, &context, &programs)?;
     if plan.recipe().fingerprint() != &ticket.recipe {
         bail!("native worker recipe differs");
@@ -414,6 +440,7 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
     if ticket.mode == Mode::Plan {
         return planning::produce(&ticket, &mut source, &programs);
     }
+    records::check_names(&ticket.admission, &expected)?;
     let candidate = tig_scene_production::render_with_programs_and_outputs(
         &mut source,
         &ticket.admission.request,
@@ -438,7 +465,8 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
             bail!("native worker output exceeds declared size");
         }
     }
-    let result = json!({"schema":"reel.tig-native-worker-result.experimental-1","context":ticket.admission.context,"recipe":candidate.recipe().fingerprint(),"producer":ticket.producer,"receipt":candidate.receipt_object(),"production_claim":null});
+    let exported = records::emit(&record_templates, &candidate)?;
+    let result = json!({"schema":"reel.tig-native-worker-result.experimental-1","context":ticket.admission.context,"recipe":candidate.recipe().fingerprint(),"producer":ticket.producer,"receipt":candidate.receipt_object(),"record_candidates":exported,"production_claim":null});
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
