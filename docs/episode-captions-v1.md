@@ -56,10 +56,12 @@ previous nearest-millisecond exporter. Source cue millisecond durations are
 otherwise unchanged. The adapter supports any valid native recipe clock,
 including 24 to 25 and 25 to 30 repeat-only conform.
 
-A new output directory receives `captions.srt`, `captions.vtt` and
+A new or existing empty output directory receives `captions.srt`, `captions.vtt` and
 `caption-timing.json`. The private timing receipt binds both native FileRefs,
 the exact adapter manifest, ordered source SRT and selection evidence FileRefs,
 source text hashes, content/hold sample spans and output hashes/byte counts.
+Existing empty directories support managed runners that precreate output parents;
+files use exclusive creation and existing content is never overwritten.
 Optional per-track VTT `line:N%` preserves an explicitly selected caption-family
 placement; no lyric text, translation or speaker credit is synthesized.
 

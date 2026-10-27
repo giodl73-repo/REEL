@@ -71,6 +71,9 @@ fn bilingual_27_segments_use_native_sample_clock_and_preserve_words_and_style() 
         let root = d.path();
         let (m, _, r) = fixture(root, lang, 30);
         let output = root.join("out");
+        if lang == "en" {
+            fs::create_dir(&output).unwrap();
+        }
         assemble(&root.join("captions.json"), root, &output).unwrap();
         let srt = fs::read_to_string(output.join("captions.srt")).unwrap();
         let cues = reel::series::parse_srt(&srt).unwrap();
@@ -269,4 +272,33 @@ fn retained_native_caption_family_comparison() {
         "retained native {journey}-{lang}: {} exact cue payloads, timing <=1ms, inherited host VTT line:70% preserved",
         actual.len()
     );
+}
+
+#[test]
+fn nonempty_managed_output_fails_without_writing_or_overwriting() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fixture(root, "en", 25);
+    let output = root.join("managed-output");
+    fs::create_dir(&output).unwrap();
+    fs::write(output.join("owner-marker"), b"preserve").unwrap();
+    assert!(assemble(&root.join("captions.json"), root, &output).is_err());
+    assert_eq!(fs::read(output.join("owner-marker")).unwrap(), b"preserve");
+    assert_eq!(fs::read_dir(&output).unwrap().count(), 1);
+}
+
+#[test]
+fn explicit_selected_empty_srt_preserves_caption_free_segment() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (mut manifest, _, _) = fixture(root, "es", 25);
+    fs::write(root.join("1.srt"), b"").unwrap();
+    manifest["tracks"][1]["source_caption"] = json!({"path":"1.srt","bytes":0,"sha256":sha(b"")});
+    manifest["tracks"][1]["source_words_sha256"] = json!(sha(b"[]"));
+    write(root, "captions.json", &manifest);
+    assemble(&root.join("captions.json"), root, &root.join("out")).unwrap();
+    let report: Value =
+        serde_json::from_slice(&fs::read(root.join("out/caption-timing.json")).unwrap()).unwrap();
+    assert_eq!(report["cues"], 26);
+    assert_eq!(report["tracks"][1]["cue_count"], 0);
 }

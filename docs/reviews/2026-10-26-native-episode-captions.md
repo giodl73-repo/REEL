@@ -50,9 +50,15 @@ deliverables have been assembled or approved.
 New expanded-programme CVA intro/full-film conform integration remains pending in
 the producing lane; no new native receipt existed at port handoff.
 
-Validation: caption integration tests 3 passed (private test explicitly ignored by
+Validation: caption integration tests 5 passed (private test explicitly ignored by
 default, then run and passed for all eight staged fixtures); 14 native conform
 unit tests passed; all-target/all-feature Clippy with warnings denied passed.
 Changed Rust files pass rustfmt. Whole-repository cargo fmt check reports only
 pre-existing formatting in browser_composition.rs and scene_delivery_compile.rs;
 those files were left unchanged. Git diff whitespace check passed.
+
+Managed-runner follow-up: precreated empty output directories are accepted,
+existing nonempty directories fail without writes, and each retained file uses
+exclusive creation. Tests cover the runner-compatible empty directory, preservation
+of unrelated existing content, and explicit selected empty SRT for wordless units.
+All eight private comparisons and all-target/all-feature Clippy passed again.

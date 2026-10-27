@@ -82,7 +82,7 @@ fn stamp(ms: u64) -> String {
 }
 
 /// All inputs are bounded FileRefs in one explicitly staged root. No cache lookup.
-/// Creates the output directory only after every dependency and cue has passed.
+/// Writes only to a new or empty directory after every dependency and cue has passed.
 pub fn assemble(manifest_path: &Path, root: &Path, output: &Path) -> Result<()> {
     let manifest_bytes = fs::read(manifest_path)?;
     let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
@@ -284,12 +284,24 @@ pub fn assemble(manifest_path: &Path, root: &Path, output: &Path) -> Result<()> 
     }
     let srt = render_srt(&cues);
     let report = serde_json::json!({"schema":"reel.episode-captions-receipt.v1","manifest_sha256":sha(&manifest_bytes),"conform_manifest":manifest.conform_manifest,"conform_receipt":manifest.conform_receipt,"episode_id":receipt.episode_id,"language":manifest.language,"output_sample_rate":receipt.output_sample_rate,"total_samples":sample_cursor,"cues":cues.len(),"srt":{"sha256":sha(srt.as_bytes()),"bytes":srt.len()},"vtt":{"sha256":sha(vtt.as_bytes()),"bytes":vtt.len()},"tracks":lineage,"publication":"not-authorized","creative_review_state":"open; no human approval inferred"});
-    fs::create_dir(output).context("caption output must be a new directory")?;
-    fs::write(output.join("captions.srt"), srt)?;
-    fs::write(output.join("captions.vtt"), vtt)?;
-    fs::write(
-        output.join("caption-timing.json"),
-        serde_json::to_vec_pretty(&report)?,
-    )?;
+    if output.exists() {
+        if !output.is_dir() || fs::read_dir(output)?.next().is_some() {
+            bail!("caption output must be a new or empty directory");
+        }
+    } else {
+        fs::create_dir(output).context("creating caption output directory")?;
+    }
+    let write_new = |name: &str, bytes: &[u8]| -> Result<()> {
+        use std::io::Write;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(output.join(name))?;
+        file.write_all(bytes)?;
+        Ok(())
+    };
+    write_new("captions.srt", srt.as_bytes())?;
+    write_new("captions.vtt", vtt.as_bytes())?;
+    write_new("caption-timing.json", &serde_json::to_vec_pretty(&report)?)?;
     Ok(())
 }
