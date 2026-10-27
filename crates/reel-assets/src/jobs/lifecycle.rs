@@ -101,13 +101,14 @@ pub(super) fn prepare_staging(cache: &Path) -> Result<()> {
 
 pub(super) fn publish_and_retire(
     root: &Path,
-    cfg: &crate::Config,
+    context: &mut RunContext<'_>,
     cache: &Path,
     workspace: &Path,
     request: &[u8],
     result: &Value,
     job: &Job,
 ) -> Result<Value> {
+    let cfg = context.config;
     let canonical = checked_workspace(cfg, cache, workspace)?;
     let staging = cache.join("staging/caminos").canonicalize()?;
     usage(workspace, 0, &mut 0)?; // Reject reparse/symlink entries before any cleanup.
@@ -190,6 +191,21 @@ pub(super) fn publish_and_retire(
     encoder.write_all(&b)?;
     encoder.finish()?.sync_all()?;
     let evidence = publish(root, cfg, cache, &evidence_path)?;
+    let pin = |value: &Value| -> Result<RetainedObject> {
+        Ok(RetainedObject {
+            sha256: value["sha256"]
+                .as_str()
+                .ok_or("Missing retained hash")?
+                .to_owned(),
+            bytes: value["bytes"].as_u64().ok_or("Missing retained bytes")?,
+        })
+    };
+    let batch_request = pin(&manifest)?;
+    let batch_evidence = pin(&evidence)?;
+    let batch_outputs = outputs
+        .iter()
+        .map(|(name, value)| Ok((name.clone(), pin(value)?)))
+        .collect::<Result<BTreeMap<_, _>>>()?;
     let mut assets = vec![manifest, evidence.clone()];
     assets.extend(outputs.values().cloned());
     for asset in &mut assets {
@@ -208,7 +224,17 @@ pub(super) fn publish_and_retire(
         .create_new(true)
         .open(&registration)?
         .write_all(&serde_json::to_vec(&json!({"assets":assets}))?)?;
-    crate::registry::register_job_outputs(root, &registration)?;
+    context.retention.retain(&RetainedJob {
+        id: result["job_id"]
+            .as_str()
+            .ok_or("Missing retained job identity")?
+            .to_owned(),
+        succeeded: result["schema"] != "reel.failed-job-result.v1",
+        request: batch_request,
+        evidence: batch_evidence,
+        outputs: batch_outputs,
+        registration,
+    })?;
     // Prove that every retained artifact really exists at its canonical E/D
     // locator before deleting scratch. No archive fallback or reserve override.
     for asset in assets {

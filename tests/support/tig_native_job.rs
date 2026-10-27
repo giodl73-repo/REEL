@@ -346,6 +346,7 @@ pub fn exercise(
     drop(job);
     drop(peer);
     drop(backend);
+    super::tig_runner::exercise(plan, owners, root, (metadata.0, &output_witness));
     let current = owners.source(&identity.source).unwrap().unwrap();
     assert_eq!(
         current.current.unwrap().selection,

@@ -96,6 +96,66 @@ fn default_success_shares_inputs_publishes_evidence_and_retires_scratch() {
 }
 
 #[test]
+fn admitted_retention_failure_preserves_workspace_and_is_not_reclassified_as_execution_failure() {
+    struct Allow(BTreeMap<String, u64>);
+    impl ResourceAuthority for Allow {
+        fn require(&self, _: ResourceRole, hash: &str, bytes: u64) -> Result<()> {
+            if self.0.get(hash) != Some(&bytes) {
+                return Err("Unexpected resource".into());
+            }
+            Ok(())
+        }
+    }
+    struct Reject(usize);
+    impl RetentionSink for Reject {
+        fn retain(&mut self, batch: &RetainedJob) -> Result<()> {
+            self.0 += 1;
+            assert!(batch.succeeded());
+            assert_eq!(batch.outputs()["copy"].bytes(), 6);
+            Err("Injected retained-reference failure".into())
+        }
+    }
+    let f = Fixture::new();
+    let (manifest, job) = prepare(&f, "copy");
+    let cfg = config(f.root()).unwrap();
+    let allowed = job["inputs"]
+        .as_object()
+        .unwrap()
+        .values()
+        .chain(job["tools"].as_object().unwrap().values())
+        .map(|v| {
+            (
+                v["sha256"].as_str().unwrap().to_owned(),
+                v["bytes"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    let mut reject = Reject(0);
+    // No catalog intake may be hidden in the explicit admitted route.
+    fs::rename(
+        f.root().join("catalog.json"),
+        f.root().join("offline-catalog.json"),
+    )
+    .unwrap();
+    let error = run_admitted(
+        f.root(),
+        &manifest,
+        &mut RunContext {
+            config: &cfg,
+            authority: &Allow(allowed),
+            retention: &mut reject,
+        },
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("staging preserved"));
+    assert_eq!(reject.0, 1);
+    let mut workspaces = fs::read_dir(cfg.cache_roots[0].join("staging/caminos")).unwrap();
+    let workspace = workspaces.next().unwrap().unwrap().path();
+    assert!(workspace.join("result.json").is_file());
+    assert_eq!(fs::read(workspace.join("out.bin")).unwrap(), b"source");
+}
+
+#[test]
 fn native_output_directory_is_created_by_producer_only_when_explicitly_requested() {
     let f = Fixture::new();
     let (manifest, mut job) = prepare(&f, "new-output-directory");

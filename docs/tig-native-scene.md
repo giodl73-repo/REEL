@@ -360,6 +360,11 @@ their requirements and need exact owner recovery; there is no timeout reset.
 Native managed CLI adoption, global source/job coverage and storage convergence
 remain separate integration work.
 
+For generic trusted child jobs, the optional [Tig-backed bounded runner](tig-job-runner.md)
+reuses existing workspace admission, process containment and scratch retirement
+with explicit resource and owned-retention adapters. Its arbitrary results stay
+unproven; it does not replace the checked native producer protocol above.
+
 ## Declared runtime files and explicit programs
 
 `media_runtime::BoundPrograms::bind(&Bindings)` verifies the actual running host

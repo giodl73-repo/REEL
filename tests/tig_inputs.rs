@@ -5,6 +5,9 @@ mod candidate_publication;
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_native_job.rs"]
 mod native_job;
+#[cfg(all(windows, feature = "tig-publication"))]
+#[path = "support/tig_runner.rs"]
+mod tig_runner;
 #[cfg(windows)]
 use reel::scene_delivery::{FileRef, InputFiles};
 use reel::{
