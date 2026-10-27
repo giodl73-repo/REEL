@@ -242,6 +242,29 @@ impl Source {
         let query = self.production_query(root, profiles, limits)?;
         Ok(graph::resolve(&mut self.snapshot, &query, profiles)?.production_requirements()?)
     }
+    pub(crate) fn production_recipe(
+        &mut self,
+        root: &str,
+        profiles: &[graph::Profile],
+        consumption: &[graph::recipe::Consumption],
+        operation: &graph::recipe::Operation,
+        limits: graph::Limits,
+    ) -> Result<graph::recipe::Plan> {
+        let query = self.production_query(root, profiles, limits)?;
+        let resolved = graph::resolve(&mut self.snapshot, &query, profiles)?;
+        Ok(graph::recipe::plan(
+            &resolved,
+            &mut self.snapshot,
+            profiles,
+            consumption,
+            operation,
+            graph::recipe::Limits {
+                nodes: limits.nodes,
+                edges: limits.edges,
+                bytes: limits.bytes,
+            },
+        )?)
+    }
     fn production_query(
         &self,
         root: &str,

@@ -14,10 +14,11 @@ commit has its own Windows/Linux qualification. Do not treat vendored source as
 an independent cache implementation or as production cutover approval.
 
 The current pin includes explicit map rules, metadata archives, cooperative reader
-release, declared production requirements and frozen contexts (upstream PRs 22
-through 25). The 47 imported files total 509,862 raw bytes, including the native
-archive/context modules. Upstream PR 25 must qualify on its exact current head
-before this pin is merged.
+release, declared production requirements, frozen contexts, consumed recipes and
+produced-claim replay (upstream PRs 22 through 27). The 50 imported files total
+537,089 raw bytes. The exact upstream e3d80bb pin passed all four Windows/Linux
+qualification checks before upstream PR27 merged. REEL consumer qualification
+is additionally required before merging this import.
 Native record and definition envelopes remain unchanged. These APIs do not
 recursively infer opaque native semantics, prove producer consumption, establish
 global source/job coverage or grant cache-removal authority.

@@ -91,6 +91,47 @@ pub fn requirements(
     let profiles = production_profiles(source, request)?;
     source.production_requirements(&request.scene_id, &profiles, query_limits())
 }
+/// Metadata-only whole-scene recipe, using the same declared Production graph.
+/// `producer` is an externally admitted package/runtime pin; this API does not
+/// establish that it names the running executable, decoder or external tools.
+/// A match never skips compilation eligibility or verifies completed output.
+pub fn recipe(
+    source: &mut Source,
+    request: &Request,
+    producer: &Object,
+) -> Result<graph::recipe::Plan> {
+    let parameters = descriptor(request)?;
+    source.check_native_context(&parameters)?;
+    let profiles = production_profiles(source, request)?;
+    let consumption: Vec<_> = profiles
+        .iter()
+        .map(|profile| graph::recipe::Consumption {
+            definition_id: profile.definition_id.clone(),
+            definition: profile.definition.clone(),
+            fields: if profile.definition_id == request.scene_definition {
+                BTreeSet::from(["scene_id".into(), "binding_ids".into()])
+            } else {
+                BTreeSet::new()
+            },
+        })
+        .collect();
+    let operation = graph::recipe::Operation {
+        name: "reel.native-scene.declared-inputs.experimental-1".into(),
+        semantics: Object::from_bytes(
+            b"reel.native-scene.recipe.experimental-1:scene_id,binding_ids;whole-scene-payloads;explicit-producer;exact-context-parameters",
+        )
+        .sha256,
+        producer: producer.clone(),
+        parameters: Object::from_bytes(&parameters),
+    };
+    source.production_recipe(
+        &request.scene_id,
+        &profiles,
+        &consumption,
+        &operation,
+        query_limits(),
+    )
+}
 fn query_limits() -> graph::Limits {
     graph::Limits {
         nodes: 4097,
@@ -165,13 +206,17 @@ fn production_profiles(source: &Source, request: &Request) -> Result<Vec<Profile
     Ok(profiles)
 }
 fn descriptor(request: &Request) -> Result<Vec<u8>> {
-    Ok(serde_json::to_vec(&json!({
+    let bytes = serde_json::to_vec(&json!({
         "schema":"reel.tig-native-scene-context.experimental-1",
         "request":request,
         "scene_adapter_sha256":Object::from_bytes(include_bytes!("tig_scene.rs")).sha256,
         "input_adapter_sha256":Object::from_bytes(include_bytes!("tig_inputs.rs")).sha256,
         "tig_source_pin_sha256":Object::from_bytes(include_bytes!("../vendor/tig/source-pin.json")).sha256
-    }))?)
+    }))?;
+    if bytes.len() > 65_536 {
+        bail!("native scene context descriptor exceeds budget");
+    }
+    Ok(bytes)
 }
 /// Freeze declared metadata and exact request as a candidate root, with no byte IO.
 /// Caller owns finish/reopen/readback and owner-journal adoption before job handoff.
