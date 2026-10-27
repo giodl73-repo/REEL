@@ -249,17 +249,7 @@ impl Source {
         profiles: &[graph::Profile],
         limits: graph::Limits,
     ) -> Result<graph::ProductionRequirements> {
-        if roots.is_empty() || roots.len() > limits.nodes {
-            bail!("native root scope exceeds graph budget");
-        }
-        let first = roots
-            .first()
-            .ok_or_else(|| anyhow!("native root scope empty"))?;
-        let mut query = self.production_query(first, profiles, limits)?;
-        query.roots = roots
-            .iter()
-            .map(|id| self.record(id).map(|r| r.reference().clone()))
-            .collect::<Result<_>>()?;
+        let query = self.production_query_for_ids(roots, profiles, limits)?;
         Ok(graph::resolve(&mut self.snapshot, &query, profiles)?.production_requirements()?)
     }
     pub(crate) fn production_recipe(
@@ -303,6 +293,39 @@ impl Source {
             kinds: std::collections::BTreeSet::from([graph::EdgeKind::Production]),
             limits,
         })
+    }
+    fn production_query_for_ids(
+        &self,
+        roots: &std::collections::BTreeSet<String>,
+        profiles: &[graph::Profile],
+        limits: graph::Limits,
+    ) -> Result<graph::Query> {
+        if roots.is_empty() || roots.len() > limits.nodes {
+            bail!("native root scope exceeds graph budget");
+        }
+        let first = roots
+            .first()
+            .ok_or_else(|| anyhow!("native root scope empty"))?;
+        let mut query = self.production_query(first, profiles, limits)?;
+        query.roots = roots
+            .iter()
+            .map(|id| self.record(id).map(|r| r.reference().clone()))
+            .collect::<Result<_>>()?;
+        Ok(query)
+    }
+    pub(crate) fn freeze_context_for_ids(
+        &mut self,
+        roots: &std::collections::BTreeSet<String>,
+        profiles: &[graph::Profile],
+        descriptor: &[u8],
+        store: &mut impl NodeStore,
+        limits: TreeLimits,
+        query_limits: graph::Limits,
+    ) -> Result<ProductionContext> {
+        let query = self.production_query_for_ids(roots, profiles, query_limits)?;
+        Ok(self
+            .snapshot
+            .freeze_production_context(&query, profiles, descriptor, store, limits)?)
     }
     pub(crate) fn freeze_context(
         &mut self,
