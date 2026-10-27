@@ -1,5 +1,5 @@
 //! Indexed evidence from actual scene-engine picture output, never seek guesses.
-use crate::scene_delivery::{Job, PictureMotion, Plan};
+use crate::scene_delivery::{InputFiles, Job, MediaProgram, PictureMotion, Plan};
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use std::{
@@ -59,8 +59,15 @@ pub fn output_names(job: &Job, plan: &Plan) -> Result<Vec<String>> {
     Ok(names)
 }
 
-fn metadata(job: &Job, plan: &Plan, root: &Path) -> Result<Value> {
-    let version = Command::new("ffmpeg").arg("-version").output()?;
+fn metadata(
+    job: &Job,
+    plan: &Plan,
+    root: &Path,
+    inputs: &(impl InputFiles + ?Sized),
+) -> Result<Value> {
+    let version = Command::new(inputs.media_program(MediaProgram::Ffmpeg)?)
+        .arg("-version")
+        .output()?;
     if !version.status.success() {
         bail!("FFmpeg version unavailable");
     }
@@ -99,14 +106,19 @@ fn metadata(job: &Job, plan: &Plan, root: &Path) -> Result<Value> {
     Ok(metadata)
 }
 
-fn selected_pixels(job: &Job, plan: &Plan, root: &Path) -> Result<Vec<u8>> {
+fn selected_pixels(
+    job: &Job,
+    plan: &Plan,
+    root: &Path,
+    inputs: &(impl InputFiles + ?Sized),
+) -> Result<Vec<u8>> {
     let samples = samples(job, plan)?;
     let select = samples
         .keys()
         .map(|frame| format!("eq(n\\,{frame})"))
         .collect::<Vec<_>>()
         .join("+");
-    let output = Command::new("ffmpeg")
+    let output = Command::new(inputs.media_program(MediaProgram::Ffmpeg)?)
         .args(["-hide_banner", "-v", "error", "-nostdin", "-i"])
         .arg(root.join("picture.mkv"))
         .args([
@@ -135,13 +147,21 @@ fn selected_pixels(job: &Job, plan: &Plan, root: &Path) -> Result<Vec<u8>> {
 }
 
 pub fn render(job: &Job, plan: &Plan, root: &Path) -> Result<()> {
+    render_with_inputs(job, plan, root, root)
+}
+pub fn render_with_inputs(
+    job: &Job,
+    plan: &Plan,
+    root: &Path,
+    inputs: &(impl InputFiles + ?Sized),
+) -> Result<()> {
     let samples = samples(job, plan)?;
     if samples.is_empty() {
         return Ok(());
     }
     let directory = root.join("motioncraft");
     fs::create_dir(&directory)?;
-    let pixels = selected_pixels(job, plan, root)?;
+    let pixels = selected_pixels(job, plan, root, inputs)?;
     let stride = job.width as usize * job.height as usize * 3;
     let thumb_width =
         ((320u64 * u64::from(job.width)) / u64::from(job.width.max(job.height))).max(1) as u32;
@@ -173,9 +193,9 @@ pub fn render(job: &Job, plan: &Plan, root: &Path) -> Result<()> {
     contact.save(directory.join("contact-sheet.png"))?;
     fs::write(
         directory.join("evidence.json"),
-        serde_json::to_vec_pretty(&metadata(job, plan, root)?)?,
+        serde_json::to_vec_pretty(&metadata(job, plan, root, inputs)?)?,
     )?;
-    let output = Command::new("ffmpeg")
+    let output = Command::new(inputs.media_program(MediaProgram::Ffmpeg)?)
         .args(["-hide_banner", "-v", "error", "-nostdin", "-i"])
         .arg(root.join("picture.mkv"))
         .args([
@@ -203,12 +223,21 @@ pub fn render(job: &Job, plan: &Plan, root: &Path) -> Result<()> {
 }
 
 pub fn check(job: &Job, plan: &Plan, root: &Path, decode: bool) -> Result<()> {
+    check_with_inputs(job, plan, root, decode, root)
+}
+pub fn check_with_inputs(
+    job: &Job,
+    plan: &Plan,
+    root: &Path,
+    decode: bool,
+    inputs: &(impl InputFiles + ?Sized),
+) -> Result<()> {
     let samples = samples(job, plan)?;
     if samples.is_empty() {
         return Ok(());
     }
     let report: Value = serde_json::from_slice(&fs::read(root.join("motioncraft/evidence.json"))?)?;
-    let mut expected = metadata(job, plan, root)?;
+    let mut expected = metadata(job, plan, root, inputs)?;
     // Producer provenance is retained across a consumer runtime upgrade. The
     // enclosing delivery receipt pins these report bytes; current decoding
     // still independently verifies indexed pixels.
@@ -227,7 +256,7 @@ pub fn check(job: &Job, plan: &Plan, root: &Path, decode: bool) -> Result<()> {
     if !decode {
         return Ok(());
     }
-    let pixels = selected_pixels(job, plan, root)?;
+    let pixels = selected_pixels(job, plan, root, inputs)?;
     let stride = job.width as usize * job.height as usize * 3;
     for (index, frame) in samples.keys().enumerate() {
         let saved = image::open(root.join(format!("motioncraft/frame-{frame:08}.png")))?.to_rgb8();

@@ -731,7 +731,33 @@ fn native_render_candidate_claims_only_independently_checked_matching_bytes() {
     };
     let (mut f, request) = native_scene_fixture();
     f.profile["byte_source"]["required"] = json!("prevent-mutation");
-    let producer = Object::from_bytes(b"synthetic explicit producer, not a full runtime closure");
+    let native_file = |path: std::path::PathBuf| {
+        let path = path.canonicalize().unwrap();
+        let identity = reel::media_runtime::ByteIdentity::observe_file(&path).unwrap();
+        reel::scene_delivery::FileRef {
+            sha256: identity.sha256,
+            bytes: identity.bytes,
+            path,
+        }
+    };
+    let locate = |name: &str| {
+        std::env::split_paths(&std::env::var_os("PATH").unwrap())
+            .map(|dir| dir.join(format!("{name}.exe")))
+            .find(|path| path.is_file())
+            .unwrap()
+    };
+    let host = native_file(std::env::current_exe().unwrap());
+    let programs = reel::media_runtime::BoundPrograms::bind(&reel::media_runtime::Bindings {
+        host: reel::media_runtime::ByteIdentity {
+            sha256: host.sha256,
+            bytes: host.bytes,
+        },
+        ffmpeg: native_file(locate("ffmpeg")),
+        ffprobe: native_file(locate("ffprobe")),
+        dependencies: Default::default(),
+    })
+    .unwrap();
+    let producer = Object::from_bytes(programs.manifest_bytes());
     let mut source = f.source();
     let metadata = f.root().join("native-job-metadata");
     let mut store = MetadataStore::create(
@@ -787,9 +813,16 @@ fn native_render_candidate_claims_only_independently_checked_matching_bytes() {
         .unwrap();
     let job = f.root().join("rendered-native-job");
     let output = f.root().join("rendered-native-output");
-    let candidate =
-        tig_scene_production::render(&mut source, &request, &context, &producer, &job, &output)
-            .unwrap();
+    let candidate = tig_scene_production::render_with_programs(
+        &mut source,
+        &request,
+        &context,
+        &programs,
+        &job,
+        &output,
+    )
+    .unwrap();
+    assert_eq!(&candidate.recipe().operation().producer, &producer);
     assert_eq!(source.active_readers(), 0);
     assert_eq!(
         candidate.recipe().operation().parameters,
