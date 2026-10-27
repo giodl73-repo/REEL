@@ -105,7 +105,45 @@ pub fn assemble(manifest_path: &Path, root: &Path, output: &Path) -> Result<()> 
     // Deserialize each version with its own typed contract; never synthesize v1
     // master hashes for an ordered immutable part set.
     let schema: serde_json::Value = serde_json::from_slice(&receipt_bytes)?;
-    let receipt = if schema["schema"] == crate::episode_conform::parts::RECEIPT {
+    let composed = schema["schema"] == crate::episode_conform::parts::COMPOSED_RECEIPT;
+    let receipt = if composed {
+        let r: crate::episode_conform::parts::ComposedReceipt =
+            serde_json::from_slice(&receipt_bytes)?;
+        if r.finalization.schema != crate::episode_conform::parts::COMPOSED_FINALIZATION
+            || !r.coded_video_packets_verified
+            || r.provenance.placements.len() != r.finalization.segments.len()
+            || r.provenance.sources.len() != 2
+        {
+            bail!("invalid composed caption timing receipt");
+        }
+        for (index, (p, s)) in r
+            .provenance
+            .placements
+            .iter()
+            .zip(&r.finalization.segments)
+            .enumerate()
+        {
+            if p.target_index != index
+                || p.start_frame != s.start_frame
+                || p.start_sample != s.start_sample
+            {
+                bail!("composed caption placement mismatch");
+            }
+        }
+        let r = r.finalization;
+        CaptionConform {
+            episode_id: r.episode_id,
+            language: r.language,
+            manifest_sha256: r.manifest_sha256,
+            timestamps_verified: r.timestamps_verified,
+            decoded_master_matches_ordered_segments: r.compact_ordered_content_verified
+                && r.preencode_pcm_identity_verified,
+            output_sample_rate: r.output_sample_rate,
+            total_frames: r.total_frames,
+            total_samples: r.total_samples,
+            segments: r.segments,
+        }
+    } else if schema["schema"] == crate::episode_conform::parts::RECEIPT {
         let r: crate::episode_conform::parts::Receipt = serde_json::from_slice(&receipt_bytes)?;
         CaptionConform {
             episode_id: r.episode_id,
@@ -280,6 +318,12 @@ pub fn assemble(manifest_path: &Path, root: &Path, output: &Path) -> Result<()> 
             )?) != track.source_words_sha256
         {
             bail!("selected source caption words/index mismatch");
+        }
+        if composed
+            && frame_cursor == 0
+            && (!entries.is_empty() || segment.kind != SegmentKind::EpisodePresentation)
+        {
+            bail!("composed musical prefix requires a zero-cue presentation track");
         }
         let first_cue = cues.len() + 1;
         for entry in entries {

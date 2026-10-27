@@ -5,6 +5,11 @@ use std::io::{Read, Write};
 
 const PROOF: &str = "reel.programme-part-proof.v2";
 pub const RECEIPT: &str = "reel.episode-conform-receipt.v2";
+mod composition;
+pub use composition::{
+    COMPOSED_FINALIZATION, COMPOSED_RECEIPT, ComposedReceipt, CompositionProvenance, compose,
+};
+
 const PROFILE: &str = "h264-independent-crf-yuv420p-bf0-mp3-continuous.v1";
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -410,6 +415,22 @@ pub(super) fn publish(
 }
 
 fn checked_proofs(set: &PartSet, root: &Path, manifest_bytes: &[u8]) -> Result<Vec<Proof>> {
+    checked_source_proofs(
+        set,
+        root,
+        manifest_bytes,
+        &file_sha(&std::env::current_exe()?)?,
+    )
+}
+
+// Only the composition entrypoint may select a qualified historical producer.
+// Ordinary v2 finalization retains its exact current-executable identity gate.
+fn checked_source_proofs(
+    set: &PartSet,
+    root: &Path,
+    manifest_bytes: &[u8],
+    validator: &str,
+) -> Result<Vec<Proof>> {
     let manifest: Manifest = serde_json::from_slice(manifest_bytes)?;
     let profile = compact_profile(&manifest)?;
     if set.schema != "reel.programme-part-set.v2"
@@ -418,7 +439,6 @@ fn checked_proofs(set: &PartSet, root: &Path, manifest_bytes: &[u8]) -> Result<V
     {
         bail!("invalid part set");
     }
-    let validator = file_sha(&std::env::current_exe()?)?;
     let ffmpeg = checkpoint::tool_hash("ffmpeg")?;
     let ffprobe = checkpoint::tool_hash("ffprobe")?;
     let (mut index, mut frames, mut samples) = (0, 0u64, 0u64);
@@ -559,12 +579,28 @@ fn checked_proofs(set: &PartSet, root: &Path, manifest_bytes: &[u8]) -> Result<V
             signature = Some(part.video_signature.clone());
             let video = scene_delivery::checked_file(root, &part.video)?;
             let pcm = scene_delivery::checked_file(root, &part.pcm)?;
-            if expected_hold_samples != 0 {
+            let silent_suffix = native
+                .audio_padding_samples
+                .checked_add(expected_hold_samples)
+                .context("silent suffix overflow")?;
+            let content_samples = native
+                .samples
+                .checked_sub(silent_suffix)
+                .context("silent suffix exceeds part")?;
+            let resampled = (u128::from(native.input_samples)
+                * u128::from(manifest.output_sample_rate)
+                + u128::from(native.input_sample_rate) / 2)
+                / u128::from(native.input_sample_rate);
+            if u128::from(content_samples).abs_diff(resampled) > 1
+                || u128::from(native.audio_padding_samples) * u128::from(n)
+                    > u128::from(manifest.output_sample_rate) * u128::from(d)
+            {
+                bail!("part source/padding sample count mismatch");
+            }
+            if silent_suffix != 0 {
                 use std::io::{Seek, SeekFrom};
                 let mut file = fs::File::open(pcm)?;
-                let tail = expected_hold_samples
-                    .checked_mul(6)
-                    .context("hold PCM overflow")?;
+                let tail = silent_suffix.checked_mul(6).context("hold PCM overflow")?;
                 file.seek(SeekFrom::End(-i64::try_from(tail)?))?;
                 let mut buffer = [0; 65536];
                 loop {
@@ -573,7 +609,7 @@ fn checked_proofs(set: &PartSet, root: &Path, manifest_bytes: &[u8]) -> Result<V
                         break;
                     }
                     if buffer[..count].iter().any(|b| *b != 0) {
-                        bail!("silent hold PCM contains nonzero samples");
+                        bail!("silent padding/hold PCM contains nonzero samples");
                     }
                 }
             }
@@ -617,6 +653,44 @@ fn checked_proofs(set: &PartSet, root: &Path, manifest_bytes: &[u8]) -> Result<V
     Ok(proofs)
 }
 
+fn clone_value<T: Serialize + serde::de::DeserializeOwned>(value: &T) -> Result<T> {
+    Ok(serde_json::from_value(serde_json::to_value(value)?)?)
+}
+
+// A finalizer view, never an original producer Proof or a newly issued proof.
+struct PreparedPart {
+    facts: MediaFacts,
+    native: SegmentReceipt,
+    lossless: RetainedPart,
+    video: scene_delivery::FileRef,
+    pcm: scene_delivery::FileRef,
+    compact_yuv420_sha256: String,
+    video_signature: serde_json::Value,
+}
+impl PreparedPart {
+    fn original(proof: &Proof, part: &Part) -> Result<Self> {
+        Ok(Self {
+            facts: proof.facts.clone(),
+            native: clone_value(&part.native)?,
+            lossless: clone_value(&part.lossless)?,
+            video: part.video.clone(),
+            pcm: part.pcm.clone(),
+            compact_yuv420_sha256: part.compact_yuv420_sha256.clone(),
+            video_signature: part.video_signature.clone(),
+        })
+    }
+}
+fn prepare_originals(proofs: &[Proof]) -> Result<Vec<PreparedPart>> {
+    proofs
+        .iter()
+        .flat_map(|p| {
+            p.parts
+                .iter()
+                .map(move |part| PreparedPart::original(p, part))
+        })
+        .collect()
+}
+
 /// Finalize only explicitly declared compact/PCM/proof/control inputs in a new
 /// job. Original lossless parts remain immutable lifecycle dependencies.
 pub fn finalize(set_path: &Path, root: &Path, output: &Path) -> Result<Receipt> {
@@ -630,8 +704,24 @@ pub fn finalize(set_path: &Path, root: &Path, output: &Path) -> Result<Receipt> 
     }
     let set: PartSet = serde_json::from_slice(&fs::read(set_path)?)?;
     let bytes = fs::read(scene_delivery::checked_file(root, &set.manifest)?)?;
-    let manifest: Manifest = serde_json::from_slice(&bytes)?;
     let proofs = checked_proofs(&set, root, &bytes)?;
+    let prepared = prepare_originals(&proofs)?;
+    finalize_checked(root, output, &bytes, &prepared, &set.proofs, None)
+}
+
+fn finalize_checked(
+    root: &Path,
+    output: &Path,
+    bytes: &[u8],
+    parts: &[PreparedPart],
+    proof_refs: &[scene_delivery::FileRef],
+    composition: Option<&CompositionProvenance>,
+) -> Result<Receipt> {
+    if output.exists() {
+        bail!("programme output must be a new directory");
+    }
+    let scope = checkpoint::snapshot_job_scope(root)?;
+    let manifest: Manifest = serde_json::from_slice(bytes)?;
     let parent = output.parent().context("output parent missing")?;
     let stage = tempfile::Builder::new()
         .prefix(".programme-")
@@ -652,112 +742,110 @@ pub fn finalize(set_path: &Path, root: &Path, output: &Path) -> Result<Receipt> 
         .clock()?;
     let mut last_sample: Option<[i32; 2]> = None;
     let mut last_picture: Option<(PathBuf, u64, String)> = None;
-    for proof in &proofs {
-        for part in &proof.parts {
-            let pcm = scene_delivery::checked_file(root, &part.pcm)?;
-            let mut file = fs::File::open(&pcm)?;
-            let mut first = [0; 6];
-            file.read_exact(&mut first)?;
-            let sample = |bytes: &[u8]| -> [i32; 2] {
-                let get = |i| i32::from_le_bytes([0, bytes[i], bytes[i + 1], bytes[i + 2]]) >> 8;
-                [get(0), get(3)]
-            };
-            if let Some(previous) = last_sample {
-                let next = sample(&first);
-                let jump = (0..2)
-                    .map(|i| f64::from((previous[i] - next[i]).abs()) / 8388608.0)
-                    .fold(0.0, f64::max);
+    for part in parts {
+        let pcm = scene_delivery::checked_file(root, &part.pcm)?;
+        let mut file = fs::File::open(&pcm)?;
+        let mut first = [0; 6];
+        file.read_exact(&mut first)?;
+        let sample = |bytes: &[u8]| -> [i32; 2] {
+            let get = |i| i32::from_le_bytes([0, bytes[i], bytes[i + 1], bytes[i + 2]]) >> 8;
+            [get(0), get(3)]
+        };
+        if let Some(previous) = last_sample {
+            let next = sample(&first);
+            let jump = (0..2)
+                .map(|i| f64::from((previous[i] - next[i]).abs()) / 8388608.0)
+                .fold(0.0, f64::max);
+            boundary_findings.push(episode_delivery::BoundaryFinding {
+                left_scene: records
+                    .last()
+                    .map(|r: &SegmentReceipt| r.id.clone())
+                    .unwrap_or_default(),
+                right_scene: part.native.id.clone(),
+                code: "audio-step".into(),
+                measured: jump,
+                threshold: 0.1,
+                disposition: if jump > 0.1 {
+                    "needs-review"
+                } else {
+                    "measured"
+                }
+                .into(),
+            });
+        }
+        use std::io::{Seek, SeekFrom};
+        file.seek(SeekFrom::End(-6))?;
+        file.read_exact(&mut first)?;
+        last_sample = Some(sample(&first));
+        file.rewind()?;
+        // Copy while hashing; this proves the exact PCM immediately before
+        // the one continuous lossy encoder, including all silent hold bytes.
+        let mut hash = Sha256::new();
+        let mut buffer = [0; 65536];
+        loop {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            hash.update(&buffer[..read]);
+            writer.write_all(&buffer[..read])?;
+        }
+        if hash
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+            != part.pcm.sha256
+        {
+            bail!("PCM changed during continuous assembly");
+        }
+        let video = scene_delivery::checked_file(root, &part.video)?;
+        if let Some((previous, frame, id)) = &last_picture {
+            let black = episode_delivery::black_edge(
+                previous,
+                *frame,
+                part.facts.width as u32,
+                part.facts.height as u32,
+            )? || episode_delivery::black_edge(
+                &video,
+                0,
+                part.facts.width as u32,
+                part.facts.height as u32,
+            )?;
+            if black {
                 boundary_findings.push(episode_delivery::BoundaryFinding {
-                    left_scene: records
-                        .last()
-                        .map(|r: &SegmentReceipt| r.id.clone())
-                        .unwrap_or_default(),
+                    left_scene: id.clone(),
                     right_scene: part.native.id.clone(),
-                    code: "audio-step".into(),
-                    measured: jump,
-                    threshold: 0.1,
-                    disposition: if jump > 0.1 {
-                        "needs-review"
-                    } else {
-                        "measured"
-                    }
-                    .into(),
+                    code: "black-at-cut".into(),
+                    measured: 1.0,
+                    threshold: 0.98,
+                    disposition: "needs-review".into(),
                 });
             }
-            use std::io::{Seek, SeekFrom};
-            file.seek(SeekFrom::End(-6))?;
-            file.read_exact(&mut first)?;
-            last_sample = Some(sample(&first));
-            file.rewind()?;
-            // Copy while hashing; this proves the exact PCM immediately before
-            // the one continuous lossy encoder, including all silent hold bytes.
-            let mut hash = Sha256::new();
-            let mut buffer = [0; 65536];
-            loop {
-                let read = file.read(&mut buffer)?;
-                if read == 0 {
-                    break;
-                }
-                hash.update(&buffer[..read]);
-                writer.write_all(&buffer[..read])?;
-            }
-            if hash
-                .finalize()
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect::<String>()
-                != part.pcm.sha256
-            {
-                bail!("PCM changed during continuous assembly");
-            }
-            let video = scene_delivery::checked_file(root, &part.video)?;
-            if let Some((previous, frame, id)) = &last_picture {
-                let black = episode_delivery::black_edge(
-                    previous,
-                    *frame,
-                    proof.facts.width as u32,
-                    proof.facts.height as u32,
-                )? || episode_delivery::black_edge(
-                    &video,
-                    0,
-                    proof.facts.width as u32,
-                    proof.facts.height as u32,
-                )?;
-                if black {
-                    boundary_findings.push(episode_delivery::BoundaryFinding {
-                        left_scene: id.clone(),
-                        right_scene: part.native.id.clone(),
-                        code: "black-at-cut".into(),
-                        measured: 1.0,
-                        threshold: 0.98,
-                        disposition: "needs-review".into(),
-                    });
-                }
-            }
-            last_picture = Some((
-                video.clone(),
-                part.native.frames - 1,
-                part.native.id.clone(),
-            ));
-            let name = video
-                .to_str()
-                .context("non UTF8 video path")?
-                .replace('\\', "/");
-            if name.contains(['\n', '\r']) {
-                bail!("unsupported concat path character");
-            }
-            let name = name.replace('\'', "'\\''");
-            concat.push_str(&format!(
-                "file '{name}'\nduration {:.12}\n",
-                part.native.frames as f64 * d as f64 / n as f64
-            ));
-            counts.push(part.native.frames);
-            hashes.push(part.compact_yuv420_sha256.clone());
-            records.push(serde_json::from_value(serde_json::to_value(&part.native)?)?);
-            retained.push(serde_json::from_value(serde_json::to_value(
-                &part.lossless,
-            )?)?);
         }
+        last_picture = Some((
+            video.clone(),
+            part.native.frames - 1,
+            part.native.id.clone(),
+        ));
+        let name = video
+            .to_str()
+            .context("non UTF8 video path")?
+            .replace('\\', "/");
+        if name.contains(['\n', '\r']) {
+            bail!("unsupported concat path character");
+        }
+        let name = name.replace('\'', "'\\''");
+        concat.push_str(&format!(
+            "file '{name}'\nduration {:.12}\n",
+            part.native.frames as f64 * d as f64 / n as f64
+        ));
+        counts.push(part.native.frames);
+        hashes.push(part.compact_yuv420_sha256.clone());
+        records.push(serde_json::from_value(serde_json::to_value(&part.native)?)?);
+        retained.push(serde_json::from_value(serde_json::to_value(
+            &part.lossless,
+        )?)?);
     }
     drop(writer);
     let total_frames = counts.iter().sum();
@@ -770,56 +858,72 @@ pub fn finalize(set_path: &Path, root: &Path, output: &Path) -> Result<Receipt> 
     let target = stage.path().join("movie.mp4");
     let profile = compact_profile(&manifest)?;
     let mut cmd = command("ffmpeg");
-    cmd.args([
-        "-v", "error", "-nostdin", "-f", "concat", "-safe", "0", "-i",
-    ])
-    .arg(&list)
-    .args(["-f", "s24le", "-ar"])
-    .arg(manifest.output_sample_rate.to_string())
-    .args(["-ac", "2", "-i"])
-    .arg(&joined_pcm)
-    .args([
-        "-map",
-        "0:v:0",
-        "-map",
-        "1:a:0",
-        "-c:v",
-        "copy",
-        "-c:a",
-        "libmp3lame",
-        "-b:a",
-    ])
-    .arg(format!("{}k", profile.audio_bitrate_kbps))
-    .args(["-video_track_timescale"])
-    .arg(n.to_string())
-    .args(["-movflags", "+faststart"])
-    .arg(&target);
+    cmd.args(["-v", "error", "-nostdin", "-f", "concat", "-safe", "0"]);
+    // All signatures were checked equal. Avoid implicit Annex-B/SPS insertion
+    // when the composition promises exact original coded packet payloads.
+    if composition.is_some() {
+        cmd.args(["-auto_convert", "0"]);
+    }
+    cmd.arg("-i")
+        .arg(&list)
+        .args(["-f", "s24le", "-ar"])
+        .arg(manifest.output_sample_rate.to_string())
+        .args(["-ac", "2", "-i"])
+        .arg(&joined_pcm)
+        .args([
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+        ])
+        .arg(format!("{}k", profile.audio_bitrate_kbps))
+        .args(["-video_track_timescale"])
+        .arg(n.to_string())
+        .args(["-movflags", "+faststart"])
+        .arg(&target);
     run(cmd)?;
     let actual = crate::decoded_video_hash::hash(&target, "yuv420p", None, Some(&counts))?;
-    let first = &proofs[0].facts;
+    let first = &parts[0].facts;
     if actual.values != hashes || actual.bytes != total_frames * first.width * first.height * 3 / 2
     {
         bail!("final ordered compact decode differs");
     }
     video_clock(&target, total_frames, n, d)?;
     verify_mp3(&target, manifest.output_sample_rate, total_samples)?;
-    if video_signature(&target)? != proofs[0].parts[0].video_signature {
+    if video_signature(&target)? != parts[0].video_signature {
         bail!("final video stream signature changed");
+    }
+    if composition.is_some() {
+        composition::verify_packet_copy(root, parts, &target)?;
     }
     for source in &scope {
         scene_delivery::checked_file(root, source)?;
     }
     let receipt = Receipt {
-        schema: RECEIPT.into(), episode_id: manifest.episode_id, language: manifest.language, manifest_sha256: sha(&bytes), output_sample_rate: manifest.output_sample_rate,
+        schema: if composition.is_some() { COMPOSED_FINALIZATION } else { RECEIPT }.into(), episode_id: manifest.episode_id, language: manifest.language, manifest_sha256: sha(bytes), output_sample_rate: manifest.output_sample_rate,
         total_frames, total_samples, timestamps_verified: true, compact_ordered_content_verified: true, preencode_pcm_identity_verified: true,
         lossless_master: LosslessMaster::OrderedImmutableParts { parts: retained, custody: "prior native bounded producer proofs; unseen lossless bytes were not freshly rehashed by finalizer; retain and pin every cache URI".into() },
-        delivery: reference(stage.path(), "movie.mp4")?, segments: records, consumed_proofs: set.proofs,
+        delivery: reference(stage.path(), "movie.mp4")?, segments: records, consumed_proofs: proof_refs.to_vec(),
         finalizer_job_sha256: file_sha(&root.join("job.json"))?, boundary_findings,
         limitations: vec!["Independent per-part GOP/rate control resets; selected CRF/profile parity, no continuous-encoder pixel or packet equivalence".into(), "One continuous MP3 encode; final decoded MP3 is lossy and does not claim lossless PCM equality; codec tail is bounded to two MP3 frames".into(), "Producer-applied technical checks; human listening, picture/cut/caption review, rights and release approval remain open".into()], publication: "not-authorized".into(),
     };
+    let document = match composition {
+        Some(p) => serde_json::to_value(ComposedReceipt {
+            schema: COMPOSED_RECEIPT.into(),
+            finalization: clone_value(&receipt)?,
+            provenance: p.clone(),
+            coded_video_packets_verified: true,
+        })?,
+        None => serde_json::to_value(&receipt)?,
+    };
     fs::write(
         stage.path().join("receipt.json"),
-        serde_json::to_vec_pretty(&receipt)?,
+        serde_json::to_vec_pretty(&document)?,
     )?;
     drop(scratch);
     fs::rename(stage.keep(), output)?;

@@ -31,13 +31,16 @@ fn run() -> Result<()> {
         }
     }
     if let [_, command, set, root_flag, root, out_flag, out] = args.as_slice() {
-        if command == "finalize-parts" && root_flag == "--asset-root" && out_flag == "--output-dir"
+        if matches!(command.as_str(), "finalize-parts" | "compose-parts")
+            && root_flag == "--asset-root"
+            && out_flag == "--output-dir"
         {
-            let receipt = reel::episode_conform::parts::finalize(
-                Path::new(set),
-                Path::new(root),
-                Path::new(out),
-            )?;
+            let finalize = if command == "compose-parts" {
+                reel::episode_conform::parts::compose
+            } else {
+                reel::episode_conform::parts::finalize
+            };
+            let receipt = finalize(Path::new(set), Path::new(root), Path::new(out))?;
             println!(
                 "{} {} {} frames {} samples",
                 receipt.episode_id, receipt.language, receipt.total_frames, receipt.total_samples

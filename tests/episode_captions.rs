@@ -325,3 +325,59 @@ fn explicit_selected_empty_srt_preserves_caption_free_segment() {
     assert_eq!(report["cues"], 26);
     assert_eq!(report["tracks"][1]["cue_count"], 0);
 }
+#[test]
+fn composed_prefix_shifts_all_27_original_tracks_with_zero_title_cues() {
+    for lang in ["es", "en"] {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path();
+        let (mut m, mut c, old) = fixture(root, lang, 30);
+        let original_tracks = m["tracks"].clone();
+        let dummy = c["segments"][0]["master"].clone();
+        let prefix = json!({"kind":"episode-presentation","id":"musical-title","master":dummy,"source_receipt":dummy});
+        c["segments"].as_array_mut().unwrap().insert(0, prefix);
+        m["conform_manifest"] = write(root, "conform.json", &c);
+        fs::write(root.join("empty.srt"), b"").unwrap();
+        let mut track = m["tracks"][1].clone();
+        track["segment_id"] = "musical-title".into();
+        track["source_caption"] = json!({"path":"empty.srt","sha256":sha(b""),"bytes":0});
+        track["source_words_sha256"] = sha(b"[]").into();
+        track["source_frame_rate"] = json!({"numerator":30,"denominator":1,"policy":"repeat-only"});
+        m["tracks"].as_array_mut().unwrap().insert(0, track);
+        let mut records = old["segments"].as_array().unwrap().clone();
+        let mut placements = vec![
+            json!({"source_id":"title","source_index":0,"source_start_frame":0,"source_start_sample":0,"target_index":0,"start_frame":0,"start_sample":0}),
+        ];
+        for (i, r) in records.iter_mut().enumerate() {
+            let f = r["start_frame"].as_u64().unwrap();
+            let s = r["start_sample"].as_u64().unwrap();
+            placements.push(json!({"source_id":"body","source_index":i,"source_start_frame":f,"source_start_sample":s,"target_index":i+1,"start_frame":f+400,"start_sample":s+640000}));
+            r["start_frame"] = (f + 400).into();
+            r["start_sample"] = (s + 640000).into();
+        }
+        records.insert(0,json!({"kind":"episode-presentation","id":"musical-title","selected_master_sha256":dummy["sha256"],"selected_master_bytes":123,"source_receipt_sha256":dummy["sha256"],"upstream_delivery_verified":false,"upstream_presentation_verified":true,"input_sample_rate":48000,"output_sample_rate":48000,"input_frames":400,"input_samples":640000,"frames":400,"samples":640000,"audio_padding_samples":0,"start_frame":0,"start_sample":0,"decoded_picture_sha256":"b".repeat(64),"decoded_audio_sha256":"c".repeat(64)}));
+        let sources:Vec<_>=["title","body"].iter().map(|id|json!({"source":{"id":id,"asset_root":id,"set":dummy,"producer":dummy},"manifest":dummy,"proofs":[],"episode_id":"episode","language":lang})).collect();
+        let mut receipt = json!({"schema":"reel.episode-conform-receipt.v3","finalization":{"schema":"reel.programme-composition-finalization.v1","episode_id":"episode","language":lang,"manifest_sha256":m["conform_manifest"]["sha256"],"output_sample_rate":48000,"total_frames":old["total_frames"].as_u64().unwrap()+400,"total_samples":old["total_samples"].as_u64().unwrap()+640000,"timestamps_verified":true,"compact_ordered_content_verified":true,"preencode_pcm_identity_verified":true,"lossless_master":{"representation":"ordered-immutable-parts","parts":[],"custody":"fixture"},"delivery":dummy,"segments":records,"consumed_proofs":[],"finalizer_job_sha256":"d".repeat(64),"boundary_findings":[],"limitations":[],"publication":"not-authorized"},"provenance":{"composition":dummy,"sources":sources,"placements":placements,"finalizer_sha256":"f".repeat(64)},"coded_video_packets_verified":true});
+        m["conform_receipt"] = write(root, "receipt.json", &receipt);
+        write(root, "captions.json", &m);
+        assemble(&root.join("captions.json"), root, &root.join("out")).unwrap();
+        let cues =
+            reel::series::parse_srt(&fs::read_to_string(root.join("out/captions.srt")).unwrap())
+                .unwrap();
+        assert_eq!(cues.len(), 27);
+        assert_eq!(
+            m["tracks"].as_array().unwrap()[1..],
+            *original_tracks.as_array().unwrap()
+        );
+        for (i, cue) in cues.iter().enumerate() {
+            assert_eq!(
+                cue.start_ms,
+                ((old["segments"][i]["start_sample"].as_u64().unwrap() + 640000) * 1000)
+                    .div_ceil(48000)
+            );
+        }
+        receipt["provenance"]["placements"][1]["start_sample"] = 0.into();
+        m["conform_receipt"] = write(root, "receipt.json", &receipt);
+        write(root, "captions.json", &m);
+        assert!(assemble(&root.join("captions.json"), root, &root.join("bad")).is_err());
+    }
+}
