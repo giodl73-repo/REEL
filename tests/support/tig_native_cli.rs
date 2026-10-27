@@ -165,8 +165,8 @@ pub fn exercise(
     assert_eq!(state.predecessors.len(), 1);
     assert!(!journal.obligations(100).unwrap().complete_claim_coverage());
     drop(journal);
-    // A completed render with a mismatched declared set is a failed job, not
-    // successful delivery. Preserve bounded candidates/evidence before cleanup.
+    // Refuse a mismatched declared set before rendering any media. Retain
+    // failure evidence, with no generated candidates, before owned cleanup.
     let mut incomplete = profile.clone();
     incomplete["source_id"] = json!("native-cli-output-mismatch");
     incomplete["worker"]["outputs"]["not-produced.bin"] = json!(1024);
@@ -197,7 +197,7 @@ pub fn exercise(
         .unwrap();
     let header: Value = serde_json::from_slice(&latest.get(&header).unwrap().unwrap()).unwrap();
     assert_eq!(header["succeeded"], false);
-    assert_eq!(header["outputs"], outputs.len());
+    assert_eq!(header["outputs"], 0);
     assert!(header["production_claim"].is_null());
     assert_eq!(
         journal
@@ -213,6 +213,107 @@ pub fn exercise(
             .next()
             .is_none()
     );
+    drop(journal);
+    for mode in ["plan-only", "automatic"] {
+        let mut automatic = profile.clone();
+        automatic["source_id"] = json!(format!("native-cli-{mode}"));
+        automatic["scratch_bytes"] = json!(128 * 1024 * 1024_u64);
+        automatic["worker"]
+            .as_object_mut()
+            .unwrap()
+            .remove("outputs");
+        automatic["worker"]["output_budget"] =
+            json!({"default_max_bytes":4*1024*1024_u64,"overrides":{"receipt.json":65_536}});
+        fs::write(&path, serde_json::to_vec(&automatic).unwrap()).unwrap();
+        let completed = Command::new(&binary)
+            .arg(if mode == "plan-only" {
+                "plan-outputs"
+            } else {
+                "run"
+            })
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert!(
+            completed.status.success(),
+            "{}",
+            String::from_utf8_lossy(&completed.stderr)
+        );
+        let completed: Value = serde_json::from_slice(&completed.stdout).unwrap();
+        let report = &completed["planning"];
+        assert_eq!(
+            report["contract"]["names"],
+            json!(reference.outputs.keys().collect::<Vec<_>>())
+        );
+        assert_eq!(
+            report["contract"]["raw_pcm24_stereo_bytes"],
+            reference.content_samples * 6
+        );
+        let maxima = report["outputs"].as_object().unwrap();
+        assert_eq!(maxima.len(), reference.outputs.len() + 1);
+        assert_eq!(maxima["receipt.json"], 65_536);
+        assert_eq!(
+            report["atomic_native_output_bytes"],
+            maxima.values().map(|n| n.as_u64().unwrap()).sum::<u64>() * 2
+        );
+        let planner = if mode == "plan-only" {
+            &completed["result"]
+        } else {
+            &completed["planning_result"]
+        };
+        let planned = planner["outputs"].as_object().unwrap();
+        assert!(
+            planner["budget_bytes"].as_u64().unwrap()
+                < automatic["scratch_bytes"].as_u64().unwrap()
+        );
+        assert!(
+            planner["budget_bytes"].as_u64().unwrap() < profile["budget_bytes"].as_u64().unwrap()
+        );
+        assert_eq!(planned.len(), 1);
+        let item = &planned["planning.json"];
+        let retained: Value =
+            serde_json::from_slice(&fs::read(item["path"].as_str().unwrap()).unwrap()).unwrap();
+        assert_eq!(&retained, report);
+        assert_eq!(
+            ByteIdentity::observe_file(Path::new(item["path"].as_str().unwrap()))
+                .unwrap()
+                .sha256,
+            item["sha256"]
+        );
+        let mut journal = SourceJournal::open(
+            &journal_root,
+            &serde_json::from_value(completed["journal_checkpoint"].clone()).unwrap(),
+        )
+        .unwrap();
+        let state = journal
+            .source(&Key::parse(&format!("native-cli-{mode}")).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(state.revision, if mode == "plan-only" { 4 } else { 8 });
+        assert_eq!(
+            state.predecessors.len(),
+            if mode == "plan-only" { 1 } else { 3 }
+        );
+        assert_eq!(completed["result"]["workspace_retained"], false);
+        if mode == "automatic" {
+            assert_eq!(completed["result"]["budget_bytes"], profile["budget_bytes"]);
+            let rendered = completed["result"]["outputs"].as_object().unwrap();
+            assert_eq!(rendered.len(), reference.outputs.len() + 2);
+            for item in rendered.values() {
+                let bytes =
+                    ByteIdentity::observe_file(Path::new(item["path"].as_str().unwrap())).unwrap();
+                assert_eq!(bytes.sha256, item["sha256"]);
+                assert_eq!(bytes.bytes, item["bytes"]);
+            }
+        }
+        assert!(
+            fs::read_dir(cache.join("staging/caminos"))
+                .unwrap()
+                .next()
+                .is_none()
+        );
+        assert!(!journal.obligations(100).unwrap().complete_claim_coverage());
+    }
     assert!(!control.join("catalog.json").exists());
     assert!(!control.join("registry").exists());
     for name in [".git", "records", "definitions"] {

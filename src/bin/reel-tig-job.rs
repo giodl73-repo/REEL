@@ -10,6 +10,8 @@ struct Args {
 enum Operation {
     /// Adopt planned resources, render in bounded scratch and retain exact results.
     Run { profile: PathBuf },
+    /// Run a bounded planning job and retain its output contract; no media render.
+    PlanOutputs { profile: PathBuf },
     /// Internal trusted child route. Use Run for admission/containment/retention.
     #[command(hide = true)]
     Worker {
@@ -23,6 +25,7 @@ enum Operation {
 fn main() -> ExitCode {
     let result = match Args::parse().operation {
         Operation::Run { profile } => reel::tig_native_job_cli::run(&profile),
+        Operation::PlanOutputs { profile } => reel::tig_native_job_cli::plan_outputs(&profile),
         Operation::Worker {
             ticket,
             sha256,

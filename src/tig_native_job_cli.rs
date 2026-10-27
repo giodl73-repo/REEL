@@ -28,6 +28,13 @@ use tig_store::{
 
 const PROFILE_SCHEMA: &str = "reel.tig-native-job-profile.experimental-1";
 const TICKET_SCHEMA: &str = "reel.tig-native-worker.experimental-1";
+mod planning;
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+enum Mode {
+    Plan,
+    Render,
+}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Worker {
@@ -37,12 +44,16 @@ struct Worker {
     context: Selection,
     request: Request,
     runtime: Bindings,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     outputs: BTreeMap<String, u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    output_budget: Option<planning::Budget>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Ticket {
     schema: String,
+    mode: Mode,
     admission: Worker,
     recipe: Digest,
     producer: Object,
@@ -103,7 +114,14 @@ fn restore(
     )
 }
 fn output_names(worker: &Worker) -> Result<BTreeSet<String>> {
-    if worker.outputs.is_empty() || worker.outputs.len() > 62 {
+    if let Some(budget) = &worker.output_budget {
+        if !worker.outputs.is_empty() {
+            bail!("native output map and budget policy are mutually exclusive");
+        }
+        budget.validate()?;
+        return Ok(BTreeSet::new());
+    }
+    if worker.outputs.is_empty() || worker.outputs.len() > 511 {
         bail!("native output set exceeds budget");
     }
     for (name, bytes) in &worker.outputs {
@@ -130,11 +148,22 @@ fn output_names(worker: &Worker) -> Result<BTreeSet<String>> {
 }
 /// No initialization or discovery: roots and trusted minimum checkpoints exist.
 pub fn run(path: &Path) -> Result<Value> {
-    let profile: Profile = read(path, 128 * 1024, None)?;
+    execute(path, false)
+}
+/// A retained bounded planning job, not a read-only/dry-run command.
+pub fn plan_outputs(path: &Path) -> Result<Value> {
+    execute(path, true)
+}
+fn execute(path: &Path, only_plan: bool) -> Result<Value> {
+    let mut profile: Profile = read(path, 128 * 1024, None)?;
     if profile.schema != PROFILE_SCHEMA {
         bail!("unsupported native job profile");
     }
     output_names(&profile.worker)?;
+    let automatic = profile.worker.output_budget.is_some();
+    if only_plan && !automatic {
+        bail!("plan-outputs requires an output budget policy");
+    }
     let coordination = Coordination {
         root: profile
             .cache
@@ -177,30 +206,131 @@ pub fn run(path: &Path) -> Result<Value> {
     let programs = BoundPrograms::bind(&profile.worker.runtime)?;
     let (mut source, context) = restore(&profile.worker)?;
     let plan = JobPlan::from_context(&mut source, &profile.worker.request, &context, &programs)?;
+    let mut spec = Phase {
+        mode: if automatic { Mode::Plan } else { Mode::Render },
+        expected_revision: profile.expected_revision,
+        start,
+        retain,
+        minimum: profile.worker.metadata_minimum.clone(),
+    };
+    if automatic {
+        spec.start = phase_operation(&identity, &spec.start, "plan")?;
+        spec.retain = phase_operation(&identity, &spec.retain, "plan")?;
+    }
+    let first = execute_phase(
+        &profile,
+        &plan,
+        &programs,
+        &mut journal,
+        &coordination,
+        &identity,
+        &spec,
+    )?;
+    if !automatic {
+        return Ok(summary(&first.value, &journal));
+    }
+    let (report, minimum) = planning::readback(&profile, &plan, &programs, &first, &mut journal)?;
+    if only_plan {
+        return Ok(
+            json!({"schema":"reel.tig-native-output-plan-result.experimental-1","result":first.value,"planning":report,"journal_checkpoint":journal.checkpoint(),"production_claim":null,"complete_claim_coverage":false}),
+        );
+    }
+    profile.worker.outputs = report.outputs.clone();
+    profile.worker.output_budget = None;
+    spec = Phase {
+        mode: Mode::Render,
+        expected_revision: first.revision,
+        start: phase_operation(&identity, &Key::parse(&profile.start_operation)?, "render")?,
+        retain: phase_operation(&identity, &Key::parse(&profile.retain_operation)?, "render")?,
+        minimum,
+    };
+    let rendered = execute_phase(
+        &profile,
+        &plan,
+        &programs,
+        &mut journal,
+        &coordination,
+        &identity,
+        &spec,
+    )?;
+    let mut result = summary(&rendered.value, &journal);
+    result["planning"] = serde_json::to_value(report)?;
+    result["planning_result"] = first.value;
+    Ok(result)
+}
+fn summary(result: &Value, journal: &SourceJournal) -> Value {
+    json!({"schema":"reel.tig-native-job-result.experimental-1","result":result,"journal_checkpoint":journal.checkpoint(),"production_claim":null,"complete_claim_coverage":false})
+}
+fn phase_operation(identity: &Identity, operation: &Key, label: &str) -> Result<Key> {
+    Ok(Key::parse(Digest::blob(&identity::canonical_json(&json!({"schema":"reel.native-output-planning-operation.experimental-1","source":identity.source.as_str(),"operation":operation.as_str(),"phase":label}))?).as_str())?)
+}
+struct Phase {
+    mode: Mode,
+    expected_revision: u64,
+    start: Key,
+    retain: Key,
+    minimum: Checkpoint,
+}
+struct PhaseResult {
+    value: Value,
+    revision: u64,
+    resources: Selection,
+    minimum: Checkpoint,
+}
+fn execute_phase(
+    profile: &Profile,
+    plan: &JobPlan<'_>,
+    programs: &BoundPrograms,
+    journal: &mut SourceJournal,
+    coordination: &Coordination,
+    identity: &Identity,
+    spec: &Phase,
+) -> Result<PhaseResult> {
     let ticket = serde_json::to_string(
-        &json!({"schema":TICKET_SCHEMA,"admission":profile.worker,"recipe":plan.recipe().fingerprint(),"producer":pin(&programs)?}),
+        &json!({"schema":TICKET_SCHEMA,"mode":spec.mode,"admission":profile.worker,"recipe":plan.recipe().fingerprint(),"producer":pin(programs)?}),
     )?;
     if ticket.len() > 65_536 {
         bail!("native worker admission exceeds budget");
     }
     let ticket_pin = Object::from_bytes(ticket.as_bytes());
-    let outputs: BTreeMap<_, _> = profile
-        .worker
-        .outputs
-        .iter()
-        .map(|(name, max)| {
-            (
-                format!("native/{name}"),
-                json!({"path":format!("native/{name}"),"max_bytes":max}),
-            )
-        })
-        .chain(std::iter::once((
-            "worker.json".into(),
-            json!({"path":"worker.json","max_bytes":65_536}),
-        )))
-        .collect();
+    let scratch_budget = if spec.mode == Mode::Plan {
+        planning::scratch_budget(profile.scratch_bytes)
+    } else {
+        profile.scratch_bytes
+    };
+    let workspace_budget = if spec.mode == Mode::Plan {
+        planning::workspace_budget(
+            profile.scratch_bytes,
+            ticket.len() as u64,
+            profile.budget_bytes,
+        )?
+    } else {
+        profile.budget_bytes
+    };
+    let outputs: BTreeMap<_, _> = if spec.mode == Mode::Plan {
+        BTreeMap::from([(
+            "planning.json".into(),
+            json!({"path":"planning.json","max_bytes":65_536}),
+        )])
+    } else {
+        profile
+            .worker
+            .outputs
+            .iter()
+            .map(|(name, max)| {
+                (
+                    format!("native/{name}"),
+                    json!({"path":format!("native/{name}"),"max_bytes":max}),
+                )
+            })
+            .chain(std::iter::once((
+                "worker.json".into(),
+                json!({"path":"worker.json","max_bytes":65_536}),
+            )))
+            .collect()
+    };
     let request = serde_json::to_vec(&json!({
-        "budget_bytes":profile.budget_bytes,"scratch_bytes":profile.scratch_bytes,
+        "output_count_limit":512,"budget_bytes":workspace_budget,"scratch_bytes":scratch_budget,
         "inputs":{},"tools":{},"installed_tools":{"worker":{"path":std::env::current_exe()?.canonicalize()?,"sha256":profile.worker.runtime.host.sha256,"bytes":profile.worker.runtime.host.bytes}},
         "files":{"worker-input.json":ticket},"prepare_output_parents":false,
         "steps":[{"tool":"worker","args":["worker","worker-input.json","--sha256",ticket_pin.sha256,"--bytes",ticket_pin.bytes.to_string()],"timeout_seconds":profile.timeout_seconds}],"outputs":outputs
@@ -208,10 +338,7 @@ pub fn run(path: &Path) -> Result<Value> {
     jobs::check_request(&request)
         .map_err(|e| anyhow::anyhow!("native job request refused: {e}"))?;
     // Validation above precedes all metadata and source-journal transitions.
-    let mut store = MetadataStore::open(
-        &profile.worker.metadata_root,
-        &profile.worker.metadata_minimum,
-    )?;
+    let mut store = MetadataStore::open(&profile.worker.metadata_root, &spec.minimum)?;
     let frozen = plan.freeze(&mut store, TreeLimits::default())?;
     let minimum = store.finish()?;
     drop(store);
@@ -219,11 +346,11 @@ pub fn run(path: &Path) -> Result<Value> {
     let ready = plan.readback(frozen.selection(), &mut reader, TreeLimits::default())?;
     let resources = plan.readback(frozen.selection(), &mut reader, TreeLimits::default())?;
     let protected = ready.protect(
-        &mut journal,
-        &coordination,
+        journal,
+        coordination,
         identity.clone(),
-        profile.expected_revision,
-        &start,
+        spec.expected_revision,
+        &spec.start,
     )?;
     let revision = protected.revision();
     drop(protected);
@@ -236,21 +363,33 @@ pub fn run(path: &Path) -> Result<Value> {
         &coordination.root,
         manifest.path(),
         resources.resources(),
-        &mut journal,
+        journal,
         &tig_job_runner::Profile {
             config: &profile.cache,
-            coordination: &coordination,
-            identity,
+            coordination,
+            identity: identity.clone(),
             expected_revision: revision,
-            operation: retain,
+            operation: spec.retain.clone(),
             metadata_root: &profile.worker.metadata_root,
             metadata_minimum: &minimum,
             tree_limits: TreeLimits::default(),
         },
     )?;
-    Ok(
-        json!({"schema":"reel.tig-native-job-result.experimental-1","result":result,"journal_checkpoint":journal.checkpoint(),"production_claim":null,"complete_claim_coverage":false}),
-    )
+    let completed = revision
+        .checked_add(2)
+        .ok_or_else(|| anyhow::anyhow!("native phase revision overflow"))?;
+    let state = journal
+        .source(&identity.source)?
+        .ok_or_else(|| anyhow::anyhow!("native phase source missing"))?;
+    if state.revision != completed || state.owner != identity.owner || state.pending.is_some() {
+        bail!("native phase handoff changed");
+    }
+    Ok(PhaseResult {
+        value: result,
+        revision: completed,
+        resources: frozen.selection().clone(),
+        minimum,
+    })
 }
 /// Internal trusted child. Coordinator supplies containment and durable claims.
 /// Calling this directly does not perform admission or establish retention.
@@ -260,6 +399,9 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
         bail!("unsupported native worker admission");
     }
     let expected = output_names(&ticket.admission)?;
+    if ticket.mode == Mode::Render && ticket.admission.output_budget.is_some() {
+        bail!("render requires derived output contract");
+    }
     let programs = BoundPrograms::bind(&ticket.admission.runtime)?;
     if pin(&programs)? != ticket.producer {
         bail!("native worker runtime differs");
@@ -269,13 +411,17 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
     if plan.recipe().fingerprint() != &ticket.recipe {
         bail!("native worker recipe differs");
     }
-    let candidate = tig_scene_production::render_with_programs(
+    if ticket.mode == Mode::Plan {
+        return planning::produce(&ticket, &mut source, &programs);
+    }
+    let candidate = tig_scene_production::render_with_programs_and_outputs(
         &mut source,
         &ticket.admission.request,
         &context,
         &programs,
         Path::new("compiled"),
         Path::new("native"),
+        Some(&expected),
     )?;
     let actual: BTreeSet<_> = candidate
         .receipt()

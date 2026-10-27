@@ -6,6 +6,7 @@ use crate::{
 };
 use anyhow::{Result, bail};
 use std::{
+    collections::BTreeSet,
     fs,
     io::Read,
     path::{Path, PathBuf},
@@ -115,7 +116,10 @@ pub fn render(
         request,
         context,
         producer,
-        None,
+        RenderOptions {
+            programs: None,
+            outputs: None,
+        },
         job_directory,
         output,
     )
@@ -132,6 +136,26 @@ pub fn render_with_programs(
     job_directory: &Path,
     output: &Path,
 ) -> Result<RenderedCandidate> {
+    render_with_programs_and_outputs(
+        source,
+        request,
+        context,
+        programs,
+        job_directory,
+        output,
+        None,
+    )
+}
+/// Verify the complete native output contract before rendering any media.
+pub fn render_with_programs_and_outputs(
+    source: &mut Source,
+    request: &Request,
+    context: &ProductionContext,
+    programs: &crate::media_runtime::BoundPrograms,
+    job_directory: &Path,
+    output: &Path,
+    expected_outputs: Option<&BTreeSet<String>>,
+) -> Result<RenderedCandidate> {
     let identity = programs.identity();
     let producer = Object {
         sha256: Digest::parse(&identity.sha256)?,
@@ -142,7 +166,10 @@ pub fn render_with_programs(
         request,
         context,
         &producer,
-        Some(programs),
+        RenderOptions {
+            programs: Some(programs),
+            outputs: expected_outputs,
+        },
         job_directory,
         output,
     )
@@ -166,12 +193,16 @@ fn context_recipe(
     Ok(recipe)
 }
 
+struct RenderOptions<'a> {
+    programs: Option<&'a crate::media_runtime::BoundPrograms>,
+    outputs: Option<&'a BTreeSet<String>>,
+}
 fn render_inner(
     source: &mut Source,
     request: &Request,
     context: &ProductionContext,
     producer: &Object,
-    programs: Option<&crate::media_runtime::BoundPrograms>,
+    options: RenderOptions<'_>,
     job_directory: &Path,
     output: &Path,
 ) -> Result<RenderedCandidate> {
@@ -183,11 +214,21 @@ fn render_inner(
     let job_path = job_directory.join("delivery/job.json").canonicalize()?;
     let job = tig_inputs::read_job(&job_path)?;
     let inputs = source.prepare(&job)?;
-    let protected = programs.map(|programs| programs.with_inputs(&inputs));
+    let protected = options
+        .programs
+        .map(|programs| programs.with_inputs(&inputs));
     let execution: &dyn scene_delivery::InputFiles = match &protected {
         Some(bound) => bound,
         None => &inputs,
     };
+    if let Some(expected) = options.outputs {
+        let (job, plan) = scene_delivery::plan_with_inputs(&job_path, execution)?;
+        let mut actual = scene_delivery::output_contract(&job, &plan)?.names;
+        actual.insert("receipt.json".into());
+        if &actual != expected {
+            bail!("native worker output set differs from admission");
+        }
+    }
     let rendered = scene_delivery::render_with_inputs(&job_path, execution, output)?;
     let receipt = scene_delivery::check_with_inputs(&job_path, execution, output)?;
     let bytes = receipt_bytes(output)?;

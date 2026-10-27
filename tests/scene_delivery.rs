@@ -1630,7 +1630,24 @@ fn phased_camera_is_bound_to_native_timing_and_compiled_evidence() {
     let mut job = fixture(t.path());
     add_phased_camera(&mut job);
     write_json(&t.path().join("job.json"), &job);
-    let (_, plan) = scene_delivery::plan(&t.path().join("job.json"), t.path()).unwrap();
+    let (native, plan) = scene_delivery::plan(&t.path().join("job.json"), t.path()).unwrap();
+    let contract = scene_delivery::output_contract(&native, &plan).unwrap();
+    assert!(contract.names.contains("motioncraft/evidence.json"));
+    assert!(contract.names.contains("motioncraft/contact-sheet.png"));
+    assert!(contract.names.contains("motioncraft/quarter-speed.mp4"));
+    assert!(
+        contract
+            .names
+            .iter()
+            .any(|n| n.starts_with("motioncraft/frame-") && n.ends_with(".png"))
+    );
+    assert_eq!(contract.raw_pcm24_stereo_bytes, 576_000);
+    let mut overflow = plan.clone();
+    overflow.duration_samples = u64::MAX;
+    assert!(scene_delivery::output_contract(&native, &overflow).is_err());
+    overflow = plan.clone();
+    overflow.frame_count = u64::MAX;
+    assert!(scene_delivery::output_contract(&native, &overflow).is_err());
     assert_eq!(plan.duration_samples, 96000);
     assert_eq!(plan.audio[2].start_sample, 123);
     job["pictures"][0]["motion"]["plan"]["duration_samples"] = json!(48000);
