@@ -71,6 +71,8 @@ pub mod sprite_materializer;
 pub mod sung_lyric_alignment;
 #[cfg(feature = "tig")]
 pub mod tig_inputs;
+#[cfg(feature = "tig-publication")]
+pub mod tig_publication;
 #[cfg(feature = "tig")]
 pub mod tig_scene;
 #[cfg(feature = "tig")]

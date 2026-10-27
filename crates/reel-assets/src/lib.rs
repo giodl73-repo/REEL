@@ -308,12 +308,76 @@ fn recover_with_publication_wait(
     if !valid_oid(oid) {
         return Err("Invalid SHA-256".into());
     }
+    let mut input = File::open(source)?;
+    recover_stream(
+        root,
+        &mut input,
+        cache,
+        oid,
+        size,
+        completed_job_output,
+        serde_json::to_value(source)?,
+    )
+}
+
+/// Publish caller-owned bytes through the existing CAS writer. The caller must
+/// first admit destination capacity and retain its source until acknowledgement.
+/// Does not initialize a cache, select an asset or establish retained custody.
+pub fn recover_from_reader(
+    root: &Path,
+    source: &mut dyn Read,
+    cache: &Path,
+    oid: &str,
+    size: u64,
+) -> Result<PathBuf> {
+    if !valid_oid(oid) {
+        return Err("Invalid SHA-256".into());
+    }
+    let cache = cache.canonicalize()?;
+    let base = cache.join("objects/sha256");
+    let metadata = fs::symlink_metadata(&base)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() || base.canonicalize()? != base {
+        return Err("Existing ordinary CAS directory required".into());
+    }
+    let shard = base.join(&oid[..2]);
+    match fs::create_dir(&shard) {
+        Ok(()) => (),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
+        Err(error) => return Err(error.into()),
+    }
+    let metadata = fs::symlink_metadata(&shard)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() || shard.canonicalize()? != shard {
+        return Err("Existing CAS shard must be an ordinary in-root directory".into());
+    }
+    recover_stream(
+        root,
+        source,
+        &cache,
+        oid,
+        size,
+        false,
+        json!({"kind":"caller-reader"}),
+    )
+}
+
+fn recover_stream(
+    root: &Path,
+    source: &mut dyn Read,
+    cache: &Path,
+    oid: &str,
+    size: u64,
+    completed_job_output: bool,
+    provenance: Value,
+) -> Result<PathBuf> {
+    if !valid_oid(oid) {
+        return Err("Invalid SHA-256".into());
+    }
     let destination = object(cache, oid);
     let parent = destination.parent().ok_or("Invalid cache path")?;
     fs::create_dir_all(parent)?;
     let temporary = Temporary(unique(parent, oid));
     {
-        let mut input = File::open(source)?.take(size.saturating_add(1));
+        let mut input = source.take(size.saturating_add(1));
         let mut output = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -338,7 +402,7 @@ fn recover_with_publication_wait(
         .append(true)
         .open(root.join(".local/cache-promotions.jsonl"))?;
     let mut line = serde_json::to_vec(
-        &json!({"sha256": oid, "bytes": size, "source": source, "destination": destination, "sha256_verified": true, "creative_authority": "not-granted-by-this-receipt"}),
+        &json!({"sha256": oid, "bytes": size, "source": provenance, "destination": destination, "sha256_verified": true, "creative_authority": "not-granted-by-this-receipt"}),
     )?;
     line.push(b'\n');
     receipt.write_all(&line)?;
