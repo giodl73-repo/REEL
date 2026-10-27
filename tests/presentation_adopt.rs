@@ -47,7 +47,25 @@ fn retained_encoded_source_preserves_exact_bytes_and_rechecks_conform() {
         (false, None),
         false,
         true,
+        None,
     );
+}
+
+#[test]
+fn retained_h264_mp3_preserves_identity_complete_decode_and_repeat_only_holds() {
+    for fps in [25, 30] {
+        opening_fixture_with_output_mode(
+            ("libx264", "yuv420p"),
+            false,
+            false,
+            false,
+            false,
+            (false, None),
+            false,
+            true,
+            Some(("libmp3lame", fps)),
+        );
+    }
 }
 
 #[test]
@@ -164,7 +182,7 @@ fn opening_fixture_with_options(
     compact: bool,
 ) {
     opening_fixture_with_output_mode(
-        source, excerpt, gapped, audio_gap, repair, clock, compact, false,
+        source, excerpt, gapped, audio_gap, repair, clock, compact, false, None,
     );
 }
 
@@ -178,6 +196,7 @@ fn opening_fixture_with_output_mode(
     clock: (bool, Option<u32>),
     compact: bool,
     retain_source: bool,
+    encoded_audio: Option<(&str, u32)>,
 ) {
     let (codec, pixel_format) = source;
     let (origin, reset_sample) = clock;
@@ -214,7 +233,11 @@ fn opening_fixture_with_output_mode(
             "-pix_fmt",
             pixel_format,
             "-c:a",
-            if origin { "aac" } else { "pcm_s24le" },
+            encoded_audio.map(|(codec, _)| codec).unwrap_or(if origin {
+                "aac"
+            } else {
+                "pcm_s24le"
+            }),
             "-shortest",
         ])
         .args(if gapped && origin {
@@ -231,7 +254,12 @@ fn opening_fixture_with_output_mode(
         } else {
             vec![]
         })
-        .arg(root.join(if retain_source {
+        .args(if encoded_audio.is_some() {
+            vec!["-f", "mp4"]
+        } else {
+            vec![]
+        })
+        .arg(root.join(if retain_source && encoded_audio.is_none() {
             "uncaptioned.mkv"
         } else {
             "opening.mkv"
@@ -239,7 +267,7 @@ fn opening_fixture_with_output_mode(
         .status()
         .unwrap();
     assert!(status.success());
-    if retain_source {
+    if retain_source && encoded_audio.is_none() {
         fs::write(
             root.join("selected.srt"),
             "1\n00:00:00,000 --> 00:00:01,500\nSelected source caption\n",
@@ -452,6 +480,39 @@ fn opening_fixture_with_output_mode(
     }
     if retain_source {
         assert_eq!(receipt["output_mode"], "retain-source");
+        if encoded_audio.is_some() {
+            for (picture, field, expected_bytes) in [
+                (true, "decoded_picture_sha256", 48 * 64 * 64 * 3),
+                (false, "decoded_audio_sha256", 96000 * 6),
+            ] {
+                let mut decoder = ffmpeg();
+                decoder
+                    .args(["-v", "error", "-i"])
+                    .arg(root.join("opening.mkv"));
+                if picture {
+                    decoder.args([
+                        "-map",
+                        "0:v:0",
+                        "-fps_mode",
+                        "passthrough",
+                        "-pix_fmt",
+                        "yuv444p",
+                        "-f",
+                        "rawvideo",
+                    ]);
+                } else {
+                    decoder.args(["-map", "0:a:0", "-c:a", "pcm_s24le", "-f", "s24le"]);
+                }
+                let decoded = decoder.arg("-").output().unwrap();
+                assert!(decoded.status.success());
+                assert_eq!(decoded.stdout.len(), expected_bytes);
+                let hash = Sha256::digest(&decoded.stdout)
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>();
+                assert_eq!(receipt[field], hash);
+            }
+        }
         for (index, change) in [
             json!({"source_range":{"start_frame":0,"frame_count":24}}),
             json!({"lossless_video_encoding":"h264-lossless"}),
@@ -745,6 +806,42 @@ fn opening_fixture_with_output_mode(
             ]
         }),
     );
+    if let Some((_, fps)) = encoded_audio {
+        let mut conform: Value =
+            serde_json::from_slice(&fs::read(root.join("conform.json")).unwrap()).unwrap();
+        conform["output_frame_rate"] =
+            json!({"numerator":fps,"denominator":1,"policy":"repeat-only"});
+        conform["audio_frame_conform"] = json!("pad-silence-to-picture-boundaries");
+        for segment in conform["segments"].as_array_mut().unwrap() {
+            segment["tail_hold_frames"] = json!(fps * 2);
+        }
+        write(&root.join("conform.json"), &conform);
+        let mut unverified = conform.clone();
+        unverified["segments"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("adoption_manifest");
+        write(&root.join("unverified-mp3-conform.json"), &unverified);
+        let rejected = Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
+            .arg("build")
+            .arg(root.join("unverified-mp3-conform.json"))
+            .arg("--input-root")
+            .arg(root)
+            .arg("--asset-root")
+            .arg(root)
+            .arg("--output-dir")
+            .arg(root.join("unverified-mp3-output"))
+            .output()
+            .unwrap();
+        assert!(!rejected.status.success());
+        assert!(
+            String::from_utf8_lossy(&rejected.stderr)
+                .contains("adopted presentation needs its source manifest recheck"),
+            "{}",
+            String::from_utf8_lossy(&rejected.stderr)
+        );
+        assert!(!root.join("unverified-mp3-output").exists());
+    }
     let conformed = Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
         .arg("build")
         .arg(root.join("conform.json"))
@@ -766,16 +863,62 @@ fn opening_fixture_with_output_mode(
             .unwrap();
     assert_eq!(
         conformed_receipt["total_frames"],
-        if excerpt { 48 } else { 72 }
+        if let Some((_, fps)) = encoded_audio {
+            u64::from(fps) * 7
+        } else if excerpt {
+            48
+        } else {
+            72
+        }
     );
     assert_eq!(
         conformed_receipt["total_samples"],
-        if excerpt { 96000 } else { 144000 }
+        if encoded_audio.is_some() {
+            336000
+        } else if excerpt {
+            96000
+        } else {
+            144000
+        }
     );
     assert_eq!(
         conformed_receipt["upstream_presentation_recheck_state"],
         "verified-for-all-presentation-segments"
     );
+    if let Some((_, fps)) = encoded_audio {
+        let selected = &conformed_receipt["segments"][0];
+        assert_eq!(selected["input_frames"], 48);
+        assert_eq!(selected["input_samples"], 96000);
+        assert_eq!(selected["frames"], fps * 4);
+        assert_eq!(selected["samples"], 192000);
+        assert_eq!(selected["tail_hold_samples"], 96000);
+        assert_eq!(selected["audio_padding_samples"], 0);
+        assert_eq!(
+            selected["frame_rate_verification"]["transformed_source_matches_selected"],
+            true
+        );
+        let normalized_audio = ffmpeg()
+            .args(["-v", "error", "-i"])
+            .arg(root.join("episode-output/master.mkv"))
+            .args(["-map", "0:a:0", "-c:a", "pcm_s24le", "-f", "s24le", "-"])
+            .output()
+            .unwrap();
+        assert!(normalized_audio.status.success());
+        assert_eq!(normalized_audio.stdout.len(), 336000 * 6);
+        let source = ffmpeg()
+            .args(["-v", "error", "-i"])
+            .arg(root.join("opening.mkv"))
+            .args(["-map", "0:a:0", "-c:a", "pcm_s24le", "-f", "s24le", "-"])
+            .output()
+            .unwrap();
+        assert!(source.status.success());
+        assert_eq!(&normalized_audio.stdout[..96000 * 6], source.stdout);
+        assert!(
+            normalized_audio.stdout[96000 * 6..192000 * 6]
+                .iter()
+                .all(|b| *b == 0)
+        );
+    }
 
     fs::create_dir(root.join("retimed")).unwrap();
     let shifted = ffmpeg()

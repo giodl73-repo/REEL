@@ -945,7 +945,7 @@ fn probe_with_source_formats(path: &Path, allow_encoded_source: bool) -> Result<
         )
         && matches!(
             a["codec_name"].as_str(),
-            Some("aac" | "pcm_s16le" | "pcm_s24le")
+            Some("aac" | "mp3" | "pcm_s16le" | "pcm_s24le")
         )
         && a["channels"] == 2;
     if !native_lossless_format && !supported_selected_format {
@@ -3281,4 +3281,69 @@ fn verify_compact(
         full_decode_verified: true,
         lossless_master_retained: profile.retain_lossless_master,
     })
+}
+
+#[cfg(test)]
+mod selected_source_audio_tests {
+    use super::*;
+
+    #[test]
+    fn mp3_is_selected_source_only_and_stereo_and_codec_guards_remain_strict() {
+        let temp = tempfile::tempdir().unwrap();
+        for (index, codec, channels, accepted) in [
+            (0, "libmp3lame", "2", true),
+            (1, "libmp3lame", "1", false),
+            (2, "libopus", "2", false),
+            (3, "pcm_f32le", "2", false),
+        ] {
+            let file = temp.path().join(format!("source-{index}.media"));
+            let status = command("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc2=s=32x32:r=24:d=1",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=437:sample_rate=48000:duration=1",
+                    "-ac",
+                    channels,
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-c:a",
+                    codec,
+                    "-f",
+                    if codec == "libmp3lame" {
+                        "mp4"
+                    } else {
+                        "matroska"
+                    },
+                ])
+                .arg(&file)
+                .status()
+                .unwrap();
+            assert!(status.success());
+            assert!(
+                probe(&file).is_err(),
+                "encoded audio must not enter strict native input"
+            );
+            assert_eq!(
+                probe_selected_source(&file).is_ok(),
+                accepted,
+                "{codec}/{channels}"
+            );
+            if accepted {
+                assert!(
+                    probe_selected_source(&file)
+                        .unwrap()
+                        .requires_lossless_normalization
+                );
+            }
+        }
+    }
 }
