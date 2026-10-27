@@ -269,6 +269,46 @@ proves approval, completed delivery, availability, full tool closure or custody.
 Historical selected outputs with no native claim remain Unproven in this new
 correspondence contract and retain their existing selection/history obligations.
 
+## Checked candidate byte publication
+
+With `tig-publication`, `RenderedCandidate::publish(bindings, publication,
+backend)` takes explicit admitted output mappings, a caller-owned operation/owner
+and acknowledgement level, and a Tig `PublicationBackend`. It rechecks the native
+receipt and all selected local output bytes, builds the exact unsigned claim and
+preflights every object against backend capabilities before provider writes.
+
+```text
+checked render candidate + admitted output bindings
+                       |
+          revalidate local selected bytes
+                       |
+          preflight every publication request
+                       |
+       selected payloads -> native receipt -> claim
+                       |
+      PublishedCandidate (all acknowledgements)
+                       |
+      explicit project registration/adoption later
+```
+
+The result exposes the exact claim, native receipt pin and individual byte
+acknowledgements. It is not deserializable and has no public constructor.
+Per-item operation keys bind the caller operation and item role/name independently
+of content. Exact retries keep those keys; changing an item under the same
+operation conflicts rather than hiding the change behind a new content-derived
+operation. Mappings are explicit and unselected render files are not published.
+Subjects sharing one output name share its publication request while retaining
+their separate logical claim bindings.
+
+This is an ordered batch, not an atomic transaction or retained lease over every
+object. Failure may leave valid immutable partial objects; an exact retry can
+reuse them. No source file is deleted or repaired, no cache/status/Git selection
+is inferred, and the candidate still requires its local files for revalidation.
+Caller-owned original context, parameters, runtime/code and job/custody claims
+must remain available separately. Independent custody and current protection
+checks are still required before retiring any source. For the concrete local
+provider's capabilities and limits, see [existing-cache publication](tig-publication.md).
+
 ## Declared runtime files and explicit programs
 
 `media_runtime::BoundPrograms::bind(&Bindings)` verifies the actual running host
