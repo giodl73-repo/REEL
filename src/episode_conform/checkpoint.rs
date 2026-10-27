@@ -44,7 +44,7 @@ pub(super) struct Prepared {
     full_episode_verified: bool,
 }
 
-fn tool_hash(name: &str) -> Result<String> {
+pub(super) fn tool_hash(name: &str) -> Result<String> {
     file_sha(Path::new(command(name).get_program()))
 }
 

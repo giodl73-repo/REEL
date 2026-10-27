@@ -81,6 +81,18 @@ fn stamp(ms: u64) -> String {
     )
 }
 
+struct CaptionConform {
+    episode_id: String,
+    language: String,
+    manifest_sha256: String,
+    timestamps_verified: bool,
+    decoded_master_matches_ordered_segments: bool,
+    output_sample_rate: u32,
+    total_frames: u64,
+    total_samples: u64,
+    segments: Vec<crate::episode_conform::SegmentReceipt>,
+}
+
 /// All inputs are bounded FileRefs in one explicitly staged root. No cache lookup.
 /// Writes only to a new or empty directory after every dependency and cue has passed.
 pub fn assemble(manifest_path: &Path, root: &Path, output: &Path) -> Result<()> {
@@ -89,10 +101,43 @@ pub fn assemble(manifest_path: &Path, root: &Path, output: &Path) -> Result<()> 
     let conform_bytes = read(root, &manifest.conform_manifest)?;
     let conform: Conform = serde_json::from_slice(&conform_bytes)?;
     let receipt_bytes = read(root, &manifest.conform_receipt)?;
-    let receipt: ConformReceipt = serde_json::from_slice(&receipt_bytes)?;
+    // Keep the timing consumer independent of the physical master representation.
+    // Deserialize each version with its own typed contract; never synthesize v1
+    // master hashes for an ordered immutable part set.
+    let schema: serde_json::Value = serde_json::from_slice(&receipt_bytes)?;
+    let receipt = if schema["schema"] == crate::episode_conform::parts::RECEIPT {
+        let r: crate::episode_conform::parts::Receipt = serde_json::from_slice(&receipt_bytes)?;
+        CaptionConform {
+            episode_id: r.episode_id,
+            language: r.language,
+            manifest_sha256: r.manifest_sha256,
+            timestamps_verified: r.timestamps_verified,
+            decoded_master_matches_ordered_segments: r.compact_ordered_content_verified
+                && r.preencode_pcm_identity_verified,
+            output_sample_rate: r.output_sample_rate,
+            total_frames: r.total_frames,
+            total_samples: r.total_samples,
+            segments: r.segments,
+        }
+    } else {
+        let r: ConformReceipt = serde_json::from_slice(&receipt_bytes)?;
+        if r.schema != "reel.episode-conform-receipt.v1" {
+            bail!("unsupported native conform receipt");
+        }
+        CaptionConform {
+            episode_id: r.episode_id,
+            language: r.language,
+            manifest_sha256: r.manifest_sha256,
+            timestamps_verified: r.timestamps_verified,
+            decoded_master_matches_ordered_segments: r.decoded_master_matches_ordered_segments,
+            output_sample_rate: r.output_sample_rate,
+            total_frames: r.total_frames,
+            total_samples: r.total_samples,
+            segments: r.segments,
+        }
+    };
     if manifest.schema != "reel.episode-captions.v1"
         || conform.schema != "reel.episode-conform.v1"
-        || receipt.schema != "reel.episode-conform-receipt.v1"
         || manifest.language != conform.language
         || manifest.language != receipt.language
         || receipt.episode_id != conform.episode_id

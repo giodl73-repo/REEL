@@ -19,6 +19,7 @@ use std::{
 };
 
 mod checkpoint;
+pub mod parts;
 
 pub const SCHEMA: &str = "reel.episode-conform.v1";
 
@@ -609,7 +610,8 @@ fn append_silent_picture_hold(
     if frames == 0 || samples == 0 || !matches!(video_codec, "h264" | "ffv1") {
         bail!("invalid silent picture hold");
     }
-    let filter = format!("tpad=stop_mode=clone:stop={frames}");
+    let (n, d) = fps_parts(&probe(source)?.fps)?;
+    let filter = format!("tpad=stop_mode=clone:stop={frames},settb=expr={d}/{n},setpts=N");
     let expected_picture = decoded_digest_with_filter(source, true, 0, Some(&filter))?;
     let expected_audio = decoded_digest_with_padding(source, false, samples)?;
     let mut encoder = command("ffmpeg");
@@ -1632,8 +1634,16 @@ pub fn build(
     asset_root: &Path,
     output: &Path,
 ) -> Result<Receipt> {
-    build_internal(manifest_path, input_root, asset_root, output, None, None)?
-        .context("missing final conform receipt")
+    build_internal(
+        manifest_path,
+        input_root,
+        asset_root,
+        output,
+        None,
+        None,
+        None,
+    )?
+    .context("missing final conform receipt")
 }
 
 pub fn prepare(
@@ -1653,6 +1663,7 @@ pub fn prepare(
         asset_root,
         output,
         Some(scope),
+        None,
         None,
     )
     .context("preparing selected native program")?;
@@ -1704,6 +1715,7 @@ pub fn prepare_batch(
             max_segments,
             resume,
         }),
+        None,
     )?;
     Ok(())
 }
@@ -1749,6 +1761,7 @@ pub fn finish_encoded_preparation(
     checkpoint::finish_encoded(prepared, asset_root, output)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_internal(
     manifest_path: &Path,
     input_root: &Path,
@@ -1756,6 +1769,7 @@ fn build_internal(
     output: &Path,
     preparation_scope: Option<Vec<scene_delivery::FileRef>>,
     mut batch: Option<BatchPreparation>,
+    part_range: Option<&parts::Range>,
 ) -> Result<Option<Receipt>> {
     let resuming = batch.as_ref().is_some_and(|b| b.resume.is_some());
     if output.exists() && !resuming {
@@ -1763,6 +1777,9 @@ fn build_internal(
     }
     let manifest_bytes = fs::read(manifest_path)?;
     let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
+    if let Some(range) = part_range {
+        range.validate(&manifest)?;
+    }
     if manifest.compact_delivery.as_ref().is_some_and(|profile| {
         profile.crf > 51
             || !(32..=512).contains(&profile.audio_bitrate_kbps)
@@ -1892,6 +1909,31 @@ fn build_internal(
     let mut presentation_cache_hits = 0;
     let mut presentation_cache_misses = 0;
     for (segment_index, segment) in manifest.segments.iter().enumerate() {
+        // Validate the complete selected order, but never open media outside the
+        // explicitly staged range. Full coverage is checked by the part consumer.
+        if part_range.is_some_and(|r| !r.contains(segment_index)) {
+            match segment.kind {
+                SegmentKind::Scene => {
+                    seen_scenes.push(segment.id.clone());
+                    let role = segment.role.as_deref().unwrap_or("chapter-scenes");
+                    if role != "chapter-scenes" || observed_roles.last().is_none_or(|v| v != role) {
+                        observed_roles.push(role.into());
+                    }
+                }
+                SegmentKind::EpisodePresentation => {
+                    observed_roles.push(segment.id.clone());
+                    if !seen_roles.insert(segment.id.clone()) {
+                        bail!("duplicate presentation role");
+                    }
+                }
+            }
+            sources.push(PathBuf::new());
+            upstream_verified.push(false);
+            presentation_verified.push(false);
+            retained_sources.push(false);
+            presentation_counts.push(None);
+            continue;
+        }
         if !ordered_units_v2 && segment.source_text_evidence.is_some() {
             bail!("v1 episode segment cannot carry v2 source-text evidence");
         }
@@ -2155,6 +2197,10 @@ fn build_internal(
     let mut common: Option<MediaFacts> = None;
     let mut frame_cursor = 0u64;
     let mut sample_cursor = 0u64;
+    if let Some(range) = part_range {
+        frame_cursor = range.start_frame;
+        sample_cursor = range.start_sample;
+    }
     if let Some(state) = batch.as_mut().and_then(|b| b.resume.take()) {
         if state.presentation_fingerprint_sha256 != presentation.fingerprint_sha256 {
             bail!("normalization progress presentation scope changed");
@@ -2170,6 +2216,9 @@ fn build_internal(
         bail!("normalization is complete; assemble the preparation next");
     }
     for (index, (segment, source)) in manifest.segments.iter().zip(&sources).enumerate() {
+        if part_range.is_some_and(|r| !r.contains(index)) {
+            continue;
+        }
         if index < completed {
             continue;
         }
@@ -2652,6 +2701,21 @@ fn build_internal(
         }
         normalized.push(selected);
     }
+    if let Some(range) = part_range {
+        parts::publish(
+            range,
+            &manifest_bytes,
+            &common.context("no part media")?,
+            &records,
+            &normalized,
+            work,
+            asset_root,
+            &preparation_scope.context("part scope missing")?,
+        )?;
+        drop(temp);
+        fs::rename(stage.context("part stage missing")?.keep(), output)?;
+        return Ok(None);
+    }
     if batch.is_some() {
         let state = checkpoint::NormalizationState {
             source_scope: preparation_scope.context("batch preparation scope missing")?,
@@ -2773,7 +2837,9 @@ fn assemble_normalized(
             let (num, den) = fps_parts(&facts.fps)?;
             concat
                 .args(["-vf"])
-                .arg(format!("setpts=N*{den}/({num}*TB)"))
+                // Integer frame ticks avoid floating division rounding an exact
+                // boundary down by a whole frame (for example frame 81 at 30fps).
+                .arg(format!("settb=expr={den}/{num},setpts=N"))
                 .args([
                     "-af",
                     "asetpts=N/SR/TB",

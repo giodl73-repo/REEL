@@ -7,6 +7,48 @@ fn run() -> Result<()> {
         _,
         command,
         manifest,
+        root_flag,
+        root,
+        range_flag,
+        range,
+        out_flag,
+        out,
+    ] = args.as_slice()
+    {
+        if command == "produce-parts"
+            && root_flag == "--asset-root"
+            && range_flag == "--range"
+            && out_flag == "--output-dir"
+        {
+            reel::episode_conform::parts::produce_from_file(
+                Path::new(manifest),
+                Path::new(root),
+                Path::new(range),
+                Path::new(out),
+            )?;
+            println!("portable native lossless/compact/PCM parts and proof retained");
+            return Ok(());
+        }
+    }
+    if let [_, command, set, root_flag, root, out_flag, out] = args.as_slice() {
+        if command == "finalize-parts" && root_flag == "--asset-root" && out_flag == "--output-dir"
+        {
+            let receipt = reel::episode_conform::parts::finalize(
+                Path::new(set),
+                Path::new(root),
+                Path::new(out),
+            )?;
+            println!(
+                "{} {} {} frames {} samples",
+                receipt.episode_id, receipt.language, receipt.total_frames, receipt.total_samples
+            );
+            return Ok(());
+        }
+    }
+    if let [
+        _,
+        command,
+        manifest,
         input_flag,
         input,
         asset_flag,

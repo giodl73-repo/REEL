@@ -55,6 +55,9 @@ distinguishing dependencies, inventory membership and historical versions.
 - Rendering [compiled scene deliveries](docs/scene-delivery-v0.1.md) from native
   cue timing with explicit D/M/E roles, composition limits, lossless masters,
   separate review encodes and independently rechecked receipts.
+- Producing [bounded native programme parts](docs/programme-parts-v2.md), retaining
+  complete ordered lossless custody and copying compact video into a continuous
+  H264/MP3 delivery with typed v2 caption timing.
 
 ## Non-goals
 

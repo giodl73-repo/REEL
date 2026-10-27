@@ -97,6 +97,29 @@ fn bilingual_27_segments_use_native_sample_clock_and_preserve_words_and_style() 
         assert!(assemble(&root.join("captions.json"), root, &output).is_err());
     }
 }
+
+#[test]
+fn bilingual_27_segments_accept_typed_ordered_part_receipt_without_v1_master_fields() {
+    for lang in ["es", "en"] {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path();
+        let (mut manifest, _, old) = fixture(root, lang, 30);
+        let receipt = json!({"schema":"reel.episode-conform-receipt.v2","episode_id":old["episode_id"],"language":lang,"manifest_sha256":old["manifest_sha256"],"output_sample_rate":48000,"total_frames":old["total_frames"],"total_samples":old["total_samples"],"timestamps_verified":true,"compact_ordered_content_verified":true,"preencode_pcm_identity_verified":true,"lossless_master":{"representation":"ordered-immutable-parts","parts":[],"custody":"fixture prior proofs"},"delivery":{"path":"movie.mp4","sha256":"a".repeat(64),"bytes":1},"segments":old["segments"],"consumed_proofs":[],"finalizer_job_sha256":"b".repeat(64),"boundary_findings":[],"limitations":["fixture"],"publication":"not-authorized"});
+        manifest["conform_receipt"] = write(root, "receipt.json", &receipt);
+        write(root, "captions.json", &manifest);
+        assemble(&root.join("captions.json"), root, &root.join("out")).unwrap();
+        let srt = fs::read_to_string(root.join("out/captions.srt")).unwrap();
+        assert_eq!(reel::series::parse_srt(&srt).unwrap().len(), 27);
+        assert_eq!(
+            fs::read_to_string(root.join("out/captions.vtt"))
+                .unwrap()
+                .matches("line:70%")
+                .count(),
+            14
+        );
+        assert!(receipt.get("master_sha256").is_none());
+    }
+}
 #[test]
 fn rejects_corruption_scope_order_clock_and_hold_leaks_before_writing() {
     for case in 0..18 {
