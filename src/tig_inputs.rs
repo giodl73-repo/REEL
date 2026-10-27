@@ -77,6 +77,12 @@ pub fn read_job(path: &Path) -> Result<Job> {
     serde_yaml::from_slice(&bounded_file(path, JOB_BYTES_MAX)?)
         .map_err(|_| anyhow!("invalid scene job"))
 }
+/// Explicit exact-pin reference for comparison; never an implicit latest lookup.
+pub fn read_reference(path: &Path) -> Result<FileRef> {
+    let value = tig_core::identity::parse_json(&bounded_file(path, PROFILE_BYTES_MAX)?)
+        .map_err(|_| anyhow!("invalid Tig reference JSON"))?;
+    serde_json::from_value(value).map_err(|_| anyhow!("invalid Tig reference fields"))
+}
 fn scope(paths: Vec<String>) -> Result<Scope> {
     if paths.is_empty() || paths.len() > 64 {
         bail!("invalid namespace scope");
