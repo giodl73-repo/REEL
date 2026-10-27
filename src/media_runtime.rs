@@ -58,7 +58,8 @@ impl ByteIdentity {
 }
 
 /// Private local enrollment; paths are never part of the portable manifest.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Bindings {
     pub host: ByteIdentity,
     pub ffmpeg: FileRef,

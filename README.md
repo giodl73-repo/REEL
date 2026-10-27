@@ -38,6 +38,9 @@ The optional [native Tig backend](docs/tig-backend.md) provides an explicit-prof
 `reel-tig-scene` command for guarded scene inputs, using a pinned Tig dependency.
 Its [native scene compiler](docs/tig-native-scene.md) resolves current leaf IDs
 from one Git view and derives exact bindings and jobs without copying media.
+With `tig-publication`, [bounded native jobs](docs/tig-job-runner.md) use
+`reel-tig-job run` to restore a frozen scene, contain a pinned same-binary worker,
+retain checked outputs through Tig and retire only its owned scratch.
 
 ---
 

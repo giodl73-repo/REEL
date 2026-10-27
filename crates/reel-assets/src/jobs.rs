@@ -310,13 +310,21 @@ fn read_job(manifest: &Path) -> Result<(Vec<u8>, Job)> {
     File::open(manifest)?
         .take(256 * 1024 + 1)
         .read_to_end(&mut bytes)?;
+    let job = parse_job(&bytes)?;
+    Ok((bytes, job))
+}
+/// Bounded structural/budget preflight only; no admission, execution or IO.
+pub fn check_request(bytes: &[u8]) -> Result<()> {
+    parse_job(bytes).map(|_| ())
+}
+fn parse_job(bytes: &[u8]) -> Result<Job> {
     if bytes.len() > 256 * 1024 {
         return Err("Job manifest exceeds intake budget".into());
     }
     let job: Job =
-        serde_json::from_str(std::str::from_utf8(&bytes)?.trim_start_matches('\u{feff}'))?;
+        serde_json::from_str(std::str::from_utf8(bytes)?.trim_start_matches('\u{feff}'))?;
     validate(&job)?;
-    Ok((bytes, job))
+    Ok(job)
 }
 fn run_loaded(
     root: &Path,
