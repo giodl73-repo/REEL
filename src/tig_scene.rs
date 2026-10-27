@@ -154,7 +154,7 @@ fn production_profiles(source: &Source, request: &Request) -> Result<Vec<Profile
             covered: BTreeSet::from([EdgeKind::Production]),
             rules: vec![],
             payloads: match &admission.payload {
-                Payload::Selected => Payloads::SelectedObject,
+                Payload::Selected {} => Payloads::SelectedObject,
                 Payload::Stream { slot } => Payloads::Named {
                     selected: false,
                     slots: BTreeSet::from([slot.clone()]),

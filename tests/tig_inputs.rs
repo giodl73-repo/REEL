@@ -260,6 +260,37 @@ fn vendored_runtime_source_matches_exact_upstream_pin() {
     assert_eq!(total, 509862);
 }
 
+#[test]
+fn payload_selectors_reject_extra_selected_or_stream_fields_in_git_and_archive_profiles() {
+    let f = Fixture::new();
+    for selector in [
+        json!({"kind":"selected","slot":"en"}),
+        json!({"kind":"selected","role":"audio"}),
+        json!({"kind":"selected","unexpected":null}),
+        json!({"kind":"stream","slot":"en","unexpected":true}),
+    ] {
+        let mut value = f.profile.clone();
+        value["admitted"][0]["payload"] = selector.clone();
+        let path = f.root().join("malformed-profile.json");
+        fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(
+            Profile::read(&path).is_err(),
+            "malformed payload selector was accepted"
+        );
+        assert!(serde_json::from_value::<Profile>(value).is_err());
+        let archive = json!({"schema":reel::tig_inputs::ARCHIVE_PROFILE_SCHEMA,"archive":Object::from_bytes(b"archive"),"checkpoint":tig_core::Digest::blob(b"checkpoint"),"admitted":f.profile["admitted"],"byte_source":f.profile["byte_source"]});
+        let mut archive = archive;
+        archive["admitted"][0]["payload"] = selector;
+        assert!(serde_json::from_value::<reel::tig_inputs::ArchiveProfile>(archive).is_err());
+    }
+    let selected: Profile = serde_json::from_value(f.profile.clone()).unwrap();
+    assert_eq!(Source::open(selected).unwrap().byte_requests(), 0);
+    let mut stream = f.profile.clone();
+    stream["admitted"][0]["payload"] = json!({"kind":"stream","slot":"en"});
+    let stream: Profile = serde_json::from_value(stream).unwrap();
+    assert_eq!(Source::open(stream).unwrap().byte_requests(), 0);
+}
+
 fn native_scene_fixture() -> (Fixture, reel::tig_scene::Request) {
     let mut f = Fixture::new();
     let root = f.root();
