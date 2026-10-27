@@ -94,4 +94,3 @@ Failed/interrupted work has no acceptance receipt; original sources/parts remain
 unchanged. Retry into a new output directory through a newly admitted job.
 No creative, contextual listening, caption, rights, likeness/voice, principal or
 release approval is inferred.
-
