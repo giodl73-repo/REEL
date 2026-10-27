@@ -77,9 +77,19 @@ pub struct Rule {
     /// RFC 6901 pointer relative to the authored object, not the whole record.
     pub pointer: String,
     pub kind: EdgeKind,
-    pub many: bool,
+    pub collection: Collection,
     pub optional: bool,
     pub binding: Binding,
+}
+
+/// Caller-admitted shape. Objects are traversed only when explicitly selected;
+/// map values are references, not arbitrary recursively discovered dependencies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Collection {
+    One,
+    Array,
+    ObjectValues,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -672,32 +682,43 @@ fn extract(
                 return Err(GapReason::InvalidReference);
             }
         };
-        if rule.many {
-            let values = value.as_array().ok_or(GapReason::InvalidReference)?;
-            for (i, item) in values.iter().enumerate() {
-                let target = target(item, rule.binding)?;
-                if kinds.contains(&rule.kind) {
-                    if edges.len() == edge_budget {
-                        return Err(GapReason::Edges);
-                    }
-                    edges.push(RawEdge {
-                        pointer: format!("{}/{i}", rule.pointer),
-                        kind: rule.kind,
-                        target,
-                    });
-                }
-            }
-        } else {
+        let mut push = |pointer: String, value: &Value| -> std::result::Result<(), GapReason> {
             let target = target(value, rule.binding)?;
             if kinds.contains(&rule.kind) {
                 if edges.len() == edge_budget {
                     return Err(GapReason::Edges);
                 }
                 edges.push(RawEdge {
-                    pointer: rule.pointer.clone(),
+                    pointer,
                     kind: rule.kind,
                     target,
                 });
+            }
+            Ok(())
+        };
+        match rule.collection {
+            Collection::One => push(rule.pointer.clone(), value)?,
+            Collection::Array => {
+                let values = value.as_array().ok_or(GapReason::InvalidReference)?;
+                for (i, item) in values.iter().enumerate() {
+                    push(format!("{}/{i}", rule.pointer), item)?;
+                }
+            }
+            Collection::ObjectValues => {
+                let values = value.as_object().ok_or(GapReason::InvalidReference)?;
+                let mut entries = values.iter().collect::<Vec<_>>();
+                entries.sort_unstable_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+                for (key, item) in entries {
+                    if key.len() > 256 || key.chars().any(char::is_control) {
+                        return Err(GapReason::InvalidReference);
+                    }
+                    let key = key.replace('~', "~0").replace('/', "~1");
+                    let pointer = format!("{}/{key}", rule.pointer);
+                    if pointer.len() > 1024 {
+                        return Err(GapReason::InvalidReference);
+                    }
+                    push(pointer, item)?;
+                }
             }
         }
     }

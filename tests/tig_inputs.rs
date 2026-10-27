@@ -210,7 +210,7 @@ fn vendored_runtime_source_matches_exact_upstream_pin() {
         serde_json::from_slice(&fs::read(root.join("source-pin.json")).unwrap()).unwrap();
     assert_eq!(
         manifest["commit"],
-        "7e43e272eb6e96f6b6b464b9b2ee267dd5d3cf9c"
+        "0855e7a97a1b51ded9e31c40d89dc9c051abd06f"
     );
     let mut listed = std::collections::BTreeSet::new();
     let mut total = 0;
@@ -257,7 +257,7 @@ fn vendored_runtime_source_matches_exact_upstream_pin() {
     actual.insert("LICENSE".into());
     assert_eq!(listed, actual);
     assert_eq!(listed.len(), 45);
-    assert_eq!(total, 481289);
+    assert_eq!(total, 482291);
 }
 
 fn native_scene_fixture() -> (Fixture, reel::tig_scene::Request) {
