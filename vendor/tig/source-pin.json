@@ -1,7 +1,7 @@
 {
   "schema": "reel.vendored-source.v1",
   "repository": "https://github.com/giodl73-repo/tig",
-  "commit": "96177878c7db238958c20a5faf1eec9bcfd6f438",
+  "commit": "fc2a9ddb9d49f20fb52a09bd1f2598a30b9bb65e",
   "license": "MIT",
   "scope": "Cargo manifests and Rust src files; upstream bytes unchanged; external test suites and documentation omitted",
   "files": [
@@ -112,8 +112,8 @@
     },
     {
       "path": "crates/tig-git/src/cache.rs",
-      "bytes": 15667,
-      "sha256": "a17ed665efd0936f461b962a876de748ee4fb0ed82042d780111eefc1e76e00c"
+      "bytes": 18402,
+      "sha256": "488f0b87fee9abd9437a8e8db643dd1179843026aee717e17d3b41d6f966ee5c"
     },
     {
       "path": "crates/tig-git/src/lib.rs",
@@ -127,8 +127,8 @@
     },
     {
       "path": "crates/tig-git/src/protocol.rs",
-      "bytes": 5441,
-      "sha256": "86ccd4145510befda9edd40293182bcb23cc4e2e09457f0de7ccda698e5844c3"
+      "bytes": 5451,
+      "sha256": "d0a60b148815d5aa55f58d81135009ffc970bfcd75f25e1d62e6f4f7a95aaf78"
     },
     {
       "path": "crates/tig-git/src/source.rs",
@@ -137,8 +137,8 @@
     },
     {
       "path": "crates/tig-git/src/source/native.rs",
-      "bytes": 10423,
-      "sha256": "dae6716821a3ca24390b3fbe36231148495fcefbbdd9b893020d5a993d2a889a"
+      "bytes": 10436,
+      "sha256": "460daaccfebcdc3731cece2e1276489ac25cfb7dcc20a7dc3c9295ed5fbfbdf7"
     },
     {
       "path": "crates/tig-git/src/source/native/archive.rs",
@@ -252,8 +252,13 @@
     },
     {
       "path": "crates/tig-store/src/source_claims.rs",
-      "bytes": 24272,
-      "sha256": "464bf6ba18d01473a483b3a67aaadb72eb77dc110b2b7f16bf40c593446824df"
+      "bytes": 24437,
+      "sha256": "8d1204ffacc7a23b1b0c3d7909c82bd73b0c4d0f658a7369d576b508a1d13460"
+    },
+    {
+      "sha256": "3a5fb1d39c4ac462b2c2b2070cc42761cf0615a941faeda249240478cf8be741",
+      "path": "crates/tig-git/src/source/native/job.rs",
+      "bytes": 9154
     }
   ]
 }

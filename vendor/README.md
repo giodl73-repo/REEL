@@ -16,9 +16,10 @@ an independent cache implementation or as production cutover approval.
 The current pin includes explicit map rules, metadata archives, cooperative reader
 release, declared production requirements, frozen contexts, consumed recipes and
 produced-claim replay (upstream PRs 22 through 27), plus canonical Windows cache
-roots (PR28). The 50 imported files total 537,367 raw bytes. The exact upstream
-96177878c7db238958c20a5faf1eec9bcfd6f438 pin must pass its Windows/Linux
-qualification. Upstream PR28 and REEL consumer qualification are required before
+roots (PR28), linked job resource contexts, bounded LFS contention and journal
+authority identity (PR29). The 51 imported files total 549,444 raw bytes. The exact
+upstream fc2a9ddb9d49f20fb52a09bd1f2598a30b9bb65e pin must pass Windows/Linux
+qualification. Upstream PR29 and REEL consumer qualification are required before
 merging this import; the source pin alone is not qualification evidence.
 Native record and definition envelopes remain unchanged. These APIs do not
 recursively infer opaque native semantics, prove producer consumption, establish

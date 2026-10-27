@@ -309,6 +309,57 @@ must remain available separately. Independent custody and current protection
 checks are still required before retiring any source. For the concrete local
 provider's capabilities and limits, see [existing-cache publication](tig-publication.md).
 
+## Explicit protected native jobs
+
+With `tig-publication`, `tig_scene_production::jobs::JobPlan::from_context` binds
+the native request/source context and held `BoundPrograms` through the same recipe
+checks as rendering. Runtime pins come from that held declaration's host, programs
+and explicit dependencies. Opaque component labels are hashed for metadata keys;
+the original private runtime manifest retains their meaning without host paths.
+
+```text
+JobPlan + held runtime + original source context
+                     |
+        freeze -> provider finish/reopen -> readback
+                     |
+        protect: scoped job fence + owner prepare/adopt
+                     |
+             native render -> checked candidate
+                     |
+           publish payloads/receipt/claim
+                     |
+       freeze_outputs -> finish/reopen -> readback_outputs
+                     |
+             adopt_outputs (exact owned handoff)
+                     |
+       claimed output root + prior input root retained
+```
+
+The explicit coordination directory must already exist and be shared by managed
+clients of the journal. The fence derives its namespace from the journal's stable
+authority identity and source ID. It covers one job; unrelated jobs and journal
+authorities can progress. Capabilities also bind that authority, owner, exact
+source revision and selection. The same source/owner/revision/root labels in
+another journal cannot substitute for a protected job.
+
+`Readback::protect` issues a job capability after explicit journal prepare/adopt.
+`resume` accepts an exact current planned job without adding transitions. Each
+render/publication/readback checks current ownership before and after work;
+foreign or stale capabilities refuse. `adopt_outputs` uses exact idempotent
+commands, preserves the input predecessor and allows only an exact completed
+handoff retry. Dropping a capability unlocks its scoped fence and leaves durable
+obligations intact. It does not expire a job or remove its files.
+
+Use one admitted authoritative journal and trusted minimum checkpoints; copying
+a database does not create independent authority. Metadata ports/providers and
+caller authority remain trusted contracts. These APIs do not admit complete job
+capacity, workspace/scratch growth or byte availability, infer undeclared runtime
+dependencies, authenticate unsigned claims, establish independent retained custody
+or authorize cleanup/selection/delivery. Ambiguous persisted transitions keep
+their requirements and need exact owner recovery; there is no timeout reset.
+Native managed CLI adoption, global source/job coverage and storage convergence
+remain separate integration work.
+
 ## Declared runtime files and explicit programs
 
 `media_runtime::BoundPrograms::bind(&Bindings)` verifies the actual running host

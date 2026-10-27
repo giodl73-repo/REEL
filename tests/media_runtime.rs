@@ -38,6 +38,15 @@ fn declared_runtime_verifies_host_and_files_holds_guards_and_omits_private_paths
         )]),
     };
     let bound = BoundPrograms::bind(&bindings).unwrap();
+    let components: BTreeMap<_, _> = bound.components().collect();
+    assert_eq!(components.len(), 4);
+    assert_eq!(components["host"], &bindings.host);
+    assert_eq!(components["programs/ffmpeg"].sha256, bindings.ffmpeg.sha256);
+    assert_eq!(components["programs/ffprobe"].bytes, bindings.ffprobe.bytes);
+    assert_eq!(
+        components["dependencies/libs/codec.dll"].sha256,
+        bindings.dependencies["libs/codec.dll"].sha256
+    );
     let manifest: serde_json::Value = serde_json::from_slice(bound.manifest_bytes()).unwrap();
     assert_eq!(manifest["complete_environment"], false);
     assert_eq!(manifest["host"]["sha256"], bindings.host.sha256);

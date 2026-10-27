@@ -12,6 +12,7 @@ pub enum AgentError {
     Unavailable,
     Integrity,
     Capacity,
+    Busy,
     Io,
     Limit,
     State,
