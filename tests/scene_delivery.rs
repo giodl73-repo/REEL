@@ -615,9 +615,24 @@ fn file(root: &Path, name: &str) -> Value {
 struct MappedInputs {
     files: std::collections::BTreeMap<std::path::PathBuf, scene_delivery::FileRef>,
     requests: std::cell::RefCell<Vec<std::path::PathBuf>>,
+    programs: Option<std::collections::BTreeMap<scene_delivery::MediaProgram, std::path::PathBuf>>,
+    program_requests: std::cell::RefCell<Vec<scene_delivery::MediaProgram>>,
 }
 
 impl scene_delivery::InputFiles for MappedInputs {
+    fn media_program(
+        &self,
+        program: scene_delivery::MediaProgram,
+    ) -> anyhow::Result<std::path::PathBuf> {
+        self.program_requests.borrow_mut().push(program);
+        match &self.programs {
+            None => Ok(program.ambient_name().into()),
+            Some(programs) => programs
+                .get(&program)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("unmapped program")),
+        }
+    }
     fn verified_path(
         &self,
         expected: &scene_delivery::FileRef,
@@ -658,6 +673,8 @@ fn map_media_inputs(root: &Path, job: &mut Value) -> MappedInputs {
     MappedInputs {
         files,
         requests: Default::default(),
+        programs: None,
+        program_requests: Default::default(),
     }
 }
 
@@ -685,6 +702,8 @@ fn mapped_inputs_preserve_plan_clocks_and_refuse_missing_or_stale_pins_before_ou
     let empty = MappedInputs {
         files: Default::default(),
         requests: Default::default(),
+        programs: None,
+        program_requests: Default::default(),
     };
     assert!(scene_delivery::render_with_inputs(&path, &empty, &output).is_err());
     assert!(!output.exists());
@@ -696,11 +715,66 @@ fn mapped_inputs_preserve_plan_clocks_and_refuse_missing_or_stale_pins_before_ou
 }
 
 #[test]
+fn explicit_program_refusal_never_falls_back_in_scene_audio_or_motion_review() {
+    use scene_delivery::{InputFiles, MediaProgram};
+    struct Refuse<'a> {
+        root: &'a Path,
+        requested: std::cell::RefCell<Vec<MediaProgram>>,
+    }
+    impl InputFiles for Refuse<'_> {
+        fn verified_path(
+            &self,
+            item: &scene_delivery::FileRef,
+        ) -> anyhow::Result<std::path::PathBuf> {
+            self.root.verified_path(item)
+        }
+        fn media_program(&self, program: MediaProgram) -> anyhow::Result<std::path::PathBuf> {
+            self.requested.borrow_mut().push(program);
+            anyhow::bail!("explicit program refused");
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let mut job = fixture(root);
+    add_phased_camera(&mut job);
+    let path = root.join("job.json");
+    write_json(&path, &job);
+    let inputs = Refuse {
+        root,
+        requested: Default::default(),
+    };
+    for audio in [false, true] {
+        let output = root.join(if audio { "no-audio" } else { "no-scene" });
+        let error = if audio {
+            scene_delivery::render_audio_with_inputs(&path, &inputs, &output)
+                .err()
+                .unwrap()
+        } else {
+            scene_delivery::render_with_inputs(&path, &inputs, &output)
+                .err()
+                .unwrap()
+        };
+        assert!(
+            error.to_string().contains("explicit program refused"),
+            "{error}"
+        );
+        assert!(!output.exists());
+    }
+    let (job, plan) = scene_delivery::plan_with_inputs(&path, &inputs).unwrap();
+    let error =
+        reel::motioncraft_review::render_with_inputs(&job, &plan, root, &inputs).unwrap_err();
+    assert!(error.to_string().contains("explicit program refused"));
+    assert!(inputs.requested.borrow().contains(&MediaProgram::Ffmpeg));
+    assert!(inputs.requested.borrow().contains(&MediaProgram::Ffprobe));
+}
+
+#[test]
 #[ignore = "requires native FFmpeg; injected input parity and independent checks"]
 fn real_mapped_input_provider_matches_local_pixels_and_pcm_and_rejects_stale_pins() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let mut job = fixture(root);
+    add_phased_camera(&mut job);
     let font = [
         "C:/Windows/Fonts/arial.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -735,6 +809,28 @@ fn real_mapped_input_provider_matches_local_pixels_and_pcm_and_rejects_stale_pin
     }
     write_json(&path, &job);
     let mapped = root.join("mapped");
+    inputs.programs = Some(
+        [
+            scene_delivery::MediaProgram::Ffmpeg,
+            scene_delivery::MediaProgram::Ffprobe,
+        ]
+        .into_iter()
+        .map(|program| {
+            let name = if cfg!(windows) {
+                format!("{}.exe", program.ambient_name())
+            } else {
+                program.ambient_name().into()
+            };
+            let path = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+                .map(|root| root.join(&name))
+                .find(|path| path.is_file())
+                .unwrap()
+                .canonicalize()
+                .unwrap();
+            (program, path)
+        })
+        .collect(),
+    );
     scene_delivery::render_with_inputs(&path, &inputs, &mapped).unwrap();
     scene_delivery::check_with_inputs(&path, &inputs, &mapped).unwrap();
     let font_hash = job["external_layers"][0]["font"]["sha256"]
@@ -770,6 +866,19 @@ fn real_mapped_input_provider_matches_local_pixels_and_pcm_and_rejects_stale_pin
     let audio = root.join("audio-only");
     scene_delivery::render_audio_with_inputs(&path, &inputs, &audio).unwrap();
     scene_delivery::check_audio_with_inputs(&path, &inputs, &audio).unwrap();
+    assert!(
+        inputs
+            .program_requests
+            .borrow()
+            .contains(&scene_delivery::MediaProgram::Ffmpeg)
+    );
+    assert!(
+        inputs
+            .program_requests
+            .borrow()
+            .contains(&scene_delivery::MediaProgram::Ffprobe)
+    );
+    assert!(mapped.join("motioncraft/evidence.json").is_file());
     for name in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
         assert_eq!(decode(&baseline, name), decode(&audio, name));
     }

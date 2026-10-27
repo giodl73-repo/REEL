@@ -103,6 +103,53 @@ pub fn render(
     job_directory: &Path,
     output: &Path,
 ) -> Result<RenderedCandidate> {
+    render_inner(
+        source,
+        request,
+        context,
+        producer,
+        None,
+        job_directory,
+        output,
+    )
+}
+
+/// Render using a held, byte-verified host/tool manifest and absolute programs.
+/// Declared runtime components are verified, not the complete OS/environment.
+/// Caller retains the manifest/code and admits all job resources before this call.
+pub fn render_with_programs(
+    source: &mut Source,
+    request: &Request,
+    context: &ProductionContext,
+    programs: &crate::media_runtime::BoundPrograms,
+    job_directory: &Path,
+    output: &Path,
+) -> Result<RenderedCandidate> {
+    let identity = programs.identity();
+    let producer = Object {
+        sha256: Digest::parse(&identity.sha256)?,
+        bytes: identity.bytes,
+    };
+    render_inner(
+        source,
+        request,
+        context,
+        &producer,
+        Some(programs),
+        job_directory,
+        output,
+    )
+}
+
+fn render_inner(
+    source: &mut Source,
+    request: &Request,
+    context: &ProductionContext,
+    producer: &Object,
+    programs: Option<&crate::media_runtime::BoundPrograms>,
+    job_directory: &Path,
+    output: &Path,
+) -> Result<RenderedCandidate> {
     let recipe = tig_scene::recipe(source, request, producer)?;
     let requirements = context.requirements();
     if recipe.checkpoint() != requirements.checkpoint()
@@ -119,8 +166,13 @@ pub fn render(
     let job_path = job_directory.join("delivery/job.json").canonicalize()?;
     let job = tig_inputs::read_job(&job_path)?;
     let inputs = source.prepare(&job)?;
-    let rendered = scene_delivery::render_with_inputs(&job_path, &inputs, output)?;
-    let receipt = scene_delivery::check_with_inputs(&job_path, &inputs, output)?;
+    let protected = programs.map(|programs| programs.with_inputs(&inputs));
+    let execution: &dyn scene_delivery::InputFiles = match &protected {
+        Some(bound) => bound,
+        None => &inputs,
+    };
+    let rendered = scene_delivery::render_with_inputs(&job_path, execution, output)?;
+    let receipt = scene_delivery::check_with_inputs(&job_path, execution, output)?;
     let bytes = receipt_bytes(output)?;
     let reread: Receipt = serde_json::from_slice(&bytes)?;
     if serde_json::to_value(&rendered)? != serde_json::to_value(&receipt)?

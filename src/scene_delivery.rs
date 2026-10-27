@@ -334,17 +334,33 @@ pub struct Plan {
     pub creative_authority: String,
 }
 
-/// Exact file access supplied for one synchronous scene delivery operation.
-///
-/// Custom providers must verify each requested hash/size and retain effective
-/// byte/path protection for their entire borrowed lifetime, including subprocess
-/// reads and independent checks. Return an error if protection is unavailable.
-/// A bare cached path or cooperative read handle is insufficient. Implementations
-/// are trusted adapters; REEL cannot sandbox incorrect lifetime/integrity claims.
-/// Path/PathBuf preserve the historical local-root checks without adding guards.
-/// Provider locations are not serialized into the job or its receipts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MediaProgram {
+    Ffmpeg,
+    Ffprobe,
+}
+impl MediaProgram {
+    pub fn ambient_name(self) -> &'static str {
+        match self {
+            Self::Ffmpeg => "ffmpeg",
+            Self::Ffprobe => "ffprobe",
+        }
+    }
+}
+
+/// Exact file/program access supplied for one synchronous scene operation.
+/// Providers verify pins and retain effective byte/path protection through all
+/// subprocess reads and checks; a bare cached path is insufficient. Adapters are
+/// trusted, not sandboxed. Path/PathBuf keep historical local-root checks and
+/// ambient tools. Provider locations are not serialized into jobs or receipts.
 pub trait InputFiles {
     fn verified_path(&self, item: &FileRef) -> Result<PathBuf>;
+    /// Program selection belongs to this operation's trusted provider. Legacy
+    /// callers retain ambient tools; protected adapters supply absolute paths.
+    /// An explicit provider error must never fall back to PATH.
+    fn media_program(&self, program: MediaProgram) -> Result<PathBuf> {
+        Ok(program.ambient_name().into())
+    }
 }
 
 impl InputFiles for Path {
@@ -904,7 +920,7 @@ pub fn plan_with_inputs(
                     explicit_picture_frames,
                 )?;
                 let source = asset_root.verified_path(timed_overlay_source(asset_root, layer)?)?;
-                let info = probe(&source)?;
+                let info = probe_with_inputs(asset_root, &source)?;
                 let video = info["streams"]
                     .as_array()
                     .and_then(|streams| streams.iter().find(|s| s["codec_type"] == "video"))
@@ -1083,6 +1099,9 @@ pub fn plan_with_inputs(
 }
 
 pub(crate) fn ffmpeg(args: &[String]) -> Result<()> {
+    ffmpeg_with_inputs(Path::new("."), args)
+}
+fn ffmpeg_with_inputs(asset_root: &(impl InputFiles + ?Sized), args: &[String]) -> Result<()> {
     let mut local_args = Vec::new();
     for argument in args {
         if argument == "-i" {
@@ -1090,7 +1109,7 @@ pub(crate) fn ffmpeg(args: &[String]) -> Result<()> {
         }
         local_args.push(argument.clone());
     }
-    let output = Command::new("ffmpeg")
+    let output = Command::new(asset_root.media_program(MediaProgram::Ffmpeg)?)
         .args(["-hide_banner", "-v", "error", "-nostdin", "-n"])
         .args(local_args)
         .output()?;
@@ -1100,7 +1119,13 @@ pub(crate) fn ffmpeg(args: &[String]) -> Result<()> {
     Ok(())
 }
 pub(crate) fn probe(path: &Path) -> Result<serde_json::Value> {
-    let o = Command::new("ffprobe")
+    probe_with_inputs(Path::new("."), path)
+}
+fn probe_with_inputs(
+    asset_root: &(impl InputFiles + ?Sized),
+    path: &Path,
+) -> Result<serde_json::Value> {
+    let o = Command::new(asset_root.media_program(MediaProgram::Ffprobe)?)
         .args([
             "-v",
             "error",
@@ -1227,7 +1252,10 @@ fn copy_ass_layer(
     Ok(())
 }
 
+// Keep existing overlay parameters explicit alongside the operation's provider.
+#[allow(clippy::too_many_arguments)]
 fn render_ass_overlay(
+    asset_root: &(impl InputFiles + ?Sized),
     root: &Path,
     fps: &str,
     font_bound: bool,
@@ -1241,7 +1269,7 @@ fn render_ass_overlay(
     } else {
         format!("ass={ass}")
     };
-    let output = Command::new("ffmpeg")
+    let output = Command::new(asset_root.media_program(MediaProgram::Ffmpeg)?)
         .current_dir(root)
         .args(["-hide_banner", "-v", "error", "-nostdin", "-n", "-i", input])
         .args(["-vf", &filter, "-an"])
@@ -1257,7 +1285,9 @@ fn render_ass_overlay(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_timed_video_overlay(
+    asset_root: &(impl InputFiles + ?Sized),
     root: &Path,
     plan: &Plan,
     span: &Span,
@@ -1279,7 +1309,7 @@ fn render_timed_video_overlay(
         span.start_frame,
         span.end_frame
     );
-    let output = Command::new("ffmpeg")
+    let output = Command::new(asset_root.media_program(MediaProgram::Ffmpeg)?)
         .current_dir(root)
         .args(["-hide_banner", "-v", "error", "-nostdin", "-n"])
         .args(["-i", picture_input, "-i", overlay_input])
@@ -1303,6 +1333,7 @@ fn render_timed_video_overlay(
 }
 
 fn render_post_compose_camera(
+    asset_root: &(impl InputFiles + ?Sized),
     root: &Path,
     plan: &Plan,
     camera: &PostComposeCamera,
@@ -1348,7 +1379,7 @@ fn render_post_compose_camera(
     }
     let fps = format!("{}/{}", plan.fps_numerator, plan.fps_denominator);
     // Geometry comes from the decoded composed picture, not a source still.
-    let picture = probe(&before)?;
+    let picture = probe_with_inputs(asset_root, &before)?;
     let stream = picture["streams"]
         .as_array()
         .and_then(|streams| {
@@ -1381,12 +1412,12 @@ fn render_post_compose_camera(
             .map(str::to_owned),
     );
     arguments.push(arg(&root.join("picture.mkv")));
-    ffmpeg(&arguments)?;
+    ffmpeg_with_inputs(asset_root, &arguments)?;
     Ok(())
 }
 
-fn decoded_video_frames(path: &Path) -> Result<u64> {
-    let output = Command::new("ffprobe")
+fn decoded_video_frames(asset_root: &(impl InputFiles + ?Sized), path: &Path) -> Result<u64> {
+    let output = Command::new(asset_root.media_program(MediaProgram::Ffprobe)?)
         .args(["-v", "error", "-count_frames", "-select_streams", "v:0"])
         .args([
             "-show_entries",
@@ -1405,9 +1436,14 @@ fn decoded_video_frames(path: &Path) -> Result<u64> {
         .context("timed overlay frame count unavailable")
 }
 
-fn rgb_frame_at_index(path: &Path, plan: &Plan, index: u64) -> Result<Vec<u8>> {
+fn rgb_frame_at_index(
+    asset_root: &(impl InputFiles + ?Sized),
+    path: &Path,
+    plan: &Plan,
+    index: u64,
+) -> Result<Vec<u8>> {
     let seconds = index as f64 * plan.fps_denominator as f64 / plan.fps_numerator as f64;
-    let output = Command::new("ffmpeg")
+    let output = Command::new(asset_root.media_program(MediaProgram::Ffmpeg)?)
         .args([
             "-hide_banner",
             "-v",
@@ -1509,11 +1545,18 @@ mod ass_visibility_tests {
 }
 
 pub(crate) fn finish_pcm(float_path: &Path, output: &Path) -> Result<()> {
+    finish_pcm_with_inputs(Path::new("."), float_path, output)
+}
+fn finish_pcm_with_inputs(
+    asset_root: &(impl InputFiles + ?Sized),
+    float_path: &Path,
+    output: &Path,
+) -> Result<()> {
     // Reject overload before PCM24 quantization can hide clipping. This is not
     // a loudness/true-peak or intelligibility approval; audio-quality still owns it.
     // Rounded dB peaks cannot distinguish the valid negative PCM rail from
     // overload. Inspect every unquantized sample: -1 is valid, +1 is not.
-    let mut decoder = Command::new("ffmpeg")
+    let mut decoder = Command::new(asset_root.media_program(MediaProgram::Ffmpeg)?)
         .args([
             "-v",
             "error",
@@ -1535,31 +1578,17 @@ pub(crate) fn finish_pcm(float_path: &Path, output: &Path) -> Result<()> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
-    let inspection = validate_pcm24_stream(
-        decoder
-            .stdout
-            .take()
-            .context("missing float decoder stream")?,
-    );
-    if let Err(error) = inspection {
-        let _ = decoder.kill();
-        let _ = decoder.wait();
-        return Err(error);
-    }
-    let result = decoder.wait_with_output()?;
-    if !result.status.success() {
-        bail!(
-            "float mix inspection failed: {}",
-            String::from_utf8_lossy(&result.stderr)
-        );
-    }
-    ffmpeg(&[
-        "-i".into(),
-        arg(float_path),
-        "-c:a".into(),
-        "pcm_s24le".into(),
-        arg(output),
-    ])?;
+    crate::process_stream::read(&mut decoder, validate_pcm24_stream)?;
+    ffmpeg_with_inputs(
+        asset_root,
+        &[
+            "-i".into(),
+            arg(float_path),
+            "-c:a".into(),
+            "pcm_s24le".into(),
+            arg(output),
+        ],
+    )?;
     fs::remove_file(float_path)?;
     Ok(())
 }
@@ -1620,8 +1649,8 @@ mod pcm_bound_tests {
         assert!(validate_pcm24_stream(Cursor::new(vec![0_u8; 3])).is_err());
     }
 }
-fn pcm_samples(path: &Path, sr: u32) -> Result<u64> {
-    let mut child = Command::new("ffmpeg")
+fn pcm_samples(asset_root: &(impl InputFiles + ?Sized), path: &Path, sr: u32) -> Result<u64> {
+    let mut child = Command::new(asset_root.media_program(MediaProgram::Ffmpeg)?)
         .args([
             "-v",
             "error",
@@ -1645,18 +1674,21 @@ fn pcm_samples(path: &Path, sr: u32) -> Result<u64> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
-    let mut out = child.stdout.take().context("PCM pipe missing")?;
-    let mut total = 0u64;
-    let mut buf = [0u8; 65536];
-    loop {
-        let n = out.read(&mut buf)?;
-        if n == 0 {
-            break;
+    let total = crate::process_stream::read(&mut child, |mut out| {
+        let mut total = 0u64;
+        let mut buf = [0u8; 65_536];
+        loop {
+            let n = out.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            total = total
+                .checked_add(n as u64)
+                .context("PCM byte count overflow")?;
         }
-        total += n as u64;
-    }
-    let status = child.wait_with_output()?;
-    if !status.status.success() || total % 6 != 0 {
+        Ok(total)
+    })?;
+    if total % 6 != 0 {
         bail!("PCM decode failed");
     }
     Ok(total / 6)
@@ -1729,7 +1761,9 @@ pub fn render_audio_with_inputs(
             },
         );
     }
-    let version = Command::new("ffmpeg").arg("-version").output()?;
+    let version = Command::new(asset_root.media_program(MediaProgram::Ffmpeg)?)
+        .arg("-version")
+        .output()?;
     if !version.status.success() {
         bail!("FFmpeg version inspection failed");
     }
@@ -1789,7 +1823,7 @@ pub fn check_audio_with_inputs(
             bail!("audio output name mismatch");
         }
         let path = checked_file(output, item)?;
-        let info = probe(&path)?;
+        let info = probe_with_inputs(asset_root, &path)?;
         let audio = info["streams"]
             .as_array()
             .and_then(|xs| xs.iter().find(|s| s["codec_type"] == "audio"))
@@ -1797,7 +1831,7 @@ pub fn check_audio_with_inputs(
         if audio["codec_name"] != "pcm_s24le"
             || audio["sample_rate"].as_str() != Some(&plan.sample_rate.to_string())
             || audio["channels"].as_u64() != Some(2)
-            || pcm_samples(&path, plan.sample_rate)? != plan.duration_samples
+            || pcm_samples(asset_root, &path, plan.sample_rate)? != plan.duration_samples
         {
             bail!("audio PCM format or decoded sample count mismatch: {name}");
         }
@@ -1868,7 +1902,7 @@ pub fn render_with_inputs(
         let s = &plan.pictures[start];
         let group_frames = plan.pictures[end - 1].end_frame - s.start_frame;
         let path = asset_root.verified_path(&p.source)?;
-        let info = probe(&path)?;
+        let info = probe_with_inputs(asset_root, &path)?;
         let stream = info["streams"]
             .as_array()
             .and_then(|xs| xs.iter().find(|s| s["codec_type"] == "video"))
@@ -1984,7 +2018,7 @@ pub fn render_with_inputs(
             "picture.mkv"
         })),
     ]);
-    ffmpeg(&inputs)?;
+    ffmpeg_with_inputs(asset_root, &inputs)?;
     if overlays.len() > 1 {
         for (index, layer) in overlays.iter().enumerate() {
             let selected = indexed_layer_source_name(layer, index);
@@ -2002,6 +2036,7 @@ pub fn render_with_inputs(
                 ExternalLayerRenderMode::AssOverlay => {
                     copy_ass_layer(root, asset_root, layer, &selected)?;
                     render_ass_overlay(
+                        asset_root,
                         root,
                         &fps,
                         layer.font.is_some(),
@@ -2019,11 +2054,14 @@ pub fn render_with_inputs(
                         .context("timed overlay span missing")?;
                     let source =
                         asset_root.verified_path(timed_overlay_source(asset_root, layer)?)?;
-                    if decoded_video_frames(&source)? < span.end_frame - span.start_frame {
+                    if decoded_video_frames(asset_root, &source)?
+                        < span.end_frame - span.start_frame
+                    {
                         bail!("timed overlay lacks frames for its selected span");
                     }
                     fs::copy(source, root.join(&selected))?;
                     render_timed_video_overlay(
+                        asset_root,
                         root,
                         &plan,
                         span,
@@ -2042,6 +2080,7 @@ pub fn render_with_inputs(
             ExternalLayerRenderMode::AssOverlay => {
                 copy_ass_layer(root, asset_root, layer, "presentation.ass")?;
                 render_ass_overlay(
+                    asset_root,
                     root,
                     &fps,
                     layer.font.is_some(),
@@ -2058,11 +2097,12 @@ pub fn render_with_inputs(
                     .find(|span| span.attachment_id == layer.attachment_id)
                     .context("timed overlay span missing")?;
                 let source = asset_root.verified_path(timed_overlay_source(asset_root, layer)?)?;
-                if decoded_video_frames(&source)? < span.end_frame - span.start_frame {
+                if decoded_video_frames(asset_root, &source)? < span.end_frame - span.start_frame {
                     bail!("timed overlay lacks frames for its selected span");
                 }
                 fs::copy(source, root.join("selected-overlay.mkv"))?;
                 render_timed_video_overlay(
+                    asset_root,
                     root,
                     &plan,
                     span,
@@ -2077,43 +2117,55 @@ pub fn render_with_inputs(
         }
     }
     if let Some(camera) = &job.post_compose_camera {
-        render_post_compose_camera(root, &plan, camera, job.still_sequence_encoding.as_deref())?;
+        render_post_compose_camera(
+            asset_root,
+            root,
+            &plan,
+            camera,
+            job.still_sequence_encoding.as_deref(),
+        )?;
     }
     render_audio_stems(&job, &plan, asset_root, root)?;
-    ffmpeg(&[
-        "-i".into(),
-        arg(&root.join("picture.mkv")),
-        "-i".into(),
-        arg(&root.join("mix.wav")),
-        "-map".into(),
-        "0:v:0".into(),
-        "-map".into(),
-        "1:a:0".into(),
-        "-c".into(),
-        "copy".into(),
-        arg(&root.join("master.mkv")),
-    ])?;
-    ffmpeg(&[
-        "-i".into(),
-        arg(&root.join("master.mkv")),
-        "-map".into(),
-        "0:v:0".into(),
-        "-map".into(),
-        "0:a:0".into(),
-        "-c:v".into(),
-        "libx264".into(),
-        "-crf".into(),
-        "18".into(),
-        "-pix_fmt".into(),
-        "yuv420p".into(),
-        "-c:a".into(),
-        "aac".into(),
-        "-b:a".into(),
-        "192k".into(),
-        "-movflags".into(),
-        "+faststart".into(),
-        arg(&root.join("review.mp4")),
-    ])?;
+    ffmpeg_with_inputs(
+        asset_root,
+        &[
+            "-i".into(),
+            arg(&root.join("picture.mkv")),
+            "-i".into(),
+            arg(&root.join("mix.wav")),
+            "-map".into(),
+            "0:v:0".into(),
+            "-map".into(),
+            "1:a:0".into(),
+            "-c".into(),
+            "copy".into(),
+            arg(&root.join("master.mkv")),
+        ],
+    )?;
+    ffmpeg_with_inputs(
+        asset_root,
+        &[
+            "-i".into(),
+            arg(&root.join("master.mkv")),
+            "-map".into(),
+            "0:v:0".into(),
+            "-map".into(),
+            "0:a:0".into(),
+            "-c:v".into(),
+            "libx264".into(),
+            "-crf".into(),
+            "18".into(),
+            "-pix_fmt".into(),
+            "yuv420p".into(),
+            "-c:a".into(),
+            "aac".into(),
+            "-b:a".into(),
+            "192k".into(),
+            "-movflags".into(),
+            "+faststart".into(),
+            arg(&root.join("review.mp4")),
+        ],
+    )?;
     let mut names: Vec<String> = vec![
         "picture.mkv",
         "D.wav",
@@ -2149,7 +2201,7 @@ pub fn render_with_inputs(
     if job.post_compose_camera.is_some() {
         names.push("pre-camera-picture.mkv".into());
     }
-    crate::motioncraft_review::render(&job, &plan, root)?;
+    crate::motioncraft_review::render_with_inputs(&job, &plan, root, asset_root)?;
     names.extend(crate::motioncraft_review::output_names(&job, &plan)?);
     let mut outputs = BTreeMap::new();
     for name in names {
@@ -2176,7 +2228,9 @@ pub fn render_with_inputs(
             },
         );
     }
-    let version = Command::new("ffmpeg").arg("-version").output()?;
+    let version = Command::new(asset_root.media_program(MediaProgram::Ffmpeg)?)
+        .arg("-version")
+        .output()?;
     let receipt = Receipt {
         schema: "reel.scene-delivery-receipt.v0.1".into(),
         tool_version: env!("CARGO_PKG_VERSION").into(),
@@ -2222,7 +2276,7 @@ fn render_audio_stems(
             .filter(|(a, _)| a.bus == bus)
         {
             let path = asset_root.verified_path(&event.source)?;
-            let info = probe(&path)?;
+            let info = probe_with_inputs(asset_root, &path)?;
             let streams = info["streams"]
                 .as_array()
                 .context("audio streams missing")?;
@@ -2233,7 +2287,7 @@ fn render_audio_stems(
             if aud["sample_rate"].as_str() != Some(&plan.sample_rate.to_string()) {
                 bail!("audio must be preconformed to the scene sample rate");
             }
-            let samples = pcm_samples(&path, plan.sample_rate)?;
+            let samples = pcm_samples(asset_root, &path, plan.sample_rate)?;
             let n = s.end_sample - s.start_sample;
             if event
                 .source_start_sample
@@ -2311,8 +2365,9 @@ fn render_audio_stems(
             "pcm_f32le".into(),
             arg(&root.join(format!("{bus}-float.wav"))),
         ]);
-        ffmpeg(&inputs)?;
-        finish_pcm(
+        ffmpeg_with_inputs(asset_root, &inputs)?;
+        finish_pcm_with_inputs(
+            asset_root,
             &root.join(format!("{bus}-float.wav")),
             &root.join(format!("{bus}.wav")),
         )?;
@@ -2333,8 +2388,12 @@ fn render_audio_stems(
         "pcm_f32le".into(),
         arg(&root.join("mix-float.wav")),
     ]);
-    ffmpeg(&mix)?;
-    finish_pcm(&root.join("mix-float.wav"), &root.join("mix.wav"))?;
+    ffmpeg_with_inputs(asset_root, &mix)?;
+    finish_pcm_with_inputs(
+        asset_root,
+        &root.join("mix-float.wav"),
+        &root.join("mix.wav"),
+    )?;
     Ok(())
 }
 
@@ -2442,15 +2501,15 @@ fn check_impl(
         }
         checked_file(output, item)?;
     }
-    crate::motioncraft_review::check(&job, &plan, output, decode_media)?;
+    crate::motioncraft_review::check_with_inputs(&job, &plan, output, decode_media, asset_root)?;
     if !decode_media {
         return Ok(receipt);
     }
     if let Some(camera) = &job.post_compose_camera {
         let before = output.join("pre-camera-picture.mkv");
         let after = output.join("picture.mkv");
-        if decoded_video_frames(&before)? != plan.frame_count
-            || decoded_video_frames(&after)? != plan.frame_count
+        if decoded_video_frames(asset_root, &before)? != plan.frame_count
+            || decoded_video_frames(asset_root, &after)? != plan.frame_count
         {
             bail!("post-composition camera changed scene frame count");
         }
@@ -2464,8 +2523,8 @@ fn check_impl(
                 window.start_frame + length * 3 / 4,
                 window.end_frame - 1,
             ] {
-                visible |= rgb_frame_at_index(&before, &plan, index)?
-                    != rgb_frame_at_index(&after, &plan, index)?;
+                visible |= rgb_frame_at_index(asset_root, &before, &plan, index)?
+                    != rgb_frame_at_index(asset_root, &after, &plan, index)?;
             }
             if length > 1 && !visible {
                 bail!("post-composition camera made no visible change");
@@ -2481,8 +2540,8 @@ fn check_impl(
                     .windows
                     .iter()
                     .any(|w| w.start_frame <= index && index < w.end_frame)
-                    && rgb_frame_at_index(&before, &plan, index)?
-                        != rgb_frame_at_index(&after, &plan, index)?
+                    && rgb_frame_at_index(asset_root, &before, &plan, index)?
+                        != rgb_frame_at_index(asset_root, &after, &plan, index)?
                 {
                     bail!("post-composition camera changed a frame outside its semantic span");
                 }
@@ -2514,8 +2573,8 @@ fn check_impl(
             } else {
                 format!("layered-picture-{index:03}.mkv")
             });
-            if decoded_video_frames(&before)? != plan.frame_count
-                || decoded_video_frames(&after)? != plan.frame_count
+            if decoded_video_frames(asset_root, &before)? != plan.frame_count
+                || decoded_video_frames(asset_root, &after)? != plan.frame_count
             {
                 bail!("rendered layer changed scene frame count");
             }
@@ -2534,8 +2593,8 @@ fn check_impl(
                 )?;
                 let mut visible = false;
                 for frame in frames {
-                    let before_pixels = rgb_frame_at_index(&before, &plan, frame)?;
-                    let after_pixels = rgb_frame_at_index(&after, &plan, frame)?;
+                    let before_pixels = rgb_frame_at_index(asset_root, &before, &plan, frame)?;
+                    let after_pixels = rgb_frame_at_index(asset_root, &after, &plan, frame)?;
                     if before_pixels.len() != after_pixels.len() {
                         bail!("ASS layer changed picture geometry");
                     }
@@ -2562,8 +2621,8 @@ fn check_impl(
                 span.start_frame + active_frames * 3 / 4,
                 span.end_frame - 1,
             ] {
-                visible |= rgb_frame_at_index(&before, &plan, frame)?
-                    != rgb_frame_at_index(&after, &plan, frame)?;
+                visible |= rgb_frame_at_index(asset_root, &before, &plan, frame)?
+                    != rgb_frame_at_index(asset_root, &after, &plan, frame)?;
             }
             if !visible {
                 bail!("timed overlay made no visible change in its selected span");
@@ -2575,8 +2634,8 @@ fn check_impl(
             .into_iter()
             .flatten()
             {
-                if rgb_frame_at_index(&before, &plan, frame)?
-                    != rgb_frame_at_index(&after, &plan, frame)?
+                if rgb_frame_at_index(asset_root, &before, &plan, frame)?
+                    != rgb_frame_at_index(asset_root, &after, &plan, frame)?
                 {
                     bail!("timed overlay changed picture outside its selected span");
                 }
@@ -2607,9 +2666,13 @@ fn check_impl(
                 )?;
                 let mut visible = false;
                 for frame in frames {
-                    let clean =
-                        rgb_frame_at_index(&output.join("clean-picture.mkv"), &plan, frame)?;
-                    let rendered = rgb_frame_at_index(&layered_picture, &plan, frame)?;
+                    let clean = rgb_frame_at_index(
+                        asset_root,
+                        &output.join("clean-picture.mkv"),
+                        &plan,
+                        frame,
+                    )?;
+                    let rendered = rgb_frame_at_index(asset_root, &layered_picture, &plan, frame)?;
                     if clean.len() != rendered.len() {
                         bail!("ASS layer changed picture geometry");
                     }
@@ -2644,9 +2707,13 @@ fn check_impl(
                     span.start_frame + active_frames * 3 / 4,
                     span.end_frame - 1,
                 ] {
-                    let clean =
-                        rgb_frame_at_index(&output.join("clean-picture.mkv"), &plan, frame)?;
-                    let rendered = rgb_frame_at_index(&layered_picture, &plan, frame)?;
+                    let clean = rgb_frame_at_index(
+                        asset_root,
+                        &output.join("clean-picture.mkv"),
+                        &plan,
+                        frame,
+                    )?;
+                    let rendered = rgb_frame_at_index(asset_root, &layered_picture, &plan, frame)?;
                     if clean.len() != rendered.len() {
                         bail!("timed overlay changed picture dimensions at frame {frame}");
                     }
@@ -2662,9 +2729,13 @@ fn check_impl(
                 .into_iter()
                 .flatten()
                 {
-                    let clean =
-                        rgb_frame_at_index(&output.join("clean-picture.mkv"), &plan, frame)?;
-                    let rendered = rgb_frame_at_index(&layered_picture, &plan, frame)?;
+                    let clean = rgb_frame_at_index(
+                        asset_root,
+                        &output.join("clean-picture.mkv"),
+                        &plan,
+                        frame,
+                    )?;
+                    let rendered = rgb_frame_at_index(asset_root, &layered_picture, &plan, frame)?;
                     if clean != rendered {
                         bail!("timed overlay changed clean picture outside its selected span");
                     }
@@ -2675,7 +2746,7 @@ fn check_impl(
         }
     }
     for name in ["D.wav", "M.wav", "E.wav", "mix.wav", "master.mkv"] {
-        let info = probe(&output.join(name))?;
+        let info = probe_with_inputs(asset_root, &output.join(name))?;
         let audio = info["streams"]
             .as_array()
             .and_then(|xs| xs.iter().find(|s| s["codec_type"] == "audio"))
@@ -2686,12 +2757,12 @@ fn check_impl(
         {
             bail!("delivery PCM format mismatch: {name}");
         }
-        if pcm_samples(&output.join(name), plan.sample_rate)? != plan.duration_samples {
+        if pcm_samples(asset_root, &output.join(name), plan.sample_rate)? != plan.duration_samples {
             bail!("decoded sample count mismatch: {name}");
         }
     }
     for name in ["picture.mkv", "master.mkv", "review.mp4"] {
-        let o = Command::new("ffprobe")
+        let o = Command::new(asset_root.media_program(MediaProgram::Ffprobe)?)
             .args([
                 "-v",
                 "error",
@@ -2875,8 +2946,26 @@ mod timed_overlay_end_frame_tests {
             start_frame: 47,
             end_frame: 118,
         };
-        render_timed_video_overlay(root, &plan, &a, "base.mkv", "a.mkv", "first.mkv", None)?;
-        render_timed_video_overlay(root, &plan, &b, "first.mkv", "b.mkv", "actual.mkv", None)?;
+        render_timed_video_overlay(
+            root,
+            root,
+            &plan,
+            &a,
+            "base.mkv",
+            "a.mkv",
+            "first.mkv",
+            None,
+        )?;
+        render_timed_video_overlay(
+            root,
+            root,
+            &plan,
+            &b,
+            "first.mkv",
+            "b.mkv",
+            "actual.mkv",
+            None,
+        )?;
         let base = frames(root, "base.mkv", 132)?;
         let source_a = frames(root, "a.mkv", 47)?;
         let source_b = frames(root, "b.mkv", 71)?;

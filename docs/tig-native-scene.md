@@ -268,3 +268,38 @@ can preserve a claimed recipe match; consumed changes are stale. Neither state
 proves approval, completed delivery, availability, full tool closure or custody.
 Historical selected outputs with no native claim remain Unproven in this new
 correspondence contract and retain their existing selection/history obligations.
+
+## Declared runtime files and explicit programs
+
+`media_runtime::BoundPrograms::bind(&Bindings)` verifies the actual running host
+executable, explicit FFmpeg/FFprobe files and up to 32 named extra dependencies.
+Private bindings carry absolute local paths and expected byte identities. Held
+Windows handles deny file mutation/replacement and parent-directory rebinding
+while allowing independent file additions and writes. Unsupported mandatory
+protection refuses; there is no cooperative downgrade or global cache/render lock.
+
+The binding generates a portable private manifest containing only logical names,
+hashes and sizes. `manifest_bytes()` and `identity()` let callers retain that
+manifest as an ordinary asset. Bounds are 1 GiB per component, 4 GiB total, 64
+path components and 64 KiB manifest bytes. `ByteIdentity::observe_file` is a bounded
+read-only enrollment aid; observation alone is not the held capability. Bind
+always rechecks exact bytes under effective guards.
+Native executables may use opaque extensionless cache names; implicit shell batch
+programs refuse. This needs no new runtime cache or production file copy.
+
+Use `tig_scene_production::render_with_programs` to bind that manifest Object as
+the producer and borrow its absolute programs throughout rendering and independent
+checks. The existing `InputFiles::media_program` port carries this choice through
+scene/audio rendering, overlays, PCM rail checks and Motioncraft evidence. Explicit
+provider refusals do not fall back to PATH. A binding may be reused across jobs
+while its read protection is retained; no process-global tool selection changes.
+Existing local-root callers keep their ambient program behavior, and the earlier
+`render` API still takes externally admitted producer identity. Neither legacy
+path establishes the new verified runtime-file capability.
+
+The manifest explicitly reports `complete_environment: false`: this verifies the
+declared host/tool/dependency files and does not discover every OS library, font,
+CPU setting, environment dependency or software license/authority. Callers retain
+the manifest and code through actual job/resource/custody admission. This adds
+declared execution-file identity, not full renderer-freshness or production cutover
+acceptance, delivery approval or an output retention lease.
