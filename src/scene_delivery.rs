@@ -10,6 +10,8 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
+mod outputs;
+pub use outputs::{OutputContract, output_contract};
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -2166,45 +2168,10 @@ pub fn render_with_inputs(
             arg(&root.join("review.mp4")),
         ],
     )?;
-    let mut names: Vec<String> = vec![
-        "picture.mkv",
-        "D.wav",
-        "M.wav",
-        "E.wav",
-        "mix.wav",
-        "master.mkv",
-        "review.mp4",
-    ]
-    .into_iter()
-    .map(str::to_string)
-    .collect();
-    if overlays.len() > 1 {
-        names.push("clean-picture.mkv".into());
-        for (index, layer) in overlays.iter().enumerate() {
-            names.push(indexed_layer_source_name(layer, index));
-            if index + 1 < overlays.len() {
-                names.push(format!("layered-picture-{index:03}.mkv"));
-            }
-        }
-    } else if let Some(overlay) = overlay {
-        names.push("clean-picture.mkv".into());
-        names.push(
-            match overlay.render_mode {
-                ExternalLayerRenderMode::AssOverlay => "presentation.ass",
-                ExternalLayerRenderMode::TimedVideoOverlay => "selected-overlay.mkv",
-                ExternalLayerRenderMode::EvidenceOnly
-                | ExternalLayerRenderMode::TimedPictureTransform => unreachable!(),
-            }
-            .into(),
-        );
-    }
-    if job.post_compose_camera.is_some() {
-        names.push("pre-camera-picture.mkv".into());
-    }
+    let names = output_contract(&job, &plan)?.names;
     crate::motioncraft_review::render_with_inputs(&job, &plan, root, asset_root)?;
-    names.extend(crate::motioncraft_review::output_names(&job, &plan)?);
     let mut outputs = BTreeMap::new();
-    for name in names {
+    for name in names.into_iter().filter(|name| !name.starts_with("fonts/")) {
         let p = root.join(&name);
         outputs.insert(
             name.clone(),
@@ -2436,18 +2403,7 @@ fn check_impl(
     {
         bail!("receipt does not match current compiled scene");
     }
-    let mut expected: BTreeSet<String> = [
-        "picture.mkv",
-        "D.wav",
-        "M.wav",
-        "E.wav",
-        "mix.wav",
-        "master.mkv",
-        "review.mp4",
-    ]
-    .into_iter()
-    .map(str::to_string)
-    .collect();
+    let expected = output_contract(&job, &plan)?.names;
     let overlays: Vec<_> = job
         .external_layers
         .iter()
@@ -2459,39 +2415,12 @@ fn check_impl(
         })
         .collect();
     let overlay = overlays.first().copied();
-    if overlays.len() > 1 {
-        expected.insert("clean-picture.mkv".into());
-        for (index, layer) in overlays.iter().enumerate() {
-            expected.insert(indexed_layer_source_name(layer, index));
-            if index + 1 < overlays.len() {
-                expected.insert(format!("layered-picture-{index:03}.mkv"));
-            }
-        }
-    } else if let Some(overlay) = overlay {
-        expected.insert("clean-picture.mkv".into());
-        expected.insert(
-            match overlay.render_mode {
-                ExternalLayerRenderMode::AssOverlay => "presentation.ass",
-                ExternalLayerRenderMode::TimedVideoOverlay => "selected-overlay.mkv",
-                ExternalLayerRenderMode::EvidenceOnly
-                | ExternalLayerRenderMode::TimedPictureTransform => unreachable!(),
-            }
-            .into(),
-        );
-    }
-    if job.post_compose_camera.is_some() {
-        expected.insert("pre-camera-picture.mkv".into());
-    }
-    expected.extend(crate::motioncraft_review::output_names(&job, &plan)?);
     let font_name = overlays
         .iter()
         .find_map(|layer| layer.font.as_ref())
         .map(font_stage_name)
         .transpose()?
         .map(|name| format!("fonts/{name}"));
-    if let Some(name) = font_name.as_deref() {
-        expected.insert(name.to_string());
-    }
     if receipt.outputs.keys().cloned().collect::<BTreeSet<_>>() != expected {
         bail!("receipt output set mismatch");
     }

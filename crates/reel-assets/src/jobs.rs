@@ -52,6 +52,8 @@ struct Step {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Job {
+    #[serde(default = "output_count_default")]
+    output_count_limit: u16,
     budget_bytes: u64,
     scratch_bytes: u64,
     inputs: BTreeMap<String, Asset>,
@@ -75,6 +77,9 @@ struct Job {
 
 fn prepare_output_parents_default() -> bool {
     true
+}
+fn output_count_default() -> u16 {
+    64
 }
 
 fn relative(name: &str) -> Result<PathBuf> {
@@ -117,7 +122,8 @@ fn validate(job: &Job) -> Result<()> {
     if job.steps.is_empty()
         || job.steps.len() > 64
         || job.outputs.is_empty()
-        || job.outputs.len() > 64
+        || !(1..=512).contains(&job.output_count_limit)
+        || job.outputs.len() > usize::from(job.output_count_limit)
     {
         return Err("Job requires bounded steps and declared outputs".into());
     }
@@ -765,6 +771,25 @@ mod process {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn explicit_output_count_preserves_default_and_bounds_large_native_sets() {
+        let outputs: BTreeMap<_, _> = (0..80)
+            .map(|n| {
+                (
+                    format!("frame-{n:03}"),
+                    json!({"path":format!("frame-{n:03}.png"),"max_bytes":1}),
+                )
+            })
+            .collect();
+        let mut request = json!({"budget_bytes":4096,"scratch_bytes":1024,"inputs":{},"tools":{"tool.exe":{"sha256":"a".repeat(64),"bytes":1}},"steps":[{"tool":"tool.exe","args":[],"timeout_seconds":1}],"outputs":outputs});
+        assert!(check_request(&serde_json::to_vec(&request).unwrap()).is_err());
+        request["output_count_limit"] = json!(80);
+        assert!(check_request(&serde_json::to_vec(&request).unwrap()).is_ok());
+        for limit in [0, 79, 513] {
+            request["output_count_limit"] = json!(limit);
+            assert!(check_request(&serde_json::to_vec(&request).unwrap()).is_err());
+        }
+    }
     #[test]
     fn workspace_monitor_preserves_counts_and_rejects_persistent_errors() {
         let root = tempfile::tempdir().unwrap();

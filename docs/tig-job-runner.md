@@ -102,7 +102,8 @@ The private profile schema is `reel.tig-native-job-profile.experimental-1`:
 | `worker.context` | Exact frozen native context Selection, not a latest lookup |
 | `worker.request` | Native scene Request matching the frozen descriptor |
 | `worker.runtime` | Private Bindings: actual CLI host byte identity, explicit FFmpeg/FFprobe FileRefs, named dependency FileRefs |
-| `worker.outputs` | Complete native receipt output filenames plus `receipt.json`, each mapped to a positive maximum byte count |
+| `worker.outputs` | Explicit complete native output filenames plus `receipt.json`, each mapped to a positive maximum; omit when using `output_budget` |
+| `worker.output_budget` | Alternative `{ "default_max_bytes": ..., "overrides": { ... } }` policy; exact override names must exist in the derived contract |
 | `cache` | Existing reel-assets Config, including an existing absolute shared `coordination_root` |
 | `journal_root`, `journal_minimum` | Existing authoritative owner journal and trusted minimum checkpoint |
 | `source_id`, `owner`, `expected_revision` | Exact caller-owned job identity and current revision; zero is required for a new source |
@@ -110,7 +111,7 @@ The private profile schema is `reel.tig-native-job-profile.experimental-1`:
 | `budget_bytes`, `scratch_bytes`, `timeout_seconds` | Complete workspace/publication allowance, scratch allowance and bounded step deadline |
 
 The profile is limited to 128 KiB. The inline worker admission must fit 64 KiB;
-there are at most 62 native outputs. Native outputs are retained under
+there are at most 511 native outputs. Native outputs are retained under
 `native/<filename>` roles, with a separate bounded `worker.json` completion record.
 All native receipt outputs must be declared; extra or omitted names cannot report
 successful retention. Budgets must include two copies of declared output maxima
@@ -134,3 +135,65 @@ actual renderer checks, owned byte retention and creative selection stay distinc
 Errors do not reset source state: interrupted starts/handoffs require exact owner
 recovery, and retention uncertainty preserves scratch. These profiles and receipts
 contain private local information and are not shareable public diagnostics.
+
+## Deriving outputs before rendering
+
+Supply `worker.output_budget` instead of `worker.outputs` to derive the complete
+native output list. For example:
+
+```json
+"output_budget": {
+  "default_max_bytes": 268435456,
+  "overrides": { "receipt.json": 65536 }
+}
+```
+
+`reel-tig-job plan-outputs profile.json` runs a **retained bounded planning job**.
+It verifies inputs and may invoke the explicit media probe; it does not encode a
+scene. It publishes only `planning.json` plus the runner's request/diagnostics and
+adopts the result root. This is an owned job with capacity/time/scratch admission
+and durable metadata transitions, rather than a read-only or dry-run command.
+
+`reel-tig-job run profile.json` with that policy first runs planning, verifies the
+exact retained report bytes and current owner/revision/root, then derives the
+render request. The actual worker rechecks the full native output contract before
+encoding. Existing explicit output-map profiles still work and now reject an
+incomplete output set before spending the render.
+
+```text
+new source@0
+    -> planned native inputs@2
+    -> retained planning result@4      (input predecessor retained)
+    -> same planned native inputs@6   (planning predecessor retained)
+    -> retained render result@8        (all three predecessors retained)
+```
+
+These numbers are source-journal revisions, not Git commits or asset versions.
+Each phase uses its own scoped operation keys and the existing per-source fence;
+foreign, stale, pending or aborted result state refuses. A planning report is read
+only after the owner check and must match its CAS pin, exact retained tree/header,
+source context, recipe, producer and budget policy. Both phases keep their earlier
+requirements; dropping them or reclaiming their bytes needs separate lifecycle
+authority. Use fresh attempt operation identities for a new request, not a reset.
+
+The renderer and checker share `scene_delivery::output_contract` for base video/
+audio, overlays, fonts, post-compose camera files and Motioncraft evidence. Its
+`raw_pcm24_stereo_bytes` and `raw_rgb24_video_bytes` describe one uncompressed
+stream's data, excluding container/encoding overhead. They are reference sizes,
+not predicted compressed sizes or physical allocation. The report's
+`atomic_native_output_bytes` is twice the sum of declared native output maxima;
+the final job also needs scratch, controls and the worker completion record.
+Overflow and unknown/zero overrides refuse. Planning reserves the configured
+scratch allowance capped at 64 MiB for metadata-only work, plus its bounded ticket,
+a 256 KiB request-control allowance and
+two 64 KiB report copies. It must fit the profile's workspace ceiling, but does not
+reserve the full render allowance. The render phase keeps the configured full
+budget and scratch allowance. Exceeding the planning control cap fails the bounded
+job; it does not borrow the render allowance. These reservations still require the
+cache's normal free-space margins.
+
+Native requests explicitly set `output_count_limit: 512` in the reusable runner;
+other requests keep the default64 unless they explicitly select a bound from1
+through512. Intake, per-file/path, diagnostics/evidence, tree and total workspace
+bounds remain in force. Large evidence sets are refused explicitly when they
+exceed these bounds; they are never silently truncated into a successful result.
