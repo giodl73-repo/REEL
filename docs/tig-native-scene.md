@@ -90,3 +90,49 @@ registration. Errors may leave a partial new metadata directory for diagnosis;
 it is not a completed build. `complete_semantic_coverage` remains false. Full
 schema/variant rules, source/job recovery, custody/eviction authority, family
 migration, rendered parity and explicit production cutover remain open.
+
+## Declared inputs and archived source metadata
+
+`reel::tig_scene::requirements(&mut source, &request)` derives a metadata-only
+Production query from the existing request and source admission. The scene uses
+its selected document and exact named control slots; primary definitions retain
+their explicit selected/named payload selectors. The original `binding_ids` map
+is the reference authority. Extra admitted types never default to primary.
+
+The result separates primary payloads, scene/control payloads and exact bound
+instance/definition/schema objects. It covers the entire declared scene, including
+all declared languages; it does not infer minimal per-language consumption.
+Missing required controls, malformed references and duplicate primary definitions
+refuse. Limits are 4,097 nodes, 4,096 edges, depth two and 16 MiB returned metadata.
+The native compiler still checks leaf eligibility before byte IO and validates
+opaque scene/alignment/control meaning through the ordinary REEL compiler.
+
+Compilation adds `declared_inputs` to the existing private `native-source.json`,
+including checkpoint, interpretation/binding hashes and the three object sets.
+`tig_source_pin_sha256` binds the imported runtime source manifest. These hashes
+and source identities are private provenance, not a sanitized public receipt,
+consumed-property recipe, human approval, retained-custody proof or eviction grant.
+Delivered-output custody remains a separate obligation from production inputs.
+
+The Rust API also supports explicit metadata-provider ownership:
+
+- `Source::archive_metadata(store, tree_limits)` returns a candidate archive root.
+- `Source::from_archive(ArchiveProfile, store, tree_limits)` restores it without
+  a Git executable or repository path. The profile schema is
+  `reel.tig-archive-input-profile.experimental-1`; it pins the archive Object and
+  expected checkpoint, native limits, exact definition admissions and existing
+  byte-source profile. A wrong checkpoint or unavailable archive refuses.
+
+The supplied store implements Tig's existing `NodeStore` port. The caller owns
+provider creation, explicit finish/reopen/readback, root protection and job/source
+admission. These methods initialize no store or cache and install no runtime.
+The existing CLI continues to accept the committed Git source profile; archived
+source loading is a Rust API in this version. Payloads and scene/control bytes
+remain in the separately enrolled existing caches and are freshly verified when
+read. Archive existence alone does not establish their availability or custody.
+
+Synthetic tests physically move Git/native working metadata aside before exact
+native recompilation. The explicit Windows FFmpeg case also prepares archived
+inputs, drops the source, renders/checks and compares original pixels and PCM.
+Actual job/claim recovery, source/job completeness, schema/variant execution,
+consumed-property invalidation, full family parity and production cutover stay open.
