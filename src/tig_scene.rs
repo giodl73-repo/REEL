@@ -3,7 +3,7 @@
 use crate::{
     scene_delivery::FileRef,
     scene_delivery_compile::{self, CompileManifest, DeliveryProfile},
-    tig_inputs::{Payload, Source},
+    tig_inputs::{ArchiveProfile, Payload, Source},
 };
 use anyhow::{Context, Result, anyhow, bail};
 use reel_assembly::{
@@ -20,7 +20,12 @@ use std::{
     path::Path,
 };
 use tig_assets::graph::{self, Binding, Collection, EdgeKind, NodeKind, Payloads, Profile, Rule};
-use tig_core::Object;
+use tig_core::{
+    Object,
+    tree::{NodeStore, TreeLimits},
+};
+use tig_git::source::native::context::ProductionContext;
+use tig_store::source_claims::Selection;
 
 pub const SCHEMA: &str = "reel.tig-native-scene.experimental-1";
 const METADATA_MAX: u64 = 16 * 1024 * 1024;
@@ -83,6 +88,18 @@ pub fn requirements(
     source: &mut Source,
     request: &Request,
 ) -> Result<graph::ProductionRequirements> {
+    let profiles = production_profiles(source, request)?;
+    source.production_requirements(&request.scene_id, &profiles, query_limits())
+}
+fn query_limits() -> graph::Limits {
+    graph::Limits {
+        nodes: 4097,
+        edges: 4096,
+        depth: 2,
+        bytes: 16 * 1024 * 1024,
+    }
+}
+fn production_profiles(source: &Source, request: &Request) -> Result<Vec<Profile>> {
     request.validate()?;
     let parent = source.record(&request.scene_id)?;
     if parent.definition().id != request.scene_definition {
@@ -145,16 +162,66 @@ pub fn requirements(
             },
         });
     }
-    source.production_requirements(
+    Ok(profiles)
+}
+fn descriptor(request: &Request) -> Result<Vec<u8>> {
+    Ok(serde_json::to_vec(&json!({
+        "schema":"reel.tig-native-scene-context.experimental-1",
+        "request":request,
+        "scene_adapter_sha256":Object::from_bytes(include_bytes!("tig_scene.rs")).sha256,
+        "input_adapter_sha256":Object::from_bytes(include_bytes!("tig_inputs.rs")).sha256,
+        "tig_source_pin_sha256":Object::from_bytes(include_bytes!("../vendor/tig/source-pin.json")).sha256
+    }))?)
+}
+/// Freeze declared metadata and exact request as a candidate root, with no byte IO.
+/// Caller owns finish/reopen/readback and owner-journal adoption before job handoff.
+pub fn freeze_context(
+    source: &mut Source,
+    request: &Request,
+    store: &mut impl NodeStore,
+    limits: TreeLimits,
+) -> Result<ProductionContext> {
+    source.check_native_context(&descriptor(request)?)?;
+    let profiles = production_profiles(source, request)?;
+    source.freeze_context(
         &request.scene_id,
         &profiles,
-        graph::Limits {
-            nodes: 4097,
-            edges: 4096,
-            depth: 2,
-            bytes: 16 * 1024 * 1024,
-        },
+        &descriptor(request)?,
+        store,
+        limits,
+        query_limits(),
     )
+}
+/// Replay under externally admitted source/policy/request, without Git or byte IO.
+/// Exact adapter identity is required; this neither adopts nor executes a job.
+pub fn restore_context(
+    profile: ArchiveProfile,
+    request: &Request,
+    selection: &Selection,
+    store: &mut impl NodeStore,
+    limits: TreeLimits,
+) -> Result<(Source, ProductionContext)> {
+    let archive = profile.archive.clone();
+    let native_limits = profile.limits;
+    let mut source = Source::from_archive(profile, store, limits)?;
+    let profiles = production_profiles(&source, request)?;
+    let root = source.record(&request.scene_id)?.reference().clone();
+    let context = source.replay_context(
+        selection,
+        &profiles,
+        store,
+        native_limits,
+        limits,
+        query_limits(),
+    )?;
+    if context.archive() != &archive
+        || context.roots() != &BTreeSet::from([root])
+        || context.descriptor() != descriptor(request)?
+    {
+        bail!("frozen native context differs from admitted request/source/tool");
+    }
+    source.bind_native_context(context.descriptor());
+    Ok((source, context))
 }
 fn put(root: &Path, name: &str, bytes: &[u8]) -> Result<()> {
     fs::OpenOptions::new()
@@ -297,6 +364,7 @@ fn snapshot_graph(
 /// No primary media copies, cache writes, selection or publication are performed.
 pub fn compile(source: &mut Source, request: &Request, output: &Path) -> Result<Value> {
     request.validate()?;
+    source.check_native_context(&descriptor(request)?)?;
     let parent = source.record(&request.scene_id)?;
     if parent.definition().id != request.scene_definition {
         bail!("scene definition differs from admitted protocol");

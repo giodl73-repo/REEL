@@ -284,6 +284,7 @@ pub struct Gap {
 pub struct Graph {
     checkpoint: Digest,
     admission: Digest,
+    admission_document: Vec<u8>,
     roots: BTreeSet<Reference>,
     kinds: BTreeSet<EdgeKind>,
     nodes: BTreeMap<Reference, Node>,
@@ -343,6 +344,11 @@ impl Graph {
     }
     pub fn admission(&self) -> &Digest {
         &self.admission
+    }
+    /// Exact canonical caller-admitted interpretation, not policy authority.
+    /// Names/identities can be private; this is not a sanitized public document.
+    pub fn admission_document(&self) -> &[u8] {
+        &self.admission_document
     }
     pub fn roots(&self) -> &BTreeSet<Reference> {
         &self.roots
@@ -503,13 +509,15 @@ pub fn resolve(source: &mut impl Source, query: &Query, profiles: &[Profile]) ->
             "duplicate definition profile",
         )?;
     }
-    let admission = Digest::blob(&canonical_json(&serde_json::json!({
+    let admission_document = canonical_json(&serde_json::json!({
         "schema":"tig.native-profile-set.experimental-1",
         "profiles":admitted.values().collect::<Vec<_>>()
-    }))?);
+    }))?;
+    let admission = Digest::blob(&admission_document);
     let mut graph = Graph {
         checkpoint: query.checkpoint.clone(),
         admission,
+        admission_document,
         roots: query.roots.clone(),
         kinds: query.kinds.clone(),
         nodes: BTreeMap::new(),

@@ -14,9 +14,10 @@ commit has its own Windows/Linux qualification. Do not treat vendored source as
 an independent cache implementation or as production cutover approval.
 
 The current pin includes explicit map rules, metadata archives, cooperative reader
-release and declared production requirements (upstream PRs 22 through 24). The 46
-imported files total 498,091 raw bytes, including the new native/archive.rs module.
-Upstream PR 24 must qualify on its exact current head before this pin is merged.
+release, declared production requirements and frozen contexts (upstream PRs 22
+through 25). The 47 imported files total 509,862 raw bytes, including the native
+archive/context modules. Upstream PR 25 must qualify on its exact current head
+before this pin is merged.
 Native record and definition envelopes remain unchanged. These APIs do not
 recursively infer opaque native semantics, prove producer consumption, establish
 global source/job coverage or grant cache-removal authority.

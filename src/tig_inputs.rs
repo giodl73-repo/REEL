@@ -17,11 +17,12 @@ use tig_core::{
 };
 use tig_git::source::{
     GitId, Repository, Scope,
-    native::{AssetSnapshot, Limits},
+    native::{AssetSnapshot, Limits, context::ProductionContext},
 };
 use tig_store::existing::{
     ByteSource, Profile as ByteProfile, ReadCache, RequiredProtection, VerifiedRead,
 };
+use tig_store::source_claims::Selection;
 
 pub const PROFILE_SCHEMA: &str = "reel.tig-input-profile.experimental-1";
 pub const ARCHIVE_PROFILE_SCHEMA: &str = "reel.tig-archive-input-profile.experimental-1";
@@ -131,6 +132,7 @@ pub struct Source {
     admitted: BTreeMap<String, Admission>,
     cache: ReadCache,
     required: RequiredProtection,
+    native_context_descriptor: Option<Object>,
 }
 impl Source {
     pub fn open(profile: Profile) -> Result<Self> {
@@ -157,6 +159,7 @@ impl Source {
             admitted,
             cache,
             required,
+            native_context_descriptor: None,
         })
     }
     fn admit(entries: Vec<Admission>) -> Result<BTreeMap<String, Admission>> {
@@ -209,6 +212,7 @@ impl Source {
             admitted,
             cache,
             required,
+            native_context_descriptor: None,
         })
     }
     pub(crate) fn admission(&self, id: &str) -> Result<&Admission> {
@@ -216,25 +220,83 @@ impl Source {
             .get(id)
             .ok_or_else(|| anyhow!("definition not admitted"))
     }
+    pub(crate) fn bind_native_context(&mut self, descriptor: &[u8]) {
+        self.native_context_descriptor = Some(Object::from_bytes(descriptor));
+    }
+    pub(crate) fn check_native_context(&self, descriptor: &[u8]) -> Result<()> {
+        if self
+            .native_context_descriptor
+            .as_ref()
+            .is_some_and(|expected| expected != &Object::from_bytes(descriptor))
+        {
+            bail!("request differs from frozen native context");
+        }
+        Ok(())
+    }
     pub(crate) fn production_requirements(
         &mut self,
         root: &str,
         profiles: &[graph::Profile],
         limits: graph::Limits,
     ) -> Result<graph::ProductionRequirements> {
+        let query = self.production_query(root, profiles, limits)?;
+        Ok(graph::resolve(&mut self.snapshot, &query, profiles)?.production_requirements()?)
+    }
+    fn production_query(
+        &self,
+        root: &str,
+        profiles: &[graph::Profile],
+        limits: graph::Limits,
+    ) -> Result<graph::Query> {
         for profile in profiles {
             if self.admission(&profile.definition_id)?.object != profile.definition {
                 bail!("graph definition pin differs from source admission");
             }
         }
         let reference = self.record(root)?.reference().clone();
-        let query = graph::Query {
+        Ok(graph::Query {
             checkpoint: self.checkpoint().clone(),
             roots: std::collections::BTreeSet::from([reference]),
             kinds: std::collections::BTreeSet::from([graph::EdgeKind::Production]),
             limits,
-        };
-        Ok(graph::resolve(&mut self.snapshot, &query, profiles)?.production_requirements()?)
+        })
+    }
+    pub(crate) fn freeze_context(
+        &mut self,
+        root: &str,
+        profiles: &[graph::Profile],
+        descriptor: &[u8],
+        store: &mut impl NodeStore,
+        limits: TreeLimits,
+        query_limits: graph::Limits,
+    ) -> Result<ProductionContext> {
+        let query = self.production_query(root, profiles, query_limits)?;
+        Ok(self
+            .snapshot
+            .freeze_production_context(&query, profiles, descriptor, store, limits)?)
+    }
+    pub(crate) fn replay_context(
+        &mut self,
+        selection: &Selection,
+        profiles: &[graph::Profile],
+        store: &mut impl NodeStore,
+        native_limits: Limits,
+        tree_limits: TreeLimits,
+        query_limits: graph::Limits,
+    ) -> Result<ProductionContext> {
+        let (snapshot, context) = AssetSnapshot::from_production_context(
+            selection,
+            profiles,
+            store,
+            native_limits,
+            tree_limits,
+            query_limits,
+        )?;
+        if snapshot.checkpoint() != self.checkpoint() {
+            bail!("context source checkpoint differs from admission");
+        }
+        self.snapshot = snapshot;
+        Ok(context)
     }
     pub fn checkpoint(&self) -> &Digest {
         self.snapshot.checkpoint()
