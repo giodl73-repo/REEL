@@ -13,6 +13,16 @@ fn scoped_descriptor(request: &Request) -> Result<Vec<u8>> {
     }
     Ok(raw)
 }
+/// Compile with explicit scoped-context descriptor admission. This preserves
+/// native preflight and verified alignment reads; it does not execute a render,
+/// adopt a job or establish a producer recipe. Legacy-mode bound sources refuse.
+pub fn compile_language_context(
+    source: &mut Source,
+    request: &Request,
+    output: &Path,
+) -> Result<Value> {
+    compile_with_descriptor(source, request, output, &scoped_descriptor(request)?)
+}
 /// Read exact named native controls and freeze the derived scoped Production
 /// query through existing metadata ports. No primary media/alignment reads.
 /// Candidate finish/readback and owner adoption remain the caller's work.

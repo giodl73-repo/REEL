@@ -3,6 +3,101 @@ use tig_core::tree::{MemoryNodes, TreeLimits};
 use tig_store::metadata::{Limits as StoreLimits, MetadataReader, MetadataStore};
 
 #[test]
+fn explicit_scoped_compile_reproduces_original_contracts_offline_and_refuses_other_modes() {
+    let (f, request) = bilingual();
+    let mut source = f.source();
+    let baseline = f.root().join("baseline-compilation");
+    reel::tig_scene::compile(&mut source, &request, &baseline).unwrap();
+    let disk = tempfile::tempdir().unwrap();
+    let metadata_path = disk.path().join("metadata");
+    let mut nodes = MetadataStore::create(
+        &metadata_path,
+        StoreLimits {
+            nodes: 8192,
+            bytes: 8 * 1024 * 1024,
+            database_bytes: 16 * 1024 * 1024,
+            min_free_bytes: 65536,
+        },
+    )
+    .unwrap();
+    let context = reel::tig_scene::freeze_language_context(
+        &mut source,
+        &request,
+        &mut nodes,
+        TreeLimits::default(),
+    )
+    .unwrap();
+    let legacy =
+        reel::tig_scene::freeze_context(&mut source, &request, &mut nodes, TreeLimits::default())
+            .unwrap();
+    let profile = archived_profile(&f, context.archive().clone(), source.checkpoint().clone());
+    let legacy_profile =
+        archived_profile(&f, legacy.archive().clone(), source.checkpoint().clone());
+    let witness = nodes.finish().unwrap();
+    drop(nodes);
+    let mut nodes = MetadataReader::open(&metadata_path, &witness).unwrap();
+    drop(source);
+    for name in [".git", "records", "definitions"] {
+        fs::rename(
+            f.root().join(name),
+            f.root().join(format!("offline-{name}")),
+        )
+        .unwrap();
+    }
+    let (mut restored, _) = reel::tig_scene::restore_language_context(
+        profile,
+        &request,
+        context.selection(),
+        &mut nodes,
+        TreeLimits::default(),
+    )
+    .unwrap();
+    let reads = restored.byte_requests();
+    let mut wrong_request: reel::tig_scene::Request =
+        serde_json::from_value(serde_json::to_value(&request).unwrap()).unwrap();
+    wrong_request.language = "es".into();
+    let wrong_output = f.root().join("wrong-request");
+    assert!(
+        reel::tig_scene::compile_language_context(&mut restored, &wrong_request, &wrong_output)
+            .is_err()
+    );
+    assert_eq!(restored.byte_requests(), reads);
+    assert!(!wrong_output.exists());
+    let wrong_mode = f.root().join("wrong-legacy-mode");
+    assert!(reel::tig_scene::compile(&mut restored, &request, &wrong_mode).is_err());
+    assert_eq!(restored.byte_requests(), reads);
+    assert!(!wrong_mode.exists());
+    let output = f.root().join("scoped-compilation");
+    reel::tig_scene::compile_language_context(&mut restored, &request, &output).unwrap();
+    assert_eq!(restored.byte_requests() - reads, 6);
+    for name in [
+        "production.json",
+        "contract.json",
+        "job.json",
+        "semantic-delivery.json",
+    ] {
+        assert_eq!(
+            fs::read(baseline.join("delivery").join(name)).unwrap(),
+            fs::read(output.join("delivery").join(name)).unwrap()
+        );
+    }
+    let (mut legacy_source, _) = reel::tig_scene::restore_context(
+        legacy_profile,
+        &request,
+        legacy.selection(),
+        &mut nodes,
+        TreeLimits::default(),
+    )
+    .unwrap();
+    let output = f.root().join("wrong-scoped-mode");
+    assert!(
+        reel::tig_scene::compile_language_context(&mut legacy_source, &request, &output).is_err()
+    );
+    assert_eq!(legacy_source.byte_requests(), 0);
+    assert!(!output.exists());
+}
+
+#[test]
 fn scoped_context_replays_original_language_roots_after_main_moves_and_git_is_offline() {
     let (mut f, request) = bilingual();
     let mut original = f.source();
@@ -308,6 +403,16 @@ fn valid_generic_context_cannot_self_admit_an_incomplete_native_language_root_se
 #[test]
 #[ignore = "explicit existing-source metadata rehearsal; requires profile and request paths"]
 fn explicit_existing_source_scoped_context_rehearsal() {
+    existing_source_scoped_rehearsal(false);
+}
+
+#[test]
+#[ignore = "explicit existing-source scoped compilation; requires profile and request paths"]
+fn explicit_existing_source_scoped_compile_rehearsal() {
+    existing_source_scoped_rehearsal(true);
+}
+
+fn existing_source_scoped_rehearsal(compile: bool) {
     use reel::tig_inputs::{ARCHIVE_PROFILE_SCHEMA, ArchiveProfile};
     let profile_path =
         std::env::var_os("REEL_TIG_SCOPE_PROFILE").expect("explicit input profile required");
@@ -320,6 +425,10 @@ fn explicit_existing_source_scoped_context_rehearsal() {
     let request = reel::tig_scene::Request::read(Path::new(&request_path)).unwrap();
     let mut source = Source::open(profile).unwrap();
     let disk = tempfile::tempdir().unwrap();
+    let baseline = disk.path().join("baseline");
+    if compile {
+        reel::tig_scene::compile(&mut source, &request, &baseline).unwrap();
+    }
     let path = disk.path().join("metadata");
     let mut store = MetadataStore::create(
         &path,
@@ -350,7 +459,7 @@ fn explicit_existing_source_scoped_context_rehearsal() {
     drop(store);
     drop(source);
     let mut reader = MetadataReader::open(&path, &witness).unwrap();
-    let (_, restored) = reel::tig_scene::restore_language_context(
+    let (mut source, restored) = reel::tig_scene::restore_language_context(
         archive,
         &request,
         context.selection(),
@@ -361,6 +470,25 @@ fn explicit_existing_source_scoped_context_rehearsal() {
     assert_eq!(context.selection(), restored.selection());
     assert_eq!(context.requirements(), restored.requirements());
     assert_eq!(context.roots(), restored.roots());
+    if compile {
+        let output = disk.path().join("scoped");
+        reel::tig_scene::compile_language_context(&mut source, &request, &output).unwrap();
+        for name in [
+            "production.json",
+            "contract.json",
+            "job.json",
+            "semantic-delivery.json",
+        ] {
+            assert_eq!(
+                fs::read(baseline.join("delivery").join(name)).unwrap(),
+                fs::read(output.join("delivery").join(name)).unwrap()
+            );
+        }
+        println!(
+            "{}",
+            json!({"compiled_contracts_equal":true,"media_rendered":false,"authorizes_eviction":false})
+        );
+    }
     println!(
         "{}",
         json!({"primary":context.requirements().primary().len(),"controls":context.requirements().controls().len(),"interpretation":context.requirements().metadata().len(),"roots":context.roots().len(),"replay_equal":true,"media_rendered":false,"authorizes_eviction":false})

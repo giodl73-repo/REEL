@@ -187,7 +187,12 @@ Git checkout; opaque controls must still be available in the enrolled caches.
 Missing or corrupt controls refuse. No cache is created or hydrated.
 
 The returned source is bound to scoped-context mode. Legacy native compilation
-and recipe APIs refuse it; active producer/job integration is subsequent work.
+and recipe APIs refuse it. Use `tig_scene::compile_language_context` explicitly
+to compile that source: it checks the scoped request/adapter descriptor and then
+uses the shared native preflight, scope derivation and verified alignment reads.
+It creates local control/contracts in a new output directory, without copying
+primary media or rendering. Legacy-bound sources refuse the scoped entry point.
+Active producer/job and semantic recipe integration remain subsequent work.
 The context is a metadata candidate, not media availability, execution, release,
 global protection or eviction authority. For evidence and limits, see the
 [scoped context review](reviews/2026-10-27-tig-scoped-context.md).

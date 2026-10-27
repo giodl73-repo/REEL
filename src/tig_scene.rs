@@ -30,7 +30,7 @@ use tig_store::source_claims::Selection;
 pub const SCHEMA: &str = "reel.tig-native-scene.experimental-1";
 const METADATA_MAX: u64 = 16 * 1024 * 1024;
 mod scoped;
-pub use scoped::{freeze_language_context, restore_language_context};
+pub use scoped::{compile_language_context, freeze_language_context, restore_language_context};
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -660,8 +660,16 @@ fn derive_scope(
 /// The full native scene is resolved, including its declared language matrix.
 /// No primary media copies, cache writes, selection or publication are performed.
 pub fn compile(source: &mut Source, request: &Request, output: &Path) -> Result<Value> {
+    compile_with_descriptor(source, request, output, &descriptor(request)?)
+}
+fn compile_with_descriptor(
+    source: &mut Source,
+    request: &Request,
+    output: &Path,
+    descriptor: &[u8],
+) -> Result<Value> {
     request.validate()?;
-    source.check_native_context(&descriptor(request)?)?;
+    source.check_native_context(descriptor)?;
     let state = read_source(source, request)?;
     let scope = derive_scope(source, request, &state)?;
     let NativeState {
