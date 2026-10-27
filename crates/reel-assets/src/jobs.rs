@@ -14,6 +14,10 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
+mod adapters;
+pub use adapters::{
+    ResourceAuthority, ResourceRole, RetainedJob, RetainedObject, RetentionSink, RunContext,
+};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -273,34 +277,83 @@ pub fn run_with_execution_window(root: &Path, manifest: &Path, policy: &Path) ->
 }
 
 fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Result<Value> {
-    let bytes = fs::read(manifest)?;
+    let (bytes, job) = read_job(manifest)?;
+    let cfg = config(root)?;
+    let authority = adapters::RegistryAuthority(selected(root)?);
+    let mut retention = adapters::RegistryRetention(root);
+    run_loaded(
+        root,
+        bytes,
+        job,
+        seed,
+        &mut RunContext {
+            config: &cfg,
+            authority: &authority,
+            retention: &mut retention,
+        },
+    )
+}
+
+/// Run the same budgeted/contained lifecycle under explicit trusted project ports.
+/// No catalog lookup or registry registration occurs unless the supplied ports do it.
+pub fn run_admitted(root: &Path, manifest: &Path, context: &mut RunContext<'_>) -> Result<Value> {
+    let (bytes, job) = read_job(manifest)?;
+    crate::validate_roots(
+        &context.config.cache_roots,
+        false,
+        &context.config.path_policy,
+    )?;
+    run_loaded(root, bytes, job, None, context)
+}
+fn read_job(manifest: &Path) -> Result<(Vec<u8>, Job)> {
+    let mut bytes = Vec::new();
+    File::open(manifest)?
+        .take(256 * 1024 + 1)
+        .read_to_end(&mut bytes)?;
     if bytes.len() > 256 * 1024 {
         return Err("Job manifest exceeds intake budget".into());
     }
-    let job: Job = serde_json::from_value(load(manifest)?)?;
+    let job: Job =
+        serde_json::from_str(std::str::from_utf8(&bytes)?.trim_start_matches('\u{feff}'))?;
     validate(&job)?;
-    let cfg = config(root)?;
-    let index = selected(root)?;
+    Ok((bytes, job))
+}
+fn run_loaded(
+    root: &Path,
+    bytes: Vec<u8>,
+    job: Job,
+    seed: Option<resume::Seed>,
+    context: &mut RunContext<'_>,
+) -> Result<Value> {
+    let cfg = context.config;
     if let Some(seed) = &seed {
         seed.validate(&job, &bytes)?;
         let job_hash = format!("{:x}", Sha256::digest(&bytes));
-        if index.get(&job_hash) != Some(&(bytes.len() as u64))
-            || index.get(&seed.sha256) != Some(&seed.bytes)
-            || seed
-                .assets()
-                .any(|asset| index.get(&asset.sha256) != Some(&asset.bytes))
-        {
-            return Err("Original job, checkpoint descriptor and checkpoint files must be exactly registered".into());
+        context
+            .authority
+            .require(ResourceRole::Checkpoint, &job_hash, bytes.len() as u64)?;
+        context
+            .authority
+            .require(ResourceRole::Checkpoint, &seed.sha256, seed.bytes)?;
+        for asset in seed.assets() {
+            context
+                .authority
+                .require(ResourceRole::Checkpoint, &asset.sha256, asset.bytes)?;
         }
     }
     for tool in job.installed_tools.values() {
-        if index.get(&tool.sha256) != Some(&tool.bytes) {
-            return Err("Installed tool must be exactly registered".into());
-        }
+        context
+            .authority
+            .require(ResourceRole::InstalledTool, &tool.sha256, tool.bytes)?;
     }
-    for asset in job.inputs.values().chain(job.tools.values()) {
-        if index.get(&asset.sha256) != Some(&asset.bytes) {
-            return Err("Job input/tool must be exactly registered".into());
+    for (role, assets) in [
+        (ResourceRole::Input, &job.inputs),
+        (ResourceRole::Tool, &job.tools),
+    ] {
+        for asset in assets.values() {
+            context
+                .authority
+                .require(role, &asset.sha256, asset.bytes)?;
         }
     }
     // Reserve before resolving source paths: maintenance can then hold all
@@ -310,7 +363,7 @@ fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Resul
         .map_or(job.budget_bytes, |seed| seed.workspace_budget(&job));
     // A registered per-job window affects reservation and working space only.
     // Canonical object resolution/publication still uses the unchanged policy.
-    let mut reservation_cfg = cfg.clone();
+    let mut reservation_cfg = (*cfg).clone();
     if workspace_budget > job.budget_bytes {
         reservation_cfg.capacity.max_object_bytes = reservation_cfg
             .capacity
@@ -322,7 +375,7 @@ fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Resul
     let mut sources = BTreeMap::new();
     let mut source_guards = Vec::new();
     if let Some(seed) = &seed {
-        source_guards.extend(seed.pin_registered_sources(&cfg, bytes.len() as u64)?);
+        source_guards.extend(seed.pin_registered_sources(cfg, bytes.len() as u64)?);
     }
     for tool in job.installed_tools.values() {
         source_guards.push(lifecycle::pin_read_only(&tool.path)?);
@@ -355,7 +408,7 @@ fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Resul
         .join(&reservation.id);
     lifecycle::prepare_staging(&reservation.cache_root)?;
     fs::create_dir(&workspace)?;
-    lifecycle::checked_workspace(&cfg, &reservation.cache_root, &workspace)?;
+    lifecycle::checked_workspace(cfg, &reservation.cache_root, &workspace)?;
     fs::write(workspace.join("job.json"), &bytes)?;
     let mut linked_input_bytes = 0u64;
     let mut copied_input_bytes = 0u64;
@@ -405,7 +458,7 @@ fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Resul
             }
         }
         if let Some(seed) = &seed {
-            seed.stage(&cfg, &workspace, &job)?;
+            seed.stage(cfg, &workspace, &job)?;
         }
         for (n, step) in job
             .steps
@@ -462,7 +515,7 @@ fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Resul
             }
             let oid = format!("{:x}", hasher.finalize());
             verify(&path, &oid, metadata.len())?;
-            let existing = active_existing(&cfg, &oid, metadata.len())?;
+            let existing = active_existing(cfg, &oid, metadata.len())?;
             results.insert(role.clone(), (path, oid, metadata.len(), existing));
         }
         let mut retained = BTreeMap::new();
@@ -492,13 +545,14 @@ fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Resul
         if !job.retain_workspace {
             let evidence = lifecycle::publish_and_retire(
                 root,
-                &cfg,
+                context,
                 &reservation.cache_root,
                 &workspace,
                 &bytes,
                 &result,
                 &job,
-            )?;
+            )
+            .map_err(|e| adapters::RetirementFailed(e.to_string()))?;
             result["workspace_retained"] = json!(false);
             result["retirement_evidence"] = evidence;
         }
@@ -507,6 +561,9 @@ fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Resul
     match attempt {
         Ok(result) => Ok(result),
         Err(error) => {
+            if error.downcast_ref::<adapters::RetirementFailed>().is_some() {
+                return Err(error);
+            }
             if job.retain_workspace {
                 return Err(error);
             }
@@ -518,7 +575,7 @@ fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Resul
             }
             match lifecycle::publish_and_retire(
                 root,
-                &cfg,
+                context,
                 &reservation.cache_root,
                 &workspace,
                 &bytes,

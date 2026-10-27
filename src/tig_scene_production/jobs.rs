@@ -166,7 +166,7 @@ impl<'a> JobPlan<'a> {
         })
     }
 }
-fn fence(
+pub(crate) fn fence(
     coordination: &Coordination,
     journal: &SourceJournal,
     identity: &Identity,
