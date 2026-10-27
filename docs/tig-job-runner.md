@@ -104,6 +104,7 @@ The private profile schema is `reel.tig-native-job-profile.experimental-1`:
 | `worker.runtime` | Private Bindings: actual CLI host byte identity, explicit FFmpeg/FFprobe FileRefs, named dependency FileRefs |
 | `worker.outputs` | Explicit complete native output filenames plus `receipt.json`, each mapped to a positive maximum; omit when using `output_budget` |
 | `worker.output_budget` | Alternative `{ "default_max_bytes": ..., "overrides": { ... } }` policy; exact override names must exist in the derived contract |
+| `worker.record_outputs` | Optional output-to-record proposals: exact archived template Reference, native output name and selected/stream selector; see below |
 | `cache` | Existing reel-assets Config, including an existing absolute shared `coordination_root` |
 | `journal_root`, `journal_minimum` | Existing authoritative owner journal and trusted minimum checkpoint |
 | `source_id`, `owner`, `expected_revision` | Exact caller-owned job identity and current revision; zero is required for a new source |
@@ -128,8 +129,9 @@ transitions. A hidden `worker` subcommand is the trusted internal child entry;
 invoking it directly does not provide admission, containment or retention.
 
 Success reports the retained outputs and resulting owner-journal checkpoint.
-It does not update project `.tig` files, approve a master, publish externally or
-export a reusable native production claim. The generic retained result deliberately
+It does not update project `.tig` files, approve a master or publish externally.
+Optional record proposals can export a scoped unsigned native claim, as described
+below. The generic retained result deliberately
 reports `production_claim: null` and incomplete claim coverage. Metadata validity,
 actual renderer checks, owned byte retention and creative selection stay distinct.
 Errors do not reset source state: interrupted starts/handoffs require exact owner
@@ -182,7 +184,9 @@ audio, overlays, fonts, post-compose camera files and Motioncraft evidence. Its
 stream's data, excluding container/encoding overhead. They are reference sizes,
 not predicted compressed sizes or physical allocation. The report's
 `atomic_native_output_bytes` is twice the sum of declared native output maxima;
-the final job also needs scratch, controls and the worker completion record.
+the final job also needs scratch, controls, the worker completion record and any
+optional record-proposal artifacts. Proposal maxima are added separately during
+render-request admission; they are not included in that planning-report field.
 Overflow and unknown/zero overrides refuse. Planning reserves the configured
 scratch allowance capped at 64 MiB for metadata-only work, plus its bounded ticket,
 a 256 KiB request-control allowance and
@@ -197,3 +201,70 @@ other requests keep the default64 unless they explicitly select a bound from1
 through512. Intake, per-file/path, diagnostics/evidence, tree and total workspace
 bounds remain in force. Large evidence sets are refused explicitly when they
 exceed these bounds; they are never silently truncated into a successful result.
+
+## Proposing native asset records
+
+An optional `worker.record_outputs` mapping exports proposed `.tig` bytes from
+an existing planned asset record in the same frozen source archive. For example:
+
+```json
+"record_outputs": [
+  {
+    "output": "master.mkv",
+    "template": {
+      "id": "delivery/example",
+      "object": { "sha256": "<exact archived record SHA-256>", "bytes": 1234 }
+    },
+    "selector": { "kind": "selected" }
+  },
+  {
+    "output": "master.mkv",
+    "template": {
+      "id": "delivery/example",
+      "object": { "sha256": "<same archived record SHA-256>", "bytes": 1234 }
+    },
+    "selector": { "kind": "stream", "slot": "es" },
+    "stream_class": { "role": "compiled-output", "group": "language" }
+  }
+]
+```
+
+The hash placeholders above must be replaced with actual archive pins. Definitions
+must already be admitted by `worker.source`. Output records cannot be production
+input records for this job. Stale/foreign templates, duplicate asset selectors,
+conflicting template pins, unknown outputs and incompatible stream classes refuse.
+A stream selector requires explicit role/group; a selected selector forbids them.
+One native output can populate several distinct selectors. The mapping has at most
+128 entries and must fit the existing worker/profile and total-output bounds.
+
+After rendering and independent native checks, the sealed candidate produces an
+unsigned claim and these retained auxiliary files:
+
+```text
+production-claim.json
+record-candidates.json
+records/<SHA-256 of asset ID UTF-8>.tig   (one per unique asset)
+```
+
+Each auxiliary artifact has a 64 KiB maximum declared before execution. Aggregate
+atomic publication, scratch and evidence budgets still apply. These files travel
+through the existing CAS/owned-result handoff before scratch retirement; they are
+not written into project Git. Planning alone does not generate them.
+
+The proposed record preserves authored fields and unmapped payload slots. It
+clears status and old metadata assertions, retains the previous template Reference,
+and records exact claim/receipt pins plus the mapped selectors in
+`metadata.production`. Changed stream provenance pins the new claim and receipt.
+Unmapped history remains untouched. The claim identifies exact asset, definition,
+selector and produced bytes; it does not depend on the candidate record's own hash.
+
+Before reporting `record_candidates`, the coordinator independently checks its
+current completed owner/revision, retained tree/header, exact artifact bytes,
+original recipe/context, template/definition binding and every claimed subject.
+The returned paths are private retained-cache locators, not canonical record paths.
+`current_selection: false` and `complete_semantic_coverage: false` remain explicit.
+Binding validates the current native envelope and authored-field contract; it
+does not execute arbitrary JSON Schema or all project semantic rules. The generic
+job still reports `production_claim: null` and incomplete global claim coverage.
+These proposals provide no human approval, release, complete custody, cache
+eviction authority or automatic canonical worktree application.

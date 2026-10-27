@@ -1,6 +1,5 @@
 //! Private retained output contracts, never a second editable source inventory.
 use super::*;
-use tig_core::tree::{NodeStore, Tree};
 
 pub(super) fn workspace_budget(scratch: u64, ticket: u64, ceiling: u64) -> Result<u64> {
     let scratch = scratch_budget(scratch);
@@ -109,6 +108,7 @@ pub(super) fn produce(
     let bound = programs.with_inputs(&inputs);
     let (job, plan) = crate::scene_delivery::plan_with_inputs(&path, &bound)?;
     let contract = crate::scene_delivery::output_contract(&job, &plan)?;
+    records::check_names(&ticket.admission, &names(&contract))?;
     let outputs = policy.apply(&names(&contract))?;
     let report = Report {
         schema: "reel.native-output-plan.experimental-1".into(),
@@ -140,32 +140,18 @@ pub(super) fn readback(
     result: &PhaseResult,
     journal: &mut SourceJournal,
 ) -> Result<(Report, Checkpoint)> {
-    let selected = owned_selection(
-        journal,
-        &Key::parse(&profile.source_id)?,
-        &Key::parse(&profile.owner)?,
-        result.revision,
-    )?;
-    let item = &result.value["outputs"]["planning.json"];
-    let object = Object {
-        sha256: Digest::parse(
-            item["sha256"]
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("planning output hash missing"))?,
-        )?,
-        bytes: item["bytes"]
-            .as_u64()
-            .ok_or_else(|| anyhow::anyhow!("planning output size missing"))?,
-    };
-    let report: Report = read(
-        Path::new(
-            item["path"]
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("planning output locator missing"))?,
-        ),
+    let verified = retained::verify(profile, result, journal)?;
+    if result.value["outputs"]
+        .as_object()
+        .is_none_or(|o| o.len() != 1)
+    {
+        bail!("planning output set differs");
+    }
+    let report: Report = serde_json::from_value(identity::parse_json(&verified.bytes(
+        result,
+        "planning.json",
         65_536,
-        Some(&object),
-    )?;
+    )?)?)?;
     let policy = profile
         .worker
         .output_budget
@@ -180,64 +166,17 @@ pub(super) fn readback(
     {
         bail!("native output plan admission differs");
     }
-    let mut reader = MetadataReader::open(&profile.worker.metadata_root, &result.minimum)?;
-    let (entries, _) =
-        Tree::from_root(selected.root).entries(&mut reader, TreeLimits::default())?;
-    let get = |name: &str| -> Result<&Object> {
-        entries
-            .get(&LogicalPath::parse(name)?)
-            .ok_or_else(|| anyhow::anyhow!("planning retained reference missing"))
-    };
-    let header = get("retention/identity")?;
-    if header.sha256 != selected.context
-        || get("source/context")? != &result.resources.root
-        || get(&format!(
-            "outputs/{}",
-            Digest::blob(b"planning.json").as_str()
-        ))? != &object
-        || entries.len() != 5
-    {
-        bail!("planning retained root differs");
-    }
-    let header = identity::parse_json(
-        &reader
-            .get(header)?
-            .ok_or_else(|| anyhow::anyhow!("planning retained header missing"))?,
-    )?;
-    if header["schema"] != "reel.tig-runner-retention.experimental-1"
-        || header["succeeded"] != true
-        || header["source"] != serde_json::to_value(&result.resources)?
-        || header["journal"] != serde_json::to_value(journal.identity())?
-        || header["owner"] != profile.owner
-        || header["source_id"] != profile.source_id
-        || header["revision"] != result.revision - 2
-        || header["outputs"] != 1
-    {
-        bail!("planning retained identity differs");
-    }
-    Ok((report, reader.checkpoint().clone()))
+    Ok((report, verified.reader.checkpoint().clone()))
 }
+#[cfg(test)]
 fn owned_selection(
     journal: &mut SourceJournal,
     source: &Key,
     owner: &Key,
     revision: u64,
 ) -> Result<Selection> {
-    let state = journal
-        .source(source)?
-        .ok_or_else(|| anyhow::anyhow!("planning source missing"))?;
-    if state.revision != revision || &state.owner != owner || state.pending.is_some() {
-        bail!("planning owner/revision differs");
-    }
-    let current = state
-        .current
-        .ok_or_else(|| anyhow::anyhow!("planning result root missing"))?;
-    if current.revision != revision {
-        bail!("planning result is not the latest completed transition");
-    }
-    Ok(current.selection)
+    retained::owned_selection(journal, source, owner, revision)
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

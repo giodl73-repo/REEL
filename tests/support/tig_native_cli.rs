@@ -2,7 +2,7 @@ use reel::{media_runtime::ByteIdentity, scene_delivery::Receipt, tig_scene::Requ
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, fs, path::Path, process::Command};
 use tig_core::{
-    LogicalPath,
+    LogicalPath, Object,
     tree::{NodeStore, Tree, TreeLimits},
 };
 use tig_store::{
@@ -10,6 +10,105 @@ use tig_store::{
     metadata::{Checkpoint, MetadataReader},
     source_claims::{Selection, SourceJournal},
 };
+
+fn check_candidates(root: &Path, completed: &Value, original_record: &[u8], template: &Value) {
+    use tig_assets::{
+        graph::Reference,
+        graph::recipe::produced::{BoundSubject, Claim, Selector},
+        native::Instance,
+    };
+    let rendered = completed["result"]["outputs"].as_object().unwrap();
+    let exported = &completed["record_candidates"];
+    assert_eq!(exported["current_selection"], false);
+    let record = &exported["records"][0];
+    assert_eq!(&record["template"], template);
+    let bytes = fs::read(record["retained_path"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        serde_json::to_value(Object::from_bytes(&bytes)).unwrap(),
+        record["record"]
+    );
+    let value: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(value["status"].as_object().unwrap().is_empty());
+    assert_eq!(value["authored"], json!({"label":"Native scene delivery"}));
+    assert!(value["metadata"].get("prior_review").is_none());
+    assert_eq!(&value["metadata"]["production"]["template"], template);
+    assert_eq!(value["metadata"]["production"]["claim"], exported["claim"]);
+    assert_eq!(
+        value["selected"],
+        json!({"sha256":rendered["native/master.mkv"]["sha256"],"bytes":rendered["native/master.mkv"]["bytes"]})
+    );
+    let claim_bytes =
+        fs::read(rendered["production-claim.json"]["path"].as_str().unwrap()).unwrap();
+    let claim = Claim::parse(
+        &serde_json::from_value(exported["claim"].clone()).unwrap(),
+        &claim_bytes,
+    )
+    .unwrap();
+    assert_eq!(claim.outputs().len(), 2);
+    let schema = fs::read(root.join("cli-offline-definitions/authored.json")).unwrap();
+    let definition = fs::read(root.join("cli-offline-definitions/native-output.json")).unwrap();
+    let bound = Instance::parse(&bytes)
+        .unwrap()
+        .bind(&definition, &schema)
+        .unwrap();
+    let admission = Reference {
+        id: "types/native-output".into(),
+        object: Object::from_bytes(&definition),
+    };
+    for selector in [
+        Selector::Selected {},
+        Selector::Stream { slot: "es".into() },
+    ] {
+        let subject = BoundSubject::bind(&bound, &admission, selector)
+            .unwrap()
+            .unwrap();
+        assert!(claim.outputs().contains(subject.subject()));
+    }
+    let original: Value = serde_json::from_slice(original_record).unwrap();
+    assert_eq!(value["streams"][0], original["streams"][0]);
+    assert_eq!(
+        fs::read(root.join("cli-offline-records/native-output.tig")).unwrap(),
+        original_record
+    );
+    let mut annotated = value;
+    annotated["metadata"]["review_note"] = json!("candidate reviewed later");
+    let annotated = Instance::parse(&serde_json::to_vec(&annotated).unwrap())
+        .unwrap()
+        .bind(&definition, &schema)
+        .unwrap();
+    let subject = BoundSubject::bind(&annotated, &admission, Selector::Selected {})
+        .unwrap()
+        .unwrap();
+    assert!(claim.outputs().contains(subject.subject()));
+}
+
+pub fn seed(f: &mut super::Fixture) {
+    let root = f.root().to_path_buf();
+    let schema = Object::from_bytes(&fs::read(root.join("definitions/authored.json")).unwrap());
+    let definition = super::write(
+        &root,
+        "definitions/native-output.json",
+        &json!({"schema":"tig.definition.design-1","id":"types/native-output","authored_schema":schema,"authoring":{"properties":["label"],"required":["label"],"defaults":{}},"stream_rules":{},"semantic_rules":{}}),
+    );
+    let history = b"previous synthetic native output";
+    let old = Object::from_bytes(history);
+    fs::write(
+        root.join("cache/objects").join(old.sha256.as_str()),
+        history,
+    )
+    .unwrap();
+    super::write(
+        &root,
+        "records/native-output.tig",
+        &json!({"schema":"tig.instance.design-1","id":"delivery/native-scene","definition":{"id":"types/native-output","sha256":definition.sha256,"bytes":definition.bytes},"authored":{"label":"Native scene delivery"},"selected":null,"streams":[{"slot":"history-v1","role":"provenance","group":"history","object":old}],"status":{"selection_state":"principal-approved"},"metadata":{"prior_review":"not applicable to replacement bytes"}}),
+    );
+    super::git(&root, &["add", "definitions", "records"]);
+    super::git(&root, &["commit", "-m", "plan native output record"]);
+    f.profile["commit"] = json!(super::git(&root, &["rev-parse", "HEAD"]));
+    f.profile["admitted"].as_array_mut().unwrap().push(
+        json!({"id":"types/native-output","object":definition,"payload":{"kind":"selected"}}),
+    );
+}
 
 pub fn exercise(
     root: &Path,
@@ -63,6 +162,9 @@ pub fn exercise(
         "journal_root":journal_root,"journal_minimum":witness,"source_id":"native-cli","owner":"worker-owner","expected_revision":0,
         "start_operation":"start","retain_operation":"retain","budget_bytes":256*1024*1024_u64,"scratch_bytes":64*1024*1024_u64,"timeout_seconds":120,
     });
+    let original_record = fs::read(root.join("records/native-output.tig")).unwrap();
+    let template =
+        json!({"id":"delivery/native-scene","object":Object::from_bytes(&original_record)});
     let path = root.join("native-cli-profile.json");
     let run = || {
         Command::new(&binary)
@@ -98,6 +200,41 @@ pub fn exercise(
         &before
     );
     assert!(!cache.join("staging/caminos").exists());
+    for refusal in ["stale-template", "production-input"] {
+        let mut rejected = profile.clone();
+        let selected = if refusal == "stale-template" {
+            json!({"id":"delivery/native-scene","object":Object::from_bytes(b"wrong template bytes")})
+        } else {
+            json!({"id":"cel/a","object":Object::from_bytes(&fs::read(root.join("records/cel-a.tig")).unwrap())})
+        };
+        rejected["worker"]["record_outputs"] =
+            json!([{"output":"master.mkv","template":selected,"selector":{"kind":"selected"}}]);
+        fs::write(&path, serde_json::to_vec(&rejected).unwrap()).unwrap();
+        let result = run();
+        assert!(!result.status.success());
+        let message = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            message.contains(if refusal == "stale-template" {
+                "not admitted"
+            } else {
+                "production input record"
+            }),
+            "{message}"
+        );
+        assert_eq!(
+            SourceJournal::open(&journal_root, &witness)
+                .unwrap()
+                .checkpoint(),
+            witness
+        );
+        assert_eq!(
+            MetadataReader::open(metadata.0, metadata.1)
+                .unwrap()
+                .checkpoint(),
+            &before
+        );
+        assert!(!cache.join("staging/caminos").exists());
+    }
     fs::write(&path, serde_json::to_vec(&profile).unwrap()).unwrap();
     for name in [".git", "records", "definitions"] {
         fs::rename(root.join(name), root.join(format!("cli-offline-{name}"))).unwrap();
@@ -224,6 +361,12 @@ pub fn exercise(
             .remove("outputs");
         automatic["worker"]["output_budget"] =
             json!({"default_max_bytes":4*1024*1024_u64,"overrides":{"receipt.json":65_536}});
+        if mode == "automatic" {
+            automatic["worker"]["record_outputs"] = json!([
+                {"output":"master.mkv","template":template,"selector":{"kind":"selected"}},
+                {"output":"master.mkv","template":template,"selector":{"kind":"stream","slot":"es"},"stream_class":{"role":"compiled-output","group":"language"}}
+            ]);
+        }
         fs::write(&path, serde_json::to_vec(&automatic).unwrap()).unwrap();
         let completed = Command::new(&binary)
             .arg(if mode == "plan-only" {
@@ -298,13 +441,16 @@ pub fn exercise(
         if mode == "automatic" {
             assert_eq!(completed["result"]["budget_bytes"], profile["budget_bytes"]);
             let rendered = completed["result"]["outputs"].as_object().unwrap();
-            assert_eq!(rendered.len(), reference.outputs.len() + 2);
+            assert_eq!(rendered.len(), reference.outputs.len() + 5);
             for item in rendered.values() {
                 let bytes =
                     ByteIdentity::observe_file(Path::new(item["path"].as_str().unwrap())).unwrap();
                 assert_eq!(bytes.sha256, item["sha256"]);
                 assert_eq!(bytes.bytes, item["bytes"]);
             }
+        }
+        if mode == "automatic" {
+            check_candidates(root, &completed, &original_record, &template);
         }
         assert!(
             fs::read_dir(cache.join("staging/caminos"))
