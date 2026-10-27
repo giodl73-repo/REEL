@@ -28,6 +28,7 @@ use tig_store::{
 
 const PROFILE_SCHEMA: &str = "reel.tig-native-job-profile.experimental-1";
 const TICKET_SCHEMA: &str = "reel.tig-native-worker.experimental-1";
+mod handoff;
 mod planning;
 mod records;
 mod retained;
@@ -52,6 +53,8 @@ struct Worker {
     output_budget: Option<planning::Budget>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     record_outputs: Vec<records::Spec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    git_handoff: Option<handoff::Handoff>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -61,6 +64,8 @@ struct Ticket {
     admission: Worker,
     recipe: Digest,
     producer: Object,
+    #[serde(default)]
+    output_roots: Vec<PathBuf>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -214,7 +219,7 @@ fn execute(path: &Path, only_plan: bool) -> Result<Value> {
     }
     let programs = BoundPrograms::bind(&profile.worker.runtime)?;
     let (mut source, context) = restore(&profile.worker)?;
-    let templates = records::prepare(&profile.worker, &context)?;
+    let templates = records::prepare(&profile.worker, &context, &profile.cache.cache_roots)?;
     let plan = JobPlan::from_context(&mut source, &profile.worker.request, &context, &programs)?;
     let mut spec = Phase {
         mode: if automatic { Mode::Plan } else { Mode::Render },
@@ -306,7 +311,7 @@ fn execute_phase(
     spec: &Phase,
 ) -> Result<PhaseResult> {
     let ticket = serde_json::to_string(
-        &json!({"schema":TICKET_SCHEMA,"mode":spec.mode,"admission":profile.worker,"recipe":plan.recipe().fingerprint(),"producer":pin(programs)?}),
+        &json!({"schema":TICKET_SCHEMA,"mode":spec.mode,"admission":profile.worker,"recipe":plan.recipe().fingerprint(),"producer":pin(programs)?,"output_roots":if profile.worker.git_handoff.is_some() {profile.cache.cache_roots.clone()} else {vec![]}}),
     )?;
     if ticket.len() > 65_536 {
         bail!("native worker admission exceeds budget");
@@ -432,7 +437,7 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
         bail!("native worker runtime differs");
     }
     let (mut source, context) = restore(&ticket.admission)?;
-    let record_templates = records::prepare(&ticket.admission, &context)?;
+    let record_templates = records::prepare(&ticket.admission, &context, &ticket.output_roots)?;
     let plan = JobPlan::from_context(&mut source, &ticket.admission.request, &context, &programs)?;
     if plan.recipe().fingerprint() != &ticket.recipe {
         bail!("native worker recipe differs");

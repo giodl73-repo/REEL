@@ -28,6 +28,10 @@ name = "tig-lfs"
 path = "src/bin/tig-lfs.rs"
 
 [[bin]]
+name = "tig-propose"
+path = "src/bin/tig-propose.rs"
+
+[[bin]]
 name = "tig-resolve"
 path = "src/bin/tig-resolve.rs"
 required-features = ["assets"]

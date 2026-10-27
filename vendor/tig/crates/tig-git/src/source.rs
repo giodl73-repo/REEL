@@ -1,6 +1,7 @@
-//! Bounded read-only extraction from exact Git commit/index views.
+//! Bounded extraction from exact Git views and explicit immutable proposals.
 #[cfg(feature = "assets")]
 pub mod native;
+pub mod proposal;
 use crate::pointer::Pointer;
 use sha2::{Digest as _, Sha256};
 use std::{

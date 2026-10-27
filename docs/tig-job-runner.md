@@ -105,6 +105,7 @@ The private profile schema is `reel.tig-native-job-profile.experimental-1`:
 | `worker.outputs` | Explicit complete native output filenames plus `receipt.json`, each mapped to a positive maximum; omit when using `output_budget` |
 | `worker.output_budget` | Alternative `{ "default_max_bytes": ..., "overrides": { ... } }` policy; exact override names must exist in the derived contract |
 | `worker.record_outputs` | Optional output-to-record proposals: exact archived template Reference, native output name and selected/stream selector; see below |
+| `worker.git_handoff` | Optional retained `tig-propose` profile with explicit Git destination/identity and one canonical path per candidate asset |
 | `cache` | Existing reel-assets Config, including an existing absolute shared `coordination_root` |
 | `journal_root`, `journal_minimum` | Existing authoritative owner journal and trusted minimum checkpoint |
 | `source_id`, `owner`, `expected_revision` | Exact caller-owned job identity and current revision; zero is required for a new source |
@@ -268,3 +269,63 @@ does not execute arbitrary JSON Schema or all project semantic rules. The generi
 job still reports `production_claim: null` and incomplete global claim coverage.
 These proposals provide no human approval, release, complete custody, cache
 eviction authority or automatic canonical worktree application.
+
+## Retaining the Git handoff request
+
+With `record_outputs`, optionally supply:
+
+```json
+"git_handoff": {
+  "git_executable": "C:/Program Files/Git/cmd/git.exe",
+  "repository": "C:/src/example",
+  "base": "<exact base Git commit ID>",
+  "identity": {
+    "name": "Example Creator",
+    "email": "creator@example.invalid",
+    "unix_seconds": 1700000000
+  },
+  "message": "Update native delivery candidate",
+  "paths": { "delivery/example": "deliveries/example.tig" },
+  "protection": "prevent-mutation"
+}
+```
+
+These are explicit destination settings, not a new asset inventory. `paths` must
+map every unique candidate asset exactly once, without duplicate/escaping paths.
+The base must be a real exact Git commit when the later Git command runs. Git
+identity/message, mappings and profile bounds are checked before media encoding.
+No Git program, repository or working file is accessed while exporting the profile.
+
+The worker ticket freezes the job's existing output CAS roots. Those roots derive
+the profile's byte-source list; there is no separately authored cache list. The
+job declares one extra64KiB artifact, `git-proposal.json`, in its existing output
+budget. It pins exact old template bytes and actual newly retained record objects.
+The candidate index also pins the profile. Parent readback checks those bytes
+against frozen destination settings, roots and record pins before returning
+`record_candidates.git_proposal` with its object and private retained path.
+
+After rendering, restore Git access and run the generic authoring tool separately:
+
+```text
+tig-propose check <retained-profile-path>
+tig-propose create <retained-profile-path>
+git show <returned-proposal-reference>
+git cherry-pick <returned-proposal-commit>
+```
+
+Profile creation can run with Git offline. Check/create retries consume retained
+small records rather than rerendering. They do not update the native job's source
+ownership or authorize retirement of its retained roots. Git handles ordinary
+merge conflicts; a conflict-free application still needs native schema, current
+recipe/freshness and delivery/approval gates. The profile does not claim its base
+commit represents every current production input. Other fixes can make a valid
+retained render stale without invalidating its exact historical bytes/claim.
+
+Keep these profiles and their paths/hashes private and immutable in the cache.
+An automated caller resolves the returned profile Object through its trusted
+byte-source enrollment and holds its verified read guard through CLI execution;
+on Windows, `VerifiedRead::with_path` exposes the protected path. A filename alone
+does not establish that a cached executable request is still the checked object.
+Correcting destination settings creates a separate request; never edit retained
+objects in place. Preserve old runtime/context obligations when adopting a new
+vendored Tig/REEL source descriptor; intake is not an automatic runtime switch.
