@@ -17,6 +17,11 @@ use tig_assets::graph::recipe::{
 use tig_core::{Digest, Object};
 use tig_git::source::native::context::ProductionContext;
 
+#[cfg(feature = "tig-publication")]
+mod publication;
+#[cfg(feature = "tig-publication")]
+pub use publication::{Publication, PublishedCandidate};
+
 /// Explicit project mapping; no inference from filenames, language or status.
 pub struct OutputBinding<'a> {
     pub output_name: &'a str,

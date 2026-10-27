@@ -1,4 +1,7 @@
 #![cfg(feature = "tig")]
+#[cfg(all(windows, feature = "tig-publication"))]
+#[path = "support/tig_candidate_publication.rs"]
+mod candidate_publication;
 #[cfg(windows)]
 use reel::scene_delivery::{FileRef, InputFiles};
 use reel::{
@@ -839,8 +842,8 @@ fn native_render_candidate_claims_only_independently_checked_matching_bytes() {
         id: "types/output".into(),
         object: Object::from_bytes(&definition),
     };
-    let bind = |pin: &Object| {
-        let record = serde_json::to_vec(&json!({"schema":"tig.instance.design-1","id":"delivery/scene","definition":{"id":admission.id,"sha256":admission.object.sha256,"bytes":admission.object.bytes},"authored":{},"selected":pin,"streams":[],"status":{},"metadata":{}})).unwrap();
+    let bind_as = |id: &str, pin: &Object| {
+        let record = serde_json::to_vec(&json!({"schema":"tig.instance.design-1","id":id,"definition":{"id":admission.id,"sha256":admission.object.sha256,"bytes":admission.object.bytes},"authored":{},"selected":pin,"streams":[],"status":{},"metadata":{}})).unwrap();
         let bound = Instance::parse(&record)
             .unwrap()
             .bind(&definition, &schema)
@@ -849,6 +852,7 @@ fn native_render_candidate_claims_only_independently_checked_matching_bytes() {
             .unwrap()
             .unwrap()
     };
+    let bind = |pin: &Object| bind_as("delivery/scene", pin);
     let original = fs::read(output.join("master.mkv")).unwrap();
     let subject = bind(&Object::from_bytes(&original));
     let mapping = || OutputBinding {
@@ -860,6 +864,8 @@ fn native_render_candidate_claims_only_independently_checked_matching_bytes() {
     claim.check_plan(candidate.recipe()).unwrap();
     assert_eq!(claim.context().root, context.selection().root);
     assert_eq!(claim.outputs(), &[subject.subject().clone()]);
+    #[cfg(feature = "tig-publication")]
+    let claim = candidate_publication::exercise(&candidate, &subject, f.root(), bind_as);
     drop(reader);
     for name in [".git", "records", "definitions"] {
         fs::rename(
