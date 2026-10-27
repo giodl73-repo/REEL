@@ -2,6 +2,8 @@
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_candidate_publication.rs"]
 mod candidate_publication;
+#[path = "support/tig_language_scope.rs"]
+mod language_scope;
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_native_cli.rs"]
 mod native_cli;

@@ -399,3 +399,22 @@ CPU setting, environment dependency or software license/authority. Callers retai
 the manifest and code through actual job/resource/custody admission. This adds
 declared execution-file identity, not full renderer-freshness or production cutover
 acceptance, delivery approval or an output retention lease.
+
+### Language-scoped declared inputs
+
+Native compilation now writes `language_inputs` alongside the conservative
+`declared_inputs` in its private asset-side `native-source.json`. The scope comes
+from the existing native authoring resolver's per-language binding set, including
+alignments, take segments, scores, effects and presentation dependencies; selected
+Sonic offset evidence is added from the admitted delivery profile. Exact current
+IDs resolve through the one authored `binding_ids` map. A multi-root Production
+query retains the scene's original controls and selected primary leaves without
+expanding one policy rule per binding or serializing another authored inventory.
+
+The scope records exact provenance plus the existing native authoring language
+fingerprint. That fingerprint does not include the complete delivery profile,
+producer/runtime or request and is not a replacement recipe or freshness gate.
+The existing whole-scene recipe and active job requirements remain conservative.
+This report alone grants no complete semantic coverage, media availability,
+custody, approval or eviction authority. Frozen scoped replay and job adoption
+still require integration before a working-set policy can use this smaller set.

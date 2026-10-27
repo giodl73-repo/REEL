@@ -539,7 +539,7 @@ pub fn compile(source: &mut Source, request: &Request, output: &Path) -> Result<
         scope_id: episode.season_id.clone(),
         assets: BTreeMap::new(),
     };
-    scene_authoring::resolve_scene(
+    let resolved_scene = scene_authoring::resolve_scene(
         &serde_json::from_slice(&controls["catalog.json"])?,
         &episode,
         &scene,
@@ -573,11 +573,18 @@ pub fn compile(source: &mut Source, request: &Request, output: &Path) -> Result<
         .context("profile is not an object")?
         .insert("asset_paths".into(), json!("asset-id"));
     let typed_profile: DeliveryProfile = serde_json::from_value(profile.clone())?;
+    let mut language_keys: BTreeSet<_> = resolved_scene
+        .inputs_for_language(&request.language)
+        .context("resolved scene language missing")?
+        .keys()
+        .cloned()
+        .collect();
     let current = scene_authoring::materialize_scene(&scene)?;
     let mut evidence = Vec::new();
     for event in &current.languages[&request.language].events {
         for key in &event.sonic_bindings {
             if let Some(offset) = typed_profile.sonic_placement_offsets_by_binding.get(key) {
+                language_keys.insert(offset.evidence_binding.clone());
                 let asset = binding(&bindings, Some(&offset.evidence_binding))?;
                 evidence.push(FileRef {
                     path: asset.logical_id.clone().into(),
@@ -593,6 +600,34 @@ pub fn compile(source: &mut Source, request: &Request, output: &Path) -> Result<
         .as_ref()
         .map(|slot| -> Result<Vec<u8>> { metadata(source, parent.stream(slot)?, &mut total) })
         .transpose()?;
+    // Native semantic membership resolves through the one authored map into
+    // exact current roots, without one graph rule per binding.
+    let mut language_roots = BTreeSet::from([request.scene_id.clone()]);
+    for key in &language_keys {
+        let id = references
+            .get(key)
+            .and_then(|r| r.get("id"))
+            .and_then(Value::as_str)
+            .context("native language input missing from authored binding map")?;
+        language_roots.insert(id.to_owned());
+    }
+    let mut language_profiles = production_profiles(source, request)?;
+    language_profiles[0].rules.clear();
+    let language_required = source.production_requirements_for_ids(
+        &language_roots,
+        &language_profiles,
+        query_limits(),
+    )?;
+    let language_scope = json!({
+        "source_checkpoint":language_required.checkpoint(),
+        "admission_sha256":language_required.admission(),
+        "binding_sha256":language_required.binding_digest(),
+        "native_semantic_sha256":resolved_scene.language_fingerprints[&request.language],
+        "primary_objects":language_required.primary(),
+        "control_objects":language_required.controls(),
+        "interpretation_objects":language_required.metadata(),
+        "complete_semantic_coverage":false,"authorizes_eviction":false,
+    });
     // All ordinary metadata is admitted before creating the output directory.
     fs::create_dir(output)?;
     for (name, bytes) in &controls {
@@ -631,7 +666,7 @@ pub fn compile(source: &mut Source, request: &Request, output: &Path) -> Result<
     json_file(
         output,
         "native-source.json",
-        &json!({"schema":"reel.tig-native-source.experimental-1","adapter_source_sha256":Object::from_bytes(include_bytes!("tig_scene.rs")).sha256,"tig_source_pin_sha256":Object::from_bytes(include_bytes!("../vendor/tig/source-pin.json")).sha256,"source_checkpoint":source.checkpoint(),"scene_record":parent.reference(),"control_objects":pins,"primary_definition_ids":request.primary_definitions,"binding_count":bindings.assets.len(),"declared_inputs":{"source_checkpoint":required.checkpoint(),"admission_sha256":required.admission(),"binding_sha256":required.binding_digest(),"primary_objects":required.primary(),"control_objects":required.controls(),"interpretation_objects":required.metadata(),"complete_semantic_coverage":false,"authorizes_eviction":false},"new_production_approval":false,"complete_semantic_coverage":false}),
+        &json!({"schema":"reel.tig-native-source.experimental-1","adapter_source_sha256":Object::from_bytes(include_bytes!("tig_scene.rs")).sha256,"tig_source_pin_sha256":Object::from_bytes(include_bytes!("../vendor/tig/source-pin.json")).sha256,"source_checkpoint":source.checkpoint(),"scene_record":parent.reference(),"control_objects":pins,"primary_definition_ids":request.primary_definitions,"binding_count":bindings.assets.len(),"declared_inputs":{"source_checkpoint":required.checkpoint(),"admission_sha256":required.admission(),"binding_sha256":required.binding_digest(),"primary_objects":required.primary(),"control_objects":required.controls(),"interpretation_objects":required.metadata(),"complete_semantic_coverage":false,"authorizes_eviction":false},"language_inputs":language_scope,"new_production_approval":false,"complete_semantic_coverage":false}),
     )?;
     if evidence.is_empty() {
         scene_delivery_compile::compile_to_dir(output, &compile)
