@@ -214,20 +214,25 @@ fn picture_digest(path: &Path, shape: &Shape, format: &str) -> Result<String> {
                     mul(mul(index.into(), shape.fps_denominator.into())?, td.into())?,
                     mul(shape.fps_numerator.into(), tn.into())?,
                 )?;
-                let duration = rounded(
-                    mul(shape.fps_denominator.into(), td.into())?,
-                    mul(shape.fps_numerator.into(), tn.into())?,
-                )?;
+                let duration_n = mul(shape.fps_denominator.into(), td.into())?;
+                let duration_d = mul(shape.fps_numerator.into(), tn.into())?;
+                let duration_floor = duration_n / duration_d;
+                let duration_ceil = duration_floor + u128::from(duration_n % duration_d != 0);
+                let duration: u128 = fields[3].parse()?;
                 if pts != expected
                     || fields[1].parse::<u128>()? != pts
-                    || fields[3].parse::<u128>()? != duration
+                    || duration_floor == 0
+                    || duration < duration_floor
+                    || duration > duration_ceil
                     || fields[4].parse::<u64>()? != frame_bytes
                     || fields[5].len() != 64
                     || !fields[5]
                         .bytes()
                         .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
                 {
-                    bail!("decoded frame differs from native clock/size/hash contract");
+                    bail!(
+                        "decoded frame differs from native clock/size/hash contract at frame {index}: PTS {pts}, expected {expected}; duration {duration}, quantized interval {duration_floor}..{duration_ceil}"
+                    );
                 }
                 hash.update(fields[5].as_bytes());
                 hash.update(b"\n");

@@ -22,7 +22,11 @@ scale, frame interpolation, channel conversion, rate conversion or padding.
 
 For every video frame, FFmpeg retains the demuxer's time base. The decoded PTS
 must match its native frame-grid position rounded to that container tick, with
-the declared frame duration and decoded byte size. YUV444P and RGB24 are compared
+the decoded byte size and a frame duration of either the floor or ceiling of
+one native frame in that time base. For example, 24 fps in millisecond ticks
+legitimately reports 41 or 42 ticks of packet duration across FFmpeg versions;
+the PTS grid remains strictly 0, 42, 83, 125, ... . A time base too coarse to
+represent a positive whole-tick frame duration refuses. YUV444P and RGB24 are compared
 separately: equal YUV planes cannot hide a color-space tag that changes displayed
 RGB. Color range, matrix, transfer, primaries and chroma-location declarations
 must also match: decoding to RGB24 alone does not apply every display transfer

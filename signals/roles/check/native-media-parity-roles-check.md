@@ -35,3 +35,11 @@ target passes 15 tests with its one real-render case initially ignored; that
 case was run explicitly and passed with comparison equality/mismatch assertions.
 All-target/all-feature warnings-denied Clippy, formatting and whitespace checks
 pass. Exact-head Windows/Linux CI remains required before merge.
+
+Pinned-tool finding: FFmpeg 8.1 reports 41-tick packet durations for 24 fps in
+a 1/1000 time base; the development build reports 42. Both preserve the exact
+nearest native PTS grid. Reproduced with the CI-selected BtbN 8.1 build in a
+temporary tool directory, without changing the installed runtime. The duration
+contract now admits only floor/ceiling native-frame tick quantization; exact PTS,
+DTS, frame size/count and discontinuity checks remain in force. Pinned/development
+tool tests and current-head CI must qualify this correction before merge.
