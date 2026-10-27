@@ -210,7 +210,7 @@ fn vendored_runtime_source_matches_exact_upstream_pin() {
         serde_json::from_slice(&fs::read(root.join("source-pin.json")).unwrap()).unwrap();
     assert_eq!(
         manifest["commit"],
-        "09cbcaafdff28b2f90e42ef8c73be2b3cf1c30b4"
+        "78b593a134f1e8d1a64fa47177376bb101be36da"
     );
     let mut listed = std::collections::BTreeSet::new();
     let mut total = 0;
@@ -256,8 +256,8 @@ fn vendored_runtime_source_matches_exact_upstream_pin() {
     walk(&root, &root, &mut actual);
     actual.insert("LICENSE".into());
     assert_eq!(listed, actual);
-    assert_eq!(listed.len(), 46);
-    assert_eq!(total, 498091);
+    assert_eq!(listed.len(), 47);
+    assert_eq!(total, 509862);
 }
 
 fn native_scene_fixture() -> (Fixture, reel::tig_scene::Request) {
@@ -571,6 +571,330 @@ fn archive_and_requirement_admission_refuse_stale_missing_and_unknown_inputs() {
         .primary_definitions
         .push(request.primary_definitions[0].clone());
     assert!(reel::tig_scene::requirements(&mut source, &request).is_err());
+    assert_eq!(source.byte_requests(), 0);
+}
+
+#[test]
+fn frozen_native_job_survives_main_advancement_provider_reopen_and_git_unavailability() {
+    use tig_core::tree::TreeLimits;
+    use tig_store::{
+        Key,
+        metadata::{MetadataReader, MetadataStore},
+        source_claims::{Command as Claim, SourceJournal},
+    };
+    let (mut f, request) = native_scene_fixture();
+    let mut old = f.source();
+    let first = f.root().join("context-before");
+    reel::tig_scene::compile(&mut old, &request, &first).unwrap();
+    let runtime = tempfile::tempdir().unwrap();
+    let metadata = runtime.path().join("metadata");
+    let mut store = MetadataStore::create(
+        &metadata,
+        tig_store::metadata::Limits {
+            nodes: 8192,
+            bytes: 8 * 1024 * 1024,
+            database_bytes: 16 * 1024 * 1024,
+            min_free_bytes: 65536,
+        },
+    )
+    .unwrap();
+    let before = old.byte_requests();
+    let old_context =
+        reel::tig_scene::freeze_context(&mut old, &request, &mut store, TreeLimits::default())
+            .unwrap();
+    assert_eq!(old.byte_requests(), before);
+    let old_profile = archived_profile(&f, old_context.archive().clone(), old.checkpoint().clone());
+    let bytes = picture([0, 255, 0]);
+    let updated = Object::from_bytes(&bytes);
+    fs::write(
+        f.root().join("cache/objects").join(updated.sha256.as_str()),
+        bytes,
+    )
+    .unwrap();
+    let mut leaf: Value =
+        serde_json::from_slice(&fs::read(f.root().join("records/cel-b.tig")).unwrap()).unwrap();
+    leaf["selected"] = serde_json::to_value(&updated).unwrap();
+    write(f.root(), "records/cel-b.tig", &leaf);
+    git(f.root(), &["add", "records"]);
+    git(f.root(), &["commit", "-m", "replace only cel B"]);
+    f.profile["commit"] = json!(git(f.root(), &["rev-parse", "HEAD"]));
+    let mut new = f.source();
+    let new_context =
+        reel::tig_scene::freeze_context(&mut new, &request, &mut store, TreeLimits::default())
+            .unwrap();
+    assert_eq!(new.byte_requests(), 0);
+    assert!(new_context.requirements().primary().contains(&updated));
+    assert!(!old_context.requirements().primary().contains(&updated));
+    assert_eq!(
+        new_context.requirements().controls(),
+        old_context.requirements().controls()
+    );
+    let new_profile = archived_profile(&f, new_context.archive().clone(), new.checkpoint().clone());
+    let checkpoint = store.finish().unwrap();
+    drop(store);
+    drop(old);
+    drop(new);
+    for name in [".git", "records", "definitions"] {
+        fs::rename(
+            f.root().join(name),
+            f.root().join(format!("offline-{name}")),
+        )
+        .unwrap();
+    }
+    let mut nodes = MetadataReader::open(&metadata, &checkpoint).unwrap();
+    for (profile, context) in [(&old_profile, &old_context), (&new_profile, &new_context)] {
+        let (source, replay) = reel::tig_scene::restore_context(
+            profile.clone(),
+            &request,
+            context.selection(),
+            &mut nodes,
+            TreeLimits::default(),
+        )
+        .unwrap();
+        assert_eq!(source.byte_requests(), 0);
+        assert_eq!(replay.requirements(), context.requirements());
+        assert_eq!(replay.descriptor(), context.descriptor());
+    }
+    // Explicit readback precedes owner adoption. This journal is fixture-only.
+    let key = |value: &str| Key::parse(value).unwrap();
+    let journal_path = runtime.path().join("journal");
+    let mut journal = SourceJournal::create(&journal_path, key("fixture"), key("epoch")).unwrap();
+    for name in ["main", "render-job"] {
+        let prepared = journal
+            .apply(
+                key(&format!("prepare-{name}")),
+                Claim::Prepare {
+                    source: key(name),
+                    owner: key("owner"),
+                    expected_revision: 0,
+                    selection: old_context.selection().clone(),
+                },
+            )
+            .unwrap();
+        journal
+            .apply(
+                key(&format!("adopt-{name}")),
+                Claim::Adopt {
+                    source: key(name),
+                    owner: key("owner"),
+                    expected_revision: 1,
+                    prepared: prepared.reference,
+                },
+            )
+            .unwrap();
+    }
+    let prepared = journal
+        .apply(
+            key("prepare-new-main"),
+            Claim::Prepare {
+                source: key("main"),
+                owner: key("owner"),
+                expected_revision: 2,
+                selection: new_context.selection().clone(),
+            },
+        )
+        .unwrap();
+    let witness = journal.checkpoint();
+    drop(journal);
+    let mut journal = SourceJournal::open(&journal_path, &witness).unwrap();
+    assert_eq!(journal.obligations(10).unwrap().len(), 3);
+    journal
+        .apply(
+            key("adopt-new-main"),
+            Claim::Adopt {
+                source: key("main"),
+                owner: key("owner"),
+                expected_revision: 3,
+                prepared: prepared.reference,
+            },
+        )
+        .unwrap();
+    journal
+        .apply(
+            key("retire-old-main"),
+            Claim::Retire {
+                source: key("main"),
+                owner: key("owner"),
+                expected_revision: 4,
+                predecessor_revision: 2,
+            },
+        )
+        .unwrap();
+    let witness = journal.checkpoint();
+    drop(journal);
+    let mut journal = SourceJournal::open(&journal_path, &witness).unwrap();
+    let obligations = journal.obligations(10).unwrap();
+    assert_eq!(obligations.len(), 2);
+    assert!(!obligations.complete_claim_coverage());
+    assert!(
+        obligations
+            .iter()
+            .any(|o| o.source == key("render-job") && &o.selection == old_context.selection())
+    );
+    assert!(
+        obligations
+            .iter()
+            .any(|o| o.source == key("main") && &o.selection == new_context.selection())
+    );
+    drop(nodes);
+    let mut nodes = MetadataReader::open(&metadata, &checkpoint).unwrap();
+    for (profile, context, name) in [
+        (old_profile, old_context, "context-old-job"),
+        (new_profile, new_context, "context-new-main"),
+    ] {
+        let (mut source, _) = reel::tig_scene::restore_context(
+            profile,
+            &request,
+            context.selection(),
+            &mut nodes,
+            TreeLimits::default(),
+        )
+        .unwrap();
+        let next = f.root().join(name);
+        let changed = reel::tig_scene::Request {
+            language: "en".into(),
+            ..serde_json::from_value(serde_json::to_value(&request).unwrap()).unwrap()
+        };
+        let refused = f.root().join(format!("{name}-wrong-request"));
+        assert!(reel::tig_scene::compile(&mut source, &changed, &refused).is_err());
+        assert_eq!(source.byte_requests(), 0);
+        assert!(!refused.exists());
+        reel::tig_scene::compile(&mut source, &request, &next).unwrap();
+        let bytes = fs::read(next.join("delivery/job.json")).unwrap();
+        let original = fs::read(first.join("delivery/job.json")).unwrap();
+        if name == "context-old-job" {
+            assert_eq!(bytes, original);
+            assert_eq!(
+                fs::read(next.join("native-source.json")).unwrap(),
+                fs::read(first.join("native-source.json")).unwrap()
+            );
+        } else {
+            assert_ne!(bytes, original);
+        }
+    }
+}
+
+#[test]
+fn frozen_context_rejects_request_policy_source_and_budget_mismatches_without_byte_io() {
+    use tig_core::{
+        Digest,
+        tree::{MemoryNodes, TreeLimits},
+    };
+    let (f, mut request) = native_scene_fixture();
+    let mut source = f.source();
+    let mut nodes = MemoryNodes::default();
+    let context =
+        reel::tig_scene::freeze_context(&mut source, &request, &mut nodes, TreeLimits::default())
+            .unwrap();
+    let profile = archived_profile(&f, context.archive().clone(), source.checkpoint().clone());
+    let restore = |profile, request: &reel::tig_scene::Request, nodes: &mut MemoryNodes| {
+        reel::tig_scene::restore_context(
+            profile,
+            request,
+            context.selection(),
+            nodes,
+            TreeLimits::default(),
+        )
+    };
+    request.language = "en".into();
+    assert!(restore(profile.clone(), &request, &mut nodes).is_err());
+    request.language = "es".into();
+    request.delivery_title.push_str(" changed");
+    assert!(restore(profile.clone(), &request, &mut nodes).is_err());
+    request
+        .delivery_title
+        .truncate(request.delivery_title.len() - 8);
+    let mut wrong = profile.clone();
+    wrong.checkpoint = Digest::blob(b"wrong source");
+    assert!(restore(wrong, &request, &mut nodes).is_err());
+    let mut wrong = profile.clone();
+    wrong.archive = Object::from_bytes(b"missing archive");
+    assert!(restore(wrong, &request, &mut nodes).is_err());
+    let mut wrong = profile.clone();
+    wrong.admitted[0].object = Object::from_bytes(b"wrong definition");
+    assert!(restore(wrong, &request, &mut nodes).is_err());
+    let mut wrong = profile.clone();
+    wrong.admitted[0].payload = reel::tig_inputs::Payload::Stream {
+        slot: "not-admitted".into(),
+    };
+    assert!(restore(wrong, &request, &mut nodes).is_err());
+    assert!(restore(profile.clone(), &request, &mut MemoryNodes::default()).is_err());
+    let count = nodes.objects().count();
+    request.delivery_title = "x".repeat(65_536);
+    assert!(
+        reel::tig_scene::freeze_context(&mut source, &request, &mut nodes, TreeLimits::default())
+            .is_err()
+    );
+    assert_eq!(nodes.objects().count(), count);
+    request.delivery_title.clear();
+    let tiny = TreeLimits {
+        max_entries: 1,
+        ..TreeLimits::default()
+    };
+    assert!(reel::tig_scene::freeze_context(&mut source, &request, &mut nodes, tiny).is_err());
+    assert_eq!(nodes.objects().count(), count);
+    assert_eq!(source.byte_requests(), 0);
+}
+
+#[test]
+fn valid_generic_context_with_changed_adapter_descriptor_is_not_a_reel_job_context() {
+    use tig_core::{
+        LogicalPath,
+        tree::{MemoryNodes, NodeStore, Tree, TreeLimits},
+    };
+    use tig_store::source_claims::Selection;
+    let (f, request) = native_scene_fixture();
+    let mut source = f.source();
+    let mut nodes = MemoryNodes::default();
+    let context =
+        reel::tig_scene::freeze_context(&mut source, &request, &mut nodes, TreeLimits::default())
+            .unwrap();
+    let mut bindings = Tree::from_root(context.selection().root.clone())
+        .entries(&mut nodes, TreeLimits::default())
+        .unwrap()
+        .0;
+    let key = |s: &str| LogicalPath::parse(s).unwrap();
+    let mut descriptor: Value = serde_json::from_slice(context.descriptor()).unwrap();
+    descriptor["scene_adapter_sha256"] = json!("0".repeat(64));
+    let descriptor = nodes
+        .put(&serde_json::to_vec(&descriptor).unwrap())
+        .unwrap();
+    let header = bindings[&key("context/identity")].clone();
+    let mut header: Value = serde_json::from_slice(&nodes.get(&header).unwrap().unwrap()).unwrap();
+    header["descriptor"] = serde_json::to_value(&descriptor).unwrap();
+    let header = nodes
+        .put(&tig_core::identity::canonical_json(&header).unwrap())
+        .unwrap();
+    bindings.insert(key("context/identity"), header.clone());
+    bindings.insert(key("operation/descriptor"), descriptor);
+    let tree = Tree::build(&bindings, &mut nodes, TreeLimits::default())
+        .unwrap()
+        .0;
+    let selection = Selection {
+        root: tree.root().clone(),
+        context: header.sha256,
+    };
+    // Identity-valid opaque descriptors are allowed by generic Tig. The producer
+    // still has to admit its exact request/adapter, before any byte reads.
+    assert!(
+        tig_git::source::native::context::read_descriptor(
+            &selection,
+            &mut nodes,
+            TreeLimits::default()
+        )
+        .is_ok()
+    );
+    let profile = archived_profile(&f, context.archive().clone(), source.checkpoint().clone());
+    assert!(
+        reel::tig_scene::restore_context(
+            profile,
+            &request,
+            &selection,
+            &mut nodes,
+            TreeLimits::default()
+        )
+        .is_err()
+    );
     assert_eq!(source.byte_requests(), 0);
 }
 

@@ -26,7 +26,7 @@ struct Header {
     bytes: usize,
 }
 
-fn tree_error(error: TreeError) -> Error {
+pub(super) fn tree_error(error: TreeError) -> Error {
     match error {
         TreeError::Budget => Error::Budget,
         TreeError::MissingNode(_) => Error::Incomplete,
@@ -43,7 +43,7 @@ fn timed(start: Instant, limits: Limits) -> Result<()> {
 fn path(namespace: &str, digest: &Digest) -> Result<LogicalPath> {
     LogicalPath::parse(&format!("{namespace}/{}", digest.as_str())).map_err(|_| Error::Invalid)
 }
-fn put(store: &mut impl NodeStore, bytes: &[u8]) -> Result<Object> {
+pub(super) fn put(store: &mut impl NodeStore, bytes: &[u8]) -> Result<Object> {
     let expected = Object::from_bytes(bytes);
     if bytes.len() > MAX_RECORD_BYTES {
         return Err(Error::Budget);
@@ -54,7 +54,7 @@ fn put(store: &mut impl NodeStore, bytes: &[u8]) -> Result<Object> {
     }
     Ok(actual)
 }
-fn read(store: &impl NodeStore, object: &Object, remaining: usize) -> Result<Vec<u8>> {
+pub(super) fn read(store: &impl NodeStore, object: &Object, remaining: usize) -> Result<Vec<u8>> {
     if object.bytes > remaining.min(MAX_RECORD_BYTES) as u64 {
         return Err(Error::Budget);
     }

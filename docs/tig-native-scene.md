@@ -136,3 +136,48 @@ native recompilation. The explicit Windows FFmpeg case also prepares archived
 inputs, drops the source, renders/checks and compares original pixels and PCM.
 Actual job/claim recovery, source/job completeness, schema/variant execution,
 consumed-property invalidation, full family parity and production cutover stay open.
+
+## Frozen declared scene jobs
+
+Optional Rust APIs use the same request-derived Production policy:
+
+```text
+freeze_context(source, request, metadata_store, tree_limits) -> candidate context
+              |
+     caller finishes provider, closes and reopens it
+              |
+restore_context(admitted_archive_profile, request, selection, store, limits)
+              -> exact source + verified context (no byte/cache reads)
+              |
+     caller owner-journal prepare/adopt and job/resource admission
+              |
+compile(restored_source, request, new_private_job_directory)
+```
+
+The private descriptor binds the exact request, native scene/input adapter source
+bytes and vendored Tig source manifest. A different request, adapter, selection,
+admission, archive or checkpoint refuses. This experimental replay requires the
+matching adapter binary; no upgrade conversion or latest-source fallback occurs.
+The restored Source binds that descriptor for native compilation/refreezing;
+changing the request afterward refuses before byte reads or job-directory writes.
+Lower-level Source readers remain explicitly caller-managed, not a capability
+sandbox limited to this context's object set.
+The returned context has exact root and primary/control/interpretation pins;
+the returned source uses its verified archived snapshot without Git. Neither API
+creates a provider/journal, starts a job, adopts an owner claim or reads payloads.
+CLI source profiles remain unchanged. Caller-provided stores and graph/archive
+limits bound individual stages, not total memory or a capacity reservation.
+
+An isolated durable fixture finishes and reads back two cel revisions before
+journal adoption, advances main, retires only its predecessor, reopens the journal
+and metadata store, then compiles the old job byte-identically after Git/working
+metadata are unavailable. The new main compilation uses the replacement cel;
+the independent old job keeps its original root. Negative cases refuse changed
+requests/tool descriptors, admissions, missing metadata and budget failures.
+
+These are declared production contexts, not consumed-property render recipes,
+full runtime/tool closures, human approvals, global job/source enrollment or media
+custody. Physical execution guards remain separate. Canonical output dependencies
+remain forbidden; optional derived-output cache reuse needs its own validated
+recipe and execution leases. The owner journal still reports incomplete global
+claims, and no context or job completion grants cache-removal authority.
