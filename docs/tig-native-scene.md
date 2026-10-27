@@ -214,3 +214,35 @@ closure to Tig's produced claim remains a separate integration step. Historical
 approved masters without a native claim remain selected history, not fabricated
 producer evidence. Existing cache/job admission and independent custody checks
 remain required; no metadata-only recipe comparison grants removal authority.
+
+## Checked local render candidates
+
+The optional Rust `tig_scene_production::render` takes a verified frozen context,
+its exact Source/request, the externally admitted producer Object, and new private
+job/output directories. Before creating directories it checks exact context
+checkpoint, binding, admission and parameters. It compiles its own native job,
+prepares guarded exact inputs, renders through the ordinary scene-delivery engine
+and independently decodes/checks the result. It returns a sealed in-process
+`RenderedCandidate`, not a deserializable success receipt or a selected asset.
+
+The caller must first finish/reopen/read back and durably protect/adopt the context
+and admit job/storage resources. This API does not establish complete global job
+claims or capacity reservations. Existing path-protection requirements still
+apply; no global render lock is added. Compile/render errors may leave diagnostic
+job metadata or completed outputs without a candidate claim.
+
+`candidate.claim(&[OutputBinding { output_name, subject }])` explicitly maps checked
+render outputs to separately admitted Tig BoundSubjects. It verifies the exact
+private receipt pin and freshly hashes mapped output files before creating the
+unsigned claim. Empty/duplicate mappings, foreign subjects, unknown outputs,
+changed receipts or changed payloads refuse. The claim pins original context,
+recipe and outputs without hashing its own containing .tig record. Callers retain
+the claim, private receipt and bytes through their existing storage/publication
+system; the API writes no .tig record, cache, selection or delivery update.
+
+This closes a scoped local execution/result-binding seam. The recipe remains
+declared whole-scene consumption, and the producer Object remains external
+admission: complete executable/decoder/library/font closure is not verified here.
+It therefore does not establish full renderer-freshness acceptance, approval,
+delivery currency or independent retained custody. Input guards end with rendering;
+candidate claim creation alone neither retains outputs nor authorizes eviction.
