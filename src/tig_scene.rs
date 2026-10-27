@@ -24,7 +24,7 @@ use tig_core::{
     Object,
     tree::{NodeStore, TreeLimits},
 };
-use tig_git::source::native::context::ProductionContext;
+use tig_git::source::native::{context::ProductionContext, produced};
 use tig_store::source_claims::Selection;
 
 pub const SCHEMA: &str = "reel.tig-native-scene.experimental-1";
@@ -103,7 +103,16 @@ pub fn recipe(
     let parameters = descriptor(request)?;
     source.check_native_context(&parameters)?;
     let profiles = production_profiles(source, request)?;
-    let consumption: Vec<_> = profiles
+    source.production_recipe(
+        &request.scene_id,
+        &profiles,
+        &consumption(&profiles, request),
+        &operation(producer, &parameters),
+        query_limits(),
+    )
+}
+fn consumption(profiles: &[Profile], request: &Request) -> Vec<graph::recipe::Consumption> {
+    profiles
         .iter()
         .map(|profile| graph::recipe::Consumption {
             definition_id: profile.definition_id.clone(),
@@ -114,23 +123,18 @@ pub fn recipe(
                 BTreeSet::new()
             },
         })
-        .collect();
-    let operation = graph::recipe::Operation {
+        .collect()
+}
+fn operation(producer: &Object, parameters: &[u8]) -> graph::recipe::Operation {
+    graph::recipe::Operation {
         name: "reel.native-scene.declared-inputs.experimental-1".into(),
         semantics: Object::from_bytes(
             b"reel.native-scene.recipe.experimental-1:scene_id,binding_ids;whole-scene-payloads;explicit-producer;exact-context-parameters",
         )
         .sha256,
         producer: producer.clone(),
-        parameters: Object::from_bytes(&parameters),
-    };
-    source.production_recipe(
-        &request.scene_id,
-        &profiles,
-        &consumption,
-        &operation,
-        query_limits(),
-    )
+        parameters: Object::from_bytes(parameters),
+    }
 }
 fn query_limits() -> graph::Limits {
     graph::Limits {
@@ -267,6 +271,54 @@ pub fn restore_context(
     }
     source.bind_native_context(context.descriptor());
     Ok((source, context))
+}
+
+/// Replay an unsigned claim's original native context/recipe, without payload IO.
+/// External source/request/producer admission is required; no current/latest
+/// fallback, producer execution, output-byte verification or custody is inferred.
+pub fn restore_claim<'a>(
+    profile: ArchiveProfile,
+    request: &Request,
+    producer: &Object,
+    claim: &'a graph::recipe::produced::Claim,
+    store: &mut impl NodeStore,
+    limits: TreeLimits,
+) -> Result<(Source, produced::ReplayedClaim<'a>)> {
+    request.validate()?;
+    let parameters = descriptor(request)?;
+    let operation = operation(producer, &parameters);
+    if claim.operation() != &operation {
+        bail!("produced claim operation differs from native admission");
+    }
+    let archive = profile.archive.clone();
+    let native = profile.limits;
+    let mut source = Source::from_archive(profile, store, limits)?;
+    let profiles = production_profiles(&source, request)?;
+    let consumption = consumption(&profiles, request);
+    let root = source.record(&request.scene_id)?.reference().clone();
+    let query = query_limits();
+    let admission = produced::Admission {
+        profiles: &profiles,
+        consumption: &consumption,
+        operation: &operation,
+        native,
+        tree: limits,
+        query,
+        recipe: graph::recipe::Limits {
+            nodes: query.nodes,
+            edges: query.edges,
+            bytes: query.bytes,
+        },
+    };
+    let replay = source.replay_produced(claim, &admission, store)?;
+    if replay.context().archive() != &archive
+        || replay.context().roots() != &BTreeSet::from([root])
+        || replay.context().descriptor() != parameters
+    {
+        bail!("produced claim context differs from admitted native source/request");
+    }
+    source.bind_native_context(replay.context().descriptor());
+    Ok((source, replay))
 }
 fn put(root: &Path, name: &str, bytes: &[u8]) -> Result<()> {
     fs::OpenOptions::new()

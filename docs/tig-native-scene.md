@@ -246,3 +246,25 @@ admission: complete executable/decoder/library/font closure is not verified here
 It therefore does not establish full renderer-freshness acceptance, approval,
 delivery currency or independent retained custody. Input guards end with rendering;
 candidate claim creation alone neither retains outputs nor authorizes eviction.
+
+## Original native claim replay
+
+`tig_scene::restore_claim(original_archive_profile, request, producer, claim,
+store, limits)` returns the original verified Source and Tig's ReplayedClaim.
+Operation/request/producer mismatch refuses before any metadata-store read.
+The API derives native profiles and consumed fields through the same helpers as
+recipe planning, then delegates to upstream original-context/recipe replay. It
+checks exact external archive/checkpoint, native scene root and descriptor, and
+binds the restored source to the original request. A missing store never falls
+back to Git, another source revision or a latest payload selection.
+
+The caller supplies the original admitted request/profile and an exact parsed
+asset-side Claim; replay does not treat a claim's own declaration as authority.
+It reads metadata only and writes no store/cache, starts no producer, and does
+not verify output payloads. A verified original claim can then be compared with
+an independently planned desired recipe and separately bound current output
+subject through Tig's correspondence API. Annotation-only desired source changes
+can preserve a claimed recipe match; consumed changes are stale. Neither state
+proves approval, completed delivery, availability, full tool closure or custody.
+Historical selected outputs with no native claim remain Unproven in this new
+correspondence contract and retain their existing selection/history obligations.
