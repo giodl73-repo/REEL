@@ -69,6 +69,11 @@ pub enum Payloads {
         groups: BTreeSet<String>,
         min: usize,
     },
+    /// Exact selected document and/or required named streams, without fallback.
+    Named {
+        selected: bool,
+        slots: BTreeSet<String>,
+    },
     Unsupported,
 }
 
@@ -131,6 +136,16 @@ impl Profile {
                     .chain(groups)
                     .all(|s| !s.is_empty() && s.len() <= 128 && !s.chars().any(char::is_control)),
                 "invalid payload selector token",
+            )?;
+        }
+        if let Payloads::Named { selected, slots } = &self.payloads {
+            require(
+                (*selected || !slots.is_empty())
+                    && slots.len() <= 256
+                    && slots.iter().all(|s| {
+                        !s.is_empty() && s.len() <= 128 && !s.chars().any(char::is_control)
+                    }),
+                "invalid named payload selector",
             )?;
         }
         Ok(())
@@ -213,6 +228,13 @@ struct RawEdge {
     target: Target,
 }
 
+struct Extraction {
+    node: Node,
+    edges: Vec<RawEdge>,
+    covered: bool,
+    payloads: Option<BTreeSet<Object>>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct Node {
     pub reference: Reference,
@@ -271,6 +293,48 @@ pub struct Graph {
     edge_attempts: usize,
     sizes: BTreeMap<Digest, u64>,
     binding_digest: Option<Digest>,
+    source_metadata: BTreeSet<Object>,
+    declared_payloads: BTreeMap<Reference, Option<BTreeSet<Object>>>,
+}
+
+/// Scoped declared inputs only; this grants no retention or eviction authority.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ProductionRequirements {
+    checkpoint: Digest,
+    admission: Digest,
+    binding_digest: Digest,
+    primary: BTreeSet<Object>,
+    controls: BTreeSet<Object>,
+    metadata: BTreeSet<Object>,
+}
+impl ProductionRequirements {
+    pub fn checkpoint(&self) -> &Digest {
+        &self.checkpoint
+    }
+    pub fn admission(&self) -> &Digest {
+        &self.admission
+    }
+    pub fn binding_digest(&self) -> &Digest {
+        &self.binding_digest
+    }
+    pub fn primary(&self) -> &BTreeSet<Object> {
+        &self.primary
+    }
+    pub fn controls(&self) -> &BTreeSet<Object> {
+        &self.controls
+    }
+    pub fn metadata(&self) -> &BTreeSet<Object> {
+        &self.metadata
+    }
+    /// Deduplicated logical objects, not measured allocated storage or custody.
+    pub fn all_objects(&self) -> BTreeSet<Object> {
+        self.primary
+            .iter()
+            .chain(&self.controls)
+            .chain(&self.metadata)
+            .cloned()
+            .collect()
+    }
 }
 
 impl Graph {
@@ -309,6 +373,44 @@ impl Graph {
     }
     pub fn complete_semantic_coverage(&self) -> bool {
         false
+    }
+
+    /// Every admitted node's exact payloads plus bound interpretation documents.
+    /// Opaque semantic coverage, source/job protection and custody stay separate.
+    pub fn production_requirements(&self) -> Result<ProductionRequirements> {
+        require(
+            self.complete_declared_coverage()
+                && self.kinds == BTreeSet::from([EdgeKind::Production]),
+            "complete Production-only query required",
+        )?;
+        let mut primary = BTreeSet::new();
+        let mut controls = BTreeSet::new();
+        for (reference, node) in &self.nodes {
+            let objects = self
+                .declared_payloads
+                .get(reference)
+                .and_then(Option::as_ref)
+                .ok_or_else(|| Error("declared payload selections missing".into()))?;
+            match node.class {
+                NodeKind::Primary => primary.extend(objects.iter().cloned()),
+                NodeKind::Container => controls.extend(objects.iter().cloned()),
+                NodeKind::Output => require(
+                    objects.is_empty(),
+                    "output bytes cannot be production inputs",
+                )?,
+            }
+        }
+        Ok(ProductionRequirements {
+            checkpoint: self.checkpoint.clone(),
+            admission: self.admission.clone(),
+            binding_digest: self
+                .binding_digest
+                .clone()
+                .ok_or_else(|| Error("binding identity missing".into()))?,
+            primary,
+            controls,
+            metadata: self.source_metadata.clone(),
+        })
     }
 
     fn gap(&mut self, at: &Reference, reason: GapReason) {
@@ -417,6 +519,8 @@ pub fn resolve(source: &mut impl Source, query: &Query, profiles: &[Profile]) ->
         edge_attempts: 0,
         sizes: BTreeMap::new(),
         binding_digest: None,
+        source_metadata: BTreeSet::new(),
+        declared_payloads: BTreeMap::new(),
     };
     let mut seen = query.roots.clone();
     for root in &seen {
@@ -593,16 +697,27 @@ fn visit(
                 profiles,
                 query.limits.edges.saturating_sub(graph.edge_attempts),
             ) {
-                Ok((node, edges, covered)) => {
+                Ok(Extraction {
+                    node,
+                    edges,
+                    covered,
+                    payloads,
+                }) => {
                     graph.check_size(reference, &node.reference.object);
                     if let Some(object) = &node.selected {
                         graph.check_size(reference, object);
                     }
-                    if let Some(objects) = &node.primary_objects {
+                    if let Some(objects) = &payloads {
                         for object in objects {
                             graph.check_size(reference, object);
                         }
                     }
+                    for bytes in [&instance, &definition, &schema] {
+                        let object = Object::from_bytes(bytes);
+                        graph.check_size(reference, &object);
+                        graph.source_metadata.insert(object);
+                    }
+                    graph.declared_payloads.insert(reference.clone(), payloads);
                     graph.nodes.insert(reference.clone(), node);
                     if !covered {
                         graph.gap(reference, GapReason::UncoveredKind);
@@ -659,7 +774,7 @@ fn extract(
     kinds: &BTreeSet<EdgeKind>,
     profiles: &BTreeMap<&Object, &Profile>,
     edge_budget: usize,
-) -> std::result::Result<(Node, Vec<RawEdge>, bool), GapReason> {
+) -> std::result::Result<Extraction, GapReason> {
     let parsed = Instance::parse(instance).map_err(|_| GapReason::InvalidRecord)?;
     if parsed.object() != &reference.object || parsed.value().id != reference.id {
         return Err(GapReason::InvalidRecord);
@@ -722,22 +837,25 @@ fn extract(
             }
         }
     }
-    Ok((
-        Node {
+    let payloads = payload_objects(parsed.value(), profile);
+    Ok(Extraction {
+        node: Node {
             reference: reference.clone(),
             class: profile.class,
             selected: parsed.value().selected.as_ref().map(Pin::object),
-            primary_objects: primary_objects(parsed.value(), profile),
+            primary_objects: if profile.class == NodeKind::Primary {
+                payloads.clone()
+            } else {
+                Some(BTreeSet::new())
+            },
         },
         edges,
-        kinds.is_subset(&profile.covered),
-    ))
+        covered: kinds.is_subset(&profile.covered),
+        payloads,
+    })
 }
 
-fn primary_objects(instance: &Instance, profile: &Profile) -> Option<BTreeSet<Object>> {
-    if profile.class != NodeKind::Primary {
-        return Some(BTreeSet::new());
-    }
+fn payload_objects(instance: &Instance, profile: &Profile) -> Option<BTreeSet<Object>> {
     match &profile.payloads {
         Payloads::None => Some(BTreeSet::new()),
         Payloads::Unsupported => None,
@@ -753,6 +871,23 @@ fn primary_objects(instance: &Instance, profile: &Profile) -> Option<BTreeSet<Ob
                 .collect();
             (matches.len() >= *min)
                 .then(|| matches.into_iter().map(|s| s.object.object()).collect())
+        }
+        Payloads::Named { selected, slots } => {
+            let mut objects = BTreeSet::new();
+            if *selected {
+                objects.insert(instance.selected.as_ref()?.object());
+            }
+            for slot in slots {
+                objects.insert(
+                    instance
+                        .streams
+                        .iter()
+                        .find(|s| &s.slot == slot)?
+                        .object
+                        .object(),
+                );
+            }
+            Some(objects)
         }
     }
 }

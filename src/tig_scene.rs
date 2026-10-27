@@ -3,7 +3,7 @@
 use crate::{
     scene_delivery::FileRef,
     scene_delivery_compile::{self, CompileManifest, DeliveryProfile},
-    tig_inputs::Source,
+    tig_inputs::{Payload, Source},
 };
 use anyhow::{Context, Result, anyhow, bail};
 use reel_assembly::{
@@ -14,11 +14,12 @@ use reel_assembly::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::{Read, Write},
     path::Path,
 };
+use tig_assets::graph::{self, Binding, Collection, EdgeKind, NodeKind, Payloads, Profile, Rule};
 use tig_core::Object;
 
 pub const SCHEMA: &str = "reel.tig-native-scene.experimental-1";
@@ -48,6 +49,22 @@ pub struct Controls {
     pub template_receipt: Option<String>,
 }
 impl Request {
+    fn validate(&self) -> Result<()> {
+        if self.schema != SCHEMA
+            || self.primary_definitions.is_empty()
+            || self.primary_definitions.len() > 256
+            || self.primary_definitions.contains(&self.scene_definition)
+            || self
+                .primary_definitions
+                .iter()
+                .collect::<BTreeSet<_>>()
+                .len()
+                != self.primary_definitions.len()
+        {
+            bail!("invalid native scene protocol admission");
+        }
+        Ok(())
+    }
     pub fn read(path: &Path) -> Result<Self> {
         let mut bytes = Vec::new();
         fs::File::open(path)?.take(65_537).read_to_end(&mut bytes)?;
@@ -57,6 +74,87 @@ impl Request {
         let value = tig_core::identity::parse_json(&bytes)?;
         Ok(serde_json::from_value(value)?)
     }
+}
+
+/// Derive the entire declared native scene input set, without byte/cache IO.
+/// Whole-scene coverage is distinct from minimal per-language consumption,
+/// production eligibility, opaque semantic completeness and retained custody.
+pub fn requirements(
+    source: &mut Source,
+    request: &Request,
+) -> Result<graph::ProductionRequirements> {
+    request.validate()?;
+    let parent = source.record(&request.scene_id)?;
+    if parent.definition().id != request.scene_definition {
+        bail!("scene definition differs from admitted protocol");
+    }
+    let references = parent
+        .authored()
+        .get("binding_ids")
+        .and_then(Value::as_object)
+        .context("scene binding_ids missing")?;
+    if references.is_empty()
+        || references.len() > 4096
+        || references
+            .keys()
+            .any(|key| key.is_empty() || key.len() > 256 || key.chars().any(char::is_control))
+    {
+        bail!("native binding count/key exceeds budget");
+    }
+    let slots = [
+        &request.controls.catalog,
+        &request.controls.episode,
+        &request.controls.policy,
+        &request.controls.profile,
+    ]
+    .into_iter()
+    .chain(request.controls.template_receipt.iter())
+    .cloned()
+    .collect();
+    let mut profiles = vec![Profile {
+        definition_id: request.scene_definition.clone(),
+        definition: source.admission(&request.scene_definition)?.object.clone(),
+        class: NodeKind::Container,
+        covered: BTreeSet::from([EdgeKind::Production]),
+        rules: vec![Rule {
+            pointer: "/binding_ids".into(),
+            kind: EdgeKind::Production,
+            collection: Collection::ObjectValues,
+            optional: false,
+            binding: Binding::SnapshotSelected,
+        }],
+        payloads: Payloads::Named {
+            selected: true,
+            slots,
+        },
+    }];
+    for id in &request.primary_definitions {
+        let admission = source.admission(id)?;
+        profiles.push(Profile {
+            definition_id: id.clone(),
+            definition: admission.object.clone(),
+            class: NodeKind::Primary,
+            covered: BTreeSet::from([EdgeKind::Production]),
+            rules: vec![],
+            payloads: match &admission.payload {
+                Payload::Selected => Payloads::SelectedObject,
+                Payload::Stream { slot } => Payloads::Named {
+                    selected: false,
+                    slots: BTreeSet::from([slot.clone()]),
+                },
+            },
+        });
+    }
+    source.production_requirements(
+        &request.scene_id,
+        &profiles,
+        graph::Limits {
+            nodes: 4097,
+            edges: 4096,
+            depth: 2,
+            bytes: 16 * 1024 * 1024,
+        },
+    )
 }
 fn put(root: &Path, name: &str, bytes: &[u8]) -> Result<()> {
     fs::OpenOptions::new()
@@ -198,15 +296,7 @@ fn snapshot_graph(
 /// The full native scene is resolved, including its declared language matrix.
 /// No primary media copies, cache writes, selection or publication are performed.
 pub fn compile(source: &mut Source, request: &Request, output: &Path) -> Result<Value> {
-    if request.schema != SCHEMA
-        || request.primary_definitions.is_empty()
-        || request.primary_definitions.len() > 256
-        || request
-            .primary_definitions
-            .contains(&request.scene_definition)
-    {
-        bail!("invalid native scene protocol admission");
-    }
+    request.validate()?;
     let parent = source.record(&request.scene_id)?;
     if parent.definition().id != request.scene_definition {
         bail!("scene definition differs from admitted protocol");
@@ -249,6 +339,7 @@ pub fn compile(source: &mut Source, request: &Request, output: &Path) -> Result<
         }
         assets.insert(key.clone(), selected);
     }
+    let required = requirements(source, request)?;
     let mut total = 0;
     let scene_bytes = metadata(source, parent.selected()?, &mut total)?;
     let scene: Scene = serde_json::from_slice(&scene_bytes)?;
@@ -375,7 +466,7 @@ pub fn compile(source: &mut Source, request: &Request, output: &Path) -> Result<
     json_file(
         output,
         "native-source.json",
-        &json!({"schema":"reel.tig-native-source.experimental-1","adapter_source_sha256":Object::from_bytes(include_bytes!("tig_scene.rs")).sha256,"source_checkpoint":source.checkpoint(),"scene_record":parent.reference(),"control_objects":pins,"primary_definition_ids":request.primary_definitions,"binding_count":bindings.assets.len(),"new_production_approval":false,"complete_semantic_coverage":false}),
+        &json!({"schema":"reel.tig-native-source.experimental-1","adapter_source_sha256":Object::from_bytes(include_bytes!("tig_scene.rs")).sha256,"tig_source_pin_sha256":Object::from_bytes(include_bytes!("../vendor/tig/source-pin.json")).sha256,"source_checkpoint":source.checkpoint(),"scene_record":parent.reference(),"control_objects":pins,"primary_definition_ids":request.primary_definitions,"binding_count":bindings.assets.len(),"declared_inputs":{"source_checkpoint":required.checkpoint(),"admission_sha256":required.admission(),"binding_sha256":required.binding_digest(),"primary_objects":required.primary(),"control_objects":required.controls(),"interpretation_objects":required.metadata(),"complete_semantic_coverage":false,"authorizes_eviction":false},"new_production_approval":false,"complete_semantic_coverage":false}),
     )?;
     if evidence.is_empty() {
         scene_delivery_compile::compile_to_dir(output, &compile)

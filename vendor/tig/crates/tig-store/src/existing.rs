@@ -251,6 +251,17 @@ pub struct VerifiedRead {
     protection: Protection,
     _permit: Permit,
 }
+impl Drop for VerifiedRead {
+    fn drop(&mut self) {
+        if self.protection == Protection::CooperativeFileLock {
+            // A duplicated/inherited descriptor may keep the open-file
+            // description alive after this File closes. End this guard's lock
+            // explicitly; independently opened readers retain their own locks.
+            // An unlock error leaves ordinary close as the conservative fallback.
+            let _ = FileExt::unlock(&self.file);
+        }
+    }
+}
 struct Permit(Arc<AtomicU32>);
 impl Drop for Permit {
     fn drop(&mut self) {
@@ -284,6 +295,38 @@ impl Read for VerifiedRead {
 impl Seek for VerifiedRead {
     fn seek(&mut self, p: SeekFrom) -> io::Result<u64> {
         self.file.seek(p)
+    }
+}
+
+#[cfg(all(test, unix))]
+mod lock_lifetime_tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_descriptor_cannot_extend_an_ended_read_guard() {
+        let temp = tempfile::tempdir().unwrap();
+        let object = Object::from_bytes(b"synthetic");
+        let path = Layout::Flat.object_path(temp.path(), &object.sha256);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"synthetic").unwrap();
+        let mut cache = ReadCache::new(Profile {
+            places: vec![Place {
+                root: temp.path().into(),
+                layout: Layout::Flat,
+            }],
+            required: RequiredProtection::CooperativeImmutable,
+            limits: Limits::default(),
+        })
+        .unwrap();
+        let held = cache.open_verified(&object).unwrap();
+        // dup and fork share the flock's open file description. Reproduce its
+        // lifetime without unsafe fork/pre_exec code or timing-dependent stress.
+        let duplicate = held.file.try_clone().unwrap();
+        let contender = File::open(&path).unwrap();
+        assert!(FileExt::try_lock_exclusive(&contender).is_err());
+        drop(held);
+        FileExt::try_lock_exclusive(&contender).unwrap();
+        assert_eq!(duplicate.metadata().unwrap().len(), object.bytes);
     }
 }
 

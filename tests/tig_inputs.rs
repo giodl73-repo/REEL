@@ -210,7 +210,7 @@ fn vendored_runtime_source_matches_exact_upstream_pin() {
         serde_json::from_slice(&fs::read(root.join("source-pin.json")).unwrap()).unwrap();
     assert_eq!(
         manifest["commit"],
-        "0855e7a97a1b51ded9e31c40d89dc9c051abd06f"
+        "09cbcaafdff28b2f90e42ef8c73be2b3cf1c30b4"
     );
     let mut listed = std::collections::BTreeSet::new();
     let mut total = 0;
@@ -256,8 +256,8 @@ fn vendored_runtime_source_matches_exact_upstream_pin() {
     walk(&root, &root, &mut actual);
     actual.insert("LICENSE".into());
     assert_eq!(listed, actual);
-    assert_eq!(listed.len(), 45);
-    assert_eq!(total, 482291);
+    assert_eq!(listed.len(), 46);
+    assert_eq!(total, 498091);
 }
 
 fn native_scene_fixture() -> (Fixture, reel::tig_scene::Request) {
@@ -393,6 +393,30 @@ fn native_scene_compiles_fresh_leaf_versions_without_changing_parent_or_old_view
     let next = f.root().join("native-next");
     reel::tig_scene::compile(&mut f.source(), &request, &next).unwrap();
     let next_job = job(&next);
+    let context = |dir: &Path| -> Value {
+        serde_json::from_slice(&fs::read(dir.join("native-source.json")).unwrap()).unwrap()
+    };
+    let before_context = context(&first);
+    let next_context = context(&next);
+    assert_eq!(before_context["scene_record"], next_context["scene_record"]);
+    assert_eq!(
+        before_context["declared_inputs"]["control_objects"],
+        next_context["declared_inputs"]["control_objects"]
+    );
+    assert_ne!(
+        before_context["declared_inputs"]["binding_sha256"],
+        next_context["declared_inputs"]["binding_sha256"]
+    );
+    let objects = |value: &Value| -> std::collections::BTreeSet<Object> {
+        serde_json::from_value(value["declared_inputs"]["primary_objects"].clone()).unwrap()
+    };
+    let before = objects(&before_context);
+    let after = objects(&next_context);
+    assert_eq!(before.difference(&after).count(), 1);
+    assert_eq!(
+        after.difference(&before).cloned().collect::<Vec<_>>(),
+        vec![pin.clone()]
+    );
     assert_eq!(next_job["pictures"][0], old_job["pictures"][0]);
     assert_eq!(next_job["audio"], old_job["audio"]);
     assert_eq!(
@@ -412,6 +436,142 @@ fn native_scene_compiles_fresh_leaf_versions_without_changing_parent_or_old_view
     assert_eq!(job(&replay), old_job);
     assert_eq!(old_view.active_readers(), 0);
     assert!(reel::tig_scene::compile(&mut f.source(), &request, &next).is_err());
+}
+
+#[test]
+fn native_requirements_are_metadata_only_and_recorded_in_existing_private_source_context() {
+    let (f, request) = native_scene_fixture();
+    let mut source = f.source();
+    let required = reel::tig_scene::requirements(&mut source, &request).unwrap();
+    assert_eq!(source.byte_requests(), 0);
+    assert_eq!(required.primary().len(), 4);
+    assert_eq!(required.controls().len(), 5);
+    assert_eq!(required.metadata().len(), 9);
+    assert_eq!(required.all_objects().len(), 18);
+    assert!(
+        !required
+            .all_objects()
+            .contains(&Object::from_bytes(b"unavailable old bindings"))
+    );
+    let output = f.root().join("requirements-build");
+    reel::tig_scene::compile(&mut source, &request, &output).unwrap();
+    let context: Value =
+        serde_json::from_slice(&fs::read(output.join("native-source.json")).unwrap()).unwrap();
+    assert_eq!(
+        context["declared_inputs"]["primary_objects"],
+        serde_json::to_value(required.primary()).unwrap()
+    );
+    assert_eq!(
+        context["declared_inputs"]["control_objects"],
+        serde_json::to_value(required.controls()).unwrap()
+    );
+    assert_eq!(
+        context["declared_inputs"]["interpretation_objects"],
+        serde_json::to_value(required.metadata()).unwrap()
+    );
+    assert_eq!(
+        context["declared_inputs"]["source_checkpoint"],
+        serde_json::to_value(source.checkpoint()).unwrap()
+    );
+    assert_eq!(context["declared_inputs"]["authorizes_eviction"], false);
+    assert_eq!(
+        context["declared_inputs"]["complete_semantic_coverage"],
+        false
+    );
+    assert_eq!(context["new_production_approval"], false);
+    assert_eq!(
+        context["tig_source_pin_sha256"],
+        serde_json::to_value(
+            Object::from_bytes(include_bytes!("../vendor/tig/source-pin.json")).sha256
+        )
+        .unwrap()
+    );
+}
+
+fn archived_profile(
+    f: &Fixture,
+    archive: Object,
+    checkpoint: tig_core::Digest,
+) -> reel::tig_inputs::ArchiveProfile {
+    serde_json::from_value(json!({"schema":reel::tig_inputs::ARCHIVE_PROFILE_SCHEMA,
+        "archive":archive,"checkpoint":checkpoint,"admitted":f.profile["admitted"],
+        "byte_source":f.profile["byte_source"]}))
+    .unwrap()
+}
+
+#[test]
+fn archived_source_compiles_exact_native_scene_with_git_and_working_metadata_unavailable() {
+    use tig_core::tree::{MemoryNodes, TreeLimits};
+    let (f, request) = native_scene_fixture();
+    let mut source = f.source();
+    let required = reel::tig_scene::requirements(&mut source, &request).unwrap();
+    let first = f.root().join("before-archive");
+    reel::tig_scene::compile(&mut source, &request, &first).unwrap();
+    let mut nodes = MemoryNodes::default();
+    let root = source
+        .archive_metadata(&mut nodes, TreeLimits::default())
+        .unwrap();
+    let profile = archived_profile(&f, root, source.checkpoint().clone());
+    drop(source);
+    for name in [".git", "records", "definitions"] {
+        fs::rename(
+            f.root().join(name),
+            f.root().join(format!("offline-{name}")),
+        )
+        .unwrap();
+    }
+    assert!(Source::open(serde_json::from_value(f.profile.clone()).unwrap()).is_err());
+    let mut restored = Source::from_archive(profile, &mut nodes, TreeLimits::default()).unwrap();
+    assert_eq!(restored.byte_requests(), 0);
+    assert_eq!(
+        reel::tig_scene::requirements(&mut restored, &request).unwrap(),
+        required
+    );
+    let next = f.root().join("from-archive");
+    reel::tig_scene::compile(&mut restored, &request, &next).unwrap();
+    assert_eq!(restored.byte_requests(), 6);
+    for file in [
+        "delivery/job.json",
+        "native-source.json",
+        "scene.json",
+        "alignment-0000.json",
+    ] {
+        assert_eq!(
+            fs::read(first.join(file)).unwrap(),
+            fs::read(next.join(file)).unwrap(),
+            "{file}"
+        );
+    }
+}
+
+#[test]
+fn archive_and_requirement_admission_refuse_stale_missing_and_unknown_inputs() {
+    use tig_core::{
+        Digest,
+        tree::{MemoryNodes, TreeLimits},
+    };
+    let (f, mut request) = native_scene_fixture();
+    let mut source = f.source();
+    let mut nodes = MemoryNodes::default();
+    let root = source
+        .archive_metadata(&mut nodes, TreeLimits::default())
+        .unwrap();
+    let mut profile = archived_profile(&f, root.clone(), Digest::blob(b"wrong checkpoint"));
+    assert!(Source::from_archive(profile.clone(), &mut nodes, TreeLimits::default()).is_err());
+    profile.checkpoint = source.checkpoint().clone();
+    profile.archive = Object::from_bytes(b"missing archive");
+    assert!(Source::from_archive(profile.clone(), &mut nodes, TreeLimits::default()).is_err());
+    profile.archive = root;
+    profile.schema = "unknown".into();
+    assert!(Source::from_archive(profile, &mut nodes, TreeLimits::default()).is_err());
+    request.controls.template_receipt = Some("absent-template".into());
+    assert!(reel::tig_scene::requirements(&mut source, &request).is_err());
+    request.controls.template_receipt = None;
+    request
+        .primary_definitions
+        .push(request.primary_definitions[0].clone());
+    assert!(reel::tig_scene::requirements(&mut source, &request).is_err());
+    assert_eq!(source.byte_requests(), 0);
 }
 
 #[test]
@@ -743,7 +903,7 @@ fn cli(root: &Path, args: &[&str]) -> Output {
 
 #[cfg(windows)]
 #[test]
-#[ignore = "requires native FFmpeg; standard Tig CLI render/version/restore"]
+#[ignore = "requires native FFmpeg; standard Tig CLI render/version/archive restore"]
 fn native_tig_cli_renders_two_cels_shared_cue_then_replaces_only_cel_b() {
     let mut f = Fixture::new();
     f.profile["byte_source"]["required"] = json!("prevent-mutation");
@@ -870,5 +1030,35 @@ fn native_tig_cli_renders_two_cels_shared_cue_then_replaces_only_cel_b() {
         cli(f.root(), &["check", "job.json", "exports/first"])
             .status
             .success()
+    );
+    // Freeze the original captured view, then remove every Git/native-metadata
+    // path before preparing guarded inputs and rendering from the archive alone.
+    let mut nodes = tig_core::tree::MemoryNodes::default();
+    let source = Source::open(serde_json::from_value(original_profile).unwrap()).unwrap();
+    let root = source
+        .archive_metadata(&mut nodes, tig_core::tree::TreeLimits::default())
+        .unwrap();
+    let profile = archived_profile(&f, root, source.checkpoint().clone());
+    drop(source);
+    for name in [".git", "records", "definitions"] {
+        fs::rename(
+            f.root().join(name),
+            f.root().join(format!("offline-{name}")),
+        )
+        .unwrap();
+    }
+    let mut restored =
+        Source::from_archive(profile, &mut nodes, tig_core::tree::TreeLimits::default()).unwrap();
+    let job_path = f.root().join("job.json");
+    let job = reel::tig_inputs::read_job(&job_path).unwrap();
+    let inputs = restored.prepare(&job).unwrap();
+    drop(restored);
+    let output = f.root().join("exports/archive");
+    reel::scene_delivery::render_with_inputs(&job_path, &inputs, &output).unwrap();
+    reel::scene_delivery::check_with_inputs(&job_path, &inputs, &output).unwrap();
+    assert_eq!(decode("exports/archive", "picture.mkv", false), before);
+    assert_eq!(
+        decode("exports/archive", "mix.wav", true),
+        decode("exports/first", "mix.wav", true)
     );
 }

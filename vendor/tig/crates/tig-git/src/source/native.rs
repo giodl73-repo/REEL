@@ -1,4 +1,5 @@
 //! Explicit bounded native catalog from captured Git blobs, never working files.
+pub mod archive;
 use super::{Error, Repository, Result, Scope, Snapshot, View};
 use std::{
     collections::{BTreeMap, BTreeSet},

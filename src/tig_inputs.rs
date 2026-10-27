@@ -10,8 +10,11 @@ use std::{
     io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
-use tig_assets::resolve::AssetResolver;
-use tig_core::{Digest, LogicalPath, Object};
+use tig_assets::{graph, resolve::AssetResolver};
+use tig_core::{
+    Digest, LogicalPath, Object,
+    tree::{NodeStore, TreeLimits},
+};
 use tig_git::source::{
     GitId, Repository, Scope,
     native::{AssetSnapshot, Limits},
@@ -21,6 +24,7 @@ use tig_store::existing::{
 };
 
 pub const PROFILE_SCHEMA: &str = "reel.tig-input-profile.experimental-1";
+pub const ARCHIVE_PROFILE_SCHEMA: &str = "reel.tig-archive-input-profile.experimental-1";
 const PROFILE_BYTES_MAX: usize = 65_536;
 pub const JOB_BYTES_MAX: usize = 4 * 1024 * 1024;
 const INPUT_NAMES_MAX: usize = 4096;
@@ -35,6 +39,19 @@ pub struct Profile {
     pub commit: String,
     pub records: Vec<String>,
     pub definitions: Vec<String>,
+    #[serde(default)]
+    pub limits: Limits,
+    pub admitted: Vec<Admission>,
+    pub byte_source: ByteProfile,
+}
+/// Caller-admitted source archive plus explicit existing-byte enrollment.
+/// Loading does not use Git, install a store or grant job/custody authority.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArchiveProfile {
+    pub schema: String,
+    pub archive: Object,
+    pub checkpoint: Digest,
     #[serde(default)]
     pub limits: Limits,
     pub admitted: Vec<Admission>,
@@ -117,24 +134,10 @@ pub struct Source {
 }
 impl Source {
     pub fn open(profile: Profile) -> Result<Self> {
-        if profile.schema != PROFILE_SCHEMA
-            || profile.admitted.is_empty()
-            || profile.admitted.len() > 256
-        {
+        if profile.schema != PROFILE_SCHEMA {
             bail!("unsupported or unbounded Tig profile");
         }
-        let mut admitted = BTreeMap::new();
-        for entry in profile.admitted {
-            token(&entry.id, 256)?;
-            if let Payload::Stream { slot } = &entry.payload
-                && (slot.is_empty() || slot.len() > 128 || slot.chars().any(char::is_control))
-            {
-                bail!("invalid stream selector");
-            }
-            if admitted.insert(entry.id.clone(), entry).is_some() {
-                bail!("duplicate definition admission");
-            }
-        }
+        let admitted = Self::admit(profile.admitted)?;
         let required = profile.byte_source.required;
         let cache = ReadCache::new(profile.byte_source)?;
         let repository = Repository::new(
@@ -155,6 +158,83 @@ impl Source {
             cache,
             required,
         })
+    }
+    fn admit(entries: Vec<Admission>) -> Result<BTreeMap<String, Admission>> {
+        if entries.is_empty() || entries.len() > 256 {
+            bail!("unbounded definition admission");
+        }
+        let mut admitted = BTreeMap::new();
+        for entry in entries {
+            token(&entry.id, 256)?;
+            if let Payload::Stream { slot } = &entry.payload
+                && (slot.is_empty() || slot.len() > 128 || slot.chars().any(char::is_control))
+            {
+                bail!("invalid stream selector");
+            }
+            if admitted.insert(entry.id.clone(), entry).is_some() {
+                bail!("duplicate definition admission");
+            }
+        }
+        Ok(admitted)
+    }
+    /// The caller owns provider finish/readback and protection of this root.
+    /// Source document archiving does not archive selected payloads or controls.
+    pub fn archive_metadata(
+        &self,
+        store: &mut impl NodeStore,
+        limits: TreeLimits,
+    ) -> Result<Object> {
+        Ok(self.snapshot.archive_metadata(store, limits)?)
+    }
+    /// Reopen an exact externally admitted checkpoint without a repository path.
+    /// This does not grant production eligibility or claim retained payload bytes.
+    pub fn from_archive(
+        profile: ArchiveProfile,
+        store: &mut impl NodeStore,
+        limits: TreeLimits,
+    ) -> Result<Self> {
+        if profile.schema != ARCHIVE_PROFILE_SCHEMA {
+            bail!("unsupported archived Tig profile");
+        }
+        let admitted = Self::admit(profile.admitted)?;
+        let required = profile.byte_source.required;
+        let cache = ReadCache::new(profile.byte_source)?;
+        let snapshot =
+            AssetSnapshot::from_metadata_archive(store, &profile.archive, profile.limits, limits)?;
+        if snapshot.checkpoint() != &profile.checkpoint {
+            bail!("archived source checkpoint differs from admission");
+        }
+        Ok(Self {
+            snapshot,
+            admitted,
+            cache,
+            required,
+        })
+    }
+    pub(crate) fn admission(&self, id: &str) -> Result<&Admission> {
+        self.admitted
+            .get(id)
+            .ok_or_else(|| anyhow!("definition not admitted"))
+    }
+    pub(crate) fn production_requirements(
+        &mut self,
+        root: &str,
+        profiles: &[graph::Profile],
+        limits: graph::Limits,
+    ) -> Result<graph::ProductionRequirements> {
+        for profile in profiles {
+            if self.admission(&profile.definition_id)?.object != profile.definition {
+                bail!("graph definition pin differs from source admission");
+            }
+        }
+        let reference = self.record(root)?.reference().clone();
+        let query = graph::Query {
+            checkpoint: self.checkpoint().clone(),
+            roots: std::collections::BTreeSet::from([reference]),
+            kinds: std::collections::BTreeSet::from([graph::EdgeKind::Production]),
+            limits,
+        };
+        Ok(graph::resolve(&mut self.snapshot, &query, profiles)?.production_requirements()?)
     }
     pub fn checkpoint(&self) -> &Digest {
         self.snapshot.checkpoint()

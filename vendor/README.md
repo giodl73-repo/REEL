@@ -13,9 +13,10 @@ documentation are not imported; REEL tests the consumer boundary, and the upstre
 commit has its own Windows/Linux qualification. Do not treat vendored source as
 an independent cache implementation or as production cutover approval.
 
-The current pin includes Tig's explicit `Collection::{One, Array, ObjectValues}`
-reference rules (upstream PR 22). Only `tig-assets/src/graph.rs` changed from the
-previous pin; the 45 imported files total 482,291 raw bytes. Native record and
-definition envelopes, byte readers and the REEL source profile remain unchanged.
-The graph API distinguishes an admitted map from an array; it does not recursively
-scan arbitrary scene/control JSON or provide producer-consumption fingerprints.
+The current pin includes explicit map rules, metadata archives, cooperative reader
+release and declared production requirements (upstream PRs 22 through 24). The 46
+imported files total 498,091 raw bytes, including the new native/archive.rs module.
+Upstream PR 24 must qualify on its exact current head before this pin is merged.
+Native record and definition envelopes remain unchanged. These APIs do not
+recursively infer opaque native semantics, prove producer consumption, establish
+global source/job coverage or grant cache-removal authority.

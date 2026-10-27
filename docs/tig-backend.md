@@ -2,6 +2,8 @@
 
 For deriving fresh native scene bindings and compiling directly from Tig, see
 [Compile a native scene from Tig](tig-native-scene.md).
+That interface also derives declared production inputs and exposes explicit Rust
+source-archive APIs through the existing metadata provider port.
 For strict comparison against a retained Tig output, see
 [Native decoded media comparison](native-media-parity.md).
 
