@@ -324,6 +324,20 @@ impl Source {
     pub fn checkpoint(&self) -> &Digest {
         self.snapshot.checkpoint()
     }
+    pub(crate) fn replay_produced<'a>(
+        &mut self,
+        claim: &'a graph::recipe::produced::Claim,
+        admission: &tig_git::source::native::produced::Admission<'_>,
+        store: &mut impl NodeStore,
+    ) -> Result<tig_git::source::native::produced::ReplayedClaim<'a>> {
+        let (snapshot, replay) =
+            tig_git::source::native::produced::replay(claim, admission, store)?;
+        if snapshot.checkpoint() != self.checkpoint() {
+            bail!("produced claim source checkpoint differs from admission");
+        }
+        self.snapshot = snapshot;
+        Ok(replay)
+    }
     pub fn byte_requests(&self) -> u32 {
         self.cache.requests()
     }

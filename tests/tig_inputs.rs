@@ -753,7 +753,7 @@ fn native_render_candidate_claims_only_independently_checked_matching_bytes() {
     drop(source);
     let mut reader = MetadataReader::open(&metadata, &checkpoint).unwrap();
     let (mut source, context) = reel::tig_scene::restore_context(
-        profile,
+        profile.clone(),
         &request,
         context.selection(),
         &mut reader,
@@ -827,6 +827,35 @@ fn native_render_candidate_claims_only_independently_checked_matching_bytes() {
     claim.check_plan(candidate.recipe()).unwrap();
     assert_eq!(claim.context().root, context.selection().root);
     assert_eq!(claim.outputs(), &[subject.subject().clone()]);
+    drop(reader);
+    for name in [".git", "records", "definitions"] {
+        fs::rename(
+            f.root().join(name),
+            f.root().join(format!("offline-{name}")),
+        )
+        .unwrap();
+    }
+    let mut reader = MetadataReader::open(&metadata, &checkpoint).unwrap();
+    let (restored, replay) = reel::tig_scene::restore_claim(
+        profile,
+        &request,
+        &producer,
+        &claim,
+        &mut reader,
+        TreeLimits::default(),
+    )
+    .unwrap();
+    assert_eq!(restored.byte_requests(), 0);
+    assert_eq!(replay.context().selection(), context.selection());
+    assert_eq!(
+        tig_assets::graph::recipe::produced::compare(
+            candidate.recipe(),
+            Some(&subject),
+            Some(replay.checked()),
+        )
+        .unwrap(),
+        tig_assets::graph::recipe::produced::Correspondence::ClaimedRecipeMatch
+    );
     assert!(candidate.claim(&[mapping(), mapping()]).is_err());
     assert!(
         candidate
@@ -864,6 +893,316 @@ fn native_render_candidate_claims_only_independently_checked_matching_bytes() {
             .is_err()
     );
     assert!(!owners.obligations(10).unwrap().complete_claim_coverage());
+}
+
+fn metadata_claim_fixture(
+    f: &Fixture,
+    request: &reel::tig_scene::Request,
+    producer: &Object,
+    store: &mut impl tig_core::tree::NodeStore,
+) -> (
+    tig_assets::graph::recipe::produced::Claim,
+    reel::tig_inputs::ArchiveProfile,
+    tig_assets::graph::recipe::produced::BoundSubject,
+) {
+    use tig_assets::{
+        graph::{
+            Reference,
+            recipe::produced::{BoundSubject, Claim, ContextPin, Selector},
+        },
+        native::Instance,
+    };
+    let mut source = f.source();
+    let plan = reel::tig_scene::recipe(&mut source, request, producer).unwrap();
+    let context = reel::tig_scene::freeze_context(
+        &mut source,
+        request,
+        store,
+        tig_core::tree::TreeLimits::default(),
+    )
+    .unwrap();
+    let schema = fs::read(f.root().join("definitions/authored.json")).unwrap();
+    let definition = serde_json::to_vec(&json!({"schema":"tig.definition.design-1","id":"types/output","authored_schema":Object::from_bytes(&schema),"authoring":{"properties":[],"required":[],"defaults":{}},"stream_rules":{},"semantic_rules":{}})).unwrap();
+    let admission = Reference {
+        id: "types/output".into(),
+        object: Object::from_bytes(&definition),
+    };
+    // Unsigned metadata fixture only: never evidence of actual producer execution.
+    let selected = Object::from_bytes(b"unit-test assertion, not actual output proof");
+    let record = serde_json::to_vec(&json!({"schema":"tig.instance.design-1","id":"delivery/test","definition":{"id":admission.id,"sha256":admission.object.sha256,"bytes":admission.object.bytes},"authored":{},"selected":selected,"streams":[],"status":{},"metadata":{}})).unwrap();
+    let bound = Instance::parse(&record)
+        .unwrap()
+        .bind(&definition, &schema)
+        .unwrap();
+    let subject = BoundSubject::bind(&bound, &admission, Selector::Selected {})
+        .unwrap()
+        .unwrap();
+    let claim = Claim::create(
+        &plan,
+        ContextPin {
+            root: context.selection().root.clone(),
+            identity: context.selection().context.clone(),
+        },
+        vec![subject.subject().clone()],
+    )
+    .unwrap();
+    assert_eq!(source.byte_requests(), 0);
+    (
+        claim,
+        archived_profile(f, context.archive().clone(), source.checkpoint().clone()),
+        subject,
+    )
+}
+
+struct ReadOnlyMetadata<'a, T> {
+    inner: &'a T,
+    reads: std::cell::Cell<usize>,
+}
+impl<T: tig_core::tree::NodeStore> tig_core::tree::NodeStore for ReadOnlyMetadata<'_, T> {
+    fn get(&self, object: &Object) -> tig_core::tree::TreeResult<Option<Vec<u8>>> {
+        self.reads.set(self.reads.get() + 1);
+        self.inner.get(object)
+    }
+    fn put(&mut self, _: &[u8]) -> tig_core::tree::TreeResult<Object> {
+        panic!("native claim replay must not write metadata");
+    }
+}
+
+#[test]
+fn native_claim_replay_reopens_original_context_after_main_changes_and_git_is_offline() {
+    use tig_assets::graph::recipe::produced::{self, Correspondence};
+    use tig_core::tree::TreeLimits;
+    use tig_store::metadata::{MetadataReader, MetadataStore};
+    let (mut f, request) = native_scene_fixture();
+    let producer = Object::from_bytes(b"synthetic admitted recipe producer");
+    let metadata = f.root().join("claim-metadata");
+    let mut store = MetadataStore::create(
+        &metadata,
+        tig_store::metadata::Limits {
+            nodes: 8192,
+            bytes: 8 * 1024 * 1024,
+            database_bytes: 16 * 1024 * 1024,
+            min_free_bytes: 65536,
+        },
+    )
+    .unwrap();
+    let (claim, profile, subject) = metadata_claim_fixture(&f, &request, &producer, &mut store);
+    let file = "records/cel-b.tig";
+    let mut record: Value =
+        serde_json::from_slice(&fs::read(f.root().join(file)).unwrap()).unwrap();
+    record["metadata"]["note"] = json!("review note only");
+    write(f.root(), file, &record);
+    git(f.root(), &["add", "records"]);
+    git(f.root(), &["commit", "-m", "annotations only"]);
+    f.profile["commit"] = json!(git(f.root(), &["rev-parse", "HEAD"]));
+    let mut annotation_source = f.source();
+    let annotation_plan =
+        reel::tig_scene::recipe(&mut annotation_source, &request, &producer).unwrap();
+    record["selected"] =
+        serde_json::to_value(Object::from_bytes(b"changed primary input")).unwrap();
+    write(f.root(), file, &record);
+    git(f.root(), &["add", "records"]);
+    git(f.root(), &["commit", "-m", "replace one primary input"]);
+    f.profile["commit"] = json!(git(f.root(), &["rev-parse", "HEAD"]));
+    let mut changed_source = f.source();
+    let changed_plan = reel::tig_scene::recipe(&mut changed_source, &request, &producer).unwrap();
+    assert_eq!(annotation_source.byte_requests(), 0);
+    assert_eq!(changed_source.byte_requests(), 0);
+    let witness = store.finish().unwrap();
+    drop(store);
+    for name in [".git", "records", "definitions"] {
+        fs::rename(
+            f.root().join(name),
+            f.root().join(format!("offline-{name}")),
+        )
+        .unwrap();
+    }
+    let reader = MetadataReader::open(&metadata, &witness).unwrap();
+    let mut readonly = ReadOnlyMetadata {
+        inner: &reader,
+        reads: 0.into(),
+    };
+    let (mut original, replay) = reel::tig_scene::restore_claim(
+        profile,
+        &request,
+        &producer,
+        &claim,
+        &mut readonly,
+        TreeLimits::default(),
+    )
+    .unwrap();
+    assert!(readonly.reads.get() > 0);
+    assert_eq!(original.checkpoint(), claim.origin().checkpoint());
+    assert_eq!(replay.checked().claim().object(), claim.object());
+    assert_eq!(
+        produced::compare(&annotation_plan, Some(&subject), Some(replay.checked())).unwrap(),
+        Correspondence::ClaimedRecipeMatch
+    );
+    assert_eq!(
+        produced::compare(&changed_plan, Some(&subject), Some(replay.checked())).unwrap(),
+        Correspondence::StaleRecipe
+    );
+    let replayed_plan = reel::tig_scene::recipe(&mut original, &request, &producer).unwrap();
+    assert_eq!(replayed_plan.fingerprint(), claim.recipe());
+    assert!(!replayed_plan.complete_semantic_coverage());
+    let mut changed = request;
+    changed.language = "en".into();
+    assert!(reel::tig_scene::recipe(&mut original, &changed, &producer).is_err());
+    assert_eq!(original.byte_requests(), 0);
+}
+
+#[test]
+fn native_claim_replay_refuses_operation_before_store_io_and_corrupt_provenance() {
+    use tig_assets::graph::recipe::produced::Claim;
+    use tig_core::{
+        Digest,
+        tree::{MemoryNodes, TreeLimits},
+    };
+    let (f, mut request) = native_scene_fixture();
+    let producer = Object::from_bytes(b"synthetic producer");
+    let mut nodes = MemoryNodes::default();
+    let (claim, profile, _) = metadata_claim_fixture(&f, &request, &producer, &mut nodes);
+    let mut readonly = ReadOnlyMetadata {
+        inner: &nodes,
+        reads: 0.into(),
+    };
+    let wrong_producer = Object::from_bytes(b"wrong producer");
+    assert!(
+        reel::tig_scene::restore_claim(
+            profile.clone(),
+            &request,
+            &wrong_producer,
+            &claim,
+            &mut readonly,
+            TreeLimits::default()
+        )
+        .is_err()
+    );
+    request.language = "en".into();
+    assert!(
+        reel::tig_scene::restore_claim(
+            profile.clone(),
+            &request,
+            &producer,
+            &claim,
+            &mut readonly,
+            TreeLimits::default()
+        )
+        .is_err()
+    );
+    assert_eq!(readonly.reads.get(), 0);
+    request.language = "es".into();
+    let mut wrong = profile.clone();
+    wrong.checkpoint = Digest::blob(b"wrong source checkpoint");
+    assert!(
+        reel::tig_scene::restore_claim(
+            wrong,
+            &request,
+            &producer,
+            &claim,
+            &mut readonly,
+            TreeLimits::default()
+        )
+        .is_err()
+    );
+    let mut wrong = profile.clone();
+    wrong.archive = Object::from_bytes(b"missing archive");
+    assert!(
+        reel::tig_scene::restore_claim(
+            wrong,
+            &request,
+            &producer,
+            &claim,
+            &mut readonly,
+            TreeLimits::default()
+        )
+        .is_err()
+    );
+    let mut wrong = profile.clone();
+    wrong.admitted[0].object = Object::from_bytes(b"wrong definition");
+    assert!(
+        reel::tig_scene::restore_claim(
+            wrong,
+            &request,
+            &producer,
+            &claim,
+            &mut readonly,
+            TreeLimits::default()
+        )
+        .is_err()
+    );
+    let mut wrong = profile.clone();
+    wrong.admitted[1].payload = reel::tig_inputs::Payload::Stream { slot: "en".into() };
+    assert!(
+        reel::tig_scene::restore_claim(
+            wrong,
+            &request,
+            &producer,
+            &claim,
+            &mut readonly,
+            TreeLimits::default()
+        )
+        .is_err()
+    );
+    let empty = MemoryNodes::default();
+    let mut unavailable = ReadOnlyMetadata {
+        inner: &empty,
+        reads: 0.into(),
+    };
+    assert!(
+        reel::tig_scene::restore_claim(
+            profile.clone(),
+            &request,
+            &producer,
+            &claim,
+            &mut unavailable,
+            TreeLimits::default()
+        )
+        .is_err()
+    );
+    for field in ["recipe", "binding", "header", "root", "size"] {
+        let mut wire: Value = serde_json::from_slice(claim.bytes()).unwrap();
+        match field {
+            "recipe" => wire["recipe"] = json!("0".repeat(64)),
+            "binding" => wire["origin"]["binding"] = json!("0".repeat(64)),
+            "header" => wire["context"]["identity"] = json!("0".repeat(64)),
+            "root" => {
+                wire["context"]["root"] =
+                    serde_json::to_value(Object::from_bytes(b"absent context root")).unwrap()
+            }
+            "size" => {
+                let record: Value =
+                    serde_json::from_slice(&fs::read(f.root().join("records/cel-b.tig")).unwrap())
+                        .unwrap();
+                wire["outputs"][0]["object"] = record["selected"].clone();
+                wire["outputs"][0]["object"]["bytes"] =
+                    json!(record["selected"]["bytes"].as_u64().unwrap() + 1);
+            }
+            _ => unreachable!(),
+        }
+        let bytes = serde_json::to_vec(&wire).unwrap();
+        let bad = Claim::parse(&Object::from_bytes(&bytes), &bytes).unwrap();
+        assert!(
+            reel::tig_scene::restore_claim(
+                profile.clone(),
+                &request,
+                &producer,
+                &bad,
+                &mut readonly,
+                TreeLimits::default()
+            )
+            .is_err(),
+            "{field}"
+        );
+    }
+    let tiny = TreeLimits {
+        max_reads: 1,
+        ..TreeLimits::default()
+    };
+    assert!(
+        reel::tig_scene::restore_claim(profile, &request, &producer, &claim, &mut readonly, tiny)
+            .is_err()
+    );
 }
 
 fn archived_profile(
