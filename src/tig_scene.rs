@@ -30,6 +30,7 @@ use tig_store::source_claims::Selection;
 pub const SCHEMA: &str = "reel.tig-native-scene.experimental-1";
 const METADATA_MAX: u64 = 16 * 1024 * 1024;
 mod bindings;
+mod controls;
 mod render_context;
 mod scoped;
 pub use render_context::{
@@ -44,6 +45,8 @@ pub struct Request {
     pub scene_id: String,
     pub scene_definition: String,
     pub primary_definitions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub control_definitions: Vec<String>,
     pub language: String,
     pub controls: Controls,
     pub delivery_id: String,
@@ -66,6 +69,18 @@ impl Request {
             || self.primary_definitions.is_empty()
             || self.primary_definitions.len() > 256
             || self.primary_definitions.contains(&self.scene_definition)
+            || self.control_definitions.len() > 128
+            || self.control_definitions.contains(&self.scene_definition)
+            || self
+                .control_definitions
+                .iter()
+                .any(|id| self.primary_definitions.contains(id))
+            || self
+                .control_definitions
+                .iter()
+                .collect::<BTreeSet<_>>()
+                .len()
+                != self.control_definitions.len()
             || self
                 .primary_definitions
                 .iter()
@@ -126,8 +141,15 @@ fn consumption(profiles: &[Profile], request: &Request) -> Vec<graph::recipe::Co
             definition: profile.definition.clone(),
             fields: if profile.definition_id == request.scene_definition {
                 let mut fields = BTreeSet::from(["scene_id".into(), "binding_ids".into()]);
-                if profile.rules.len() > 1 {
+                if profile
+                    .rules
+                    .iter()
+                    .any(|r| r.pointer.starts_with("/language_binding_ids/"))
+                {
                     fields.insert("language_binding_ids".into());
+                }
+                if profile.rules.iter().any(|r| r.pointer == "/control_ids") {
+                    fields.insert("control_ids".into());
                 }
                 fields
             } else {
@@ -140,7 +162,7 @@ fn operation(producer: &Object, parameters: &[u8]) -> graph::recipe::Operation {
     graph::recipe::Operation {
         name: "reel.native-scene.declared-inputs.experimental-1".into(),
         semantics: Object::from_bytes(
-            b"reel.native-scene.recipe.experimental-1:scene_id,binding_ids,optional-language_binding_ids;whole-scene-variant-payloads;explicit-producer;exact-context-parameters",
+            b"reel.native-scene.recipe.experimental-1:scene_id,binding_ids,optional-language_binding_ids,optional-control_ids;whole-scene-variant-payloads;explicit-producer;exact-context-parameters",
         )
         .sha256,
         producer: producer.clone(),
@@ -149,8 +171,8 @@ fn operation(producer: &Object, parameters: &[u8]) -> graph::recipe::Operation {
 }
 fn query_limits() -> graph::Limits {
     graph::Limits {
-        nodes: 4097,
-        edges: 4096,
+        nodes: 4225,
+        edges: 4224,
         depth: 2,
         bytes: 16 * 1024 * 1024,
     }
@@ -161,7 +183,11 @@ fn production_profiles(source: &Source, request: &Request) -> Result<Vec<Profile
     if parent.definition().id != request.scene_definition {
         bail!("scene definition differs from admitted protocol");
     }
-    let catalog = bindings::Catalog::read(parent.authored(), &request.language)?;
+    let mut catalog = bindings::Catalog::read(parent.authored(), &request.language)?;
+    let controls = controls::Catalog::read(source, &parent, request)?;
+    if !controls.ids.is_empty() {
+        catalog.rules.push(controls::rule());
+    }
     let slots = [
         &request.controls.catalog,
         &request.controls.episode,
@@ -170,6 +196,7 @@ fn production_profiles(source: &Source, request: &Request) -> Result<Vec<Profile
     ]
     .into_iter()
     .chain(request.controls.template_receipt.iter())
+    .filter(|slot| !controls.ids.contains_key(slot.as_str()))
     .cloned()
     .collect();
     let mut profiles = vec![Profile {
@@ -200,6 +227,17 @@ fn production_profiles(source: &Source, request: &Request) -> Result<Vec<Profile
             },
         });
     }
+    for id in &request.control_definitions {
+        let admission = source.admission(id)?;
+        profiles.push(Profile {
+            definition_id: id.clone(),
+            definition: admission.object.clone(),
+            class: NodeKind::Container,
+            covered: BTreeSet::from([EdgeKind::Production]),
+            rules: vec![],
+            payloads: controls::payloads(&admission.payload),
+        });
+    }
     Ok(profiles)
 }
 fn descriptor(request: &Request) -> Result<Vec<u8>> {
@@ -208,6 +246,7 @@ fn descriptor(request: &Request) -> Result<Vec<u8>> {
         "request":request,
         "scene_adapter_sha256":Object::from_bytes(include_bytes!("tig_scene.rs")).sha256,
         "binding_adapter_sha256":Object::from_bytes(include_bytes!("tig_scene/bindings.rs")).sha256,
+        "control_adapter_sha256":Object::from_bytes(include_bytes!("tig_scene/controls.rs")).sha256,
         "input_adapter_sha256":Object::from_bytes(include_bytes!("tig_inputs.rs")).sha256,
         "tig_source_pin_sha256":Object::from_bytes(include_bytes!("../vendor/tig/source-pin.json")).sha256
     }))?;
@@ -480,6 +519,7 @@ fn read_source(source: &mut Source, request: &Request) -> Result<NativeState> {
         bail!("scene definition differs from admitted protocol");
     }
     let catalog = bindings::Catalog::read(parent.authored(), &request.language)?;
+    let control_catalog = controls::Catalog::read(source, &parent, request)?;
     // Admit every declared leaf's type/identity, including unused alternatives.
     // Native resolution checks production eligibility where each input is used;
     // an unused candidate in the authoring catalog is not a selected input.
@@ -527,9 +567,9 @@ fn read_source(source: &mut Source, request: &Request) -> Result<NativeState> {
         ("policy.json", &request.controls.policy),
         ("profile.json", &request.controls.profile),
     ] {
-        let pin = parent.stream(slot)?;
-        controls.insert(name, metadata(source, pin, &mut total)?);
-        pins.insert(name, pin.clone());
+        let pin = control_catalog.object(source, &parent, slot)?;
+        controls.insert(name, metadata(source, &pin, &mut total)?);
+        pins.insert(name, pin);
     }
     let episode: Episode = serde_json::from_slice(&controls["episode.json"])?;
     let empty_episode = ScopedBindings {
@@ -612,6 +652,17 @@ fn derive_scope(
     // Native semantic membership resolves through the one authored map into
     // exact current roots, without one graph rule per binding.
     let mut language_roots = BTreeSet::from([request.scene_id.clone()]);
+    let control_catalog = controls::Catalog::read(source, &state.parent, request)?;
+    for slot in [
+        &request.controls.catalog,
+        &request.controls.episode,
+        &request.controls.policy,
+        &request.controls.profile,
+    ] {
+        if let Some(id) = control_catalog.ids.get(slot) {
+            language_roots.insert(id.clone());
+        }
+    }
     for key in &language_keys {
         let id = references
             .get(key)

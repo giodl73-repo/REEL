@@ -100,8 +100,8 @@ reel-tig-scene --profile .local/tig.json render .local/build-dawn-es/delivery/jo
 
 The selected parent object is native `scene.json`, not rendered video. Its
 `authored.scene_id` must match that scene. Control names select exact named streams
-on the same parent revision; they are never executed as scripts or interpreted as
-paths. Retained `bindings.json`, old assembly graphs and old alignment-path lists
+on the same parent revision unless explicit control references are declared below;
+they are never executed as scripts or interpreted as paths. Retained `bindings.json`, old assembly graphs and old alignment-path lists
 are not current dependency authorities. The adapter generates scene bindings from
 current leaves, empty enclosing scopes, the requested language's alignment paths
 and a current assembly projection. Version history stays in the Tig records/Git;
@@ -142,6 +142,47 @@ it is not a completed build. `complete_semantic_coverage` remains false. Full
 schema/variant rules, source/job recovery, custody/eviction authority, family
 migration, rendered parity and explicit production cutover remain open.
 
+## Independently versioned controls
+
+An admitted scene may declare `authored.control_ids`, keyed by the same exact
+slot selectors used in the request. The request explicitly admits the control
+types through optional `control_definitions`; those types must be distinct from
+the scene and primary types. For example:
+
+```json
+{
+  "control_ids": {
+    "profile.es.json": {"id": "profiles/private-spanish"},
+    "profile.en.json": {"id": "profiles/private-english"}
+  }
+}
+```
+
+The Spanish request selects `controls.profile: "profile.es.json"`. Each control
+record resolves its admitted selected/named payload from the same Git snapshot.
+Editing that profile record changes compilation without changing the scene's
+reference. Prior Git snapshots and frozen contexts retain the prior profile.
+There are at most 128 control references; every declared identity and type is
+checked before byte IO. Used controls require the native eligible selection
+state. Unused controls remain declared provenance, without reading their bytes
+or adding them to the derived language roots.
+
+When no control reference exists, the existing parent stream remains the exact
+authority. If both forms are present, their object pins must match; a stale
+duplicate refuses rather than falling back. To edit controls independently,
+remove duplicate parent stream pins during migration. Presentation receipts
+continue to use their existing primary binding mechanism, not `control_ids`.
+Control records are graph containers and cannot be managed-job output templates.
+Projected recipes bind compiled parameters and consumed media while retaining
+the exact control objects as provenance. This is native adapter policy, not an
+inference from a file extension or an automatic cache operation.
+
+This adapter change requires a newly admitted runtime for new contexts. Keep
+previously captured jobs on their exact admitted runtime. The optional request
+field defaults to absent; old source records and named controls remain usable
+for newly captured work. Native graph bounds are now 4,225 nodes and 4,224 edges,
+including the 128-control allowance, with the existing depth and byte bounds.
+
 ## Declared inputs and archived source metadata
 
 `reel::tig_scene::requirements(&mut source, &request)` derives a metadata-only
@@ -154,7 +195,7 @@ The result separates primary payloads, scene/control payloads and exact bound
 instance/definition/schema objects. It covers the entire declared scene, including
 all declared languages; it does not infer minimal per-language consumption.
 Missing required controls, malformed references and duplicate primary definitions
-refuse. Limits are 4,097 nodes, 4,096 edges, depth two and 16 MiB returned metadata.
+refuse. Limits are 4,225 nodes, 4,224 edges, depth two and 16 MiB returned metadata.
 The native compiler checks used-leaf eligibility after named controls and before
 alignment/media reads, and validates
 opaque scene/alignment/control meaning through the ordinary REEL compiler.

@@ -210,6 +210,10 @@ pub(super) fn prepare(
         if resolved.definition().id == worker.request.scene_definition
             || worker
                 .request
+                .control_definitions
+                .contains(&resolved.definition().id)
+            || worker
+                .request
                 .primary_definitions
                 .contains(&resolved.definition().id)
         {
