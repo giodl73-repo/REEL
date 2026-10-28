@@ -26,6 +26,10 @@ The private profile uses `reel.tig-native-registration.experimental-1`:
 | `byte_source` | Existing Tig byte-provider profile: explicit ordered places, layouts, protection and verification limits |
 | `package` | Exact SHA-256/size Object of a retained `caminos.artifact-package.v1` source package |
 | `scene_asset`, `bindings_asset` | Exact keys in that package's assets map |
+| `binding_ancestors` | Optional ordered `{asset, scope_id}` package binding sources, lowest precedence first; local `bindings_asset` aliases override them |
+| `language_bindings_assets` | Optional language-to-package-role map for additional native binding documents |
+| `language_binding_ancestors` | Optional language-to-ancestor-array map, resolved before that language's local bindings |
+| `language_filenames` | Optional language-to-alias-to-portable-filename map for new variant records |
 | `scene_definition`, `primary_definition` | Each has `definition` and `authored_schema` FileRefs with explicit absolute local paths and expected hashes/sizes |
 | `controls` | Explicit Tig stream descriptors on the scene record; external admission, not automatically inferred from the source package |
 | `metadata` | Optional private provenance/rights data copied into records; `native_registration` is reserved for checked source package/binding identity |
@@ -45,6 +49,24 @@ line endings before computing them or use files exported from the committed
 view. After export, capture and bind the complete committed Tig snapshot before
 adoption: Git clean filters or newline normalization can otherwise change a
 support blob without changing the pin embedded in a candidate record.
+
+An ancestor scope must match the explicitly admitted `scope_id`; it is not
+inferred from a path. At most eight ancestors are allowed per binding source.
+Retained source pins record that precedence without creating a new mutable
+inventory. Each declared language must occur in the original scene, and its
+effective aliases must already exist in the resolved base catalog. There are at
+most 32 languages and 4,096 total effective base/language entries. All source
+documents share the same 16 MiB read allowance.
+
+Identical shared IDs, byte pins, status and alias meaning produce one leaf.
+Conflicting data for a shared ID refuses; different language IDs remain distinct
+assets. Changed aliases become explicit `language_binding_ids` overrides on the
+parent, whose definition must admit that optional field. Shared aliases do not
+need repeated override entries. New variant filenames default to
+`<binding-key>.<language>.tig`; explicit names still undergo portable-name and
+case-insensitive collision checks. Source-binding pins and language/ancestor
+provenance remain attached. No status is promoted or primary media opened.
+Absent or explicitly empty extensions preserve legacy candidate bytes.
 
 The profile is at most 64 KiB. Each package/native document is at most 4 MiB,
 with 16 MiB total metadata read; definition/schema documents and each generated
