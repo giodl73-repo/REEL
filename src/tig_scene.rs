@@ -730,7 +730,7 @@ fn compile_with_scope(
     });
     // All ordinary metadata is admitted before creating the output directory.
     let mut budget = scene_delivery_compile::MetadataBudget::new(
-        64 * 1024 * 1024,
+        scene_delivery_compile::PREPARATION_MAX_BYTES,
         crate::tig_inputs::JOB_BYTES_MAX,
     );
     fs::create_dir(output)?;

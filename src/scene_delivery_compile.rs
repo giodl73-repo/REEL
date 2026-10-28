@@ -495,9 +495,14 @@ fn write_new(dir: &Path, name: &str, value: &Value) -> Result<(String, u64)> {
 }
 
 /// Logical candidate-file allowance, not a physical capacity reservation.
+#[cfg(any(feature = "tig", test))]
+pub(crate) const PREPARATION_MAX_FILES: u64 = 4128;
+#[cfg(feature = "tig")]
+pub(crate) const PREPARATION_MAX_BYTES: u64 = 64 * 1024 * 1024;
 pub(crate) struct MetadataBudget {
     remaining: u64,
     document: usize,
+    files: u64,
 }
 struct LimitedBuffer {
     bytes: Vec<u8>,
@@ -523,14 +528,16 @@ impl MetadataBudget {
         Self {
             remaining: total,
             document,
+            files: PREPARATION_MAX_FILES,
         }
     }
     pub(crate) fn write_bytes(&mut self, dir: &Path, name: &str, bytes: &[u8]) -> Result<()> {
-        if bytes.len() > self.document || bytes.len() as u64 > self.remaining {
+        if self.files == 0 || bytes.len() > self.document || bytes.len() as u64 > self.remaining {
             bail!("native metadata write exceeds budget");
         }
         // Charge before IO: even partial writes on failure remain accounted.
         self.remaining -= bytes.len() as u64;
+        self.files -= 1;
         use std::io::Write;
         fs::OpenOptions::new()
             .write(true)
@@ -1461,6 +1468,16 @@ mod tests {
         buffer.write_all(b"abc").unwrap();
         assert!(buffer.write_all(b"de").is_err());
         assert_eq!(buffer.bytes, b"abc");
+    }
+    #[test]
+    fn bounded_metadata_limits_even_empty_file_entries() {
+        let root = tempfile::tempdir().unwrap();
+        let mut budget = super::MetadataBudget::new(100, 100);
+        budget.files = 2;
+        budget.write_bytes(root.path(), "first", b"").unwrap();
+        budget.write_bytes(root.path(), "second", b"").unwrap();
+        assert!(budget.write_bytes(root.path(), "third", b"").is_err());
+        assert!(!root.path().join("third").exists());
     }
 
     #[test]

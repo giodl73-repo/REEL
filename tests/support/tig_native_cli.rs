@@ -118,6 +118,27 @@ pub fn exercise(
     source: Value,
     reference: &Receipt,
 ) {
+    exercise_mode(root, request, context, metadata, source, reference, false)
+}
+pub fn exercise_compiled(
+    root: &Path,
+    request: &Request,
+    context: &Selection,
+    metadata: (&Path, &Checkpoint),
+    source: Value,
+    reference: &Receipt,
+) {
+    exercise_mode(root, request, context, metadata, source, reference, true)
+}
+fn exercise_mode(
+    root: &Path,
+    request: &Request,
+    context: &Selection,
+    metadata: (&Path, &Checkpoint),
+    source: Value,
+    reference: &Receipt,
+    compiled: bool,
+) {
     let locate = |name: &str| {
         std::env::split_paths(&std::env::var_os("PATH").unwrap())
             .map(|dir| dir.join(format!("{name}.exe")))
@@ -153,7 +174,7 @@ pub fn exercise(
         .map(|n| (n.clone(), 4 * 1024 * 1024_u64))
         .collect();
     outputs.insert("receipt.json".into(), 4 * 1024 * 1024);
-    let profile = json!({
+    let mut profile = json!({
         "schema":"reel.tig-native-job-profile.experimental-1",
         "worker":{"metadata_root":metadata.0,"metadata_minimum":metadata.1,"source":source,"context":context,"request":request,
             "runtime":{"host":host,"ffmpeg":file(locate("ffmpeg")),"ffprobe":file(locate("ffprobe")),"dependencies":{}},"outputs":outputs},
@@ -162,6 +183,12 @@ pub fn exercise(
         "journal_root":journal_root,"journal_minimum":witness,"source_id":"native-cli","owner":"worker-owner","expected_revision":0,
         "start_operation":"start","retain_operation":"retain","budget_bytes":256*1024*1024_u64,"scratch_bytes":64*1024*1024_u64,"timeout_seconds":120,
     });
+    if compiled {
+        profile["worker"]["context_mode"] = json!("compiled");
+        profile["preparation_cache"] = json!(cache);
+        profile["scratch_bytes"] = json!(512 * 1024 * 1024_u64);
+        profile["budget_bytes"] = json!(1024 * 1024 * 1024_u64);
+    }
     let original_record = fs::read(root.join("records/native-output.tig")).unwrap();
     let template =
         json!({"id":"delivery/native-scene","object":Object::from_bytes(&original_record)});
@@ -182,12 +209,37 @@ pub fn exercise(
         .checkpoint()
         .clone();
     let mut invalid = profile.clone();
+    if compiled {
+        fs::write(&path, serde_json::to_vec(&profile).unwrap()).unwrap();
+        let inspected = Command::new(&binary)
+            .arg("preparation-budget")
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert!(
+            inspected.status.success(),
+            "{}",
+            String::from_utf8_lossy(&inspected.stderr)
+        );
+        let inspected: Value = serde_json::from_slice(&inspected.stdout).unwrap();
+        assert_eq!(inspected["admitted"], false);
+        assert_eq!(inspected["creates_files"], false);
+        assert!(
+            inspected["minimum_worker_scratch_bytes"].as_u64().unwrap()
+                <= profile["scratch_bytes"].as_u64().unwrap()
+        );
+        assert!(!control.join("admissions").exists());
+    }
     invalid["budget_bytes"] = json!(1);
     fs::write(&path, serde_json::to_vec(&invalid).unwrap()).unwrap();
     let rejected = run();
     assert!(!rejected.status.success());
     assert!(
-        String::from_utf8_lossy(&rejected.stderr).contains("request refused"),
+        String::from_utf8_lossy(&rejected.stderr).contains(if compiled {
+            "workspace budget below"
+        } else {
+            "request refused"
+        }),
         "{}",
         String::from_utf8_lossy(&rejected.stderr)
     );
@@ -204,6 +256,41 @@ pub fn exercise(
         &before
     );
     assert!(!cache.join("staging/caminos").exists());
+    if compiled {
+        for refusal in ["scratch", "capacity", "mode"] {
+            let mut rejected = profile.clone();
+            match refusal {
+                "scratch" => rejected["scratch_bytes"] = json!(1),
+                "capacity" => rejected["cache"]["capacity"]["max_object_bytes"] = json!(1),
+                _ => rejected["worker"]["context_mode"] = json!("automatic"),
+            }
+            fs::write(&path, serde_json::to_vec(&rejected).unwrap()).unwrap();
+            let result = run();
+            assert!(!result.status.success());
+            let message = String::from_utf8_lossy(&result.stderr);
+            assert!(
+                message.contains(match refusal {
+                    "scratch" => "scratch below",
+                    "capacity" => "preparation not admitted",
+                    _ => "unknown variant",
+                }),
+                "{message}"
+            );
+            assert_eq!(
+                SourceJournal::open(&journal_root, &witness)
+                    .unwrap()
+                    .checkpoint(),
+                witness
+            );
+            assert!(!cache.read_dir().unwrap().any(|e| {
+                e.unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("native-prepare-")
+            }));
+            assert!(!cache.join("staging/caminos").exists());
+        }
+    }
     for refusal in ["stale-template", "production-input"] {
         let mut rejected = profile.clone();
         let selected = if refusal == "stale-template" {
@@ -375,7 +462,11 @@ pub fn exercise(
     for mode in ["plan-only", "automatic"] {
         let mut automatic = profile.clone();
         automatic["source_id"] = json!(format!("native-cli-{mode}"));
-        automatic["scratch_bytes"] = json!(128 * 1024 * 1024_u64);
+        automatic["scratch_bytes"] = json!(if compiled {
+            512 * 1024 * 1024_u64
+        } else {
+            128 * 1024 * 1024_u64
+        });
         automatic["worker"]
             .as_object_mut()
             .unwrap()
@@ -427,13 +518,18 @@ pub fn exercise(
             &completed["planning_result"]
         };
         let planned = planner["outputs"].as_object().unwrap();
-        assert!(
-            planner["budget_bytes"].as_u64().unwrap()
-                < automatic["scratch_bytes"].as_u64().unwrap()
-        );
-        assert!(
-            planner["budget_bytes"].as_u64().unwrap() < profile["budget_bytes"].as_u64().unwrap()
-        );
+        if compiled {
+            assert_eq!(planner["budget_bytes"], profile["budget_bytes"]);
+        } else {
+            assert!(
+                planner["budget_bytes"].as_u64().unwrap()
+                    < automatic["scratch_bytes"].as_u64().unwrap()
+            );
+            assert!(
+                planner["budget_bytes"].as_u64().unwrap()
+                    < profile["budget_bytes"].as_u64().unwrap()
+            );
+        }
         assert_eq!(planned.len(), 1);
         let item = &planned["planning.json"];
         let retained: Value =

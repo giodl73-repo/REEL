@@ -180,15 +180,59 @@ struct Entry {
     cache_root: PathBuf,
 }
 
+/// Observed data-allocation unit for bounded preparation planning. This is not
+/// a bound on filesystem administrative overhead or a capacity reservation.
+#[cfg(windows)]
+pub fn allocation_unit(path: &Path) -> Result<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{GetDiskFreeSpaceW, GetVolumePathNameW};
+    let path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut mount = [0u16; 1024];
+    let (mut sectors, mut bytes, mut free, mut total) = (0, 0, 0, 0);
+    // Buffers and scalar outputs remain valid for both Windows calls.
+    unsafe {
+        if GetVolumePathNameW(path.as_ptr(), mount.as_mut_ptr(), mount.len() as u32) == 0
+            || GetDiskFreeSpaceW(
+                mount.as_ptr(),
+                &mut sectors,
+                &mut bytes,
+                &mut free,
+                &mut total,
+            ) == 0
+        {
+            return Err(std::io::Error::last_os_error().into());
+        }
+    }
+    u64::from(sectors)
+        .checked_mul(u64::from(bytes))
+        .filter(|n| *n > 0)
+        .ok_or_else(|| "Invalid filesystem allocation unit".into())
+}
+#[cfg(not(windows))]
+pub fn allocation_unit(_path: &Path) -> Result<u64> {
+    Err("Native preparation allocation geometry unavailable on this platform".into())
+}
+
 pub struct Reservation {
     pub id: String,
     pub volume_id: String,
     pub cache_root: PathBuf,
     dir: PathBuf,
     lease: Option<File>,
+    retained: bool,
+}
+impl Reservation {
+    /// End this writer's lease but leave its conservative capacity record for
+    /// explicit recovery. Does not authorize deleting any residual workspace.
+    pub fn retain_for_recovery(mut self) {
+        self.retained = true;
+    }
 }
 impl Drop for Reservation {
     fn drop(&mut self) {
+        if self.retained {
+            return;
+        }
         // If the short metadata lock is unavailable, retain a conservative stale
         // reservation for explicit recovery rather than pretending it expired.
         if let Ok(_lock) = capacity_lock(&self.dir) {
@@ -279,6 +323,7 @@ fn reserve_candidates(
             cache_root: cache.clone(),
             dir,
             lease: Some(lease),
+            retained: false,
         });
     }
     Err(AdmissionDenied(reasons.join("; ")).into())

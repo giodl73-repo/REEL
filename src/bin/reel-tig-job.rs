@@ -12,6 +12,8 @@ enum Operation {
     Run { profile: PathBuf },
     /// Run a bounded planning job and retain its output contract; no media render.
     PlanOutputs { profile: PathBuf },
+    /// Inspect preparation allowances from existing roots; no writes or execution.
+    PreparationBudget { profile: PathBuf },
     /// Internal trusted child route. Use Run for admission/containment/retention.
     #[command(hide = true)]
     Worker {
@@ -26,6 +28,9 @@ fn main() -> ExitCode {
     let result = match Args::parse().operation {
         Operation::Run { profile } => reel::tig_native_job_cli::run(&profile),
         Operation::PlanOutputs { profile } => reel::tig_native_job_cli::plan_outputs(&profile),
+        Operation::PreparationBudget { profile } => {
+            reel::tig_native_job_cli::preparation_budget(&profile)
+        }
         Operation::Worker {
             ticket,
             sha256,
