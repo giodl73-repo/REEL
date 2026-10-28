@@ -75,12 +75,12 @@ fn consumption(profiles: &[Profile]) -> Vec<graph::recipe::Consumption> {
 }
 fn payloads(
     profiles: &[Profile],
-    request: &Request,
+    _request: &Request,
 ) -> Result<Vec<graph::recipe::PayloadConsumption>> {
     profiles
         .iter()
         .map(|profile| {
-            let (selected, slots) = if profile.definition_id == request.scene_definition {
+            let (selected, slots) = if profile.class == NodeKind::Container {
                 (false, BTreeSet::new())
             } else {
                 match &profile.payloads {

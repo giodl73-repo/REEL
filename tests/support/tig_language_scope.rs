@@ -1,6 +1,8 @@
 use super::*;
 #[path = "tig_binding_variants.rs"]
 mod binding_variants;
+#[path = "tig_control_references.rs"]
+mod control_references;
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "tig_projected_jobs.rs"]
 mod projected_jobs;
@@ -75,13 +77,14 @@ fn bilingual() -> (Fixture, reel::tig_scene::Request) {
 }
 #[cfg(all(windows, feature = "tig-publication"))]
 #[test]
-fn unused_primary_definitions_cannot_be_output_templates_before_job_adoption() {
+fn unused_input_definitions_cannot_be_output_templates_before_job_adoption() {
     use tig_store::{metadata::MetadataReader, source_claims::SourceJournal};
-    let (mut f, request) = bilingual();
+    let (mut f, request) = control_references::fixture();
     f.profile["byte_source"]["required"] = json!("prevent-mutation");
     for (name, id) in [
         ("cue-main", "cue/unrelated-output-trap"),
         ("alignment", "alignment/unrelated-output-trap"),
+        ("profile", "controls/unrelated-output-trap"),
     ] {
         let mut record = load(&f, &format!("records/{name}.tig"));
         record["id"] = json!(id);
@@ -125,6 +128,7 @@ fn unused_primary_definitions_cannot_be_output_templates_before_job_adoption() {
     for (id, name) in [
         ("cue/unrelated-output-trap", "unused-cue-main"),
         ("alignment/unrelated-output-trap", "unused-alignment"),
+        ("controls/unrelated-output-trap", "unused-profile"),
     ] {
         let template = tig_assets::graph::Reference {
             id: id.into(),

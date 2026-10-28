@@ -178,6 +178,10 @@ fn compare(profile: &Path, output: &Path) -> Result<Value> {
                 || subject.definition().id == profile.request.scene_definition
                 || profile
                     .request
+                    .control_definitions
+                    .contains(&subject.definition().id)
+                || profile
+                    .request
                     .primary_definitions
                     .contains(&subject.definition().id)
         })
