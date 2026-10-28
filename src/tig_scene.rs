@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    io::{Read, Write},
+    io::Read,
     path::Path,
 };
 use tig_assets::graph::{self, Binding, Collection, EdgeKind, NodeKind, Payloads, Profile, Rule};
@@ -325,17 +325,6 @@ pub fn restore_claim<'a>(
     }
     source.bind_native_context(replay.context().descriptor());
     Ok((source, replay))
-}
-fn put(root: &Path, name: &str, bytes: &[u8]) -> Result<()> {
-    fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(root.join(name))?
-        .write_all(bytes)?;
-    Ok(())
-}
-fn json_file(root: &Path, name: &str, value: &impl serde::Serialize) -> Result<()> {
-    put(root, name, &serde_json::to_vec(value)?)
 }
 fn metadata(source: &mut Source, object: &Object, total: &mut u64) -> Result<Vec<u8>> {
     *total = total
@@ -740,19 +729,23 @@ fn compile_with_scope(
         "complete_semantic_coverage":false,"authorizes_eviction":false,
     });
     // All ordinary metadata is admitted before creating the output directory.
+    let mut budget = scene_delivery_compile::MetadataBudget::new(
+        64 * 1024 * 1024,
+        crate::tig_inputs::JOB_BYTES_MAX,
+    );
     fs::create_dir(output)?;
     for (name, bytes) in &controls {
         if *name != "profile.json" {
-            put(output, name, bytes)?;
+            budget.write_bytes(output, name, bytes)?;
         }
     }
-    put(output, "scene.json", &scene_bytes)?;
-    json_file(output, "profile.json", profile)?;
-    json_file(output, "scene-bindings.json", &bindings)?;
-    json_file(output, "episode-bindings.json", &empty_episode)?;
-    json_file(output, "season-bindings.json", &empty_season)?;
-    json_file(output, "graph.json", &graph)?;
-    json_file(output, "pointer.json", &pointer)?;
+    budget.write_bytes(output, "scene.json", &scene_bytes)?;
+    budget.compact(output, "profile.json", profile)?;
+    budget.compact(output, "scene-bindings.json", &bindings)?;
+    budget.compact(output, "episode-bindings.json", &empty_episode)?;
+    budget.compact(output, "season-bindings.json", &empty_season)?;
+    budget.compact(output, "graph.json", &graph)?;
+    budget.compact(output, "pointer.json", &pointer)?;
     let mut paths = BTreeMap::new();
     for (index, cue) in alignments.keys().enumerate() {
         // Preserve exact selected alignment bytes; reserializing can change pins.
@@ -764,26 +757,26 @@ fn compile_with_scope(
         let asset = binding(&bindings, cue_source.phrase_alignment_binding.as_deref())?;
         let file = format!("alignment-{index:04}.json");
         let bytes = &alignment_bytes[&asset.logical_id];
-        put(output, &file, bytes)?;
+        budget.write_bytes(output, &file, bytes)?;
         paths.insert(cue.clone(), file);
     }
-    json_file(output, "alignment-paths.json", &paths)?;
+    budget.compact(output, "alignment-paths.json", &paths)?;
     if let Some(bytes) = template {
-        put(output, "template-receipt.json", &bytes)?;
+        budget.write_bytes(output, "template-receipt.json", &bytes)?;
     }
     let manifest = json!({"schema":"reel.scene-delivery-compile.v1","catalog":"catalog.json","episode":"episode.json","scene":"scene.json","policy":"policy.json", "season_bindings":"season-bindings.json","episode_bindings":"episode-bindings.json","scene_bindings":"scene-bindings.json","graph":"graph.json","pointer":"pointer.json","alignment_paths":"alignment-paths.json","profile":"profile.json","language":request.language,"delivery_id":request.delivery_id,"delivery_title":request.delivery_title,"output_dir":"delivery","template_receipt":request.controls.template_receipt.as_ref().map(|_|"template-receipt.json")});
     let compile: CompileManifest = serde_json::from_value(manifest.clone())?;
-    json_file(output, "compile.json", &manifest)?;
-    json_file(
+    budget.compact(output, "compile.json", &manifest)?;
+    budget.compact(
         output,
         "native-source.json",
         &json!({"schema":"reel.tig-native-source.experimental-1","adapter_source_sha256":Object::from_bytes(include_bytes!("tig_scene.rs")).sha256,"tig_source_pin_sha256":Object::from_bytes(include_bytes!("../vendor/tig/source-pin.json")).sha256,"source_checkpoint":source.checkpoint(),"scene_record":parent.reference(),"control_objects":pins,"primary_definition_ids":request.primary_definitions,"binding_count":bindings.assets.len(),"declared_inputs":{"source_checkpoint":required.checkpoint(),"admission_sha256":required.admission(),"binding_sha256":required.binding_digest(),"primary_objects":required.primary(),"control_objects":required.controls(),"interpretation_objects":required.metadata(),"complete_semantic_coverage":false,"authorizes_eviction":false},"language_inputs":language_scope,"new_production_approval":false,"complete_semantic_coverage":false}),
     )?;
     if evidence.is_empty() {
-        scene_delivery_compile::compile_to_dir(output, &compile)
+        scene_delivery_compile::compile_to_dir_with_budget(output, &compile, output, &mut budget)
     } else {
         let inputs = source.prepare_files(evidence)?;
-        scene_delivery_compile::compile_to_dir_with_inputs(output, &compile, &inputs)
+        scene_delivery_compile::compile_to_dir_with_budget(output, &compile, &inputs, &mut budget)
     }
     .map_err(|error| anyhow!("native scene compilation refused: {error}"))
     .map(|receipt| (receipt, scope))
