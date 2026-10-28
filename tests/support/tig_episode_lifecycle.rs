@@ -288,6 +288,12 @@ impl Project {
         project
     }
     fn render(&mut self, index: usize, version: &str) -> Scene {
+        self.render_impl(index, version, false)
+    }
+    fn render_delivery(&mut self, index: usize, version: &str) -> Scene {
+        self.render_impl(index, version, true)
+    }
+    fn render_impl(&mut self, index: usize, version: &str, complete: bool) -> Scene {
         let unit = UNITS[index];
         let request = &self.requests[index];
         let mut source = self.source();
@@ -366,22 +372,46 @@ impl Project {
         .unwrap()
         .unwrap();
         let mut backend = self.publisher("hot");
-        let published = job
-            .publish(
+        let bindings = [OutputBinding {
+            output_name: "master.mkv",
+            subject: &subject,
+        }];
+        let publication = Publication {
+            operation: key(&format!("render-{unit}-{version}")),
+            owner: key("fixture"),
+            required: AckLevel::ProcessRestart,
+        };
+        let published = if complete {
+            if index == 1 {
+                super::candidate_publication::exercise_delivery(
+                    candidate.candidate(),
+                    &subject,
+                    self.publisher("hot"),
+                    &output,
+                );
+            }
+            job.publish_delivery(
                 &mut self.owners,
                 &candidate,
-                &[OutputBinding {
-                    output_name: "master.mkv",
-                    subject: &subject,
-                }],
-                &Publication {
-                    operation: key(&format!("render-{unit}-{version}")),
-                    owner: key("fixture"),
-                    required: AckLevel::ProcessRestart,
+                &bindings,
+                &publication,
+                &mut backend,
+                &reel::tig_scene_production::DeliveryBudget {
+                    max_objects: 64,
+                    max_bytes: 8 * 1024 * 1024,
                 },
+            )
+            .unwrap()
+        } else {
+            job.publish(
+                &mut self.owners,
+                &candidate,
+                &bindings,
+                &publication,
                 &mut backend,
             )
-            .unwrap();
+            .unwrap()
+        };
         let claim = Claim::parse(
             published.published().claim().object(),
             published.published().claim().bytes(),
@@ -409,6 +439,23 @@ impl Project {
                 TreeLimits::default(),
             )
             .unwrap();
+        assert_eq!(published.published().delivery_outputs().is_some(), complete);
+        if let Some(outputs) = published.published().delivery_outputs() {
+            for object in outputs.values() {
+                assert!(
+                    ready
+                        .resources()
+                        .of(tig_git::source::native::job::Role::Evidence)
+                        .contains(object)
+                );
+                assert!(
+                    !ready
+                        .resources()
+                        .of(tig_git::source::native::job::Role::Primary)
+                        .contains(object)
+                );
+            }
+        }
         job.adopt_outputs(
             &mut self.owners,
             &ready,
@@ -755,15 +802,11 @@ fn cached_scene_bundle_rechecks_without_render_directory_and_rejects_bad_bytes()
     use reel::{scene_delivery, tig_scene_outputs::Bundle};
     use tig_core::Digest;
     let mut p = Project::new();
-    let scene = p.render(1, "cached-v1");
+    let scene = p.render_delivery(1, "cached-v1");
     let original_bytes = fs::read(scene.output.join("receipt.json")).unwrap();
     let original: scene_delivery::Receipt = serde_json::from_slice(&original_bytes).unwrap();
-    for file in original.outputs.values() {
-        let object = p.publish("hot", &fs::read(scene.output.join(&file.path)).unwrap());
-        assert_eq!(object.sha256.as_str(), file.sha256);
-        assert_eq!(object.bytes, file.bytes);
-    }
-    let receipt = p.publish("hot", &original_bytes);
+    let receipt = scene.delivery_receipt.clone();
+    assert_eq!(Object::from_bytes(&original_bytes), receipt);
     let profile: tig_store::existing::Profile =
         serde_json::from_value(p.profile["byte_source"].clone()).unwrap();
     let job: Job = serde_json::from_slice(&fs::read(&scene.job).unwrap()).unwrap();
@@ -885,10 +928,10 @@ fn cached_scene_bundle_rechecks_without_render_directory_and_rejects_bad_bytes()
     drop(distributed);
     // Complete episode consumption: every original render directory is absent.
     let scenes = vec![
-        p.render(0, "cached-v1"),
+        p.render_delivery(0, "cached-v1"),
         scene,
-        p.render(2, "cached-v1"),
-        p.render(3, "cached-v1"),
+        p.render_delivery(2, "cached-v1"),
+        p.render_delivery(3, "cached-v1"),
     ];
     let bundles: Vec<_> = scenes
         .iter()
@@ -897,14 +940,8 @@ fn cached_scene_bundle_rechecks_without_render_directory_and_rejects_bad_bytes()
             let selected = if i == 1 {
                 receipt.clone()
             } else {
-                let bytes = fs::read(s.output.join("receipt.json")).unwrap();
-                let metadata: scene_delivery::Receipt = serde_json::from_slice(&bytes).unwrap();
-                for file in metadata.outputs.values() {
-                    p.publish("hot", &fs::read(s.output.join(&file.path)).unwrap());
-                }
-                let selected = p.publish("hot", &bytes);
                 fs::rename(&s.output, s.output.with_extension("not-visible")).unwrap();
-                selected
+                s.delivery_receipt.clone()
             };
             assert!(!s.output.exists());
             Bundle::open(profile.clone(), &selected).unwrap()
