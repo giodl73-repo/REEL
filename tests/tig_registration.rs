@@ -5,6 +5,8 @@ use std::{fs, path::Path, process::Command};
 use tig_assets::native::Instance;
 use tig_core::Object;
 use tig_store::existing::ReadCache;
+#[path = "support/tig_registration_variants.rs"]
+mod variants;
 
 struct Fixture {
     root: tempfile::TempDir,
@@ -177,11 +179,25 @@ fn invalid_scope_identity_annotations_budget_and_definition_refuse_before_output
     }
 }
 #[test]
-fn duplicate_ids_and_wrong_binding_scope_do_not_silently_rename_source_assets() {
+fn shared_aliases_emit_one_asset_while_wrong_scopes_and_conflicting_ids_refuse() {
     let asset = json!({"logical_id":"same-id","sha256":"a".repeat(64),"bytes":1,
         "cache_uri":format!("cache://sha256/{}","a".repeat(64)),"selection_state":"draft"});
-    for bindings in [
+    let f = Fixture::new(
         json!({"schema":"reel.scene-asset-bindings.v1","scope_id":"scene:01","assets":{"one":asset,"two":asset}}),
+    );
+    let output = f.root.path().join("shared");
+    assert!(f.run(&output).status.success());
+    assert_eq!(fs::read_dir(output.join("inputs")).unwrap().count(), 1);
+    let parent: Value =
+        serde_json::from_slice(&fs::read(output.join("scene.tig")).unwrap()).unwrap();
+    assert_eq!(
+        parent["authored"]["binding_ids"]["one"],
+        parent["authored"]["binding_ids"]["two"]
+    );
+    let mut conflicting = asset.clone();
+    conflicting["selection_state"] = json!("different-state");
+    for bindings in [
+        json!({"schema":"reel.scene-asset-bindings.v1","scope_id":"scene:01","assets":{"one":asset,"two":conflicting}}),
         json!({"schema":"reel.scene-asset-bindings.v1","scope_id":"wrong-scene","assets":{"one":asset}}),
     ] {
         let f = Fixture::new(bindings);

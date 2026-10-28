@@ -17,6 +17,15 @@ use tig_store::existing::{ByteSource, Profile as ByteProfile, ReadCache};
 pub const SCHEMA: &str = "reel.tig-native-registration.experimental-1";
 const DOCUMENT_BYTES: u64 = 4 * 1024 * 1024;
 const TOTAL_BYTES: u64 = 16 * 1024 * 1024;
+mod scopes;
+mod variants;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BindingSource {
+    pub asset: String,
+    pub scope_id: String,
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -32,6 +41,14 @@ pub struct Profile {
     pub package: Object,
     pub scene_asset: String,
     pub bindings_asset: String,
+    #[serde(default)]
+    pub language_bindings_assets: BTreeMap<String, String>,
+    #[serde(default)]
+    pub language_filenames: BTreeMap<String, BTreeMap<String, String>>,
+    #[serde(default)]
+    pub binding_ancestors: Vec<BindingSource>,
+    #[serde(default)]
+    pub language_binding_ancestors: BTreeMap<String, Vec<BindingSource>>,
     pub scene_definition: DefinitionFiles,
     pub primary_definition: DefinitionFiles,
     pub controls: Vec<Stream>,
@@ -228,8 +245,15 @@ pub fn prepare(profile: &Profile, source: &mut impl ByteSource) -> Result<Prepar
     let scene_pin = pin(&profile.scene_asset)?;
     let bindings_pin = pin(&profile.bindings_asset)?;
     let scene: Scene = serde_json::from_slice(&read_metadata(source, &scene_pin, &mut remaining)?)?;
-    let bindings: Bindings =
+    let mut bindings: Bindings =
         serde_json::from_slice(&read_metadata(source, &bindings_pin, &mut remaining)?)?;
+    let inherited = scopes::merge(
+        &profile.binding_ancestors,
+        &package,
+        &mut bindings,
+        source,
+        &mut remaining,
+    )?;
     if ![
         scene_authoring::SCENE_SCHEMA,
         scene_authoring::SCENE_SCHEMA_V2,
@@ -249,6 +273,9 @@ pub fn prepare(profile: &Profile, source: &mut impl ByteSource) -> Result<Prepar
     {
         bail!("registration annotation names an unknown binding");
     }
+    for name in profile.filenames.values() {
+        filename(name)?;
+    }
     if profile.metadata.contains_key("native_registration") {
         bail!("registration provenance is reserved");
     }
@@ -258,18 +285,33 @@ pub fn prepare(profile: &Profile, source: &mut impl ByteSource) -> Result<Prepar
         json!({"package":profile.package,
         "artifact_id":package.artifact_id,"version_id":package.version_id,"bindings":bindings_pin}),
     );
+    if !inherited.is_empty() {
+        metadata["native_registration"]["binding_ancestors"] = json!(inherited);
+    }
     let definition_pin =
         |id: &str, bytes: &[u8]| json!({"id":id,"sha256":Digest::blob(bytes),"bytes":bytes.len()});
     let mut records = BTreeMap::new();
     let mut references = Map::new();
-    let mut ids = BTreeSet::from([scene.scene_id.clone()]);
+    let mut ids = BTreeMap::new();
     let mut names = BTreeSet::new();
     let mut sizes = BTreeMap::new();
     let mut total = 0u64;
     for (key, asset) in &bindings.assets {
-        if !ids.insert(asset.logical_id.clone()) {
-            bail!("duplicate native asset identity");
+        if asset.logical_id == scene.scene_id {
+            bail!("primary identity collides with scene");
         }
+        let identity = (
+            serde_json::to_value(asset)?,
+            profile.primary_annotations.get(key).cloned(),
+        );
+        if let Some(previous) = ids.get(&asset.logical_id) {
+            if previous != &identity {
+                bail!("shared native identity has conflicting data or annotations");
+            }
+            references.insert(key.clone(), json!({"id":asset.logical_id}));
+            continue;
+        }
+        ids.insert(asset.logical_id.clone(), identity);
         let object = Object {
             sha256: Digest::parse(&asset.sha256)?,
             bytes: asset.bytes,
@@ -314,11 +356,41 @@ pub fn prepare(profile: &Profile, source: &mut impl ByteSource) -> Result<Prepar
         records.insert(format!("inputs/{name}"), bytes);
         references.insert(key.clone(), json!({"id":asset.logical_id}));
     }
+    let variants = variants::prepare(
+        profile,
+        &package,
+        &scene,
+        &bindings,
+        source,
+        &mut remaining,
+        &records,
+    )?;
+    for (path, bytes) in variants.records {
+        total = total
+            .checked_add(bytes.len() as u64)
+            .context("registration byte overflow")?;
+        if total > profile.max_output_bytes {
+            bail!("registration output exceeds budget");
+        }
+        records.insert(path, bytes);
+    }
+    let mut parent_authored = json!({
+        "scene_id":scene.scene_id,"episode_id":scene.episode_id,"source_package":profile.package,
+        "binding_ids":references,"public_release":false
+    });
+    if !variants.overrides.is_empty() {
+        parent_authored["language_binding_ids"] = json!(variants.overrides);
+    }
+    if !variants.pins.is_empty() {
+        metadata["native_registration"]["language_bindings"] = json!(variants.pins);
+    }
+    if !variants.ancestors.is_empty() {
+        metadata["native_registration"]["language_binding_ancestors"] = json!(variants.ancestors);
+    }
     let parent = record(
         json!({"schema":"tig.instance.design-1","id":scene.scene_id,
-        "definition":definition_pin(&scene_type.value().id,&scene_definition),"authored":{
-            "scene_id":scene.scene_id,"episode_id":scene.episode_id,"source_package":profile.package,
-            "binding_ids":references,"public_release":false},"selected":scene_pin,"streams":profile.controls,
+        "definition":definition_pin(&scene_type.value().id,&scene_definition),"authored":parent_authored,
+        "selected":scene_pin,"streams":profile.controls,
         "status":{"lifecycle":"registered-native-source","native_authoring_state":scene.authoring_state},"metadata":metadata}),
         &scene_definition,
         &scene_schema,
