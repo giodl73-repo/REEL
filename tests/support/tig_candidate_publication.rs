@@ -1,6 +1,6 @@
 use reel::{
     tig_publication::{ExistingPublisher, Profile},
-    tig_scene_production::{OutputBinding, Publication, RenderedCandidate},
+    tig_scene_production::{DeliveryBudget, OutputBinding, Publication, RenderedCandidate},
 };
 use reel_assets::{Config, PathPolicy};
 use std::{fs, io::Read, path::Path};
@@ -17,6 +17,108 @@ struct Observed {
     requests: Vec<Request>,
     max_bytes: Option<u64>,
     fail_object: Option<Object>,
+}
+
+pub fn exercise_delivery(
+    candidate: &RenderedCandidate,
+    subject: &BoundSubject,
+    inner: ExistingPublisher,
+    output: &Path,
+) {
+    let mut backend = Observed {
+        inner,
+        visits: 0,
+        requests: Vec::new(),
+        max_bytes: None,
+        fail_object: None,
+    };
+    let bindings = [OutputBinding {
+        output_name: "master.mkv",
+        subject,
+    }];
+    let mut publication = Publication {
+        operation: Key::parse("complete-delivery-contract").unwrap(),
+        owner: Key::parse("fixture").unwrap(),
+        required: AckLevel::ProcessRestart,
+    };
+    let budget = DeliveryBudget {
+        max_objects: 4098,
+        max_bytes: 8 * 1024 * 1024,
+    };
+    for denied in [
+        DeliveryBudget {
+            max_objects: 0,
+            max_bytes: budget.max_bytes,
+        },
+        DeliveryBudget {
+            max_objects: 1,
+            max_bytes: budget.max_bytes,
+        },
+        DeliveryBudget {
+            max_objects: 4098,
+            max_bytes: 1,
+        },
+    ] {
+        assert!(
+            candidate
+                .publish_delivery(&bindings, &publication, &mut backend, &denied)
+                .is_err()
+        );
+        assert_eq!(backend.visits, 0);
+    }
+    publication.required = AckLevel::ProviderDurable;
+    assert!(
+        candidate
+            .publish_delivery(&bindings, &publication, &mut backend, &budget)
+            .is_err()
+    );
+    assert_eq!(backend.visits, 0);
+    publication.required = AckLevel::ProcessRestart;
+    let other = candidate
+        .receipt()
+        .outputs
+        .iter()
+        .find(|(name, _)| name.as_str() != "master.mkv")
+        .unwrap()
+        .1;
+    let other_path = output.join(&other.path);
+    let original = fs::read(&other_path).unwrap();
+    let mut changed = original.clone();
+    changed[0] ^= 1;
+    fs::write(&other_path, changed).unwrap();
+    assert!(
+        candidate
+            .publish_delivery(&bindings, &publication, &mut backend, &budget)
+            .is_err()
+    );
+    assert_eq!(backend.visits, 0);
+    fs::write(&other_path, original).unwrap();
+    backend.fail_object = Some(candidate.receipt_object().clone());
+    assert!(
+        candidate
+            .publish_delivery(&bindings, &publication, &mut backend, &budget)
+            .is_err()
+    );
+    assert_eq!(backend.visits, candidate.receipt().outputs.len() + 1);
+    let prefix = backend.requests.clone();
+    backend.fail_object = None;
+    let published = candidate
+        .publish_delivery(&bindings, &publication, &mut backend, &budget)
+        .unwrap();
+    let outputs = published.delivery_outputs().unwrap();
+    assert_eq!(outputs.len(), candidate.receipt().outputs.len());
+    assert_eq!(published.acknowledgements().len(), outputs.len() + 2);
+    for (name, object) in outputs {
+        let expected = &candidate.receipt().outputs[name];
+        assert_eq!(object.sha256.as_str(), expected.sha256);
+        assert_eq!(object.bytes, expected.bytes);
+    }
+    assert_eq!(&backend.requests[prefix.len()..prefix.len() * 2], &prefix);
+    let replayed = candidate
+        .publish_delivery(&bindings, &publication, &mut backend, &budget)
+        .unwrap();
+    assert_eq!(replayed.claim().object(), published.claim().object());
+    assert_eq!(replayed.delivery_outputs(), published.delivery_outputs());
 }
 impl PublicationBackend for Observed {
     fn capabilities(&self) -> Capabilities {

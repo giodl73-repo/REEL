@@ -36,3 +36,8 @@ path = "src/bin/tig-propose.rs"
 name = "tig-resolve"
 path = "src/bin/tig-resolve.rs"
 required-features = ["assets"]
+
+[[bin]]
+name = "tig-graph"
+path = "src/bin/tig-graph.rs"
+required-features = ["assets"]

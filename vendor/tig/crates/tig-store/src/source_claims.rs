@@ -116,6 +116,12 @@ pub struct Source {
     pub pending: Option<Pending>,
     pub predecessors: Vec<Version>,
 }
+/// One verified journal snapshot, not a lease, liveness or recovery decision.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Observation {
+    pub checkpoint: Checkpoint,
+    pub source: Option<Source>,
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Role {
     Current,
@@ -149,12 +155,31 @@ impl std::ops::Deref for ObligationSet {
         &self.roots
     }
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Receipt {
     pub reference: Reference,
     pub checkpoint: Checkpoint,
     pub source_revision: u64,
     pub replayed: bool,
+}
+/// A coherent read-only candidate, never a newly committed receipt.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Preview {
+    pub checkpoint: Checkpoint,
+    pub disposition: PreviewDisposition,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PreviewDisposition {
+    Recorded {
+        receipt: Receipt,
+    },
+    Proposed {
+        before: Option<Source>,
+        after: Box<Source>,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -188,6 +213,17 @@ pub enum Command {
         owner: Key,
         expected_revision: u64,
     },
+}
+impl Command {
+    fn source(&self) -> &Key {
+        match self {
+            Self::Prepare { source, .. }
+            | Self::Adopt { source, .. }
+            | Self::Abort { source, .. }
+            | Self::Retire { source, .. }
+            | Self::Withdraw { source, .. } => source,
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -382,6 +418,19 @@ impl SourceJournal {
     }
     /// The witness is a trusted minimum; it cannot detect every unseen rollback.
     pub fn open(root: &Path, witness: &Checkpoint) -> Result<Self> {
+        Self::open_mode(root, witness, false)
+    }
+    /// Read an existing authority without write access, creation or recovery.
+    /// Both fields come from one replay. Absence is scoped to this snapshot;
+    /// later commands still require current revision and owner authorization.
+    pub fn observe(root: &Path, witness: &Checkpoint, source: &Key) -> Result<Observation> {
+        let journal = Self::open_mode(root, witness, true)?;
+        Ok(Observation {
+            checkpoint: journal.state.head.clone(),
+            source: journal.state.sources.get(source.as_str()).cloned(),
+        })
+    }
+    fn open_mode(root: &Path, witness: &Checkpoint, read_only: bool) -> Result<Self> {
         local::check_root_spelling(root)?;
         local::directory(root)?;
         let config: Config = local::read_record(&root.join("claims.json"))?;
@@ -393,7 +442,11 @@ impl SourceJournal {
             return Err(Error::InvalidReference);
         }
         local::regular(&root.join("claims.sqlite"))?;
-        let conn = connect(&root.join("claims.sqlite"))?;
+        let conn = if read_only {
+            connect_read_only(&root.join("claims.sqlite"))?
+        } else {
+            connect(&root.join("claims.sqlite"))?
+        };
         let mut journal = Self {
             conn,
             state: State {
@@ -500,13 +553,59 @@ impl SourceJournal {
     pub fn apply(&mut self, operation: Key, command: Command) -> Result<Receipt> {
         self.apply_hook(operation, command, |_| Ok(()))
     }
+    pub fn preview(
+        root: &Path,
+        minimum: &Checkpoint,
+        operation: Key,
+        command: Command,
+    ) -> Result<Preview> {
+        let mut journal = Self::open_mode(root, minimum, true)?;
+        let request = Request { operation, command };
+        let body = encode(&request).map_err(|_| Error::InvalidReference)?;
+        let tx = journal
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Deferred)?;
+        let mut state = journal.state.clone();
+        catch_up(&tx, &mut state)?;
+        let checkpoint = state.head.clone();
+        let disposition = if let Some(receipt) = recorded_receipt(&tx, &state, &request, &body)? {
+            PreviewDisposition::Recorded { receipt }
+        } else {
+            growth_bytes(&state, body.len())?;
+            let source = request.command.source().as_str().to_owned();
+            let before = state.sources.get(&source).cloned();
+            state.transition(&request)?;
+            let after = state.sources.get(&source).cloned().ok_or(Error::Corrupt)?;
+            PreviewDisposition::Proposed {
+                before,
+                after: Box::new(after),
+            }
+        };
+        tx.commit()?;
+        Ok(Preview {
+            checkpoint,
+            disposition,
+        })
+    }
+    /// Recover only an exact previously committed acknowledgment. Unknown IDs
+    /// refuse without executing a transition or opening a writable authority.
+    /// The returned revision/checkpoint are historical, not current state.
+    pub fn acknowledge(
+        root: &Path,
+        minimum: &Checkpoint,
+        operation: Key,
+        command: Command,
+    ) -> Result<Receipt> {
+        let mut journal = Self::open_mode(root, minimum, true)?;
+        journal.apply_once(operation, command, true, |_| Ok(()))
+    }
     pub fn apply_hook(
         &mut self,
         operation: Key,
         command: Command,
         hook: impl FnMut(Stage) -> Result<()>,
     ) -> Result<Receipt> {
-        let result = self.apply_once(operation, command, hook);
+        let result = self.apply_once(operation, command, false, hook);
         self.mark_uncertain(&result);
         result
     }
@@ -514,6 +613,7 @@ impl SourceJournal {
         &mut self,
         operation: Key,
         command: Command,
+        recorded_only: bool,
         mut hook: impl FnMut(Stage) -> Result<()>,
     ) -> Result<Receipt> {
         if self.poisoned {
@@ -521,67 +621,22 @@ impl SourceJournal {
         }
         let request = Request { operation, command };
         let body = encode(&request).map_err(|_| Error::InvalidReference)?;
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let tx = self.conn.transaction_with_behavior(if recorded_only {
+            TransactionBehavior::Deferred
+        } else {
+            TransactionBehavior::Immediate
+        })?;
         let mut state = self.state.clone();
         catch_up(&tx, &mut state)?;
-        let old = tx
-            .query_row(
-                "SELECT sequence,length(body),body,previous,hash FROM events WHERE operation=?1",
-                [request.operation.as_str()],
-                |r| {
-                    if unsigned(r, 1)? > 65_536 {
-                        return Err(rusqlite::Error::InvalidQuery);
-                    }
-                    Ok((
-                        unsigned(r, 0)?,
-                        r.get::<_, Vec<u8>>(2)?,
-                        r.get::<_, String>(3)?,
-                        r.get::<_, String>(4)?,
-                    ))
-                },
-            )
-            .optional()?;
-        if let Some((sequence, old, previous, hash)) = old {
-            if old != body {
-                return Err(Error::Conflict);
-            }
-            let hash = digest(&hash)?;
-            if event_hash(sequence, &digest(&previous)?, &request)? != hash {
-                return Err(Error::Corrupt);
-            }
-            let source_revision = *state
-                .outcomes
-                .get(request.operation.as_str())
-                .ok_or(Error::Corrupt)?;
-            let receipt = Receipt {
-                reference: Reference {
-                    journal: state.head.genesis.clone(),
-                    operation: request.operation,
-                },
-                checkpoint: Checkpoint {
-                    genesis: state.head.genesis.clone(),
-                    sequence,
-                    hash,
-                },
-                source_revision,
-                replayed: true,
-            };
+        if let Some(receipt) = recorded_receipt(&tx, &state, &request, &body)? {
             tx.commit()?;
             self.state = state;
             return Ok(receipt);
         }
-        if state.head.sequence >= MAX_COMMANDS {
-            return Err(Error::Budget);
+        if recorded_only {
+            return Err(Error::Missing);
         }
-        let bytes = state
-            .bytes
-            .checked_add(body.len() as u64)
-            .ok_or(Error::Budget)?;
-        if bytes > MAX_COMMAND_BYTES {
-            return Err(Error::Budget);
-        }
+        let bytes = growth_bytes(&state, body.len())?;
         let revision = state.transition(&request)?;
         let sequence = state.head.sequence.checked_add(1).ok_or(Error::Budget)?;
         let hash = event_hash(sequence, &state.head.hash, &request)?;
@@ -618,6 +673,67 @@ impl SourceJournal {
         self.state = state;
         Ok(receipt)
     }
+}
+fn growth_bytes(state: &State, body_len: usize) -> Result<u64> {
+    let bytes = state
+        .bytes
+        .checked_add(body_len as u64)
+        .ok_or(Error::Budget)?;
+    if state.head.sequence >= MAX_COMMANDS || bytes > MAX_COMMAND_BYTES {
+        return Err(Error::Budget);
+    }
+    Ok(bytes)
+}
+fn recorded_receipt(
+    conn: &Connection,
+    state: &State,
+    request: &Request,
+    body: &[u8],
+) -> Result<Option<Receipt>> {
+    let old = conn
+        .query_row(
+            "SELECT sequence,length(body),body,previous,hash FROM events WHERE operation=?1",
+            [request.operation.as_str()],
+            |r| {
+                if unsigned(r, 1)? > 65_536 {
+                    return Err(rusqlite::Error::InvalidQuery);
+                }
+                Ok((
+                    unsigned(r, 0)?,
+                    r.get::<_, Vec<u8>>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((sequence, old, previous, hash)) = old else {
+        return Ok(None);
+    };
+    if old != body {
+        return Err(Error::Conflict);
+    }
+    let hash = digest(&hash)?;
+    if event_hash(sequence, &digest(&previous)?, request)? != hash {
+        return Err(Error::Corrupt);
+    }
+    let source_revision = *state
+        .outcomes
+        .get(request.operation.as_str())
+        .ok_or(Error::Corrupt)?;
+    Ok(Some(Receipt {
+        reference: Reference {
+            journal: state.head.genesis.clone(),
+            operation: request.operation.clone(),
+        },
+        checkpoint: Checkpoint {
+            genesis: state.head.genesis.clone(),
+            sequence,
+            hash,
+        },
+        source_revision,
+        replayed: true,
+    }))
 }
 fn catch_up(conn: &Connection, state: &mut State) -> Result<()> {
     let (genesis, sequence, hash, bytes) = conn.query_row(
@@ -741,4 +857,17 @@ fn connect(path: &Path) -> Result<Connection> {
         return Err(Error::Corrupt);
     }
     Ok(c)
+}
+fn connect_read_only(path: &Path) -> Result<Connection> {
+    let connection = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    connection.busy_timeout(Duration::ZERO)?;
+    connection.pragma_update(None, "query_only", true)?;
+    let mode: String = connection.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
+    if mode != "delete" {
+        return Err(Error::Corrupt);
+    }
+    Ok(connection)
 }

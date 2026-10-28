@@ -2186,10 +2186,11 @@ pub fn render_with_inputs(
         let name = font_stage_name(layer)?;
         let relative = Path::new("fonts").join(name);
         let p = root.join(&relative);
+        let name = relative.to_string_lossy().replace('\\', "/");
         outputs.insert(
-            relative.to_string_lossy().replace('\\', "/"),
+            name.clone(),
             FileRef {
-                path: relative,
+                path: name.into(),
                 sha256: crate::sha256_file(&p)?,
                 bytes: fs::metadata(p)?.len(),
             },

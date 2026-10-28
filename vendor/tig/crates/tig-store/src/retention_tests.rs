@@ -405,8 +405,9 @@ fn missing_or_corrupt_settled_record_is_not_recreated_under_spent_budget() {
 fn retained_revalidation_failure_keeps_protection_but_invalidates_coverage() {
     let mut f = Fixture::new();
     let r = f.retain();
-    let mut retained = verify(&mut f.ledger, &f.store, &r.grant).unwrap();
     let source = Fixture::new();
+    // Finish durable fixture setup before taking short-lived observations.
+    let mut retained = verify(&mut f.ledger, &f.store, &r.grant).unwrap();
     let live = replica::verify(&source.store, &source.planned.request.publication).unwrap();
     let enrollment = vec![
         replica::ReplicaEnrollment {
@@ -449,9 +450,11 @@ fn retained_revalidation_failure_keeps_protection_but_invalidates_coverage() {
 #[test]
 fn retained_coverage_is_explicit_and_still_not_final_eviction_authority() {
     let source = Fixture::new();
-    let live = replica::verify(&source.store, &source.planned.request.publication).unwrap();
     let mut f = Fixture::new();
     let r = f.retain();
+    // Setup performs synced publications/ledger writes and may exceed the
+    // production freshness window under parallel load. Verify at point of use.
+    let live = replica::verify(&source.store, &source.planned.request.publication).unwrap();
     let retained = verify(&mut f.ledger, &f.store, &r.grant).unwrap();
     let enrollment = vec![
         replica::ReplicaEnrollment {

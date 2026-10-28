@@ -5,6 +5,9 @@ mod candidate_publication;
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_capture.rs"]
 mod capture;
+#[cfg(all(windows, feature = "tig-publication"))]
+#[path = "support/tig_episode_lifecycle.rs"]
+mod fake_episode_lifecycle;
 #[path = "support/tig_language_scope.rs"]
 mod language_scope;
 #[cfg(all(windows, feature = "tig-publication"))]
@@ -235,7 +238,7 @@ fn vendored_runtime_source_matches_exact_upstream_pin() {
         serde_json::from_slice(&fs::read(root.join("source-pin.json")).unwrap()).unwrap();
     assert_eq!(
         manifest["commit"],
-        "4715559021c48bbdebc422d5047b01bce62a99d8"
+        "4e80e0116e36567d1e1f10dbc6c6acf742e2f192"
     );
     let mut listed = std::collections::BTreeSet::new();
     let mut total = 0;
@@ -282,8 +285,8 @@ fn vendored_runtime_source_matches_exact_upstream_pin() {
     actual.insert("LICENSE".into());
     actual.insert("Cargo.lock".into());
     assert_eq!(listed, actual);
-    assert_eq!(listed.len(), 61);
-    assert_eq!(total, 656167);
+    assert_eq!(listed.len(), 65);
+    assert_eq!(total, 691949);
 }
 
 #[test]
