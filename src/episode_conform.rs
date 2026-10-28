@@ -522,10 +522,6 @@ mod media_tool_resolution_tests {
     }
 }
 
-pub(crate) fn probe(path: &Path) -> Result<MediaFacts> {
-    probe_with_inputs(path, Path::new("."))
-}
-
 pub(crate) fn probe_with_inputs(
     path: &Path,
     inputs: &(impl scene_delivery::InputFiles + ?Sized),
@@ -604,7 +600,8 @@ pub(crate) fn probe_with_inputs(
     })
 }
 
-pub(crate) fn decoded_digest(path: &Path, video: bool) -> Result<(String, u64)> {
+#[cfg(test)]
+fn decoded_digest(path: &Path, video: bool) -> Result<(String, u64)> {
     decoded_digest_with_padding(path, video, 0)
 }
 
@@ -613,16 +610,10 @@ pub(crate) fn decoded_digest_with_inputs(
     video: bool,
     inputs: &(impl scene_delivery::InputFiles + ?Sized),
 ) -> Result<(String, u64)> {
-    decoded_digest_command(
-        command_with_inputs(inputs, scene_delivery::MediaProgram::Ffmpeg)?,
-        path,
-        video,
-        0,
-        None,
-        "yuv444p",
-    )
+    decoded_digest_with_options(path, video, 0, None, "yuv444p", inputs)
 }
 
+#[cfg(test)]
 fn decoded_digest_with_padding(
     path: &Path,
     video: bool,
@@ -631,6 +622,7 @@ fn decoded_digest_with_padding(
     decoded_digest_with_filter(path, video, padding_samples, None)
 }
 
+#[cfg(test)]
 fn decoded_digest_with_filter(
     path: &Path,
     video: bool,
@@ -640,14 +632,19 @@ fn decoded_digest_with_filter(
     decoded_digest_with_pixel_format(path, video, padding_samples, video_filter, "yuv444p")
 }
 
-fn verify_color_space_declaration(source: &Path, space: &str) -> Result<()> {
-    let original = decoded_digest_with_pixel_format(source, true, 0, None, "rgb24")?;
-    let declared = decoded_digest_with_pixel_format(
+fn verify_color_space_declaration(
+    source: &Path,
+    space: &str,
+    inputs: &(impl scene_delivery::InputFiles + ?Sized),
+) -> Result<()> {
+    let original = decoded_digest_with_options(source, true, 0, None, "rgb24", inputs)?;
+    let declared = decoded_digest_with_options(
         source,
         true,
         0,
         Some(&format!("setparams=colorspace={space}")),
         "rgb24",
+        inputs,
     )?;
     if declared != original {
         bail!("unspecified color-space declaration changes decoded source colors");
@@ -689,12 +686,13 @@ mod color_declaration_tests {
             decoded_digest_with_filter(&path, true, 0, Some("setparams=colorspace=bt470bg"))
                 .unwrap();
         assert_eq!(yuv, retagged_yuv);
-        let error = verify_color_space_declaration(&path, "bt470bg").unwrap_err();
+        let error = verify_color_space_declaration(&path, "bt470bg", Path::new(".")).unwrap_err();
         assert!(error.to_string().contains("changes decoded source colors"));
-        verify_color_space_declaration(&path, "bt709").unwrap();
+        verify_color_space_declaration(&path, "bt709", Path::new(".")).unwrap();
     }
 }
 
+#[cfg(test)]
 fn decoded_digest_with_pixel_format(
     path: &Path,
     video: bool,
@@ -702,8 +700,26 @@ fn decoded_digest_with_pixel_format(
     video_filter: Option<&str>,
     pixel_format: &str,
 ) -> Result<(String, u64)> {
+    decoded_digest_with_options(
+        path,
+        video,
+        padding_samples,
+        video_filter,
+        pixel_format,
+        Path::new("."),
+    )
+}
+
+fn decoded_digest_with_options(
+    path: &Path,
+    video: bool,
+    padding_samples: u64,
+    video_filter: Option<&str>,
+    pixel_format: &str,
+    inputs: &(impl scene_delivery::InputFiles + ?Sized),
+) -> Result<(String, u64)> {
     decoded_digest_command(
-        command("ffmpeg"),
+        command_with_inputs(inputs, scene_delivery::MediaProgram::Ffmpeg)?,
         path,
         video,
         padding_samples,
@@ -1254,9 +1270,7 @@ pub fn build(
         input_root,
         asset_root,
         output,
-        None,
-        None,
-        None,
+        Provided::default(),
     )
 }
 
@@ -1277,9 +1291,10 @@ pub fn build_with_scene_inputs(
         input_root,
         asset_root,
         output,
-        Some(scene_inputs),
-        None,
-        None,
+        Provided {
+            scene_inputs: Some(scene_inputs),
+            ..Provided::default()
+        },
     )
 }
 
@@ -1300,9 +1315,11 @@ pub fn build_with_scene_files(
         input_root,
         asset_root,
         output,
-        Some(scene_inputs),
-        Some(scene_outputs),
-        None,
+        Provided {
+            scene_inputs: Some(scene_inputs),
+            scene_outputs: Some(scene_outputs),
+            ..Provided::default()
+        },
     )
 }
 
@@ -1329,9 +1346,10 @@ pub fn build_with_presentation_files(
         input_root,
         asset_root,
         output,
-        None,
-        None,
-        Some(presentations),
+        Provided {
+            presentations: Some(presentations),
+            ..Provided::default()
+        },
     )
 }
 
@@ -1351,10 +1369,52 @@ pub fn build_with_segment_files(
         input_root,
         asset_root,
         output,
-        Some(scene_inputs),
-        Some(scene_outputs),
-        Some(presentations),
+        Provided {
+            scene_inputs: Some(scene_inputs),
+            scene_outputs: Some(scene_outputs),
+            presentations: Some(presentations),
+            ..Provided::default()
+        },
     )
+}
+
+/// Exact borrowed component coverage and explicit episode media programs. Keep
+/// every provider owner alive through the operation. Programs do not establish
+/// producer currency; the admitted job must separately bind runtime identity.
+pub struct Files<'a> {
+    pub scene_inputs: &'a BTreeMap<String, &'a dyn scene_delivery::InputFiles>,
+    pub scene_outputs: &'a BTreeMap<String, &'a dyn scene_delivery::InputFiles>,
+    pub presentations: &'a BTreeMap<String, PresentationFiles<'a>>,
+    pub programs: &'a dyn scene_delivery::InputFiles,
+}
+
+pub fn build_with_files(
+    manifest_path: &Path,
+    input_root: &Path,
+    asset_root: &Path,
+    output: &Path,
+    files: Files<'_>,
+) -> Result<Receipt> {
+    build_impl(
+        manifest_path,
+        input_root,
+        asset_root,
+        output,
+        Provided {
+            scene_inputs: Some(files.scene_inputs),
+            scene_outputs: Some(files.scene_outputs),
+            presentations: Some(files.presentations),
+            programs: Some(files.programs),
+        },
+    )
+}
+
+#[derive(Default)]
+struct Provided<'a> {
+    scene_inputs: Option<&'a BTreeMap<String, &'a dyn scene_delivery::InputFiles>>,
+    scene_outputs: Option<&'a BTreeMap<String, &'a dyn scene_delivery::InputFiles>>,
+    presentations: Option<&'a BTreeMap<String, PresentationFiles<'a>>>,
+    programs: Option<&'a dyn scene_delivery::InputFiles>,
 }
 
 fn build_impl(
@@ -1362,12 +1422,23 @@ fn build_impl(
     input_root: &Path,
     asset_root: &Path,
     output: &Path,
-    scene_inputs: Option<&BTreeMap<String, &dyn scene_delivery::InputFiles>>,
-    scene_outputs: Option<&BTreeMap<String, &dyn scene_delivery::InputFiles>>,
-    presentations: Option<&BTreeMap<String, PresentationFiles<'_>>>,
+    provided: Provided<'_>,
 ) -> Result<Receipt> {
+    let Provided {
+        scene_inputs,
+        scene_outputs,
+        presentations,
+        programs,
+    } = provided;
+    let explicit_programs = programs.is_some();
+    let local_programs = PathBuf::from(".");
+    let programs = programs.unwrap_or(&local_programs);
     if output.exists() {
         bail!("episode output must be a new directory");
+    }
+    if explicit_programs {
+        command_with_inputs(programs, scene_delivery::MediaProgram::Ffmpeg)?;
+        command_with_inputs(programs, scene_delivery::MediaProgram::Ffprobe)?;
     }
     let manifest_bytes = fs::read(manifest_path)?;
     let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
@@ -1827,7 +1898,7 @@ fn build_impl(
     let mut frame_cursor = 0u64;
     let mut sample_cursor = 0u64;
     for (index, (segment, source)) in manifest.segments.iter().zip(&sources).enumerate() {
-        let facts = probe(source)?;
+        let facts = probe_with_inputs(source, programs)?;
         let mut output_facts = facts.clone();
         let assumed_color_space = if let Some(space) = manifest
             .output_geometry
@@ -1934,7 +2005,7 @@ fn build_impl(
             source.clone()
         } else {
             let path = temp.path().join(format!("normalized-{index:03}.mkv"));
-            let mut encoder = command("ffmpeg");
+            let mut encoder = command_with_inputs(programs, scene_delivery::MediaProgram::Ffmpeg)?;
             encoder
                 .args(["-v", "error", "-nostdin", "-i"])
                 .arg(source)
@@ -1983,7 +2054,7 @@ fn build_impl(
             }
             path
         };
-        let selected_facts = probe(&selected)?;
+        let selected_facts = probe_with_inputs(&selected, programs)?;
         if manifest.output_geometry.is_some()
             && (selected_facts.sample_aspect_ratio != "1:1"
                 || selected_facts.color_properties != output_facts.color_properties)
@@ -2001,8 +2072,8 @@ fn build_impl(
         if selected_facts.sample_rate != manifest.output_sample_rate {
             bail!("normalization sample rate mismatch");
         }
-        let (picture_hash, picture_bytes) = decoded_digest(&selected, true)?;
-        let (mut audio_hash, audio_bytes) = decoded_digest(&selected, false)?;
+        let (picture_hash, picture_bytes) = decoded_digest_with_inputs(&selected, true, programs)?;
+        let (mut audio_hash, audio_bytes) = decoded_digest_with_inputs(&selected, false, programs)?;
         let frame_bytes = selected_facts.width * selected_facts.height * 3;
         if picture_bytes == 0
             || picture_bytes % frame_bytes != 0
@@ -2017,13 +2088,15 @@ fn build_impl(
         let (input_frames, input_samples) = if !needs_normalization {
             (frames, samples)
         } else {
-            let (source_picture_hash, source_picture_bytes) = decoded_digest(source, true)?;
+            let (source_picture_hash, source_picture_bytes) =
+                decoded_digest_with_inputs(source, true, programs)?;
             if let Some(space) = &assumed_color_space {
-                verify_color_space_declaration(source, space)?;
+                verify_color_space_declaration(source, space, programs)?;
             }
-            let (source_audio_hash, source_audio_bytes) = decoded_digest(source, false)?;
+            let (source_audio_hash, source_audio_bytes) =
+                decoded_digest_with_inputs(source, false, programs)?;
             let expected_picture = if let Some(filter) = &scale_filter {
-                decoded_digest_with_filter(source, true, 0, Some(filter))?
+                decoded_digest_with_options(source, true, 0, Some(filter), "yuv444p", programs)?
             } else {
                 (source_picture_hash.clone(), source_picture_bytes)
             };
@@ -2085,7 +2158,13 @@ fn build_impl(
         }
         if manifest.output_geometry.is_some() {
             let (num, den) = fps_parts(&facts.fps)?;
-            episode_delivery::verify_timestamps(source, facts.sample_rate, num, den)?;
+            episode_delivery::verify_timestamps_with_inputs(
+                source,
+                facts.sample_rate,
+                num,
+                den,
+                programs,
+            )?;
         }
         let mut audio_padding_samples = 0;
         if manifest.audio_frame_conform.as_deref() == Some("pad-silence-to-picture-boundaries") {
@@ -2113,10 +2192,16 @@ fn build_impl(
                 bail!("frame conform padding exceeds one frame");
             }
             if audio_padding_samples != 0 {
-                let expected =
-                    decoded_digest_with_padding(&selected, false, audio_padding_samples)?;
+                let expected = decoded_digest_with_options(
+                    &selected,
+                    false,
+                    audio_padding_samples,
+                    None,
+                    "yuv444p",
+                    programs,
+                )?;
                 let padded = temp.path().join(format!("padded-{index:03}.mkv"));
-                let status = command("ffmpeg")
+                let status = command_with_inputs(programs, scene_delivery::MediaProgram::Ffmpeg)?
                     .args(["-v", "error", "-nostdin", "-i"])
                     .arg(&selected)
                     .args(["-map", "0:v:0", "-map", "0:a:0", "-c:v", "copy", "-af"])
@@ -2129,7 +2214,7 @@ fn build_impl(
                 if !status.success() {
                     bail!("frame audio padding failed");
                 }
-                let actual = decoded_digest(&padded, false)?;
+                let actual = decoded_digest_with_inputs(&padded, false, programs)?;
                 if actual != expected {
                     bail!("frame conform changed native audio prefix or nonzero padded tail");
                 }
@@ -2188,7 +2273,7 @@ fn build_impl(
     }
     drop(list);
     let master = work.join("master.mkv");
-    let mut concat = command("ffmpeg");
+    let mut concat = command_with_inputs(programs, scene_delivery::MediaProgram::Ffmpeg)?;
     concat
         .args([
             "-v",
@@ -2245,7 +2330,7 @@ fn build_impl(
     }
     let first = common.context("no episode media")?;
     if manifest.output_geometry.is_some() {
-        let final_facts = probe(&master)?;
+        let final_facts = probe_with_inputs(&master, programs)?;
         if final_facts.sample_aspect_ratio != "1:1"
             || final_facts.color_properties != first.color_properties
         {
@@ -2257,8 +2342,10 @@ fn build_impl(
         .map(|r| r.frames * first.width * first.height * 3)
         .collect::<Vec<_>>();
     let audio_lengths = records.iter().map(|r| r.samples * 6).collect::<Vec<_>>();
-    let actual_video = episode_delivery::decode_segments(&master, true, &video_lengths)?;
-    let actual_audio = episode_delivery::decode_segments(&master, false, &audio_lengths)?;
+    let actual_video =
+        episode_delivery::decode_segments_with_inputs(&master, true, &video_lengths, programs)?;
+    let actual_audio =
+        episode_delivery::decode_segments_with_inputs(&master, false, &audio_lengths, programs)?;
     for (index, record) in records.iter().enumerate() {
         if actual_video[index] != record.decoded_picture_sha256
             || actual_audio[index] != record.decoded_audio_sha256
@@ -2267,27 +2354,30 @@ fn build_impl(
         }
     }
     let (fps_numerator, fps_denominator) = fps_parts(&first.fps)?;
-    episode_delivery::verify_timestamps(
+    episode_delivery::verify_timestamps_with_inputs(
         &master,
         manifest.output_sample_rate,
         fps_numerator,
         fps_denominator,
+        programs,
     )?;
     let mut boundary_findings = Vec::new();
     for index in 0..normalized.len().saturating_sub(1) {
         let left = &records[index];
         let right = &records[index + 1];
-        let left_audio = episode_delivery::edge_audio(
+        let left_audio = episode_delivery::edge_audio_with_inputs(
             &normalized[index],
             left.samples,
             manifest.output_sample_rate,
             true,
+            programs,
         )?;
-        let right_audio = episode_delivery::edge_audio(
+        let right_audio = episode_delivery::edge_audio_with_inputs(
             &normalized[index + 1],
             right.samples,
             manifest.output_sample_rate,
             false,
+            programs,
         )?;
         let jump = (0..2)
             .map(|channel| {
@@ -2304,16 +2394,18 @@ fn build_impl(
                 disposition: "needs-review".into(),
             });
         }
-        let black = episode_delivery::black_edge(
+        let black = episode_delivery::black_edge_with_inputs(
             &normalized[index],
             left.frames - 1,
             first.width as u32,
             first.height as u32,
-        )? || episode_delivery::black_edge(
+            programs,
+        )? || episode_delivery::black_edge_with_inputs(
             &normalized[index + 1],
             0,
             first.width as u32,
             first.height as u32,
+            programs,
         )?;
         if black {
             boundary_findings.push(episode_delivery::BoundaryFinding {
@@ -2326,7 +2418,9 @@ fn build_impl(
             });
         }
     }
-    let version = command("ffmpeg").arg("-version").output()?;
+    let version = command_with_inputs(programs, scene_delivery::MediaProgram::Ffmpeg)?
+        .arg("-version")
+        .output()?;
     let ffmpeg_version = String::from_utf8_lossy(&version.stdout)
         .lines()
         .next()
@@ -2337,7 +2431,8 @@ fn build_impl(
             bail!("invalid compact episode encoding profile");
         }
         let target = work.join("episode.mp4");
-        let mut compact_encoder = command("ffmpeg");
+        let mut compact_encoder =
+            command_with_inputs(programs, scene_delivery::MediaProgram::Ffmpeg)?;
         compact_encoder
             .args(["-v", "error", "-nostdin", "-i"])
             .arg(&master)
@@ -2374,7 +2469,7 @@ fn build_impl(
         if !status.success() {
             bail!("compact episode encoding failed");
         }
-        let decoded = command("ffmpeg")
+        let decoded = command_with_inputs(programs, scene_delivery::MediaProgram::Ffmpeg)?
             .args(["-v", "error", "-xerror", "-nostdin", "-i"])
             .arg(&target)
             .args(["-map", "0:v:0", "-map", "0:a:0", "-f", "null", "-"])
@@ -2382,7 +2477,7 @@ fn build_impl(
         if !decoded.success() {
             bail!("compact episode full decode failed");
         }
-        let probe = command("ffprobe")
+        let probe = command_with_inputs(programs, scene_delivery::MediaProgram::Ffprobe)?
             .args([
                 "-v",
                 "error",

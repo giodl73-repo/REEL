@@ -169,6 +169,21 @@ pub(crate) fn decode_segments_with_program(
 ) -> Result<Vec<String>> {
     decode_segments_command(Command::new(program), path, video, lengths, false)
 }
+
+pub(crate) fn decode_segments_with_inputs(
+    path: &Path,
+    video: bool,
+    lengths: &[u64],
+    inputs: &(impl scene_delivery::InputFiles + ?Sized),
+) -> Result<Vec<String>> {
+    decode_segments_command(
+        crate::episode_conform::command_with_inputs(inputs, scene_delivery::MediaProgram::Ffmpeg)?,
+        path,
+        video,
+        lengths,
+        true,
+    )
+}
 fn decode_segments_command(
     mut cmd: Command,
     path: &Path,
@@ -248,30 +263,41 @@ fn decode_segments_command(
 }
 
 pub(crate) fn edge_audio(path: &Path, samples: u64, sr: u32, end: bool) -> Result<Vec<f32>> {
+    edge_audio_with_inputs(path, samples, sr, end, Path::new("."))
+}
+
+pub(crate) fn edge_audio_with_inputs(
+    path: &Path,
+    samples: u64,
+    sr: u32,
+    end: bool,
+    inputs: &(impl scene_delivery::InputFiles + ?Sized),
+) -> Result<Vec<f32>> {
     let window = u64::from((sr / 10).max(1)).min(samples);
     let start = if end { samples - window } else { 0 };
-    let o = ffmpeg_command()
-        .args([
-            "-v",
-            "error",
-            "-nostdin",
-            "-protocol_whitelist",
-            "file,pipe",
-            "-i",
-        ])
-        .arg(path)
-        .args([
-            "-map",
-            "0:a:0",
-            "-af",
-            &format!("atrim=start_sample={start}:end_sample={}", start + window),
-            "-f",
-            "f32le",
-            "-c:a",
-            "pcm_f32le",
-            "-",
-        ])
-        .output()?;
+    let o =
+        crate::episode_conform::command_with_inputs(inputs, scene_delivery::MediaProgram::Ffmpeg)?
+            .args([
+                "-v",
+                "error",
+                "-nostdin",
+                "-protocol_whitelist",
+                "file,pipe",
+                "-i",
+            ])
+            .arg(path)
+            .args([
+                "-map",
+                "0:a:0",
+                "-af",
+                &format!("atrim=start_sample={start}:end_sample={}", start + window),
+                "-f",
+                "f32le",
+                "-c:a",
+                "pcm_f32le",
+                "-",
+            ])
+            .output()?;
     if !o.status.success() || o.stdout.len() as u64 != window * 8 {
         bail!("audio edge decode failed");
     }
@@ -282,30 +308,41 @@ pub(crate) fn edge_audio(path: &Path, samples: u64, sr: u32, end: bool) -> Resul
 }
 
 pub(crate) fn black_edge(path: &Path, frame: u64, width: u32, height: u32) -> Result<bool> {
-    let o = ffmpeg_command()
-        .args([
-            "-v",
-            "error",
-            "-nostdin",
-            "-protocol_whitelist",
-            "file,pipe",
-            "-i",
-        ])
-        .arg(path)
-        .args([
-            "-map",
-            "0:v:0",
-            "-vf",
-            &format!("select=eq(n\\,{frame})"),
-            "-frames:v",
-            "1",
-            "-pix_fmt",
-            "gray",
-            "-f",
-            "rawvideo",
-            "-",
-        ])
-        .output()?;
+    black_edge_with_inputs(path, frame, width, height, Path::new("."))
+}
+
+pub(crate) fn black_edge_with_inputs(
+    path: &Path,
+    frame: u64,
+    width: u32,
+    height: u32,
+    inputs: &(impl scene_delivery::InputFiles + ?Sized),
+) -> Result<bool> {
+    let o =
+        crate::episode_conform::command_with_inputs(inputs, scene_delivery::MediaProgram::Ffmpeg)?
+            .args([
+                "-v",
+                "error",
+                "-nostdin",
+                "-protocol_whitelist",
+                "file,pipe",
+                "-i",
+            ])
+            .arg(path)
+            .args([
+                "-map",
+                "0:v:0",
+                "-vf",
+                &format!("select=eq(n\\,{frame})"),
+                "-frames:v",
+                "1",
+                "-pix_fmt",
+                "gray",
+                "-f",
+                "rawvideo",
+                "-",
+            ])
+            .output()?;
     if !o.status.success() || o.stdout.len() as u64 != u64::from(width) * u64::from(height) {
         bail!("picture edge decode failed");
     }

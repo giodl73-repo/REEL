@@ -72,6 +72,12 @@ The episode control JSON and adoption manifest remain bounded local compiler
 products. The original presentation media and outputs may be absent from that
 tree. Direct borrowed presentations receive the same full decoded-source and
 clock recheck, even when local verification reuse was requested; no implicit
-verification cache is written in the asset root. Episode-level tool injection
-and the end-to-end managed episode executor remain separate required work.
+verification cache is written in the asset root. `build_with_files` additionally
+takes an `episode_conform::Files` capability set with the three exact component
+maps and an explicit episode `programs` provider. All episode media operations,
+including normalization, independent checks, boundaries and compact delivery,
+honor those programs. Bind the runtime separately and retain its owner through
+the operation; program paths alone do not establish production currency. See
+[the runtime fixture](reviews/2026-10-28-explicit-episode-runtime.md).
+The end-to-end managed episode executor remains separate required work.
 See [the fixture and review](reviews/2026-10-28-cache-presentation-adoption.md).
