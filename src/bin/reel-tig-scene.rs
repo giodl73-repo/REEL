@@ -8,7 +8,9 @@ use reel::{
 use std::{path::PathBuf, process::ExitCode};
 
 #[derive(Parser)]
-#[command(about = "Render/check native scenes using an explicit committed Tig source")]
+#[command(
+    about = "Render/check native scenes and plan episode composition from explicit Tig sources"
+)]
 struct Args {
     #[arg(long)]
     profile: PathBuf,
@@ -17,6 +19,10 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Operation {
+    PlanEpisode {
+        request: PathBuf,
+        output: PathBuf,
+    },
     CompileNative {
         request: PathBuf,
         output: PathBuf,
@@ -48,6 +54,16 @@ enum Operation {
 }
 fn run() -> Result<()> {
     let args = Args::parse();
+    if let Operation::PlanEpisode { request, output } = &args.command {
+        let mut source = Source::open(Profile::read(&args.profile)?)?;
+        let result = reel::tig_episode::write_plan(
+            &mut source,
+            &reel::tig_episode::Request::read(request)?,
+            output,
+        )?;
+        println!("{result}");
+        return Ok(());
+    }
     if let Operation::CompileNative { request, output } = &args.command {
         let mut source = Source::open(Profile::read(&args.profile)?)?;
         let result = reel::tig_scene::compile(
@@ -68,7 +84,7 @@ fn run() -> Result<()> {
         | Operation::Check { job, .. }
         | Operation::CheckAudio { job, .. }
         | Operation::Compare { job, .. } => job,
-        Operation::CompileNative { .. } => unreachable!(),
+        Operation::CompileNative { .. } | Operation::PlanEpisode { .. } => unreachable!(),
     };
     let job_path = job_path
         .canonicalize()
@@ -78,7 +94,7 @@ fn run() -> Result<()> {
     let inputs = source.prepare(&job)?;
     let comparison = matches!(&args.command, Operation::Compare { .. });
     let result = match args.command {
-        Operation::CompileNative { .. } => unreachable!(),
+        Operation::CompileNative { .. } | Operation::PlanEpisode { .. } => unreachable!(),
         Operation::Plan { .. } => {
             serde_json::to_value(scene_delivery::plan_with_inputs(&job_path, &inputs)?.1)?
         }
