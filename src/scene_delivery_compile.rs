@@ -67,6 +67,9 @@ pub struct DeliveryProfile {
     pub score_gain_db: f64,
     pub score_fade_in_samples: u64,
     pub score_fade_out_samples: u64,
+    /// Explicit phase in the delivery sample clock, pinned to the selected music.
+    #[serde(default)]
+    pub score_source_starts_by_binding: BTreeMap<String, ScoreSourceStart>,
     /// Dialogue trims are scoped to this scene language and exact selected take.
     #[serde(default)]
     pub dialogue_gain_by_cue: BTreeMap<String, DialogueGain>,
@@ -97,6 +100,58 @@ pub enum AssetPaths {
 pub struct DialogueGain {
     pub source_sha256: String,
     pub gain_db: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScoreSourceStart {
+    pub source_sha256: String,
+    pub start_sample: u64,
+}
+
+pub(crate) fn validate_score_source_starts(
+    profile: &DeliveryProfile,
+    episode: &Episode,
+    scopes: &[&ScopedBindings],
+) -> Result<()> {
+    if profile.score_source_starts_by_binding.len() > 4096 {
+        bail!("score source start count exceeds budget");
+    }
+    for (binding, start) in &profile.score_source_starts_by_binding {
+        if !episode
+            .score_palette
+            .iter()
+            .any(|p| &p.asset_binding == binding)
+            || start.source_sha256.len() != 64
+            || !start
+                .source_sha256
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+            || asset(binding, scopes)?.sha256 != start.source_sha256
+        {
+            bail!("score source start differs from selected palette binding");
+        }
+    }
+    Ok(())
+}
+fn score_source_start(
+    profile: &DeliveryProfile,
+    binding: &str,
+    source: &str,
+    length: u64,
+) -> Result<u64> {
+    let start = if let Some(start) = profile.score_source_starts_by_binding.get(binding) {
+        if start.source_sha256 != source {
+            bail!("score source start pin differs from selected recording");
+        }
+        start.start_sample
+    } else {
+        0
+    };
+    start
+        .checked_add(length)
+        .context("score source range overflow")?;
+    Ok(start)
 }
 
 fn dialogue_gain_db(profile: &DeliveryProfile, cue: &str, source: &str) -> Result<Option<f64>> {
@@ -726,6 +781,7 @@ fn compile_with_budget(
     {
         bail!("invalid scene delivery profile");
     }
+    validate_score_source_starts(&profile, &episode, &scopes)?;
     crate::caption_presentation::resolve_scene_picture_layout(
         profile.caption_picture_layout.as_ref(),
         profile.picture_region.as_ref(),
@@ -1013,7 +1069,7 @@ fn compile_with_budget(
             "attachment_id":attachment,
             "source":media_ref(score, profile.asset_paths),
             "bus":"M",
-            "source_start_sample":0,
+            "source_start_sample":score_source_start(&profile, &palette.asset_binding, &score.sha256, run_len)?,
             "gain_db":profile.score_gain_db,
             "fade_in_samples":profile.score_fade_in_samples,
             "fade_out_samples":profile.score_fade_out_samples
@@ -1519,6 +1575,40 @@ mod tests {
         .unwrap();
         assert_eq!(sonic_gain_db(&profile, "sonic.thunder"), -19.0);
         assert_eq!(sonic_gain_db(&profile, "sonic.rain"), -30.0);
+    }
+
+    #[test]
+    fn score_source_start_defaults_to_zero_pins_source_and_checks_range_overflow() {
+        let mut profile: DeliveryProfile = serde_json::from_value(json!({
+            "schema":"reel.scene-delivery-profile.v1","width":64,"height":64,
+            "sample_rate":48000,"frame_rate_numerator":24,"frame_rate_denominator":1,
+            "max_composition_samples":96000,"score_gain_db":-18,
+            "score_fade_in_samples":0,"score_fade_out_samples":0
+        }))
+        .unwrap();
+        let source = "a".repeat(64);
+        assert_eq!(
+            super::score_source_start(&profile, "music", &source, 48000).unwrap(),
+            0
+        );
+        profile.score_source_starts_by_binding.insert(
+            "music".into(),
+            super::ScoreSourceStart {
+                source_sha256: source.clone(),
+                start_sample: 12345,
+            },
+        );
+        assert_eq!(
+            super::score_source_start(&profile, "music", &source, 48000).unwrap(),
+            12345
+        );
+        assert!(super::score_source_start(&profile, "music", &"b".repeat(64), 48000).is_err());
+        profile
+            .score_source_starts_by_binding
+            .get_mut("music")
+            .unwrap()
+            .start_sample = u64::MAX;
+        assert!(super::score_source_start(&profile, "music", &source, 1).is_err());
     }
 
     #[test]
