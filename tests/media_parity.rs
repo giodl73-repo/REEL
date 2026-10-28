@@ -29,6 +29,42 @@ fn reference(root: &Path, name: &str) -> FileRef {
     }
 }
 #[test]
+fn explicit_validation_program_refusal_precedes_payload_access_without_fallback() {
+    use reel::scene_delivery::{InputFiles, MediaProgram};
+    struct Refuse(std::cell::Cell<usize>);
+    impl InputFiles for Refuse {
+        fn verified_path(&self, _: &FileRef) -> anyhow::Result<std::path::PathBuf> {
+            self.0.set(self.0.get() + 1);
+            anyhow::bail!("unexpected payload access")
+        }
+        fn media_program(&self, _: MediaProgram) -> anyhow::Result<std::path::PathBuf> {
+            anyhow::bail!("explicit validation program refusal")
+        }
+    }
+    let source = Refuse(std::cell::Cell::new(0));
+    let file = FileRef {
+        path: "unopened.mkv".into(),
+        sha256: "0".repeat(64),
+        bytes: 1,
+    };
+    let shape = Shape {
+        width: 32,
+        height: 32,
+        fps_numerator: 24,
+        fps_denominator: 1,
+        frames: 24,
+        sample_rate: 48000,
+        samples: 48000,
+    };
+    assert!(
+        compare_with_inputs(&file, &source, &file, &source, &shape)
+            .unwrap_err()
+            .to_string()
+            .contains("explicit validation program refusal")
+    );
+    assert_eq!(source.0.get(), 0);
+}
+#[test]
 #[ignore = "requires native FFmpeg; strict decoded picture/PCM and frame-clock comparison"]
 fn native_media_parity_detects_content_color_clock_and_length_changes() {
     let temp = tempfile::tempdir().unwrap();

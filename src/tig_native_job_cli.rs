@@ -29,6 +29,8 @@ use tig_store::{
 const PROFILE_SCHEMA: &str = "reel.tig-native-job-profile.experimental-1";
 const TICKET_SCHEMA: &str = "reel.tig-native-worker.experimental-1";
 mod capture;
+mod comparison;
+pub use comparison::compare_retained;
 mod handoff;
 mod planning;
 mod preparation;

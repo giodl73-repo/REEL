@@ -16,6 +16,9 @@ mod native_job;
 #[path = "support/tig_presentation.rs"]
 mod presentation;
 #[cfg(all(windows, feature = "tig-publication"))]
+#[path = "support/tig_retained_comparison.rs"]
+mod retained_comparison;
+#[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_store_setup.rs"]
 mod store_setup;
 #[cfg(all(windows, feature = "tig-publication"))]
