@@ -670,6 +670,288 @@ fn opening_fixture_with_reset(
         .unwrap();
     assert!(!rejected.status.success());
     assert!(!root.join("rejected").exists());
+
+    if codec == "ffv1" && !excerpt {
+        borrowed_opening_without_source_tree(root, &receipt);
+    }
+}
+
+/// Cache-backed paths keep their logical names; the adopted source tree need
+/// not exist. This provider deliberately has no filesystem fallback.
+struct CacheFiles {
+    aliases: std::collections::BTreeMap<std::path::PathBuf, reel::scene_delivery::FileRef>,
+    #[cfg(not(all(windows, feature = "tig")))]
+    root: std::path::PathBuf,
+    programs: std::collections::BTreeMap<reel::scene_delivery::MediaProgram, std::path::PathBuf>,
+    #[cfg(all(windows, feature = "tig"))]
+    guards: std::collections::BTreeMap<String, tig_store::existing::VerifiedRead>,
+}
+impl reel::scene_delivery::InputFiles for CacheFiles {
+    fn verified_path(
+        &self,
+        expected: &reel::scene_delivery::FileRef,
+    ) -> anyhow::Result<std::path::PathBuf> {
+        let actual = self
+            .aliases
+            .get(&expected.path)
+            .ok_or_else(|| anyhow::anyhow!("unbound presentation input"))?;
+        anyhow::ensure!(
+            actual.sha256 == expected.sha256 && actual.bytes == expected.bytes,
+            "presentation input pin differs"
+        );
+        #[cfg(all(windows, feature = "tig"))]
+        {
+            Ok(self.guards[&actual.sha256].with_path(Path::to_path_buf)?)
+        }
+        #[cfg(not(all(windows, feature = "tig")))]
+        {
+            reel::scene_delivery::InputFiles::verified_path(&self.root, actual)
+        }
+    }
+    fn media_program(
+        &self,
+        program: reel::scene_delivery::MediaProgram,
+    ) -> anyhow::Result<std::path::PathBuf> {
+        self.programs
+            .get(&program)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("unbound presentation tool"))
+    }
+}
+
+fn borrowed_opening_without_source_tree(root: &Path, expected: &Value) {
+    #[cfg(all(windows, feature = "tig"))]
+    use reel::scene_delivery::InputFiles;
+    use reel::{
+        presentation_adopt,
+        scene_delivery::{FileRef, MediaProgram},
+    };
+    let manifest_path = root.join("manifest.json");
+    let mut manifest: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    // The caller's final bad-manifest test must not affect the admitted source.
+    manifest["evidence_hash_pointer"] = "/series_opening/cache_uri".into();
+    write(&manifest_path, &manifest);
+    let cache = root.join("borrowed-cache");
+    fs::create_dir_all(cache.join("objects")).unwrap();
+    let mut files = CacheFiles {
+        aliases: Default::default(),
+        programs: Default::default(),
+        #[cfg(not(all(windows, feature = "tig")))]
+        root: cache.clone(),
+        #[cfg(all(windows, feature = "tig"))]
+        guards: Default::default(),
+    };
+    for program in [MediaProgram::Ffmpeg, MediaProgram::Ffprobe] {
+        let name = if cfg!(windows) {
+            format!("{}.exe", program.ambient_name())
+        } else {
+            program.ambient_name().into()
+        };
+        let path = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+            .map(|p| p.join(&name))
+            .find(|p| p.is_file())
+            .unwrap()
+            .canonicalize()
+            .unwrap();
+        files.programs.insert(program, path);
+    }
+    for key in [
+        "catalog",
+        "template_definition",
+        "season_bindings",
+        "episode_bindings",
+        "selection_evidence",
+        "source",
+    ] {
+        let logical: FileRef = serde_json::from_value(manifest[key].clone()).unwrap();
+        let actual = FileRef {
+            path: format!("objects/{}", logical.sha256).into(),
+            sha256: logical.sha256.clone(),
+            bytes: logical.bytes,
+        };
+        fs::copy(root.join(&logical.path), cache.join(&actual.path)).unwrap();
+        files.aliases.insert(logical.path, actual);
+    }
+    for name in ["master.mkv", "receipt.json"] {
+        let original = format!("adopted/{name}");
+        let mut logical: FileRef = serde_json::from_value(reference(root, &original)).unwrap();
+        let actual = FileRef {
+            path: format!("objects/{}", logical.sha256).into(),
+            sha256: logical.sha256.clone(),
+            bytes: logical.bytes,
+        };
+        fs::copy(root.join(&original), cache.join(&actual.path)).unwrap();
+        logical.path = name.into();
+        files.aliases.insert(logical.path, actual);
+    }
+    #[cfg(all(windows, feature = "tig"))]
+    {
+        use tig_store::existing::{ByteSource, ReadCache};
+        let mut reader = ReadCache::new(
+            serde_json::from_value(
+                json!({"places":[{"root":cache,"layout":"flat"}],"required":"prevent-mutation"}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        for item in files.aliases.values() {
+            let object = tig_core::Object {
+                sha256: tig_core::Digest::parse(&item.sha256).unwrap(),
+                bytes: item.bytes,
+            };
+            files
+                .guards
+                .entry(item.sha256.clone())
+                .or_insert_with(|| reader.open_verified(&object).unwrap());
+        }
+    }
+    let source: FileRef = serde_json::from_value(manifest["source"].clone()).unwrap();
+    let missing = files.aliases.remove(&source.path).unwrap();
+    // Originals are still available. An explicit provider refusal must win.
+    let rejected = root.join("borrowed-missing");
+    assert!(presentation_adopt::build(&manifest_path, &files, &files, &rejected).is_err());
+    assert!(!rejected.exists());
+    files.aliases.insert(source.path.clone(), missing);
+    let tool = files.programs.remove(&MediaProgram::Ffprobe).unwrap();
+    let rejected = root.join("borrowed-missing-tool");
+    assert!(presentation_adopt::build(&manifest_path, &files, &files, &rejected).is_err());
+    assert!(!rejected.exists());
+    files.programs.insert(MediaProgram::Ffprobe, tool);
+    let selected_output = files.aliases.remove(Path::new("master.mkv")).unwrap();
+    let presentations = std::collections::BTreeMap::from([(
+        "series-opening".to_string(),
+        reel::episode_conform::PresentationFiles {
+            inputs: &files,
+            outputs: &files,
+        },
+    )]);
+    let rejected = root.join("borrowed-unbound-output");
+    assert!(
+        reel::episode_conform::build_with_presentation_files(
+            &root.join("conform.json"),
+            root,
+            root,
+            &rejected,
+            &presentations
+        )
+        .is_err()
+    );
+    assert!(!rejected.exists());
+    assert!(root.join("adopted/master.mkv").is_file());
+    files.aliases.insert("master.mkv".into(), selected_output);
+    // Episode conform uses the adopted cache outputs with their local copies
+    // removed, while keeping its own bounded authoring JSON in the input root.
+    let conform_path = root.join("conform.json");
+    let mut conform: Value = serde_json::from_slice(&fs::read(&conform_path).unwrap()).unwrap();
+    conform["reuse_verified_presentations"] = true.into();
+    write(&conform_path, &conform);
+    for name in ["adopted/master.mkv", "adopted/receipt.json", "opening.mkv"] {
+        fs::remove_file(root.join(name)).unwrap();
+    }
+    let episode_output = root.join("borrowed-episode");
+    assert!(
+        reel::episode_conform::build_with_presentation_files(
+            &root.join("conform.json"),
+            root,
+            root,
+            &episode_output,
+            &Default::default()
+        )
+        .is_err()
+    );
+    assert!(!episode_output.exists());
+    let presentations = std::collections::BTreeMap::from([(
+        "series-opening".to_string(),
+        reel::episode_conform::PresentationFiles {
+            inputs: &files,
+            outputs: &files,
+        },
+    )]);
+    let episode = reel::episode_conform::build_with_presentation_files(
+        &root.join("conform.json"),
+        root,
+        root,
+        &episode_output,
+        &presentations,
+    )
+    .unwrap();
+    assert!(episode.decoded_master_matches_ordered_segments);
+    assert!(episode.timestamps_verified);
+    assert_eq!(episode.total_frames, 72);
+    assert_eq!(episode.total_samples, 144000);
+    let verification = serde_json::to_value(&episode).unwrap();
+    assert_eq!(
+        verification["presentation_verification_cache"]["reused_verified_checks"],
+        0
+    );
+    assert_eq!(
+        verification["presentation_verification_cache"]["fresh_full_checks"],
+        1
+    );
+    assert!(!root.join(".reel-verification-cache").exists());
+    for key in [
+        "catalog",
+        "template_definition",
+        "season_bindings",
+        "episode_bindings",
+        "selection_evidence",
+    ] {
+        let item: FileRef = serde_json::from_value(manifest[key].clone()).unwrap();
+        fs::remove_file(root.join(item.path)).unwrap();
+    }
+    #[cfg(all(windows, feature = "tig"))]
+    assert!(fs::write(files.verified_path(&source).unwrap(), b"changed").is_err());
+    let output = root.join("borrowed-adopted");
+    let receipt = presentation_adopt::build(&manifest_path, &files, &files, &output).unwrap();
+    assert_eq!(serde_json::to_value(&receipt).unwrap(), *expected);
+    let master = output.join("master.mkv");
+    let receipt = output.join("receipt.json");
+    let evidence = root.join("borrowed-verification");
+    assert!(
+        !presentation_adopt::check_cached(
+            &manifest_path,
+            &files,
+            &files,
+            &master,
+            &receipt,
+            root,
+            &evidence
+        )
+        .unwrap()
+    );
+    assert!(
+        presentation_adopt::check_cached(
+            &manifest_path,
+            &files,
+            &files,
+            &master,
+            &receipt,
+            root,
+            &evidence
+        )
+        .unwrap()
+    );
+    files.aliases.remove(&source.path);
+    assert!(
+        presentation_adopt::check_cached(
+            &manifest_path,
+            &files,
+            &files,
+            &master,
+            &receipt,
+            root,
+            &evidence
+        )
+        .is_err()
+    );
+    assert!(!root.join("opening.mkv").exists());
+    let unique: std::collections::BTreeSet<_> = files.aliases.values().map(|f| &f.sha256).collect();
+    // Source alias was deliberately withdrawn above, but its bytes are also the
+    // exact native adopted master and remain referenced by that output alias.
+    assert_eq!(
+        fs::read_dir(cache.join("objects")).unwrap().count(),
+        unique.len()
+    );
 }
 
 #[test]

@@ -47,6 +47,8 @@ jobs:
         run: cargo test --test scene_delivery real_delivery_preserves_sample_offset_stems_frames_and_rejects_tamper -- --ignored --exact
       - name: Verify injected scene inputs preserve pictures and PCM through independent checks
         run: cargo test --test scene_delivery real_mapped_input_provider_matches_local_pixels_and_pcm_and_rejects_stale_pins -- --ignored --exact
+      - name: Verify borrowed presentation inputs and outputs through episode conform
+        run: cargo test --all-features --test presentation_adopt selected_native_opening_preserves_exact_bytes_and_rechecks_timing --locked -- --exact
       - name: Verify native media comparison catches content, color, clock and length changes
         run: cargo test --test media_parity native_media_parity_detects_content_color_clock_and_length_changes --locked -- --ignored --exact
       - name: Build pinned Tig authoring handoff CLI
