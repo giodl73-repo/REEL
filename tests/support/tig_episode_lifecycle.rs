@@ -61,6 +61,7 @@ struct Scene {
     recipe: Plan,
     claim: Claim,
     subject: BoundSubject,
+    delivery_receipt: Object,
     primary: BTreeSet<Object>,
     controls: BTreeSet<Object>,
 }
@@ -438,11 +439,20 @@ impl Project {
             recipe,
             claim,
             subject,
+            delivery_receipt: published.published().receipt_object().clone(),
             primary,
             controls,
         }
     }
     fn assemble(&self, scenes: &[Scene], version: &str) -> (Object, PathBuf) {
+        self.assemble_using(scenes, version, None)
+    }
+    fn assemble_using(
+        &self,
+        scenes: &[Scene],
+        version: &str,
+        outputs: Option<&BTreeMap<String, &dyn reel::scene_delivery::InputFiles>>,
+    ) -> (Object, PathBuf) {
         let root = self.data.path();
         let controls = root.join("controls");
         let mut owners = Vec::new();
@@ -455,7 +465,11 @@ impl Project {
             .zip(&owners)
             .map(|(s, i)| (s.unit.clone(), i as &dyn reel::scene_delivery::InputFiles))
             .collect();
-        let segments:Vec<_>=scenes.iter().map(|s|json!({"kind":"scene","id":s.unit,"master":pin(root,&s.output.join("master.mkv")),"source_receipt":pin(root,&s.output.join("receipt.json")),"delivery_job":pin(root,&s.job),"delivery_receipt":pin(root,&s.output.join("receipt.json")),"semantic_delivery":pin(root,&s.job.parent().unwrap().join("semantic-delivery.json"))})).collect();
+        let segments:Vec<_>=scenes.iter().map(|s| {
+            let master = reference(s.output.join("master.mkv").strip_prefix(root).unwrap().to_str().unwrap(),s.subject.subject().object());
+            let receipt = reference(s.output.join("receipt.json").strip_prefix(root).unwrap().to_str().unwrap(),&s.delivery_receipt);
+            json!({"kind":"scene","id":s.unit,"master":master,"source_receipt":receipt,"delivery_job":pin(root,&s.job),"delivery_receipt":receipt,"semantic_delivery":pin(root,&s.job.parent().unwrap().join("semantic-delivery.json"))})
+        }).collect();
         let manifest = json!({"schema":"reel.episode-conform.v1","episode_id":"episode-1","language":"es","output_sample_rate":48000,"catalog":pin(root,&controls.join("catalog.json")),"master_template_definition":pin(root,&controls.join("master.json")),"episode":pin(root,&controls.join("episode.json")),"season_bindings":pin(root,&controls.join("season.json")),"episode_bindings":pin(root,&controls.join("episode-bindings.json")),"segments":segments});
         let name = format!("episode-{version}.json");
         write(root, &name, &manifest);
@@ -476,14 +490,43 @@ impl Project {
             .is_err()
         );
         assert!(!output.exists());
-        let receipt = episode_conform::build_with_scene_inputs(
-            &root.join(name),
-            root,
-            root,
-            &output,
-            &provided,
-        )
-        .unwrap();
+        let receipt = if let Some(outputs) = outputs {
+            let missing_outputs = outputs
+                .iter()
+                .skip(1)
+                .map(|(k, v)| (k.clone(), *v))
+                .collect();
+            assert!(
+                episode_conform::build_with_scene_files(
+                    &root.join(&name),
+                    root,
+                    root,
+                    &output,
+                    &provided,
+                    &missing_outputs
+                )
+                .is_err()
+            );
+            assert!(!output.exists());
+            episode_conform::build_with_scene_files(
+                &root.join(name),
+                root,
+                root,
+                &output,
+                &provided,
+                outputs,
+            )
+            .unwrap()
+        } else {
+            episode_conform::build_with_scene_inputs(
+                &root.join(name),
+                root,
+                root,
+                &output,
+                &provided,
+            )
+            .unwrap()
+        };
         assert!(receipt.decoded_master_matches_ordered_segments);
         assert!(receipt.timestamps_verified);
         assert_eq!(receipt.total_frames, 96);
@@ -704,6 +747,179 @@ fn storage_transition(
             *object
         );
     }
+}
+
+#[test]
+#[ignore = "requires native FFmpeg; complete cached delivery with no render directory"]
+fn cached_scene_bundle_rechecks_without_render_directory_and_rejects_bad_bytes() {
+    use reel::{scene_delivery, tig_scene_outputs::Bundle};
+    use tig_core::Digest;
+    let mut p = Project::new();
+    let scene = p.render(1, "cached-v1");
+    let original_bytes = fs::read(scene.output.join("receipt.json")).unwrap();
+    let original: scene_delivery::Receipt = serde_json::from_slice(&original_bytes).unwrap();
+    for file in original.outputs.values() {
+        let object = p.publish("hot", &fs::read(scene.output.join(&file.path)).unwrap());
+        assert_eq!(object.sha256.as_str(), file.sha256);
+        assert_eq!(object.bytes, file.bytes);
+    }
+    let receipt = p.publish("hot", &original_bytes);
+    let profile: tig_store::existing::Profile =
+        serde_json::from_value(p.profile["byte_source"].clone()).unwrap();
+    let job: Job = serde_json::from_slice(&fs::read(&scene.job).unwrap()).unwrap();
+    let primary = p.source().prepare(&job).unwrap();
+    // Preserve scratch for cleanup, but remove its old path from all lookups.
+    let hidden = scene.output.with_extension("not-visible");
+    fs::rename(&scene.output, &hidden).unwrap();
+    assert!(!scene.output.exists());
+    let bundle = Bundle::open(profile.clone(), &receipt).unwrap();
+    let checked = scene_delivery::check_with_output_files(
+        &scene.job,
+        &primary,
+        &bundle,
+        bundle.receipt_ref(),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&checked).unwrap(),
+        serde_json::to_value(&original).unwrap()
+    );
+    let closure: BTreeSet<_> = bundle.objects().cloned().collect();
+    assert!(closure.contains(&receipt));
+    for file in original.outputs.values() {
+        assert!(closure.contains(&Object {
+            sha256: Digest::parse(&file.sha256).unwrap(),
+            bytes: file.bytes
+        }));
+    }
+    let mut stale = checked.outputs["master.mkv"].clone();
+    stale.bytes += 1;
+    assert!(bundle.verified_path(&stale).is_err());
+    stale.path = "unbound.mkv".into();
+    assert!(bundle.verified_path(&stale).is_err());
+    let master = &checked.outputs["master.mkv"];
+    let mut aliased = master.clone();
+    aliased.path = "./master.mkv".into();
+    assert!(bundle.verified_path(&aliased).is_err());
+    let master_object = Object {
+        sha256: Digest::parse(&master.sha256).unwrap(),
+        bytes: master.bytes,
+    };
+    let master_path = object_file(&p.hot(), &master_object);
+    assert!(
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&master_path)
+            .is_err()
+    );
+    drop(bundle);
+    let saved = fs::read(&master_path).unwrap();
+    let missing = master_path.with_extension("missing");
+    fs::rename(&master_path, &missing).unwrap();
+    assert!(Bundle::open(profile.clone(), &receipt).is_err());
+    let mut too_small = profile.clone();
+    too_small.limits.live_readers = 1;
+    assert!(
+        Bundle::open(too_small, &receipt)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("reader budget")
+    );
+    fs::rename(&missing, &master_path).unwrap();
+    let mut corrupt = saved.clone();
+    corrupt[0] ^= 1;
+    fs::write(&master_path, corrupt).unwrap();
+    assert!(Bundle::open(profile.clone(), &receipt).is_err());
+    fs::write(&master_path, saved).unwrap();
+    assert!(Bundle::open(profile.clone(), &receipt).is_ok());
+    let mut cooperative = profile.clone();
+    cooperative.required = RequiredProtection::CooperativeImmutable;
+    assert!(Bundle::open(cooperative, &receipt).is_err());
+    let mut bad = serde_json::to_value(&original).unwrap();
+    bad["outputs"]["master.mkv"]["path"] = json!("../escape.mkv");
+    let bad_receipt = p.publish("hot", &serde_json::to_vec(&bad).unwrap());
+    assert!(Bundle::open(profile.clone(), &bad_receipt).is_err());
+    let mut traversal = serde_json::to_value(&original).unwrap();
+    let mut item = traversal["outputs"]
+        .as_object_mut()
+        .unwrap()
+        .remove("master.mkv")
+        .unwrap();
+    item["path"] = json!("../escape.mkv");
+    traversal["outputs"]["../escape.mkv"] = item;
+    let traversal_receipt = p.publish("hot", &serde_json::to_vec(&traversal).unwrap());
+    assert!(Bundle::open(profile.clone(), &traversal_receipt).is_err());
+    let text = std::str::from_utf8(&original_bytes).unwrap();
+    let duplicated = format!(
+        "{{\"schema\":\"reel.scene-delivery-receipt.v0.1\",{}",
+        &text[1..]
+    );
+    let duplicate_receipt = p.publish("hot", duplicated.as_bytes());
+    assert!(Bundle::open(profile.clone(), &duplicate_receipt).is_err());
+    let oversized = Object {
+        sha256: receipt.sha256.clone(),
+        bytes: 4 * 1024 * 1024 + 1,
+    };
+    assert!(Bundle::open(profile.clone(), &oversized).is_err());
+    // A complete delivery can span tiers without copying it back into hot.
+    let picture_file = &original.outputs["picture.mkv"];
+    let picture_object = Object {
+        sha256: Digest::parse(&picture_file.sha256).unwrap(),
+        bytes: picture_file.bytes,
+    };
+    let hot_picture = object_file(&p.hot(), &picture_object);
+    assert_eq!(
+        p.publish("history", &fs::read(&hot_picture).unwrap()),
+        picture_object
+    );
+    fs::remove_file(&hot_picture).unwrap();
+    let distributed = Bundle::open(profile.clone(), &receipt).unwrap();
+    assert!(
+        distributed
+            .verified_path(picture_file)
+            .unwrap()
+            .starts_with(p.data.path().join("history"))
+    );
+    assert!(!hot_picture.exists());
+    drop(distributed);
+    // Complete episode consumption: every original render directory is absent.
+    let scenes = vec![
+        p.render(0, "cached-v1"),
+        scene,
+        p.render(2, "cached-v1"),
+        p.render(3, "cached-v1"),
+    ];
+    let bundles: Vec<_> = scenes
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let selected = if i == 1 {
+                receipt.clone()
+            } else {
+                let bytes = fs::read(s.output.join("receipt.json")).unwrap();
+                let metadata: scene_delivery::Receipt = serde_json::from_slice(&bytes).unwrap();
+                for file in metadata.outputs.values() {
+                    p.publish("hot", &fs::read(s.output.join(&file.path)).unwrap());
+                }
+                let selected = p.publish("hot", &bytes);
+                fs::rename(&s.output, s.output.with_extension("not-visible")).unwrap();
+                selected
+            };
+            assert!(!s.output.exists());
+            Bundle::open(profile.clone(), &selected).unwrap()
+        })
+        .collect();
+    let providers = scenes
+        .iter()
+        .zip(&bundles)
+        .map(|(s, b)| (s.unit.clone(), b as &dyn InputFiles))
+        .collect();
+    p.assemble_using(&scenes, "cached-episode", Some(&providers));
+    assert!(
+        !hot_picture.exists(),
+        "assembly must not hydrate history outputs into hot"
+    );
 }
 
 fn publication_failures_and_parallel_writers(p: &Project) {

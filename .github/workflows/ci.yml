@@ -70,6 +70,9 @@ jobs:
       - name: Verify synthetic episode edit, delivery, parallel publication and verified cache eviction
         if: runner.os == 'Windows'
         run: cargo test --features tig-publication --test tig_inputs fake_episode_lifecycle::fake_episode_runs_v1_then_rebuilds_only_the_changed_scene --locked -- --ignored --exact
+      - name: Verify protected Tig scene outputs without the render directory
+        if: runner.os == 'Windows'
+        run: cargo test --features tig-publication --test tig_inputs fake_episode_lifecycle::cached_scene_bundle_rechecks_without_render_directory_and_rejects_bad_bytes --locked -- --ignored --exact
       - name: Verify explicit mono duplication preserves source level and rejects stereo
         run: cargo test --test scene_delivery duplicate_mono_preserves_source_level_and_rejects_stereo -- --ignored --exact
       - name: Verify independent native audio matches full-scene stems and rejects stale evidence
