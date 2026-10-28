@@ -34,6 +34,8 @@ pub use comparison::compare_retained;
 mod handoff;
 mod planning;
 mod preparation;
+mod publication;
+pub use publication::publish_file;
 mod records;
 mod retained;
 mod setup;

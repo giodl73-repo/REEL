@@ -58,3 +58,44 @@ Fixtures cover a 40 MiB stream beyond Tig LocalStore's separate prototype limit,
 reopen/retry, short/long/failing sources, corruption and missing acknowledgements,
 capacity denial, same-object exclusion and independent overlapping writers.
 These fixtures do not activate a live cache or switch a native render workflow.
+
+## Publish an exact caller-owned file
+
+With `tig-publication`, use the existing CLI:
+
+```text
+reel-tig-job publish-file PRIVATE_PROFILE NEW_PRIVATE_RECEIPT
+```
+
+The bounded 64 KiB profile has schema
+`reel.tig-file-publication.experimental-1`, `artifact_root`, `namespace`,
+`storage` (the existing shared cache Config), `destination`, `reader_limits`,
+`protection`, absolute `source`, and `request` (operation, owner, exact Object,
+required acknowledgement). Reuse the same cache/coordination enrollment and
+capacity policy as the other project writers. The destination's existing
+`objects/sha256` directory is required. Other offline active roots need not be
+available; they are not initialized or used as fallback write destinations.
+
+The command first checks a new absolute receipt path with an existing parent
+outside managed cache/control directories. It uses exact-operation recovery;
+already verified bytes can satisfy retry without opening the caller source.
+Otherwise it opens a regular source file, checks its length and streams it through
+the existing bounded publisher. On Windows the open handle excludes source writes
+and deletion. Other platforms retain their explicitly admitted cooperative mode;
+the expected hash is always independently checked by the cache writer.
+
+After publication the command closes and reopens the provider, verifies recovery,
+and atomically publishes a synced, no-clobber private receipt. Stdout is a count/
+flag summary. Refusals omit private paths and source error chains. The caller's
+source is never modified or deleted. Failed operations can leave a protected
+intent, completed object or unreported acknowledgement; retain the source and
+retry the exact operation with a new receipt path. Conflicting owners/objects and
+missing acknowledged bytes refuse rather than silently repairing.
+
+The receipt states `source_may_be_retired: false`,
+`complete_job_enrollment: false`, `independent_custody_verified: false`, and
+`authorizes_eviction: false`. This publishes byte availability, not a semantic
+validation, Git edit, selected version, draft/root claim, complete job enrollment,
+independent backup or creative approval. Keep source bytes until those separate
+retention/adoption obligations are met. No daemon, cache creation, discovery,
+render, upload or automatic retirement occurs.
