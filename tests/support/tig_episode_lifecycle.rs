@@ -1,7 +1,7 @@
 //! A complete tiny project. All stores, Git remotes and media are temporary.
 use super::*;
 use reel::{
-    episode_conform, media_runtime, tig_publication, tig_scene,
+    episode_conform, media_runtime, scene_delivery, tig_publication, tig_scene,
     tig_scene_production::{
         OutputBinding, Publication,
         jobs::{Coordination, Identity, JobPlan},
@@ -52,6 +52,7 @@ struct Project {
     profile: Value,
     requests: Vec<tig_scene::Request>,
     programs: media_runtime::BoundPrograms,
+    runtime: media_runtime::Bindings,
     owners: SourceJournal,
 }
 struct Scene {
@@ -159,14 +160,14 @@ impl Project {
                 bytes: observed.bytes,
             }
         };
-        let programs = media_runtime::BoundPrograms::bind(&media_runtime::Bindings {
+        let runtime = media_runtime::Bindings {
             host: media_runtime::ByteIdentity::observe_file(&std::env::current_exe().unwrap())
                 .unwrap(),
             ffmpeg: file(locate("ffmpeg")),
             ffprobe: file(locate("ffprobe")),
             dependencies: Default::default(),
-        })
-        .unwrap();
+        };
+        let programs = media_runtime::BoundPrograms::bind(&runtime).unwrap();
         let owners = SourceJournal::create(
             &data.path().join("owners"),
             key("fake-episode"),
@@ -179,6 +180,7 @@ impl Project {
             profile: bootstrap.profile.clone(),
             requests: Vec::new(),
             programs,
+            runtime,
             owners,
         };
         project.profile["repository"] = json!(project.repo.path());
@@ -555,13 +557,14 @@ impl Project {
                 .is_err()
             );
             assert!(!output.exists());
-            episode_conform::build_with_scene_files(
+            episode_conform::build_with_segment_files(
                 &root.join(name),
                 root,
                 root,
                 &output,
                 &provided,
                 outputs,
+                &BTreeMap::new(),
             )
             .unwrap()
         } else {
@@ -799,6 +802,11 @@ fn storage_transition(
 #[test]
 #[ignore = "requires native FFmpeg; complete cached delivery with no render directory"]
 fn cached_scene_bundle_rechecks_without_render_directory_and_rejects_bad_bytes() {
+    use std::os::windows::process::CommandExt;
+    if let Some(case) = std::env::var_os("REEL_TEST_EPISODE_NO_PATH") {
+        consume_episode_without_path(Path::new(&case));
+        return;
+    }
     use reel::{scene_delivery, tig_scene_outputs::Bundle};
     use tig_core::Digest;
     let mut p = Project::new();
@@ -967,10 +975,157 @@ fn cached_scene_bundle_rechecks_without_render_directory_and_rejects_bad_bytes()
         .map(|(s, b)| (s.unit.clone(), b as &dyn InputFiles))
         .collect();
     p.assemble_using(&scenes, "cached-episode", Some(&providers));
+    let case = p.data.path().join("episode-no-path.json");
+    write(
+        p.data.path(),
+        "episode-no-path.json",
+        &json!({
+            "source":p.profile,"runtime":p.runtime,"root":p.data.path(),
+            "manifest":p.data.path().join("episode-cached-episode.json"),
+            "jobs":scenes.iter().map(|s| (s.unit.clone(), s.job.clone())).collect::<BTreeMap<_,_>>(),
+            "receipts":scenes.iter().map(|s| (s.unit.clone(), s.delivery_receipt.clone())).collect::<BTreeMap<_,_>>(),
+        }),
+    );
+    let child = Command::new(std::env::current_exe().unwrap())
+        .creation_flags(0x0800_0000)
+        .args(["--ignored", "--exact", "fake_episode_lifecycle::cached_scene_bundle_rechecks_without_render_directory_and_rejects_bad_bytes", "--nocapture"])
+        .env("PATH", "").env("REEL_TEST_EPISODE_NO_PATH", case)
+        .output().unwrap();
+    assert!(
+        child.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&child.stdout),
+        String::from_utf8_lossy(&child.stderr)
+    );
     assert!(
         !hot_picture.exists(),
         "assembly must not hydrate history outputs into hot"
     );
+}
+
+fn consume_episode_without_path(case_path: &Path) {
+    assert_eq!(std::env::var_os("PATH").unwrap(), "");
+    let case = read(case_path);
+    let profile: Profile = serde_json::from_value(case["source"].clone()).unwrap();
+    let runtime: media_runtime::Bindings = serde_json::from_value(case["runtime"].clone()).unwrap();
+    let programs = media_runtime::BoundPrograms::bind(&runtime).unwrap();
+    let jobs: BTreeMap<String, PathBuf> = serde_json::from_value(case["jobs"].clone()).unwrap();
+    let receipts: BTreeMap<String, Object> =
+        serde_json::from_value(case["receipts"].clone()).unwrap();
+    let mut source = Source::open(profile.clone()).unwrap();
+    let primary: BTreeMap<_, _> = jobs
+        .iter()
+        .map(|(id, path)| {
+            let job: Job = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+            (id.clone(), source.prepare(&job).unwrap())
+        })
+        .collect();
+    let inputs: BTreeMap<_, _> = primary
+        .iter()
+        .map(|(id, files)| (id.clone(), programs.with_inputs(files)))
+        .collect();
+    let inputs: BTreeMap<_, _> = inputs
+        .iter()
+        .map(|(id, files)| (id.clone(), files as &dyn InputFiles))
+        .collect();
+    let bundles: BTreeMap<_, _> = receipts
+        .iter()
+        .map(|(id, object)| {
+            (
+                id.clone(),
+                reel::tig_scene_outputs::Bundle::open(profile.byte_source.clone(), object).unwrap(),
+            )
+        })
+        .collect();
+    let outputs = bundles
+        .iter()
+        .map(|(id, files)| (id.clone(), files as &dyn InputFiles))
+        .collect();
+    let root: PathBuf = serde_json::from_value(case["root"].clone()).unwrap();
+    let manifest: PathBuf = serde_json::from_value(case["manifest"].clone()).unwrap();
+    let base = PathBuf::from(".");
+    let tools = programs.with_inputs(&base);
+    struct Deny<'a>(&'a dyn InputFiles, scene_delivery::MediaProgram);
+    impl InputFiles for Deny<'_> {
+        fn verified_path(&self, item: &FileRef) -> anyhow::Result<PathBuf> {
+            self.0.verified_path(item)
+        }
+        fn media_program(&self, program: scene_delivery::MediaProgram) -> anyhow::Result<PathBuf> {
+            anyhow::ensure!(program != self.1, "episode tool denied");
+            self.0.media_program(program)
+        }
+    }
+    let presentations = BTreeMap::new();
+    for denied in [
+        scene_delivery::MediaProgram::Ffmpeg,
+        scene_delivery::MediaProgram::Ffprobe,
+    ] {
+        let refused = root.join(format!("episode-refused-{denied:?}"));
+        let error = episode_conform::build_with_files(
+            &manifest,
+            &root,
+            &root,
+            &refused,
+            episode_conform::Files {
+                scene_inputs: &inputs,
+                scene_outputs: &outputs,
+                presentations: &presentations,
+                programs: &Deny(&tools, denied),
+            },
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("episode tool denied"),
+            "{error:#}"
+        );
+        assert!(!refused.exists());
+    }
+    let receipt = episode_conform::build_with_files(
+        &manifest,
+        &root,
+        &root,
+        &root.join("episode-no-path"),
+        episode_conform::Files {
+            scene_inputs: &inputs,
+            scene_outputs: &outputs,
+            presentations: &presentations,
+            programs: &tools,
+        },
+    )
+    .unwrap();
+    assert!(receipt.decoded_master_matches_ordered_segments);
+    assert!(receipt.timestamps_verified);
+    assert_eq!(receipt.total_frames, 96);
+    assert_eq!(receipt.total_samples, 192000);
+    // Exercise the non-copy paths too: declared geometry/color normalization,
+    // lossless H264 intermediates, concat clocks and compact delivery validation.
+    let mut compact = read(&manifest);
+    compact["output_geometry"] = json!({"width":32,"height":32,"policy":"preserve-aspect-lanczos","assume_square_for_unspecified_sar":true,"assume_color_space_for_unspecified":"bt470bg"});
+    compact["audio_frame_conform"] = json!("pad-silence-to-picture-boundaries");
+    compact["compact_delivery"] = json!({"crf":18,"audio_bitrate_kbps":128,"retain_lossless_master":true,"intermediate_video_encoding":"h264-lossless"});
+    let compact_path = root.join("episode-no-path-compact.json");
+    write(&root, "episode-no-path-compact.json", &compact);
+    let compact = episode_conform::build_with_files(
+        &compact_path,
+        &root,
+        &root,
+        &root.join("episode-no-path-compact"),
+        episode_conform::Files {
+            scene_inputs: &inputs,
+            scene_outputs: &outputs,
+            presentations: &presentations,
+            programs: &tools,
+        },
+    )
+    .unwrap();
+    assert!(compact.decoded_master_matches_ordered_segments);
+    assert!(compact.timestamps_verified);
+    assert_eq!(compact.total_frames, 96);
+    assert_eq!(compact.total_samples, 192000);
+    let encoded = compact.encoded_delivery.unwrap();
+    assert!(encoded.full_decode_verified);
+    assert!(encoded.lossless_master_retained);
+    assert_eq!(encoded.decoded_frames, 96);
 }
 
 fn publication_failures_and_parallel_writers(p: &Project) {

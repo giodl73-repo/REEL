@@ -286,12 +286,13 @@ fn probe_sample_window(
     source: &Path,
     range: &SourceRange,
     definition: &Template,
+    inputs: &(impl scene_delivery::InputFiles + ?Sized),
 ) -> Result<AudioSampleWindow> {
     let (end, _, _) = range_clocks(range, definition)?;
     // Probe the complete metadata timeline: a large pre-range reset can move
     // the needed decoded ordinal past a PTS-bounded read. The media decode
     // itself remains bounded after the exact local window is resolved.
-    let output = episode_conform::command("ffprobe")
+    let output = episode_conform::command_with_inputs(inputs, scene_delivery::MediaProgram::Ffprobe)?
         .args(["-v", "error"])
         .args(["-show_frames", "-show_entries", "frame=media_type,stream_index,best_effort_timestamp,nb_samples:stream=index,codec_type,time_base", "-of", "json"])
         .arg(source).output()?;
@@ -520,11 +521,13 @@ fn source_digest(
     range: Option<&SourceRange>,
     definition: &Template,
     window: Option<&AudioSampleWindow>,
+    inputs: &(impl scene_delivery::InputFiles + ?Sized),
 ) -> Result<(String, u64)> {
     let Some(range) = range else {
-        return episode_conform::decoded_digest(path, picture);
+        return episode_conform::decoded_digest_with_inputs(path, picture, inputs);
     };
-    let mut cmd = episode_conform::command("ffmpeg");
+    let mut cmd =
+        episode_conform::command_with_inputs(inputs, scene_delivery::MediaProgram::Ffmpeg)?;
     cmd.args(["-v", "error", "-nostdin"]);
     bound_source_read(&mut cmd, Some(range), definition, window)?;
     cmd.arg("-i").arg(path);
@@ -573,11 +576,15 @@ fn source_digest(
     ))
 }
 
-fn source_facts(path: &Path) -> Result<(u64, u64, String, u32)> {
-    let output = episode_conform::command("ffprobe")
-        .args(["-v", "error", "-show_streams", "-of", "json"])
-        .arg(path)
-        .output()?;
+fn source_facts(
+    path: &Path,
+    inputs: &(impl scene_delivery::InputFiles + ?Sized),
+) -> Result<(u64, u64, String, u32)> {
+    let output =
+        episode_conform::command_with_inputs(inputs, scene_delivery::MediaProgram::Ffprobe)?
+            .args(["-v", "error", "-show_streams", "-of", "json"])
+            .arg(path)
+            .output()?;
     if !output.status.success() {
         bail!("FFprobe rejected selected presentation source");
     }
@@ -612,11 +619,15 @@ fn source_facts(path: &Path) -> Result<(u64, u64, String, u32)> {
     ))
 }
 
-fn is_native_lossless(path: &Path) -> Result<bool> {
-    let output = episode_conform::command("ffprobe")
-        .args(["-v", "error", "-show_streams", "-of", "json"])
-        .arg(path)
-        .output()?;
+fn is_native_lossless(
+    path: &Path,
+    inputs: &(impl scene_delivery::InputFiles + ?Sized),
+) -> Result<bool> {
+    let output =
+        episode_conform::command_with_inputs(inputs, scene_delivery::MediaProgram::Ffprobe)?
+            .args(["-v", "error", "-show_streams", "-of", "json"])
+            .arg(path)
+            .output()?;
     if !output.status.success() {
         bail!("FFprobe rejected presentation codecs");
     }
@@ -633,10 +644,13 @@ fn is_native_lossless(path: &Path) -> Result<bool> {
         }))
 }
 
+/// Controls and source media may be borrowed protected cache readers. Keep both
+/// providers alive through this synchronous operation. Media programs come from
+/// the source provider; its refusal never falls back to ambient tools or files.
 pub fn build(
     manifest_path: &Path,
-    input_root: &Path,
-    asset_root: &Path,
+    input_root: &(impl scene_delivery::InputFiles + ?Sized),
+    asset_root: &(impl scene_delivery::InputFiles + ?Sized),
     output: &Path,
 ) -> Result<Receipt> {
     if output.exists() {
@@ -654,7 +668,7 @@ pub fn build(
         bail!("invalid presentation adoption manifest");
     }
     let read = |item: &scene_delivery::FileRef| -> Result<Vec<u8>> {
-        Ok(fs::read(scene_delivery::checked_file(input_root, item)?)?)
+        Ok(fs::read(input_root.verified_path(item)?)?)
     };
     let catalog: TemplateCatalog = serde_json::from_slice(&read(&manifest.catalog)?)?;
     let definition_bytes = read(&manifest.template_definition)?;
@@ -794,8 +808,8 @@ pub fn build(
         }
         _ => bail!("selection evidence and hash pointer must be supplied together"),
     };
-    let source = scene_delivery::checked_file(asset_root, &manifest.source)?;
-    let (width, height, fps, sample_rate) = source_facts(&source)?;
+    let source = asset_root.verified_path(&manifest.source)?;
+    let (width, height, fps, sample_rate) = source_facts(&source, asset_root)?;
     let expected_fps = format!(
         "{}/{}",
         definition.fps_numerator, definition.fps_denominator
@@ -818,6 +832,7 @@ pub fn build(
                 .as_ref()
                 .context("audio range origin lacks source range")?,
             &definition,
+            asset_root,
         )?)
     } else {
         None
@@ -831,10 +846,11 @@ pub fn build(
         .prefix(".presentation-adopt-")
         .tempdir_in(parent)?;
     let master = stage.path().join("master.mkv");
-    if manifest.source_range.is_none() && is_native_lossless(&source)? {
+    if manifest.source_range.is_none() && is_native_lossless(&source, asset_root)? {
         fs::copy(&source, &master)?;
     } else {
-        let mut command = episode_conform::command("ffmpeg");
+        let mut command =
+            episode_conform::command_with_inputs(asset_root, scene_delivery::MediaProgram::Ffmpeg)?;
         command.args(["-v", "error", "-nostdin"]);
         bound_source_read(
             &mut command,
@@ -889,7 +905,7 @@ pub fn build(
             bail!("presentation lossless conversion failed");
         }
     }
-    let facts = episode_conform::probe(&master)?;
+    let facts = episode_conform::probe_with_inputs(&master, asset_root)?;
     if (
         facts.width,
         facts.height,
@@ -909,6 +925,7 @@ pub fn build(
         manifest.source_range.as_ref(),
         &definition,
         audio_sample_window.as_ref(),
+        asset_root,
     )?;
     let (source_audio_sha, source_audio_bytes) = source_digest(
         &source,
@@ -916,9 +933,12 @@ pub fn build(
         manifest.source_range.as_ref(),
         &definition,
         audio_sample_window.as_ref(),
+        asset_root,
     )?;
-    let (picture_sha, picture_bytes) = episode_conform::decoded_digest(&master, true)?;
-    let (audio_sha, audio_bytes) = episode_conform::decoded_digest(&master, false)?;
+    let (picture_sha, picture_bytes) =
+        episode_conform::decoded_digest_with_inputs(&master, true, asset_root)?;
+    let (audio_sha, audio_bytes) =
+        episode_conform::decoded_digest_with_inputs(&master, false, asset_root)?;
     let frame_bytes = definition.width * definition.height * 3;
     if picture_sha != source_picture_sha
         || picture_bytes != source_picture_bytes
@@ -952,11 +972,12 @@ pub fn build(
     {
         bail!("presentation duration differs from selected template");
     }
-    episode_delivery::verify_timestamps(
+    episode_delivery::verify_timestamps_with_inputs(
         &master,
         definition.sample_rate,
         definition.fps_numerator,
         definition.fps_denominator,
+        asset_root,
     )?;
     let receipt = Receipt {
         schema: "reel.presentation-master-receipt.v1".into(),
@@ -1005,8 +1026,8 @@ pub fn build(
 /// callers can cache the checked result at a higher build-graph layer.
 pub fn check(
     manifest_path: &Path,
-    input_root: &Path,
-    asset_root: &Path,
+    input_root: &(impl scene_delivery::InputFiles + ?Sized),
+    asset_root: &(impl scene_delivery::InputFiles + ?Sized),
     master_path: &Path,
     receipt_path: &Path,
     stage_parent: &Path,
@@ -1047,11 +1068,10 @@ pub fn check(
         bail!("selected presentation adoption differs from current source selection");
     }
     let manifest: Manifest = serde_json::from_slice(&fs::read(manifest_path)?)?;
-    let definition: Template = serde_json::from_slice(&fs::read(scene_delivery::checked_file(
-        input_root,
-        &manifest.template_definition,
-    )?)?)?;
-    let facts = episode_conform::probe(master_path)?;
+    let definition: Template = serde_json::from_slice(&fs::read(
+        input_root.verified_path(&manifest.template_definition)?,
+    )?)?;
+    let facts = episode_conform::probe_with_inputs(master_path, asset_root)?;
     if (
         facts.width,
         facts.height,
@@ -1069,14 +1089,17 @@ pub fn check(
     ) {
         bail!("selected presentation master differs from adopted media policy");
     }
-    episode_delivery::verify_timestamps(
+    episode_delivery::verify_timestamps_with_inputs(
         master_path,
         definition.sample_rate,
         definition.fps_numerator,
         definition.fps_denominator,
+        asset_root,
     )?;
-    let (picture_sha, picture_bytes) = episode_conform::decoded_digest(master_path, true)?;
-    let (audio_sha, audio_bytes) = episode_conform::decoded_digest(master_path, false)?;
+    let (picture_sha, picture_bytes) =
+        episode_conform::decoded_digest_with_inputs(master_path, true, asset_root)?;
+    let (audio_sha, audio_bytes) =
+        episode_conform::decoded_digest_with_inputs(master_path, false, asset_root)?;
     if picture_sha != rebuilt.decoded_picture_sha256
         || audio_sha != rebuilt.decoded_audio_sha256
         || picture_bytes == 0
@@ -1120,8 +1143,8 @@ fn verified_file(role: &str, path: &Path) -> Result<VerifiedFile> {
 
 fn verification_key(
     manifest_path: &Path,
-    input_root: &Path,
-    asset_root: &Path,
+    input_root: &(impl scene_delivery::InputFiles + ?Sized),
+    asset_root: &(impl scene_delivery::InputFiles + ?Sized),
     master_path: &Path,
     receipt_path: &Path,
 ) -> Result<VerificationKey> {
@@ -1140,7 +1163,7 @@ fn verification_key(
         ("selection-evidence", manifest.selection_evidence.as_ref()),
     ] {
         if let Some(item) = item {
-            scene_delivery::checked_file(input_root, item)?;
+            input_root.verified_path(item)?;
             files.push(VerifiedFile {
                 role: role.into(),
                 sha256: item.sha256.clone(),
@@ -1148,7 +1171,7 @@ fn verification_key(
             });
         }
     }
-    scene_delivery::checked_file(asset_root, &manifest.source)?;
+    asset_root.verified_path(&manifest.source)?;
     files.push(VerifiedFile {
         role: "selected-source".into(),
         sha256: manifest.source.sha256.clone(),
@@ -1156,8 +1179,26 @@ fn verification_key(
     });
     files.extend([
         verified_file("validator", &std::env::current_exe()?)?,
-        verified_file("ffmpeg", &episode_conform::media_tool_path("ffmpeg")?)?,
-        verified_file("ffprobe", &episode_conform::media_tool_path("ffprobe")?)?,
+        verified_file(
+            "ffmpeg",
+            Path::new(
+                episode_conform::command_with_inputs(
+                    asset_root,
+                    scene_delivery::MediaProgram::Ffmpeg,
+                )?
+                .get_program(),
+            ),
+        )?,
+        verified_file(
+            "ffprobe",
+            Path::new(
+                episode_conform::command_with_inputs(
+                    asset_root,
+                    scene_delivery::MediaProgram::Ffprobe,
+                )?
+                .get_program(),
+            ),
+        )?,
     ]);
     Ok(VerificationKey {
         schema: "reel.presentation-adoption-verification-key.v1".into(),
@@ -1182,8 +1223,8 @@ fn cache_hit(path: &Path, key: &VerificationKey) -> bool {
 /// never creative approval; callers must still verify the new episode output.
 pub fn check_cached(
     manifest_path: &Path,
-    input_root: &Path,
-    asset_root: &Path,
+    input_root: &(impl scene_delivery::InputFiles + ?Sized),
+    asset_root: &(impl scene_delivery::InputFiles + ?Sized),
     master_path: &Path,
     receipt_path: &Path,
     stage_parent: &Path,
