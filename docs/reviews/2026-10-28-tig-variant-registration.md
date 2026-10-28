@@ -48,3 +48,17 @@ four package cases pass (0.67 seconds), four versioned cases pass (0.37 seconds)
 and all-feature/all-target warnings-denied Clippy passes (41.39 seconds). No
 production source changes follow that run. Actual private candidate preparation,
 upstream PR220 and hosted qualification remain separate gates.
+
+Actual private metadata rehearsal on source `7210ea7` prepares all twenty-two
+bilingual scene sets: 714 candidate records, including twenty-seven changed
+language aliases and inherited score variants. All 714 exact authored schemas
+pass. No primary media is opened or copied; the executable hash remains unchanged.
+Raw profiles, source pins, candidates and reports stay outside Git.
+
+Cross-scene reconciliation finds 713 distinct IDs and one contradictory ID: two
+scenes select different bytes under the same legacy logical name, with equal
+sizes/status. These candidates are **not adopted**. Schema validity is not global
+identity consistency, and the conflicting source versions must not be collapsed,
+renamed silently or chosen by timestamp. Resolve exact source-version/scoped
+identity policy before project adoption. Producer integration finding: high,
+consumer integration owner; full committed-view binding remains required.
