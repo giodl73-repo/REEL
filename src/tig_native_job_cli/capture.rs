@@ -81,11 +81,11 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
     // Worst-case bounded database plus rollback, page/header and small output
     // allowance. Existing bytes may be charged twice: never assume exclusive
     // ownership, sparse allocation or that logical bytes imply physical space.
-    let metadata_bytes = bounds
-        .database_bytes
-        .checked_mul(2)
-        .and_then(|bytes| bytes.checked_add(1024 * 1024))
-        .ok_or_else(|| anyhow::anyhow!("metadata capacity allowance overflow"))?;
+    let metadata_bytes = preparation::metadata_allowance(
+        &capture.metadata_cache,
+        bounds.database_bytes,
+        1024 * 1024,
+    )?;
     let _metadata_reservation = admission::reserve_on(
         &capture.metadata_root,
         &capture.cache,

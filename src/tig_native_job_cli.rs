@@ -34,8 +34,10 @@ mod planning;
 mod preparation;
 mod records;
 mod retained;
+mod setup;
 pub use capture::capture_context;
 use preparation::ContextMode;
+pub use setup::{check_stores, setup_stores};
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 enum Mode {
