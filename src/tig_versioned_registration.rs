@@ -43,9 +43,14 @@ pub fn prepare(source: &Object, bytes: &[u8], definition: &[u8], schema: &[u8]) 
     let id = text(&doc["artifact_id"])?;
     let kind = text(&doc["kind"])?;
     let current = text(&doc["current_version"])?;
-    let public = doc["public_release"]
-        .as_bool()
-        .context("source release declaration missing")?;
+    let public = doc
+        .get("public_release")
+        .map(|value| {
+            value
+                .as_bool()
+                .context("source release declaration must be Boolean when present")
+        })
+        .transpose()?;
     let versions = doc["versions"]
         .as_array()
         .context("source versions missing")?;
@@ -64,11 +69,11 @@ pub fn prepare(source: &Object, bytes: &[u8], definition: &[u8], schema: &[u8]) 
             bail!("duplicate source version");
         }
         let manifest = &version["manifest"];
+        let lock_version = text(&version["version_lock"]["version_id"])?;
         let object: Object =
             serde_json::from_value(json!({"sha256":manifest["sha256"],"bytes":manifest["bytes"]}))?;
         if manifest["cache_uri"] != format!("cache://sha256/{}", object.sha256.as_str())
             || version["version_lock"]["logical_id"] != id
-            || version["version_lock"]["version_id"] != name
             || version["version_lock"]["manifest_sha256"] != object.sha256.as_str()
             || sizes
                 .insert(object.sha256.clone(), object.bytes)
@@ -79,15 +84,20 @@ pub fn prepare(source: &Object, bytes: &[u8], definition: &[u8], schema: &[u8]) 
         if name == current {
             selected = Some(object.clone());
         }
-        streams.push(json!({"slot":format!("version/{name}"),"role":"source/package","group":"version","object":object}));
+        streams.push(json!({"slot":format!("version/{name}"),"role":"source/package","group":"version","object":object,
+            "provenance":{"version_lock_id":lock_version}}));
     }
     let selected = selected.context("source current version is absent")?;
     let definition_value = Definition::parse(definition)?;
     let pin = Object::from_bytes(definition);
+    let mut authored = json!({"artifact_id":id,"kind":kind,"current_version":current});
+    if let Some(public) = public {
+        authored["public_release"] = json!(public);
+    }
     let output = serde_json::to_vec_pretty(&json!({
         "schema":"tig.instance.design-1","id":id,
         "definition":{"id":definition_value.value().id,"sha256":pin.sha256,"bytes":pin.bytes},
-        "authored":{"artifact_id":id,"kind":kind,"current_version":current,"public_release":public},
+        "authored":authored,
         "selected":selected,"streams":streams,
         "status":{"lifecycle":"registered-source-package","production_state":"unclassified"},
         "metadata":{"versioned_registration":{"source_record":source,"source_schema":"caminos.artifact-record.v1"}}
