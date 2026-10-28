@@ -678,6 +678,156 @@ fn map_media_inputs(root: &Path, job: &mut Value) -> MappedInputs {
     }
 }
 
+fn assert_scattered_output_checks(root: &Path, job: &Path, inputs: &MappedInputs, rendered: &Path) {
+    let original = fs::read(rendered.join("receipt.json")).unwrap();
+    let receipt: scene_delivery::Receipt = serde_json::from_slice(&original).unwrap();
+    let scattered = root.join("scattered-outputs");
+    fs::create_dir(&scattered).unwrap();
+    let mut files = std::collections::BTreeMap::new();
+    for (index, output) in receipt.outputs.values().enumerate() {
+        let destination = scattered.join(format!("object-{index:03}.blob"));
+        fs::rename(rendered.join(&output.path), &destination).unwrap();
+        let mut actual = output.clone();
+        actual.path = destination;
+        files.insert(output.path.clone(), actual);
+    }
+    let mut expected_receipt: scene_delivery::FileRef =
+        serde_json::from_value(file(rendered, "receipt.json")).unwrap();
+    expected_receipt.path = "delivery:receipt".into();
+    let receipt_path = scattered.join("receipt-object.blob");
+    fs::rename(rendered.join("receipt.json"), &receipt_path).unwrap();
+    let mut actual = expected_receipt.clone();
+    actual.path = receipt_path.clone();
+    files.insert(expected_receipt.path.clone(), actual);
+    fs::rename(rendered, root.join("offline-render-scratch")).unwrap();
+    assert!(!rendered.exists());
+    let mut outputs = MappedInputs {
+        files,
+        requests: Default::default(),
+        // Output locations cannot choose tools. Any such request must refuse.
+        programs: Some(Default::default()),
+        program_requests: Default::default(),
+    };
+    let checked =
+        scene_delivery::check_with_output_files(job, inputs, &outputs, &expected_receipt).unwrap();
+    assert_eq!(
+        serde_json::to_vec(&checked).unwrap(),
+        serde_json::to_vec(&receipt).unwrap()
+    );
+    assert!(outputs.program_requests.borrow().is_empty());
+    assert_eq!(outputs.requests.borrow().len(), receipt.outputs.len() + 1);
+    assert!(
+        !String::from_utf8_lossy(&serde_json::to_vec(&checked).unwrap())
+            .contains(root.to_str().unwrap())
+    );
+
+    let mut oversized = expected_receipt.clone();
+    oversized.bytes = 4 * 1024 * 1024 + 1;
+    outputs.requests.borrow_mut().clear();
+    inputs.requests.borrow_mut().clear();
+    assert!(scene_delivery::check_with_output_files(job, inputs, &outputs, &oversized).is_err());
+    assert!(outputs.requests.borrow().is_empty());
+    assert!(inputs.requests.borrow().is_empty());
+
+    let master_key = std::path::PathBuf::from("master.mkv");
+    let master = outputs.files.remove(&master_key).unwrap();
+    inputs.program_requests.borrow_mut().clear();
+    assert!(
+        scene_delivery::check_with_output_files(job, inputs, &outputs, &expected_receipt).is_err()
+    );
+    assert!(inputs.program_requests.borrow().is_empty());
+    outputs.files.insert(master_key.clone(), master.clone());
+
+    outputs.files.get_mut(&master_key).unwrap().sha256 = "0".repeat(64);
+    assert!(
+        scene_delivery::check_with_output_files(job, inputs, &outputs, &expected_receipt).is_err()
+    );
+    outputs.files.insert(master_key, master.clone());
+    let master_bytes = fs::read(&master.path).unwrap();
+    fs::write(&master.path, b"corrupted selected output").unwrap();
+    assert!(
+        scene_delivery::check_with_output_files(job, inputs, &outputs, &expected_receipt).is_err()
+    );
+    fs::write(&master.path, master_bytes).unwrap();
+
+    let mut wrong_receipt = expected_receipt.clone();
+    wrong_receipt.sha256 = "0".repeat(64);
+    assert!(
+        scene_delivery::check_with_output_files(job, inputs, &outputs, &wrong_receipt).is_err()
+    );
+    for case in 0..3 {
+        let mut altered: Value = serde_json::from_slice(&original).unwrap();
+        match case {
+            0 => altered["outputs"]["master.mkv"]["path"] = json!("different-name"),
+            1 => {
+                altered["outputs"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("master.mkv");
+            }
+            _ => altered["content_samples"] = json!(1),
+        }
+        let raw = serde_json::to_vec(&altered).unwrap();
+        fs::write(&receipt_path, &raw).unwrap();
+        let mut pin: scene_delivery::FileRef =
+            serde_json::from_value(file(&scattered, "receipt-object.blob")).unwrap();
+        pin.path = expected_receipt.path.clone();
+        let mut actual = pin.clone();
+        actual.path = receipt_path.clone();
+        outputs.files.insert(expected_receipt.path.clone(), actual);
+        inputs.program_requests.borrow_mut().clear();
+        assert!(scene_delivery::check_with_output_files(job, inputs, &outputs, &pin).is_err());
+        assert!(inputs.program_requests.borrow().is_empty());
+    }
+    // Identical pixels in a different encoded format cannot replace a PNG
+    // snapshot, even when both the receipt and provider are repinned.
+    let snapshot_key = receipt
+        .outputs
+        .keys()
+        .find(|name| name.starts_with("motioncraft/frame-"))
+        .unwrap();
+    let snapshot = outputs.files[Path::new(snapshot_key)].clone();
+    let original_pixels = fs::read(&snapshot.path).unwrap();
+    let pixels = image::load_from_memory(&original_pixels).unwrap().to_rgb8();
+    let pnm = [
+        format!("P6\n{} {}\n255\n", pixels.width(), pixels.height()).as_bytes(),
+        pixels.as_raw(),
+    ]
+    .concat();
+    fs::write(&snapshot.path, &pnm).unwrap();
+    let mut changed_snapshot = snapshot.clone();
+    changed_snapshot.sha256 = Sha256::digest(&pnm)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    changed_snapshot.bytes = pnm.len() as u64;
+    outputs
+        .files
+        .insert(snapshot_key.into(), changed_snapshot.clone());
+    let mut altered: Value = serde_json::from_slice(&original).unwrap();
+    changed_snapshot.path = snapshot_key.into();
+    altered["outputs"][snapshot_key] = serde_json::to_value(changed_snapshot).unwrap();
+    write_json(&receipt_path, &altered);
+    let mut pin: scene_delivery::FileRef =
+        serde_json::from_value(file(&scattered, "receipt-object.blob")).unwrap();
+    pin.path = expected_receipt.path.clone();
+    let mut actual = pin.clone();
+    actual.path = receipt_path.clone();
+    outputs.files.insert(expected_receipt.path.clone(), actual);
+    outputs.requests.borrow_mut().clear();
+    inputs.program_requests.borrow_mut().clear();
+    assert!(scene_delivery::check_with_output_files(job, inputs, &outputs, &pin).is_err());
+    assert_eq!(outputs.requests.borrow().len(), receipt.outputs.len() + 1);
+    assert!(
+        inputs
+            .program_requests
+            .borrow()
+            .contains(&scene_delivery::MediaProgram::Ffmpeg)
+    );
+    fs::write(snapshot.path, original_pixels).unwrap();
+    fs::write(receipt_path, original).unwrap();
+}
+
 #[test]
 fn mapped_inputs_preserve_plan_clocks_and_refuse_missing_or_stale_pins_before_output() {
     let temp = tempfile::tempdir().unwrap();
@@ -884,12 +1034,15 @@ fn real_mapped_input_provider_matches_local_pixels_and_pcm_and_rejects_stale_pin
     }
     let receipt = fs::read(mapped.join("receipt.json")).unwrap();
     assert!(!String::from_utf8_lossy(&receipt).contains(root.to_str().unwrap()));
+    let valid_job = job.clone();
     job["audio"][0]["source"]["sha256"] = json!("0".repeat(64));
     write_json(&path, &job);
     assert!(scene_delivery::check_with_inputs(&path, &inputs, &mapped).is_err());
     let rejected = root.join("stale-not-published");
     assert!(scene_delivery::render_with_inputs(&path, &inputs, &rejected).is_err());
     assert!(!rejected.exists());
+    write_json(&path, &valid_job);
+    assert_scattered_output_checks(root, &path, &inputs, &mapped);
 }
 
 #[test]

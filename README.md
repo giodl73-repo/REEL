@@ -40,8 +40,10 @@ The [conform component registrar](docs/tig-conform-components.md) gives retained
 scene/presentation masters independent Tig records without copying media.
 The [episode composition planner](docs/tig-episode-planning.md) resolves their
 logical IDs and native order while keeping producer freshness unclassified.
-Its [native scene compiler](docs/tig-native-scene.md) resolves current leaf IDs
+The [native scene compiler](docs/tig-native-scene.md) resolves current leaf IDs
 from one Git view and derives exact bindings and jobs without copying media.
+[Verified output providers](docs/provided-scene-outputs.md) let the shared checker
+validate cache-backed deliveries without recreating their directory layout.
 With `tig-publication`, [bounded native jobs](docs/tig-job-runner.md) use
 `reel-tig-job run` to restore a frozen scene, contain a pinned same-binary worker,
 retain checked outputs through Tig and retire only its owned scratch.
