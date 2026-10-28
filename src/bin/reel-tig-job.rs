@@ -8,6 +8,10 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Operation {
+    /// Explicit one-time shared metadata/journal setup; never invoked by Run.
+    Setup { profile: PathBuf, output: PathBuf },
+    /// Check existing named stores against private trusted-minimum bindings.
+    CheckStores { bindings: PathBuf },
     /// Freeze and read back a committed source; write a private worker fragment.
     CaptureContext { profile: PathBuf, output: PathBuf },
     /// Adopt planned resources, render in bounded scratch and retain exact results.
@@ -28,6 +32,10 @@ enum Operation {
 }
 fn main() -> ExitCode {
     let result = match Args::parse().operation {
+        Operation::Setup { profile, output } => {
+            reel::tig_native_job_cli::setup_stores(&profile, &output)
+        }
+        Operation::CheckStores { bindings } => reel::tig_native_job_cli::check_stores(&bindings),
         Operation::CaptureContext { profile, output } => {
             reel::tig_native_job_cli::capture_context(&profile, &output)
         }

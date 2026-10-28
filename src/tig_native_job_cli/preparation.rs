@@ -30,6 +30,14 @@ fn peak(unit: u64, passes: u64) -> Result<u64> {
         .and_then(|n| n.checked_add(1024 * 1024))
         .ok_or_else(|| anyhow::anyhow!("preparation allocation allowance overflow"))
 }
+pub(super) fn metadata_allowance(root: &Path, database_bytes: u64, bootstrap: u64) -> Result<u64> {
+    let unit = admission::allocation_unit(root)
+        .map_err(|_| anyhow::anyhow!("metadata allocation geometry unavailable"))?;
+    unit.checked_mul(16)
+        .and_then(|margin| database_bytes.checked_mul(2)?.checked_add(margin))
+        .and_then(|bytes| bytes.checked_add(bootstrap))
+        .ok_or_else(|| anyhow::anyhow!("metadata allocation allowance overflow"))
+}
 pub(super) fn worker_allowance(profile: &Profile) -> Result<u64> {
     if profile.worker.context_mode == ContextMode::Declared {
         return Ok(0);
@@ -89,14 +97,35 @@ impl Preparation {
         let reservation = admission::reserve_on(namespace, config, root, bytes)
             .map_err(|e| anyhow::anyhow!("compiled preparation not admitted: {e}"))?;
         let prefix = format!("native-prepare-{}-", reservation.id);
-        let directory = tempfile::Builder::new()
-            .prefix(&prefix)
-            .tempdir_in(&reservation.cache_root)?;
+        Self::from_reservation(reservation, root, &prefix)
+    }
+    pub(super) fn from_reservation(
+        reservation: Reservation,
+        parent: &Path,
+        prefix: &str,
+    ) -> Result<Self> {
+        let volume = |path: &Path| {
+            admission::volume_id(path)
+                .map_err(|_| anyhow::anyhow!("owned directory volume unavailable"))
+        };
+        if !parent.is_absolute()
+            || !parent.is_dir()
+            || volume(parent)? != volume(&reservation.cache_root)?
+        {
+            bail!("owned directory must use the reserved volume");
+        }
+        let directory = tempfile::Builder::new().prefix(prefix).tempdir_in(parent)?;
         let prepared = Self {
             directory: Some(directory),
             reservation: Some(reservation),
         };
         Ok(prepared)
+    }
+    /// Call immediately after publishing the independently read-back bindings.
+    /// No fallible operation may intervene between publication and retention.
+    pub(super) fn keep(mut self) {
+        let _ = self.directory.take().expect("live preparation").keep();
+        self.reservation.take();
     }
     pub(super) fn path(&self) -> &Path {
         self.directory.as_ref().expect("live preparation").path()

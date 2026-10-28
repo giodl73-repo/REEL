@@ -1,5 +1,64 @@
 # Tig-backed bounded jobs
 
+## Set up shared stores once
+
+The managed Windows CLI can explicitly create the metadata provider and source
+journal through the existing Tig implementations. It does not create byte caches
+or run setup from any other command. All worktrees share the resulting bindings;
+do not create another store/journal for each job.
+
+```text
+reel-tig-job setup <private-setup-profile.json> <new-private-store-bindings.json>
+reel-tig-job check-stores <private-store-bindings.json>
+```
+
+A setup profile looks like this; all directories in the example already exist:
+
+```json
+{
+  "schema": "reel.tig-job-store-setup.experimental-1",
+  "state_parent": "X:/project-state",
+  "capacity_cache": "X:/byte-cache",
+  "cache": {
+    "path_policy": "configured-local-roots",
+    "cache_roots": ["X:/byte-cache"],
+    "coordination_root": "X:/shared-control"
+  },
+  "metadata_limits": {
+    "nodes": 131072,
+    "bytes": 134217728,
+    "database_bytes": 268435456,
+    "min_free_bytes": 67108864
+  },
+  "journal_project": "my-project",
+  "journal_epoch": "initial"
+}
+```
+
+Use the same shared capacity policy/coordination root as the other project
+workers. Existing capacity policy defaults apply unless explicitly configured.
+State and the new bindings file must reside on the selected capacity volume.
+Setup admits database/rollback plus bootstrap and allocation-rounding allowances
+before creating a unique owned directory beneath `state_parent`. It creates and
+independently reopens both empty providers, then publishes the private bindings
+with no overwrite. A handled refusal cleans only its own new directory; failed
+cleanup retains conservative accounting for explicit recovery. An abrupt crash
+can leave an unselected directory/stale reservation; automatic orphan discovery,
+deletion and complete recovery commands are outside this setup operation.
+
+The small bindings file has schema `reel.tig-job-store-bindings.experimental-1`,
+`metadata_root`, `metadata_minimum`, `journal_root`, and `journal_minimum`. Keep
+it outside Git and back it up as private control data. Use the metadata fields for
+capture and the journal fields in managed job profiles. Check-stores opens those
+named existing providers with their trusted minimum checkpoints; it does not
+create missing roots or infer complete job coverage/custody. Later appends are
+allowed; rollback/foreign identity refusals remain the provider's responsibility.
+Neither technical setup nor checking installs runtime bindings or adopts assets.
+Setup records initial trusted minimums. Retain the advanced checkpoints returned
+by later admitted jobs as private control evidence; an initial minimum cannot
+detect rollback of changes the checker has never independently witnessed. A
+successful check against old bindings does not prove latest protected state.
+
 ## Capture a committed scene for the managed CLI
 
 With `tig-publication`, the explicit command below freezes a committed native
@@ -41,10 +100,10 @@ private source identifiers, paths and admission settings. Stdout is count-only;
 refusal diagnostics omit private provider/compiler error chains. Capture uses
 named controls/alignment metadata and never decodes primary pictures or audio.
 
-An operator must still explicitly provision the metadata provider and authoritative
-job journal, configure existing caches, and bind the runtime. This command removes
-the custom Rust step for source freezing; it is not automatic runtime installation
-or full project adoption. Existing contexts retain their original adapter/runtime
+Use the explicit setup command above once, configure existing byte caches, and
+bind the runtime independently. Setup and capture remove custom Rust bootstrap
+and source-freezing steps; they are not automatic runtime installation or full
+project adoption. Existing contexts retain their original adapter/runtime
 obligations when tools change.
 
 The optional `tig-publication` feature exposes `reel::tig_job_runner::run`.

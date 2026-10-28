@@ -58,7 +58,7 @@ fn compiled_cli_plans_renders_and_hands_off_records_with_source_git_offline() {
     let fragment: Value =
         serde_json::from_slice(&fs::read(f.root().join("compiled-cli-fragment.json")).unwrap())
             .unwrap();
-    let metadata = f.root().join("capture-metadata");
+    let metadata = crate::capture::metadata_root(f.root());
     let witness = serde_json::from_value(fragment["metadata_minimum"].clone()).unwrap();
     let mut nodes = MetadataReader::open(&metadata, &witness).unwrap();
     let profile = fragment["source"].clone();
