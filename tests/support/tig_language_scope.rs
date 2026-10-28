@@ -71,6 +71,110 @@ fn bilingual() -> (Fixture, reel::tig_scene::Request) {
     request.language = "en".into();
     (f, request)
 }
+#[cfg(all(windows, feature = "tig-publication"))]
+#[test]
+fn unused_primary_definitions_cannot_be_output_templates_before_job_adoption() {
+    use tig_store::{metadata::MetadataReader, source_claims::SourceJournal};
+    let (mut f, request) = bilingual();
+    f.profile["byte_source"]["required"] = json!("prevent-mutation");
+    for (name, id) in [
+        ("cue-main", "cue/unrelated-output-trap"),
+        ("alignment", "alignment/unrelated-output-trap"),
+    ] {
+        let mut record = load(&f, &format!("records/{name}.tig"));
+        record["id"] = json!(id);
+        write(f.root(), &format!("records/unused-{name}.tig"), &record);
+    }
+    save_commit(&mut f);
+    let capture = crate::capture::profile(&f, &request);
+    let captured = crate::capture::run(&f, &capture, "role-context.json");
+    assert!(
+        captured.status.success(),
+        "{}",
+        String::from_utf8_lossy(&captured.stderr)
+    );
+    let fragment = load(&f, "role-context.json");
+    let stores = load(&f, "capture-stores.json");
+    let metadata = crate::capture::metadata_root(f.root());
+    let minimum = serde_json::from_value(fragment["metadata_minimum"].clone()).unwrap();
+    let mut reader = MetadataReader::open(&metadata, &minimum).unwrap();
+    let before_metadata = reader.checkpoint().clone();
+    let (_, context) = reel::tig_scene::restore_render_context(
+        serde_json::from_value(fragment["source"].clone()).unwrap(),
+        &request,
+        &serde_json::from_value(fragment["context"].clone()).unwrap(),
+        &f.root().join("role-preflight"),
+        &mut reader,
+        tig_core::tree::TreeLimits::default(),
+    )
+    .unwrap();
+    drop(reader);
+    let journal_root = Path::new(stores["journal_root"].as_str().unwrap());
+    let journal_minimum = serde_json::from_value(stores["journal_minimum"].clone()).unwrap();
+    let before_journal = SourceJournal::open(journal_root, &journal_minimum)
+        .unwrap()
+        .checkpoint();
+    let executable = Path::new(env!("CARGO_BIN_EXE_reel-tig-job"))
+        .canonicalize()
+        .unwrap();
+    let pin = Object::from_bytes(&fs::read(&executable).unwrap());
+    let file = json!({"path":executable,"sha256":pin.sha256,"bytes":pin.bytes});
+    fs::create_dir_all(f.root().join("capture-capacity/objects/sha256")).unwrap();
+    for (id, name) in [
+        ("cue/unrelated-output-trap", "unused-cue-main"),
+        ("alignment/unrelated-output-trap", "unused-alignment"),
+    ] {
+        let template = tig_assets::graph::Reference {
+            id: id.into(),
+            object: Object::from_bytes(
+                &fs::read(f.root().join(format!("records/{name}.tig"))).unwrap(),
+            ),
+        };
+        assert!(
+            !context.requirements().metadata().contains(&template.object),
+            "the target must exercise type admission outside the current input-identity guard"
+        );
+        let mut worker = fragment.clone();
+        worker["runtime"] = json!({"host":pin,"ffmpeg":file,"ffprobe":file,"dependencies":{}});
+        worker["output_budget"] = json!({"default_max_bytes":4*1024*1024_u64});
+        worker["record_outputs"] =
+            json!([{"output":"master.mkv","template":template,"selector":{"kind":"selected"}}]);
+        let profile = json!({"schema":"reel.tig-native-job-profile.experimental-1",
+            "worker":worker,"cache":capture["cache"],"preparation_cache":capture["preparation_cache"],
+            "journal_root":journal_root,"journal_minimum":journal_minimum,
+            "source_id":"role-guard","owner":"fixture-owner","expected_revision":0,
+            "start_operation":"role-start","retain_operation":"role-retain",
+            "budget_bytes":1073741824_u64,"scratch_bytes":536870912_u64,"timeout_seconds":30});
+        let path = f.root().join("role-profile.json");
+        fs::write(&path, serde_json::to_vec(&profile).unwrap()).unwrap();
+        let refused = Command::new(&executable)
+            .arg("plan-outputs")
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert!(!refused.status.success());
+        assert!(
+            String::from_utf8_lossy(&refused.stderr)
+                .contains("output template uses a production-input definition"),
+            "{}",
+            String::from_utf8_lossy(&refused.stderr)
+        );
+        assert_eq!(
+            SourceJournal::open(journal_root, &journal_minimum)
+                .unwrap()
+                .checkpoint(),
+            before_journal
+        );
+        assert_eq!(
+            MetadataReader::open(&metadata, &minimum)
+                .unwrap()
+                .checkpoint(),
+            &before_metadata
+        );
+        assert!(!f.root().join("capture-capacity/staging/caminos").exists());
+    }
+}
+
 fn compile(f: &Fixture, request: &reel::tig_scene::Request, name: &str) -> Value {
     let output = f.root().join(name);
     reel::tig_scene::compile(&mut f.source(), request, &output).unwrap();

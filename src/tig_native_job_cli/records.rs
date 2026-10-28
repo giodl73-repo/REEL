@@ -207,6 +207,14 @@ pub(super) fn prepare(
             continue;
         }
         let resolved = snapshot.resolve_id(&spec.template.id)?;
+        if resolved.definition().id == worker.request.scene_definition
+            || worker
+                .request
+                .primary_definitions
+                .contains(&resolved.definition().id)
+        {
+            bail!("native output template uses a production-input definition");
+        }
         if resolved.reference() != &spec.template
             || !profile.admitted.iter().any(|a| {
                 a.id == resolved.definition().id && a.object == resolved.definition().object
