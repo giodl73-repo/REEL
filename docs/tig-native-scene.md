@@ -337,6 +337,16 @@ global source/job coverage, approval or eviction authority. See the
 Generated primary-input correspondence is not yet verified by this adapter;
 project-level freshness checks remain necessary before selecting a delivery.
 
+Every native compilation shares a64 MiB logical metadata-write allowance across
+copied controls, generated native metadata and generic compiler contracts, with
+a4 MiB per-document limit. Serialization and raw writes refuse before creating
+the offending file; valid document bytes retain their existing representation.
+Partial preparation remains caller-owned. These limits do not reserve physical
+disk space or account for filesystem allocation overhead. CLI compiled-context
+adoption still requires capacity admission for its preparation passes. Generic
+non-native compiler APIs retain their existing unbounded behavior. See the
+[preparation budget review](reviews/2026-10-27-tig-bounded-preparation.md).
+
 ```text
 JobPlan + held runtime + original source context
                      |
