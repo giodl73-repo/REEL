@@ -1,7 +1,7 @@
 //! Explicit native language context candidates; not execution or custody.
 use super::*;
 
-fn scoped_descriptor(request: &Request) -> Result<Vec<u8>> {
+pub(super) fn scoped_descriptor(request: &Request) -> Result<Vec<u8>> {
     let native: Value = serde_json::from_slice(&descriptor(request)?)?;
     let raw = serde_json::to_vec(&json!({
         "schema":"reel.tig-native-language-context.experimental-1",

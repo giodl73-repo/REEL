@@ -196,3 +196,24 @@ Active producer/job and semantic recipe integration remain subsequent work.
 The context is a metadata candidate, not media availability, execution, release,
 global protection or eviction authority. For evidence and limits, see the
 [scoped context review](reviews/2026-10-27-tig-scoped-context.md).
+
+For a distinct compiled-parameter candidate, `tig_scene::freeze_render_context`
+takes a new private output directory as well as the request and metadata store.
+It compiles through the shared interpreter, hash-checks the three generated
+renderer contracts against the compiler's in-memory result, then freezes their
+pins with the native request/adapter and compiler identities. Each contract is
+bounded to4 MiB; the descriptor is bounded to64 KiB. Source/build receipts remain
+provenance rather than being indiscriminately included as render parameters.
+The selected-language authoring fingerprint is also retained: text edits remain
+visible even before a recording is regenerated. This is conservative semantic
+invalidation, not minimal byte consumption or upstream freshness verification.
+
+`tig_scene::restore_render_context` checks descriptor mode/request/code/shape
+before cache access, independently recompiles the original archive into a new
+caller-owned directory, and compares contract pins, exact roots and full captured
+requirements. Opaque controls and selected alignments must remain readable through
+the enrolled providers. Candidate scratch may exist when a later verification
+fails; its caller owns cleanup. The returned source is render-context bound and
+legacy recipe/compilation entry points refuse it. These APIs do not yet admit a
+projected recipe, runtime environment or active render job; see the
+[render context review](reviews/2026-10-27-tig-render-context.md).
