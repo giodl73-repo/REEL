@@ -70,6 +70,8 @@ pub mod sprite_library;
 pub mod sprite_materializer;
 pub mod sung_lyric_alignment;
 #[cfg(feature = "tig")]
+pub mod tig_conform_registration;
+#[cfg(feature = "tig")]
 pub mod tig_inputs;
 #[cfg(feature = "tig-publication")]
 pub mod tig_job_runner;
