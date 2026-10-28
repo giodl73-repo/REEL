@@ -645,8 +645,17 @@ fn storage_transition(
     for hash in &expected {
         assert!(reel_assets::object(&p.hot(), hash).exists());
     }
-    // A completed publication marker is not enough when the retained bytes vanish.
-    let previous = object_file(&p.data.path().join("history"), old);
+    // Commits are per object, not batch-atomic. Force a late failure so resume
+    // must preserve already verified removals and never remove the missing copy.
+    let ordered = read(root.join("request.json"));
+    let held_hash = ordered["sha256s"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .as_str()
+        .unwrap();
+    let previous = reel_assets::object(&p.data.path().join("history"), held_hash);
     let missing = p.data.path().join("missing-backup.blob");
     fs::rename(&previous, &missing).unwrap();
     assert!(
@@ -659,14 +668,23 @@ fn storage_transition(
         )
         .is_err()
     );
-    for hash in &expected {
-        assert!(reel_assets::object(&p.hot(), hash).exists());
+    assert!(reel_assets::object(&p.hot(), held_hash).exists());
+    for object in old_set.difference(&new_set) {
+        if object.sha256.as_str() != held_hash {
+            assert!(!object_file(&p.hot(), object).exists());
+            assert_eq!(
+                Object::from_bytes(
+                    &fs::read(object_file(&p.data.path().join("history"), object)).unwrap()
+                ),
+                *object
+            );
+        }
     }
     fs::rename(missing, &previous).unwrap();
     demotion::run(
         &root,
         &root.join("request.json"),
-        &root.join(".local/apply"),
+        &root.join(".local/missing"),
         true,
         now,
     )

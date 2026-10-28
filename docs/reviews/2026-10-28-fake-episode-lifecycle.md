@@ -29,8 +29,10 @@ The retention adapter derives primary and control objects from the actual native
 scene graphs. Compiled episode masters are outputs, never primary dependencies.
 Each version is anchored to the hash of its actual small delivery instance record.
 The existing asset accounting, tiering, version-diff and demotion implementations
-compute and apply the transition. Removing a backup must block eviction and leave
-all candidates present. After restoring that backup, the old cel, old master and
+compute and apply the transition. Eviction commits per object, not atomically for
+the whole batch. A deliberately missing final backup must block that object's
+removal; earlier removals must each have a verified retained copy. Restoring the
+backup and resuming the same journal completes the transition. The old cel, old master and
 old delivery record leave the hot store; every current object remains verified.
 
 Publication failure injection interrupts a stream before completion, requires no
