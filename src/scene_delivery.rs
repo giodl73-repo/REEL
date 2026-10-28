@@ -2377,6 +2377,39 @@ pub fn check_with_inputs(
     check_impl(job_path, asset_root, output, true)
 }
 
+/// Check an exact delivery receipt and its outputs through borrowed providers.
+/// The output provider must verify each requested pin and hold protection through
+/// this synchronous check. Physical siblings, extensions and local directories
+/// are not required. Tool selection remains with the primary-input provider.
+/// Receipt metadata is bounded to 4 MiB before any provider or planning access.
+/// This does not grant producer currency, approval, custody or eviction authority.
+pub fn check_with_output_files(
+    job_path: &Path,
+    inputs: &(impl InputFiles + ?Sized),
+    outputs: &(impl InputFiles + ?Sized),
+    receipt: &FileRef,
+) -> Result<Receipt> {
+    if receipt.bytes > 4 * 1024 * 1024 {
+        bail!("delivery receipt exceeds metadata budget");
+    }
+    let (job, plan) = plan_with_inputs(job_path, inputs)?;
+    let path = outputs.verified_path(receipt)?;
+    let receipt: Receipt = serde_json::from_slice(&fs::read(path)?)?;
+    check_outputs_impl(job, plan, inputs, outputs, receipt, true)
+}
+
+struct CheckedOutputPaths {
+    paths: BTreeMap<PathBuf, PathBuf>,
+}
+impl CheckedOutputPaths {
+    fn path(&self, name: impl AsRef<Path>) -> Result<PathBuf> {
+        self.paths
+            .get(name.as_ref())
+            .cloned()
+            .context("unbound delivery output")
+    }
+}
+
 /// Recheck immutable bytes after the caller verifies the exact native scene
 /// build proof's job and delivery-receipt hashes. That native proof is issued
 /// only after `check` succeeds. Standalone checks always decode all media.
@@ -2396,6 +2429,17 @@ fn check_impl(
 ) -> Result<Receipt> {
     let (job, plan) = plan_with_inputs(job_path, asset_root)?;
     let receipt: Receipt = serde_json::from_slice(&fs::read(output.join("receipt.json"))?)?;
+    check_outputs_impl(job, plan, asset_root, output, receipt, decode_media)
+}
+
+fn check_outputs_impl(
+    job: Job,
+    plan: Plan,
+    asset_root: &(impl InputFiles + ?Sized),
+    files: &(impl InputFiles + ?Sized),
+    receipt: Receipt,
+    decode_media: bool,
+) -> Result<Receipt> {
     if receipt.schema != "reel.scene-delivery-receipt.v0.1"
         || serde_json::to_value(&receipt.plan)? != serde_json::to_value(&plan)?
         || receipt.content_samples != plan.duration_samples
@@ -2424,19 +2468,27 @@ fn check_impl(
     if receipt.outputs.keys().cloned().collect::<BTreeSet<_>>() != expected {
         bail!("receipt output set mismatch");
     }
+    let mut paths = BTreeMap::new();
     for (name, item) in &receipt.outputs {
         if item.path != Path::new(name) {
             bail!("output name mismatch");
         }
-        checked_file(output, item)?;
+        paths.insert(item.path.clone(), files.verified_path(item)?);
     }
-    crate::motioncraft_review::check_with_inputs(&job, &plan, output, decode_media, asset_root)?;
+    let output = CheckedOutputPaths { paths };
+    crate::motioncraft_review::check_with_output_paths(
+        &job,
+        &plan,
+        decode_media,
+        asset_root,
+        |name| output.path(name),
+    )?;
     if !decode_media {
         return Ok(receipt);
     }
     if let Some(camera) = &job.post_compose_camera {
-        let before = output.join("pre-camera-picture.mkv");
-        let after = output.join("picture.mkv");
+        let before = output.path("pre-camera-picture.mkv")?;
+        let after = output.path("picture.mkv")?;
         if decoded_video_frames(asset_root, &before)? != plan.frame_count
             || decoded_video_frames(asset_root, &after)? != plan.frame_count
         {
@@ -2488,12 +2540,12 @@ fn check_impl(
             if receipt.outputs[&selected].sha256 != source.sha256 {
                 bail!("rendered layer source differs from selected evidence");
             }
-            let before = output.join(if index == 0 {
+            let before = output.path(if index == 0 {
                 "clean-picture.mkv".to_string()
             } else {
                 format!("layered-picture-{:03}.mkv", index - 1)
-            });
-            let after = output.join(if index + 1 == overlays.len() {
+            })?;
+            let after = output.path(if index + 1 == overlays.len() {
                 if job.post_compose_camera.is_some() {
                     "pre-camera-picture.mkv".to_string()
                 } else {
@@ -2501,7 +2553,7 @@ fn check_impl(
                 }
             } else {
                 format!("layered-picture-{index:03}.mkv")
-            });
+            })?;
             if decoded_video_frames(asset_root, &before)? != plan.frame_count
                 || decoded_video_frames(asset_root, &after)? != plan.frame_count
             {
@@ -2571,11 +2623,11 @@ fn check_impl(
             }
         }
     } else if let Some(layer) = overlay {
-        let layered_picture = output.join(if job.post_compose_camera.is_some() {
+        let layered_picture = output.path(if job.post_compose_camera.is_some() {
             "pre-camera-picture.mkv"
         } else {
             "picture.mkv"
-        });
+        })?;
         match layer.render_mode {
             ExternalLayerRenderMode::AssOverlay => {
                 if receipt.outputs["presentation.ass"].sha256 != layer.evidence.sha256 {
@@ -2597,7 +2649,7 @@ fn check_impl(
                 for frame in frames {
                     let clean = rgb_frame_at_index(
                         asset_root,
-                        &output.join("clean-picture.mkv"),
+                        &output.path("clean-picture.mkv")?,
                         &plan,
                         frame,
                     )?;
@@ -2638,7 +2690,7 @@ fn check_impl(
                 ] {
                     let clean = rgb_frame_at_index(
                         asset_root,
-                        &output.join("clean-picture.mkv"),
+                        &output.path("clean-picture.mkv")?,
                         &plan,
                         frame,
                     )?;
@@ -2660,7 +2712,7 @@ fn check_impl(
                 {
                     let clean = rgb_frame_at_index(
                         asset_root,
-                        &output.join("clean-picture.mkv"),
+                        &output.path("clean-picture.mkv")?,
                         &plan,
                         frame,
                     )?;
@@ -2675,7 +2727,7 @@ fn check_impl(
         }
     }
     for name in ["D.wav", "M.wav", "E.wav", "mix.wav", "master.mkv"] {
-        let info = probe_with_inputs(asset_root, &output.join(name))?;
+        let info = probe_with_inputs(asset_root, &output.path(name)?)?;
         let audio = info["streams"]
             .as_array()
             .and_then(|xs| xs.iter().find(|s| s["codec_type"] == "audio"))
@@ -2686,7 +2738,8 @@ fn check_impl(
         {
             bail!("delivery PCM format mismatch: {name}");
         }
-        if pcm_samples(asset_root, &output.join(name), plan.sample_rate)? != plan.duration_samples {
+        if pcm_samples(asset_root, &output.path(name)?, plan.sample_rate)? != plan.duration_samples
+        {
             bail!("decoded sample count mismatch: {name}");
         }
     }
@@ -2700,7 +2753,7 @@ fn check_impl(
                 "-of",
                 "json",
             ])
-            .arg(output.join(name))
+            .arg(output.path(name)?)
             .output()?;
         if !o.status.success() {
             bail!("frame decode failed");
