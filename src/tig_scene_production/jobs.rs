@@ -144,6 +144,9 @@ impl<'a> JobPlan<'a> {
     pub fn recipe(&self) -> &Plan {
         &self.recipe
     }
+    pub(crate) fn native_request(&self) -> &Request {
+        self.request
+    }
     pub fn runtime(&self) -> &BTreeMap<LogicalPath, Object> {
         &self.runtime
     }

@@ -65,6 +65,9 @@ struct Scene {
     delivery_receipt: Object,
     primary: BTreeSet<Object>,
     controls: BTreeSet<Object>,
+    metadata: PathBuf,
+    metadata_checkpoint: tig_store::metadata::Checkpoint,
+    archive: reel::tig_inputs::ArchiveProfile,
 }
 impl Project {
     fn hot(&self) -> PathBuf {
@@ -208,7 +211,26 @@ impl Project {
         ] {
             write(&controls, name, &value);
         }
-        let base = read(project.repo.path().join("records/scene.tig"));
+        let mut scene_definition = read(project.repo.path().join("definitions/scene.json"));
+        scene_definition["authoring"]["properties"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!("episode_id"));
+        let scene_definition_pin = write(
+            project.repo.path(),
+            "definitions/scene.json",
+            &scene_definition,
+        );
+        for admission in project.profile["admitted"].as_array_mut().unwrap() {
+            if admission["id"] == "types/scene" {
+                admission["object"] = json!(scene_definition_pin);
+            }
+        }
+        let mut base = read(project.repo.path().join("records/scene.tig"));
+        base["definition"]["sha256"] = json!(scene_definition_pin.sha256);
+        base["definition"]["bytes"] = json!(scene_definition_pin.bytes);
+        base["authored"]["episode_id"] = json!("episode-1");
+        write(project.repo.path(), "records/scene.tig", &base);
         let original: Object = serde_json::from_value(base["selected"].clone()).unwrap();
         let native = read(object_file(&project.hot(), &original));
         let media = read(project.repo.path().join("records/cel-a.tig"));
@@ -228,7 +250,7 @@ impl Project {
         let output_def = write(
             project.repo.path(),
             "definitions/output.json",
-            &json!({"schema":"tig.definition.design-1","id":"types/output","authored_schema":schema,"authoring":{"properties":["scene"],"required":[],"defaults":{}},"stream_rules":{},"semantic_rules":{}}),
+            &json!({"schema":"tig.definition.design-1","id":"types/output","authored_schema":schema,"authoring":{"properties":["scene","language","component_kind","source_segment_id"],"required":[],"defaults":{}},"stream_rules":{},"semantic_rules":{}}),
         );
         project.profile["admitted"]
             .as_array_mut()
@@ -282,7 +304,7 @@ impl Project {
             write(
                 project.repo.path(),
                 &format!("records/output-{unit}.tig"),
-                &json!({"schema":"tig.instance.design-1","id":format!("output/{unit}"),"definition":{"id":"types/output","sha256":output_def.sha256,"bytes":output_def.bytes},"authored":{"scene":{"id":format!("scene/{unit}")}},"selected":null,"streams":[],"status":{},"metadata":{}}),
+                &json!({"schema":"tig.instance.design-1","id":format!("output/{unit}"),"definition":{"id":"types/output","sha256":output_def.sha256,"bytes":output_def.bytes},"authored":{"scene":{"id":format!("scene/{unit}")},"language":"es","component_kind":"scene","source_segment_id":unit},"selected":null,"streams":[],"status":{},"metadata":{}}),
             );
         }
         fs::remove_file(project.repo.path().join("records/scene.tig")).unwrap();
@@ -324,6 +346,15 @@ impl Project {
         let context =
             tig_scene::freeze_context(&mut source, request, &mut writer, TreeLimits::default())
                 .unwrap();
+        let original: Profile = serde_json::from_value(self.profile.clone()).unwrap();
+        let archive = reel::tig_inputs::ArchiveProfile {
+            schema: reel::tig_inputs::ARCHIVE_PROFILE_SCHEMA.into(),
+            archive: context.archive().clone(),
+            checkpoint: source.checkpoint().clone(),
+            limits: original.limits,
+            admitted: original.admitted,
+            byte_source: original.byte_source,
+        };
         let plan = JobPlan::from_context(&mut source, request, &context, &self.programs).unwrap();
         let frozen = plan.freeze(&mut writer, TreeLimits::default()).unwrap();
         let checkpoint = writer.finish().unwrap();
@@ -491,6 +522,9 @@ impl Project {
             delivery_receipt: published.published().receipt_object().clone(),
             primary,
             controls,
+            metadata,
+            metadata_checkpoint: completed,
+            archive,
         }
     }
     fn assemble(&self, scenes: &[Scene], version: &str) -> (Object, PathBuf) {
@@ -1128,6 +1162,174 @@ fn consume_episode_without_path(case_path: &Path) {
     assert_eq!(encoded.decoded_frames, 96);
 }
 
+fn scene_correspondence(
+    p: &Project,
+    scene: &Scene,
+    index: usize,
+    output_id: &str,
+) -> anyhow::Result<reel::tig_episode::CurrentScene> {
+    use reel::tig_episode::check_current_scene;
+    let mut original_nodes =
+        MetadataReader::open(&scene.metadata, &scene.metadata_checkpoint).unwrap();
+    let producer = Object::from_bytes(p.programs.manifest_bytes());
+    let (_, replay) = tig_scene::restore_claim(
+        scene.archive.clone(),
+        &p.requests[index],
+        &producer,
+        &scene.claim,
+        &mut original_nodes,
+        TreeLimits::default(),
+    )
+    .unwrap();
+    let mut source = p.source();
+    let mut nodes = tig_core::tree::MemoryNodes::default();
+    let context = tig_scene::freeze_context(
+        &mut source,
+        &p.requests[index],
+        &mut nodes,
+        TreeLimits::default(),
+    )
+    .unwrap();
+    let plan =
+        JobPlan::from_context(&mut source, &p.requests[index], &context, &p.programs).unwrap();
+    let checked = check_current_scene(&source, output_id, &plan, &replay);
+    assert_eq!(
+        source.byte_requests(),
+        0,
+        "metadata correspondence must not open primary/output bodies"
+    );
+    checked
+}
+
+fn exercise_scene_correspondence(p: &mut Project, scenes: &[Scene]) {
+    let original_profile = p.profile.clone();
+    let scene = &scenes[2];
+    let check = |p: &Project, output_id: &str| scene_correspondence(p, scene, 2, output_id);
+    let checked = check(p, "output/scene-b").unwrap();
+    assert_eq!(checked.selected(), scene.subject.subject().object());
+    assert_eq!(checked.claim(), scene.claim.object());
+    assert_eq!(checked.recipe(), scene.recipe.fingerprint());
+    assert!(check(p, "output/scene-a").is_err());
+    git(p.repo.path(), &["switch", "-c", "correspondence-cases"]);
+    let request = add_episode_assembly(p);
+    let mut proofs = scenes
+        .iter()
+        .enumerate()
+        .map(|(index, scene)| {
+            (
+                scene.unit.clone(),
+                scene_correspondence(p, scene, index, &format!("output/{}", scene.unit)).unwrap(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut source = p.source();
+    let planned =
+        reel::tig_episode::require_current_scenes(&mut source, &request, &proofs).unwrap();
+    assert_eq!(planned.components.len(), 4);
+    assert_eq!(
+        source.byte_requests(),
+        2,
+        "only native episode/conform controls are read"
+    );
+    assert!(
+        !planned.production_currency_verified
+            && !planned.executable
+            && !planned.authorizes_eviction
+    );
+    let proof = proofs.remove("scene-b").unwrap();
+    assert!(reel::tig_episode::require_current_scenes(&mut p.source(), &request, &proofs).is_err());
+    proofs.insert("wrong-unit".into(), proof);
+    assert!(reel::tig_episode::require_current_scenes(&mut p.source(), &request, &proofs).is_err());
+    let proof = proofs.remove("wrong-unit").unwrap();
+    proofs.insert("scene-b".into(), proof);
+    let path = p.repo.path().join("records/output-scene-b.tig");
+    let original = read(&path);
+    let mut annotated = original.clone();
+    annotated["status"] = json!({"production_state":"current"});
+    write(p.repo.path(), "records/output-scene-b.tig", &annotated);
+    p.commit("annotate selected output without changing its subject");
+    assert!(check(p, "output/scene-b").is_ok());
+    assert!(
+        reel::tig_episode::require_current_scenes(&mut p.source(), &request, &proofs).is_err(),
+        "refresh metadata correspondence after a source checkpoint changes"
+    );
+    annotated["selected"] = json!(Object::from_bytes(b"substituted master NOT PRESENT"));
+    write(p.repo.path(), "records/output-scene-b.tig", &annotated);
+    p.commit("substitute only selected output bytes");
+    assert!(check(p, "output/scene-b").is_err());
+    write(p.repo.path(), "records/output-scene-b.tig", &original);
+    let mut cel = read(p.repo.path().join("records/cel-b.tig"));
+    cel["selected"] = json!(Object::from_bytes(b"changed primary cel NOT PRESENT"));
+    write(p.repo.path(), "records/cel-b.tig", &cel);
+    p.commit("change only primary cel while retaining the previous scene master");
+    assert!(
+        check(p, "output/scene-b")
+            .unwrap_err()
+            .to_string()
+            .contains("stale current-source recipe")
+    );
+    git(p.repo.path(), &["switch", "main"]);
+    p.profile = original_profile;
+    assert!(check(p, "output/scene-b").is_ok());
+}
+
+fn add_episode_assembly(p: &mut Project) -> reel::tig_episode::Request {
+    let schema =
+        Object::from_bytes(&fs::read(p.repo.path().join("definitions/authored.json")).unwrap());
+    let mut definitions = BTreeMap::new();
+    for (name, fields) in [
+        ("episode-source", vec!["episode_id", "scene_ids"]),
+        (
+            "assembly",
+            vec!["episode", "language", "conform_slot", "components"],
+        ),
+    ] {
+        let pin = write(
+            p.repo.path(),
+            &format!("definitions/{name}.json"),
+            &json!({"schema":"tig.definition.design-1","id":format!("types/{name}"),"authored_schema":schema,"authoring":{"properties":fields,"required":[],"defaults":{}},"stream_rules":{},"semantic_rules":{}}),
+        );
+        p.profile["admitted"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":format!("types/{name}"),"object":pin,"payload":{"kind":"selected"}}));
+        definitions.insert(name, pin);
+    }
+    let native = p.publish(
+        "hot",
+        &fs::read(p.data.path().join("controls/episode.json")).unwrap(),
+    );
+    let conform = p.publish(
+        "hot",
+        &fs::read(p.data.path().join("episode-v1.json")).unwrap(),
+    );
+    let record = |name: &str, id: &str, authored: Value, selected: Value, streams: Value| json!({"schema":"tig.instance.design-1","id":id,"definition":{"id":format!("types/{name}"),"sha256":definitions[name].sha256,"bytes":definitions[name].bytes},"authored":authored,"selected":selected,"streams":streams,"status":{},"metadata":{}});
+    write(
+        p.repo.path(),
+        "records/episode-source.tig",
+        &record(
+            "episode-source",
+            "source/episode",
+            json!({"episode_id":"episode-1","scene_ids":UNITS.iter().map(|id| json!({"id":format!("scene/{id}")})).collect::<Vec<_>>()}),
+            json!(native),
+            json!([{"slot":"retained-es","role":"evidence/conform","group":"source","object":conform}]),
+        ),
+    );
+    write(
+        p.repo.path(),
+        "records/assembly.tig",
+        &record(
+            "assembly",
+            "assemble/es",
+            json!({"episode":{"id":"source/episode"},"language":"es","conform_slot":"retained-es","components":UNITS.iter().map(|id| ((*id).to_string(),json!({"id":format!("output/{id}")}))).collect::<BTreeMap<_,_>>()}),
+            Value::Null,
+            json!([]),
+        ),
+    );
+    p.commit("bind declarative episode assembly to independently versioned component outputs");
+    serde_json::from_value(json!({"schema":reel::tig_episode::SCHEMA,"assembly_id":"assemble/es","assembly_definition":"types/assembly","episode_definition":"types/episode-source","scene_definitions":["types/scene"],"component_definitions":["types/output"]})).unwrap()
+}
+
 fn publication_failures_and_parallel_writers(p: &Project) {
     use std::{
         io::{self, Read},
@@ -1270,6 +1472,7 @@ fn fake_episode_runs_v1_then_rebuilds_only_the_changed_scene() {
     let (master_v1, path_v1) = p.assemble(&scenes, "v1");
     let manifest_v1 = p.deliver(&master_v1, &path_v1);
     p.commit("review delivery v1 source and produced scene records");
+    exercise_scene_correspondence(&mut p, &scenes);
     let source_v1 = p.profile.clone();
     let remote = p.data.path().join("remote.git");
     git(p.data.path(), &["init", "--bare", remote.to_str().unwrap()]);
