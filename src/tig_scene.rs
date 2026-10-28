@@ -47,6 +47,9 @@ pub struct Request {
     pub primary_definitions: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub control_definitions: Vec<String>,
+    /// Explicit control-definition ID -> top-level authored JSON object field.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub authored_control_fields: BTreeMap<String, String>,
     pub language: String,
     pub controls: Controls,
     pub delivery_id: String,
@@ -71,6 +74,12 @@ impl Request {
             || self.primary_definitions.contains(&self.scene_definition)
             || self.control_definitions.len() > 128
             || self.control_definitions.contains(&self.scene_definition)
+            || self.authored_control_fields.iter().any(|(id, field)| {
+                !self.control_definitions.contains(id)
+                    || field.is_empty()
+                    || field.len() > 128
+                    || field.chars().any(char::is_control)
+            })
             || self
                 .control_definitions
                 .iter()
@@ -152,6 +161,9 @@ fn consumption(profiles: &[Profile], request: &Request) -> Vec<graph::recipe::Co
                     fields.insert("control_ids".into());
                 }
                 fields
+            } else if let Some(field) = request.authored_control_fields.get(&profile.definition_id)
+            {
+                BTreeSet::from([field.clone()])
             } else {
                 BTreeSet::new()
             },
@@ -235,7 +247,11 @@ fn production_profiles(source: &Source, request: &Request) -> Result<Vec<Profile
             class: NodeKind::Container,
             covered: BTreeSet::from([EdgeKind::Production]),
             rules: vec![],
-            payloads: controls::payloads(&admission.payload),
+            payloads: if request.authored_control_fields.contains_key(id) {
+                Payloads::None
+            } else {
+                controls::payloads(&admission.payload)
+            },
         });
     }
     Ok(profiles)
@@ -500,6 +516,7 @@ struct NativeState {
     references: serde_json::Map<String, Value>,
     controls: BTreeMap<&'static str, Vec<u8>>,
     pins: BTreeMap<&'static str, Object>,
+    authored_controls: BTreeMap<&'static str, Value>,
     empty_episode: ScopedBindings,
     empty_season: ScopedBindings,
     resolved_scene: scene_authoring::ResolvedScene,
@@ -561,15 +578,20 @@ fn read_source(source: &mut Source, request: &Request) -> Result<NativeState> {
     };
     let mut controls = BTreeMap::new();
     let mut pins = BTreeMap::new();
+    let mut authored_controls = BTreeMap::new();
     for (name, slot) in [
         ("catalog.json", &request.controls.catalog),
         ("episode.json", &request.controls.episode),
         ("policy.json", &request.controls.policy),
         ("profile.json", &request.controls.profile),
     ] {
-        let pin = control_catalog.object(source, &parent, slot)?;
-        controls.insert(name, metadata(source, &pin, &mut total)?);
-        pins.insert(name, pin);
+        let control = control_catalog.materialize(source, &parent, slot, &mut total)?;
+        controls.insert(name, control.bytes);
+        if let Some(origin) = control.authored {
+            authored_controls.insert(name, origin);
+        } else {
+            pins.insert(name, control.pin);
+        }
     }
     let episode: Episode = serde_json::from_slice(&controls["episode.json"])?;
     let empty_episode = ScopedBindings {
@@ -601,6 +623,7 @@ fn read_source(source: &mut Source, request: &Request) -> Result<NativeState> {
         references: catalog.effective,
         controls,
         pins,
+        authored_controls,
         empty_episode,
         empty_season,
         resolved_scene,
@@ -628,6 +651,11 @@ fn derive_scope(
     if typed_profile.schema != "reel.scene-delivery-profile.v1" {
         bail!("unsupported native delivery profile schema");
     }
+    scene_delivery_compile::validate_score_source_starts(
+        &typed_profile,
+        &serde_json::from_slice(&controls["episode.json"])?,
+        &[bindings, &state.empty_episode, &state.empty_season],
+    )?;
     let mut language_keys: BTreeSet<_> = resolved_scene
         .inputs_for_language(&request.language)
         .context("resolved scene language missing")?
@@ -720,6 +748,7 @@ fn compile_with_scope(
         bindings,
         controls,
         pins,
+        authored_controls,
         empty_episode,
         empty_season,
         ..
@@ -835,7 +864,7 @@ fn compile_with_scope(
     budget.compact(
         output,
         "native-source.json",
-        &json!({"schema":"reel.tig-native-source.experimental-1","adapter_source_sha256":Object::from_bytes(include_bytes!("tig_scene.rs")).sha256,"tig_source_pin_sha256":Object::from_bytes(include_bytes!("../vendor/tig/source-pin.json")).sha256,"source_checkpoint":source.checkpoint(),"scene_record":parent.reference(),"control_objects":pins,"primary_definition_ids":request.primary_definitions,"binding_count":bindings.assets.len(),"declared_inputs":{"source_checkpoint":required.checkpoint(),"admission_sha256":required.admission(),"binding_sha256":required.binding_digest(),"primary_objects":required.primary(),"control_objects":required.controls(),"interpretation_objects":required.metadata(),"complete_semantic_coverage":false,"authorizes_eviction":false},"language_inputs":language_scope,"new_production_approval":false,"complete_semantic_coverage":false}),
+        &json!({"schema":"reel.tig-native-source.experimental-1","adapter_source_sha256":Object::from_bytes(include_bytes!("tig_scene.rs")).sha256,"tig_source_pin_sha256":Object::from_bytes(include_bytes!("../vendor/tig/source-pin.json")).sha256,"source_checkpoint":source.checkpoint(),"scene_record":parent.reference(),"control_objects":pins,"authored_controls":authored_controls,"primary_definition_ids":request.primary_definitions,"binding_count":bindings.assets.len(),"declared_inputs":{"source_checkpoint":required.checkpoint(),"admission_sha256":required.admission(),"binding_sha256":required.binding_digest(),"primary_objects":required.primary(),"control_objects":required.controls(),"interpretation_objects":required.metadata(),"complete_semantic_coverage":false,"authorizes_eviction":false},"language_inputs":language_scope,"new_production_approval":false,"complete_semantic_coverage":false}),
     )?;
     if evidence.is_empty() {
         scene_delivery_compile::compile_to_dir_with_budget(output, &compile, output, &mut budget)

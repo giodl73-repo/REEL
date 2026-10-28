@@ -1,4 +1,6 @@
 use super::*;
+#[path = "tig_authored_controls.rs"]
+mod authored_controls;
 #[path = "tig_binding_variants.rs"]
 mod binding_variants;
 #[path = "tig_control_references.rs"]
