@@ -22,6 +22,17 @@ counts, and video frame geometry recheck. A failed run does not replace a delive
 
 ## Job contract
 
+The native compiler profile may declare `score_source_starts_by_binding`, keyed
+by an exact episode score-palette asset binding. Each value is
+`{"source_sha256":"<selected recording SHA-256>","start_sample":12345}`.
+The offset uses the delivery sample clock, matching the job's
+`source_start_sample`. It applies to each contiguous score run using that binding;
+it does not infer continuity from neighboring scenes or previously delivered
+outputs. Omitted entries retain zero-start behavior. Unknown palette bindings,
+stale recording pins, more than 4,096 entries and source-range overflow refuse.
+The existing renderer's independently checked source/range constraints still
+apply; declaring an offset does not prove media availability or approve a mix.
+
 JSON and YAML are accepted. Unknown fields are rejected. Every file reference is
 `{path, sha256, bytes}`. The contract path is relative to the job directory; media
 and external-layer evidence paths are relative to `--asset-root`. Absolute paths,

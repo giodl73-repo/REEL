@@ -183,6 +183,36 @@ field defaults to absent; old source records and named controls remain usable
 for newly captured work. Native graph bounds are now 4,225 nodes and 4,224 edges,
 including the 128-control allowance, with the existing depth and byte bounds.
 
+### Small controls authored in Git
+
+The optional request map `authored_control_fields` explicitly maps a control
+definition ID to one top-level authored object field, for example:
+
+```json
+{
+  "control_definitions": ["types/render-profile"],
+  "authored_control_fields": {"types/render-profile": "parameters"}
+}
+```
+
+The referenced `.tig` record contains its complete profile in
+`authored.parameters`; `selected` may be null because there is no separate byte
+payload. Keep original profile objects as historical evidence when migrating.
+The exact definition/schema must declare that field. Every referenced record of
+this admitted type must supply a JSON object there, including inactive controls.
+There is no field-name, language, extension or type-name inference. The existing
+selection-state, role-separation, request-size and metadata budgets still apply.
+
+The adapter materializes the object with Tig's bounded prototype canonical JSON
+encoding. This is not an RFC 8785 claim. The source archive retains the `.tig`
+record itself; whole-scene recipes consume the admitted field, and projected
+render recipes bind the resulting compiled parameters. No cache copy is needed.
+`native-source.json` distinguishes `authored_controls` (record/field/canonical
+fingerprint, `stored_byte_object: false`) from existing `control_objects`.
+Synthetic materialization hashes never become byte-cache custody requirements.
+Low-level selected-byte resolution remains a byte-payload API; the native control
+adapter interprets these explicitly admitted authored controls.
+
 ## Declared inputs and archived source metadata
 
 `reel::tig_scene::requirements(&mut source, &request)` derives a metadata-only
