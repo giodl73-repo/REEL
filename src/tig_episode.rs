@@ -17,6 +17,10 @@ use tig_assets::{graph::Reference, resolve::Resolved};
 use tig_core::{Digest, Object, identity};
 
 pub const SCHEMA: &str = "reel.tig-episode-plan-request.experimental-1";
+#[cfg(feature = "tig-publication")]
+mod correspondence;
+#[cfg(feature = "tig-publication")]
+pub use correspondence::{CurrentScene, check_current_scene, require_current_scenes};
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
