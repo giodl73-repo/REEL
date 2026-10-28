@@ -33,3 +33,26 @@ checked. Explicit absence retains parent history. Twelve malformed mapping/
 identity/filename/definition/budget variants and four correctly hashed foreign
 package/schema/lock/URI variants refuse before output creation. Clippy/default
 isolation and exact-head hosted qualification remain separate gates.
+
+Final metadata consistency guard rejects one digest with contradictory sizes
+across mapped assets/versions, before export. The added correctly hashed-package
+negative exercises that cross-record case. All thirteen registration cases pass
+again (new package cases 0.63 seconds); locked all-target/all-feature Clippy
+passes (39.69 seconds). Earlier default-library isolation passes 190 cases with
+nine explicit ignored runtime cases; subsequent production changes are confined
+to the feature-gated importer.
+
+Actual private consumer: candidate 14a3742 produced three poem parents and six
+independent Spanish/English text records from eight retained packages, with
+thirteen exact text-version mappings. Separate pin comparison preserves current,
+history, original raw-record evidence and source fields. Nine authored schemas
+pass and nineteen protected current/prior lookups bind the complete 1,337-record
+Melena view, verifying eight unique text objects (9,749 logical bytes read).
+No text/body rewrite, media processing, cache publication or runtime installation.
+Final guarded importer must reproduce those same candidates before adoption.
+
+Producer editor/sound/rights disposition: pass_with_risk for explicit native
+source projections. English-to-Spanish references declare desired dependency;
+imported translation freshness and approval remain unproven. Unmapped readings,
+delivery and evidence remain in retained packages; complete family semantics,
+shared-ID reconciliation, graph admission and runtime cutover remain open.

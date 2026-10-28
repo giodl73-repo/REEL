@@ -112,6 +112,7 @@ pub fn prepare(profile: &Profile, source: &mut impl ByteSource) -> Result<Prepar
     }
     let versions: BTreeSet<_> = packages.keys().cloned().collect();
     let mut records = BTreeMap::new();
+    let mut payload_sizes = BTreeMap::new();
     for entry in profile.entries.values() {
         if entry.assets.keys().cloned().collect::<BTreeSet<_>>() != versions {
             bail!("every source version needs an explicit asset mapping or absence");
@@ -126,6 +127,12 @@ pub fn prepare(profile: &Profile, source: &mut impl ByteSource) -> Result<Prepar
                 .get(role)
                 .context("mapped package asset missing")?
                 .object()?;
+            if payload_sizes
+                .insert(pin.sha256.clone(), pin.bytes)
+                .is_some_and(|bytes| bytes != pin.bytes)
+            {
+                bail!("mapped objects have contradictory sizes");
+            }
             if version == current {
                 selected = Some(pin.clone());
             }

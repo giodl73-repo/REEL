@@ -247,13 +247,18 @@ fn invalid_mapping_identity_definition_and_budget_refuse_before_output_creation(
 }
 #[test]
 fn checked_package_bytes_cannot_claim_another_scope_lock_schema_or_asset_uri() {
-    for case in ["scope", "lock", "schema", "uri"] {
+    for case in ["scope", "lock", "schema", "uri", "conflicting-size"] {
         let mut f = Fixture::new();
         f.repackage(|package| match case {
             "scope" => package["artifact_id"] = json!("foreign"),
             "lock" => package["version_id"] = json!("foreign"),
             "schema" => package["schema"] = json!("foreign"),
-            _ => package["assets"]["es-original"]["cache_uri"] = json!("cache://sha256/wrong"),
+            "uri" => package["assets"]["es-original"]["cache_uri"] = json!("cache://sha256/wrong"),
+            _ => {
+                let mut pin = package["assets"]["en-old"].clone();
+                pin["bytes"] = json!(999);
+                package["assets"]["es-original"] = pin;
+            }
         });
         assert!(!f.run().status.success(), "{case}");
         assert!(!f.root.path().join("candidates").exists());
