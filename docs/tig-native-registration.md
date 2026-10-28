@@ -84,9 +84,14 @@ depending on its media family. Its private profile is:
 | `definition` | `definition` and `authored_schema` FileRefs, each with absolute path, SHA-256 and size |
 
 The definition must declare authored fields `artifact_id`, `kind`, `current_version`
-and `public_release`. The importer copies their original values, uses the original
+and optional `public_release`. The importer copies their original values, uses the original
 artifact ID as its logical ID, and selects the exact current package Object. Every
-source version becomes a `version/<original-version-id>` stream. A separate
+source display version becomes a `version/<original-version-id>` stream. The
+immutable lock's version ID is preserved in that stream's provenance as
+`version_lock_id`; it may differ from the display label. The complete original
+lock remains in the pinned source record. Logical ID and manifest hash must
+still match. Absent release declarations stay absent and confer no authority.
+A separate
 `source-record` evidence stream preserves the original control record, including
 rights, editions and unknown source fields; these expanding details are not
 duplicated into ordinary Git. Status is explicitly unclassified for production.

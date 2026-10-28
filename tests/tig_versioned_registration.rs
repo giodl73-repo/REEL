@@ -11,7 +11,7 @@ fn definitions() -> (Vec<u8>, Vec<u8>) {
         &json!({"schema":"tig.definition.design-1","id":"types/source-package",
         "authored_schema":Object::from_bytes(&schema),
         "authoring":{"properties":["artifact_id","kind","current_version","public_release"],
-        "required":["artifact_id","kind","current_version","public_release"],"defaults":{}},
+        "required":["artifact_id","kind","current_version"],"defaults":{}},
         "stream_rules":{},"semantic_rules":{}}),
     )
     .unwrap();
@@ -92,7 +92,7 @@ fn malformed_versions_cannot_silently_drop_history_or_select_a_foreign_package()
             }
             "current" => value["current_version"] = json!("absent"),
             "foreign" => value["versions"][0]["version_lock"]["logical_id"] = json!("other"),
-            "lock-version" => value["versions"][0]["version_lock"]["version_id"] = json!("other"),
+            "lock-version" => value["versions"][0]["version_lock"]["version_id"] = json!(""),
             "lock-hash" => {
                 value["versions"][0]["version_lock"]["manifest_sha256"] =
                     value["versions"][1]["manifest"]["sha256"].clone()
@@ -108,7 +108,7 @@ fn malformed_versions_cannot_silently_drop_history_or_select_a_foreign_package()
             "empty" => value["versions"] = json!([]),
             "limit" => value["versions"] = json!(vec![value["versions"][0].clone(); 256]),
             "release" => {
-                value.as_object_mut().unwrap().remove("public_release");
+                value["public_release"] = Value::Null;
             }
             _ => {
                 let long = "x".repeat(129);
@@ -141,6 +141,32 @@ fn malformed_versions_cannot_silently_drop_history_or_select_a_foreign_package()
             &schema
         )
         .is_err()
+    );
+}
+
+#[test]
+fn display_versions_and_absent_release_declarations_remain_distinct_from_lock_identity() {
+    let mut value = source("arrangement");
+    value.as_object_mut().unwrap().remove("public_release");
+    value["versions"][1]["version_lock"]["version_id"] = json!("v2-inputs-exact");
+    let bytes = candidate(&value).unwrap();
+    let record = Instance::parse(&bytes).unwrap();
+    let instance = record.value();
+    assert_eq!(instance.authored["current_version"], "v2");
+    assert!(!instance.authored.contains_key("public_release"));
+    assert_eq!(instance.streams[2].slot, "version/v2");
+    assert_eq!(
+        instance.streams[2].provenance.as_ref().unwrap()["version_lock_id"],
+        value["versions"][1]["version_lock"]["version_id"]
+    );
+    assert_eq!(
+        instance.selected.as_ref().unwrap().object(),
+        Object::from_bytes(b"v2")
+    );
+    assert_eq!(instance.status["production_state"], "unclassified");
+    assert_eq!(
+        instance.streams[0].object.object(),
+        Object::from_bytes(&serde_json::to_vec(&value).unwrap())
     );
 }
 
