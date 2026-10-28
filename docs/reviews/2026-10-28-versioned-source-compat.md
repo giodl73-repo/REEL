@@ -18,9 +18,16 @@ Preserve absent public_release as absent; validate it as a Boolean when present.
 Definitions must make that authored field optional for these sources. Missing
 declarations do not confer release authority; production remains unclassified.
 
-Preliminary text BOM inspection used a culture-sensitive comparison and was
-incorrect; raw byte inspection found no source BOMs. Do not add BOM handling for
-this catalog. L0 locked fmt/Clippy/isolation. L1 explicit alias and absent-value
+L0 locked fmt/Clippy/isolation. L1 explicit alias and absent-value
 preservation, invalid/null declaration and malformed lock refusals. L2 rerun the
 real candidate conversion from the already retained exact source objects; no
 re-ingestion, media IO, source edits or existing-candidate overwrite.
+
+Outcome: four portable/CLI tests pass, including distinct display/lock labels
+and genuinely absent release fields. Locked all-target/all-feature Clippy passes.
+Actual conversion from the existing retained metadata now produces all 675
+source candidates with 1,522 version references, preserving 36 aliased lock
+entries and eleven absent release declarations. All candidates independently
+match original identity, selection, history and lock pins. No original source
+or selected production subject is changed. Complete native source/package
+semantics, producer freshness and custody remain separate requirements.
