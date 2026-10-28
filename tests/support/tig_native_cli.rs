@@ -157,17 +157,31 @@ fn exercise_mode(
     let host = ByteIdentity::observe_file(&binary).unwrap();
     let cache = root.join("cli-active");
     fs::create_dir_all(cache.join("objects/sha256")).unwrap();
-    let control = root.join("cli-control");
-    fs::create_dir(&control).unwrap();
-    let journal_root = root.join("cli-owner");
-    let journal = SourceJournal::create(
-        &journal_root,
-        Key::parse("fixture").unwrap(),
-        Key::parse("epoch").unwrap(),
-    )
-    .unwrap();
-    let witness = journal.checkpoint();
-    drop(journal);
+    let (control, journal_root, witness) = if compiled {
+        let stores: Value =
+            serde_json::from_slice(&fs::read(root.join("capture-stores.json")).unwrap()).unwrap();
+        assert_eq!(
+            Path::new(stores["metadata_root"].as_str().unwrap()),
+            metadata.0
+        );
+        (
+            root.join("capture-coordination"),
+            std::path::PathBuf::from(stores["journal_root"].as_str().unwrap()),
+            serde_json::from_value(stores["journal_minimum"].clone()).unwrap(),
+        )
+    } else {
+        let control = root.join("cli-control");
+        fs::create_dir(&control).unwrap();
+        let journal_root = root.join("cli-owner");
+        let journal = SourceJournal::create(
+            &journal_root,
+            Key::parse("fixture").unwrap(),
+            Key::parse("epoch").unwrap(),
+        )
+        .unwrap();
+        let witness = journal.checkpoint();
+        (control, journal_root, witness)
+    };
     let mut outputs: BTreeMap<_, _> = reference
         .outputs
         .keys()
@@ -228,7 +242,7 @@ fn exercise_mode(
             inspected["minimum_worker_scratch_bytes"].as_u64().unwrap()
                 <= profile["scratch_bytes"].as_u64().unwrap()
         );
-        assert!(!control.join("admissions").exists());
+        assert_eq!(control.join("admissions").read_dir().unwrap().count(), 0);
     }
     invalid["budget_bytes"] = json!(1);
     fs::write(&path, serde_json::to_vec(&invalid).unwrap()).unwrap();

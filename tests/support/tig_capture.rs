@@ -1,33 +1,47 @@
 use super::*;
 use tig_core::tree::TreeLimits;
-use tig_store::metadata::{Limits, MetadataReader, MetadataStore};
+use tig_store::metadata::MetadataReader;
 
 pub(crate) fn profile(f: &Fixture, request: &reel::tig_scene::Request) -> Value {
     setup(f.root(), &f.profile, request)
 }
 fn setup(root: &Path, source: &Value, request: &reel::tig_scene::Request) -> Value {
-    for name in ["capture-capacity", "capture-coordination"] {
+    for name in ["capture-capacity", "capture-coordination", "capture-state"] {
         fs::create_dir(root.join(name)).unwrap();
     }
-    let metadata = root.join("capture-metadata");
-    let mut store = MetadataStore::create(
-        &metadata,
-        Limits {
-            nodes: 8192,
-            bytes: 8 * 1024 * 1024,
-            database_bytes: 16 * 1024 * 1024,
-            min_free_bytes: 65536,
-        },
-    )
-    .unwrap();
-    let checkpoint = store.finish().unwrap();
+    let cache = json!({"cache_roots":[root.join("capture-capacity")],
+        "path_policy":"configured-local-roots", "coordination_root":root.join("capture-coordination"),
+        "capacity":{"minimum_free_bytes":0,"minimum_free_basis_points":0}});
+    let setup = json!({"schema":"reel.tig-job-store-setup.experimental-1",
+        "state_parent":root.join("capture-state"),"capacity_cache":root.join("capture-capacity"),
+        "cache":cache,"metadata_limits":{"nodes":8192,"bytes":8*1024*1024_u64,
+            "database_bytes":16*1024*1024_u64,"min_free_bytes":65536},
+        "journal_project":"fixture","journal_epoch":"epoch"});
+    let path = root.join("store-setup.json");
+    fs::write(&path, serde_json::to_vec(&setup).unwrap()).unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_reel-tig-job"))
+        .arg("setup")
+        .arg(path)
+        .arg(root.join("capture-stores.json"))
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let stores: Value =
+        serde_json::from_slice(&fs::read(root.join("capture-stores.json")).unwrap()).unwrap();
     json!({"schema":"reel.tig-native-capture-profile.experimental-1",
-        "source":source, "request":request, "metadata_root":metadata,
-        "metadata_minimum":checkpoint, "metadata_cache":root.join("capture-capacity"),
+        "source":source, "request":request, "metadata_root":stores["metadata_root"],
+        "metadata_minimum":stores["metadata_minimum"], "metadata_cache":root.join("capture-capacity"),
         "preparation_cache":root.join("capture-capacity"),
-        "cache":{"cache_roots":[root.join("capture-capacity")],
-            "path_policy":"configured-local-roots", "coordination_root":root.join("capture-coordination"),
-            "capacity":{"minimum_free_bytes":0,"minimum_free_basis_points":0}}})
+        "cache":cache})
+}
+pub(crate) fn metadata_root(root: &Path) -> PathBuf {
+    let stores: Value =
+        serde_json::from_slice(&fs::read(root.join("capture-stores.json")).unwrap()).unwrap();
+    PathBuf::from(stores["metadata_root"].as_str().unwrap())
 }
 pub(crate) fn run(f: &Fixture, profile: &Value, name: &str) -> std::process::Output {
     run_at(f.root(), profile, name)
@@ -93,7 +107,7 @@ fn replay(f: &Fixture, name: &str, output: &str) -> (Value, Value) {
     assert!(fs::metadata(f.root().join(name)).unwrap().len() <= 65536);
     assert_eq!(fragment["context_mode"], "compiled");
     let minimum = serde_json::from_value(fragment["metadata_minimum"].clone()).unwrap();
-    let mut reader = MetadataReader::open(&f.root().join("capture-metadata"), &minimum).unwrap();
+    let mut reader = MetadataReader::open(&metadata_root(f.root()), &minimum).unwrap();
     let (_, context) = reel::tig_scene::restore_render_context(
         serde_json::from_value(fragment["source"].clone()).unwrap(),
         &serde_json::from_value(fragment["request"].clone()).unwrap(),
@@ -180,8 +194,8 @@ fn cli_capture_reuses_provider_tracks_one_leaf_and_replays_both_without_git() {
 fn capture_refusals_preserve_metadata_existing_outputs_and_other_workers() {
     let (f, request) = native_scene_fixture();
     let input = profile(&f, &request);
-    let database = f.root().join("capture-metadata/nodes.sqlite");
-    let header = f.root().join("capture-metadata/metadata.json");
+    let database = metadata_root(f.root()).join("nodes.sqlite");
+    let header = metadata_root(f.root()).join("metadata.json");
     let original = (fs::read(&database).unwrap(), fs::read(&header).unwrap());
     let mut low = input.clone();
     low["cache"]["capacity"]["max_object_bytes"] = json!(1);
