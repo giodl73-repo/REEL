@@ -111,3 +111,56 @@ This is candidate preservation, not complete authoring conversion, native packag
 schema validation, production freshness, approval, payload availability, custody
 or eviction authority. Before adoption, bind the complete committed target view
 and verify required source/package availability through explicit providers.
+
+## Independent assets from retained packages
+
+```text
+reel-tig-register --package-assets PRIVATE_PROFILE NEW_CANDIDATE_DIRECTORY
+```
+
+This mode reads the exact original versioned control record and each retained
+package manifest, then creates a parent plus independent native assets. It does
+not open the mapped payloads. It reuses the versioned mode's lock/URI validation;
+display versions and immutable lock versions may differ. Original source,
+selected package and all prior packages remain pinned on the parent.
+
+The strict profile uses `reel.tig-package-assets-registration.experimental-1`:
+
+| Field | Meaning |
+| --- | --- |
+| `source_record`, `byte_source` | Exact original record and enrolled existing providers |
+| `parent_definition`, `parent_filename` | Exact definition/schema FileRefs and portable root `.tig` name |
+| `parent_authored` | Optional declared extra fields; original identity/kind/current/release fields and generated `asset_ids` cannot be overridden |
+| `entries` | Map of stable project binding names to independent asset declarations |
+| `max_output_bytes` | Positive aggregate candidate budget, at most 16 MiB |
+
+Each entry has `id`, portable `filename`, `definition`, `authored`, and `assets`.
+Definitions use the same pinned FileRef pair as other registration modes. The
+parent definition must admit `asset_ids`; the tool generates its ID references.
+An English text entry can declare `authored.translated_from:{"id":"..."}` under
+an appropriate project definition. This is a desired dependency, not proof that
+an imported translation is current or approved.
+
+`assets` maps **every display version** to its exact package asset role, or null
+for an explicit caller-declared absence. For example, an independently maintained
+Spanish text might map `v1` to `submitted-spanish` and `v2` to `corrected-spanish`.
+No fallback or filename/language inference occurs. Current must be present.
+Each available version becomes a leaf `version/<display-version>` stream with
+exact object, source package, source role and original lock version provenance.
+Original packages remain available even for a deliberately absent leaf version.
+
+The parent is written at the candidate root and leaves under `inputs/`. There
+are at most 128 entries and 255 source versions. Profile/source/definition/schema
+and generated records retain the 64 KiB intake bounds; each package is at most
+4 MiB with at most 16 MiB total metadata read. Every candidate binds before the
+new output directory is created. Case-folded filename collisions, duplicate IDs,
+parent/leaf identity collisions, unsupported names, missing mappings/roles,
+foreign packages/locks and exceeded budgets refuse rather than truncate history.
+
+All production states remain unclassified. Unknown source rights/holds/evidence
+stay in their original pinned records/packages, not expanded into Git or inferred
+from labels. An explicitly mapped subset is not complete family/graph conversion.
+The caller must reconcile shared asset IDs and assign production/evidence/output
+semantics through trusted definitions/adapters. Full authored-schema and graph
+validation, historical byte readback and consumer qualification remain required
+before adoption. No registration mode installs runtimes or grants eviction.
