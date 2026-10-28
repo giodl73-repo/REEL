@@ -83,6 +83,8 @@ pub mod tig_publication;
 pub mod tig_scene;
 #[cfg(feature = "tig")]
 pub mod tig_scene_production;
+#[cfg(feature = "tig")]
+pub mod tig_versioned_registration;
 pub mod voice_consistency;
 pub mod voice_performance;
 
