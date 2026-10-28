@@ -1167,11 +1167,65 @@ pub fn build(
     asset_root: &Path,
     output: &Path,
 ) -> Result<Receipt> {
+    build_impl(manifest_path, input_root, asset_root, output, None)
+}
+
+/// Recheck every native scene with its borrowed, protected primary inputs.
+/// Metadata and fresh delivery outputs retain the existing local-root contract;
+/// this does not hydrate/cache/materialize primary media or grant producer currency.
+/// Coverage must be exact. Imported legacy-source rechecks need their own adapter
+/// and refuse here rather than falling back to ambient filesystem inputs.
+pub fn build_with_scene_inputs(
+    manifest_path: &Path,
+    input_root: &Path,
+    asset_root: &Path,
+    output: &Path,
+    scene_inputs: &BTreeMap<String, &dyn scene_delivery::InputFiles>,
+) -> Result<Receipt> {
+    build_impl(
+        manifest_path,
+        input_root,
+        asset_root,
+        output,
+        Some(scene_inputs),
+    )
+}
+
+fn build_impl(
+    manifest_path: &Path,
+    input_root: &Path,
+    asset_root: &Path,
+    output: &Path,
+    scene_inputs: Option<&BTreeMap<String, &dyn scene_delivery::InputFiles>>,
+) -> Result<Receipt> {
     if output.exists() {
         bail!("episode output must be a new directory");
     }
     let manifest_bytes = fs::read(manifest_path)?;
     let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
+    if let Some(inputs) = scene_inputs {
+        let scenes = manifest
+            .segments
+            .iter()
+            .filter(|s| s.kind == SegmentKind::Scene)
+            .collect::<Vec<_>>();
+        let ids = scenes
+            .iter()
+            .map(|s| s.id.as_str())
+            .collect::<BTreeSet<_>>();
+        if ids.len() != scenes.len()
+            || ids.len() != inputs.len()
+            || inputs.keys().any(|id| !ids.contains(id.as_str()))
+            || scenes.iter().any(|s| {
+                s.delivery_job.is_none()
+                    || s.delivery_receipt.is_none()
+                    || s.imported_source_manifest.is_some()
+                    || s.imported_source_root.is_some()
+            })
+        {
+            bail!("provided scene inputs require exact native recheck coverage");
+        }
+    }
     if manifest.compact_delivery.as_ref().is_some_and(|profile| {
         profile.crf > 51
             || !(32..=512).contains(&profile.audio_bitrate_kbps)
@@ -1381,7 +1435,12 @@ pub fn build(
                 } else {
                     verify_native_delivery_proof(&receipt, job_ref, delivery_ref)?;
                 }
-                let checked = if let Some(imported) = &segment.imported_source_manifest {
+                let checked = if let Some(inputs) = scene_inputs {
+                    let inputs = inputs
+                        .get(&segment.id)
+                        .context("missing provided scene inputs")?;
+                    scene_delivery::check_with_inputs(&job_path, *inputs, delivery_root)?
+                } else if let Some(imported) = &segment.imported_source_manifest {
                     imported_scene_proof::recheck(
                         &source_root,
                         imported,

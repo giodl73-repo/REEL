@@ -5,6 +5,9 @@ mod candidate_publication;
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_capture.rs"]
 mod capture;
+#[cfg(all(windows, feature = "tig-publication"))]
+#[path = "support/tig_episode_lifecycle.rs"]
+mod fake_episode_lifecycle;
 #[path = "support/tig_language_scope.rs"]
 mod language_scope;
 #[cfg(all(windows, feature = "tig-publication"))]
