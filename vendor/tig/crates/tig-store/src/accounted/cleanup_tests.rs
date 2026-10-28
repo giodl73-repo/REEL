@@ -1,5 +1,5 @@
 use super::*;
-use crate::ledger::{Checkpoint, Response};
+use crate::ledger::{Checkpoint, LedgerError, Response};
 use std::{
     fs,
     io::{self, Cursor},
@@ -42,15 +42,29 @@ impl Fixture {
             },
         )
         .unwrap();
-        let p = ledger.begin_probe(key("probe")).unwrap();
-        ledger
-            .observe(key("sample"), p.reference(), 1024 * 1024 * 1024)
-            .unwrap();
-        let job = ledger
-            .reserve(key("job"), key("owner"), publication.limit)
-            .unwrap()
-            .reference()
-            .clone();
+        // Durable parallel fixture IO can outlive a probe. Resample rather than
+        // weakening production freshness or spending the expired observation.
+        let job = (0..8)
+            .find_map(|attempt| {
+                let p = ledger
+                    .begin_probe(key(&format!("probe-{attempt}")))
+                    .unwrap();
+                match ledger.observe(
+                    key(&format!("sample-{attempt}")),
+                    p.reference(),
+                    1024 * 1024 * 1024,
+                ) {
+                    Err(LedgerError::NeedsProbe) => return None,
+                    result => {
+                        result.unwrap();
+                    }
+                }
+                match ledger.reserve(key("job"), key("owner"), publication.limit) {
+                    Err(LedgerError::NeedsProbe) => None,
+                    result => Some(result.unwrap().reference().clone()),
+                }
+            })
+            .expect("fixture could not obtain a fresh reservation after eight probes");
         Self {
             temp,
             store,

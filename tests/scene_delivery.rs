@@ -981,7 +981,14 @@ fn real_mapped_input_provider_matches_local_pixels_and_pcm_and_rejects_stale_pin
         })
         .collect(),
     );
-    scene_delivery::render_with_inputs(&path, &inputs, &mapped).unwrap();
+    let rendered = scene_delivery::render_with_inputs(&path, &inputs, &mapped).unwrap();
+    for (name, file) in &rendered.outputs {
+        assert_eq!(
+            file.path.to_str(),
+            Some(name.as_str()),
+            "output name must be portable"
+        );
+    }
     scene_delivery::check_with_inputs(&path, &inputs, &mapped).unwrap();
     let font_hash = job["external_layers"][0]["font"]["sha256"]
         .as_str()

@@ -76,12 +76,13 @@ fn prepare(
     if variants.is_some_and(|packet| packet.source() != context.selection()) {
         return Err(Error::Integrity);
     }
-    if admission.runtime.len() > 64
-        || admission
-            .output
-            .as_ref()
-            .is_some_and(|o| o.attachments.len() > 64)
-    {
+    let evidence = admission.output.as_ref().map_or(0, |o| o.attachments.len());
+    let entries = 4_usize
+        .checked_add(admission.runtime.len())
+        .and_then(|n| n.checked_add(evidence))
+        .and_then(|n| n.checked_add(usize::from(admission.output.is_some())))
+        .and_then(|n| n.checked_add(usize::from(variants.is_some())));
+    if admission.runtime.len() > 64 || entries.is_none_or(|count| count > limits.max_entries) {
         return Err(Error::Budget);
     }
     for names in [
@@ -92,10 +93,10 @@ fn prepare(
     .flatten()
     {
         for name in names.keys() {
-            if names.keys().any(|other| {
-                name != other && name.as_str().starts_with(&format!("{}/", other.as_str()))
-            }) {
-                return Err(Error::Invalid);
+            for (index, _) in name.as_str().match_indices('/') {
+                if names.contains_key(&path(&name.as_str()[..index])?) {
+                    return Err(Error::Invalid);
+                }
             }
         }
     }

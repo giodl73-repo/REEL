@@ -85,9 +85,10 @@ The isolated cached-episode fixture uses this path for every scene, then removes
 the render directories from lookup and performs full cache-backed scene/episode
 checks. It also exercises pre-write budget/capability and changed-unmapped-output
 refusal, a failure before receipt publication, exact retry and output-resource
-membership after job readback. The Tig job evidence budget extension must be
-qualified and vendored before larger-than-64 output evidence can complete handoff;
-an explicit complete-publication CLI profile remains a separate integration step.
+membership after job readback. Imported qualified Tig PR47 now admits evidence
+under the caller's total tree-entry budget while runtime names retain their
+independent 64-name bound. Exact-source REEL consumer qualification remains
+required; whole-episode production CLI integration remains separate work.
 
 ## Publish an exact caller-owned file
 

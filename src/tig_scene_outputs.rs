@@ -4,15 +4,28 @@ use crate::scene_delivery::{FileRef, InputFiles, Receipt};
 use anyhow::{Result, anyhow, bail};
 use std::{
     collections::BTreeMap,
-    io::Read,
+    io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
 use tig_core::{Digest, LogicalPath, Object};
-use tig_store::existing::{ByteSource, Profile, ReadCache, RequiredProtection, VerifiedRead};
+use tig_store::existing::{
+    ByteSource, Limits, Profile, ReadCache, RequiredProtection, VerifiedRead,
+};
 
 const RECEIPT_MAX: u64 = 4 * 1024 * 1024;
 const OUTPUTS_MAX: usize = 4096;
 const RECEIPT_NAME: &str = "receipt.json";
+
+/// Native Windows receipts historically used backslashes for font subpaths.
+/// Only separator spelling is normalized; dot/root/drive aliases stay invalid.
+pub(crate) fn output_name(path: &Path) -> Result<String> {
+    let name = path
+        .to_str()
+        .ok_or_else(|| anyhow!("non-Unicode output name"))?
+        .replace('\\', "/");
+    LogicalPath::parse(&name)?;
+    Ok(name)
+}
 
 /// Owns every verified output guard, deduplicated by hash. Keep this owner alive
 /// for the entire synchronous check/consume operation, including subprocesses.
@@ -34,7 +47,25 @@ impl Bundle {
         }
         let limits = profile.limits;
         let mut cache = ReadCache::new(profile)?;
-        let mut guard = cache.open_verified(receipt)?;
+        let guard = cache.open_verified(receipt)?;
+        Self::from_held_receipt(&mut cache, receipt, guard, limits)
+    }
+    /// Reuse one explicitly admitted cache so claim/reference/output reads share
+    /// its charged budgets. The caller passes that cache's original limits.
+    pub(crate) fn from_held_receipt(
+        cache: &mut ReadCache,
+        receipt: &Object,
+        mut guard: VerifiedRead,
+        limits: Limits,
+    ) -> Result<Self> {
+        if !cfg!(windows) {
+            bail!("mandatory output path protection unavailable");
+        }
+        if receipt.bytes > RECEIPT_MAX || guard.object() != receipt {
+            bail!("delivery receipt exceeds metadata budget");
+        }
+        guard.with_path(|_| ())?;
+        guard.seek(SeekFrom::Start(0))?;
         let mut bytes = Vec::new();
         (&mut guard).take(RECEIPT_MAX + 1).read_to_end(&mut bytes)?;
         if bytes.len() as u64 != receipt.bytes {
@@ -51,7 +82,7 @@ impl Bundle {
         let mut objects = BTreeMap::from([(receipt.sha256.clone(), receipt.bytes)]);
         for (name, file) in &parsed.outputs {
             LogicalPath::parse(name)?;
-            if file.path.to_str() != Some(name.as_str()) || name == RECEIPT_NAME {
+            if output_name(&file.path)? != *name || name == RECEIPT_NAME {
                 bail!("delivery output name mismatch");
             }
             let object = Object {
@@ -65,12 +96,20 @@ impl Bundle {
             }
             names.insert(name.clone(), object);
         }
+        let additional = objects.len() - 1;
         let total = objects
-            .values()
-            .try_fold(0_u64, |sum, size| sum.checked_add(*size))
+            .iter()
+            .filter(|(hash, _)| **hash != receipt.sha256)
+            .try_fold(cache.verification_bytes(), |sum, (_, size)| {
+                sum.checked_add(*size)
+            })
             .ok_or_else(|| anyhow!("delivery byte budget overflow"))?;
-        if objects.len() > limits.live_readers as usize
-            || objects.len() > limits.requests as usize
+        if (cache.active_readers() as usize)
+            .checked_add(additional)
+            .is_none_or(|n| n > limits.live_readers as usize)
+            || (cache.requests() as usize)
+                .checked_add(additional)
+                .is_none_or(|n| n > limits.requests as usize)
             || total > limits.total_bytes
             || objects.values().any(|size| *size > limits.object_bytes)
         {
@@ -110,14 +149,10 @@ impl Bundle {
 }
 impl InputFiles for Bundle {
     fn verified_path(&self, expected: &FileRef) -> Result<PathBuf> {
-        let name = expected
-            .path
-            .to_str()
-            .ok_or_else(|| anyhow!("non-Unicode output name"))?;
-        LogicalPath::parse(name)?;
+        let name = output_name(&expected.path)?;
         let object = self
             .names
-            .get(name)
+            .get(&name)
             .ok_or_else(|| anyhow!("unbound delivery output"))?;
         if object.sha256.as_str() != expected.sha256 || object.bytes != expected.bytes {
             bail!("delivery output pin changed");

@@ -893,6 +893,20 @@ fn cached_scene_bundle_rechecks_without_render_directory_and_rejects_bad_bytes()
     traversal["outputs"]["../escape.mkv"] = item;
     let traversal_receipt = p.publish("hot", &serde_json::to_vec(&traversal).unwrap());
     assert!(Bundle::open(profile.clone(), &traversal_receipt).is_err());
+    let mut windows_names = serde_json::to_value(&original).unwrap();
+    let mut alias = windows_names["outputs"]["picture.mkv"].clone();
+    alias["path"] = json!("nested\\picture.mkv");
+    windows_names["outputs"]["nested/picture.mkv"] = alias;
+    let windows_receipt = p.publish("hot", &serde_json::to_vec(&windows_names).unwrap());
+    let legacy = Bundle::open(profile.clone(), &windows_receipt).unwrap();
+    let mut expected = original.outputs["picture.mkv"].clone();
+    expected.path = "nested/picture.mkv".into();
+    let canonical_path = legacy.verified_path(&expected).unwrap();
+    expected.path = "nested\\picture.mkv".into();
+    assert_eq!(legacy.verified_path(&expected).unwrap(), canonical_path);
+    expected.path = "nested/./picture.mkv".into();
+    assert!(legacy.verified_path(&expected).is_err());
+    drop(legacy);
     let text = std::str::from_utf8(&original_bytes).unwrap();
     let duplicated = format!(
         "{{\"schema\":\"reel.scene-delivery-receipt.v0.1\",{}",

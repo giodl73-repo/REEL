@@ -87,12 +87,70 @@ pub fn exercise(
     let summary: Value = serde_json::from_slice(&checked.stdout).unwrap();
     assert_eq!(summary["equal"], true);
     assert_eq!(summary["native_checked"], true);
+    assert_eq!(summary["materialized_bytes"], 0);
     assert!(!String::from_utf8_lossy(&checked.stdout).contains("sha256"));
     let evidence: Value = serde_json::from_slice(&fs::read(&report).unwrap()).unwrap();
     assert_eq!(evidence["parity"]["native_clock_checked"], true);
     assert_eq!(evidence["parity"]["approval_transferred"], false);
     assert_eq!(evidence["execution_attested"], false);
     clean(cache);
+    // Receipt-derived v2 keeps one manifest and shares one charged reader across
+    // claim, receipt, baseline and all unique native outputs. Exact allowance
+    // succeeds; one fewer request must refuse, rather than resetting a cache.
+    let mut derived = comparison.clone();
+    derived["schema"] = json!("reel.tig-retained-comparison.experimental-2");
+    derived.as_object_mut().unwrap().remove("outputs");
+    let mut unique = std::collections::BTreeMap::new();
+    let mut named_bytes = comparison["receipt"]["bytes"].as_u64().unwrap();
+    for object in comparison["outputs"].as_object().unwrap().values() {
+        unique.insert(
+            object["sha256"].as_str().unwrap(),
+            object["bytes"].as_u64().unwrap(),
+        );
+        named_bytes += object["bytes"].as_u64().unwrap();
+    }
+    let requests = unique.len() as u32 + 3;
+    let verified_bytes = unique.values().sum::<u64>()
+        + comparison["claim"]["bytes"].as_u64().unwrap()
+        + comparison["receipt"]["bytes"].as_u64().unwrap()
+        + baseline.bytes;
+    derived["max_output_bytes"] = json!(named_bytes);
+    derived["byte_source"]["limits"] = json!({"requests":requests,"total_bytes":verified_bytes});
+    let derived_report = root.join("receipt-derived-comparison.json");
+    let checked = invoke(&derived, &derived_report);
+    assert!(
+        checked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    let summary: Value = serde_json::from_slice(&checked.stdout).unwrap();
+    assert_eq!(summary["materialized_bytes"], 0);
+    assert_eq!(summary["verified_output_bytes"], named_bytes);
+    let derived_evidence: Value =
+        serde_json::from_slice(&fs::read(derived_report).unwrap()).unwrap();
+    assert_eq!(
+        derived_evidence["schema"],
+        "reel.tig-retained-comparison-report.experimental-2"
+    );
+    assert!(derived_evidence.get("outputs").is_none());
+    assert_eq!(derived_evidence["output_manifest"], comparison["receipt"]);
+    assert_eq!(
+        derived_evidence["output_count"],
+        evidence["outputs"].as_object().unwrap().len()
+    );
+    for case in ["requests", "bytes", "duplicate-map", "missing-v1-map"] {
+        let mut denied = derived.clone();
+        match case {
+            "requests" => denied["byte_source"]["limits"]["requests"] = json!(requests - 1),
+            "bytes" => denied["byte_source"]["limits"]["total_bytes"] = json!(verified_bytes - 1),
+            "duplicate-map" => denied["outputs"] = comparison["outputs"].clone(),
+            _ => denied["schema"] = comparison["schema"].clone(),
+        }
+        let output = root.join(format!("refused-derived-{case}.json"));
+        assert!(!invoke(&denied, &output).status.success());
+        assert!(!output.exists());
+        clean(cache);
+    }
     let original_report = fs::read(&report).unwrap();
     assert!(!invoke(&comparison, &report).status.success());
     assert_eq!(fs::read(&report).unwrap(), original_report);

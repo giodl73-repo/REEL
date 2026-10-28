@@ -16,9 +16,10 @@ bundle result; source bytes remain caller-owned until handoff obligations finish
 Successful complete publication exposes the exact output map. Protected native
 jobs include those objects as named Evidence in output freeze/readback/adoption,
 separate from canonical primary inputs and without inventing complete global
-claim coverage. The upstream Tig total-entry budget extension is required for
-large evidence sets; current vendored code retains its old count limit until
-that source is qualified and integrated.
+claim coverage. Qualified upstream Tig PR47 is now imported at
+4e80e0116e36567d1e1f10dbc6c6acf742e2f192; evidence uses the explicit total
+tree-entry budget while the runtime-name bound remains independent. Exact-source
+REEL consumer qualification remains required.
 
 The generated cached-episode fixture now uses managed complete publication for
 every unit. It has no manual output-list publication loop. The native job result

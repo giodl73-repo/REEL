@@ -11,7 +11,7 @@ use tig_core::{
 
 pub mod recipe;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EdgeKind {
     Production,
@@ -21,7 +21,7 @@ pub enum EdgeKind {
     Publication,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeKind {
     Primary,
@@ -50,7 +50,8 @@ impl Reference {
 }
 
 /// Caller-admitted meaning, never policy obtained from an instance's own status.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Profile {
     pub definition_id: String,
     pub definition: Object,
@@ -62,7 +63,8 @@ pub struct Profile {
 
 /// Explicit admitted meaning: selected can name a manifest, so it is never
 /// automatically treated as all of an asset's primary byte dependencies.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum Payloads {
     None,
     SelectedObject,
@@ -79,7 +81,8 @@ pub enum Payloads {
     Unsupported,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Rule {
     /// RFC 6901 pointer relative to the authored object, not the whole record.
     pub pointer: String,
@@ -91,7 +94,7 @@ pub struct Rule {
 
 /// Caller-admitted shape. Objects are traversed only when explicitly selected;
 /// map values are references, not arbitrary recursively discovered dependencies.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Collection {
     One,
@@ -99,7 +102,7 @@ pub enum Collection {
     ObjectValues,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum Binding {
     ExactOnly,
     SnapshotSelected,
@@ -154,7 +157,8 @@ impl Profile {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Limits {
     pub nodes: usize,
     pub edges: usize,
