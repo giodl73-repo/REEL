@@ -273,6 +273,9 @@ pub fn prepare(profile: &Profile, source: &mut impl ByteSource) -> Result<Prepar
     {
         bail!("registration annotation names an unknown binding");
     }
+    for name in profile.filenames.values() {
+        filename(name)?;
+    }
     if profile.metadata.contains_key("native_registration") {
         bail!("registration provenance is reserved");
     }
@@ -289,14 +292,26 @@ pub fn prepare(profile: &Profile, source: &mut impl ByteSource) -> Result<Prepar
         |id: &str, bytes: &[u8]| json!({"id":id,"sha256":Digest::blob(bytes),"bytes":bytes.len()});
     let mut records = BTreeMap::new();
     let mut references = Map::new();
-    let mut ids = BTreeSet::from([scene.scene_id.clone()]);
+    let mut ids = BTreeMap::new();
     let mut names = BTreeSet::new();
     let mut sizes = BTreeMap::new();
     let mut total = 0u64;
     for (key, asset) in &bindings.assets {
-        if !ids.insert(asset.logical_id.clone()) {
-            bail!("duplicate native asset identity");
+        if asset.logical_id == scene.scene_id {
+            bail!("primary identity collides with scene");
         }
+        let identity = (
+            serde_json::to_value(asset)?,
+            profile.primary_annotations.get(key).cloned(),
+        );
+        if let Some(previous) = ids.get(&asset.logical_id) {
+            if previous != &identity {
+                bail!("shared native identity has conflicting data or annotations");
+            }
+            references.insert(key.clone(), json!({"id":asset.logical_id}));
+            continue;
+        }
+        ids.insert(asset.logical_id.clone(), identity);
         let object = Object {
             sha256: Digest::parse(&asset.sha256)?,
             bytes: asset.bytes,

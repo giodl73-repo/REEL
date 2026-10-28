@@ -68,10 +68,17 @@ case-insensitive collision checks. Source-binding pins and language/ancestor
 provenance remain attached. No status is promoted or primary media opened.
 Absent or explicitly empty extensions preserve legacy candidate bytes.
 
+Several aliases may intentionally reference one identical asset ID. Such aliases
+emit one leaf and share its parent references. Byte pins, selection state and
+explicit asset annotations must agree. The leaf's `binding_key` retains the first
+source alias in deterministic order as an origin hint, not exclusive ownership;
+all alias relationships remain in the parent. Conflicting shared identities are
+refused rather than renamed or assigned guessed versions.
+
 The profile is at most 64 KiB. Each package/native document is at most 4 MiB,
 with 16 MiB total metadata read; definition/schema documents and each generated
 record are at most 64 KiB. Binding maps have at most 4,096 unique keys. Existing
-Tig envelope/node limits also apply. Duplicate asset IDs, conflicting sizes,
+Tig envelope/node limits also apply. Conflicting shared asset IDs or sizes,
 wrong native scopes, unknown annotations and case-insensitive filename collisions
 refuse. Unsafe or reserved filenames require explicit portable names.
 

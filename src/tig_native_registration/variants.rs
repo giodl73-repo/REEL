@@ -48,10 +48,9 @@ pub(super) fn prepare(
     let mut identities = BTreeMap::new();
     let mut sizes = BTreeMap::new();
     for (key, asset) in &base.assets {
-        identities.insert(
-            asset.logical_id.clone(),
-            (key.clone(), serde_json::to_value(asset)?),
-        );
+        identities
+            .entry(asset.logical_id.clone())
+            .or_insert((key.clone(), serde_json::to_value(asset)?));
         sizes.insert(asset.sha256.clone(), asset.bytes);
     }
     let mut names: BTreeSet<_> = existing
@@ -127,7 +126,10 @@ pub(super) fn prepare(
                 bail!("language asset identity or state is inconsistent");
             }
             if let Some((previous_key, previous)) = identities.get(&asset.logical_id) {
-                if previous_key != key || previous != &value {
+                if previous != &value
+                    || profile.primary_annotations.get(previous_key)
+                        != profile.primary_annotations.get(key)
+                {
                     bail!("shared identity has conflicting bindings");
                 }
             } else {

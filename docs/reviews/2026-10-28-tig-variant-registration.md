@@ -33,3 +33,18 @@ legacy empty-extension bytes, shared/different IDs, original held states,
 explicit provenance, inherited score variants, local precedence, no media reads
 and no publication on refusal. Hosted and actual consumer qualification remain
 open; producer disposition is pass_with_risk for candidate registration only.
+
+The first actual private scene candidate refused before publication because two
+aliases intentionally share identical identity, bytes and status. Registration
+now deduplicates that valid reuse; a native source alias is not a separate asset
+identity. Explicit annotations must agree, and conflicting bytes/status remain
+errors. The former duplicate-ID test now distinguishes identical alias reuse from
+conflicting data; wrong-scope refusal remains. The leaf's first binding-key hint
+does not claim exclusive ownership; parent references preserve all aliases.
+The earlier local test run predates this correction and is not final qualification.
+
+Final source qualification: all ten native registration cases pass (0.27 seconds),
+four package cases pass (0.67 seconds), four versioned cases pass (0.37 seconds),
+and all-feature/all-target warnings-denied Clippy passes (41.39 seconds). No
+production source changes follow that run. Actual private candidate preparation,
+upstream PR220 and hosted qualification remain separate gates.
