@@ -70,12 +70,23 @@ impl Preparation {
             return Ok(None);
         }
         let root = Self::cache(profile)?;
+        Self::open_on(&profile.cache, &profile.journal_root, root, 2).map(Some)
+    }
+    pub(super) fn open_on(
+        config: &Config,
+        namespace: &Path,
+        root: &Path,
+        passes: u64,
+    ) -> Result<Self> {
+        if !root.is_absolute() || !config.cache_roots.iter().any(|p| p == root) {
+            bail!("preparation cache must be an explicitly configured active root");
+        }
         let bytes = peak(
             admission::allocation_unit(root)
                 .map_err(|e| anyhow::anyhow!("preparation geometry unavailable: {e}"))?,
-            2,
+            passes,
         )?;
-        let reservation = admission::reserve_on(&profile.journal_root, &profile.cache, root, bytes)
+        let reservation = admission::reserve_on(namespace, config, root, bytes)
             .map_err(|e| anyhow::anyhow!("compiled preparation not admitted: {e}"))?;
         let prefix = format!("native-prepare-{}-", reservation.id);
         let directory = tempfile::Builder::new()
@@ -85,7 +96,7 @@ impl Preparation {
             directory: Some(directory),
             reservation: Some(reservation),
         };
-        Ok(Some(prepared))
+        Ok(prepared)
     }
     pub(super) fn path(&self) -> &Path {
         self.directory.as_ref().expect("live preparation").path()

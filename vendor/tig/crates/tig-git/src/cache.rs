@@ -164,7 +164,7 @@ pub struct CacheBackend {
 }
 enum AuthorityNodes {
     Files(ReadNodes),
-    Sqlite(tig_store::metadata::MetadataReader),
+    Sqlite(Box<tig_store::metadata::MetadataReader>),
 }
 impl NodeStore for AuthorityNodes {
     fn get(&self, o: &Object) -> TreeResult<Option<Vec<u8>>> {
@@ -182,6 +182,7 @@ impl CacheBackend {
         match &self.profile.authority_checkpoint {
             Some(minimum) => {
                 tig_store::metadata::MetadataReader::open(&self.profile.authority_nodes, minimum)
+                    .map(Box::new)
                     .map(AuthorityNodes::Sqlite)
                     .map_err(|_| AgentError::Authority)
             }

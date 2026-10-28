@@ -43,35 +43,34 @@ fn programs(real: bool) -> BoundPrograms {
 #[test]
 #[ignore = "requires Windows FFmpeg and tig-propose; compiled CLI workflow"]
 fn compiled_cli_plans_renders_and_hands_off_records_with_source_git_offline() {
-    use tig_store::metadata::{Limits, MetadataStore};
+    use tig_store::metadata::MetadataReader;
     let (mut f, request) = native_scene_fixture();
     f.profile["byte_source"]["required"] = json!("prevent-mutation");
     native_cli::seed(&mut f);
     let programs = programs(true);
-    let metadata = f.root().join("compiled-cli-metadata");
-    let mut nodes = MetadataStore::create(
-        &metadata,
-        Limits {
-            nodes: 32768,
-            bytes: 16 * 1024 * 1024,
-            database_bytes: 32 * 1024 * 1024,
-            min_free_bytes: 65536,
-        },
-    )
-    .unwrap();
-    let mut source = f.source();
-    let context = reel::tig_scene::freeze_render_context(
-        &mut source,
+    let capture = crate::capture::profile(&f, &request);
+    let result = crate::capture::run(&f, &capture, "compiled-cli-fragment.json");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let fragment: Value =
+        serde_json::from_slice(&fs::read(f.root().join("compiled-cli-fragment.json")).unwrap())
+            .unwrap();
+    let metadata = f.root().join("capture-metadata");
+    let witness = serde_json::from_value(fragment["metadata_minimum"].clone()).unwrap();
+    let mut nodes = MetadataReader::open(&metadata, &witness).unwrap();
+    let profile = fragment["source"].clone();
+    let (mut source, context) = reel::tig_scene::restore_render_context(
+        serde_json::from_value(profile.clone()).unwrap(),
         &request,
+        &serde_json::from_value(fragment["context"].clone()).unwrap(),
         &f.root().join("compiled-cli-context"),
         &mut nodes,
         TreeLimits::default(),
     )
     .unwrap();
-    let profile = json!({"schema":reel::tig_inputs::ARCHIVE_PROFILE_SCHEMA,
-        "archive":context.archive(),"checkpoint":source.checkpoint(),
-        "admitted":f.profile["admitted"],"byte_source":f.profile["byte_source"]});
-    let witness = nodes.finish().unwrap();
     drop(nodes);
     let reference = tig_scene_production::render_projected_with_programs(
         &mut source,

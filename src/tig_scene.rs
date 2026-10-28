@@ -60,7 +60,7 @@ pub struct Controls {
     pub template_receipt: Option<String>,
 }
 impl Request {
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         if self.schema != SCHEMA
             || self.primary_definitions.is_empty()
             || self.primary_definitions.len() > 256
