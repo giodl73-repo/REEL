@@ -6,14 +6,19 @@ use std::{path::PathBuf, process::ExitCode};
 )]
 struct Args {
     /// Register a family-neutral versioned package record into one new file.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "package_assets")]
     versioned: bool,
+    /// Register explicitly mapped package assets, including prior versions.
+    #[arg(long)]
+    package_assets: bool,
     profile: PathBuf,
     output: PathBuf,
 }
 fn main() -> ExitCode {
     let args = Args::parse();
-    let result = if args.versioned {
+    let result = if args.package_assets {
+        reel::tig_package_registration::run(&args.profile, &args.output)
+    } else if args.versioned {
         reel::tig_versioned_registration::run(&args.profile, &args.output)
     } else {
         reel::tig_native_registration::run(&args.profile, &args.output)

@@ -77,6 +77,8 @@ pub mod tig_job_runner;
 pub mod tig_native_job_cli;
 #[cfg(feature = "tig")]
 pub mod tig_native_registration;
+#[cfg(feature = "tig")]
+pub mod tig_package_registration;
 #[cfg(feature = "tig-publication")]
 pub mod tig_publication;
 #[cfg(feature = "tig")]

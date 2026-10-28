@@ -26,6 +26,15 @@ struct Profile {
 /// Pure projection; the caller supplies exact source and definition bytes.
 /// Packages stay opaque. This is not graph closure, availability or approval.
 pub fn prepare(source: &Object, bytes: &[u8], definition: &[u8], schema: &[u8]) -> Result<Vec<u8>> {
+    prepare_with_fields(source, bytes, definition, schema, &serde_json::Map::new())
+}
+pub(crate) fn prepare_with_fields(
+    source: &Object,
+    bytes: &[u8],
+    definition: &[u8],
+    schema: &[u8],
+    extra: &serde_json::Map<String, Value>,
+) -> Result<Vec<u8>> {
     if bytes.len() > LIMIT || Object::from_bytes(bytes) != *source {
         bail!("versioned source differs from its bounded admission");
     }
@@ -93,6 +102,15 @@ pub fn prepare(source: &Object, bytes: &[u8], definition: &[u8], schema: &[u8]) 
     let mut authored = json!({"artifact_id":id,"kind":kind,"current_version":current});
     if let Some(public) = public {
         authored["public_release"] = json!(public);
+    }
+    for (key, value) in extra {
+        if ["artifact_id", "kind", "current_version", "public_release"].contains(&key.as_str()) {
+            bail!("native fields cannot override original source fields");
+        }
+        authored
+            .as_object_mut()
+            .context("authored object missing")?
+            .insert(key.clone(), value.clone());
     }
     let output = serde_json::to_vec_pretty(&json!({
         "schema":"tig.instance.design-1","id":id,

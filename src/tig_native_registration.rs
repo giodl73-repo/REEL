@@ -74,22 +74,22 @@ where
     d.deserialize_map(Visitor(std::marker::PhantomData))
 }
 #[derive(Deserialize)]
-struct Package {
-    schema: String,
-    artifact_id: String,
-    version_id: String,
+pub(crate) struct Package {
+    pub(crate) schema: String,
+    pub(crate) artifact_id: String,
+    pub(crate) version_id: String,
     #[serde(deserialize_with = "unique_map")]
-    assets: BTreeMap<String, PackagePin>,
+    pub(crate) assets: BTreeMap<String, PackagePin>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PackagePin {
+pub(crate) struct PackagePin {
     sha256: Digest,
     bytes: u64,
     cache_uri: String,
 }
 impl PackagePin {
-    fn object(&self) -> Result<Object> {
+    pub(crate) fn object(&self) -> Result<Object> {
         if self.cache_uri != format!("cache://sha256/{}", self.sha256.as_str()) {
             bail!("package asset URI differs from identity");
         }
@@ -125,7 +125,7 @@ pub(crate) fn read_local(file: &FileRef) -> Result<Vec<u8>> {
     }
     Ok(bytes)
 }
-fn read_metadata(
+pub(crate) fn read_metadata(
     source: &mut impl ByteSource,
     pin: &Object,
     remaining: &mut u64,
@@ -144,7 +144,7 @@ fn read_metadata(
     }
     Ok(bytes)
 }
-fn filename(name: &str) -> Result<()> {
+pub(crate) fn filename(name: &str) -> Result<()> {
     let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
     let reserved = ["CON", "PRN", "AUX", "NUL"].contains(&stem.as_str())
         || (stem.len() == 4
@@ -164,8 +164,8 @@ fn filename(name: &str) -> Result<()> {
     Ok(())
 }
 pub struct Prepared {
-    records: BTreeMap<String, Vec<u8>>,
-    bytes: u64,
+    pub(crate) records: BTreeMap<String, Vec<u8>>,
+    pub(crate) bytes: u64,
 }
 impl Prepared {
     /// Candidate source files only; no overwrite, Git, cache publication or adoption.
