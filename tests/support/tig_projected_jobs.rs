@@ -41,6 +41,67 @@ fn programs(real: bool) -> BoundPrograms {
 }
 
 #[test]
+#[ignore = "requires Windows FFmpeg and tig-propose; compiled CLI workflow"]
+fn compiled_cli_plans_renders_and_hands_off_records_with_source_git_offline() {
+    use tig_store::metadata::{Limits, MetadataStore};
+    let (mut f, request) = native_scene_fixture();
+    f.profile["byte_source"]["required"] = json!("prevent-mutation");
+    native_cli::seed(&mut f);
+    let programs = programs(true);
+    let metadata = f.root().join("compiled-cli-metadata");
+    let mut nodes = MetadataStore::create(
+        &metadata,
+        Limits {
+            nodes: 32768,
+            bytes: 16 * 1024 * 1024,
+            database_bytes: 32 * 1024 * 1024,
+            min_free_bytes: 65536,
+        },
+    )
+    .unwrap();
+    let mut source = f.source();
+    let context = reel::tig_scene::freeze_render_context(
+        &mut source,
+        &request,
+        &f.root().join("compiled-cli-context"),
+        &mut nodes,
+        TreeLimits::default(),
+    )
+    .unwrap();
+    let profile = json!({"schema":reel::tig_inputs::ARCHIVE_PROFILE_SCHEMA,
+        "archive":context.archive(),"checkpoint":source.checkpoint(),
+        "admitted":f.profile["admitted"],"byte_source":f.profile["byte_source"]});
+    let witness = nodes.finish().unwrap();
+    drop(nodes);
+    let reference = tig_scene_production::render_projected_with_programs(
+        &mut source,
+        &request,
+        &context,
+        &programs,
+        &f.root().join("compiled-cli-reference-job"),
+        &f.root().join("compiled-cli-reference-output"),
+    )
+    .unwrap();
+    native_cli::exercise_compiled(
+        f.root(),
+        &request,
+        context.selection(),
+        (&metadata, &witness),
+        profile,
+        reference.receipt(),
+    );
+    // The helper renders/plans with Git hidden, then restores it for the
+    // explicit proposal/apply assertions at the end of the lifecycle.
+    assert!(f.root().join(".git").is_dir());
+    assert!(!f.root().join("cli-active").read_dir().unwrap().any(|e| {
+        e.unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("native-prepare-")
+    }));
+}
+
+#[test]
 fn projected_job_freeze_retains_controls_runtime_and_primary_inputs_without_execution() {
     let (f, request) = bilingual();
     // The test executable is a held runtime stand-in; it is never invoked as media software.
