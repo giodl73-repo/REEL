@@ -1,7 +1,8 @@
 //! Explicit native job ownership over existing metadata/journal/provider ports.
 //! Resource protection is scoped, not global availability, custody or deletion.
 use super::{
-    OutputBinding, Publication, PublishedCandidate, RecipeMode, RenderedCandidate, context_recipe,
+    DeliveryBudget, OutputBinding, Publication, PublishedCandidate, RecipeMode, RenderedCandidate,
+    context_recipe,
 };
 use crate::{media_runtime::BoundPrograms, tig_inputs::Source, tig_scene::Request};
 use anyhow::{Result, bail};
@@ -322,10 +323,19 @@ impl<'p, 'a> Readback<'p, 'a> {
     }
 }
 fn attachments(published: &ManagedPublication) -> Result<BTreeMap<LogicalPath, Object>> {
-    Ok(BTreeMap::from([(
+    let mut attachments = BTreeMap::from([(
         LogicalPath::parse("native-receipt")?,
         published.published.receipt_object().clone(),
-    )]))
+    )]);
+    if let Some(outputs) = published.published.delivery_outputs() {
+        for (name, object) in outputs {
+            attachments.insert(
+                LogicalPath::parse(&format!("native-outputs/{name}"))?,
+                object.clone(),
+            );
+        }
+    }
+    Ok(attachments)
 }
 impl ProtectedJob<'_, '_> {
     pub fn selection(&self) -> &Selection {
@@ -390,6 +400,31 @@ impl ProtectedJob<'_, '_> {
         let published = candidate
             .candidate
             .publish(bindings, publication, backend)?;
+        self.planned(journal)?;
+        Ok(ManagedPublication {
+            stamp: self.stamp.clone(),
+            published,
+        })
+    }
+    /// Publish the complete native delivery under this exact active job stamp.
+    /// Freeze/readback/adoption must retain its returned complete attachment set.
+    pub fn publish_delivery(
+        &mut self,
+        journal: &mut SourceJournal,
+        candidate: &ManagedCandidate,
+        bindings: &[OutputBinding<'_>],
+        publication: &Publication,
+        backend: &mut impl PublicationBackend,
+        budget: &DeliveryBudget,
+    ) -> Result<ManagedPublication> {
+        self.planned(journal)?;
+        if candidate.stamp != self.stamp {
+            bail!("native render belongs to another protected job");
+        }
+        let published =
+            candidate
+                .candidate
+                .publish_delivery(bindings, publication, backend, budget)?;
         self.planned(journal)?;
         Ok(ManagedPublication {
             stamp: self.stamp.clone(),

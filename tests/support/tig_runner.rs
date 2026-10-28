@@ -179,7 +179,8 @@ pub fn exercise(
             );
             assert!(result["retirement_evidence"]["sha256"].as_str().is_some());
         } else {
-            assert!(result.unwrap_err().to_string().contains("workspace budget"));
+            let error = result.unwrap_err().to_string();
+            assert!(error.contains("workspace budget"), "{mode}: {error}");
         }
         let state = journal.source(&identity.source).unwrap().unwrap();
         assert_eq!(state.revision, 4);

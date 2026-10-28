@@ -21,7 +21,7 @@ use tig_git::source::native::context::ProductionContext;
 #[cfg(feature = "tig-publication")]
 mod publication;
 #[cfg(feature = "tig-publication")]
-pub use publication::{Publication, PublishedCandidate};
+pub use publication::{DeliveryBudget, Publication, PublishedCandidate};
 #[cfg(feature = "tig-publication")]
 pub mod jobs;
 

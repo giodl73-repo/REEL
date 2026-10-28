@@ -1,9 +1,13 @@
 //! Ordered byte acknowledgements, not atomic batch custody or output selection.
 use super::{OutputBinding, RenderedCandidate, receipt_bytes};
 use anyhow::{Result, bail};
-use std::{collections::BTreeSet, fs::File, io::Cursor};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs::File,
+    io::Cursor,
+};
 use tig_assets::graph::recipe::produced::Claim;
-use tig_core::{Digest, Object, identity};
+use tig_core::{Digest, LogicalPath, Object, identity};
 use tig_store::{AckLevel, Key, PublicationBackend, Receipt, Request};
 
 /// Caller-owned operation identity. Use the same identity for exact retries;
@@ -14,12 +18,20 @@ pub struct Publication {
     pub required: AckLevel,
 }
 
+/// Explicit complete-delivery budget, including the receipt and claim. Object
+/// count and bytes are deduplicated by hash, not allocated-disk measurements.
+pub struct DeliveryBudget {
+    pub max_objects: usize,
+    pub max_bytes: u64,
+}
+
 /// Issued after all selected payloads, native receipt and claim are acknowledged.
 /// No Deserialize/constructor, selection, retained custody or removal authority.
 pub struct PublishedCandidate {
     claim: Claim,
     native_receipt: Object,
     acknowledgements: Vec<Receipt>,
+    delivery_outputs: Option<BTreeMap<String, Object>>,
 }
 impl PublishedCandidate {
     pub fn claim(&self) -> &Claim {
@@ -30,6 +42,11 @@ impl PublishedCandidate {
     }
     pub fn acknowledgements(&self) -> &[Receipt] {
         &self.acknowledgements
+    }
+    /// Present only after explicit complete-delivery publication. Acknowledged
+    /// objects still need owner adoption/retention; this is not permanent custody.
+    pub fn delivery_outputs(&self) -> Option<&BTreeMap<String, Object>> {
+        self.delivery_outputs.as_ref()
     }
 }
 
@@ -58,36 +75,98 @@ impl RenderedCandidate {
         publication: &Publication,
         backend: &mut impl PublicationBackend,
     ) -> Result<PublishedCandidate> {
+        self.publish_impl(bindings, publication, backend, None)
+    }
+
+    /// Explicitly publish every independently checked native output, then receipt
+    /// and claim. Preflight all local pins/capabilities/budgets before any write.
+    /// Errors may leave acknowledged prefixes; exact retries use the same keys.
+    /// No source removal, atomic-batch custody or new creative selection occurs.
+    pub fn publish_delivery(
+        &self,
+        bindings: &[OutputBinding<'_>],
+        publication: &Publication,
+        backend: &mut impl PublicationBackend,
+        budget: &DeliveryBudget,
+    ) -> Result<PublishedCandidate> {
+        self.publish_impl(bindings, publication, backend, Some(budget))
+    }
+
+    fn publish_impl(
+        &self,
+        bindings: &[OutputBinding<'_>],
+        publication: &Publication,
+        backend: &mut impl PublicationBackend,
+        budget: Option<&DeliveryBudget>,
+    ) -> Result<PublishedCandidate> {
+        if budget.is_some_and(|b| b.max_objects == 0 || b.max_bytes == 0)
+            || (budget.is_some() && self.receipt.outputs.len() > 4096)
+        {
+            bail!("complete delivery publication exceeds budget");
+        }
         // claim validates all mappings and source pins before any provider write.
         let claim = self.claim(bindings)?;
         let native_receipt = receipt_bytes(&self.output)?;
         if Object::from_bytes(&native_receipt) != self.receipt_object {
             bail!("rendered candidate receipt changed before publication");
         }
-        let mut seen = BTreeSet::new();
+        let names = if budget.is_some() {
+            self.receipt
+                .outputs
+                .keys()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>()
+        } else {
+            bindings.iter().map(|binding| binding.output_name).collect()
+        };
         let mut outputs = Vec::new();
-        for binding in bindings {
-            if seen.insert(binding.output_name) {
-                let item = &self.receipt.outputs[binding.output_name];
-                let request = publication.request(
-                    "output",
-                    binding.output_name,
-                    binding.subject.subject().object().clone(),
-                )?;
-                outputs.push((request, self.output.join(&item.path)));
-            }
+        let mut delivery_outputs = BTreeMap::new();
+        for name in names {
+            let item = &self.receipt.outputs[name];
+            let object = Object {
+                sha256: Digest::parse(&item.sha256)?,
+                bytes: item.bytes,
+            };
+            let path = if budget.is_some() {
+                LogicalPath::parse(&format!("native-outputs/{name}"))?;
+                if item.path.to_str() != Some(name) {
+                    bail!("native delivery output name mismatch");
+                }
+                crate::scene_delivery::checked_file(&self.output, item)?
+            } else {
+                self.output.join(&item.path)
+            };
+            let request = publication.request("output", name, object.clone())?;
+            delivery_outputs.insert(name.to_owned(), object);
+            outputs.push((request, path));
         }
         // Stable ordering also makes partial retry independent of mapping order.
         outputs.sort_by(|a, b| a.0.operation.as_str().cmp(b.0.operation.as_str()));
         let receipt_request = publication.request("receipt", "", self.receipt_object.clone())?;
         let claim_request = publication.request("claim", "", claim.object().clone())?;
         let capabilities = backend.capabilities();
+        let mut sizes = BTreeMap::new();
         for request in outputs
             .iter()
             .map(|(request, _)| request)
             .chain([&receipt_request, &claim_request])
         {
             capabilities.check(request)?;
+            if sizes
+                .insert(request.object.sha256.clone(), request.object.bytes)
+                .is_some_and(|previous| previous != request.object.bytes)
+            {
+                bail!("conflicting delivery object sizes");
+            }
+        }
+        if let Some(budget) = budget {
+            let bytes = sizes
+                .values()
+                .try_fold(0_u64, |sum, bytes| sum.checked_add(*bytes))
+                .ok_or_else(|| anyhow::anyhow!("delivery publication byte budget overflow"))?;
+            if sizes.len() > budget.max_objects || bytes > budget.max_bytes {
+                bail!("complete delivery publication exceeds budget");
+            }
         }
         let mut acknowledgements = Vec::with_capacity(outputs.len() + 2);
         for (request, path) in outputs {
@@ -108,6 +187,7 @@ impl RenderedCandidate {
             claim,
             native_receipt: self.receipt_object.clone(),
             acknowledgements,
+            delivery_outputs: budget.map(|_| delivery_outputs),
         })
     }
 }

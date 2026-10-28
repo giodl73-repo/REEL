@@ -88,6 +88,8 @@ pub mod tig_publication;
 #[cfg(feature = "tig")]
 pub mod tig_scene;
 #[cfg(feature = "tig")]
+pub mod tig_scene_outputs;
+#[cfg(feature = "tig")]
 pub mod tig_scene_production;
 #[cfg(feature = "tig")]
 pub mod tig_versioned_registration;

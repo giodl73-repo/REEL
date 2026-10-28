@@ -59,6 +59,36 @@ reopen/retry, short/long/failing sources, corruption and missing acknowledgement
 capacity denial, same-object exclusion and independent overlapping writers.
 These fixtures do not activate a live cache or switch a native render workflow.
 
+## Publish a complete checked scene delivery from Rust
+
+`RenderedCandidate::publish_delivery` and the protected job's corresponding
+method opt into all native delivery outputs. Supply the existing asset subject
+bindings and operation/owner, publisher and an explicit `DeliveryBudget`.
+The default `publish` continues publishing only the mapped asset payloads.
+
+Complete delivery publication checks every local output pin and every provider
+capability before the first write. The budget counts distinct hashes and bytes,
+including the native receipt and claim; it is not disk allocation or a capacity
+reservation. The existing publisher still admits each write against storage
+headroom. Payload acknowledgements precede the native receipt and claim. A
+failure can leave a verified prefix; retry the same operation with the original
+candidate retained. No automatic cleanup or source retirement is performed.
+
+Successful complete publication exposes `delivery_outputs()`. Managed job
+freeze/readback includes every output under `native-outputs/` evidence references,
+so adoption retains the complete declared resource set. These references are
+Evidence, not canonical primary dependencies. The caller must finish/read back
+metadata, adopt the new job resources and establish its required retained custody.
+Acknowledgements alone do not protect bytes indefinitely or authorize eviction.
+
+The isolated cached-episode fixture uses this path for every scene, then removes
+the render directories from lookup and performs full cache-backed scene/episode
+checks. It also exercises pre-write budget/capability and changed-unmapped-output
+refusal, a failure before receipt publication, exact retry and output-resource
+membership after job readback. The Tig job evidence budget extension must be
+qualified and vendored before larger-than-64 output evidence can complete handoff;
+an explicit complete-publication CLI profile remains a separate integration step.
+
 ## Publish an exact caller-owned file
 
 With `tig-publication`, use the existing CLI:
