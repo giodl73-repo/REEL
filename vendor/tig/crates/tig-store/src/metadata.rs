@@ -221,6 +221,10 @@ impl MetadataStore {
     pub fn checkpoint(&self) -> Checkpoint {
         self.checkpoint.clone()
     }
+    /// Validated configured bounds at open. Not observed space or a reservation.
+    pub fn limits(&self) -> Limits {
+        self.config.limits
+    }
     pub fn metrics(&self) -> Metrics {
         self.metrics.get()
     }
@@ -406,6 +410,7 @@ fn tree_error(error: Error) -> TreeError {
 pub struct MetadataReader {
     conn: Connection,
     checkpoint: Checkpoint,
+    limits: Limits,
     metrics: Cell<Metrics>,
 }
 impl MetadataReader {
@@ -442,11 +447,16 @@ impl MetadataReader {
         Ok(Self {
             conn,
             checkpoint,
+            limits: config.limits,
             metrics: Cell::new(Metrics::default()),
         })
     }
     pub fn checkpoint(&self) -> &Checkpoint {
         &self.checkpoint
+    }
+    /// Validated opening bounds, returned by value. No capacity is reserved.
+    pub fn limits(&self) -> Limits {
+        self.limits
     }
     pub fn metrics(&self) -> Metrics {
         self.metrics.get()

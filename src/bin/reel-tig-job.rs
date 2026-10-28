@@ -8,6 +8,8 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Operation {
+    /// Freeze and read back a committed source; write a private worker fragment.
+    CaptureContext { profile: PathBuf, output: PathBuf },
     /// Adopt planned resources, render in bounded scratch and retain exact results.
     Run { profile: PathBuf },
     /// Run a bounded planning job and retain its output contract; no media render.
@@ -26,6 +28,9 @@ enum Operation {
 }
 fn main() -> ExitCode {
     let result = match Args::parse().operation {
+        Operation::CaptureContext { profile, output } => {
+            reel::tig_native_job_cli::capture_context(&profile, &output)
+        }
         Operation::Run { profile } => reel::tig_native_job_cli::run(&profile),
         Operation::PlanOutputs { profile } => reel::tig_native_job_cli::plan_outputs(&profile),
         Operation::PreparationBudget { profile } => {

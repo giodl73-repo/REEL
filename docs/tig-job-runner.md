@@ -1,5 +1,52 @@
 # Tig-backed bounded jobs
 
+## Capture a committed scene for the managed CLI
+
+With `tig-publication`, the explicit command below freezes a committed native
+source and independently recompiles its frozen context before publishing a small
+private worker-context fragment. It does not render or adopt a job.
+
+```text
+reel-tig-job capture-context <private-capture-profile.json> <new-private-fragment.json>
+```
+
+The capture profile has these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `schema` | `reel.tig-native-capture-profile.experimental-1` |
+| `source` | Existing committed `reel.tig-input-profile.experimental-1` object |
+| `request` | Native scene request, including exact language/control slot policy |
+| `metadata_root`, `metadata_minimum` | Existing metadata provider and trusted checkpoint |
+| `metadata_cache` | Configured active capacity root on the metadata/output volume |
+| `preparation_cache` | Configured active root for owned compiler scratch |
+| `cache` | Shared capacity configuration with an existing absolute coordination root |
+
+The output path must be new, absolute, and have an existing parent on the metadata
+volume. The command never replaces an existing file. It reserves conservative
+database/rollback and two-pass compiler capacity before opening a metadata writer.
+It checks writer bounds again, freezes the source, finishes and reopens the store,
+then replays into separate owned scratch. Context selection, descriptor, archive,
+requirements and all three compiled delivery controls must agree. Scratch cleanup
+must succeed before the output fragment is published. A failed capture can leave
+unselected immutable metadata in the existing provider; it grants no retention,
+source selection or eviction authority. This is cooperative admission, not a
+filesystem quota or protection against unrelated external disk writers.
+
+The fragment contains `context_mode`, `metadata_root`, `metadata_minimum`,
+`source` (the archived source), `context`, and `request`. Copy these fields into the
+managed profile's `worker` object and supply the independently pinned runtime and
+output policy described below. Keep the fragment/profile outside Git: they include
+private source identifiers, paths and admission settings. Stdout is count-only;
+refusal diagnostics omit private provider/compiler error chains. Capture uses
+named controls/alignment metadata and never decodes primary pictures or audio.
+
+An operator must still explicitly provision the metadata provider and authoritative
+job journal, configure existing caches, and bind the runtime. This command removes
+the custom Rust step for source freezing; it is not automatic runtime installation
+or full project adoption. Existing contexts retain their original adapter/runtime
+obligations when tools change.
+
 The optional `tig-publication` feature exposes `reel::tig_job_runner::run`.
 It connects an already adopted planned Tig job context to the existing
 `reel-assets` runner. It does not create another runner, cache or inventory.
