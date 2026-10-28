@@ -8,6 +8,8 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Operation {
+    /// Publish one exact caller-owned file through an explicitly enrolled cache.
+    PublishFile { profile: PathBuf, output: PathBuf },
     /// Recheck retained native outputs and compare their master with a baseline.
     CompareRetained { profile: PathBuf, output: PathBuf },
     /// Explicit one-time shared metadata/journal setup; never invoked by Run.
@@ -36,6 +38,9 @@ fn main() -> ExitCode {
     let operation = Args::parse().operation;
     let comparison = matches!(&operation, Operation::CompareRetained { .. });
     let result = match operation {
+        Operation::PublishFile { profile, output } => {
+            reel::tig_native_job_cli::publish_file(&profile, &output)
+        }
         Operation::CompareRetained { profile, output } => {
             reel::tig_native_job_cli::compare_retained(&profile, &output)
         }
