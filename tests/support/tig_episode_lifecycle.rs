@@ -514,7 +514,7 @@ fn storage_transition(
     manifests: [&Object; 2],
 ) {
     use reel_assets::{accounting, demotion, tiering, version_diff, versions};
-    let root = p.state();
+    let root = p.state().canonicalize().unwrap();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
