@@ -420,7 +420,20 @@ pub(crate) fn verify_timestamps(
     numerator: u64,
     denominator: u64,
 ) -> Result<()> {
-    let mut command = crate::episode_conform::command("ffprobe");
+    verify_timestamps_with_inputs(path, sr, numerator, denominator, Path::new("."))
+}
+
+pub(crate) fn verify_timestamps_with_inputs(
+    path: &Path,
+    sr: u32,
+    numerator: u64,
+    denominator: u64,
+    inputs: &(impl crate::scene_delivery::InputFiles + ?Sized),
+) -> Result<()> {
+    let mut command = crate::episode_conform::command_with_inputs(
+        inputs,
+        crate::scene_delivery::MediaProgram::Ffprobe,
+    )?;
     let o = command
         .args([
             "-v",

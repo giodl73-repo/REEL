@@ -555,13 +555,14 @@ impl Project {
                 .is_err()
             );
             assert!(!output.exists());
-            episode_conform::build_with_scene_files(
+            episode_conform::build_with_segment_files(
                 &root.join(name),
                 root,
                 root,
                 &output,
                 &provided,
                 outputs,
+                &BTreeMap::new(),
             )
             .unwrap()
         } else {

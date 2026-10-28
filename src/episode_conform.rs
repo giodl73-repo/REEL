@@ -423,13 +423,6 @@ fn media_tool_in_path(name: &str, search: &std::ffi::OsStr) -> Result<PathBuf> {
     bail!("cannot identify {name} executable for verification reuse")
 }
 
-pub(crate) fn media_tool_path(name: &str) -> Result<PathBuf> {
-    media_tool_in_path(
-        name,
-        &std::env::var_os("PATH").context("tool PATH is missing")?,
-    )
-}
-
 fn command_with_search(name: &str, search: Option<&std::ffi::OsStr>) -> Command {
     // Resolve to the same absolute PATH binary used by verification keys.
     // Windows' implicit executable-directory search can otherwise run a
@@ -449,6 +442,31 @@ fn command_with_search(name: &str, search: Option<&std::ffi::OsStr>) -> Command 
 
 pub(crate) fn command(name: &str) -> Command {
     command_with_search(name, std::env::var_os("PATH").as_deref())
+}
+
+/// Honor explicit provider selection/errors; only the legacy ambient name uses
+/// an exact PATH resolver. No ambient retry after an admitted-tool failure.
+pub(crate) fn command_with_inputs(
+    inputs: &(impl scene_delivery::InputFiles + ?Sized),
+    program: scene_delivery::MediaProgram,
+) -> Result<Command> {
+    let selected = inputs.media_program(program)?;
+    let path = if selected == Path::new(program.ambient_name()) {
+        media_tool_in_path(
+            program.ambient_name(),
+            &std::env::var_os("PATH").context("tool PATH is missing")?,
+        )?
+    } else {
+        selected
+    };
+    #[allow(unused_mut)]
+    let mut command = Command::new(path);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    Ok(command)
 }
 
 #[cfg(test)]
@@ -477,10 +495,42 @@ mod media_tool_resolution_tests {
             selected.as_os_str()
         );
     }
+
+    #[test]
+    fn explicit_tool_selection_and_refusal_never_fall_back_to_path() {
+        struct Provider(Option<PathBuf>);
+        impl scene_delivery::InputFiles for Provider {
+            fn verified_path(&self, _: &scene_delivery::FileRef) -> Result<PathBuf> {
+                bail!("no files admitted")
+            }
+            fn media_program(&self, _: scene_delivery::MediaProgram) -> Result<PathBuf> {
+                self.0.clone().context("tool not admitted")
+            }
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let selected = temp.path().join("explicit-nonexistent-tool");
+        let mut command = command_with_inputs(
+            &Provider(Some(selected.clone())),
+            scene_delivery::MediaProgram::Ffmpeg,
+        )
+        .unwrap();
+        assert_eq!(command.get_program(), selected.as_os_str());
+        assert!(command.output().is_err());
+        assert!(
+            command_with_inputs(&Provider(None), scene_delivery::MediaProgram::Ffprobe).is_err()
+        );
+    }
 }
 
 pub(crate) fn probe(path: &Path) -> Result<MediaFacts> {
-    let output = command("ffprobe")
+    probe_with_inputs(path, Path::new("."))
+}
+
+pub(crate) fn probe_with_inputs(
+    path: &Path,
+    inputs: &(impl scene_delivery::InputFiles + ?Sized),
+) -> Result<MediaFacts> {
+    let output = command_with_inputs(inputs, scene_delivery::MediaProgram::Ffprobe)?
         .args(["-v", "error", "-show_streams", "-of", "json"])
         .arg(path)
         .output()?;
@@ -556,6 +606,21 @@ pub(crate) fn probe(path: &Path) -> Result<MediaFacts> {
 
 pub(crate) fn decoded_digest(path: &Path, video: bool) -> Result<(String, u64)> {
     decoded_digest_with_padding(path, video, 0)
+}
+
+pub(crate) fn decoded_digest_with_inputs(
+    path: &Path,
+    video: bool,
+    inputs: &(impl scene_delivery::InputFiles + ?Sized),
+) -> Result<(String, u64)> {
+    decoded_digest_command(
+        command_with_inputs(inputs, scene_delivery::MediaProgram::Ffmpeg)?,
+        path,
+        video,
+        0,
+        None,
+        "yuv444p",
+    )
 }
 
 fn decoded_digest_with_padding(
@@ -637,7 +702,24 @@ fn decoded_digest_with_pixel_format(
     video_filter: Option<&str>,
     pixel_format: &str,
 ) -> Result<(String, u64)> {
-    let mut cmd = command("ffmpeg");
+    decoded_digest_command(
+        command("ffmpeg"),
+        path,
+        video,
+        padding_samples,
+        video_filter,
+        pixel_format,
+    )
+}
+
+fn decoded_digest_command(
+    mut cmd: Command,
+    path: &Path,
+    video: bool,
+    padding_samples: u64,
+    video_filter: Option<&str>,
+    pixel_format: &str,
+) -> Result<(String, u64)> {
     cmd.args(["-v", "error", "-nostdin", "-i"]).arg(path);
     if video {
         if let Some(filter) = video_filter {
@@ -1167,7 +1249,15 @@ pub fn build(
     asset_root: &Path,
     output: &Path,
 ) -> Result<Receipt> {
-    build_impl(manifest_path, input_root, asset_root, output, None, None)
+    build_impl(
+        manifest_path,
+        input_root,
+        asset_root,
+        output,
+        None,
+        None,
+        None,
+    )
 }
 
 /// Recheck every native scene with its borrowed, protected primary inputs.
@@ -1188,6 +1278,7 @@ pub fn build_with_scene_inputs(
         asset_root,
         output,
         Some(scene_inputs),
+        None,
         None,
     )
 }
@@ -1211,6 +1302,58 @@ pub fn build_with_scene_files(
         output,
         Some(scene_inputs),
         Some(scene_outputs),
+        None,
+    )
+}
+
+/// Borrow the exact controls/source and selected output providers for one
+/// adopted presentation. Keep both owners alive through the complete conform.
+pub struct PresentationFiles<'a> {
+    pub inputs: &'a dyn scene_delivery::InputFiles,
+    pub outputs: &'a dyn scene_delivery::InputFiles,
+}
+
+/// Recheck adopted presentations directly against cache-backed source and output
+/// files. Other segments retain their existing local contract. Coverage is exact
+/// and a provider refusal never falls back to local files. This path deliberately
+/// performs full independent presentation checks, without implicit cache writes.
+pub fn build_with_presentation_files(
+    manifest_path: &Path,
+    input_root: &Path,
+    asset_root: &Path,
+    output: &Path,
+    presentations: &BTreeMap<String, PresentationFiles<'_>>,
+) -> Result<Receipt> {
+    build_impl(
+        manifest_path,
+        input_root,
+        asset_root,
+        output,
+        None,
+        None,
+        Some(presentations),
+    )
+}
+
+/// Combine exact native-scene and adopted-presentation provider coverage. The
+/// episode's bounded source/control JSON keeps its explicit local-root contract.
+pub fn build_with_segment_files(
+    manifest_path: &Path,
+    input_root: &Path,
+    asset_root: &Path,
+    output: &Path,
+    scene_inputs: &BTreeMap<String, &dyn scene_delivery::InputFiles>,
+    scene_outputs: &BTreeMap<String, &dyn scene_delivery::InputFiles>,
+    presentations: &BTreeMap<String, PresentationFiles<'_>>,
+) -> Result<Receipt> {
+    build_impl(
+        manifest_path,
+        input_root,
+        asset_root,
+        output,
+        Some(scene_inputs),
+        Some(scene_outputs),
+        Some(presentations),
     )
 }
 
@@ -1221,12 +1364,31 @@ fn build_impl(
     output: &Path,
     scene_inputs: Option<&BTreeMap<String, &dyn scene_delivery::InputFiles>>,
     scene_outputs: Option<&BTreeMap<String, &dyn scene_delivery::InputFiles>>,
+    presentations: Option<&BTreeMap<String, PresentationFiles<'_>>>,
 ) -> Result<Receipt> {
     if output.exists() {
         bail!("episode output must be a new directory");
     }
     let manifest_bytes = fs::read(manifest_path)?;
     let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
+    if let Some(files) = presentations {
+        let selected = manifest
+            .segments
+            .iter()
+            .filter(|s| s.kind == SegmentKind::EpisodePresentation)
+            .collect::<Vec<_>>();
+        let ids = selected
+            .iter()
+            .map(|s| s.id.as_str())
+            .collect::<BTreeSet<_>>();
+        if ids.len() != selected.len()
+            || ids.len() != files.len()
+            || files.keys().any(|id| !ids.contains(id.as_str()))
+            || selected.iter().any(|s| s.adoption_manifest.is_none())
+        {
+            bail!("provided presentation files require exact adopted recheck coverage");
+        }
+    }
     if let Some(inputs) = scene_inputs {
         let scenes = manifest
             .segments
@@ -1381,10 +1543,14 @@ fn build_impl(
         if !ordered_units_v2 && segment.source_text_evidence.is_some() {
             bail!("v1 episode segment cannot carry v2 source-text evidence");
         }
+        let provided_presentation = presentations
+            .filter(|_| segment.kind == SegmentKind::EpisodePresentation)
+            .and_then(|files| files.get(&segment.id));
         let provided_outputs = scene_outputs
             .filter(|_| segment.kind == SegmentKind::Scene)
             .and_then(|outputs| outputs.get(&segment.id))
-            .copied();
+            .copied()
+            .or_else(|| provided_presentation.map(|p| p.outputs));
         let (master, receipt_path) = if let Some(files) = provided_outputs {
             let mut master = segment.master.clone();
             master.path = "master.mkv".into();
@@ -1421,7 +1587,17 @@ fn build_impl(
                     .parent()
                     .filter(|path| !path.as_os_str().is_empty())
                     .unwrap_or(Path::new("."));
-                if manifest.reuse_verified_presentations {
+                if let Some(files) = provided_presentation {
+                    presentation_adopt::check(
+                        &adoption_path,
+                        files.inputs,
+                        files.inputs,
+                        &master,
+                        &receipt_path,
+                        stage_parent,
+                    )?;
+                    presentation_cache_misses += 1;
+                } else if manifest.reuse_verified_presentations {
                     let hit = presentation_adopt::check_cached(
                         &adoption_path,
                         input_root,

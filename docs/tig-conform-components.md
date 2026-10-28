@@ -49,3 +49,29 @@ Status remains `registered-native-component`, with `production_state: unclassifi
 and `new_approval: false`. A desired scene link is not a captured producer assertion.
 No current production stamp, decoded parity, creative approval, independent custody,
 eviction authority, rendering or media transfer follows from this operation.
+
+## Consuming retained presentation outputs
+
+The native Rust consumer can use `episode_conform::PresentationFiles` to borrow
+two existing `scene_delivery::InputFiles` providers per presentation: one for its
+exact controls/source, one for its selected outputs. Output aliases are
+`master.mkv` and `receipt.json`; hashes and lengths must match the conform pins.
+`build_with_presentation_files` covers adopted presentations alongside existing
+local scene consumption. `build_with_segment_files` also requires the exact
+native scene input/output maps, providing the combined path for an admitted job.
+Provider maps must cover their respective segment kinds exactly.
+
+Tig callers can prepare explicitly bound files through `Source::prepare_files`
+and retain the resulting `Inputs` owners; native scene jobs still require the
+complete `prepare(job)` admission. A source `Inputs` can be wrapped with the
+already admitted `BoundPrograms::with_inputs` for absolute media tools. Neither
+reading outputs nor adopting a presentation establishes producer currency for
+the whole episode, selection, custody or retirement permission.
+
+The episode control JSON and adoption manifest remain bounded local compiler
+products. The original presentation media and outputs may be absent from that
+tree. Direct borrowed presentations receive the same full decoded-source and
+clock recheck, even when local verification reuse was requested; no implicit
+verification cache is written in the asset root. Episode-level tool injection
+and the end-to-end managed episode executor remain separate required work.
+See [the fixture and review](reviews/2026-10-28-cache-presentation-adoption.md).
