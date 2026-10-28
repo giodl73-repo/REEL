@@ -9,6 +9,18 @@ definition from permitted primary definitions; scene/control/delivery definition
 must not be admitted as primary types. Definition admission is trusted project
 policy, not execution of every JSON Schema or Tig semantic rule.
 
+The binding map is an authoring catalog, not a second approval list. Unused
+candidate/held entries may remain in it without making their payloads available.
+Every reference must still resolve to an admitted primary definition and exact
+identity; missing records and output definitions are not silently ignored.
+Native consumption enforces selection for used cues, pictures, segments,
+alignments, presentation/score inputs and compiler-specific sonic evidence.
+Identifying consumption reads the bounded scene and named controls first;
+unapproved used inputs refuse before alignment/media reads or output creation.
+The conservative declared graph still includes the full map, while the derived
+language graph includes only that language's actual inputs. Neither graph alone
+proves complete global demand or authorizes eviction.
+
 ```text
 captured Git commit
   scene.tig --binding_ids--> cel.tig / cue.tig / alignment.tig
@@ -66,8 +78,10 @@ this derived assembly is a current snapshot, not an append-only history import.
 
 Native scene validation still resolves the entire declared language matrix;
 this version does not infer partially completed variants. Each declared leaf must
-have an admitted selected/named payload and one of native REEL's eligible
-selection states. A draft leaf refuses before reading cached bytes. Replacing a
+have an admitted exact selected/named payload identity. Used leaves must have
+one of native REEL's eligible selection states; unused authoring alternatives
+remain distinct. A used draft refuses after bounded scene/control reads, before
+alignment/media reads and output creation. Replacing a
 take without its matching alignment refuses; historical captured views retain
 their own payloads and status. `Source::resolve_asset(id)` is the metadata-only
 library operation for deriving an exact `AssetRef`; it does not read media or
@@ -110,7 +124,8 @@ instance/definition/schema objects. It covers the entire declared scene, includi
 all declared languages; it does not infer minimal per-language consumption.
 Missing required controls, malformed references and duplicate primary definitions
 refuse. Limits are 4,097 nodes, 4,096 edges, depth two and 16 MiB returned metadata.
-The native compiler still checks leaf eligibility before byte IO and validates
+The native compiler checks used-leaf eligibility after named controls and before
+alignment/media reads, and validates
 opaque scene/alignment/control meaning through the ordinary REEL compiler.
 
 Compilation adds `declared_inputs` to the existing private `native-source.json`,

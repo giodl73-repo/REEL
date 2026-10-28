@@ -1724,7 +1724,7 @@ fn valid_generic_context_with_changed_adapter_descriptor_is_not_a_reel_job_conte
 }
 
 #[test]
-fn native_scene_rejects_draft_leaf_and_wrong_primary_type_before_byte_io() {
+fn native_scene_rejects_wrong_type_before_bytes_and_used_draft_after_controls_only() {
     let (mut f, mut request) = native_scene_fixture();
     request.primary_definitions = vec!["types/alignment".into()];
     let mut source = f.source();
@@ -1745,7 +1745,9 @@ fn native_scene_rejects_draft_leaf_and_wrong_primary_type_before_byte_io() {
     f.profile["commit"] = json!(git(f.root(), &["rev-parse", "HEAD"]));
     let mut source = f.source();
     assert!(reel::tig_scene::compile(&mut source, &request, &output).is_err());
-    assert_eq!(source.byte_requests(), 0);
+    // Consumption is derived from the selected scene and four named controls.
+    // The selected draft fails before any alignment/media reads or output writes.
+    assert_eq!(source.byte_requests(), 5);
     assert!(!output.exists());
 }
 

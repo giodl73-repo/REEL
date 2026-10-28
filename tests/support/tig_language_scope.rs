@@ -185,6 +185,68 @@ fn primary(report: &Value, scope: &str) -> BTreeSet<Object> {
 }
 
 #[test]
+fn unused_drafts_need_no_payload_reads_and_leave_actual_language_contracts_unchanged() {
+    let (mut f, request) = bilingual();
+    let before = compile(&f, &request, "before-unused-drafts");
+    let mut parent = load(&f, "records/scene.tig");
+    let mut unused = BTreeSet::new();
+    for (name, status) in [
+        ("candidate", "candidate-unselected"),
+        ("held", "held-for-listening"),
+    ] {
+        let mut record = load(&f, "records/cue-main.tig");
+        let object = Object::from_bytes(format!("never materialized {name}").as_bytes());
+        record["id"] = json!(format!("cue/unused-{name}"));
+        record["selected"] = json!(object);
+        record["status"]["selection_state"] = json!(status);
+        write(f.root(), &format!("records/unused-{name}.tig"), &record);
+        parent["authored"]["binding_ids"][format!("unused-{name}")] =
+            json!({"id":format!("cue/unused-{name}")});
+        assert!(
+            !f.root()
+                .join("cache/objects")
+                .join(object.sha256.as_str())
+                .exists()
+        );
+        unused.insert(object);
+    }
+    write(f.root(), "records/scene.tig", &parent);
+    save_commit(&mut f);
+    let after = compile(&f, &request, "with-unused-drafts");
+    assert_eq!(
+        primary(&before, "language_inputs"),
+        primary(&after, "language_inputs")
+    );
+    assert_eq!(
+        before["language_inputs"]["native_semantic_sha256"],
+        after["language_inputs"]["native_semantic_sha256"]
+    );
+    let declared = primary(&after, "declared_inputs");
+    assert!(unused.iter().all(|object| declared.contains(object)));
+    assert!(unused.is_disjoint(&primary(&after, "language_inputs")));
+    for name in ["production.json", "contract.json", "job.json"] {
+        assert_eq!(
+            fs::read(f.root().join("before-unused-drafts/delivery").join(name)).unwrap(),
+            fs::read(f.root().join("with-unused-drafts/delivery").join(name)).unwrap()
+        );
+    }
+    // The exact old snapshot continues to resolve after the authoring catalog edit.
+    let mut old = f.profile.clone();
+    old["commit"] = json!(git(f.root(), &["rev-parse", "HEAD^"]));
+    let mut old_source = Source::open(serde_json::from_value(old).unwrap()).unwrap();
+    reel::tig_scene::compile(&mut old_source, &request, &f.root().join("old-drafts-view")).unwrap();
+    // Unused does not bypass type admission: a scene/output is never a primary.
+    parent["authored"]["binding_ids"]["unused-wrong-definition"] = json!({"id":request.scene_id});
+    write(f.root(), "records/scene.tig", &parent);
+    save_commit(&mut f);
+    let mut source = f.source();
+    let refused = f.root().join("unused-wrong-definition");
+    assert!(reel::tig_scene::compile(&mut source, &request, &refused).is_err());
+    assert_eq!(source.byte_requests(), 0);
+    assert!(!refused.exists());
+}
+
+#[test]
 fn native_language_scope_retains_alignments_and_controls_without_other_language_bytes() {
     let (f, request) = bilingual();
     let report = compile(&f, &request, "english-scope");
@@ -336,6 +398,17 @@ fn native_scope_rejects_missing_sonic_offset_evidence_before_creating_output() {
         write(f.root(), "records/placement-evidence.tig", &record);
         parent["authored"]["binding_ids"]["missing-evidence"] = json!({"id":"evidence/placement"});
         write(f.root(), "records/scene.tig", &parent);
+        save_commit(&mut f);
+        let mut held = record.clone();
+        held["status"]["selection_state"] = json!("candidate-unselected");
+        write(f.root(), "records/placement-evidence.tig", &held);
+        save_commit(&mut f);
+        let refused = f.root().join("unapproved-placement-evidence");
+        let mut source = f.source();
+        assert!(reel::tig_scene::compile(&mut source, &request, &refused).is_err());
+        assert_eq!(source.byte_requests(), 5);
+        assert!(!refused.exists());
+        write(f.root(), "records/placement-evidence.tig", &record);
         save_commit(&mut f);
         let report = compile(&f, &request, "retained-placement-evidence");
         assert!(primary(&report, "language_inputs").contains(&evidence));
