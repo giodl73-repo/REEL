@@ -3,6 +3,37 @@
 `reel-tig-scene compile-native` captures the explicit committed source profile
 and resolves the scene's current `authored.binding_ids` map. Each value is exactly
 `{"id":"opaque-asset-id"}`. The parent file need not change when a leaf changes.
+An admitted scene definition may additionally declare `language_binding_ids`:
+
+```json
+{
+  "binding_ids": {
+    "picture": {"id": "pictures/shared"},
+    "title": {"id": "titles/spanish"}
+  },
+  "language_binding_ids": {
+    "en": {"title": {"id": "titles/english"}}
+  }
+}
+```
+
+The requested language overrides only the listed shared aliases. Every alias
+must already exist in `binding_ids`; every variant language must exist in the
+selected scene. There are at most 32 variant languages and 4,096 total declared
+base/override entries. Unknown reference fields, missing records, wrong primary
+definitions and invalid inactive variants refuse; a missing or invalid selected
+variant never falls back to the base. Unmentioned aliases remain explicitly
+shared. No language is inferred from IDs, paths, filenames or status values.
+Whole-scene requirements retain all variants. Derived language roots and render
+recipes use the requested effective map and actual semantic consumption; an
+unconsumed language-only asset edit need not invalidate another language render.
+Inactive draft bytes are not read; used draft inputs still refuse. Named controls
+can remain language-specific through the existing exact stream selectors.
+
+The source context pins the binding adapter along with the scene/input adapters.
+Keep existing archived jobs on their admitted runtime; this source change does
+not replace the compiler of an old frozen context. The registration importer
+does not yet synthesize this optional map from multiple binding documents.
 The parent definition and all primary definitions are explicitly admitted and
 pinned by the existing source profile. The native request distinguishes the scene
 definition from permitted primary definitions; scene/control/delivery definitions

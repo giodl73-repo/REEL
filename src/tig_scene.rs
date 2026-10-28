@@ -29,6 +29,7 @@ use tig_store::source_claims::Selection;
 
 pub const SCHEMA: &str = "reel.tig-native-scene.experimental-1";
 const METADATA_MAX: u64 = 16 * 1024 * 1024;
+mod bindings;
 mod render_context;
 mod scoped;
 pub use render_context::{
@@ -124,7 +125,11 @@ fn consumption(profiles: &[Profile], request: &Request) -> Vec<graph::recipe::Co
             definition_id: profile.definition_id.clone(),
             definition: profile.definition.clone(),
             fields: if profile.definition_id == request.scene_definition {
-                BTreeSet::from(["scene_id".into(), "binding_ids".into()])
+                let mut fields = BTreeSet::from(["scene_id".into(), "binding_ids".into()]);
+                if profile.rules.len() > 1 {
+                    fields.insert("language_binding_ids".into());
+                }
+                fields
             } else {
                 BTreeSet::new()
             },
@@ -135,7 +140,7 @@ fn operation(producer: &Object, parameters: &[u8]) -> graph::recipe::Operation {
     graph::recipe::Operation {
         name: "reel.native-scene.declared-inputs.experimental-1".into(),
         semantics: Object::from_bytes(
-            b"reel.native-scene.recipe.experimental-1:scene_id,binding_ids;whole-scene-payloads;explicit-producer;exact-context-parameters",
+            b"reel.native-scene.recipe.experimental-1:scene_id,binding_ids,optional-language_binding_ids;whole-scene-variant-payloads;explicit-producer;exact-context-parameters",
         )
         .sha256,
         producer: producer.clone(),
@@ -156,19 +161,7 @@ fn production_profiles(source: &Source, request: &Request) -> Result<Vec<Profile
     if parent.definition().id != request.scene_definition {
         bail!("scene definition differs from admitted protocol");
     }
-    let references = parent
-        .authored()
-        .get("binding_ids")
-        .and_then(Value::as_object)
-        .context("scene binding_ids missing")?;
-    if references.is_empty()
-        || references.len() > 4096
-        || references
-            .keys()
-            .any(|key| key.is_empty() || key.len() > 256 || key.chars().any(char::is_control))
-    {
-        bail!("native binding count/key exceeds budget");
-    }
+    let catalog = bindings::Catalog::read(parent.authored(), &request.language)?;
     let slots = [
         &request.controls.catalog,
         &request.controls.episode,
@@ -184,13 +177,7 @@ fn production_profiles(source: &Source, request: &Request) -> Result<Vec<Profile
         definition: source.admission(&request.scene_definition)?.object.clone(),
         class: NodeKind::Container,
         covered: BTreeSet::from([EdgeKind::Production]),
-        rules: vec![Rule {
-            pointer: "/binding_ids".into(),
-            kind: EdgeKind::Production,
-            collection: Collection::ObjectValues,
-            optional: false,
-            binding: Binding::SnapshotSelected,
-        }],
+        rules: catalog.rules,
         payloads: Payloads::Named {
             selected: true,
             slots,
@@ -220,6 +207,7 @@ fn descriptor(request: &Request) -> Result<Vec<u8>> {
         "schema":"reel.tig-native-scene-context.experimental-1",
         "request":request,
         "scene_adapter_sha256":Object::from_bytes(include_bytes!("tig_scene.rs")).sha256,
+        "binding_adapter_sha256":Object::from_bytes(include_bytes!("tig_scene/bindings.rs")).sha256,
         "input_adapter_sha256":Object::from_bytes(include_bytes!("tig_inputs.rs")).sha256,
         "tig_source_pin_sha256":Object::from_bytes(include_bytes!("../vendor/tig/source-pin.json")).sha256
     }))?;
@@ -470,6 +458,7 @@ struct NativeState {
     scene_bytes: Vec<u8>,
     scene: Scene,
     bindings: ScopedBindings,
+    references: serde_json::Map<String, Value>,
     controls: BTreeMap<&'static str, Vec<u8>>,
     pins: BTreeMap<&'static str, Object>,
     empty_episode: ScopedBindings,
@@ -490,42 +479,40 @@ fn read_source(source: &mut Source, request: &Request) -> Result<NativeState> {
     if parent.definition().id != request.scene_definition {
         bail!("scene definition differs from admitted protocol");
     }
-    let references = parent
-        .authored()
-        .get("binding_ids")
-        .and_then(Value::as_object)
-        .context("scene binding_ids missing")?;
-    if references.is_empty() || references.len() > 4096 {
-        bail!("native binding count exceeds budget");
-    }
+    let catalog = bindings::Catalog::read(parent.authored(), &request.language)?;
     // Admit every declared leaf's type/identity, including unused alternatives.
     // Native resolution checks production eligibility where each input is used;
     // an unused candidate in the authoring catalog is not a selected input.
-    let mut assets = BTreeMap::new();
-    for (key, value) in references {
-        let map = value
-            .as_object()
-            .context("binding reference must be an object")?;
-        let id = map
-            .get("id")
-            .and_then(Value::as_str)
-            .context("binding ID missing")?;
-        if map.len() != 1 || key.is_empty() || key.len() > 256 || key.chars().any(char::is_control)
-        {
-            bail!("unsupported native binding reference");
-        }
+    for id in &catalog.ids {
         let leaf = source.record(id)?;
         if !request.primary_definitions.contains(&leaf.definition().id) {
             bail!("binding is outside admitted primary definitions");
         }
-        assets.insert(key.clone(), source.resolve_asset(id)?);
+        source.resolve_asset(id)?;
     }
+    let assets = catalog
+        .effective
+        .iter()
+        .map(|(key, value)| {
+            Ok((
+                key.clone(),
+                source.resolve_asset(value["id"].as_str().unwrap())?,
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
     let required = requirements(source, request)?;
     let mut total = 0;
     let scene_bytes = metadata(source, parent.selected()?, &mut total)?;
     let scene: Scene = serde_json::from_slice(&scene_bytes)?;
     if parent.authored().get("scene_id").and_then(Value::as_str) != Some(scene.scene_id.as_str()) {
         bail!("selected scene identity differs from parent");
+    }
+    if catalog
+        .languages
+        .iter()
+        .any(|tag| !scene.languages.contains_key(tag))
+    {
+        bail!("binding variant language is absent from scene");
     }
     let bindings = ScopedBindings {
         schema: scene_authoring::BINDINGS_SCHEMA.into(),
@@ -571,6 +558,7 @@ fn read_source(source: &mut Source, request: &Request) -> Result<NativeState> {
         scene_bytes,
         scene,
         bindings,
+        references: catalog.effective,
         controls,
         pins,
         empty_episode,
@@ -584,18 +572,13 @@ fn derive_scope(
     state: &NativeState,
 ) -> Result<LanguageScope> {
     let NativeState {
-        parent,
         scene,
         bindings,
+        references,
         controls,
         resolved_scene,
         ..
     } = state;
-    let references = parent
-        .authored()
-        .get("binding_ids")
-        .and_then(Value::as_object)
-        .context("scene binding_ids missing")?;
     let mut profile: Value = serde_json::from_slice(&controls["profile.json"])?;
     profile
         .as_object_mut()
