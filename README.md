@@ -36,6 +36,8 @@ The native [asset input reader](docs/tig-asset-inputs.md) accepts logical IDs
 through an injected resolver such as Tig, preserving exact scoped byte pins.
 The optional [native Tig backend](docs/tig-backend.md) provides an explicit-profile
 `reel-tig-scene` command for guarded scene inputs, using a pinned Tig dependency.
+The [conform component registrar](docs/tig-conform-components.md) gives retained
+scene/presentation masters independent Tig records without copying media.
 Its [native scene compiler](docs/tig-native-scene.md) resolves current leaf IDs
 from one Git view and derives exact bindings and jobs without copying media.
 With `tig-publication`, [bounded native jobs](docs/tig-job-runner.md) use

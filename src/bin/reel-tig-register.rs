@@ -11,12 +11,17 @@ struct Args {
     /// Register explicitly mapped package assets, including prior versions.
     #[arg(long)]
     package_assets: bool,
+    /// Register explicit component masters from exact native episode conforms.
+    #[arg(long, conflicts_with_all = ["versioned", "package_assets"])]
+    conform_components: bool,
     profile: PathBuf,
     output: PathBuf,
 }
 fn main() -> ExitCode {
     let args = Args::parse();
-    let result = if args.package_assets {
+    let result = if args.conform_components {
+        reel::tig_conform_registration::run(&args.profile, &args.output)
+    } else if args.package_assets {
         reel::tig_package_registration::run(&args.profile, &args.output)
     } else if args.versioned {
         reel::tig_versioned_registration::run(&args.profile, &args.output)
