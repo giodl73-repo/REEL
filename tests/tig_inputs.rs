@@ -10,6 +10,8 @@ mod native_cli;
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_native_job.rs"]
 mod native_job;
+#[path = "support/tig_presentation.rs"]
+mod presentation;
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_runner.rs"]
 mod tig_runner;
