@@ -94,6 +94,7 @@ fn names(contract: &crate::scene_delivery::OutputContract) -> BTreeSet<String> {
 pub(super) fn produce(
     ticket: &Ticket,
     source: &mut crate::tig_inputs::Source,
+    context: &tig_git::source::native::context::ProductionContext,
     programs: &BoundPrograms,
 ) -> Result<Value> {
     let policy = ticket
@@ -101,7 +102,23 @@ pub(super) fn produce(
         .output_budget
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("planning requires output budget policy"))?;
-    tig_scene::compile(source, &ticket.admission.request, Path::new("compiled"))?;
+    match ticket.admission.context_mode {
+        ContextMode::Declared => {
+            tig_scene::compile(source, &ticket.admission.request, Path::new("compiled"))?;
+        }
+        ContextMode::Compiled => {
+            let recipe = tig_scene::render_recipe(
+                source,
+                &ticket.admission.request,
+                context,
+                &pin(programs)?,
+                Path::new("compiled"),
+            )?;
+            if recipe.fingerprint() != &ticket.recipe {
+                bail!("compiled output planning recipe differs");
+            }
+        }
+    }
     let path = Path::new("compiled/delivery/job.json").canonicalize()?;
     let job = crate::tig_inputs::read_job(&path)?;
     let inputs = source.prepare(&job)?;

@@ -119,6 +119,7 @@ pub fn render(
         RenderOptions {
             programs: None,
             outputs: None,
+            mode: RecipeMode::Declared,
         },
         job_directory,
         output,
@@ -169,6 +170,57 @@ pub fn render_with_programs_and_outputs(
         RenderOptions {
             programs: Some(programs),
             outputs: expected_outputs,
+            mode: RecipeMode::Declared,
+        },
+        job_directory,
+        output,
+    )
+}
+
+/// Explicit compiled-context execution with held declared host/tool components.
+/// Caller admits/protects job resources before invocation; no owner/cache setup.
+pub fn render_projected_with_programs(
+    source: &mut Source,
+    request: &Request,
+    context: &ProductionContext,
+    programs: &crate::media_runtime::BoundPrograms,
+    job_directory: &Path,
+    output: &Path,
+) -> Result<RenderedCandidate> {
+    render_projected_with_programs_and_outputs(
+        source,
+        request,
+        context,
+        programs,
+        job_directory,
+        output,
+        None,
+    )
+}
+/// Check the complete requested output contract before projected rendering.
+pub fn render_projected_with_programs_and_outputs(
+    source: &mut Source,
+    request: &Request,
+    context: &ProductionContext,
+    programs: &crate::media_runtime::BoundPrograms,
+    job_directory: &Path,
+    output: &Path,
+    expected_outputs: Option<&BTreeSet<String>>,
+) -> Result<RenderedCandidate> {
+    let identity = programs.identity();
+    let producer = Object {
+        sha256: Digest::parse(&identity.sha256)?,
+        bytes: identity.bytes,
+    };
+    render_inner(
+        source,
+        request,
+        context,
+        &producer,
+        RenderOptions {
+            programs: Some(programs),
+            outputs: expected_outputs,
+            mode: RecipeMode::Projected,
         },
         job_directory,
         output,
@@ -196,6 +248,12 @@ fn context_recipe(
 struct RenderOptions<'a> {
     programs: Option<&'a crate::media_runtime::BoundPrograms>,
     outputs: Option<&'a BTreeSet<String>>,
+    mode: RecipeMode,
+}
+#[derive(Clone, Copy)]
+enum RecipeMode {
+    Declared,
+    Projected,
 }
 fn render_inner(
     source: &mut Source,
@@ -206,11 +264,20 @@ fn render_inner(
     job_directory: &Path,
     output: &Path,
 ) -> Result<RenderedCandidate> {
-    let recipe = context_recipe(source, request, context, producer)?;
+    let recipe = match options.mode {
+        RecipeMode::Declared => Some(context_recipe(source, request, context, producer)?),
+        RecipeMode::Projected => None,
+    };
     if job_directory.exists() || output.exists() {
         bail!("native candidate requires new job and output directories");
     }
-    tig_scene::compile(source, request, job_directory)?;
+    let recipe = match recipe {
+        Some(recipe) => {
+            tig_scene::compile(source, request, job_directory)?;
+            recipe
+        }
+        None => tig_scene::render_recipe(source, request, context, producer, job_directory)?,
+    };
     let job_path = job_directory.join("delivery/job.json").canonicalize()?;
     let job = tig_inputs::read_job(&job_path)?;
     let inputs = source.prepare(&job)?;

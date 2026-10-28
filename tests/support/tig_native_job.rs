@@ -47,7 +47,7 @@ pub fn exercise(
     root: &Path,
     metadata: (&Path, &Checkpoint),
     bind_as: impl Fn(&str, &Object) -> BoundSubject,
-) {
+) -> tig_assets::graph::recipe::produced::Claim {
     let coord_root = root.join("managed-coordination");
     fs::create_dir(&coord_root).unwrap();
     let coordination = Coordination {
@@ -369,4 +369,9 @@ pub fn exercise(
     );
     assert!(!owners.obligations(100).unwrap().complete_claim_coverage());
     assert!(root.join("managed-native-output/master.mkv").is_file());
+    tig_assets::graph::recipe::produced::Claim::parse(
+        published.published().claim().object(),
+        published.published().claim().bytes(),
+    )
+    .unwrap()
 }

@@ -100,6 +100,7 @@ The private profile schema is `reel.tig-native-job-profile.experimental-1`:
 | `worker.metadata_root`, `worker.metadata_minimum` | Existing metadata provider and trusted minimum checkpoint |
 | `worker.source` | Admitted `reel.tig-archive-input-profile.experimental-1`; Git is not needed during execution |
 | `worker.context` | Exact frozen native context Selection, not a latest lookup |
+| `worker.context_mode` | `declared` (default) or explicitly `compiled`; compiled mode replays the archived language-scoped native interpretation |
 | `worker.request` | Native scene Request matching the frozen descriptor |
 | `worker.runtime` | Private Bindings: actual CLI host byte identity, explicit FFmpeg/FFprobe FileRefs, named dependency FileRefs |
 | `worker.outputs` | Explicit complete native output filenames plus `receipt.json`, each mapped to a positive maximum; omit when using `output_budget` |
@@ -107,6 +108,7 @@ The private profile schema is `reel.tig-native-job-profile.experimental-1`:
 | `worker.record_outputs` | Optional output-to-record proposals: exact archived template Reference, native output name and selected/stream selector; see below |
 | `worker.git_handoff` | Optional retained `tig-propose` profile with explicit Git destination/identity and one canonical path per candidate asset |
 | `cache` | Existing reel-assets Config, including an existing absolute shared `coordination_root` |
+| `preparation_cache` | Compiled mode only: an existing absolute active root listed in `cache.cache_roots` for owned coordinator preparation |
 | `journal_root`, `journal_minimum` | Existing authoritative owner journal and trusted minimum checkpoint |
 | `source_id`, `owner`, `expected_revision` | Exact caller-owned job identity and current revision; zero is required for a new source |
 | `start_operation`, `retain_operation` | Explicit distinct-purpose stable operation identities |
@@ -120,6 +122,43 @@ successful retention. Budgets must include two copies of declared output maxima
 for atomic publication, control bytes and scratch. Installed runtimes execute in
 place and primary inputs resolve directly from the existing cache enrollment.
 The worker's compiled controls and intermediates occupy its bounded scratch.
+
+### Compiled context preparation
+
+Set `worker.context_mode` to `compiled` only for a frozen compiled render context.
+The coordinator and worker use the same projected recipe and output contract;
+neither infers this mode from a report. Omitted mode retains the declared-context
+workflow. A declared-context profile must omit `preparation_cache`.
+
+Before choosing budgets, run:
+
+```text
+reel-tig-job preparation-budget profile.json
+```
+
+This reads the bounded profile and filesystem allocation geometry. It reports
+coordinator preparation bytes and the minimum worker scratch allowance without
+opening source metadata, admitting a job, creating files or scanning caches.
+The worker allowance covers three compilation passes at the largest allocation
+unit among the configured active roots. It is a preparation minimum; provide
+additional scratch for rendering and include output publication in the complete
+workspace budget. The CLI refuses insufficient declared scratch before owner
+transitions and does not increase a budget automatically.
+
+Compiled preparation shares a 64 MiB logical write allowance and 4,128-file limit
+per pass, with a 4 MiB maximum per document. The coordinator reserves two passes
+through the existing shared capacity ledger before creating its owned
+`native-prepare-<reservation-id>-*` directory. It removes that directory before
+releasing capacity. Failed cleanup retains the capacity record for explicit
+recovery and reports its reservation ID. A process interruption also leaves
+conservative accounting; automatic crash cleanup is not implemented here.
+Worker preparation occurs inside the already admitted job workspace.
+
+The estimate includes data allocation rounding and a per-entry allowance.
+Configured free-space policy must cover filesystem administrative overhead and
+external writers. These logical bounds and reservations are not a physical
+filesystem quota. Preparation does not create another asset cache, select new
+masters, switch installed runtimes or authorize payload eviction.
 
 The coordinator keeps its verified runtime guards while the child runs. Both
 processes derive the producer from the same declared runtime manifest and exact

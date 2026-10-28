@@ -30,8 +30,10 @@ const PROFILE_SCHEMA: &str = "reel.tig-native-job-profile.experimental-1";
 const TICKET_SCHEMA: &str = "reel.tig-native-worker.experimental-1";
 mod handoff;
 mod planning;
+mod preparation;
 mod records;
 mod retained;
+use preparation::ContextMode;
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 enum Mode {
@@ -41,6 +43,8 @@ enum Mode {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Worker {
+    #[serde(default, skip_serializing_if = "ContextMode::is_declared")]
+    context_mode: ContextMode,
     metadata_root: PathBuf,
     metadata_minimum: Checkpoint,
     source: Value,
@@ -70,6 +74,8 @@ struct Ticket {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Profile {
+    #[serde(default)]
+    preparation_cache: Option<PathBuf>,
     schema: String,
     worker: Worker,
     cache: Config,
@@ -110,6 +116,7 @@ fn pin(programs: &BoundPrograms) -> Result<Object> {
 }
 fn restore(
     worker: &Worker,
+    output: Option<&Path>,
 ) -> Result<(
     crate::tig_inputs::Source,
     tig_git::source::native::context::ProductionContext,
@@ -119,6 +126,17 @@ fn restore(
         bail!("existing absolute metadata root required");
     }
     let mut reader = MetadataReader::open(&worker.metadata_root, &worker.metadata_minimum)?;
+    if worker.context_mode == ContextMode::Compiled {
+        return tig_scene::restore_render_context(
+            profile,
+            &worker.request,
+            &worker.context,
+            output
+                .ok_or_else(|| anyhow::anyhow!("compiled restore requires admitted preparation"))?,
+            &mut reader,
+            TreeLimits::default(),
+        );
+    }
     tig_scene::restore_context(
         profile,
         &worker.request,
@@ -126,6 +144,27 @@ fn restore(
         &mut reader,
         TreeLimits::default(),
     )
+}
+fn job_plan<'a>(
+    mode: ContextMode,
+    request: &'a Request,
+    source: &mut crate::tig_inputs::Source,
+    context: &'a tig_git::source::native::context::ProductionContext,
+    programs: &'a BoundPrograms,
+    output: Option<&Path>,
+) -> Result<JobPlan<'a>> {
+    match mode {
+        ContextMode::Declared => JobPlan::from_context(source, request, context, programs),
+        ContextMode::Compiled => JobPlan::from_render_context(
+            source,
+            request,
+            context,
+            programs,
+            output.ok_or_else(|| {
+                anyhow::anyhow!("compiled planning requires admitted preparation")
+            })?,
+        ),
+    }
 }
 fn output_names(worker: &Worker) -> Result<BTreeSet<String>> {
     if let Some(budget) = &worker.output_budget {
@@ -167,6 +206,24 @@ pub fn run(path: &Path) -> Result<Value> {
 /// A retained bounded planning job, not a read-only/dry-run command.
 pub fn plan_outputs(path: &Path) -> Result<Value> {
     execute(path, true)
+}
+/// Read declared profile and named filesystem geometry only. No cache census,
+/// reservation, workspace creation, source/metadata opens or runtime execution.
+pub fn preparation_budget(path: &Path) -> Result<Value> {
+    let profile: Profile = read(path, 128 * 1024, None)?;
+    if profile.schema != PROFILE_SCHEMA {
+        bail!("unsupported native job profile");
+    }
+    if profile.cache.cache_roots.is_empty()
+        || profile
+            .cache
+            .cache_roots
+            .iter()
+            .any(|p| !p.is_absolute() || !p.join("objects/sha256").is_dir())
+    {
+        bail!("existing active CAS roots required");
+    }
+    preparation::report(&profile)
 }
 fn execute(path: &Path, only_plan: bool) -> Result<Value> {
     let mut profile: Profile = read(path, 128 * 1024, None)?;
@@ -217,10 +274,35 @@ fn execute(path: &Path, only_plan: bool) -> Result<Value> {
     } else if profile.expected_revision != 0 {
         bail!("native job source missing");
     }
+    let allowance = preparation::worker_allowance(&profile)?;
+    if profile.scratch_bytes < allowance {
+        bail!("compiled worker scratch below preparation allowance");
+    }
+    if profile.worker.context_mode == ContextMode::Compiled
+        && profile
+            .scratch_bytes
+            .checked_add(1024 * 1024)
+            .is_none_or(|n| n > profile.budget_bytes)
+    {
+        bail!("compiled workspace budget below scratch and metadata allowance");
+    }
     let programs = BoundPrograms::bind(&profile.worker.runtime)?;
-    let (mut source, context) = restore(&profile.worker)?;
+    let prepared = preparation::Preparation::open(&profile)?;
+    let restored = prepared.as_ref().map(|p| p.path().join("source"));
+    let planned = prepared.as_ref().map(|p| p.path().join("recipe"));
+    let (mut source, context) = restore(&profile.worker, restored.as_deref())?;
     let templates = records::prepare(&profile.worker, &context, &profile.cache.cache_roots)?;
-    let plan = JobPlan::from_context(&mut source, &profile.worker.request, &context, &programs)?;
+    let plan = job_plan(
+        profile.worker.context_mode,
+        &profile.worker.request,
+        &mut source,
+        &context,
+        &programs,
+        planned.as_deref(),
+    )?;
+    if let Some(prepared) = prepared {
+        prepared.finish()?;
+    }
     let mut spec = Phase {
         mode: if automatic { Mode::Plan } else { Mode::Render },
         expected_revision: profile.expected_revision,
@@ -317,20 +399,22 @@ fn execute_phase(
         bail!("native worker admission exceeds budget");
     }
     let ticket_pin = Object::from_bytes(ticket.as_bytes());
-    let scratch_budget = if spec.mode == Mode::Plan {
-        planning::scratch_budget(profile.scratch_bytes)
-    } else {
-        profile.scratch_bytes
-    };
-    let workspace_budget = if spec.mode == Mode::Plan {
-        planning::workspace_budget(
-            profile.scratch_bytes,
-            ticket.len() as u64,
-            profile.budget_bytes,
-        )?
-    } else {
-        profile.budget_bytes
-    };
+    let scratch_budget =
+        if spec.mode == Mode::Plan && profile.worker.context_mode == ContextMode::Declared {
+            planning::scratch_budget(profile.scratch_bytes)
+        } else {
+            profile.scratch_bytes
+        };
+    let workspace_budget =
+        if spec.mode == Mode::Plan && profile.worker.context_mode == ContextMode::Declared {
+            planning::workspace_budget(
+                profile.scratch_bytes,
+                ticket.len() as u64,
+                profile.budget_bytes,
+            )?
+        } else {
+            profile.budget_bytes
+        };
     let mut outputs: BTreeMap<_, _> = if spec.mode == Mode::Plan {
         BTreeMap::from([(
             "planning.json".into(),
@@ -436,17 +520,28 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
     if pin(&programs)? != ticket.producer {
         bail!("native worker runtime differs");
     }
-    let (mut source, context) = restore(&ticket.admission)?;
+    let (mut source, context) = restore(&ticket.admission, Some(Path::new("source-context")))?;
     let record_templates = records::prepare(&ticket.admission, &context, &ticket.output_roots)?;
-    let plan = JobPlan::from_context(&mut source, &ticket.admission.request, &context, &programs)?;
+    let plan = job_plan(
+        ticket.admission.context_mode,
+        &ticket.admission.request,
+        &mut source,
+        &context,
+        &programs,
+        Some(Path::new("recipe-preparation")),
+    )?;
     if plan.recipe().fingerprint() != &ticket.recipe {
         bail!("native worker recipe differs");
     }
     if ticket.mode == Mode::Plan {
-        return planning::produce(&ticket, &mut source, &programs);
+        return planning::produce(&ticket, &mut source, &context, &programs);
     }
     records::check_names(&ticket.admission, &expected)?;
-    let candidate = tig_scene_production::render_with_programs_and_outputs(
+    let render = match ticket.admission.context_mode {
+        ContextMode::Declared => tig_scene_production::render_with_programs_and_outputs,
+        ContextMode::Compiled => tig_scene_production::render_projected_with_programs_and_outputs,
+    };
+    let candidate = render(
         &mut source,
         &ticket.admission.request,
         &context,

@@ -317,6 +317,36 @@ checks as rendering. Runtime pins come from that held declaration's host, progra
 and explicit dependencies. Opaque component labels are hashed for metadata keys;
 the original private runtime manifest retains their meaning without host paths.
 
+For a compiled language render context, explicitly use
+`JobPlan::from_render_context` with a new preparation directory. It derives the
+projected recipe under the held runtime, retaining every captured control and
+primary input. It uses the same freeze/finish/readback/protect and output handoff
+ports below. The resulting job capability dispatches to projected rendering;
+it does not infer a mode from a stored report or relax legacy admission.
+Execution recompiles into new job scratch and verifies frozen parameters before
+opening primary media. A managed candidate must match the admitted recipe and
+source provenance. Preparation/execution scratch cleanup belongs to the caller.
+
+Direct callers use `render_projected_with_programs` (or the explicit-output-set
+variant), with independently protected resources and held declared programs.
+Rendering still performs independent output checking before a candidate can
+produce a claim. The CLI's native mode is not implicitly switched; explicit CLI
+adoption is subsequent work. Neither path establishes complete environment,
+global source/job coverage, approval or eviction authority. See the
+[projected managed job review](reviews/2026-10-27-tig-projected-managed-jobs.md).
+Generated primary-input correspondence is not yet verified by this adapter;
+project-level freshness checks remain necessary before selecting a delivery.
+
+Every native compilation shares a64 MiB logical metadata-write allowance across
+copied controls, generated native metadata and generic compiler contracts, with
+a4 MiB per-document limit. Serialization and raw writes refuse before creating
+the offending file; valid document bytes retain their existing representation.
+Partial preparation remains caller-owned. These limits do not reserve physical
+disk space or account for filesystem allocation overhead. CLI compiled-context
+adoption still requires capacity admission for its preparation passes. Generic
+non-native compiler APIs retain their existing unbounded behavior. See the
+[preparation budget review](reviews/2026-10-27-tig-bounded-preparation.md).
+
 ```text
 JobPlan + held runtime + original source context
                      |

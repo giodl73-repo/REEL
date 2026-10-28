@@ -494,6 +494,88 @@ fn write_new(dir: &Path, name: &str, value: &Value) -> Result<(String, u64)> {
     Ok((hash(&bytes), bytes.len() as u64))
 }
 
+/// Logical candidate-file allowance, not a physical capacity reservation.
+#[cfg(any(feature = "tig", test))]
+pub(crate) const PREPARATION_MAX_FILES: u64 = 4128;
+#[cfg(feature = "tig")]
+pub(crate) const PREPARATION_MAX_BYTES: u64 = 64 * 1024 * 1024;
+pub(crate) struct MetadataBudget {
+    remaining: u64,
+    document: usize,
+    files: u64,
+}
+struct LimitedBuffer {
+    bytes: Vec<u8>,
+    limit: usize,
+}
+impl std::io::Write for LimitedBuffer {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() > self.limit.saturating_sub(self.bytes.len()) {
+            return Err(std::io::Error::other(
+                "metadata serialization exceeds budget",
+            ));
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+impl MetadataBudget {
+    #[cfg(any(feature = "tig", test))]
+    pub(crate) fn new(total: u64, document: usize) -> Self {
+        Self {
+            remaining: total,
+            document,
+            files: PREPARATION_MAX_FILES,
+        }
+    }
+    pub(crate) fn write_bytes(&mut self, dir: &Path, name: &str, bytes: &[u8]) -> Result<()> {
+        if self.files == 0 || bytes.len() > self.document || bytes.len() as u64 > self.remaining {
+            bail!("native metadata write exceeds budget");
+        }
+        // Charge before IO: even partial writes on failure remain accounted.
+        self.remaining -= bytes.len() as u64;
+        self.files -= 1;
+        use std::io::Write;
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(dir.join(name))?
+            .write_all(bytes)?;
+        Ok(())
+    }
+    fn serialize(&self, value: &impl serde::Serialize, pretty: bool) -> Result<Vec<u8>> {
+        let mut buffer = LimitedBuffer {
+            bytes: Vec::new(),
+            limit: self
+                .document
+                .min(usize::try_from(self.remaining).unwrap_or(usize::MAX)),
+        };
+        if pretty {
+            serde_json::to_writer_pretty(&mut buffer, value)?;
+        } else {
+            serde_json::to_writer(&mut buffer, value)?;
+        }
+        Ok(buffer.bytes)
+    }
+    #[cfg(any(feature = "tig", test))]
+    pub(crate) fn compact(
+        &mut self,
+        dir: &Path,
+        name: &str,
+        value: &impl serde::Serialize,
+    ) -> Result<()> {
+        self.write_bytes(dir, name, &self.serialize(value, false)?)
+    }
+    fn pretty(&mut self, dir: &Path, name: &str, value: &Value) -> Result<(String, u64)> {
+        let bytes = self.serialize(value, true)?;
+        self.write_bytes(dir, name, &bytes)?;
+        Ok((hash(&bytes), bytes.len() as u64))
+    }
+}
+
 fn score_role(score: &ScoreUse) -> Result<Option<String>> {
     match score {
         ScoreUse::Role { role } if !role.is_empty() => Ok(Some(role.clone())),
@@ -516,6 +598,27 @@ pub fn compile_to_dir_with_inputs(
     request: &CompileManifest,
     inputs: &(impl crate::scene_delivery::InputFiles + ?Sized),
 ) -> Result<Value> {
+    compile_with_budget(root, request, inputs, None)
+}
+#[cfg(feature = "tig")]
+pub(crate) fn compile_to_dir_with_budget(
+    root: &Path,
+    request: &CompileManifest,
+    inputs: &(impl crate::scene_delivery::InputFiles + ?Sized),
+    budget: &mut MetadataBudget,
+) -> Result<Value> {
+    compile_with_budget(root, request, inputs, Some(budget))
+}
+fn compile_with_budget(
+    root: &Path,
+    request: &CompileManifest,
+    inputs: &(impl crate::scene_delivery::InputFiles + ?Sized),
+    mut budget: Option<&mut MetadataBudget>,
+) -> Result<Value> {
+    let mut emit = |dir: &Path, name: &str, value: &Value| match &mut budget {
+        Some(budget) => budget.pretty(dir, name, value),
+        None => write_new(dir, name, value),
+    };
     if request.schema != "reel.scene-delivery-compile.v1" {
         bail!("unsupported scene delivery compile schema");
     }
@@ -1157,8 +1260,8 @@ pub fn compile_to_dir_with_inputs(
             bail!("scene delivery compile output already exists: {name}");
         }
     }
-    let (production_sha, _) = write_new(&dir, "production.json", &production)?;
-    let (contract_sha, contract_bytes) = write_new(&dir, "contract.json", &contract)?;
+    let (production_sha, _) = emit(&dir, "production.json", &production)?;
+    let (contract_sha, contract_bytes) = emit(&dir, "contract.json", &contract)?;
     let mut job = json!({
         "still_sequence_encoding":profile.still_sequence_encoding,
         "schema":"reel.scene-delivery.v0.1",
@@ -1185,7 +1288,7 @@ pub fn compile_to_dir_with_inputs(
     if let Some(region) = &profile.picture_region {
         job["picture_region"] = serde_json::to_value(region)?;
     }
-    let (job_sha, job_bytes) = write_new(&dir, "job.json", &job)?;
+    let (job_sha, job_bytes) = emit(&dir, "job.json", &job)?;
     let source_selected_graph_lock = graph.lock.clone();
     let (graph, pointer) =
         close_delivery_graph(&graph, &pointer, &scene.scene_id, &id, &scopes, &job)?;
@@ -1200,7 +1303,7 @@ pub fn compile_to_dir_with_inputs(
         "scene_delivery_job":{"path":"job.json","sha256":job_sha,"bytes":job_bytes},
         "event_bindings":event_bindings
     });
-    let (semantic_sha, _) = write_new(&dir, "semantic-delivery.json", &semantic)?;
+    let (semantic_sha, _) = emit(&dir, "semantic-delivery.json", &semantic)?;
     let mut build = json!({
         "schema":"reel.scene-build.v1",
         "scene_id":scene.scene_id,
@@ -1220,7 +1323,7 @@ pub fn compile_to_dir_with_inputs(
     } else if request.template_receipt.is_some() {
         bail!("ordinary scene cannot declare a template receipt");
     }
-    let (build_sha, _) = write_new(&dir, "build.json", &build)?;
+    let (build_sha, _) = emit(&dir, "build.json", &build)?;
     let alignment_sha256 = lane
         .cues
         .iter()
@@ -1253,7 +1356,7 @@ pub fn compile_to_dir_with_inputs(
         "build_sha256":build_sha,
         "state":"private technical compilation; creative review remains external"
     });
-    write_new(&dir, "compile-receipt.json", &receipt)?;
+    emit(&dir, "compile-receipt.json", &receipt)?;
     Ok(receipt)
 }
 
@@ -1292,6 +1395,90 @@ mod tests {
     };
     use reel_assembly::scene_authoring::ScoreUse;
     use serde_json::json;
+
+    #[test]
+    fn bounded_metadata_shares_one_allowance_across_raw_compact_and_pretty_writes() {
+        let root = tempfile::tempdir().unwrap();
+        let mut budget = super::MetadataBudget::new(12, 8);
+        budget.write_bytes(root.path(), "raw", b"1234").unwrap();
+        budget
+            .compact(root.path(), "compact", &json!("ab"))
+            .unwrap();
+        budget.pretty(root.path(), "pretty", &json!(7)).unwrap();
+        assert!(
+            budget
+                .write_bytes(root.path(), "too-large", b"1234")
+                .is_err()
+        );
+        assert!(!root.path().join("too-large").exists());
+        budget.write_bytes(root.path(), "last", b"123").unwrap();
+        assert!(
+            budget
+                .pretty(root.path(), "empty-budget", &json!(true))
+                .is_err()
+        );
+        assert!(!root.path().join("empty-budget").exists());
+        let total: u64 = std::fs::read_dir(root.path())
+            .unwrap()
+            .map(|e| e.unwrap().metadata().unwrap().len())
+            .sum();
+        assert_eq!(total, 12);
+    }
+    #[test]
+    fn bounded_metadata_serialization_refuses_before_file_creation_without_changing_valid_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let value = json!({"unicode":"á","numbers":[1,1.25],"nested":{"key":true}});
+        let expected = serde_json::to_vec_pretty(&value).unwrap();
+        let mut small = super::MetadataBudget::new(1024, expected.len() - 1);
+        assert!(small.pretty(root.path(), "refused.json", &value).is_err());
+        assert!(!root.path().join("refused.json").exists());
+        let mut exact = super::MetadataBudget::new(expected.len() as u64, expected.len());
+        let (sha, len) = exact.pretty(root.path(), "bounded.json", &value).unwrap();
+        super::write_new(root.path(), "generic.json", &value).unwrap();
+        assert_eq!(
+            std::fs::read(root.path().join("bounded.json")).unwrap(),
+            expected
+        );
+        assert_eq!(
+            std::fs::read(root.path().join("generic.json")).unwrap(),
+            expected
+        );
+        assert_eq!(sha, super::hash(&expected));
+        assert_eq!(len, expected.len() as u64);
+    }
+    #[test]
+    fn bounded_metadata_never_truncates_existing_files_and_limits_buffer_growth() {
+        use std::io::Write;
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("existing"), b"original").unwrap();
+        let mut budget = super::MetadataBudget::new(16, 16);
+        assert!(
+            budget
+                .write_bytes(root.path(), "existing", b"replacement")
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read(root.path().join("existing")).unwrap(),
+            b"original"
+        );
+        let mut buffer = super::LimitedBuffer {
+            bytes: Vec::new(),
+            limit: 4,
+        };
+        buffer.write_all(b"abc").unwrap();
+        assert!(buffer.write_all(b"de").is_err());
+        assert_eq!(buffer.bytes, b"abc");
+    }
+    #[test]
+    fn bounded_metadata_limits_even_empty_file_entries() {
+        let root = tempfile::tempdir().unwrap();
+        let mut budget = super::MetadataBudget::new(100, 100);
+        budget.files = 2;
+        budget.write_bytes(root.path(), "first", b"").unwrap();
+        budget.write_bytes(root.path(), "second", b"").unwrap();
+        assert!(budget.write_bytes(root.path(), "third", b"").is_err());
+        assert!(!root.path().join("third").exists());
+    }
 
     #[test]
     fn asset_id_representation_keeps_opaque_ids_and_exact_pins() {
