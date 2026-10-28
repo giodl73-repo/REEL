@@ -36,6 +36,11 @@ definitions that declare these fields. For example, a project definition requiri
 `media_kind` needs an annotation for each input; the tool does not guess media
 roles from filenames. Exact definition/schema binding runs before export, but
 the JSON Schema engine and full native semantic validation are separate checks.
+Definition/schema pins must describe the exact bytes stored in Git. Normalize
+line endings before computing them or use files exported from the committed
+view. After export, capture and bind the complete committed Tig snapshot before
+adoption: Git clean filters or newline normalization can otherwise change a
+support blob without changing the pin embedded in a candidate record.
 
 The profile is at most 64 KiB. Each package/native document is at most 4 MiB,
 with 16 MiB total metadata read; definition/schema documents and each generated

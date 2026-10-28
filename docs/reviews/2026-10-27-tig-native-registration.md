@@ -31,3 +31,24 @@ never translate or regenerate during import. Preserve unselected/held states;
 only bounded count diagnostics are public. Rights/source declarations stay in
 the private records and do not imply new approval. These are producer checks,
 not independent or human acceptance.
+
+## Executed checks
+
+Five synthetic CLI/library cases pass, including actual existing-cache reads,
+absent primary media, draft-state preservation, duplicate JSON binding keys,
+conflicting sizes, scope/annotation/filename/budget/definition failures and
+destination non-overwrite. Locked all-target/all-feature warnings-denied Clippy,
+default-feature isolation and formatting pass.
+
+The generic command also registers the actual retained Melena source: 46 files,
+106,992 bytes; all 45 leaf IDs/pins/states and the selected scene pin match.
+It registers 12 scenes/538 files/984,163 bytes from the newer pinned preparation
+package without primary media IO. Eleven absent scenes are imported separately;
+the existing retained dawn-walk is not overwritten by that package's held draft.
+Raw profiles/receipts remain private and outside Git.
+
+Committed-view validation caught a project definition generated with CRLF while
+Git stored LF. Corrected project pins bind successfully across the full 553-record
+target view. This establishes the mandatory post-Git binding check; registration
+alone cannot promise unchanged bytes under a caller's Git filters. Native control
+binding, complete episode production/freshness and adoption remain open.
