@@ -48,6 +48,7 @@ pub(super) fn prepare(
     let mut identities = BTreeMap::new();
     let mut sizes = BTreeMap::new();
     for (key, asset) in &base.assets {
+        let asset = &identities::resolve(profile, base, key, asset, None)?;
         identities
             .entry(asset.logical_id.clone())
             .or_insert((key.clone(), serde_json::to_value(asset)?));
@@ -103,12 +104,18 @@ pub(super) fn prepare(
                 .language_filenames
                 .get(tag)
                 .is_some_and(|names| names.keys().any(|key| !bindings.assets.contains_key(key)))
+            || profile
+                .language_primary_ids
+                .get(tag)
+                .is_some_and(|ids| ids.keys().any(|key| !bindings.assets.contains_key(key)))
         {
             bail!("language binding scope, aliases or budget differ");
         }
         result.pins.insert(tag.clone(), pin.clone());
         let mut overrides = Map::new();
         for (key, asset) in &bindings.assets {
+            let original = asset;
+            let asset = &identities::resolve(profile, base, key, asset, Some(tag))?;
             let value = serde_json::to_value(asset)?;
             if asset.logical_id == scene.scene_id {
                 bail!("primary identity collides with scene");
@@ -158,6 +165,7 @@ pub(super) fn prepare(
                 if !inherited.is_empty() {
                     metadata["native_registration"]["binding_ancestors"] = json!(inherited);
                 }
+                identities::provenance(&mut metadata, original, asset);
                 let bytes = record(
                     json!({"schema":"tig.instance.design-1","id":asset.logical_id,
                     "definition":{"id":declared.value().id,"sha256":Object::from_bytes(&definition).sha256,"bytes":definition.len()},
@@ -173,7 +181,9 @@ pub(super) fn prepare(
                 }
                 result.records.insert(path, bytes);
             }
-            if asset.logical_id != base.assets[key].logical_id {
+            if asset.logical_id
+                != identities::resolve(profile, base, key, &base.assets[key], None)?.logical_id
+            {
                 overrides.insert(key.clone(), json!({"id":asset.logical_id}));
             }
         }

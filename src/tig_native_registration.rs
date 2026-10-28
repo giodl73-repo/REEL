@@ -17,6 +17,7 @@ use tig_store::existing::{ByteSource, Profile as ByteProfile, ReadCache};
 pub const SCHEMA: &str = "reel.tig-native-registration.experimental-1";
 const DOCUMENT_BYTES: u64 = 4 * 1024 * 1024;
 const TOTAL_BYTES: u64 = 16 * 1024 * 1024;
+mod identities;
 mod scopes;
 mod variants;
 
@@ -49,6 +50,10 @@ pub struct Profile {
     pub binding_ancestors: Vec<BindingSource>,
     #[serde(default)]
     pub language_binding_ancestors: BTreeMap<String, Vec<BindingSource>>,
+    #[serde(default)]
+    pub primary_ids: BTreeMap<String, String>,
+    #[serde(default)]
+    pub language_primary_ids: BTreeMap<String, BTreeMap<String, String>>,
     pub scene_definition: DefinitionFiles,
     pub primary_definition: DefinitionFiles,
     pub controls: Vec<Stream>,
@@ -276,6 +281,7 @@ pub fn prepare(profile: &Profile, source: &mut impl ByteSource) -> Result<Prepar
     for name in profile.filenames.values() {
         filename(name)?;
     }
+    identities::validate(profile, &bindings)?;
     if profile.metadata.contains_key("native_registration") {
         bail!("registration provenance is reserved");
     }
@@ -297,6 +303,8 @@ pub fn prepare(profile: &Profile, source: &mut impl ByteSource) -> Result<Prepar
     let mut sizes = BTreeMap::new();
     let mut total = 0u64;
     for (key, asset) in &bindings.assets {
+        let original = asset;
+        let asset = &identities::resolve(profile, &bindings, key, asset, None)?;
         if asset.logical_id == scene.scene_id {
             bail!("primary identity collides with scene");
         }
@@ -340,10 +348,12 @@ pub fn prepare(profile: &Profile, source: &mut impl ByteSource) -> Result<Prepar
             }
             authored.extend(extra.clone());
         }
+        let mut leaf_metadata = metadata.clone();
+        identities::provenance(&mut leaf_metadata, original, asset);
         let bytes = record(
             json!({"schema":"tig.instance.design-1","id":asset.logical_id,
             "definition":definition_pin(&primary_type.value().id, &primary_definition),"authored":authored,
-            "selected":object,"streams":[],"status":{"lifecycle":"registered-native-input","selection_state":asset.selection_state},"metadata":metadata}),
+            "selected":object,"streams":[],"status":{"lifecycle":"registered-native-input","selection_state":asset.selection_state},"metadata":leaf_metadata}),
             &primary_definition,
             &primary_schema,
         )?;
@@ -386,6 +396,13 @@ pub fn prepare(profile: &Profile, source: &mut impl ByteSource) -> Result<Prepar
     }
     if !variants.ancestors.is_empty() {
         metadata["native_registration"]["language_binding_ancestors"] = json!(variants.ancestors);
+    }
+    if !profile.primary_ids.is_empty() {
+        metadata["native_registration"]["canonical_ids"] = json!(profile.primary_ids);
+    }
+    if !profile.language_primary_ids.is_empty() {
+        metadata["native_registration"]["language_canonical_ids"] =
+            json!(profile.language_primary_ids);
     }
     let parent = record(
         json!({"schema":"tig.instance.design-1","id":scene.scene_id,

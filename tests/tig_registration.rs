@@ -5,6 +5,8 @@ use std::{fs, path::Path, process::Command};
 use tig_assets::native::Instance;
 use tig_core::Object;
 use tig_store::existing::ReadCache;
+#[path = "support/tig_registration_identities.rs"]
+mod identities;
 #[path = "support/tig_registration_variants.rs"]
 mod variants;
 

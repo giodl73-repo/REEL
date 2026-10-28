@@ -6,7 +6,7 @@ fn descriptor(object: &Object) -> Value {
 fn object_json(f: &Fixture, hash: &str) -> Value {
     serde_json::from_slice(&fs::read(f.root.path().join("objects").join(hash)).unwrap()).unwrap()
 }
-fn fixture(edit: impl FnOnce(&mut Value)) -> Fixture {
+pub(super) fn fixture(edit: impl FnOnce(&mut Value)) -> Fixture {
     let mut f = Fixture::standard();
     let mut package = object_json(&f, f.profile["package"]["sha256"].as_str().unwrap());
     let mut scene = object_json(

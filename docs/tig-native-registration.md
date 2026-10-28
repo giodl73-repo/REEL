@@ -30,6 +30,7 @@ The private profile uses `reel.tig-native-registration.experimental-1`:
 | `language_bindings_assets` | Optional language-to-package-role map for additional native binding documents |
 | `language_binding_ancestors` | Optional language-to-ancestor-array map, resolved before that language's local bindings |
 | `language_filenames` | Optional language-to-alias-to-portable-filename map for new variant records |
+| `primary_ids`, `language_primary_ids` | Optional explicit alias-to-canonical-ID maps, with the latter keyed by language; source identity is retained as provenance |
 | `scene_definition`, `primary_definition` | Each has `definition` and `authored_schema` FileRefs with explicit absolute local paths and expected hashes/sizes |
 | `controls` | Explicit Tig stream descriptors on the scene record; external admission, not automatically inferred from the source package |
 | `metadata` | Optional private provenance/rights data copied into records; `native_registration` is reserved for checked source package/binding identity |
@@ -74,6 +75,17 @@ explicit asset annotations must agree. The leaf's `binding_key` retains the firs
 source alias in deterministic order as an origin hint, not exclusive ownership;
 all alias relationships remain in the parent. Conflicting shared identities are
 refused rather than renamed or assigned guessed versions.
+
+When legacy logical names were only unique inside a source scope, the caller can
+declare canonical Tig IDs explicitly. Unknown aliases/languages, invalid IDs and
+inconsistent canonical collisions refuse. The original logical ID is retained
+on the mapped leaf alongside its unchanged source scope/binding provenance; the
+parent retains the explicit map. Byte pins, native status and original scene
+content do not change. Maps never supply filesystem paths. A language source
+inherits the base mapping only when it references the same original asset; a
+different variant keeps its own identity unless explicitly mapped. Several
+shared aliases must be mapped consistently if they are to remain one asset.
+Empty maps preserve legacy bytes and unrelated leaf files remain unchanged.
 
 The profile is at most 64 KiB. Each package/native document is at most 4 MiB,
 with 16 MiB total metadata read; definition/schema documents and each generated
