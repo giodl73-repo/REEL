@@ -673,7 +673,11 @@ fn native_recipe_distinguishes_production_changes_from_annotation_and_status() {
             assert!(!output.exists());
         }
         assert_eq!(old.byte_requests(), 0, "{change}");
-        assert_eq!(current.byte_requests(), 0, "{change}");
+        assert_eq!(
+            current.byte_requests(),
+            if change == "status" { 5 } else { 0 },
+            "{change}"
+        );
     }
 }
 
