@@ -41,3 +41,13 @@ cases (0.25 seconds), four versioned cases (0.08 seconds), and all-target/all-fe
 Clippy (0.63 seconds). The added shared-alias case confirms the same canonical
 scoped asset is emitted once, with both parent aliases and the original native
 identity retained. No production source changes follow that qualification.
+
+Actual source `f873c60` prepares twenty-two scene sets with two explicit scoped
+identities. All 714 candidates pass their authored schemas and have 714 distinct
+IDs, with zero collisions. Comparison against the earlier conflicting candidates
+changes exactly two leaves and two parents. All selected objects, definition pins,
+statuses and history/control streams remain unchanged; unrelated leaves are
+byte-identical. The two mapped leaves retain their exact original logical name
+and source scope. No primary media is read, copied or rewritten. Raw mapping and
+proof stay private outside Git. This resolves candidate identity consistency,
+not renderer parity, production freshness, approval or storage custody.
