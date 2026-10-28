@@ -8,6 +8,8 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Operation {
+    /// Recheck retained native outputs and compare their master with a baseline.
+    CompareRetained { profile: PathBuf, output: PathBuf },
     /// Explicit one-time shared metadata/journal setup; never invoked by Run.
     Setup { profile: PathBuf, output: PathBuf },
     /// Check existing named stores against private trusted-minimum bindings.
@@ -31,7 +33,12 @@ enum Operation {
     },
 }
 fn main() -> ExitCode {
-    let result = match Args::parse().operation {
+    let operation = Args::parse().operation;
+    let comparison = matches!(&operation, Operation::CompareRetained { .. });
+    let result = match operation {
+        Operation::CompareRetained { profile, output } => {
+            reel::tig_native_job_cli::compare_retained(&profile, &output)
+        }
         Operation::Setup { profile, output } => {
             reel::tig_native_job_cli::setup_stores(&profile, &output)
         }
@@ -59,7 +66,11 @@ fn main() -> ExitCode {
     match result {
         Ok(value) => {
             println!("{value}");
-            ExitCode::SUCCESS
+            if comparison && value["equal"] != true {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            }
         }
         Err(error) => {
             eprintln!("{error:#}");

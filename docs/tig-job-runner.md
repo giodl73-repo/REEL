@@ -474,3 +474,49 @@ does not establish that a cached executable request is still the checked object.
 Correcting destination settings creates a separate request; never edit retained
 objects in place. Preserve old runtime/context obligations when adopting a new
 vendored Tig/REEL source descriptor; intake is not an automatic runtime switch.
+
+## Compare retained native output without rendering again
+
+```text
+reel-tig-job compare-retained <private-comparison-profile.json> <new-private-report.json>
+```
+
+This explicit read/CPU operation replays a frozen compiled scene, checks the
+retained native output set, and compares its master with an independently pinned
+reference. It does not render, select a candidate, publish, or evict assets.
+
+The strict profile has schema `reel.tig-retained-comparison.experimental-1`:
+
+| Field | Source and meaning |
+| --- | --- |
+| `metadata_root`, `metadata_minimum` | Existing provider and trusted checkpoint |
+| `source`, `context`, `request` | Original captured worker fragment |
+| `producer` | Independently admitted original producer Object, for example the earlier planning result; do not infer admission from the claim being checked |
+| `claim`, `receipt` | Exact retained candidate claim and native receipt Objects |
+| `outputs` | Map of native relative output names to exact Objects; remove the `native/` retention prefix and exclude `receipt.json` |
+| `reference` | Independently selected baseline Object; comparison evidence, not a production dependency |
+| `byte_source` | Existing enrolled CAS places, with `required: "prevent-mutation"` |
+| `runtime` | Current validator executable, FFmpeg, FFprobe, and dependency bindings |
+| `cache`, `preparation_cache` | Shared capacity policy and existing owned-scratch volume |
+| `max_output_bytes` | Maximum sum of native output sizes plus receipt size |
+
+An Object contains `sha256` and `bytes`. Validator host bindings must identify the
+executable actually running this check. Keep the independently admitted original
+producer distinct: a newer validator does not retroactively become the producer.
+
+The command reserves bounded compiler and copy scratch, reads protected cache
+objects, and copies only the named native outputs into its owned check directory.
+It never makes writable aliases to cache objects. Receipt names, pins, native
+plan, output contract, claim context/producer and subject roles must agree before
+the independent native checker runs. Every comparison probe and decode uses the
+declared validator tools, including when PATH is empty. Comparison checks exact
+native clocks, frame count, picture planes, displayed RGB, color metadata and PCM.
+
+The private report must be a new absolute file with an existing parent on the
+preparation volume. Owned scratch is cleaned before bounded report publication.
+Stdout contains counts and booleans only. A valid content mismatch writes its
+report and returns failure; invalid admissions or corrupt bytes fail without a
+comparison report. Existing reports are never overwritten. No metadata writer,
+source-journal adoption or Git operation is involved. Reports retain exact pins
+and must stay outside Git. Equality does not transfer human approval or prove
+complete semantic coverage, execution attestation, custody or eviction safety.

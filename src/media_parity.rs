@@ -1,6 +1,6 @@
 //! Exact native SDR content comparison through the existing input-provider port.
 //! Containers and codecs may differ. This does not select or approve either file.
-use crate::scene_delivery::{self, FileRef, InputFiles};
+use crate::scene_delivery::{self, FileRef, InputFiles, MediaProgram};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -75,8 +75,8 @@ fn video_bytes(shape: &Shape) -> Result<u64> {
         .and_then(|v| v.checked_mul(3))
         .context("frame size overflow")
 }
-fn facts(path: &Path, shape: &Shape) -> Result<Value> {
-    let probe = scene_delivery::probe(path)?;
+fn facts(path: &Path, shape: &Shape, tools: &(impl InputFiles + ?Sized)) -> Result<Value> {
+    let probe = scene_delivery::probe_with_inputs(tools, path)?;
     let streams = probe["streams"]
         .as_array()
         .context("comparison streams missing")?;
@@ -131,12 +131,12 @@ fn facts(path: &Path, shape: &Shape) -> Result<Value> {
 }
 
 fn with_framehash<T>(
+    program: &Path,
     path: &Path,
     options: &[&str],
     inspect: impl FnOnce(&mut BufReader<ChildStdout>) -> Result<T>,
 ) -> Result<T> {
-    let errors = tempfile::tempfile()?;
-    let mut child = Command::new("ffmpeg")
+    let mut child = Command::new(program)
         .args([
             "-v",
             "error",
@@ -149,7 +149,7 @@ fn with_framehash<T>(
         .args(options)
         .args(["-f", "framehash", "-hash", "sha256", "-"])
         .stdout(Stdio::piped())
-        .stderr(errors)
+        .stderr(Stdio::null())
         .spawn()?;
     let mut reader = BufReader::new(child.stdout.take().context("framehash pipe missing")?);
     let result = inspect(&mut reader);
@@ -176,8 +176,9 @@ fn hash_line(reader: &mut impl BufRead) -> Result<Option<String>> {
 }
 /// Framehash emits bounded metadata, not raw frames. The source demuxer clock
 /// remains in force; passthrough does not repair or interpolate timestamps.
-fn picture_digest(path: &Path, shape: &Shape, format: &str) -> Result<String> {
+fn picture_digest(program: &Path, path: &Path, shape: &Shape, format: &str) -> Result<String> {
     with_framehash(
+        program,
         path,
         &[
             "-map",
@@ -249,67 +250,79 @@ fn picture_digest(path: &Path, shape: &Shape, format: &str) -> Result<String> {
         },
     )
 }
-fn audio_clock(path: &Path, shape: &Shape) -> Result<()> {
-    with_framehash(path, &["-map", "0:a:0", "-c:a", "pcm_s24le"], |reader| {
-        let mut time_base = None;
-        let mut samples = 0u64;
-        while let Some(line) = hash_line(reader)? {
-            if let Some(value) = line.strip_prefix("#tb 0: ") {
-                if time_base.replace(ratio(value)?).is_some() {
-                    bail!("duplicate audio clock");
+fn audio_clock(program: &Path, path: &Path, shape: &Shape) -> Result<()> {
+    with_framehash(
+        program,
+        path,
+        &["-map", "0:a:0", "-c:a", "pcm_s24le"],
+        |reader| {
+            let mut time_base = None;
+            let mut samples = 0u64;
+            while let Some(line) = hash_line(reader)? {
+                if let Some(value) = line.strip_prefix("#tb 0: ") {
+                    if time_base.replace(ratio(value)?).is_some() {
+                        bail!("duplicate audio clock");
+                    }
+                    continue;
                 }
-                continue;
+                if line.starts_with('#') || line.is_empty() {
+                    continue;
+                }
+                let fields = line.split(',').map(str::trim).collect::<Vec<_>>();
+                if fields.len() != 6 || fields[0] != "0" {
+                    bail!("unexpected audio framehash record");
+                }
+                let (n, d) = time_base.context("audio clock missing")?;
+                let duration = fields[3].parse::<u64>()?;
+                if mul(n.into(), shape.sample_rate.into())? != u128::from(d)
+                    || duration == 0
+                    || fields[1].parse::<u64>()? != samples
+                    || fields[2].parse::<u64>()? != samples
+                    || fields[4].parse::<u64>()?
+                        != duration
+                            .checked_mul(6)
+                            .context("audio packet size overflow")?
+                {
+                    bail!("decoded audio differs from contiguous native sample clock");
+                }
+                samples = samples
+                    .checked_add(duration)
+                    .context("audio clock overflow")?;
+                if samples > shape.samples {
+                    bail!("extra native audio samples");
+                }
             }
-            if line.starts_with('#') || line.is_empty() {
-                continue;
+            if samples != shape.samples {
+                bail!("native audio sample count differs");
             }
-            let fields = line.split(',').map(str::trim).collect::<Vec<_>>();
-            if fields.len() != 6 || fields[0] != "0" {
-                bail!("unexpected audio framehash record");
-            }
-            let (n, d) = time_base.context("audio clock missing")?;
-            let duration = fields[3].parse::<u64>()?;
-            if mul(n.into(), shape.sample_rate.into())? != u128::from(d)
-                || duration == 0
-                || fields[1].parse::<u64>()? != samples
-                || fields[2].parse::<u64>()? != samples
-                || fields[4].parse::<u64>()?
-                    != duration
-                        .checked_mul(6)
-                        .context("audio packet size overflow")?
-            {
-                bail!("decoded audio differs from contiguous native sample clock");
-            }
-            samples = samples
-                .checked_add(duration)
-                .context("audio clock overflow")?;
-            if samples > shape.samples {
-                bail!("extra native audio samples");
-            }
-        }
-        if samples != shape.samples {
-            bail!("native audio sample count differs");
-        }
-        Ok(())
-    })
+            Ok(())
+        },
+    )
 }
-fn digest(path: &Path, shape: &Shape) -> Result<Digests> {
-    audio_clock(path, shape)?;
+fn digest(program: &Path, path: &Path, shape: &Shape) -> Result<Digests> {
+    audio_clock(program, path, shape)?;
     let audio_bytes = shape
         .samples
         .checked_mul(6)
         .context("PCM comparison size overflow")?;
     Ok(Digests {
-        yuv444p_frame_sequence_sha256: picture_digest(path, shape, "yuv444p")?,
-        rgb24_frame_sequence_sha256: picture_digest(path, shape, "rgb24")?,
-        pcm24_sha256: crate::episode_delivery::decode_segments(path, false, &[audio_bytes])?
-            .remove(0),
+        yuv444p_frame_sequence_sha256: picture_digest(program, path, shape, "yuv444p")?,
+        rgb24_frame_sequence_sha256: picture_digest(program, path, shape, "rgb24")?,
+        pcm24_sha256: crate::episode_delivery::decode_segments_with_program(
+            program,
+            path,
+            false,
+            &[audio_bytes],
+        )?
+        .remove(0),
     })
 }
 /// Both providers stay borrowed through all probes and synchronous decoders.
 /// A provider must enforce exact byte pins and its declared protection lifetime.
 /// Local Path providers preserve existing local checks; they add no custody or
 /// mutation protection. No source/output role becomes a production dependency.
+/// The candidate provider selects validation tools for both files; its explicit
+/// refusal never falls back to PATH. This is separate from producer admission.
 pub fn compare_with_inputs(
     reference: &FileRef,
     reference_inputs: &(impl InputFiles + ?Sized),
@@ -318,11 +331,12 @@ pub fn compare_with_inputs(
     shape: &Shape,
 ) -> Result<Report> {
     video_bytes(shape)?;
+    let program = candidate_inputs.media_program(MediaProgram::Ffmpeg)?;
     let reference_path = reference_inputs.verified_path(reference)?;
     let candidate_path = candidate_inputs.verified_path(candidate)?;
     // Both stream shapes are checked before expensive decoding.
-    let reference_facts = facts(&reference_path, shape)?;
-    let candidate_facts = facts(&candidate_path, shape)?;
+    let reference_facts = facts(&reference_path, shape, candidate_inputs)?;
+    let candidate_facts = facts(&candidate_path, shape, candidate_inputs)?;
     let color_metadata_equal = [
         "color_range",
         "color_space",
@@ -332,8 +346,8 @@ pub fn compare_with_inputs(
     ]
     .iter()
     .all(|key| reference_facts[key] == candidate_facts[key]);
-    let reference = digest(&reference_path, shape)?;
-    let candidate = digest(&candidate_path, shape)?;
+    let reference = digest(&program, &reference_path, shape)?;
+    let candidate = digest(&program, &candidate_path, shape)?;
     let picture_planes_equal =
         reference.yuv444p_frame_sequence_sha256 == candidate.yuv444p_frame_sequence_sha256;
     let displayed_rgb_equal = color_metadata_equal

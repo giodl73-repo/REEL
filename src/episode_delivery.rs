@@ -159,7 +159,23 @@ pub(crate) fn load_scene(
 /// Hash each segment in one bounded-memory decode. Exact byte counts reject
 /// extra/short media; no timestamp seek, rate conversion or frame interpolation.
 pub(crate) fn decode_segments(path: &Path, video: bool, lengths: &[u64]) -> Result<Vec<String>> {
-    let mut cmd = ffmpeg_command();
+    decode_segments_command(ffmpeg_command(), path, video, lengths, true)
+}
+pub(crate) fn decode_segments_with_program(
+    program: &Path,
+    path: &Path,
+    video: bool,
+    lengths: &[u64],
+) -> Result<Vec<String>> {
+    decode_segments_command(Command::new(program), path, video, lengths, false)
+}
+fn decode_segments_command(
+    mut cmd: Command,
+    path: &Path,
+    video: bool,
+    lengths: &[u64],
+    capture_diagnostics: bool,
+) -> Result<Vec<String>> {
     cmd.args([
         "-v",
         "error",
@@ -183,12 +199,12 @@ pub(crate) fn decode_segments(path: &Path, video: bool, lengths: &[u64]) -> Resu
     } else {
         cmd.args(["-map", "0:a:0", "-c:a", "pcm_s24le", "-f", "s24le"]);
     }
-    let mut errors = tempfile::tempfile()?;
-    let mut child = cmd
-        .arg("-")
-        .stdout(Stdio::piped())
-        .stderr(errors.try_clone()?)
-        .spawn()?;
+    let mut errors = capture_diagnostics.then(tempfile::tempfile).transpose()?;
+    let stderr = match &errors {
+        Some(file) => Stdio::from(file.try_clone()?),
+        None => Stdio::null(),
+    };
+    let mut child = cmd.arg("-").stdout(Stdio::piped()).stderr(stderr).spawn()?;
     let result = (|| -> Result<Vec<String>> {
         let mut pipe = child.stdout.take().context("decoder pipe")?;
         let mut hashes = Vec::new();
@@ -214,9 +230,11 @@ pub(crate) fn decode_segments(path: &Path, video: bool, lengths: &[u64]) -> Resu
         let _ = child.kill();
     }
     let status = child.wait()?;
-    errors.rewind()?;
     let mut diagnostics = String::new();
-    errors.take(8192).read_to_string(&mut diagnostics)?;
+    if let Some(errors) = errors.as_mut() {
+        errors.rewind()?;
+        errors.take(8192).read_to_string(&mut diagnostics)?;
+    }
     if !status.success() && result.is_ok() {
         bail!("media decode failed");
     }

@@ -1123,7 +1123,7 @@ fn ffmpeg_with_inputs(asset_root: &(impl InputFiles + ?Sized), args: &[String]) 
 pub(crate) fn probe(path: &Path) -> Result<serde_json::Value> {
     probe_with_inputs(Path::new("."), path)
 }
-fn probe_with_inputs(
+pub(crate) fn probe_with_inputs(
     asset_root: &(impl InputFiles + ?Sized),
     path: &Path,
 ) -> Result<serde_json::Value> {

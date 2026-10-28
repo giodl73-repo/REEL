@@ -583,6 +583,11 @@ fn exercise_mode(
         }
         if mode == "automatic" {
             check_candidates(root, &completed, &original_record, &template);
+            if compiled {
+                crate::retained_comparison::exercise(
+                    root, &automatic, &completed, reference, &cache,
+                );
+            }
             handoff_result = Some(completed.clone());
         }
         assert!(
