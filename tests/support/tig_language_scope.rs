@@ -1,4 +1,6 @@
 use super::*;
+#[path = "tig_binding_variants.rs"]
+mod binding_variants;
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "tig_projected_jobs.rs"]
 mod projected_jobs;

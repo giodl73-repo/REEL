@@ -101,7 +101,7 @@ fn explicit_existing_source_projected_recipe_rehearsal() {
     );
 }
 
-fn plan(
+pub(super) fn plan(
     f: &Fixture,
     request: &reel::tig_scene::Request,
     producer: &Object,
