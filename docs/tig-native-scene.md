@@ -79,8 +79,14 @@ each, with 16 MiB aggregate metadata and 4,096 bindings. The 64 KiB request is r
 with a bound and rejects duplicate/unknown fields. Profile `asset_paths` is derived
 as `asset-id`. Original control pins and the captured parent record/checkpoint are
 recorded in `native-source.json`; this is private provenance, not a public receipt.
-Optional presentation receipts use an explicit `controls.template_receipt` stream;
-the compiler still compares it to the fresh selected receipt binding. Sonic
+Presentation receipts resolve through the scene's per-language
+`template_receipt_bindings` key and the current admitted primary asset. No second
+parent control selection is required. An explicit legacy
+`controls.template_receipt` stream must match that current primary object; a
+stale alias refuses before the output directory is created. The compiler checks
+the original receipt's scene, language, template, ASS/source-text pins and clock.
+Changing a receipt leaf can update the compiled presentation while leaving its
+parent record unchanged; prior Git views retain their own bindings. Sonic
 placement evidence uses protected exact input pins during compilation. Rendering
 subsequently prepares the whole job independently.
 

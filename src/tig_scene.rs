@@ -712,12 +712,39 @@ fn compile_with_scope(
         },
     )?;
     let (graph, pointer) = snapshot_graph(&scene, &request.language, &bindings, &alignments)?;
-    let template = request
-        .controls
-        .template_receipt
+    // Presentation receipts are independently versioned primary inputs. Resolve
+    // the native language binding, not a second retained parent-stream selection.
+    let template_object = if let Some(presentation) = &scene.presentation {
+        let key = presentation
+            .content
+            .get("template_receipt_bindings")
+            .and_then(|v| v.get(&request.language))
+            .and_then(Value::as_str)
+            .context("native presentation receipt binding missing for language")?;
+        let asset = binding(&bindings, Some(key))?;
+        let object = Object {
+            sha256: tig_core::Digest::parse(&asset.sha256)?,
+            bytes: asset.bytes,
+        };
+        if let Some(slot) = &request.controls.template_receipt {
+            if parent.stream(slot)? != &object {
+                bail!("explicit template receipt differs from current native binding");
+            }
+        }
+        Some(object)
+    } else {
+        request
+            .controls
+            .template_receipt
+            .as_ref()
+            .map(|slot| parent.stream(slot).cloned())
+            .transpose()?
+    };
+    let template = template_object
         .as_ref()
-        .map(|slot| -> Result<Vec<u8>> { metadata(source, parent.stream(slot)?, &mut total) })
+        .map(|object| metadata(source, object, &mut total))
         .transpose()?;
+    let template_path = template.as_ref().map(|_| "template-receipt.json");
     let language_scope = json!({
         "source_checkpoint":language_required.checkpoint(),
         "admission_sha256":language_required.admission(),
@@ -764,7 +791,7 @@ fn compile_with_scope(
     if let Some(bytes) = template {
         budget.write_bytes(output, "template-receipt.json", &bytes)?;
     }
-    let manifest = json!({"schema":"reel.scene-delivery-compile.v1","catalog":"catalog.json","episode":"episode.json","scene":"scene.json","policy":"policy.json", "season_bindings":"season-bindings.json","episode_bindings":"episode-bindings.json","scene_bindings":"scene-bindings.json","graph":"graph.json","pointer":"pointer.json","alignment_paths":"alignment-paths.json","profile":"profile.json","language":request.language,"delivery_id":request.delivery_id,"delivery_title":request.delivery_title,"output_dir":"delivery","template_receipt":request.controls.template_receipt.as_ref().map(|_|"template-receipt.json")});
+    let manifest = json!({"schema":"reel.scene-delivery-compile.v1","catalog":"catalog.json","episode":"episode.json","scene":"scene.json","policy":"policy.json", "season_bindings":"season-bindings.json","episode_bindings":"episode-bindings.json","scene_bindings":"scene-bindings.json","graph":"graph.json","pointer":"pointer.json","alignment_paths":"alignment-paths.json","profile":"profile.json","language":request.language,"delivery_id":request.delivery_id,"delivery_title":request.delivery_title,"output_dir":"delivery","template_receipt":template_path});
     let compile: CompileManifest = serde_json::from_value(manifest.clone())?;
     budget.compact(output, "compile.json", &manifest)?;
     budget.compact(
