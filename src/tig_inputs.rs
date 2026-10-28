@@ -275,6 +275,31 @@ impl Source {
             },
         )?)
     }
+    pub(crate) fn projected_recipe_for_ids(
+        &mut self,
+        roots: &std::collections::BTreeSet<String>,
+        profiles: &[graph::Profile],
+        consumption: &[graph::recipe::Consumption],
+        payloads: &[graph::recipe::PayloadConsumption],
+        operation: &graph::recipe::Operation,
+        limits: graph::Limits,
+    ) -> Result<graph::recipe::Plan> {
+        let query = self.production_query_for_ids(roots, profiles, limits)?;
+        let resolved = graph::resolve(&mut self.snapshot, &query, profiles)?;
+        Ok(graph::recipe::plan_with_payloads(
+            &resolved,
+            &mut self.snapshot,
+            profiles,
+            consumption,
+            payloads,
+            operation,
+            graph::recipe::Limits {
+                nodes: limits.nodes,
+                edges: limits.edges,
+                bytes: limits.bytes,
+            },
+        )?)
+    }
     fn production_query(
         &self,
         root: &str,
@@ -377,6 +402,22 @@ impl Source {
             tig_git::source::native::produced::replay(claim, admission, store)?;
         if snapshot.checkpoint() != self.checkpoint() {
             bail!("produced claim source checkpoint differs from admission");
+        }
+        self.snapshot = snapshot;
+        Ok(replay)
+    }
+    pub(crate) fn replay_produced_with_payloads<'a>(
+        &mut self,
+        claim: &'a graph::recipe::produced::Claim,
+        admission: &tig_git::source::native::produced::Admission<'_>,
+        payloads: &[graph::recipe::PayloadConsumption],
+        store: &mut impl NodeStore,
+    ) -> Result<tig_git::source::native::produced::ReplayedClaim<'a>> {
+        let (snapshot, replay) = tig_git::source::native::produced::replay_with_payloads(
+            claim, admission, payloads, store,
+        )?;
+        if snapshot.checkpoint() != self.checkpoint() {
+            bail!("projected claim source checkpoint differs from admission");
         }
         self.snapshot = snapshot;
         Ok(replay)

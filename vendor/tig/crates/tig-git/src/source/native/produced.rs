@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use tig_assets::graph::{
     self,
     recipe::{
-        self, Consumption, Operation,
+        self, Consumption, Operation, PayloadConsumption,
         produced::{Claim, PlanCheckedClaim},
     },
 };
@@ -41,6 +41,24 @@ impl ReplayedClaim<'_> {
 pub fn replay<'a>(
     claim: &'a Claim,
     admission: &Admission<'_>,
+    store: &mut impl NodeStore,
+) -> Result<(AssetSnapshot, ReplayedClaim<'a>)> {
+    replay_inner(claim, admission, None, store)
+}
+/// Explicit original consumed-payload admission. No policy is inferred from
+/// stored claims, and neither this nor legacy replay silently falls back.
+pub fn replay_with_payloads<'a>(
+    claim: &'a Claim,
+    admission: &Admission<'_>,
+    payloads: &[PayloadConsumption],
+    store: &mut impl NodeStore,
+) -> Result<(AssetSnapshot, ReplayedClaim<'a>)> {
+    replay_inner(claim, admission, Some(payloads), store)
+}
+fn replay_inner<'a>(
+    claim: &'a Claim,
+    admission: &Admission<'_>,
+    payloads: Option<&[PayloadConsumption]>,
     store: &mut impl NodeStore,
 ) -> Result<(AssetSnapshot, ReplayedClaim<'a>)> {
     if claim.operation() != admission.operation {
@@ -98,14 +116,26 @@ pub fn replay<'a>(
     };
     let graph =
         graph::resolve(&mut source, &query, admission.profiles).map_err(|_| Error::Invalid)?;
-    let plan = recipe::plan(
-        &graph,
-        &mut source,
-        admission.profiles,
-        admission.consumption,
-        admission.operation,
-        admission.recipe,
-    )
+    let plan = if let Some(payloads) = payloads {
+        recipe::plan_with_payloads(
+            &graph,
+            &mut source,
+            admission.profiles,
+            admission.consumption,
+            payloads,
+            admission.operation,
+            admission.recipe,
+        )
+    } else {
+        recipe::plan(
+            &graph,
+            &mut source,
+            admission.profiles,
+            admission.consumption,
+            admission.operation,
+            admission.recipe,
+        )
+    }
     .map_err(|_| Error::Invalid)?;
     let checked = claim.check_plan(&plan).map_err(|_| Error::Integrity)?;
     Ok((source, ReplayedClaim { context, checked }))

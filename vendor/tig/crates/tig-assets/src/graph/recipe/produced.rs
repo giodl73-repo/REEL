@@ -15,7 +15,7 @@ pub enum Selector {
     Stream { slot: String },
 }
 impl Selector {
-    fn validate(&self) -> Result<()> {
+    pub(super) fn validate(&self) -> Result<()> {
         if let Self::Stream { slot } = self {
             token(slot)?;
             require(slot.len() <= 128, "output slot budget")?;

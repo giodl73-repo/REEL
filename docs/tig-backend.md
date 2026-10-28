@@ -217,3 +217,22 @@ fails; its caller owns cleanup. The returned source is render-context bound and
 legacy recipe/compilation entry points refuse it. These APIs do not yet admit a
 projected recipe, runtime environment or active render job; see the
 [render context review](reviews/2026-10-27-tig-render-context.md).
+
+`tig_scene::render_recipe` explicitly takes a compiled render context, externally
+admitted producer pin and a new private scratch directory. It recompiles and
+checks that context's parameters, roots and full requirements before deriving a
+projected plan. Primary leaf payloads and frozen language meaning affect the
+recipe; original raw scene/control bytes and the whole bilingual binding map
+remain retained provenance. A Spanish-only text edit can preserve the English
+recipe while a selected-language text, cel, profile or producer change invalidates
+it. The native authoring pin still makes some metadata changes conservatively
+invalidating; complete generated-input freshness remains a separate obligation.
+
+`tig_scene::restore_render_claim` independently replays that original context and
+rebuilds the projection policy before replaying a claim. It reads enrolled named
+controls/alignments and writes new candidate scratch; it can work with Git offline.
+Legacy/projected claims and context modes never silently fall back to one another.
+A returned unsigned claimed recipe match proves neither execution nor output
+bytes, runtime/environment availability, approval or custody. Active job/CLI
+adoption remains subsequent work. See the
+[projected recipe review](reviews/2026-10-27-tig-projected-native-recipe.md).

@@ -1,8 +1,12 @@
 //! Explicit bounded native catalog from captured Git blobs, never working files.
 pub mod archive;
+pub mod assessment;
 pub mod context;
 pub mod job;
 pub mod produced;
+#[cfg(feature = "schema")]
+pub mod schema;
+pub mod variants;
 use super::{Error, Repository, Result, Scope, Snapshot, View};
 use std::{
     collections::{BTreeMap, BTreeSet},
