@@ -336,10 +336,22 @@ fn metadata(source: &mut Source, object: &Object, total: &mut u64) -> Result<Vec
     source.read_metadata(object, crate::tig_inputs::JOB_BYTES_MAX)
 }
 fn binding<'a>(scope: &'a ScopedBindings, key: Option<&str>) -> Result<&'a AssetRef> {
-    scope
+    let asset = scope
         .assets
         .get(key.context("missing native binding key")?)
-        .context("native binding missing")
+        .context("native binding missing")?;
+    // Extra compiler inputs (for example sonic-placement evidence) are not all
+    // visited by resolve_scene. Enforce eligibility at their consumption too.
+    if ![
+        "selected-private-production",
+        "principal-approved",
+        "release-cleared",
+    ]
+    .contains(&asset.selection_state.as_str())
+    {
+        bail!("native consumed binding is not selected for production");
+    }
+    Ok(asset)
 }
 
 /// Build a current, derived assembly projection. Version history stays in Tig
@@ -486,7 +498,9 @@ fn read_source(source: &mut Source, request: &Request) -> Result<NativeState> {
     if references.is_empty() || references.len() > 4096 {
         bail!("native binding count exceeds budget");
     }
-    // Resolve every declared leaf and status before reading control/media bytes.
+    // Admit every declared leaf's type/identity, including unused alternatives.
+    // Native resolution checks production eligibility where each input is used;
+    // an unused candidate in the authoring catalog is not a selected input.
     let mut assets = BTreeMap::new();
     for (key, value) in references {
         let map = value
@@ -504,17 +518,7 @@ fn read_source(source: &mut Source, request: &Request) -> Result<NativeState> {
         if !request.primary_definitions.contains(&leaf.definition().id) {
             bail!("binding is outside admitted primary definitions");
         }
-        let selected = source.resolve_asset(id)?;
-        if ![
-            "selected-private-production",
-            "principal-approved",
-            "release-cleared",
-        ]
-        .contains(&selected.selection_state.as_str())
-        {
-            bail!("native binding is not selected for production");
-        }
-        assets.insert(key.clone(), selected);
+        assets.insert(key.clone(), source.resolve_asset(id)?);
     }
     let required = requirements(source, request)?;
     let mut total = 0;
