@@ -1,5 +1,9 @@
 # Register native source as Tig candidates
 
+For family-neutral current/prior package preservation, see the explicit
+[versioned mode](#versioned-package-records). Native scene conversion remains
+the default behavior below.
+
 Build with `cargo build --locked --features tig --bin reel-tig-register`, then:
 
 ```text
@@ -62,3 +66,43 @@ production freshness, creative approval, complete reference closure or custody.
 Across scenes, reconcile shared IDs into one canonical asset file and validate
 the complete target snapshot before Git proposal/adoption. This command does not
 perform a project-wide merge or infer historical production claims.
+
+## Versioned package records
+
+```text
+reel-tig-register --versioned PRIVATE_PROFILE NEW_CANDIDATE.tig
+```
+
+This mode converts a bounded `caminos.artifact-record.v1` source record without
+depending on its media family. Its private profile is:
+
+| Field | Meaning |
+| --- | --- |
+| `schema` | `reel.tig-versioned-registration.experimental-1` |
+| `source_record` | Exact SHA-256/size Object of the complete original control record, already retained in an enrolled provider |
+| `byte_source` | Explicit existing ordered providers, protection and limits |
+| `definition` | `definition` and `authored_schema` FileRefs, each with absolute path, SHA-256 and size |
+
+The definition must declare authored fields `artifact_id`, `kind`, `current_version`
+and `public_release`. The importer copies their original values, uses the original
+artifact ID as its logical ID, and selects the exact current package Object. Every
+source version becomes a `version/<original-version-id>` stream. A separate
+`source-record` evidence stream preserves the original control record, including
+rights, editions and unknown source fields; these expanding details are not
+duplicated into ordinary Git. Status is explicitly unclassified for production.
+
+Source, profile, definitions and output use the strict bounded JSON intake;
+each is at most 64 KiB and existing Tig node/depth/safe-integer limits apply.
+There must be 1–255 unique versions. Current version, immutable lock identities,
+manifest hashes, cache URIs and sizes must agree. Slot limits also apply. Refuse
+unsupported/oversized records rather than truncating history. Packages and their
+payloads remain opaque and are never opened by this operation.
+
+The output is one new absolute file with an existing trusted parent. All
+preparation/binding completes before a temporary file is created; publication
+uses no-overwrite semantics and handled failures remove the owned temporary.
+Stdout contains only counts/booleans; refusal diagnostics omit raw paths/hashes.
+This is candidate preservation, not complete authoring conversion, native package
+schema validation, production freshness, approval, payload availability, custody
+or eviction authority. Before adoption, bind the complete committed target view
+and verify required source/package availability through explicit providers.

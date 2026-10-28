@@ -107,7 +107,7 @@ struct Bindings {
     #[serde(deserialize_with = "unique_map")]
     assets: BTreeMap<String, AssetRef>,
 }
-fn read_local(file: &FileRef) -> Result<Vec<u8>> {
+pub(crate) fn read_local(file: &FileRef) -> Result<Vec<u8>> {
     if !file.path.is_absolute() || file.bytes > 65_536 {
         bail!("explicit bounded absolute definition file required");
     }
