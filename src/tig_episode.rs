@@ -36,6 +36,10 @@ mod jobs;
 pub use jobs::{
     CompositionJobPlan, CompositionOwnership, CompositionReadback, ProtectedComposition,
 };
+#[cfg(feature = "tig-publication")]
+mod controls;
+#[cfg(feature = "tig-publication")]
+pub use controls::ParentControls;
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {

@@ -36,6 +36,8 @@ mod child_protection;
 mod composition_protection;
 #[path = "tig_composition_runner.rs"]
 mod composition_runner;
+#[path = "tig_episode_parent_controls.rs"]
+mod parent_controls;
 fn key(value: &str) -> Key {
     Key::parse(value).unwrap()
 }
