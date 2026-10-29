@@ -222,6 +222,23 @@ fn order_comes_from_native_conform_and_outputs_are_not_opened_or_promoted() {
     assert_eq!(source.byte_requests(), 2);
     assert_eq!(source.active_readers(), 0);
 }
+
+#[cfg(feature = "tig-publication")]
+#[test]
+fn current_labels_without_native_scene_correspondence_cannot_admit_assembly() {
+    let f = Fixture::new();
+    let mut source = f.source();
+    assert!(
+        tig_episode::require_current_scenes(&mut source, &f.request(), &Default::default())
+            .is_err()
+    );
+    assert_eq!(
+        source.byte_requests(),
+        2,
+        "only bounded episode/conform metadata may be read"
+    );
+    assert_eq!(source.active_readers(), 0);
+}
 #[test]
 fn independent_output_and_source_edits_resolve_without_editing_the_assembly_and_old_commits_restore()
  {

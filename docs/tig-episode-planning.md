@@ -68,3 +68,27 @@ graph/recipe checks; unchanged scene-file pins alone cannot prove currency. Hist
 retained-output reuse, native presentation/template rechecks,
 decoded equality, rendering, delivery and custody remain distinct obligations.
 The subsequent executor must preserve the existing conform renderer's checks.
+
+## Current scene correspondence before execution capture
+
+With `tig-publication`, `check_current_scene` accepts an actual current native
+`JobPlan` and an independently replayed original producer claim. It binds the
+current selected output under its exact definition, native scene ID, segment kind
+and language; compares the current recipe with the original checked claim; and
+returns a non-deserializable `CurrentScene` capability only on correspondence.
+Current job checkpoint and source-node pins must belong to the caller's exact view.
+No primary or output body is opened by this check. Status labels grant nothing.
+
+`require_current_scenes` replans the assembly in that view and requires exactly
+one matching capability for every native scene. Missing/extra identities, changed
+source checkpoints, selected subjects or record pins refuse. Native production
+definition sets must remain disjoint from the admitted component-output types:
+component masters cannot become primary/control dependencies by relabeling them.
+The returned logical plan retains its false execution/production/byte/eviction
+flags. Presentation currency, byte checks and complete job admission remain open.
+
+Source edits may still merge with deferred renders according to project policy.
+These checks are an assembly/execution prerequisite, not a requirement to render
+every authoring commit. Metadata-only status changes can retain a matching native
+recipe; changing a consumed cel or cue requires new scene correspondence. Old
+explicit source snapshots can still replay their own original version.
