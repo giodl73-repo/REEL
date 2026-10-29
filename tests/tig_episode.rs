@@ -11,6 +11,9 @@ use std::{
 };
 use tig_core::Object;
 
+#[path = "support/tig_episode_context.rs"]
+mod composition_context;
+
 fn git_executable() -> PathBuf {
     std::env::split_paths(&std::env::var_os("PATH").unwrap())
         .map(|p| p.join(if cfg!(windows) { "git.exe" } else { "git" }))

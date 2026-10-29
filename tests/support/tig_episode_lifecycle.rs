@@ -1226,6 +1226,7 @@ fn exercise_scene_correspondence(p: &mut Project, scenes: &[Scene]) {
     let planned =
         reel::tig_episode::require_current_scenes(&mut source, &request, &proofs).unwrap();
     assert_eq!(planned.components.len(), 4);
+    exercise_episode_context(p, &request);
     assert_eq!(
         source.byte_requests(),
         2,
@@ -1271,6 +1272,59 @@ fn exercise_scene_correspondence(p: &mut Project, scenes: &[Scene]) {
     git(p.repo.path(), &["switch", "main"]);
     p.profile = original_profile;
     assert!(check(p, "output/scene-b").is_ok());
+}
+
+fn exercise_episode_context(p: &Project, request: &reel::tig_episode::Request) {
+    let root = p.data.path().join("episode-context-metadata");
+    let mut store = tig_store::metadata::MetadataStore::create(
+        &root,
+        tig_store::metadata::Limits {
+            nodes: 8192,
+            bytes: 8 * 1024 * 1024,
+            database_bytes: 16 * 1024 * 1024,
+            min_free_bytes: 65_536,
+        },
+    )
+    .unwrap();
+    let mut source = p.source();
+    let context = reel::tig_episode::freeze_composition_context(
+        &mut source,
+        request,
+        &mut store,
+        TreeLimits::default(),
+    )
+    .unwrap();
+    let producer = Object::from_bytes(p.programs.manifest_bytes());
+    let recipe =
+        reel::tig_episode::composition_recipe(&mut p.source(), request, &context, &producer)
+            .unwrap();
+    assert!(
+        context.requirements().primary().is_empty(),
+        "assembly controls cannot substitute for child primary inputs"
+    );
+    let profile = serde_json::from_value(json!({
+        "schema":reel::tig_inputs::ARCHIVE_PROFILE_SCHEMA,"archive":context.archive(),
+        "checkpoint":source.checkpoint(),"admitted":p.profile["admitted"],
+        "byte_source":p.profile["byte_source"],
+    }))
+    .unwrap();
+    let checkpoint = store.finish().unwrap();
+    drop(store);
+    drop(source);
+    let mut reader = MetadataReader::open(&root, &checkpoint).unwrap();
+    let (mut replayed_source, replayed) = reel::tig_episode::restore_composition_context(
+        profile,
+        request,
+        context.selection(),
+        &mut reader,
+        TreeLimits::default(),
+    )
+    .unwrap();
+    let replayed_recipe =
+        reel::tig_episode::composition_recipe(&mut replayed_source, request, &replayed, &producer)
+            .unwrap();
+    assert_eq!(recipe.fingerprint(), replayed_recipe.fingerprint());
+    assert_eq!(context.selection(), replayed.selection());
 }
 
 fn add_episode_assembly(p: &mut Project) -> reel::tig_episode::Request {

@@ -17,6 +17,8 @@ use tig_assets::{graph::Reference, resolve::Resolved};
 use tig_core::{Digest, Object, identity};
 
 pub const SCHEMA: &str = "reel.tig-episode-plan-request.experimental-1";
+mod context;
+pub use context::{composition_recipe, freeze_composition_context, restore_composition_context};
 #[cfg(feature = "tig-publication")]
 mod correspondence;
 #[cfg(feature = "tig-publication")]
