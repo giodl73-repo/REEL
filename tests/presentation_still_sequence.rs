@@ -477,6 +477,36 @@ fn cached_producer_without_original_files(root: &Path, expected: &serde_json::Va
             decode(&output.join("master.mkv"))
         );
     }
+    let mut retained = BTreeMap::new();
+    for name in [
+        "receipt.json",
+        "master.mkv",
+        "review.mp4",
+        "editable-layer.ass",
+    ] {
+        let mut value = reference(&output, name);
+        value.as_object_mut().unwrap().remove("cache_uri");
+        let mut logical: FileRef = serde_json::from_value(value).unwrap();
+        let actual = FileRef {
+            path: logical.sha256.clone().into(),
+            ..logical.clone()
+        };
+        let target = cache.join(&actual.path);
+        if !target.exists() {
+            fs::copy(output.join(name), &target).unwrap();
+            let mut options = fs::OpenOptions::new();
+            options.read(true);
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::OpenOptionsExt;
+                options.share_mode(1);
+            }
+            files._guards.push(options.open(target).unwrap());
+        }
+        logical.path = format!("retained/{name}").into();
+        files.names.insert(logical.path.clone(), actual);
+        retained.insert(name, logical);
+    }
     let tool = files.programs.remove(&MediaProgram::Ffprobe).unwrap();
     assert!(
         reel::presentation_still_sequence::check_with_control_files(
@@ -492,5 +522,46 @@ fn cached_producer_without_original_files(root: &Path, expected: &serde_json::Va
         )
         .is_err()
     );
+    fs::rename(&output, root.join("producer-output-offline")).unwrap();
+    let check = |files: &Files| {
+        reel::presentation_still_sequence::check_retained_with_files(
+            &manifest,
+            files,
+            files,
+            files,
+            reel::presentation_still_sequence::RetainedOutputs {
+                receipt: &retained["receipt.json"],
+                master: &retained["master.mkv"],
+                review: &retained["review.mp4"],
+                editable_layer: &retained["editable-layer.ass"],
+                fonts: &[],
+            },
+        )
+    };
+    check(&files).unwrap();
+    let mut wrong = retained["master.mkv"].clone();
+    wrong.bytes += 1;
+    let error = reel::presentation_still_sequence::check_retained_with_files(
+        &manifest,
+        &files,
+        &files,
+        &files,
+        reel::presentation_still_sequence::RetainedOutputs {
+            receipt: &retained["receipt.json"],
+            master: &wrong,
+            review: &retained["review.mp4"],
+            editable_layer: &retained["editable-layer.ass"],
+            fonts: &[],
+        },
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("output pins differ from producer receipt")
+    );
+    files.names.remove(&retained["master.mkv"].path);
+    assert!(check(&files).is_err());
+    assert!(!output.exists());
     assert!(!root.join("manifest.json").exists());
 }

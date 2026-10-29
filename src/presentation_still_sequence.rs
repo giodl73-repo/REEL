@@ -660,19 +660,151 @@ fn check_manifest(
     inputs: &dyn InputFiles,
     output_dir: &Path,
 ) -> Result<()> {
-    let (manifest, template, _, _, manifest_bytes, picture_frames) = load(raw, controls, inputs)?;
-    let receipt: Receipt = serde_json::from_slice(&fs::read(output_dir.join("receipt.json"))?)?;
-    let master = output_dir.join("master.mkv");
-    let review = output_dir.join("review.mp4");
-    let layer = fs::read(output_dir.join("editable-layer.ass"))?;
-    for (index, font) in manifest.fonts.iter().enumerate() {
-        let bytes = fs::read(output_dir.join(format!("fonts/font-{index}.ttf")))?;
-        if hash(&bytes) != font.sha256 || bytes.len() as u64 != font.bytes {
-            bail!("retained font differs from selected font");
-        }
+    let loaded = load(raw, controls, inputs)?;
+    let fonts = (0..loaded.0.fonts.len())
+        .map(|i| observe(&output_dir.join(format!("fonts/font-{i}.ttf"))))
+        .collect::<Result<Vec<_>>>()?;
+    check_outputs(
+        loaded,
+        inputs,
+        ObservedOutputs {
+            receipt: bounded_receipt(&output_dir.join("receipt.json"))?,
+            master: output_dir.join("master.mkv"),
+            review: output_dir.join("review.mp4"),
+            layer: observe(&output_dir.join("editable-layer.ass"))?,
+            fonts,
+        },
+    )
+}
+
+/// Exact retained output subjects, independent of their physical directory.
+/// Fonts are in the producer manifest's declared order. These pins and a
+/// successful check do not confer approval, custody or native job currency.
+pub struct RetainedOutputs<'a> {
+    pub receipt: &'a scene_delivery::FileRef,
+    pub master: &'a scene_delivery::FileRef,
+    pub review: &'a scene_delivery::FileRef,
+    pub editable_layer: &'a scene_delivery::FileRef,
+    pub fonts: &'a [scene_delivery::FileRef],
+}
+
+/// Recheck directly from guarded control, primary and retained-output readers.
+/// No original source/output directory, staging view or media copy is needed.
+pub fn check_retained_with_files(
+    manifest: &scene_delivery::FileRef,
+    controls: &dyn InputFiles,
+    inputs: &dyn InputFiles,
+    outputs: &dyn InputFiles,
+    selected: RetainedOutputs<'_>,
+) -> Result<()> {
+    scene_delivery::control_name(&manifest.path)?;
+    let raw = scene_delivery::read_control(controls, manifest)?;
+    scene_delivery::control_name(&selected.receipt.path)?;
+    let receipt = scene_delivery::read_control(outputs, selected.receipt)?;
+    let declared: Receipt = serde_json::from_slice(&receipt)?;
+    if selected.master.sha256 != declared.master_sha256
+        || selected.master.bytes != declared.master_bytes
+        || selected.review.sha256 != declared.review_sha256
+        || selected.review.bytes != declared.review_bytes
+        || selected.editable_layer.sha256 != declared.editable_layer_sha256
+        || selected.fonts.len() != declared.font_sha256.len()
+        || selected
+            .fonts
+            .iter()
+            .zip(&declared.font_sha256)
+            .any(|(f, sha)| &f.sha256 != sha)
+    {
+        bail!("retained output pins differ from producer receipt");
     }
-    let (frames, samples) = check_media(&output_dir.join("master.mkv"), &template, inputs)?;
+    let loaded = load(&raw, controls, inputs)?;
+    if selected.fonts.len() != loaded.0.fonts.len()
+        || selected
+            .fonts
+            .iter()
+            .zip(&loaded.0.fonts)
+            .any(|(f, source)| f.sha256 != source.sha256 || f.bytes != source.bytes)
+        || selected.editable_layer.sha256 != loaded.0.editable_layer.sha256
+        || selected.editable_layer.bytes != loaded.0.editable_layer.bytes
+    {
+        bail!("retained layer/font subjects differ from producer");
+    }
+    let resolve = |item: &scene_delivery::FileRef| -> Result<PathBuf> {
+        scene_delivery::control_name(&item.path)?;
+        outputs.verified_path(item)
+    };
+    let master = resolve(selected.master)?;
+    let review = resolve(selected.review)?;
+    let layer = observe(&resolve(selected.editable_layer)?)?;
+    let fonts = selected
+        .fonts
+        .iter()
+        .map(|f| observe(&resolve(f)?))
+        .collect::<Result<Vec<_>>>()?;
+    check_outputs(
+        loaded,
+        inputs,
+        ObservedOutputs {
+            receipt,
+            master,
+            review,
+            layer,
+            fonts,
+        },
+    )
+}
+
+struct ObservedOutputs {
+    receipt: Vec<u8>,
+    master: PathBuf,
+    review: PathBuf,
+    layer: (String, u64),
+    fonts: Vec<(String, u64)>,
+}
+
+fn observe(path: &Path) -> Result<(String, u64)> {
+    Ok((episode_conform::file_sha(path)?, fs::metadata(path)?.len()))
+}
+
+fn bounded_receipt(path: &Path) -> Result<Vec<u8>> {
+    use std::io::Read;
+    let mut raw = Vec::new();
+    fs::File::open(path)?
+        .take(4 * 1024 * 1024 + 1)
+        .read_to_end(&mut raw)?;
+    if raw.len() > 4 * 1024 * 1024 {
+        bail!("presentation receipt exceeds metadata budget");
+    }
+    Ok(raw)
+}
+
+fn check_outputs(
+    loaded: LoadedPresentation,
+    inputs: &dyn InputFiles,
+    outputs: ObservedOutputs,
+) -> Result<()> {
+    let (manifest, template, _, _, manifest_bytes, picture_frames) = loaded;
+    let ObservedOutputs {
+        receipt,
+        master,
+        review,
+        layer,
+        fonts,
+    } = outputs;
+    let receipt: Receipt = serde_json::from_slice(&receipt)?;
+    if fonts.len() != manifest.fonts.len()
+        || fonts
+            .iter()
+            .zip(&manifest.fonts)
+            .any(|((sha, bytes), f)| sha != &f.sha256 || *bytes != f.bytes)
+    {
+        bail!("retained font differs from selected font");
+    }
+    let (frames, samples) = check_media(&master, &template, inputs)?;
     if receipt.schema != "reel.presentation-still-sequence-receipt.v1"
+        || receipt.episode_id != manifest.episode_id
+        || receipt.language != manifest.language
+        || receipt.role != manifest.role
+        || receipt.template_id != template.template_id
         || receipt.manifest_sha256 != hash(&manifest_bytes)
         || receipt.template_sha256 != manifest.template.sha256
         || receipt.picture_sha256
@@ -681,7 +813,9 @@ fn check_manifest(
                 .iter()
                 .map(|p| p.sha256.clone())
                 .collect::<Vec<_>>()
-        || receipt.editable_layer_sha256 != hash(&layer)
+        || receipt.editable_layer_sha256 != layer.0
+        || manifest.editable_layer.sha256 != layer.0
+        || manifest.editable_layer.bytes != layer.1
         || receipt.audio_sha256 != manifest.audio.map(|a| a.sha256)
         || receipt.audio_treatment != manifest.audio_treatment
         || receipt.font_sha256
@@ -706,7 +840,7 @@ fn check_manifest(
     run({
         let mut c = command(inputs, MediaProgram::Ffmpeg)?;
         c.args(["-v", "error", "-i"])
-            .arg(output_dir.join("review.mp4"))
+            .arg(&review)
             .args(["-f", "null", "-"]);
         c
     })?;

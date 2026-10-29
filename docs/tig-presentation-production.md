@@ -32,10 +32,20 @@ audio treatment and original receipt checks are preserved. The source-clock
 integration case compares actual decoded picture and PCM bytes between the
 original local path and cache-backed production after original inputs disappear.
 
+`check_retained_with_files` checks exact retained master, review, layer, font and
+receipt subjects directly through a separate output provider. Font coverage and
+output pins must match the original receipt and manifest. A mismatched movie pin
+refuses before opening that movie. Original source and output directories may
+both be unavailable; no reconstructed directory view or media copy is required.
+Receipts additionally retain their exact episode, language, role and template
+identity. Layer and font checks stream instead of reading whole files into RAM.
+
 These low-level APIs do not reserve capacity, enroll Tig jobs, publish frozen
 resources, establish complete producer correspondence, grant approval or allow
-eviction. The checker currently reads an owned candidate output directory;
-direct independently retained output-provider checking remains separate work.
+eviction. Receipt correspondence alone does not independently reconstruct every
+picture/audio sample from the primary inputs. Keep that distinction when
+admitting a retained result under a newly compiled recipe: never rewrite original
+receipt or plan hashes to substitute a new production history.
 
 ## Producer checklist findings
 
@@ -55,8 +65,8 @@ rights/provenance checklists, not independent or human approval.
   selection and the runtime environment; explicit program paths alone cannot
   establish complete runtime closure.
 
-Native presentation recipe/currency admission, retained output-provider checks,
-bounded parent execution and complete resource-owner handoff remain open.
+Native presentation recipe/currency admission, bounded parent execution and
+complete resource-owner handoff remain open.
 
 ## Local qualification
 
@@ -66,3 +76,9 @@ The library passes 213 tests with nine explicitly ignored (2.61 seconds),
 including the timing tests moved with their kernel. Locked all-target,
 all-feature Clippy passes with warnings denied. Hosted qualification is pending;
 these checks do not qualify actual project adoption or installed runtime pins.
+
+The retained-output extension also passes with the output directory renamed
+offline, missing retained subjects and contradictory movie pins. Its final run
+passes all five integration cases (15.93 seconds), 213 library tests with nine
+explicitly ignored (13.50 seconds), and locked all-target/all-feature Clippy with
+warnings denied. Hosted qualification remains pending.
