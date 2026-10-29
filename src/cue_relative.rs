@@ -230,6 +230,30 @@ pub fn compile_file(input: impl AsRef<Path>, output: impl AsRef<Path>) -> Result
 }
 
 pub fn compile(contract: &Contract, base: &Path) -> Result<CompiledConform> {
+    compile_loaded(contract, || {
+        production::load(base.join(&contract.production_manifest))
+    })
+}
+
+/// Compile exact caller-supplied production metadata without a source checkout.
+/// Callers separately verify its expected digest and retain byte authority.
+pub fn compile_with_manifest_bytes(contract: &Contract, bytes: &[u8]) -> Result<CompiledConform> {
+    if bytes.len() > 4 * 1024 * 1024 {
+        bail!("production metadata exceeds budget");
+    }
+    compile_loaded(contract, || {
+        Ok(production::LoadedProductionManifest {
+            path: PathBuf::new(),
+            manifest: serde_yaml::from_slice(bytes)?,
+            bytes: bytes.to_vec(),
+        })
+    })
+}
+
+fn compile_loaded(
+    contract: &Contract,
+    load: impl FnOnce() -> Result<production::LoadedProductionManifest>,
+) -> Result<CompiledConform> {
     if contract.schema != CONTRACT_SCHEMA {
         bail!(
             "unsupported schema {}; expected {CONTRACT_SCHEMA}",
@@ -247,8 +271,7 @@ pub fn compile(contract: &Contract, base: &Path) -> Result<CompiledConform> {
         bail!("cues must not be empty");
     }
 
-    let manifest_path = base.join(&contract.production_manifest);
-    let loaded = production::load(&manifest_path)?;
+    let loaded = load()?;
     let manifest = &loaded.manifest;
     let manifest_cues: BTreeSet<_> = manifest
         .narration_cues

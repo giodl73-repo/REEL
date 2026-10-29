@@ -465,7 +465,102 @@ pub fn plan_with_inputs(
     asset_root: &(impl InputFiles + ?Sized),
 ) -> Result<(Job, Plan)> {
     let job_bytes = fs::read(job_path)?;
-    let mut job: Job = serde_yaml::from_slice(&job_bytes)?;
+    plan_from_bytes(&job_bytes, asset_root, |job| {
+        let base = job_path.parent().unwrap_or(Path::new("."));
+        let contract_path = checked_file(base, &job.contract)?;
+        let contract = cue_relative::load(&contract_path)?;
+        let contract_base = contract_path.parent().unwrap();
+        checked_file(
+            contract_base,
+            &FileRef {
+                path: contract.production_manifest.clone(),
+                sha256: job.production_manifest_sha256.clone(),
+                bytes: fs::metadata(contract_base.join(&contract.production_manifest))?.len(),
+            },
+        )?;
+        cue_relative::compile(&contract, contract_base)
+    })
+}
+
+pub(crate) fn control_name(path: &Path) -> Result<PathBuf> {
+    let name = path
+        .to_str()
+        .context("non-Unicode control name")?
+        .replace('\\', "/");
+    if name.is_empty()
+        || name.len() > 1024
+        || name.chars().any(|c| c.is_control() || c == ':')
+        || name
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        bail!("control name must be a bounded relative virtual path");
+    }
+    Ok(PathBuf::from(name))
+}
+pub(crate) fn scoped_control(parent: &FileRef, child: &FileRef) -> Result<FileRef> {
+    let parent = control_name(&parent.path)?;
+    let child_path = control_name(&child.path)?;
+    let mut reference = child.clone();
+    reference.path = parent.parent().unwrap_or(Path::new("")).join(child_path);
+    control_name(&reference.path)?;
+    Ok(reference)
+}
+pub(crate) fn read_control(
+    files: &(impl InputFiles + ?Sized),
+    reference: &FileRef,
+) -> Result<Vec<u8>> {
+    const MAX: u64 = 4 * 1024 * 1024;
+    if reference.bytes > MAX {
+        bail!("control metadata exceeds budget");
+    }
+    let path = files.verified_path(reference)?;
+    let mut raw = Vec::new();
+    fs::File::open(path)?.take(MAX + 1).read_to_end(&mut raw)?;
+    if raw.len() as u64 != reference.bytes
+        || crate::production::sha256_bytes(&raw) != reference.sha256
+    {
+        bail!("control metadata differs from its declared pin");
+    }
+    Ok(raw)
+}
+
+/// Plan from exact guarded job/contract/production metadata and primary inputs.
+/// Virtual names resolve relative to the original control document, never the
+/// physical CAS file. Explicit failures have no local-root or PATH fallback.
+pub fn plan_with_control_files(
+    job: &FileRef,
+    production: &FileRef,
+    inputs: &(impl InputFiles + ?Sized),
+    controls: &(impl InputFiles + ?Sized),
+) -> Result<(Job, Plan)> {
+    let raw = read_control(controls, job)?;
+    plan_from_bytes(&raw, inputs, |declared| {
+        let reference = scoped_control(job, &declared.contract)?;
+        let contract: cue_relative::Contract =
+            serde_yaml::from_slice(&read_control(controls, &reference)?)?;
+        let expected = scoped_control(
+            &reference,
+            &FileRef {
+                path: contract.production_manifest.clone(),
+                sha256: declared.production_manifest_sha256.clone(),
+                bytes: production.bytes,
+            },
+        )?;
+        if control_name(&production.path)? != expected.path || production.sha256 != expected.sha256
+        {
+            bail!("production metadata differs from declared scene scope");
+        }
+        cue_relative::compile_with_manifest_bytes(&contract, &read_control(controls, production)?)
+    })
+}
+
+fn plan_from_bytes(
+    job_bytes: &[u8],
+    asset_root: &(impl InputFiles + ?Sized),
+    compile: impl FnOnce(&Job) -> Result<cue_relative::CompiledConform>,
+) -> Result<(Job, Plan)> {
+    let mut job: Job = serde_yaml::from_slice(job_bytes)?;
     if job.schema != "reel.scene-delivery.v0.1" || !nonempty(&job.id) {
         bail!("invalid scene-delivery schema/id");
     }
@@ -492,19 +587,7 @@ pub fn plan_with_inputs(
             "reserved caption band or explicit picture region requires contained picture motion; legacy or post-compose cameras are unsupported"
         );
     }
-    let base = job_path.parent().unwrap_or(Path::new("."));
-    let contract_path = checked_file(base, &job.contract)?;
-    let contract = cue_relative::load(&contract_path)?;
-    let contract_base = contract_path.parent().unwrap();
-    checked_file(
-        contract_base,
-        &FileRef {
-            path: contract.production_manifest.clone(),
-            sha256: job.production_manifest_sha256.clone(),
-            bytes: fs::metadata(contract_base.join(&contract.production_manifest))?.len(),
-        },
-    )?;
-    let compiled = cue_relative::compile(&contract, contract_path.parent().unwrap())?;
+    let compiled = compile(&job)?;
     if compiled.production_manifest_sha256 != job.production_manifest_sha256 {
         bail!("production manifest differs from the delivery selection");
     }
@@ -995,7 +1078,7 @@ pub fn plan_with_inputs(
     let plan = Plan {
         schema: "reel.scene-delivery-plan.v0.1".into(),
         id: job.id.clone(),
-        job_sha256: <sha2::Sha256 as sha2::Digest>::digest(&job_bytes)
+        job_sha256: <sha2::Sha256 as sha2::Digest>::digest(job_bytes)
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect(),
@@ -2396,6 +2479,24 @@ pub fn check_with_output_files(
     let (job, plan) = plan_with_inputs(job_path, inputs)?;
     let path = outputs.verified_path(receipt)?;
     let receipt: Receipt = serde_json::from_slice(&fs::read(path)?)?;
+    check_outputs_impl(job, plan, inputs, outputs, receipt, true)
+}
+
+/// Full native checks with explicit primary, output and source-control providers.
+/// No local source checkout is consulted; caller keeps all guards alive.
+pub fn check_with_all_files(
+    job: &FileRef,
+    production: &FileRef,
+    inputs: &(impl InputFiles + ?Sized),
+    outputs: &(impl InputFiles + ?Sized),
+    receipt: &FileRef,
+    controls: &(impl InputFiles + ?Sized),
+) -> Result<Receipt> {
+    if receipt.bytes > 4 * 1024 * 1024 {
+        bail!("delivery receipt exceeds metadata budget");
+    }
+    let (job, plan) = plan_with_control_files(job, production, inputs, controls)?;
+    let receipt: Receipt = serde_json::from_slice(&read_control(outputs, receipt)?)?;
     check_outputs_impl(job, plan, inputs, outputs, receipt, true)
 }
 

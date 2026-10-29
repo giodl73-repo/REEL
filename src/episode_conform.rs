@@ -908,6 +908,40 @@ fn verify_semantic_scene_scope(
     Ok(())
 }
 
+fn verify_semantic_scene_controls(
+    segment: &Segment,
+    language: &str,
+    receipt: &serde_json::Value,
+    controls: &dyn scene_delivery::InputFiles,
+) -> Result<()> {
+    let reference = segment
+        .semantic_delivery
+        .as_ref()
+        .context("direct scene delivery lacks semantic selection")?;
+    let semantic: semantic_delivery::SemanticDelivery =
+        serde_yaml::from_slice(&scene_delivery::read_control(controls, reference)?)?;
+    let job = segment
+        .delivery_job
+        .as_ref()
+        .context("semantic scene lacks delivery job")?;
+    if semantic.scene_id.as_deref() != Some(segment.id.as_str())
+        || semantic.language.as_deref() != Some(language)
+        || semantic.scene_delivery_job.sha256 != job.sha256
+        || semantic.scene_delivery_job.bytes != job.bytes
+        || scene_delivery::scoped_control(reference, &semantic.scene_delivery_job)?.path
+            != scene_delivery::control_name(&job.path)?
+    {
+        bail!("semantic control selection differs from scene/language/delivery scope");
+    }
+    let planned = semantic_delivery::plan_with_control_files(reference, controls)?;
+    if planned.scene_delivery_job_sha256 != job.sha256
+        || receipt["plan"]["job_sha256"] != job.sha256
+    {
+        bail!("semantic control selection differs from rendered job");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod semantic_receipt_tests {
     use super::*;
@@ -1434,6 +1468,42 @@ pub fn build_with_parent_controls(
             programs: Some(files.programs),
             controls: Some(controls),
             manifest: Some(manifest),
+            ..Provided::default()
+        },
+    )
+}
+
+/// Exact production metadata pin for one native scene; the provider also owns
+/// its original job, cue contract and semantic selection. Not media outputs.
+pub struct SceneControls<'a> {
+    pub files: &'a dyn scene_delivery::InputFiles,
+    pub production: &'a scene_delivery::FileRef,
+}
+/// Full direct-native control path: parent and per-scene metadata plus explicit
+/// primary/output/runtime providers. Imported/presentation routes refuse until
+/// separately supported; no fallback to input_root source files is permitted.
+pub fn build_with_all_control_files(
+    manifest: &scene_delivery::FileRef,
+    input_root: &Path,
+    asset_root: &Path,
+    output: &Path,
+    files: Files<'_>,
+    controls: &dyn scene_delivery::InputFiles,
+    scenes: &BTreeMap<String, SceneControls<'_>>,
+) -> Result<Receipt> {
+    build_impl(
+        &manifest.path,
+        input_root,
+        asset_root,
+        output,
+        Provided {
+            scene_inputs: Some(files.scene_inputs),
+            scene_outputs: Some(files.scene_outputs),
+            presentations: Some(files.presentations),
+            programs: Some(files.programs),
+            controls: Some(controls),
+            manifest: Some(manifest),
+            scene_controls: Some(scenes),
         },
     )
 }
@@ -1463,6 +1533,7 @@ struct Provided<'a> {
     programs: Option<&'a dyn scene_delivery::InputFiles>,
     controls: Option<&'a dyn scene_delivery::InputFiles>,
     manifest: Option<&'a scene_delivery::FileRef>,
+    scene_controls: Option<&'a BTreeMap<String, SceneControls<'a>>>,
 }
 
 fn build_impl(
@@ -1479,6 +1550,7 @@ fn build_impl(
         programs,
         controls,
         manifest: pinned_manifest,
+        scene_controls,
     } = provided;
     let explicit_programs = programs.is_some();
     let local_programs = PathBuf::from(".");
@@ -1499,6 +1571,29 @@ fn build_impl(
         fs::read(manifest_path)?
     };
     let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
+    if let Some(scenes) = scene_controls {
+        let ids = manifest
+            .segments
+            .iter()
+            .map(|s| s.id.as_str())
+            .collect::<BTreeSet<_>>();
+        if ids.len() != manifest.segments.len()
+            || scenes.len() != ids.len()
+            || !scenes.keys().all(|id| ids.contains(id.as_str()))
+            || manifest.segments.iter().any(|s| {
+                s.kind != SegmentKind::Scene
+                    || s.semantic_delivery.is_none()
+                    || s.delivery_job.is_none()
+                    || s.delivery_receipt.is_none()
+                    || s.imported_source_root.is_some()
+                    || s.imported_source_manifest.is_some()
+                    || s.adoption_manifest.is_some()
+                    || s.source_text_evidence.is_some()
+            })
+        {
+            bail!("explicit scene controls require exact direct-native coverage");
+        }
+    }
     if let Some(files) = presentations {
         let selected = manifest
             .segments
@@ -1769,10 +1864,23 @@ fn build_impl(
             &segment.delivery_receipt,
         ) {
             (SegmentKind::Scene, Some(job_ref), Some(delivery_ref)) => {
-                let source_root =
-                    scoped_import_root(input_root, segment.imported_source_root.as_deref())?;
-                let job_path = scene_delivery::checked_file(&source_root, job_ref)?;
-                if segment.semantic_delivery.is_some() {
+                let provided_controls = scene_controls.and_then(|scenes| scenes.get(&segment.id));
+                let (source_root, job_path) = if provided_controls.is_some() {
+                    (None, None)
+                } else {
+                    let source_root =
+                        scoped_import_root(input_root, segment.imported_source_root.as_deref())?;
+                    let job_path = scene_delivery::checked_file(&source_root, job_ref)?;
+                    (Some(source_root), Some(job_path))
+                };
+                if let Some(controls) = provided_controls {
+                    verify_semantic_scene_controls(
+                        segment,
+                        &manifest.language,
+                        &receipt,
+                        controls.files,
+                    )?;
+                } else if segment.semantic_delivery.is_some() {
                     verify_semantic_scene_scope(segment, &manifest.language, &receipt, input_root)?;
                 } else {
                     verify_native_delivery_proof(&receipt, job_ref, delivery_ref)?;
@@ -1783,8 +1891,30 @@ fn build_impl(
                         .context("missing provided scene inputs")?;
                     let mut reference = delivery_ref.clone();
                     reference.path = "receipt.json".into();
-                    scene_delivery::check_with_output_files(&job_path, *inputs, files, &reference)?
+                    if let Some(controls) = provided_controls {
+                        scene_delivery::check_with_all_files(
+                            job_ref,
+                            controls.production,
+                            *inputs,
+                            files,
+                            &reference,
+                            controls.files,
+                        )?
+                    } else {
+                        scene_delivery::check_with_output_files(
+                            job_path.as_ref().context("local job path missing")?,
+                            *inputs,
+                            files,
+                            &reference,
+                        )?
+                    }
                 } else {
+                    let job_path = job_path
+                        .as_ref()
+                        .context("scene controls require explicit output files")?;
+                    let source_root = source_root
+                        .as_deref()
+                        .context("local source root missing")?;
                     let delivery_path = scene_delivery::checked_file(asset_root, delivery_ref)?;
                     if delivery_path
                         .file_name()
@@ -1802,10 +1932,10 @@ fn build_impl(
                         let inputs = inputs
                             .get(&segment.id)
                             .context("missing provided scene inputs")?;
-                        scene_delivery::check_with_inputs(&job_path, *inputs, delivery_root)?
+                        scene_delivery::check_with_inputs(job_path, *inputs, delivery_root)?
                     } else if let Some(imported) = &segment.imported_source_manifest {
                         imported_scene_proof::recheck(
-                            &source_root,
+                            source_root,
                             imported,
                             asset_root,
                             delivery_root,
@@ -1815,13 +1945,9 @@ fn build_impl(
                         // The exact native proof above binds a successful full check.
                         // Rehash all current source/output bytes and compare the plan;
                         // final conform still decodes and compares every ordered frame.
-                        scene_delivery::recheck_native_receipt(
-                            &job_path,
-                            asset_root,
-                            delivery_root,
-                        )?
+                        scene_delivery::recheck_native_receipt(job_path, asset_root, delivery_root)?
                     } else {
-                        scene_delivery::check(&job_path, asset_root, delivery_root)?
+                        scene_delivery::check(job_path, asset_root, delivery_root)?
                     }
                 };
                 let checked_master = checked
