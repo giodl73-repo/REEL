@@ -30,6 +30,10 @@ use tig_store::{
 };
 
 const UNITS: [&str; 4] = ["opening", "scene-a", "scene-b", "credits"];
+#[path = "tig_episode_protection.rs"]
+mod child_protection;
+#[path = "tig_composition_runner.rs"]
+mod composition_runner;
 fn key(value: &str) -> Key {
     Key::parse(value).unwrap()
 }
@@ -1035,6 +1039,16 @@ fn cached_scene_bundle_rechecks_without_render_directory_and_rejects_bad_bytes()
         !hot_picture.exists(),
         "assembly must not hydrate history outputs into hot"
     );
+    let request = add_episode_assembly(&mut p, "episode-cached-episode.json");
+    let (context, recipe, metadata, checkpoint) = exercise_episode_context(&p, &request);
+    composition_runner::exercise(
+        &mut p,
+        &request,
+        &context,
+        &recipe,
+        (&metadata, &checkpoint),
+    );
+    child_protection::exercise(&p, &request, &scenes, &providers);
 }
 
 fn consume_episode_without_path(case_path: &Path) {
@@ -1211,7 +1225,7 @@ fn exercise_scene_correspondence(p: &mut Project, scenes: &[Scene]) {
     assert_eq!(checked.recipe(), scene.recipe.fingerprint());
     assert!(check(p, "output/scene-a").is_err());
     git(p.repo.path(), &["switch", "-c", "correspondence-cases"]);
-    let request = add_episode_assembly(p);
+    let request = add_episode_assembly(p, "episode-v1.json");
     let mut proofs = scenes
         .iter()
         .enumerate()
@@ -1274,7 +1288,15 @@ fn exercise_scene_correspondence(p: &mut Project, scenes: &[Scene]) {
     assert!(check(p, "output/scene-b").is_ok());
 }
 
-fn exercise_episode_context(p: &Project, request: &reel::tig_episode::Request) {
+fn exercise_episode_context(
+    p: &Project,
+    request: &reel::tig_episode::Request,
+) -> (
+    tig_git::source::native::context::ProductionContext,
+    Plan,
+    PathBuf,
+    tig_store::metadata::Checkpoint,
+) {
     let root = p.data.path().join("episode-context-metadata");
     let mut store = tig_store::metadata::MetadataStore::create(
         &root,
@@ -1325,9 +1347,10 @@ fn exercise_episode_context(p: &Project, request: &reel::tig_episode::Request) {
             .unwrap();
     assert_eq!(recipe.fingerprint(), replayed_recipe.fingerprint());
     assert_eq!(context.selection(), replayed.selection());
+    (replayed, replayed_recipe, root, checkpoint)
 }
 
-fn add_episode_assembly(p: &mut Project) -> reel::tig_episode::Request {
+fn add_episode_assembly(p: &mut Project, conform_name: &str) -> reel::tig_episode::Request {
     let schema =
         Object::from_bytes(&fs::read(p.repo.path().join("definitions/authored.json")).unwrap());
     let mut definitions = BTreeMap::new();
@@ -1353,10 +1376,7 @@ fn add_episode_assembly(p: &mut Project) -> reel::tig_episode::Request {
         "hot",
         &fs::read(p.data.path().join("controls/episode.json")).unwrap(),
     );
-    let conform = p.publish(
-        "hot",
-        &fs::read(p.data.path().join("episode-v1.json")).unwrap(),
-    );
+    let conform = p.publish("hot", &fs::read(p.data.path().join(conform_name)).unwrap());
     let record = |name: &str, id: &str, authored: Value, selected: Value, streams: Value| json!({"schema":"tig.instance.design-1","id":id,"definition":{"id":format!("types/{name}"),"sha256":definitions[name].sha256,"bytes":definitions[name].bytes},"authored":authored,"selected":selected,"streams":streams,"status":{},"metadata":{}});
     write(
         p.repo.path(),

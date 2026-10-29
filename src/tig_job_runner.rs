@@ -46,6 +46,7 @@ struct Session<'a> {
     journal: &'a mut SourceJournal,
     journal_identity: Digest,
     completed: bool,
+    dependencies: bool,
 }
 impl Session<'_> {
     fn check(&mut self) -> Result<()> {
@@ -85,6 +86,13 @@ impl ResourceAuthority for Authority<'_, '_> {
             bytes,
         };
         let kinds: &[Role] = match role {
+            ResourceRole::Input if session.dependencies => &[
+                Role::Primary,
+                Role::Control,
+                Role::Interpretation,
+                Role::Composition,
+                Role::Evidence,
+            ],
             ResourceRole::Input => &[Role::Primary, Role::Control, Role::Interpretation],
             ResourceRole::Tool | ResourceRole::InstalledTool => &[Role::Runtime],
             ResourceRole::Checkpoint => &[Role::Interpretation],
@@ -211,7 +219,33 @@ pub fn run(
     journal: &mut SourceJournal,
     profile: &Profile<'_>,
 ) -> Result<serde_json::Value> {
-    if !resources.of(Role::ClaimedOutput).is_empty() || !resources.of(Role::Evidence).is_empty() {
+    run_inner(root, manifest, resources, journal, profile, false)
+}
+/// Explicit generic consumption of already admitted Composition/Evidence bytes.
+/// Roles remain distinct; this is not native episode freshness, primary closure,
+/// producer correspondence or creative approval. Claimed-output contexts refuse.
+pub fn run_with_dependencies(
+    root: &Path,
+    manifest: &Path,
+    resources: &JobContext,
+    journal: &mut SourceJournal,
+    profile: &Profile<'_>,
+) -> Result<serde_json::Value> {
+    run_inner(root, manifest, resources, journal, profile, true)
+}
+fn run_inner(
+    root: &Path,
+    manifest: &Path,
+    resources: &JobContext,
+    journal: &mut SourceJournal,
+    profile: &Profile<'_>,
+    dependencies: bool,
+) -> Result<serde_json::Value> {
+    if !resources.of(Role::ClaimedOutput).is_empty()
+        || (!dependencies
+            && (!resources.of(Role::Evidence).is_empty()
+                || !resources.of(Role::Composition).is_empty()))
+    {
         bail!("runner requires a planned input context");
     }
     let _fence = fence(profile.coordination, journal, &profile.identity)?;
@@ -222,6 +256,7 @@ pub fn run(
         journal,
         journal_identity,
         completed: false,
+        dependencies,
     });
     cell.borrow_mut().check()?;
     let authority = Authority(&cell);

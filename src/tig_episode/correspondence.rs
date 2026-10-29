@@ -14,9 +14,20 @@ pub struct CurrentScene {
     selected: Object,
     claim: Object,
     recipe: Digest,
+    binding: Digest,
+    admission: Digest,
     production_definitions: BTreeSet<String>,
 }
 impl CurrentScene {
+    pub(super) fn matches_job(&self, plan: &JobPlan<'_>) -> bool {
+        let recipe = plan.recipe();
+        self.checkpoint == *recipe.checkpoint()
+            && self.recipe == *recipe.fingerprint()
+            && self.binding == *recipe.binding()
+            && self.admission == *recipe.admission()
+            && plan.native_request().scene_id == self.scene.id
+            && recipe.nodes().contains_key(&self.scene)
+    }
     pub fn selected(&self) -> &Object {
         &self.selected
     }
@@ -76,6 +87,8 @@ pub fn check_current_scene(
         selected: subject.subject().object().clone(),
         claim: original.checked().claim().object().clone(),
         recipe: current.recipe().fingerprint().clone(),
+        binding: current.recipe().binding().clone(),
+        admission: current.recipe().admission().clone(),
         production_definitions: request
             .primary_definitions
             .iter()
