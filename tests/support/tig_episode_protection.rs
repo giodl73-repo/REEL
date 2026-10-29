@@ -199,13 +199,15 @@ pub(super) fn exercise(
             2,
         );
     assert!(locked.is_err(), "same source fence must remain held");
-    let result = protected
-        .with_current(&snapshot, &mut journal, |_| {
-            Ok(p.assemble_using(scenes, "protected-cached-episode", Some(providers)))
-        })
-        .unwrap();
-    assert!(result.0.bytes > 0);
-    assert!(result.1.is_file());
+    composition_protection::exercise(
+        p,
+        request,
+        &proofs,
+        &protected,
+        &mut journal,
+        scenes,
+        providers,
+    );
     drop(peer);
     drop(protected);
 

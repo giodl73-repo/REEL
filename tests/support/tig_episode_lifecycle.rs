@@ -32,6 +32,8 @@ use tig_store::{
 const UNITS: [&str; 4] = ["opening", "scene-a", "scene-b", "credits"];
 #[path = "tig_episode_protection.rs"]
 mod child_protection;
+#[path = "tig_episode_composition_protection.rs"]
+mod composition_protection;
 #[path = "tig_composition_runner.rs"]
 mod composition_runner;
 fn key(value: &str) -> Key {
@@ -547,9 +549,13 @@ impl Project {
             let job: Job = serde_json::from_slice(&fs::read(&scene.job).unwrap()).unwrap();
             owners.push(self.source().prepare(&job).unwrap());
         }
+        let runtime_owners = owners
+            .iter()
+            .map(|owner| self.programs.with_inputs(owner))
+            .collect::<Vec<_>>();
         let provided: BTreeMap<String, &dyn reel::scene_delivery::InputFiles> = scenes
             .iter()
-            .zip(&owners)
+            .zip(&runtime_owners)
             .map(|(s, i)| (s.unit.clone(), i as &dyn reel::scene_delivery::InputFiles))
             .collect();
         let segments:Vec<_>=scenes.iter().map(|s| {
@@ -595,14 +601,19 @@ impl Project {
                 .is_err()
             );
             assert!(!output.exists());
-            episode_conform::build_with_segment_files(
+            let local = PathBuf::from(".");
+            let programs = self.programs.with_inputs(&local);
+            episode_conform::build_with_files(
                 &root.join(name),
                 root,
                 root,
                 &output,
-                &provided,
-                outputs,
-                &BTreeMap::new(),
+                episode_conform::Files {
+                    scene_inputs: &provided,
+                    scene_outputs: outputs,
+                    presentations: &BTreeMap::new(),
+                    programs: &programs,
+                },
             )
             .unwrap()
         } else {

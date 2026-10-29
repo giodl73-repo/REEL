@@ -309,6 +309,55 @@ fn adopt(
     check(journal, &stamp)?;
     Ok(stamp)
 }
+/// Internal source ownership shared by native scene and composition adapters.
+/// Drop releases only the per-source fence, never the durable source obligation.
+pub(crate) struct ScopedSource {
+    stamp: Stamp,
+    _fence: admission::MetadataLock,
+}
+impl ScopedSource {
+    pub(crate) fn protect(
+        journal: &mut SourceJournal,
+        coordination: &Coordination,
+        identity: Identity,
+        revision: u64,
+        operation: &Key,
+        selection: &Selection,
+    ) -> Result<Self> {
+        let guard = fence(coordination, journal, &identity)?;
+        let stamp = adopt(journal, &identity, revision, operation, selection)?;
+        Ok(Self {
+            stamp,
+            _fence: guard,
+        })
+    }
+    pub(crate) fn resume(
+        journal: &mut SourceJournal,
+        coordination: &Coordination,
+        identity: Identity,
+        revision: u64,
+        selection: &Selection,
+    ) -> Result<Self> {
+        let guard = fence(coordination, journal, &identity)?;
+        let stamp = Stamp {
+            journal: journal.identity().clone(),
+            identity,
+            revision,
+            selection: selection.clone(),
+        };
+        check(journal, &stamp)?;
+        Ok(Self {
+            stamp,
+            _fence: guard,
+        })
+    }
+    pub(crate) fn check(&self, journal: &mut SourceJournal) -> Result<()> {
+        check(journal, &self.stamp)
+    }
+    pub(crate) fn revision(&self) -> u64 {
+        self.stamp.revision
+    }
+}
 impl<'p, 'a> Readback<'p, 'a> {
     pub(crate) fn plan(&self) -> &JobPlan<'a> {
         self.plan
@@ -379,6 +428,9 @@ fn attachments(published: &ManagedPublication) -> Result<BTreeMap<LogicalPath, O
     Ok(attachments)
 }
 impl ProtectedJob<'_, '_> {
+    pub(crate) fn source_identity(&self) -> &Key {
+        &self.stamp.identity.source
+    }
     pub(crate) fn verify_inputs(&self, journal: &mut SourceJournal) -> Result<()> {
         self.planned(journal)
     }
