@@ -18,6 +18,7 @@ mod native_cli;
 mod native_job;
 #[path = "support/tig_presentation.rs"]
 mod presentation;
+#[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_producer_reuse.rs"]
 mod producer_reuse;
 #[cfg(all(windows, feature = "tig-publication"))]
