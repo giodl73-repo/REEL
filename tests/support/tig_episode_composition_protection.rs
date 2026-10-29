@@ -225,6 +225,25 @@ pub(super) fn exercise(
             .protect(&snapshot, children, journal, &limited, &key("too-small"))
             .is_err()
     );
+    // Independent workers may own the same plan. Their candidate capabilities
+    // must nevertheless remain bound to the actual producing job guard.
+    let peer = readback()
+        .protect(
+            &snapshot,
+            children,
+            journal,
+            &CompositionOwnership {
+                coordination: &coordination,
+                identity: Identity {
+                    source: key("parent-peer"),
+                    owner: key("parent-owner"),
+                },
+                expected_revision: 0,
+                budget: &budget,
+            },
+            &key("parent-peer-adopt"),
+        )
+        .unwrap();
     let held = journal.checkpoint();
     assert!(
         readback()
@@ -404,27 +423,38 @@ pub(super) fn exercise(
     let offline_repo = original_repo.with_extension("unavailable");
     assert!(!offline_repo.exists());
     fs::rename(original_repo, &offline_repo).unwrap();
-    let result = parent.with_current(&snapshot, children, journal, |_| {
-        episode_conform::build_with_all_control_files(
-            control_files.manifest_ref(),
-            &absent,
-            &absent,
-            &output,
-            episode_conform::Files {
-                scene_inputs: &inputs,
-                scene_outputs: providers,
-                presentations: &BTreeMap::new(),
-                programs: &programs,
-            },
-            &control_files,
-            &scene_controls,
-        )
-    });
+    let result = parent.assemble(
+        &snapshot,
+        children,
+        journal,
+        &output,
+        tig_episode::CompositionFiles {
+            parent: &control_files,
+            scenes: &scene_controls,
+            inputs: &inputs,
+            outputs: providers,
+        },
+    );
     fs::rename(&offline_repo, original_repo).unwrap();
-    let result = result.unwrap();
+    let episode_candidate = result.unwrap();
+    let result = episode_candidate.receipt();
     assert!(result.decoded_master_matches_ordered_segments && result.timestamps_verified);
     assert_eq!((result.total_frames, result.total_samples), (96, 192000));
     assert!(result.master_bytes > 0 && output.join("master.mkv").is_file());
+    super::episode_publication::exercise(
+        p,
+        &plan,
+        &different_plan,
+        (&root, &checkpoint),
+        &parent,
+        &peer,
+        children,
+        journal,
+        &episode_candidate,
+        &output,
+        scenes,
+    );
+    drop(episode_candidate);
     let failed = parent.with_current::<()>(&snapshot, children, journal, |_| {
         anyhow::bail!("bounded action refused")
     });

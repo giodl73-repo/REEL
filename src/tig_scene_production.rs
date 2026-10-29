@@ -19,7 +19,7 @@ use tig_core::{Digest, Object};
 use tig_git::source::native::context::ProductionContext;
 
 #[cfg(feature = "tig-publication")]
-mod publication;
+pub(crate) mod publication;
 #[cfg(feature = "tig-publication")]
 pub use publication::{DeliveryBudget, Publication, PublishedCandidate};
 #[cfg(feature = "tig-publication")]

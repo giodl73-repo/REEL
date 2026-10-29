@@ -18,14 +18,15 @@ use tig_store::{
 /// Every selected component and original scene claim is derived from the single
 /// admitted source view. Presentation-specific proof is not implemented here.
 pub struct CompositionJobPlan<'a> {
-    context: &'a ProductionContext,
-    programs: &'a BoundPrograms,
-    recipe: recipe::Plan,
+    pub(super) context: &'a ProductionContext,
+    pub(super) programs: &'a BoundPrograms,
+    pub(super) recipe: recipe::Plan,
     runtime: BTreeMap<LogicalPath, Object>,
     composition: BTreeMap<LogicalPath, Object>,
     evidence: BTreeMap<LogicalPath, Object>,
     children: BTreeMap<String, Digest>,
     child_declaration: Vec<u8>,
+    pub(super) conform: Object,
 }
 pub struct CompositionReadback<'p, 'a> {
     plan: &'p CompositionJobPlan<'a>,
@@ -105,12 +106,13 @@ impl<'a> CompositionJobPlan<'a> {
             evidence,
             children,
             child_declaration,
+            conform: plan.conform,
         })
     }
     pub fn recipe(&self) -> &recipe::Plan {
         &self.recipe
     }
-    fn admission(&self) -> job::Admission<'_> {
+    pub(super) fn admission(&self) -> job::Admission<'_> {
         job::Admission {
             context: self.context,
             plan: &self.recipe,
@@ -118,7 +120,7 @@ impl<'a> CompositionJobPlan<'a> {
             output: None,
         }
     }
-    fn dependencies(&self) -> job::Dependencies<'_> {
+    pub(super) fn dependencies(&self) -> job::Dependencies<'_> {
         job::Dependencies {
             composition: &self.composition,
             evidence: &self.evidence,
@@ -130,12 +132,7 @@ impl<'a> CompositionJobPlan<'a> {
         store: &mut impl NodeStore,
         limits: TreeLimits,
     ) -> Result<job::JobContext> {
-        if store.put(&self.child_declaration)? != Object::from_bytes(&self.child_declaration) {
-            bail!("composition child declaration publication differs");
-        }
-        if store.put(self.programs.manifest_bytes())? != self.recipe.operation().producer {
-            bail!("composition runtime manifest publication differs");
-        }
+        self.put_interpretation(store)?;
         Ok(job::freeze_with_dependencies(
             &self.admission(),
             &self.dependencies(),
@@ -144,24 +141,22 @@ impl<'a> CompositionJobPlan<'a> {
             limits,
         )?)
     }
+    pub(super) fn put_interpretation(&self, store: &mut impl NodeStore) -> Result<()> {
+        if store.put(&self.child_declaration)? != Object::from_bytes(&self.child_declaration) {
+            bail!("composition child declaration publication differs");
+        }
+        if store.put(self.programs.manifest_bytes())? != self.recipe.operation().producer {
+            bail!("composition runtime manifest publication differs");
+        }
+        Ok(())
+    }
     pub fn readback<'p>(
         &'p self,
         selection: &Selection,
         store: &mut impl NodeStore,
         limits: TreeLimits,
     ) -> Result<CompositionReadback<'p, 'a>> {
-        if store.get(&self.recipe.operation().producer)?.as_deref()
-            != Some(self.programs.manifest_bytes())
-        {
-            bail!("composition runtime manifest missing or substituted");
-        }
-        if store
-            .get(&Object::from_bytes(&self.child_declaration))?
-            .as_deref()
-            != Some(self.child_declaration.as_slice())
-        {
-            bail!("composition child declaration missing or substituted");
-        }
+        self.verify_interpretation(store)?;
         let resources = job::restore_with_dependencies(
             selection,
             &self.admission(),
@@ -174,6 +169,21 @@ impl<'a> CompositionJobPlan<'a> {
             plan: self,
             resources,
         })
+    }
+    pub(super) fn verify_interpretation(&self, store: &mut impl NodeStore) -> Result<()> {
+        if store.get(&self.recipe.operation().producer)?.as_deref()
+            != Some(self.programs.manifest_bytes())
+        {
+            bail!("composition runtime manifest missing or substituted");
+        }
+        if store
+            .get(&Object::from_bytes(&self.child_declaration))?
+            .as_deref()
+            != Some(self.child_declaration.as_slice())
+        {
+            bail!("composition child declaration missing or substituted");
+        }
+        Ok(())
     }
 }
 impl<'p, 'a> CompositionReadback<'p, 'a> {
@@ -283,6 +293,12 @@ impl<'p, 'a> CompositionReadback<'p, 'a> {
     }
 }
 impl ProtectedComposition<'_, '_> {
+    pub(super) fn source_guard(&self) -> &ScopedSource {
+        &self.source
+    }
+    pub(super) fn plan(&self) -> &CompositionJobPlan<'_> {
+        self.readback.plan
+    }
     pub fn resources(&self) -> &job::JobContext {
         &self.readback.resources
     }
