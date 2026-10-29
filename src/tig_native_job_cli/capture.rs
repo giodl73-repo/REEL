@@ -1,9 +1,19 @@
 //! Explicit bounded source capture. No implicit initialization or job adoption.
+use super::metadata_wait::{MetadataWait, Waiting};
 use super::*;
+use anyhow::Context;
 use reel_assets::admission;
 
 const SCHEMA: &str = "reel.tig-native-capture-profile.experimental-1";
 const MAX_OUTPUT: usize = 65_536;
+
+#[derive(Debug)]
+struct CaptureStage(&'static str);
+impl std::fmt::Display for CaptureStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -74,7 +84,10 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
     if volume_of(&capture.metadata_root)? != volume || volume_of(parent)? != volume {
         bail!("metadata and capture output must share the admitted volume");
     }
-    let reader = MetadataReader::open(&capture.metadata_root, &capture.metadata_minimum)?;
+    let wait = MetadataWait::default();
+    let reader = wait
+        .run(|| MetadataReader::open(&capture.metadata_root, &capture.metadata_minimum))
+        .context(CaptureStage("metadata read"))?;
     let bounds = reader.limits();
     let minimum = reader.checkpoint().clone();
     drop(reader);
@@ -92,18 +105,22 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
         &capture.metadata_cache,
         metadata_bytes,
     )
-    .map_err(|_| anyhow::anyhow!("metadata capacity not admitted"))?;
+    .map_err(|_| anyhow::Error::msg(CaptureStage("metadata capacity")))?;
     let preparation = preparation::Preparation::open_on(
         &capture.cache,
         &capture.metadata_root,
         &capture.preparation_cache,
         2,
     )
-    .map_err(|_| anyhow::anyhow!("capture preparation not admitted"))?;
+    .context(CaptureStage("preparation"))?;
     let mut source = crate::tig_inputs::Source::open(source_profile)
-        .map_err(|_| anyhow::anyhow!("committed-source capture refused"))?;
-    let mut store = MetadataStore::open(&capture.metadata_root, &minimum)?;
-    if store.limits() != bounds {
+        .context(CaptureStage("committed source"))?;
+    let mut store = Waiting::new(
+        wait.run(|| MetadataStore::open(&capture.metadata_root, &minimum))
+            .context(CaptureStage("metadata open"))?,
+        &wait,
+    );
+    if store.inner.limits() != bounds {
         bail!("metadata bounds changed before capture");
     }
     let before = preparation.path().join("capture");
@@ -114,7 +131,7 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
         &mut store,
         TreeLimits::default(),
     )
-    .map_err(|_| anyhow::anyhow!("native source compilation or freeze refused"))?;
+    .context(CaptureStage("native freeze"))?;
     let mut archive = json!({
         "schema": crate::tig_inputs::ARCHIVE_PROFILE_SCHEMA,
         "archive": context.archive(), "checkpoint": source.checkpoint(),
@@ -124,10 +141,16 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
     if let Some(limits) = capture.source.get("limits") {
         archive["limits"] = limits.clone();
     }
-    let witness = store.finish()?;
+    let witness = wait
+        .run(|| store.inner.finish())
+        .context(CaptureStage("metadata finish"))?;
     drop(store);
     drop(source);
-    let mut reader = MetadataReader::open(&capture.metadata_root, &witness)?;
+    let mut reader = Waiting::new(
+        wait.run(|| MetadataReader::open(&capture.metadata_root, &witness))
+            .context(CaptureStage("readback open"))?,
+        &wait,
+    );
     let (_, restored) = tig_scene::restore_render_context(
         serde_json::from_value(archive.clone())?,
         &capture.request,
@@ -136,7 +159,7 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
         &mut reader,
         TreeLimits::default(),
     )
-    .map_err(|_| anyhow::anyhow!("frozen context readback refused"))?;
+    .context(CaptureStage("native readback"))?;
     if restored.selection() != context.selection()
         || restored.descriptor() != context.descriptor()
         || restored.requirements() != context.requirements()
@@ -166,7 +189,9 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
     }
     // Clean only our scratch before publishing a usable fragment. Failed cleanup
     // retains conservative preparation accounting via the existing guard.
-    preparation.finish()?;
+    preparation
+        .finish()
+        .context(CaptureStage("preparation cleanup"))?;
     let mut file = tempfile::NamedTempFile::new_in(parent)?;
     file.write_all(&bytes)?;
     file.as_file().sync_all()?;
@@ -184,11 +209,12 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
 /// Explicit write action. Existing stores/coordination only, private output;
 /// public diagnostics omit source identity, paths and raw compiler errors.
 pub fn capture_context(profile: &Path, output: &Path) -> Result<Value> {
-    capture(profile, output).map_err(|_| {
+    capture(profile, output).map_err(|error| {
         // Only our bounded stage names are public. Lower-level provider/IO errors
         // may contain private paths; do not format their error chain.
-        anyhow::anyhow!(
-            "source capture refused; verify profile, roots, capacity and source contracts"
-        )
+        match error.downcast_ref::<CaptureStage>() {
+            Some(stage)=>anyhow::anyhow!("source capture refused during {stage}; verify profile, roots, capacity and source contracts"),
+            None=>anyhow::anyhow!("source capture refused; verify profile, roots, capacity and source contracts"),
+        }
     })
 }

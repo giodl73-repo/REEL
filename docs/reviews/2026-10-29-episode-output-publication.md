@@ -74,6 +74,32 @@ owners must remain. This low-level assembly API does not reserve disk or bound
 scratch itself; production callers must use the existing bounded job runner.
 No live cache operations or runtime bindings are changed by this implementation.
 
+## Concurrent capture qualification
+
+The first hosted head (928cfe0, run 40937426237) failed the existing capture
+concurrency test: both workers refused; the diagnostic did not identify the
+stage. It is not qualified. The assertion remains unchanged.
+
+Capture now gives the pinned metadata provider one cumulative two-second,
+256-pause retry allowance across open, node reads/writes, finish and readback.
+Only typed metadata Busy and its exact pinned NodeStore projection retry.
+Integrity, foreign identity, capacity, IO and source-contract failures remain
+terminal. No capture-wide replay, provider fallback, new global cache/render
+lock or source-journal transition is introduced. Public errors expose only
+fixed phase labels and discard private lower-level chains.
+
+Four controlled SQLite cases pass: competing writers preserve both objects;
+buffered node flush handles the real Busy projection; exhaustion preserves pending
+nodes and cannot reset its budget at the next call; foreign checkpoints refuse
+without retries. Capture integration passes all three active tests, including
+the original concurrency assertion; five additional concurrent rounds pass.
+All-target/all-feature Clippy passes. The final full input suite passes 71 with
+12 explicit ignored and eight test threads; library passes 209 with nine ignored.
+An earlier default-parallel local run hit Budget in fixture Source::open before
+the forgery scenario; that exact scenario passed standalone and in the full
+eight-thread run. Source limits and all security assertions remain unchanged.
+Fresh exact-head hosted qualification is still required.
+
 Retained-media migration must not rewrite an original receipt's plan hashes to
 match a newly compiled job. Geometry, clock and output-pin checks alone do not
 prove that a changed cel or cue was rendered. Preserve original correspondence
