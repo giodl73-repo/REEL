@@ -1151,7 +1151,7 @@ fn verify_source_text_evidence(
     receipt: &serde_json::Value,
     invocation: &reel_assembly::scene_authoring::PresentationUse,
     bindings: [&ScopedBindings; 2],
-    input_root: &Path,
+    input_root: &dyn scene_delivery::InputFiles,
 ) -> Result<()> {
     if unit.source_ids.is_empty() {
         return Ok(());
@@ -1160,12 +1160,12 @@ fn verify_source_text_evidence(
         .source_text_evidence
         .as_ref()
         .context("editable display lacks source-text evidence")?;
-    let path = scene_delivery::checked_file(input_root, reference)?;
-    let evidence: SourceTextEvidence = serde_json::from_slice(&fs::read(path)?)?;
+    let evidence: SourceTextEvidence =
+        serde_json::from_slice(&scene_delivery::read_control(input_root, reference)?)?;
     if let Some(adoption_reference) = &segment.adoption_manifest {
-        let adoption_path = scene_delivery::checked_file(input_root, adoption_reference)?;
-        let adoption: presentation_adopt::Manifest =
-            serde_json::from_slice(&fs::read(adoption_path)?)?;
+        let adoption: presentation_adopt::Manifest = serde_json::from_slice(
+            &scene_delivery::read_control(input_root, adoption_reference)?,
+        )?;
         verify_adopted_display_source(
             evidence.rendered_source_master_sha256.as_deref(),
             receipt,
@@ -1504,6 +1504,43 @@ pub fn build_with_all_control_files(
             controls: Some(controls),
             manifest: Some(manifest),
             scene_controls: Some(scenes),
+            ..Provided::default()
+        },
+    )
+}
+
+/// Complete metadata coverage for direct native scenes and adopted
+/// presentations. Composition source movies remain separate from primary
+/// scene inputs and from retained component outputs.
+pub struct ComponentControls<'a> {
+    pub parent: &'a dyn scene_delivery::InputFiles,
+    pub scenes: &'a BTreeMap<String, SceneControls<'a>>,
+    pub presentations: &'a BTreeMap<String, &'a dyn scene_delivery::InputFiles>,
+}
+
+/// Assemble with no source checkout fallback. Every scene and presentation
+/// must have exactly one metadata provider and the corresponding media
+/// provider in `files`. This checks content, not producer lineage or approval.
+pub fn build_with_component_controls(
+    manifest: &scene_delivery::FileRef,
+    output: &Path,
+    files: Files<'_>,
+    controls: ComponentControls<'_>,
+) -> Result<Receipt> {
+    build_impl(
+        &manifest.path,
+        Path::new(""),
+        Path::new(""),
+        output,
+        Provided {
+            scene_inputs: Some(files.scene_inputs),
+            scene_outputs: Some(files.scene_outputs),
+            presentations: Some(files.presentations),
+            programs: Some(files.programs),
+            controls: Some(controls.parent),
+            manifest: Some(manifest),
+            scene_controls: Some(controls.scenes),
+            presentation_controls: Some(controls.presentations),
         },
     )
 }
@@ -1534,6 +1571,7 @@ struct Provided<'a> {
     controls: Option<&'a dyn scene_delivery::InputFiles>,
     manifest: Option<&'a scene_delivery::FileRef>,
     scene_controls: Option<&'a BTreeMap<String, SceneControls<'a>>>,
+    presentation_controls: Option<&'a BTreeMap<String, &'a dyn scene_delivery::InputFiles>>,
 }
 
 fn build_impl(
@@ -1551,9 +1589,11 @@ fn build_impl(
         controls,
         manifest: pinned_manifest,
         scene_controls,
+        presentation_controls,
     } = provided;
     let explicit_programs = programs.is_some();
     let local_programs = PathBuf::from(".");
+    let local_controls = input_root.to_path_buf();
     let programs = programs.unwrap_or(&local_programs);
     if output.exists() {
         bail!("episode output must be a new directory");
@@ -1575,14 +1615,22 @@ fn build_impl(
         let ids = manifest
             .segments
             .iter()
+            .filter(|s| s.kind == SegmentKind::Scene)
             .map(|s| s.id.as_str())
             .collect::<BTreeSet<_>>();
-        if ids.len() != manifest.segments.len()
+        if ids.len()
+            != manifest
+                .segments
+                .iter()
+                .filter(|s| s.kind == SegmentKind::Scene)
+                .count()
             || scenes.len() != ids.len()
             || !scenes.keys().all(|id| ids.contains(id.as_str()))
             || manifest.segments.iter().any(|s| {
-                s.kind != SegmentKind::Scene
-                    || s.semantic_delivery.is_none()
+                if s.kind == SegmentKind::EpisodePresentation {
+                    return presentation_controls.is_none();
+                }
+                s.semantic_delivery.is_none()
                     || s.delivery_job.is_none()
                     || s.delivery_receipt.is_none()
                     || s.imported_source_root.is_some()
@@ -1592,6 +1640,20 @@ fn build_impl(
             })
         {
             bail!("explicit scene controls require exact direct-native coverage");
+        }
+    }
+    if let Some(metadata) = presentation_controls {
+        let ids = manifest
+            .segments
+            .iter()
+            .filter(|s| s.kind == SegmentKind::EpisodePresentation)
+            .map(|s| s.id.as_str())
+            .collect::<BTreeSet<_>>();
+        if metadata.len() != ids.len()
+            || !metadata.keys().all(|id| ids.contains(id.as_str()))
+            || presentations.is_none_or(|files| !metadata.keys().eq(files.keys()))
+        {
+            bail!("presentation controls require exact adopted component coverage");
         }
     }
     if let Some(files) = presentations {
@@ -1809,12 +1871,31 @@ fn build_impl(
                 if receipt["technical_validation_state"] != "decoded-source-equivalent" {
                     bail!("adoption manifest requires decoded-source-equivalent receipt");
                 }
-                let adoption_path = scene_delivery::checked_file(input_root, adoption)?;
                 let stage_parent = output
                     .parent()
                     .filter(|path| !path.as_os_str().is_empty())
                     .unwrap_or(Path::new("."));
-                if let Some(files) = provided_presentation {
+                if let Some(metadata) = presentation_controls.and_then(|p| p.get(&segment.id)) {
+                    let files =
+                        provided_presentation.context("presentation media provider missing")?;
+                    let mut master = segment.master.clone();
+                    master.path = "master.mkv".into();
+                    let mut receipt = segment.source_receipt.clone();
+                    receipt.path = "receipt.json".into();
+                    presentation_adopt::check_with_control_files(
+                        &presentation_adopt::Selection {
+                            manifest: adoption,
+                            master: &master,
+                            receipt: &receipt,
+                        },
+                        *metadata,
+                        files.inputs,
+                        files.outputs,
+                        stage_parent,
+                    )?;
+                    presentation_cache_misses += 1;
+                } else if let Some(files) = provided_presentation {
+                    let adoption_path = scene_delivery::checked_file(input_root, adoption)?;
                     presentation_adopt::check(
                         &adoption_path,
                         files.inputs,
@@ -1825,6 +1906,7 @@ fn build_impl(
                     )?;
                     presentation_cache_misses += 1;
                 } else if manifest.reuse_verified_presentations {
+                    let adoption_path = scene_delivery::checked_file(input_root, adoption)?;
                     let hit = presentation_adopt::check_cached(
                         &adoption_path,
                         input_root,
@@ -1840,6 +1922,7 @@ fn build_impl(
                         presentation_cache_misses += 1;
                     }
                 } else {
+                    let adoption_path = scene_delivery::checked_file(input_root, adoption)?;
                     presentation_adopt::check(
                         &adoption_path,
                         input_root,
@@ -2037,7 +2120,11 @@ fn build_impl(
                         &receipt,
                         invocation,
                         [&episode_bindings, &season],
-                        input_root,
+                        presentation_controls
+                            .and_then(|p| p.get(&segment.id))
+                            .copied()
+                            .or(controls)
+                            .unwrap_or(&local_controls),
                     )?;
                 }
             }

@@ -150,3 +150,42 @@ not a capacity scheduler; production execution needs the existing bounded job
 runner. Parent native CLI/scheduler integration, full child-retention handoff,
 generated-input freshness and actual project adoption remain separate work.
 See [the output publication review](reviews/2026-10-29-episode-output-publication.md).
+
+## Retained presentation controls without a checkout
+
+`presentation_adopt::build_with_control_files` takes an exact manifest `FileRef`
+and separate control and composition-source providers. `Selection` names the
+retained manifest, master and receipt for `check_with_control_files` or
+`check_cached_with_control_files`. All metadata is bounded to 4 MiB per document
+and checked against its exact declared hash and size. Virtual document names do
+not resolve relative to physical CAS paths. Missing subjects, changed pins or
+missing runtime programs refuse without a local-file or PATH fallback.
+
+`episode_conform::build_with_component_controls` combines parent controls,
+direct-native scene controls and adopted-presentation controls. Coverage must
+match the selected component kinds exactly. Selected presentation masters are
+composition dependencies; their source movies do not become primary inputs.
+Ordered-unit source-text evidence uses the same explicit metadata provider.
+This entry point performs full presentation checks, without implicitly writing
+a verification cache. Explicit verification-cache reuse rechecks every subject,
+validator and tool before accepting an exact previous successful check.
+
+```text
+Tig-selected presentation manifest + controls     retained source movie
+                  |                                      |
+          control provider                       composition provider
+                  +-----------------+--------------------+
+                                    |
+                       full decoded equivalence check
+                                    |
+                  retained master + receipt provider
+                                    |
+              episode parent / ordered component composition
+```
+
+This closes the local-control dependency of the native presentation checker.
+It does not establish the source movie's producer lineage, creative approval,
+complete primary closure, child-owner handoff or eviction authority. The sealed
+Tig composition admission path still requires separate presentation currency
+support before it can accept retained openings and credits. Low-level conform
+is not a storage-capacity scheduler.

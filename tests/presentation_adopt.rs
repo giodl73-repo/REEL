@@ -784,6 +784,64 @@ fn borrowed_opening_without_source_tree(root: &Path, expected: &Value) {
         logical.path = name.into();
         files.aliases.insert(logical.path, actual);
     }
+    let manifest_ref: FileRef = serde_json::from_value(reference(root, "manifest.json")).unwrap();
+    let actual = FileRef {
+        path: format!("objects/{}", manifest_ref.sha256).into(),
+        sha256: manifest_ref.sha256.clone(),
+        bytes: manifest_ref.bytes,
+    };
+    fs::copy(&manifest_path, cache.join(&actual.path)).unwrap();
+    files.aliases.insert(manifest_ref.path.clone(), actual);
+    // Exercise a true presentation component in an ordered-unit parent.
+    let load = |name: &str| -> Value {
+        serde_json::from_slice(&fs::read(root.join(name)).unwrap()).unwrap()
+    };
+    let mut parent_episode = load("episode-authoring.json");
+    parent_episode["scene_ids"] = json!([]);
+    write(&root.join("cached-parent-episode.json"), &parent_episode);
+    write(
+        &root.join("cached-parent-order.json"),
+        &json!({
+            "schema":"reel.episode-master-template.v2", "template_id":"episode-master",
+            "ordered_units":[{"kind":"episode-presentation", "id":"series-opening"}]
+        }),
+    );
+    let mut parent_catalog = load("conform-catalog.json");
+    parent_catalog["templates"][0]["definition_sha256"] =
+        reference(root, "cached-parent-order.json")["sha256"].clone();
+    write(&root.join("cached-parent-catalog.json"), &parent_catalog);
+    let mut parent = load("conform.json");
+    parent["segments"].as_array_mut().unwrap().truncate(1);
+    parent["episode"] = reference(root, "cached-parent-episode.json");
+    parent["catalog"] = reference(root, "cached-parent-catalog.json");
+    parent["master_template_definition"] = reference(root, "cached-parent-order.json");
+    write(&root.join("cached-parent-conform.json"), &parent);
+    let parent_ref: FileRef =
+        serde_json::from_value(reference(root, "cached-parent-conform.json")).unwrap();
+    let parent_names = [
+        "cached-parent-episode.json",
+        "cached-parent-order.json",
+        "cached-parent-catalog.json",
+        "cached-parent-conform.json",
+        "conform-episode-bindings.json",
+    ];
+    for name in parent_names {
+        let logical: FileRef = serde_json::from_value(reference(root, name)).unwrap();
+        let actual = FileRef {
+            path: format!("objects/{}", logical.sha256).into(),
+            ..logical.clone()
+        };
+        fs::copy(root.join(name), cache.join(&actual.path)).unwrap();
+        files.aliases.insert(logical.path, actual);
+    }
+    let master_ref = FileRef {
+        path: "master.mkv".into(),
+        ..serde_json::from_value(reference(root, "adopted/master.mkv")).unwrap()
+    };
+    let receipt_ref = FileRef {
+        path: "receipt.json".into(),
+        ..serde_json::from_value(reference(root, "adopted/receipt.json")).unwrap()
+    };
     #[cfg(all(windows, feature = "tig"))]
     {
         use tig_store::existing::{ByteSource, ReadCache};
@@ -931,16 +989,110 @@ fn borrowed_opening_without_source_tree(root: &Path, expected: &Value) {
         )
         .unwrap()
     );
+    // The manifest is also a pinned cache document. All original adoption
+    // metadata and media are now absent; only guarded objects remain.
+    fs::remove_file(&manifest_path).unwrap();
+    let selection = presentation_adopt::Selection {
+        manifest: &manifest_ref,
+        master: &master_ref,
+        receipt: &receipt_ref,
+    };
+    let cache_output = root.join("fully-cached-adoption");
+    let rebuilt =
+        presentation_adopt::build_with_control_files(&manifest_ref, &files, &files, &cache_output)
+            .unwrap();
+    assert_eq!(serde_json::to_value(&rebuilt).unwrap(), *expected);
+    // The old path-based cache is reusable because its key describes exact
+    // semantic subjects, independent of their physical storage locations.
+    assert!(
+        presentation_adopt::check_cached_with_control_files(
+            &selection, &files, &files, &files, root, &evidence,
+        )
+        .unwrap()
+    );
+    let fresh = root.join("fully-cached-verification");
+    assert!(
+        !presentation_adopt::check_cached_with_control_files(
+            &selection, &files, &files, &files, root, &fresh,
+        )
+        .unwrap()
+    );
+    let missing = files.aliases.remove(&manifest_ref.path).unwrap();
+    assert!(
+        presentation_adopt::check_cached_with_control_files(
+            &selection, &files, &files, &files, root, &fresh,
+        )
+        .is_err()
+    );
+    let rejected = root.join("unbound-cached-manifest");
+    assert!(
+        presentation_adopt::build_with_control_files(&manifest_ref, &files, &files, &rejected,)
+            .is_err()
+    );
+    assert!(!rejected.exists());
+    files.aliases.insert(manifest_ref.path.clone(), missing);
+    let mut wrong = manifest_ref.clone();
+    wrong.sha256 = "a".repeat(64);
+    assert!(
+        presentation_adopt::build_with_control_files(&wrong, &files, &files, &rejected,).is_err()
+    );
+    wrong = manifest_ref.clone();
+    wrong.path = "../manifest.json".into();
+    assert!(
+        presentation_adopt::build_with_control_files(&wrong, &files, &files, &rejected,).is_err()
+    );
+    wrong = manifest_ref.clone();
+    wrong.bytes = 4 * 1024 * 1024 + 1;
+    assert!(
+        presentation_adopt::build_with_control_files(&wrong, &files, &files, &rejected,).is_err()
+    );
+    for name in parent_names {
+        fs::remove_file(root.join(name)).unwrap();
+    }
+    let presentation_media = std::collections::BTreeMap::from([(
+        "series-opening".into(),
+        reel::episode_conform::PresentationFiles {
+            inputs: &files,
+            outputs: &files,
+        },
+    )]);
+    let presentation_controls = std::collections::BTreeMap::from([(
+        "series-opening".into(),
+        &files as &dyn reel::scene_delivery::InputFiles,
+    )]);
+    let empty = Default::default();
+    let empty_scenes = Default::default();
+    let assemble = |controls, output: &Path| {
+        reel::episode_conform::build_with_component_controls(
+            &parent_ref,
+            output,
+            reel::episode_conform::Files {
+                scene_inputs: &empty,
+                scene_outputs: &empty,
+                presentations: &presentation_media,
+                programs: &files,
+            },
+            reel::episode_conform::ComponentControls {
+                parent: &files,
+                scenes: &empty_scenes,
+                presentations: controls,
+            },
+        )
+    };
+    let rejected = root.join("missing-presentation-controls");
+    let missing_controls = Default::default();
+    assert!(assemble(&missing_controls, &rejected).is_err());
+    assert!(!rejected.exists());
+    let composed = assemble(&presentation_controls, &root.join("fully-cached-parent")).unwrap();
+    assert!(composed.decoded_master_matches_ordered_segments);
+    assert!(composed.timestamps_verified);
+    assert_eq!(composed.total_frames, 48);
+    assert_eq!(composed.total_samples, 96000);
+    assert!(!manifest_path.exists());
     files.aliases.remove(&source.path);
     assert!(
-        presentation_adopt::check_cached(
-            &manifest_path,
-            &files,
-            &files,
-            &master,
-            &receipt,
-            root,
-            &evidence
+        presentation_adopt::check_cached_with_control_files(
+            &selection, &files, &files, &files, root, &fresh,
         )
         .is_err()
     );

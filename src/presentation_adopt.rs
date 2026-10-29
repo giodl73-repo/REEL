@@ -653,10 +653,53 @@ pub fn build(
     asset_root: &(impl scene_delivery::InputFiles + ?Sized),
     output: &Path,
 ) -> Result<Receipt> {
+    build_manifest(&fs::read(manifest_path)?, input_root, asset_root, output)
+}
+
+/// Build from an exact manifest pin and protected control/source providers.
+/// Names are virtual repository names, never paths relative to a CAS object.
+/// Provider refusals have no filesystem or ambient-program fallback.
+pub fn build_with_control_files(
+    manifest: &scene_delivery::FileRef,
+    controls: &(impl scene_delivery::InputFiles + ?Sized),
+    source: &(impl scene_delivery::InputFiles + ?Sized),
+    output: &Path,
+) -> Result<Receipt> {
+    scene_delivery::control_name(&manifest.path)?;
+    let raw = scene_delivery::read_control(controls, manifest)?;
+    validate_control_names(&raw)?;
+    build_manifest(&raw, controls, source, output)
+}
+
+fn validate_control_names(raw: &[u8]) -> Result<()> {
+    let manifest: Manifest = serde_json::from_slice(raw)?;
+    for item in [
+        Some(&manifest.catalog),
+        Some(&manifest.template_definition),
+        manifest.source_template.as_ref(),
+        Some(&manifest.season_bindings),
+        Some(&manifest.episode_bindings),
+        manifest.selection_evidence.as_ref(),
+        Some(&manifest.source),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        scene_delivery::control_name(&item.path)?;
+    }
+    Ok(())
+}
+
+fn build_manifest(
+    manifest_bytes: &[u8],
+    input_root: &(impl scene_delivery::InputFiles + ?Sized),
+    asset_root: &(impl scene_delivery::InputFiles + ?Sized),
+    output: &Path,
+) -> Result<Receipt> {
     if output.exists() {
         bail!("presentation output must be a new directory");
     }
-    let manifest: Manifest = serde_json::from_slice(&fs::read(manifest_path)?)?;
+    let manifest: Manifest = serde_json::from_slice(manifest_bytes)?;
     if manifest.schema != SCHEMA
         || manifest.role.is_empty()
         || !matches!(manifest.language.as_str(), "es" | "en")
@@ -668,7 +711,7 @@ pub fn build(
         bail!("invalid presentation adoption manifest");
     }
     let read = |item: &scene_delivery::FileRef| -> Result<Vec<u8>> {
-        Ok(fs::read(input_root.verified_path(item)?)?)
+        scene_delivery::read_control(input_root, item)
     };
     let catalog: TemplateCatalog = serde_json::from_slice(&read(&manifest.catalog)?)?;
     let definition_bytes = read(&manifest.template_definition)?;
@@ -1032,6 +1075,59 @@ pub fn check(
     receipt_path: &Path,
     stage_parent: &Path,
 ) -> Result<()> {
+    check_manifest(
+        &fs::read(manifest_path)?,
+        input_root,
+        asset_root,
+        master_path,
+        receipt_path,
+        stage_parent,
+    )
+}
+
+/// Exact selected presentation subjects. Outputs are composition dependencies,
+/// never reclassified as primary inputs by this byte-equivalence check.
+pub struct Selection<'a> {
+    pub manifest: &'a scene_delivery::FileRef,
+    pub master: &'a scene_delivery::FileRef,
+    pub receipt: &'a scene_delivery::FileRef,
+}
+
+/// Independently check a retained presentation without a source checkout.
+/// This establishes decoded source equivalence, not creative approval or the
+/// source movie's own producer lineage. Keep all provider guards alive.
+pub fn check_with_control_files(
+    selection: &Selection<'_>,
+    controls: &(impl scene_delivery::InputFiles + ?Sized),
+    source: &(impl scene_delivery::InputFiles + ?Sized),
+    outputs: &(impl scene_delivery::InputFiles + ?Sized),
+    stage_parent: &Path,
+) -> Result<()> {
+    scene_delivery::control_name(&selection.manifest.path)?;
+    scene_delivery::control_name(&selection.master.path)?;
+    scene_delivery::control_name(&selection.receipt.path)?;
+    let raw = scene_delivery::read_control(controls, selection.manifest)?;
+    validate_control_names(&raw)?;
+    // Receipts are metadata and must satisfy the same bounded exact-byte read.
+    scene_delivery::read_control(outputs, selection.receipt)?;
+    check_manifest(
+        &raw,
+        controls,
+        source,
+        &outputs.verified_path(selection.master)?,
+        &outputs.verified_path(selection.receipt)?,
+        stage_parent,
+    )
+}
+
+fn check_manifest(
+    manifest_bytes: &[u8],
+    input_root: &(impl scene_delivery::InputFiles + ?Sized),
+    asset_root: &(impl scene_delivery::InputFiles + ?Sized),
+    master_path: &Path,
+    receipt_path: &Path,
+    stage_parent: &Path,
+) -> Result<()> {
     let selected: Receipt = serde_json::from_slice(&fs::read(receipt_path)?)?;
     if selected.schema != "reel.presentation-master-receipt.v1"
         || selected.technical_validation_state != "decoded-source-equivalent"
@@ -1046,8 +1142,8 @@ pub fn check(
     let stage = tempfile::Builder::new()
         .prefix(".presentation-recheck-")
         .tempdir_in(stage_parent)?;
-    let rebuilt = build(
-        manifest_path,
+    let rebuilt = build_manifest(
+        manifest_bytes,
         input_root,
         asset_root,
         &stage.path().join("rebuilt"),
@@ -1067,9 +1163,10 @@ pub fn check(
     if selected_value != rebuilt_value {
         bail!("selected presentation adoption differs from current source selection");
     }
-    let manifest: Manifest = serde_json::from_slice(&fs::read(manifest_path)?)?;
-    let definition: Template = serde_json::from_slice(&fs::read(
-        input_root.verified_path(&manifest.template_definition)?,
+    let manifest: Manifest = serde_json::from_slice(manifest_bytes)?;
+    let definition: Template = serde_json::from_slice(&scene_delivery::read_control(
+        input_root,
+        &manifest.template_definition,
     )?)?;
     let facts = episode_conform::probe_with_inputs(master_path, asset_root)?;
     if (
@@ -1148,9 +1245,29 @@ fn verification_key(
     master_path: &Path,
     receipt_path: &Path,
 ) -> Result<VerificationKey> {
-    let manifest: Manifest = serde_json::from_slice(&fs::read(manifest_path)?)?;
+    verification_key_bytes(
+        &fs::read(manifest_path)?,
+        input_root,
+        asset_root,
+        master_path,
+        receipt_path,
+    )
+}
+
+fn verification_key_bytes(
+    raw: &[u8],
+    input_root: &(impl scene_delivery::InputFiles + ?Sized),
+    asset_root: &(impl scene_delivery::InputFiles + ?Sized),
+    master_path: &Path,
+    receipt_path: &Path,
+) -> Result<VerificationKey> {
+    let manifest: Manifest = serde_json::from_slice(raw)?;
     let mut files = vec![
-        verified_file("adoption-manifest", manifest_path)?,
+        VerifiedFile {
+            role: "adoption-manifest".into(),
+            sha256: sha(raw),
+            bytes: raw.len() as u64,
+        },
         verified_file("selected-master", master_path)?,
         verified_file("selected-receipt", receipt_path)?,
     ];
@@ -1163,7 +1280,7 @@ fn verification_key(
         ("selection-evidence", manifest.selection_evidence.as_ref()),
     ] {
         if let Some(item) = item {
-            input_root.verified_path(item)?;
+            scene_delivery::read_control(input_root, item)?;
             files.push(VerifiedFile {
                 role: role.into(),
                 sha256: item.sha256.clone(),
@@ -1217,6 +1334,59 @@ fn cache_hit(path: &Path, key: &VerificationKey) -> bool {
         })
 }
 
+/// Reuse a full check only for the exact manifest, selected output/receipt,
+/// controls, composition source, validator and media tools. Even cache hits
+/// resolve all subjects through their current providers; no path fallback.
+pub fn check_cached_with_control_files(
+    selection: &Selection<'_>,
+    controls: &(impl scene_delivery::InputFiles + ?Sized),
+    source: &(impl scene_delivery::InputFiles + ?Sized),
+    outputs: &(impl scene_delivery::InputFiles + ?Sized),
+    stage_parent: &Path,
+    cache_root: &Path,
+) -> Result<bool> {
+    let current_key = || -> Result<VerificationKey> {
+        for item in [selection.manifest, selection.master, selection.receipt] {
+            scene_delivery::control_name(&item.path)?;
+        }
+        let raw = scene_delivery::read_control(controls, selection.manifest)?;
+        validate_control_names(&raw)?;
+        scene_delivery::read_control(outputs, selection.receipt)?;
+        verification_key_bytes(
+            &raw,
+            controls,
+            source,
+            &outputs.verified_path(selection.master)?,
+            &outputs.verified_path(selection.receipt)?,
+        )
+    };
+    let key = current_key()?;
+    let digest = sha(&serde_json::to_vec(&key)?);
+    let cache_path = cache_root.join(format!("{digest}.json"));
+    if cache_hit(&cache_path, &key) {
+        return Ok(true);
+    }
+    check_with_control_files(selection, controls, source, outputs, stage_parent)?;
+    if current_key()? != key {
+        bail!("adoption dependencies changed during verification");
+    }
+    write_verification(cache_root, &cache_path, key)?;
+    Ok(false)
+}
+
+fn write_verification(cache_root: &Path, cache_path: &Path, key: VerificationKey) -> Result<()> {
+    fs::create_dir_all(cache_root)?;
+    let mut staged = tempfile::NamedTempFile::new_in(cache_root)?;
+    staged.write_all(&serde_json::to_vec_pretty(&VerificationRecord {
+        schema: "reel.presentation-adoption-verification.v1".into(),
+        key,
+        full_check_passed: true,
+    })?)?;
+    staged.as_file().sync_all()?;
+    staged.persist(cache_path)?;
+    Ok(())
+}
+
 /// Reuse a successful full adoption check only after rehashing every current
 /// dependency, selected output/receipt, validator, and both media tools.
 /// Returns true for a verified cache hit. The cache is local build evidence,
@@ -1260,15 +1430,7 @@ pub fn check_cached(
     {
         bail!("adoption dependencies changed during verification");
     }
-    fs::create_dir_all(cache_root)?;
-    let mut staged = tempfile::NamedTempFile::new_in(cache_root)?;
-    staged.write_all(&serde_json::to_vec_pretty(&VerificationRecord {
-        schema: "reel.presentation-adoption-verification.v1".into(),
-        key,
-        full_check_passed: true,
-    })?)?;
-    staged.as_file().sync_all()?;
-    staged.persist(&cache_path)?;
+    write_verification(cache_root, &cache_path, key)?;
     Ok(false)
 }
 
