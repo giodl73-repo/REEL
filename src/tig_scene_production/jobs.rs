@@ -275,6 +275,9 @@ fn adopt(
     Ok(stamp)
 }
 impl<'p, 'a> Readback<'p, 'a> {
+    pub(crate) fn plan(&self) -> &JobPlan<'a> {
+        self.plan
+    }
     pub fn resources(&self) -> &job::JobContext {
         &self.resources
     }
@@ -341,6 +344,9 @@ fn attachments(published: &ManagedPublication) -> Result<BTreeMap<LogicalPath, O
     Ok(attachments)
 }
 impl ProtectedJob<'_, '_> {
+    pub(crate) fn verify_inputs(&self, journal: &mut SourceJournal) -> Result<()> {
+        self.planned(journal)
+    }
     pub fn selection(&self) -> &Selection {
         &self.stamp.selection
     }

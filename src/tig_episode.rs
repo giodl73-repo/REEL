@@ -23,6 +23,10 @@ pub use context::{composition_recipe, freeze_composition_context, restore_compos
 mod correspondence;
 #[cfg(feature = "tig-publication")]
 pub use correspondence::{CurrentScene, check_current_scene, require_current_scenes};
+#[cfg(feature = "tig-publication")]
+mod protection;
+#[cfg(feature = "tig-publication")]
+pub use protection::{ProtectedScenes, ProtectionBudget, SceneAdmission, protect_current_scenes};
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {

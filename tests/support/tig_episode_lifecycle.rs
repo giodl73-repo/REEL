@@ -30,6 +30,8 @@ use tig_store::{
 };
 
 const UNITS: [&str; 4] = ["opening", "scene-a", "scene-b", "credits"];
+#[path = "tig_episode_protection.rs"]
+mod child_protection;
 #[path = "tig_composition_runner.rs"]
 mod composition_runner;
 fn key(value: &str) -> Key {
@@ -1046,6 +1048,7 @@ fn cached_scene_bundle_rechecks_without_render_directory_and_rejects_bad_bytes()
         &recipe,
         (&metadata, &checkpoint),
     );
+    child_protection::exercise(&p, &request, &scenes, &providers);
 }
 
 fn consume_episode_without_path(case_path: &Path) {
