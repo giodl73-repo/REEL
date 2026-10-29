@@ -40,6 +40,10 @@ pub use jobs::{
 mod controls;
 #[cfg(feature = "tig-publication")]
 pub use controls::{ControlTree, ParentControls};
+#[cfg(feature = "tig-publication")]
+mod production;
+#[cfg(feature = "tig-publication")]
+pub use production::{CompositionFiles, PublishedComposition, RenderedComposition};
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {

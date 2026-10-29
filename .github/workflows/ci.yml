@@ -63,11 +63,11 @@ jobs:
         run: |
           cargo test --features tig --test tig_inputs native_tig_cli_renders_two_cels_shared_cue_then_replaces_only_cel_b --locked -- --ignored --exact
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --features tig-publication --test tig_inputs native_render_candidate_claims_only_independently_checked_matching_bytes --locked -- --ignored --exact
+          cargo test --all-features --test tig_inputs native_render_candidate_claims_only_independently_checked_matching_bytes --locked -- --ignored --exact
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --features tig-publication --test tig_inputs language_scope::projected_jobs::projected_managed_render_publishes_and_replays_checked_claim --locked -- --ignored --exact
+          cargo test --all-features --test tig_inputs language_scope::projected_jobs::projected_managed_render_publishes_and_replays_checked_claim --locked -- --ignored --exact
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --features tig-publication --test tig_inputs language_scope::projected_jobs::compiled_cli_plans_renders_and_hands_off_records_with_source_git_offline --locked -- --ignored --exact
+          cargo test --all-features --test tig_inputs language_scope::projected_jobs::compiled_cli_plans_renders_and_hands_off_records_with_source_git_offline --locked -- --ignored --exact
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build qualified original producer for retained-version fixture
         if: runner.os == 'Windows'
@@ -94,13 +94,13 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Value "REEL_TEST_TIG_ORIGINAL_PRODUCER=$retainedTargetRoot/debug/reel-tig-job.exe"
       - name: Verify original producer and new checker keep source currency and claims distinct
         if: runner.os == 'Windows'
-        run: cargo test --features tig-publication --test tig_inputs language_scope::projected_jobs::retained_producer_and_new_checker_preserve_claim_and_source_currency --locked -- --ignored --exact
+        run: cargo test --all-features --test tig_inputs language_scope::projected_jobs::retained_producer_and_new_checker_preserve_claim_and_source_currency --locked -- --ignored --exact
       - name: Verify synthetic episode edit, delivery, parallel publication and verified cache eviction
         if: runner.os == 'Windows'
-        run: cargo test --features tig-publication --test tig_inputs fake_episode_lifecycle::fake_episode_runs_v1_then_rebuilds_only_the_changed_scene --locked -- --ignored --exact
+        run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::fake_episode_runs_v1_then_rebuilds_only_the_changed_scene --locked -- --ignored --exact
       - name: Verify protected Tig scene outputs without the render directory
         if: runner.os == 'Windows'
-        run: cargo test --features tig-publication --test tig_inputs fake_episode_lifecycle::cached_scene_bundle_rechecks_without_render_directory_and_rejects_bad_bytes --locked -- --ignored --exact
+        run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::cached_scene_bundle_rechecks_without_render_directory_and_rejects_bad_bytes --locked -- --ignored --exact
       - name: Verify explicit mono duplication preserves source level and rejects stereo
         run: cargo test --test scene_delivery duplicate_mono_preserves_source_level_and_rejects_stereo -- --ignored --exact
       - name: Verify independent native audio matches full-scene stems and rejects stale evidence

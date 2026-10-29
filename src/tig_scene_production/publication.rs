@@ -51,7 +51,7 @@ impl PublishedCandidate {
 }
 
 impl Publication {
-    fn request(&self, role: &str, name: &str, object: Object) -> Result<Request> {
+    pub(crate) fn request(&self, role: &str, name: &str, object: Object) -> Result<Request> {
         let bytes = identity::canonical_json(&serde_json::json!({
             "schema":"reel.native-candidate-publication-key.v1",
             "operation":self.operation.as_str(),"role":role,"name":name,
@@ -140,56 +140,84 @@ impl RenderedCandidate {
             delivery_outputs.insert(name.to_owned(), object);
             outputs.push((request, path));
         }
-        // Stable ordering also makes partial retry independent of mapping order.
-        outputs.sort_by(|a, b| a.0.operation.as_str().cmp(b.0.operation.as_str()));
-        let receipt_request = publication.request("receipt", "", self.receipt_object.clone())?;
-        let claim_request = publication.request("claim", "", claim.object().clone())?;
-        let capabilities = backend.capabilities();
-        let mut sizes = BTreeMap::new();
-        for request in outputs
-            .iter()
-            .map(|(request, _)| request)
-            .chain([&receipt_request, &claim_request])
-        {
-            capabilities.check(request)?;
-            if sizes
-                .insert(request.object.sha256.clone(), request.object.bytes)
-                .is_some_and(|previous| previous != request.object.bytes)
-            {
-                bail!("conflicting delivery object sizes");
-            }
-        }
-        if let Some(budget) = budget {
-            let bytes = sizes
-                .values()
-                .try_fold(0_u64, |sum, bytes| sum.checked_add(*bytes))
-                .ok_or_else(|| anyhow::anyhow!("delivery publication byte budget overflow"))?;
-            if sizes.len() > budget.max_objects || bytes > budget.max_bytes {
-                bail!("complete delivery publication exceeds budget");
-            }
-        }
-        let mut acknowledgements = Vec::with_capacity(outputs.len() + 2);
-        for (request, path) in outputs {
-            let mut source = File::open(path)?;
-            acknowledgements.push(tig_store::publish(backend, &request, &mut source)?);
-        }
-        acknowledgements.push(tig_store::publish(
-            backend,
-            &receipt_request,
-            &mut Cursor::new(native_receipt),
-        )?);
-        acknowledgements.push(tig_store::publish(
-            backend,
-            &claim_request,
-            &mut Cursor::new(claim.bytes()),
-        )?);
-        Ok(PublishedCandidate {
+        publish_checked(
             claim,
-            native_receipt: self.receipt_object.clone(),
-            acknowledgements,
-            delivery_outputs: budget.map(|_| delivery_outputs),
-        })
+            &native_receipt,
+            &self.receipt_object,
+            outputs,
+            budget.map(|_| delivery_outputs),
+            publication,
+            backend,
+            budget,
+        )
     }
+}
+
+/// Shared publication mechanics for sealed native scene/episode candidates.
+/// Callers independently validate every local payload and exact receipt first.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn publish_checked(
+    claim: Claim,
+    native_receipt: &[u8],
+    receipt_object: &Object,
+    mut outputs: Vec<(Request, std::path::PathBuf)>,
+    delivery_outputs: Option<BTreeMap<String, Object>>,
+    publication: &Publication,
+    backend: &mut impl PublicationBackend,
+    budget: Option<&DeliveryBudget>,
+) -> Result<PublishedCandidate> {
+    if Object::from_bytes(native_receipt) != *receipt_object {
+        bail!("native candidate receipt changed before publication");
+    }
+    // Stable ordering also makes partial retry independent of mapping order.
+    outputs.sort_by(|a, b| a.0.operation.as_str().cmp(b.0.operation.as_str()));
+    let receipt_request = publication.request("receipt", "", receipt_object.clone())?;
+    let claim_request = publication.request("claim", "", claim.object().clone())?;
+    let capabilities = backend.capabilities();
+    let mut sizes = BTreeMap::new();
+    for request in outputs
+        .iter()
+        .map(|(request, _)| request)
+        .chain([&receipt_request, &claim_request])
+    {
+        capabilities.check(request)?;
+        if sizes
+            .insert(request.object.sha256.clone(), request.object.bytes)
+            .is_some_and(|previous| previous != request.object.bytes)
+        {
+            bail!("conflicting delivery object sizes");
+        }
+    }
+    if let Some(budget) = budget {
+        let bytes = sizes
+            .values()
+            .try_fold(0_u64, |sum, bytes| sum.checked_add(*bytes))
+            .ok_or_else(|| anyhow::anyhow!("delivery publication byte budget overflow"))?;
+        if sizes.len() > budget.max_objects || bytes > budget.max_bytes {
+            bail!("complete delivery publication exceeds budget");
+        }
+    }
+    let mut acknowledgements = Vec::with_capacity(outputs.len() + 2);
+    for (request, path) in outputs {
+        let mut source = File::open(path)?;
+        acknowledgements.push(tig_store::publish(backend, &request, &mut source)?);
+    }
+    acknowledgements.push(tig_store::publish(
+        backend,
+        &receipt_request,
+        &mut Cursor::new(native_receipt),
+    )?);
+    acknowledgements.push(tig_store::publish(
+        backend,
+        &claim_request,
+        &mut Cursor::new(claim.bytes()),
+    )?);
+    Ok(PublishedCandidate {
+        claim,
+        native_receipt: receipt_object.clone(),
+        acknowledgements,
+        delivery_outputs,
+    })
 }
 
 #[cfg(test)]

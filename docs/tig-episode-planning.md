@@ -92,3 +92,61 @@ These checks are an assembly/execution prerequisite, not a requirement to render
 every authoring commit. Metadata-only status changes can retain a matching native
 recipe; changing a consumed cel or cue requires new scene correspondence. Old
 explicit source snapshots can still replay their own original version.
+
+## Protected direct-native assembly and output publication
+
+The `tig-publication` library path adds capabilities beyond the metadata-only
+planning CLI. These do not change the planner's false execution/eviction flags.
+
+```text
+one source snapshot + exact current scene correspondence
+       |
+       +--> protect child jobs (independent source fences)
+       +--> CompositionJobPlan -> freeze -> reopen -> protect parent
+                                             |
+protected parent/scene control trees + primary/output/runtime readers
+                                             |
+                    ProtectedComposition::assemble
+                                             |
+                         RenderedComposition
+                                             |
+explicit admitted output subjects + complete publication budget
+                                             |
+                    parent.publish_delivery
+                                             |
+                        PublishedComposition
+                                             |
+            plan.freeze_outputs -> finish provider -> reopen
+                                             |
+                     plan.readback_outputs
+```
+
+`ParentControls` holds the exact conform and its top-level metadata from existing
+byte providers. `ControlTree` uses the existing Tig tree format for each native
+scene's named job/contract/production/semantic controls. `CompositionFiles`
+provides those controls and the separate primary/output readers. Assembly binds
+the conform to its plan, uses its admitted runtime and checks ownership before
+and after the full native operation. Local control files cannot rescue an
+explicit provider refusal. The generated integration fixture makes its entire
+source checkout unavailable during assembly.
+
+The sealed result rechecks receipt and all retained output hashes. It can assert
+unsigned correspondence for explicit admitted asset subjects. Complete
+publication preflights provider capability and deduplicated object/byte budgets
+before writes, then acknowledges outputs, receipt and claim. Keep the same
+operation/owner identity for an exact interrupted retry. A changed render needs
+a new operation. Publication is local byte retention, not creative approval or
+Google Drive/YouTube delivery.
+
+Freeze and independently reopen the published resource set before proposing an
+owner transition. It retains the original runtime/composition/evidence roles and
+adds the checked outputs, receipt and claim. It still reports incomplete claim
+coverage: full child primary/control closures belong to the independent child
+owners. Keep them active; no child retirement or cache eviction is authorized.
+
+The path currently supports direct native scene components, not actual retained
+opening/credits presentation eligibility. This low-level assembly primitive is
+not a capacity scheduler; production execution needs the existing bounded job
+runner. Parent native CLI/scheduler integration, full child-retention handoff,
+generated-input freshness and actual project adoption remain separate work.
+See [the output publication review](reviews/2026-10-29-episode-output-publication.md).
