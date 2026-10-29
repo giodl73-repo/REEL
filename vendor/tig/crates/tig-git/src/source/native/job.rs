@@ -24,12 +24,19 @@ pub struct Admission<'a> {
     pub runtime: &'a BTreeMap<LogicalPath, Object>,
     pub output: Option<OutputEvidence<'a>>,
 }
+/// Caller-resolved pre-execution obligations, never a second authored inventory.
+/// These pins grant no producer currency, byte availability or custody authority.
+pub struct Dependencies<'a> {
+    pub composition: &'a BTreeMap<LogicalPath, Object>,
+    pub evidence: &'a BTreeMap<LogicalPath, Object>,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Role {
     Primary,
     Control,
     Interpretation,
     Runtime,
+    Composition,
     ClaimedOutput,
     Evidence,
 }
@@ -65,9 +72,42 @@ struct Prepared {
     entries: BTreeMap<LogicalPath, Object>,
     roles: BTreeMap<Role, BTreeSet<Object>>,
 }
+fn validate_names(names: &BTreeMap<LogicalPath, Object>) -> Result<()> {
+    for name in names.keys() {
+        for (index, _) in name.as_str().match_indices('/') {
+            if names.contains_key(&path(&name.as_str()[..index])?) {
+                return Err(Error::Invalid);
+            }
+        }
+    }
+    Ok(())
+}
+fn add_dependencies(
+    dependencies: &Dependencies<'_>,
+    entries: &mut BTreeMap<LogicalPath, Object>,
+    roles: &mut BTreeMap<Role, BTreeSet<Object>>,
+) -> Result<()> {
+    for (prefix, names, role) in [
+        ("composition", dependencies.composition, Role::Composition),
+        ("input-evidence", dependencies.evidence, Role::Evidence),
+    ] {
+        for (name, object) in names {
+            entries.insert(
+                path(&format!("{prefix}/{}", name.as_str()))?,
+                object.clone(),
+            );
+            roles
+                .get_mut(&role)
+                .ok_or(Error::Invalid)?
+                .insert(object.clone());
+        }
+    }
+    Ok(())
+}
 fn prepare(
     admission: &Admission<'_>,
     variants: Option<&super::variants::Packet>,
+    dependencies: Option<&Dependencies<'_>>,
     limits: TreeLimits,
 ) -> Result<Prepared> {
     let context = admission.context;
@@ -79,6 +119,8 @@ fn prepare(
     let evidence = admission.output.as_ref().map_or(0, |o| o.attachments.len());
     let entries = 4_usize
         .checked_add(admission.runtime.len())
+        .and_then(|n| n.checked_add(dependencies.map_or(0, |d| d.composition.len())))
+        .and_then(|n| n.checked_add(dependencies.map_or(0, |d| d.evidence.len())))
         .and_then(|n| n.checked_add(evidence))
         .and_then(|n| n.checked_add(usize::from(admission.output.is_some())))
         .and_then(|n| n.checked_add(usize::from(variants.is_some())));
@@ -88,17 +130,13 @@ fn prepare(
     for names in [
         Some(admission.runtime),
         admission.output.as_ref().map(|o| o.attachments),
+        dependencies.map(|d| d.composition),
+        dependencies.map(|d| d.evidence),
     ]
     .into_iter()
     .flatten()
     {
-        for name in names.keys() {
-            for (index, _) in name.as_str().match_indices('/') {
-                if names.contains_key(&path(&name.as_str()[..index])?) {
-                    return Err(Error::Invalid);
-                }
-            }
-        }
+        validate_names(names)?;
     }
     if plan.checkpoint() != required.checkpoint()
         || plan.binding() != required.binding_digest()
@@ -132,6 +170,13 @@ fn prepare(
         header["variants"] =
             serde_json::to_value(packet.selection()).map_err(|_| Error::Invalid)?;
     }
+    if let Some(dependencies) = dependencies
+        && (!dependencies.composition.is_empty() || !dependencies.evidence.is_empty())
+    {
+        header["schema"] = "tig.native-job-context.experimental-3".into();
+        header["composition"] = dependencies.composition.len().into();
+        header["input_evidence"] = dependencies.evidence.len().into();
+    }
     let header = identity::canonical_json(&header).map_err(|_| Error::Invalid)?;
     let header_object = Object::from_bytes(&header);
     let mut entries = BTreeMap::from([
@@ -158,6 +203,7 @@ fn prepare(
             BTreeSet::from([plan.operation().producer.clone()]),
         ),
         (Role::ClaimedOutput, BTreeSet::new()),
+        (Role::Composition, BTreeSet::new()),
         (Role::Evidence, BTreeSet::new()),
     ]);
     roles.get_mut(&Role::Interpretation).unwrap().extend([
@@ -178,6 +224,9 @@ fn prepare(
         .get_mut(&Role::Runtime)
         .unwrap()
         .extend(admission.runtime.values().cloned());
+    if let Some(dependencies) = dependencies {
+        add_dependencies(dependencies, &mut entries, &mut roles)?;
+    }
     if let Some(output) = &admission.output {
         entries.insert(path("claim/record")?, output.claim.object().clone());
         roles
@@ -252,7 +301,7 @@ pub fn freeze(
     store: &mut impl NodeStore,
     limits: TreeLimits,
 ) -> Result<JobContext> {
-    freeze_inner(admission, None, store, limits)
+    freeze_inner(admission, None, None, store, limits)
 }
 /// Attach an independently checked variant packet to this exact job source.
 /// Candidate finish/readback and owner adoption remain external.
@@ -262,15 +311,27 @@ pub fn freeze_with_variants(
     store: &mut impl NodeStore,
     limits: TreeLimits,
 ) -> Result<JobContext> {
-    freeze_inner(admission, Some(variants), store, limits)
+    freeze_inner(admission, Some(variants), None, store, limits)
 }
-fn freeze_inner(
+/// Freeze explicitly admitted pre-execution references under distinct roles.
+/// Candidate finish/readback and scoped owner protection remain the caller's work.
+pub fn freeze_with_dependencies(
     admission: &Admission<'_>,
+    dependencies: &Dependencies<'_>,
     variants: Option<&super::variants::Packet>,
     store: &mut impl NodeStore,
     limits: TreeLimits,
 ) -> Result<JobContext> {
-    let prepared = prepare(admission, variants, limits)?;
+    freeze_inner(admission, variants, Some(dependencies), store, limits)
+}
+fn freeze_inner(
+    admission: &Admission<'_>,
+    variants: Option<&super::variants::Packet>,
+    dependencies: Option<&Dependencies<'_>>,
+    store: &mut impl NodeStore,
+    limits: TreeLimits,
+) -> Result<JobContext> {
+    let prepared = prepare(admission, variants, dependencies, limits)?;
     let header = put(store, &prepared.header)?;
     if let Some(output) = &admission.output {
         put(store, output.claim.bytes())?;
@@ -293,7 +354,7 @@ pub fn restore(
     store: &mut impl NodeStore,
     limits: TreeLimits,
 ) -> Result<JobContext> {
-    restore_inner(selection, admission, None, store, limits)
+    restore_inner(selection, admission, None, None, store, limits)
 }
 /// Restore only with an already replay-checked packet and exact job admission.
 pub fn restore_with_variants(
@@ -303,16 +364,35 @@ pub fn restore_with_variants(
     store: &mut impl NodeStore,
     limits: TreeLimits,
 ) -> Result<JobContext> {
-    restore_inner(selection, admission, Some(variants), store, limits)
+    restore_inner(selection, admission, Some(variants), None, store, limits)
+}
+/// Exact replay admission; omission/reclassification is not an empty fallback.
+pub fn restore_with_dependencies(
+    selection: &Selection,
+    admission: &Admission<'_>,
+    dependencies: &Dependencies<'_>,
+    variants: Option<&super::variants::Packet>,
+    store: &mut impl NodeStore,
+    limits: TreeLimits,
+) -> Result<JobContext> {
+    restore_inner(
+        selection,
+        admission,
+        variants,
+        Some(dependencies),
+        store,
+        limits,
+    )
 }
 fn restore_inner(
     selection: &Selection,
     admission: &Admission<'_>,
     variants: Option<&super::variants::Packet>,
+    dependencies: Option<&Dependencies<'_>>,
     store: &mut impl NodeStore,
     limits: TreeLimits,
 ) -> Result<JobContext> {
-    let prepared = prepare(admission, variants, limits)?;
+    let prepared = prepare(admission, variants, dependencies, limits)?;
     let header = Object::from_bytes(&prepared.header);
     if selection.context != header.sha256 {
         return Err(Error::Integrity);
