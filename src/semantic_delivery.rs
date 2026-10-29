@@ -278,11 +278,32 @@ fn validate_event_bindings(
 /// filename, path, or a candidate revision after REEL resolves the closure.
 pub fn plan(path: &Path) -> Result<Plan> {
     let semantic: SemanticDelivery = serde_yaml::from_slice(&fs::read(path)?)?;
+    plan_loaded(semantic, |reference| checked_job(path, reference))
+}
+
+/// Resolve semantic selection and its exact delivery job through held controls.
+pub fn plan_with_control_files(
+    reference: &FileRef,
+    controls: &(impl scene_delivery::InputFiles + ?Sized),
+) -> Result<Plan> {
+    let semantic = serde_yaml::from_slice(&scene_delivery::read_control(controls, reference)?)?;
+    plan_loaded(semantic, |job| {
+        let job = scene_delivery::scoped_control(reference, job)?;
+        Ok(serde_yaml::from_slice(&scene_delivery::read_control(
+            controls, &job,
+        )?)?)
+    })
+}
+
+fn plan_loaded(
+    semantic: SemanticDelivery,
+    load: impl FnOnce(&FileRef) -> Result<Job>,
+) -> Result<Plan> {
     if semantic.schema != SCHEMA || !nonempty(&semantic.id) || !nonempty(&semantic.target) {
         bail!("invalid semantic-delivery schema, id, or target");
     }
     let selection = selected_closure(&semantic.pointer, &semantic.graph, &semantic.target)?;
-    let job = checked_job(path, &semantic.scene_delivery_job)?;
+    let job = load(&semantic.scene_delivery_job)?;
     validate_job_media(&selection, &job)?;
     validate_event_bindings(
         &selection,

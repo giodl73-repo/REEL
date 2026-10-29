@@ -309,23 +309,119 @@ pub(super) fn exercise(
         );
         assert!(!refused_output.exists());
     }
-    let result = parent
-        .with_current(&snapshot, children, journal, |_| {
-            episode_conform::build_with_parent_controls(
-                control_files.manifest_ref(),
-                p.data.path(),
-                p.data.path(),
-                &output,
-                episode_conform::Files {
-                    scene_inputs: &inputs,
-                    scene_outputs: providers,
-                    presentations: &BTreeMap::new(),
-                    programs: &programs,
-                },
-                &control_files,
-            )
-        })
-        .unwrap();
+    let source_controls = parent_controls::scene_controls(p, &control_files);
+    let scene_controls = source_controls.borrowed();
+    let mut incomplete = source_controls.borrowed();
+    incomplete.remove("scene-b");
+    let refused = p.data.path().join("incomplete-scene-controls");
+    assert!(
+        episode_conform::build_with_all_control_files(
+            control_files.manifest_ref(),
+            p.data.path(),
+            p.data.path(),
+            &refused,
+            episode_conform::Files {
+                scene_inputs: &inputs,
+                scene_outputs: providers,
+                presentations: &BTreeMap::new(),
+                programs: &programs
+            },
+            &control_files,
+            &incomplete,
+        )
+        .is_err()
+    );
+    assert!(!refused.exists());
+    let mut wrong_production = source_controls.production["opening"].clone();
+    wrong_production.path = "wrong-scope/production.json".into();
+    let mut wrong_scope = source_controls.borrowed();
+    wrong_scope.get_mut("opening").unwrap().production = &wrong_production;
+    let refused = p.data.path().join("wrong-production-control-scope");
+    let error = episode_conform::build_with_all_control_files(
+        control_files.manifest_ref(),
+        p.data.path(),
+        p.data.path(),
+        &refused,
+        episode_conform::Files {
+            scene_inputs: &inputs,
+            scene_outputs: providers,
+            presentations: &BTreeMap::new(),
+            programs: &programs,
+        },
+        &control_files,
+        &wrong_scope,
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("production metadata differs from declared scene scope"),
+        "{error:#}"
+    );
+    assert!(!refused.exists());
+    struct DenyScene<'a>(&'a dyn InputFiles);
+    impl InputFiles for DenyScene<'_> {
+        fn verified_path(&self, reference: &FileRef) -> anyhow::Result<PathBuf> {
+            if reference
+                .path
+                .to_string_lossy()
+                .contains("semantic-delivery")
+            {
+                anyhow::bail!("scene control provider refused");
+            }
+            self.0.verified_path(reference)
+        }
+    }
+    let denied = DenyScene(&source_controls.files["scene-b"]);
+    let mut explicit_refusal = source_controls.borrowed();
+    explicit_refusal.get_mut("scene-b").unwrap().files = &denied;
+    let refused = p.data.path().join("denied-scene-controls");
+    let error = episode_conform::build_with_all_control_files(
+        control_files.manifest_ref(),
+        p.data.path(),
+        p.data.path(),
+        &refused,
+        episode_conform::Files {
+            scene_inputs: &inputs,
+            scene_outputs: providers,
+            presentations: &BTreeMap::new(),
+            programs: &programs,
+        },
+        &control_files,
+        &explicit_refusal,
+    )
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("scene control provider refused"),
+        "{error:#}"
+    );
+    assert!(!refused.exists());
+    // Both roots are deliberately absent. Any hidden local metadata read must
+    // fail, while every source-control body remains in a protected cache tree.
+    let absent = p.data.path().join("no-local-source-controls");
+    assert!(!absent.exists());
+    let original_repo = p.repo.path();
+    let offline_repo = original_repo.with_extension("unavailable");
+    assert!(!offline_repo.exists());
+    fs::rename(original_repo, &offline_repo).unwrap();
+    let result = parent.with_current(&snapshot, children, journal, |_| {
+        episode_conform::build_with_all_control_files(
+            control_files.manifest_ref(),
+            &absent,
+            &absent,
+            &output,
+            episode_conform::Files {
+                scene_inputs: &inputs,
+                scene_outputs: providers,
+                presentations: &BTreeMap::new(),
+                programs: &programs,
+            },
+            &control_files,
+            &scene_controls,
+        )
+    });
+    fs::rename(&offline_repo, original_repo).unwrap();
+    let result = result.unwrap();
     assert!(result.decoded_master_matches_ordered_segments && result.timestamps_verified);
     assert_eq!((result.total_frames, result.total_samples), (96, 192000));
     assert!(result.master_bytes > 0 && output.join("master.mkv").is_file());

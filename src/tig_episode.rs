@@ -39,7 +39,7 @@ pub use jobs::{
 #[cfg(feature = "tig-publication")]
 mod controls;
 #[cfg(feature = "tig-publication")]
-pub use controls::ParentControls;
+pub use controls::{ControlTree, ParentControls};
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
