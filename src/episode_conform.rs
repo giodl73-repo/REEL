@@ -1405,8 +1405,54 @@ pub fn build_with_files(
             scene_outputs: Some(files.scene_outputs),
             presentations: Some(files.presentations),
             programs: Some(files.programs),
+            ..Provided::default()
         },
     )
+}
+
+/// Exact cache/provider-backed parent manifest and top-level episode controls.
+/// Scene source/semantic controls keep their explicit input_root contract. The
+/// caller retains every provider owner through the complete synchronous build.
+/// Provider errors never fall back to local controls or ambient programs.
+pub fn build_with_parent_controls(
+    manifest: &scene_delivery::FileRef,
+    input_root: &Path,
+    asset_root: &Path,
+    output: &Path,
+    files: Files<'_>,
+    controls: &dyn scene_delivery::InputFiles,
+) -> Result<Receipt> {
+    build_impl(
+        &manifest.path,
+        input_root,
+        asset_root,
+        output,
+        Provided {
+            scene_inputs: Some(files.scene_inputs),
+            scene_outputs: Some(files.scene_outputs),
+            presentations: Some(files.presentations),
+            programs: Some(files.programs),
+            controls: Some(controls),
+            manifest: Some(manifest),
+        },
+    )
+}
+
+fn read_parent_control(
+    files: &dyn scene_delivery::InputFiles,
+    reference: &scene_delivery::FileRef,
+) -> Result<Vec<u8>> {
+    const MAX: u64 = 4 * 1024 * 1024;
+    if reference.bytes > MAX {
+        bail!("episode parent control exceeds metadata budget");
+    }
+    let path = files.verified_path(reference)?;
+    let mut raw = Vec::new();
+    fs::File::open(path)?.take(MAX + 1).read_to_end(&mut raw)?;
+    if raw.len() as u64 != reference.bytes || sha(&raw) != reference.sha256 {
+        bail!("episode parent control differs from its admitted pin");
+    }
+    Ok(raw)
 }
 
 #[derive(Default)]
@@ -1415,6 +1461,8 @@ struct Provided<'a> {
     scene_outputs: Option<&'a BTreeMap<String, &'a dyn scene_delivery::InputFiles>>,
     presentations: Option<&'a BTreeMap<String, PresentationFiles<'a>>>,
     programs: Option<&'a dyn scene_delivery::InputFiles>,
+    controls: Option<&'a dyn scene_delivery::InputFiles>,
+    manifest: Option<&'a scene_delivery::FileRef>,
 }
 
 fn build_impl(
@@ -1429,6 +1477,8 @@ fn build_impl(
         scene_outputs,
         presentations,
         programs,
+        controls,
+        manifest: pinned_manifest,
     } = provided;
     let explicit_programs = programs.is_some();
     let local_programs = PathBuf::from(".");
@@ -1440,7 +1490,14 @@ fn build_impl(
         command_with_inputs(programs, scene_delivery::MediaProgram::Ffmpeg)?;
         command_with_inputs(programs, scene_delivery::MediaProgram::Ffprobe)?;
     }
-    let manifest_bytes = fs::read(manifest_path)?;
+    let manifest_bytes = if let Some(reference) = pinned_manifest {
+        read_parent_control(
+            controls.context("parent manifest requires explicit controls")?,
+            reference,
+        )?
+    } else {
+        fs::read(manifest_path)?
+    };
     let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
     if let Some(files) = presentations {
         let selected = manifest
@@ -1515,7 +1572,11 @@ fn build_impl(
         bail!("invalid episode conform manifest");
     }
     let read_input = |item: &scene_delivery::FileRef| -> Result<Vec<u8>> {
-        Ok(fs::read(scene_delivery::checked_file(input_root, item)?)?)
+        if let Some(files) = controls {
+            read_parent_control(files, item)
+        } else {
+            Ok(fs::read(scene_delivery::checked_file(input_root, item)?)?)
+        }
     };
     let catalog: TemplateCatalog = serde_json::from_slice(&read_input(&manifest.catalog)?)?;
     let master_bytes = read_input(&manifest.master_template_definition)?;

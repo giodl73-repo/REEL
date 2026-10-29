@@ -235,12 +235,100 @@ pub(super) fn exercise(
     assert_eq!(journal.checkpoint(), held);
     // An unrelated native worker's fence remains available while parent/children
     // are held (the caller fixture already owns an independent peer job).
+    let control_files = parent_controls::exercise(p, request);
+    let primary = scenes
+        .iter()
+        .map(|scene| {
+            let job: Job = serde_json::from_slice(&fs::read(&scene.job).unwrap()).unwrap();
+            p.source().prepare(&job).unwrap()
+        })
+        .collect::<Vec<_>>();
+    let primary_runtime = primary
+        .iter()
+        .map(|inputs| p.programs.with_inputs(inputs))
+        .collect::<Vec<_>>();
+    let inputs = scenes
+        .iter()
+        .zip(&primary_runtime)
+        .map(|(scene, inputs)| (scene.unit.clone(), inputs as &dyn InputFiles))
+        .collect();
+    let local = PathBuf::from(".");
+    let programs = p.programs.with_inputs(&local);
+    let output = p.data.path().join("episode-protected-cached-episode");
+    struct Refuse<'a> {
+        inner: &'a tig_episode::ParentControls,
+        spoof: bool,
+    }
+    impl InputFiles for Refuse<'_> {
+        fn verified_path(&self, reference: &FileRef) -> anyhow::Result<PathBuf> {
+            if reference.path == self.inner.manifest().catalog.path {
+                if self.spoof {
+                    return self.inner.verified_path(self.inner.manifest_ref());
+                }
+                anyhow::bail!("fixture parent control provider refused");
+            }
+            self.inner.verified_path(reference)
+        }
+    }
+    assert!(
+        p.data
+            .path()
+            .join(&control_files.manifest().catalog.path)
+            .is_file(),
+        "a valid local copy must not rescue an explicit provider refusal"
+    );
+    for spoof in [false, true] {
+        let refused_output = p
+            .data
+            .path()
+            .join(format!("parent-control-refused-{spoof}"));
+        let error = episode_conform::build_with_parent_controls(
+            control_files.manifest_ref(),
+            p.data.path(),
+            p.data.path(),
+            &refused_output,
+            episode_conform::Files {
+                scene_inputs: &inputs,
+                scene_outputs: providers,
+                presentations: &BTreeMap::new(),
+                programs: &programs,
+            },
+            &Refuse {
+                inner: &control_files,
+                spoof,
+            },
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains(if spoof {
+                "differs from its admitted pin"
+            } else {
+                "provider refused"
+            }),
+            "{error:#}"
+        );
+        assert!(!refused_output.exists());
+    }
     let result = parent
         .with_current(&snapshot, children, journal, |_| {
-            Ok(p.assemble_using(scenes, "protected-cached-episode", Some(providers)))
+            episode_conform::build_with_parent_controls(
+                control_files.manifest_ref(),
+                p.data.path(),
+                p.data.path(),
+                &output,
+                episode_conform::Files {
+                    scene_inputs: &inputs,
+                    scene_outputs: providers,
+                    presentations: &BTreeMap::new(),
+                    programs: &programs,
+                },
+                &control_files,
+            )
         })
         .unwrap();
-    assert!(result.0.bytes > 0 && result.1.is_file());
+    assert!(result.decoded_master_matches_ordered_segments && result.timestamps_verified);
+    assert_eq!((result.total_frames, result.total_samples), (96, 192000));
+    assert!(result.master_bytes > 0 && output.join("master.mkv").is_file());
     let failed = parent.with_current::<()>(&snapshot, children, journal, |_| {
         anyhow::bail!("bounded action refused")
     });
