@@ -43,10 +43,31 @@ fn programs(real: bool) -> BoundPrograms {
 #[test]
 #[ignore = "requires Windows FFmpeg and tig-propose; compiled CLI workflow"]
 fn compiled_cli_plans_renders_and_hands_off_records_with_source_git_offline() {
+    compiled_rehearsal(None);
+}
+#[test]
+#[ignore = "requires source-pinned older producer, FFmpeg and tig-propose"]
+fn retained_producer_and_new_checker_preserve_claim_and_source_currency() {
+    let producer = std::env::var_os("REEL_TEST_TIG_ORIGINAL_PRODUCER")
+        .map(PathBuf::from)
+        .expect("explicit older qualified producer required");
+    assert_ne!(
+        reel::media_runtime::ByteIdentity::observe_file(&producer).unwrap(),
+        reel::media_runtime::ByteIdentity::observe_file(Path::new(env!(
+            "CARGO_BIN_EXE_reel-tig-job"
+        )))
+        .unwrap()
+    );
+    compiled_rehearsal(Some(&producer));
+}
+fn compiled_rehearsal(producer: Option<&Path>) {
     use tig_store::metadata::MetadataReader;
     let (mut f, request) = native_scene_fixture();
     f.profile["byte_source"]["required"] = json!("prevent-mutation");
     native_cli::seed(&mut f);
+    if producer.is_some() {
+        crate::producer_reuse::seed_scene_scope(&mut f);
+    }
     let programs = programs(true);
     let capture = crate::capture::profile(&f, &request);
     let result = crate::capture::run(&f, &capture, "compiled-cli-fragment.json");
@@ -81,14 +102,26 @@ fn compiled_cli_plans_renders_and_hands_off_records_with_source_git_offline() {
         &f.root().join("compiled-cli-reference-output"),
     )
     .unwrap();
-    native_cli::exercise_compiled(
-        f.root(),
-        &request,
-        context.selection(),
-        (&metadata, &witness),
-        profile,
-        reference.receipt(),
-    );
+    if let Some(producer) = producer {
+        native_cli::exercise_retained_producer(
+            f.root(),
+            &request,
+            context.selection(),
+            (&metadata, &witness),
+            profile,
+            reference.receipt(),
+            producer,
+        );
+    } else {
+        native_cli::exercise_compiled(
+            f.root(),
+            &request,
+            context.selection(),
+            (&metadata, &witness),
+            profile,
+            reference.receipt(),
+        );
+    }
     // The helper renders/plans with Git hidden, then restores it for the
     // explicit proposal/apply assertions at the end of the lifecycle.
     assert!(f.root().join(".git").is_dir());

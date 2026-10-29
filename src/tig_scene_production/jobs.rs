@@ -147,6 +147,41 @@ impl<'a> JobPlan<'a> {
     pub(crate) fn native_request(&self) -> &Request {
         self.request
     }
+    pub(crate) fn recipe_for_producer(
+        &self,
+        source: &mut Source,
+        producer: &Object,
+        preparation: Option<&Path>,
+    ) -> Result<Plan> {
+        let recipe = match self.mode {
+            RecipeMode::Declared => {
+                if preparation.is_some() {
+                    bail!("declared producer replay takes no preparation directory");
+                }
+                context_recipe(source, self.request, self.context, producer)?
+            }
+            RecipeMode::Projected => crate::tig_scene::render_recipe(
+                source,
+                self.request,
+                self.context,
+                producer,
+                preparation.ok_or_else(|| {
+                    anyhow::anyhow!("projected producer replay requires new preparation scratch")
+                })?,
+            )?,
+        };
+        if recipe.checkpoint() != self.recipe.checkpoint()
+            || recipe.binding() != self.recipe.binding()
+            || recipe.admission() != self.recipe.admission()
+            || recipe.nodes() != self.recipe.nodes()
+            || recipe.operation().name != self.recipe.operation().name
+            || recipe.operation().semantics != self.recipe.operation().semantics
+            || recipe.operation().parameters != self.recipe.operation().parameters
+        {
+            bail!("producer replay changed current native source interpretation");
+        }
+        Ok(recipe)
+    }
     pub fn runtime(&self) -> &BTreeMap<LogicalPath, Object> {
         &self.runtime
     }

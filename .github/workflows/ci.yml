@@ -69,6 +69,32 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --features tig-publication --test tig_inputs language_scope::projected_jobs::compiled_cli_plans_renders_and_hands_off_records_with_source_git_offline --locked -- --ignored --exact
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build qualified original producer for retained-version fixture
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          CARGO_PROFILE_DEV_DEBUG: "0"
+          CARGO_INCREMENTAL: "0"
+        run: |
+          $retainedCommit = '5fe28596db71f4cbe5e796afc2390cb1cd7c6e81'
+          git fetch --no-tags --depth=1 origin $retainedCommit
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $retainedTree = git rev-parse ($retainedCommit + '^{tree}')
+          if ($retainedTree -ne '4902213c0c9d37f5905860c803daf8945f14755e') { throw 'Original producer source tree differs' }
+          $retainedSourceRoot = Join-Path $env:RUNNER_TEMP 'reel-original-source'
+          $retainedTargetRoot = Join-Path $env:RUNNER_TEMP 'reel-original-target'
+          $retainedArchive = Join-Path $env:RUNNER_TEMP 'reel-original-source.tar'
+          New-Item -ItemType Directory -Path $retainedSourceRoot | Out-Null
+          git archive --format=tar "--output=$retainedArchive" $retainedCommit
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          tar -xf $retainedArchive -C $retainedSourceRoot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --locked --manifest-path (Join-Path $retainedSourceRoot 'Cargo.toml') --target-dir $retainedTargetRoot --features tig-publication --bin reel-tig-job
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Value "REEL_TEST_TIG_ORIGINAL_PRODUCER=$retainedTargetRoot/debug/reel-tig-job.exe"
+      - name: Verify original producer and new checker keep source currency and claims distinct
+        if: runner.os == 'Windows'
+        run: cargo test --features tig-publication --test tig_inputs language_scope::projected_jobs::retained_producer_and_new_checker_preserve_claim_and_source_currency --locked -- --ignored --exact
       - name: Verify synthetic episode edit, delivery, parallel publication and verified cache eviction
         if: runner.os == 'Windows'
         run: cargo test --features tig-publication --test tig_inputs fake_episode_lifecycle::fake_episode_runs_v1_then_rebuilds_only_the_changed_scene --locked -- --ignored --exact

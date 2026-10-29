@@ -88,7 +88,7 @@ pub fn seed(f: &mut super::Fixture) {
     let definition = super::write(
         &root,
         "definitions/native-output.json",
-        &json!({"schema":"tig.definition.design-1","id":"types/native-output","authored_schema":schema,"authoring":{"properties":["label"],"required":["label"],"defaults":{}},"stream_rules":{},"semantic_rules":{}}),
+        &json!({"schema":"tig.definition.design-1","id":"types/native-output","authored_schema":schema,"authoring":{"properties":["label","scene","language","component_kind","source_segment_id"],"required":["label"],"defaults":{}},"stream_rules":{},"semantic_rules":{}}),
     );
     let history = b"previous synthetic native output";
     let old = Object::from_bytes(history);
@@ -118,7 +118,15 @@ pub fn exercise(
     source: Value,
     reference: &Receipt,
 ) {
-    exercise_mode(root, request, context, metadata, source, reference, false)
+    exercise_mode(
+        root,
+        request,
+        context,
+        metadata,
+        source,
+        reference,
+        ProducerMode::Declared,
+    )
 }
 pub fn exercise_compiled(
     root: &Path,
@@ -128,7 +136,39 @@ pub fn exercise_compiled(
     source: Value,
     reference: &Receipt,
 ) {
-    exercise_mode(root, request, context, metadata, source, reference, true)
+    exercise_mode(
+        root,
+        request,
+        context,
+        metadata,
+        source,
+        reference,
+        ProducerMode::Compiled,
+    )
+}
+pub fn exercise_retained_producer(
+    root: &Path,
+    request: &Request,
+    context: &Selection,
+    metadata: (&Path, &Checkpoint),
+    source: Value,
+    reference: &Receipt,
+    producer: &Path,
+) {
+    exercise_mode(
+        root,
+        request,
+        context,
+        metadata,
+        source,
+        reference,
+        ProducerMode::Retained(producer),
+    )
+}
+enum ProducerMode<'a> {
+    Declared,
+    Compiled,
+    Retained(&'a Path),
 }
 fn exercise_mode(
     root: &Path,
@@ -137,8 +177,10 @@ fn exercise_mode(
     metadata: (&Path, &Checkpoint),
     source: Value,
     reference: &Receipt,
-    compiled: bool,
+    mode: ProducerMode<'_>,
 ) {
+    let compiled = !matches!(mode, ProducerMode::Declared);
+    let retained_producer = matches!(mode, ProducerMode::Retained(_));
     let locate = |name: &str| {
         std::env::split_paths(&std::env::var_os("PATH").unwrap())
             .map(|dir| dir.join(format!("{name}.exe")))
@@ -151,9 +193,12 @@ fn exercise_mode(
         let observed = ByteIdentity::observe_file(&path).unwrap();
         json!({"path":path,"sha256":observed.sha256,"bytes":observed.bytes})
     };
-    let binary = Path::new(env!("CARGO_BIN_EXE_reel-tig-job"))
-        .canonicalize()
-        .unwrap();
+    let binary = match mode {
+        ProducerMode::Retained(path) => path,
+        _ => Path::new(env!("CARGO_BIN_EXE_reel-tig-job")),
+    }
+    .canonicalize()
+    .unwrap();
     let host = ByteIdentity::observe_file(&binary).unwrap();
     let cache = root.join("cli-active");
     fs::create_dir_all(cache.join("objects/sha256")).unwrap();
@@ -603,13 +648,11 @@ fn exercise_mode(
     for name in [".git", "records", "definitions"] {
         fs::rename(root.join(format!("cli-offline-{name}")), root.join(name)).unwrap();
     }
-    check_git_handoff(
-        root,
-        &handoff_result.unwrap(),
-        &git_base,
-        &original_record,
-        &cache,
-    );
+    let completed = handoff_result.unwrap();
+    check_git_handoff(root, &completed, &git_base, &original_record, &cache);
+    if retained_producer {
+        crate::producer_reuse::exercise(root, request, metadata, &profile, &completed);
+    }
 }
 
 fn check_git_handoff(root: &Path, completed: &Value, base: &str, original: &[u8], cache: &Path) {
