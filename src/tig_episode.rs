@@ -22,7 +22,10 @@ pub use context::{composition_recipe, freeze_composition_context, restore_compos
 #[cfg(feature = "tig-publication")]
 mod correspondence;
 #[cfg(feature = "tig-publication")]
-pub use correspondence::{CurrentScene, check_current_scene, require_current_scenes};
+pub use correspondence::{
+    CurrentScene, check_current_scene, check_current_scene_with_retained_producer,
+    require_current_scenes,
+};
 #[cfg(feature = "tig-publication")]
 mod protection;
 #[cfg(feature = "tig-publication")]

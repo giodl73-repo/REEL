@@ -60,6 +60,11 @@ pub fn exercise(
         "outputs":outputs,"reference":baseline,"runtime":profile["worker"]["runtime"],
         "byte_source":{"places":[{"root":cache,"layout":"reel-cas"}],"required":"prevent-mutation"},
         "cache":profile["cache"],"preparation_cache":cache,"max_output_bytes":134217728_u64});
+    // The validator is this independently pinned executable, not whichever host
+    // originally rendered the scene. Preserve producer and all original claims.
+    let mut comparison = comparison;
+    comparison["runtime"]["host"] =
+        json!(reel::media_runtime::ByteIdentity::observe_file(binary).unwrap());
     let minimum = serde_json::from_value(profile["worker"]["metadata_minimum"].clone()).unwrap();
     let metadata = Path::new(profile["worker"]["metadata_root"].as_str().unwrap());
     let before = MetadataReader::open(metadata, &minimum)
@@ -93,6 +98,11 @@ pub fn exercise(
     assert_eq!(evidence["parity"]["native_clock_checked"], true);
     assert_eq!(evidence["parity"]["approval_transferred"], false);
     assert_eq!(evidence["execution_attested"], false);
+    assert_eq!(evidence["producer"], comparison["producer"]);
+    let producer_host = &profile["worker"]["runtime"]["host"];
+    if producer_host != &comparison["runtime"]["host"] {
+        assert_ne!(evidence["producer"], evidence["validator"]);
+    }
     clean(cache);
     // Receipt-derived v2 keeps one manifest and shares one charged reader across
     // claim, receipt, baseline and all unique native outputs. Exact allowance

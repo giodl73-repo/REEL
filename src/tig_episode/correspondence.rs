@@ -14,6 +14,8 @@ pub struct CurrentScene {
     selected: Object,
     claim: Object,
     recipe: Digest,
+    protection_recipe: Digest,
+    producer: Object,
     binding: Digest,
     admission: Digest,
     production_definitions: BTreeSet<String>,
@@ -22,7 +24,7 @@ impl CurrentScene {
     pub(super) fn matches_job(&self, plan: &JobPlan<'_>) -> bool {
         let recipe = plan.recipe();
         self.checkpoint == *recipe.checkpoint()
-            && self.recipe == *recipe.fingerprint()
+            && self.protection_recipe == *recipe.fingerprint()
             && self.binding == *recipe.binding()
             && self.admission == *recipe.admission()
             && plan.native_request().scene_id == self.scene.id
@@ -37,6 +39,11 @@ impl CurrentScene {
     pub fn recipe(&self) -> &Digest {
         &self.recipe
     }
+    /// Producer explicitly admitted for the matched retained output, which may
+    /// differ from the current checker/ownership job. No execution attestation.
+    pub fn matched_producer(&self) -> &Object {
+        &self.producer
+    }
 }
 
 /// Reuse independently replayed original correspondence and an actual native
@@ -46,6 +53,36 @@ pub fn check_current_scene(
     source: &Source,
     output_id: &str,
     current: &JobPlan<'_>,
+    original: &ReplayedClaim<'_>,
+) -> Result<CurrentScene> {
+    check_recipe(source, output_id, current, current.recipe(), original)
+}
+
+/// Caller independently authorizes this original producer for current reuse.
+/// Recomputes current native consumed meaning with that pin, without weakening
+/// interpreter/parameter checks or pretending the checker executes old code.
+/// Projected mode requires new bounded preparation scratch; declared mode None.
+/// Actual native byte checks, generated-input eligibility and approval stay separate.
+pub fn check_current_scene_with_retained_producer(
+    source: &mut Source,
+    output_id: &str,
+    current: &JobPlan<'_>,
+    original: &ReplayedClaim<'_>,
+    producer: &Object,
+    preparation: Option<&std::path::Path>,
+) -> Result<CurrentScene> {
+    if &original.checked().claim().operation().producer != producer {
+        bail!("retained producer differs from independent reuse admission");
+    }
+    let recipe = current.recipe_for_producer(source, producer, preparation)?;
+    check_recipe(source, output_id, current, &recipe, original)
+}
+
+fn check_recipe(
+    source: &Source,
+    output_id: &str,
+    current: &JobPlan<'_>,
+    recipe: &tig_assets::graph::recipe::Plan,
     original: &ReplayedClaim<'_>,
 ) -> Result<CurrentScene> {
     let request = current.native_request();
@@ -75,7 +112,7 @@ pub fn check_current_scene(
     }
     let subject = BoundSubject::resolve(&output, output.definition(), Selector::Selected {})?
         .context("scene component has no selected output")?;
-    if produced::compare(current.recipe(), Some(&subject), Some(original.checked()))?
+    if produced::compare(recipe, Some(&subject), Some(original.checked()))?
         != Correspondence::ClaimedRecipeMatch
     {
         bail!("selected scene output has a stale current-source recipe");
@@ -86,7 +123,9 @@ pub fn check_current_scene(
         scene: scene.reference().clone(),
         selected: subject.subject().object().clone(),
         claim: original.checked().claim().object().clone(),
-        recipe: current.recipe().fingerprint().clone(),
+        recipe: recipe.fingerprint().clone(),
+        protection_recipe: current.recipe().fingerprint().clone(),
+        producer: recipe.operation().producer.clone(),
         binding: current.recipe().binding().clone(),
         admission: current.recipe().admission().clone(),
         production_definitions: request
