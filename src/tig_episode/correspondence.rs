@@ -21,6 +21,9 @@ pub struct CurrentScene {
     production_definitions: BTreeSet<String>,
 }
 impl CurrentScene {
+    pub(super) fn protection_recipe(&self) -> &Digest {
+        &self.protection_recipe
+    }
     pub(super) fn matches_job(&self, plan: &JobPlan<'_>) -> bool {
         let recipe = plan.recipe();
         self.checkpoint == *recipe.checkpoint()

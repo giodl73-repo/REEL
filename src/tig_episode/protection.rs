@@ -21,10 +21,23 @@ pub struct SceneAdmission<'p, 'a> {
 pub struct ProtectedScenes<'p, 'a> {
     checkpoint: Digest,
     jobs: BTreeMap<String, ProtectedJob<'p, 'a>>,
+    recipes: BTreeMap<String, Digest>,
+    objects: BTreeSet<Object>,
     primary: BTreeSet<Object>,
     logical_bytes: u64,
 }
 impl ProtectedScenes<'_, '_> {
+    pub(super) fn matches(&self, checkpoint: &Digest, recipes: &BTreeMap<String, Digest>) -> bool {
+        &self.checkpoint == checkpoint && &self.recipes == recipes
+    }
+    pub(super) fn objects(&self) -> &BTreeSet<Object> {
+        &self.objects
+    }
+    pub(super) fn contains_source(&self, source: &Key) -> bool {
+        self.jobs
+            .values()
+            .any(|job| job.source_identity() == source)
+    }
     pub fn primary_objects(&self) -> &BTreeSet<Object> {
         &self.primary
     }
@@ -121,6 +134,15 @@ pub fn protect_current_scenes<'p, 'a>(
         );
     }
     let mut jobs = BTreeMap::new();
+    let recipes = admissions
+        .iter()
+        .map(|(id, child)| {
+            (
+                id.clone(),
+                child.readback.plan().recipe().fingerprint().clone(),
+            )
+        })
+        .collect();
     for (id, child) in admissions {
         let job = child.readback.protect(
             journal,
@@ -134,6 +156,11 @@ pub fn protect_current_scenes<'p, 'a>(
     Ok(ProtectedScenes {
         checkpoint: plan.source_checkpoint,
         jobs,
+        recipes,
+        objects: objects
+            .into_iter()
+            .map(|(sha256, bytes)| Object { sha256, bytes })
+            .collect(),
         primary,
         logical_bytes,
     })

@@ -30,6 +30,12 @@ pub use correspondence::{
 mod protection;
 #[cfg(feature = "tig-publication")]
 pub use protection::{ProtectedScenes, ProtectionBudget, SceneAdmission, protect_current_scenes};
+#[cfg(feature = "tig-publication")]
+mod jobs;
+#[cfg(feature = "tig-publication")]
+pub use jobs::{
+    CompositionJobPlan, CompositionOwnership, CompositionReadback, ProtectedComposition,
+};
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
