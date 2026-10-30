@@ -8,6 +8,18 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Operation {
+    /// Verify retained components and assemble an episode in admitted scratch.
+    RunEpisode { profile: PathBuf },
+    /// Resume a completed episode job's verified metadata/owner handoff only.
+    FinishEpisode { profile: PathBuf },
+    #[command(hide = true)]
+    EpisodeWorker {
+        ticket: PathBuf,
+        #[arg(long)]
+        sha256: String,
+        #[arg(long)]
+        bytes: u64,
+    },
     /// Verify exact PCM-WAV reconstruction; publish only with explicit admission.
     RecoverPcmWave {
         profile: PathBuf,
@@ -48,7 +60,21 @@ enum Operation {
 fn main() -> ExitCode {
     let operation = Args::parse().operation;
     let comparison = matches!(&operation, Operation::CompareRetained { .. });
+    let episode_job = matches!(&operation, Operation::RunEpisode { .. });
     let result = match operation {
+        Operation::RunEpisode { profile } => reel::tig_episode_cli::run(&profile),
+        Operation::FinishEpisode { profile } => reel::tig_episode_cli::finish_episode(&profile),
+        Operation::EpisodeWorker {
+            ticket,
+            sha256,
+            bytes,
+        } => (|| -> anyhow::Result<_> {
+            let expected = tig_core::Object {
+                sha256: tig_core::Digest::parse(&sha256)?,
+                bytes,
+            };
+            reel::tig_episode_cli::worker(&ticket, &expected)
+        })(),
         Operation::RecoverPcmWave { profile, publish } => {
             reel::tig_pcm_recovery::run(&profile, publish)
         }
@@ -87,7 +113,8 @@ fn main() -> ExitCode {
     match result {
         Ok(value) => {
             println!("{value}");
-            if comparison && value["equal"] != true {
+            if (comparison && value["equal"] != true) || (episode_job && value["succeeded"] != true)
+            {
                 ExitCode::FAILURE
             } else {
                 ExitCode::SUCCESS

@@ -10,7 +10,7 @@ use tig_core::{
 };
 use tig_store::metadata;
 
-pub(super) struct MetadataWait {
+pub(crate) struct MetadataWait {
     spent: Cell<Duration>,
     pauses: Cell<u16>,
     limit: Duration,
@@ -27,7 +27,7 @@ impl Default for MetadataWait {
 impl MetadataWait {
     // One cumulative wait allowance spans open, freeze, finish and readback.
     // Compilation, capacity refusals, IO, integrity and rollback never retry.
-    pub(super) fn run<T>(
+    pub(crate) fn run<T>(
         &self,
         action: impl FnMut() -> metadata::Result<T>,
     ) -> metadata::Result<T> {
@@ -55,12 +55,12 @@ impl MetadataWait {
         }
     }
 }
-pub(super) struct Waiting<'a, T> {
-    pub(super) inner: T,
+pub(crate) struct Waiting<'a, T> {
+    pub(crate) inner: T,
     wait: &'a MetadataWait,
 }
 impl<'a, T> Waiting<'a, T> {
-    pub(super) fn new(inner: T, wait: &'a MetadataWait) -> Self {
+    pub(crate) fn new(inner: T, wait: &'a MetadataWait) -> Self {
         Self { inner, wait }
     }
 }

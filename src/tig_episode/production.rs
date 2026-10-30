@@ -369,6 +369,9 @@ impl CompositionJobPlan<'_> {
     }
 }
 impl RenderedComposition<'_> {
+    pub fn outputs(&self) -> &BTreeMap<String, FileRef> {
+        &self.outputs
+    }
     pub fn receipt(&self) -> &episode_conform::Receipt {
         &self.receipt
     }
