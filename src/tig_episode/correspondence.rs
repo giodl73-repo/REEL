@@ -21,6 +21,15 @@ pub struct CurrentScene {
     production_definitions: BTreeSet<String>,
 }
 impl CurrentScene {
+    pub(super) fn checkpoint(&self) -> &Digest {
+        &self.checkpoint
+    }
+    pub(super) fn output(&self) -> &Reference {
+        &self.output
+    }
+    pub(super) fn scene(&self) -> &Reference {
+        &self.scene
+    }
     pub(super) fn protection_recipe(&self) -> &Digest {
         &self.protection_recipe
     }

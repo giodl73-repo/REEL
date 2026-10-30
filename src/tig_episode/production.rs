@@ -129,6 +129,33 @@ impl ProtectedComposition<'_, '_> {
                     baseline: files.parent,
                     compiled,
                 };
+                let mut scenes = files
+                    .scenes
+                    .iter()
+                    .map(|(id, scene)| {
+                        (
+                            id.clone(),
+                            SceneControls {
+                                files: scene.files,
+                                production: scene.production,
+                            },
+                        )
+                    })
+                    .collect::<BTreeMap<_, _>>();
+                for (id, production) in &compiled.scene_production {
+                    if scenes.contains_key(id) {
+                        bail!(
+                            "current native scene controls cannot be replaced by a caller provider"
+                        );
+                    }
+                    scenes.insert(
+                        id.clone(),
+                        SceneControls {
+                            files: &controls,
+                            production,
+                        },
+                    );
+                }
                 episode_conform::build_with_current_presentations(
                     &compiled.reference,
                     output,
@@ -139,7 +166,7 @@ impl ProtectedComposition<'_, '_> {
                         programs: &programs,
                     },
                     &controls,
-                    files.scenes,
+                    &scenes,
                     &plan.presentations,
                 )?
             } else {

@@ -17,17 +17,20 @@ pub(super) struct CurrentControls {
     pub metadata: BTreeMap<Object, Vec<u8>>,
     pub storage: BTreeMap<Object, Vec<u8>>,
     pub root: Object,
+    pub scene_production: BTreeMap<String, FileRef>,
 }
 impl CurrentControls {
     pub fn compile(
         source: &mut Source,
         plan: &Plan,
         proofs: &BTreeMap<String, &VerifiedPresentation<'_>>,
+        scenes: &BTreeMap<String, CurrentSceneControls>,
     ) -> Result<Self> {
         let raw = source.read_metadata(&plan.conform, 4 * 1024 * 1024)?;
         let mut value = identity::parse_json(&raw)?;
         let mut metadata = BTreeMap::new();
         let mut total = raw.len();
+        let mut scene_production = BTreeMap::new();
         // Top-level controls are real resource obligations, not an opaque receipt.
         for key in [
             "catalog",
@@ -72,6 +75,28 @@ impl CurrentControls {
                 bail!("current parent segment order differs");
             }
             if component.kind == "scene" {
+                if let Some(controls) = scenes.get(&component.segment_id) {
+                    metadata.extend(controls.metadata.clone());
+                    scene_production
+                        .insert(component.segment_id.clone(), controls.production.clone());
+                    let name = Digest::blob(component.segment_id.as_bytes());
+                    segment["master"] = serde_json::json!({"path":format!("current/{}/master.mkv",name.as_str()),"sha256":component.selected.sha256,"bytes":component.selected.bytes});
+                    segment["source_receipt"] = serde_json::to_value(&controls.receipt)?;
+                    segment["delivery_receipt"] = serde_json::to_value(&controls.receipt)?;
+                    segment["delivery_job"] = serde_json::to_value(&controls.job)?;
+                    segment["semantic_delivery"] = serde_json::to_value(&controls.semantic)?;
+                    let fields = segment
+                        .as_object_mut()
+                        .context("invalid native scene segment")?;
+                    for key in [
+                        "imported_source_manifest",
+                        "imported_source_root",
+                        "adoption_manifest",
+                    ] {
+                        fields.remove(key);
+                    }
+                    continue;
+                }
                 if component.changed_from_baseline {
                     bail!("changed scene requires current native scene controls");
                 }
@@ -132,6 +157,7 @@ impl CurrentControls {
             metadata,
             storage,
             root,
+            scene_production,
         })
     }
 }

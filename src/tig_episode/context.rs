@@ -79,6 +79,7 @@ fn descriptor(source: &Source, request: &Request, plan: &Plan) -> Result<Vec<u8>
         "adapter":Object::from_bytes(include_bytes!("context.rs")),
         "planner":Object::from_bytes(include_bytes!("../tig_episode.rs")),
         "current_control_compiler":Object::from_bytes(include_bytes!("current_controls.rs")),
+        "current_scene_compiler":Object::from_bytes(include_bytes!("scene_controls.rs")),
         "input_adapter":Object::from_bytes(include_bytes!("../tig_inputs.rs")),
         "tig_source_pin":Object::from_bytes(include_bytes!("../../vendor/tig/source-pin.json")),
     }))?;
