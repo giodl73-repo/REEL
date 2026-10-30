@@ -357,6 +357,20 @@ impl MediaProgram {
 /// ambient tools. Provider locations are not serialized into jobs or receipts.
 pub trait InputFiles {
     fn verified_path(&self, item: &FileRef) -> Result<PathBuf>;
+    /// Exact metadata bytes may come directly from an immutable node provider.
+    /// The caller still checks the declared pin. Explicit failure is terminal;
+    /// it must not trigger a filesystem fallback. The default retains guarded
+    /// path access for existing providers.
+    fn control_bytes(&self, item: &FileRef) -> Result<Vec<u8>> {
+        const MAX: u64 = 4 * 1024 * 1024;
+        if item.bytes > MAX {
+            bail!("control metadata exceeds budget");
+        }
+        let path = self.verified_path(item)?;
+        let mut raw = Vec::new();
+        fs::File::open(path)?.take(MAX + 1).read_to_end(&mut raw)?;
+        Ok(raw)
+    }
     /// Program selection belongs to this operation's trusted provider. Legacy
     /// callers retain ambient tools; protected adapters supply absolute paths.
     /// An explicit provider error must never fall back to PATH.
@@ -514,15 +528,56 @@ pub(crate) fn read_control(
     if reference.bytes > MAX {
         bail!("control metadata exceeds budget");
     }
-    let path = files.verified_path(reference)?;
-    let mut raw = Vec::new();
-    fs::File::open(path)?.take(MAX + 1).read_to_end(&mut raw)?;
+    let raw = files.control_bytes(reference)?;
     if raw.len() as u64 != reference.bytes
         || crate::production::sha256_bytes(&raw) != reference.sha256
     {
         bail!("control metadata differs from its declared pin");
     }
     Ok(raw)
+}
+
+#[cfg(test)]
+mod memory_control_tests {
+    use super::*;
+    struct Memory(bool);
+    impl InputFiles for Memory {
+        fn verified_path(&self, _: &FileRef) -> Result<PathBuf> {
+            panic!("metadata provider must not fall back to a filesystem path")
+        }
+        fn control_bytes(&self, _: &FileRef) -> Result<Vec<u8>> {
+            if !self.0 {
+                bail!("explicit provider refusal");
+            }
+            Ok(b"{}".to_vec())
+        }
+    }
+    #[test]
+    fn in_memory_controls_require_exact_pins_and_preserve_explicit_refusals() {
+        let mut pin = FileRef {
+            path: "virtual/control.json".into(),
+            sha256: crate::production::sha256_bytes(b"{}"),
+            bytes: 2,
+        };
+        assert_eq!(read_control(&Memory(true), &pin).unwrap(), b"{}");
+        assert!(
+            read_control(&Memory(false), &pin)
+                .unwrap_err()
+                .to_string()
+                .contains("explicit provider refusal")
+        );
+        pin.sha256 = "0".repeat(64);
+        assert!(read_control(&Memory(true), &pin).is_err());
+        pin.bytes = 3;
+        assert!(read_control(&Memory(true), &pin).is_err());
+        pin.bytes = 4 * 1024 * 1024 + 1;
+        assert!(
+            read_control(&Memory(false), &pin)
+                .unwrap_err()
+                .to_string()
+                .contains("exceeds budget")
+        );
+    }
 }
 
 /// Plan from exact guarded job/contract/production metadata and primary inputs.

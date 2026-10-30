@@ -38,6 +38,26 @@ fn declared_runtime_verifies_host_and_files_holds_guards_and_omits_private_paths
         )]),
     };
     let bound = BoundPrograms::bind(&bindings).unwrap();
+    struct MemoryControl;
+    impl InputFiles for MemoryControl {
+        fn verified_path(&self, _: &FileRef) -> anyhow::Result<PathBuf> {
+            anyhow::bail!("metadata has no filesystem path")
+        }
+        fn control_bytes(&self, _: &FileRef) -> anyhow::Result<Vec<u8>> {
+            Ok(b"literal control".to_vec())
+        }
+    }
+    assert_eq!(
+        bound
+            .with_inputs(&MemoryControl)
+            .control_bytes(&FileRef {
+                path: "virtual.json".into(),
+                sha256: "0".repeat(64),
+                bytes: 15
+            })
+            .unwrap(),
+        b"literal control"
+    );
     let components: BTreeMap<_, _> = bound.components().collect();
     assert_eq!(components.len(), 4);
     assert_eq!(components["host"], &bindings.host);
