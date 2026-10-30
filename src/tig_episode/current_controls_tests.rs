@@ -1,4 +1,5 @@
 use super::*;
+use tig_core::tree::{MemoryNodes, NodeStore, Tree, TreeLimits};
 
 #[test]
 fn larger_control_is_framed_as_bounded_existing_nodes() {

@@ -283,3 +283,11 @@ fake-episode lifecycle also passes (93.60 seconds), including the changed-scene
 rebuild, Git history, retained outputs and verified synthetic cache eviction.
 The current control-compiler extension requires its own final tests and exact
 hosted qualification before adoption.
+
+For retained scenes without an original native Tig claim, the
+[owned scene-reference path](reviews/2026-10-30-owned-scene-reference.md) freezes
+current controls and selected-output resources, reopens them, and retains a
+source owner plus byte guards through independent picture/PCM comparison.
+Its sealed `VerifiedScene` is separate from historical recipe correspondence.
+Parent admission and assembly must explicitly consume this proof before it can
+qualify a complete legacy episode; that handoff remains open.

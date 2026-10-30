@@ -1,5 +1,6 @@
 //! Current native scene metadata compiled from its matched job, not an old conform.
 use super::{CurrentScene, Source};
+use crate::tig_scene_production::control_snapshot::{body, capture};
 use crate::{
     cue_relative::Contract,
     scene_delivery::{self, FileRef, InputFiles, Job},
@@ -8,7 +9,7 @@ use crate::{
     tig_scene_production::jobs::JobPlan,
 };
 use anyhow::{Context, Result, bail};
-use std::{collections::BTreeMap, fs, io::Read, path::Path};
+use std::{collections::BTreeMap, path::Path};
 use tig_assets::graph::Reference;
 use tig_core::{Digest, Object};
 
@@ -147,53 +148,4 @@ impl CurrentSceneControls {
             metadata,
         })
     }
-}
-// Retain just the four native render controls, not the compiler's diagnostic
-// inventories and intermediate authoring projections. Each remains exact bytes.
-fn capture(
-    preparation: &Path,
-    relative: &Path,
-    prefix: &str,
-    metadata: &mut BTreeMap<Object, Vec<u8>>,
-    total: &mut u64,
-) -> Result<FileRef> {
-    let relative = scene_delivery::control_name(relative)?;
-    let path = preparation.join(&relative);
-    let root = preparation.canonicalize()?;
-    if !fs::symlink_metadata(&path)?.file_type().is_file()
-        || path.canonicalize()? != root.join(&relative)
-    {
-        bail!("scene control is not a regular contained file");
-    }
-    let mut raw = Vec::new();
-    fs::File::open(path)?
-        .take(4 * 1024 * 1024 + 1)
-        .read_to_end(&mut raw)?;
-    *total = total
-        .checked_add(raw.len() as u64)
-        .context("scene control budget overflow")?;
-    if raw.len() > 4 * 1024 * 1024 || *total > 16 * 1024 * 1024 {
-        bail!("scene controls exceed metadata budget");
-    }
-    let object = Object::from_bytes(&raw);
-    let name = relative
-        .to_str()
-        .context("non-Unicode scene control")?
-        .replace('\\', "/");
-    let file = FileRef {
-        path: format!("{prefix}{name}").into(),
-        sha256: object.sha256.as_str().into(),
-        bytes: object.bytes,
-    };
-    metadata.insert(object, raw);
-    Ok(file)
-}
-fn body<'a>(metadata: &'a BTreeMap<Object, Vec<u8>>, reference: &FileRef) -> Result<&'a [u8]> {
-    let object = Object {
-        sha256: Digest::parse(&reference.sha256)?,
-        bytes: reference.bytes,
-    };
-    Ok(metadata
-        .get(&object)
-        .context("compiled scene control body missing")?)
 }

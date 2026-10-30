@@ -104,6 +104,9 @@ jobs:
       - name: Verify changed scene controls rebuild the parent without an old movie
         if: runner.os == 'Windows'
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::current_scene_controls::sparse_scene_edit_compiles_parent_without_manual_conform_or_old_movie --locked -- --ignored --exact
+      - name: Verify independent retained scene ownership without source checkout
+        if: runner.os == 'Windows'
+        run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::scene_reference::retained_scene_matches_without_history_and_with_independent_owners --locked -- --ignored --exact
       - name: Verify explicit mono duplication preserves source level and rejects stereo
         run: cargo test --test scene_delivery duplicate_mono_preserves_source_level_and_rejects_stereo -- --ignored --exact
       - name: Verify independent native audio matches full-scene stems and rejects stale evidence

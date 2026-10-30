@@ -22,6 +22,7 @@ use tig_store::{
     source_claims::{Command, Selection, SourceJournal},
 };
 
+pub mod reference;
 /// Existing private coordination root shared by all managed users of this journal.
 pub struct Coordination {
     pub root: PathBuf,
