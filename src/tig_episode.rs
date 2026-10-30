@@ -41,7 +41,11 @@ mod controls;
 #[cfg(feature = "tig-publication")]
 mod current_controls;
 #[cfg(feature = "tig-publication")]
+mod scene_controls;
+#[cfg(feature = "tig-publication")]
 pub use controls::{ControlTree, ParentControls};
+#[cfg(feature = "tig-publication")]
+pub use scene_controls::CurrentSceneControls;
 #[cfg(feature = "tig-publication")]
 mod production;
 #[cfg(feature = "tig-publication")]

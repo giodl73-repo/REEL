@@ -147,6 +147,35 @@ impl<'a> JobPlan<'a> {
     pub(crate) fn native_request(&self) -> &Request {
         self.request
     }
+    /// Recompile current metadata under this exact frozen native interpretation.
+    /// This creates only a new bounded preparation directory, never media.
+    pub(crate) fn compile_parent_controls(
+        &self,
+        source: &mut Source,
+        preparation: &Path,
+    ) -> Result<()> {
+        let recipe = match self.mode {
+            RecipeMode::Declared => {
+                let recipe = context_recipe(
+                    source,
+                    self.request,
+                    self.context,
+                    &self.recipe.operation().producer,
+                )?;
+                crate::tig_scene::compile(source, self.request, preparation)?;
+                recipe
+            }
+            RecipeMode::Projected => self.recipe_for_producer(
+                source,
+                &self.recipe.operation().producer,
+                Some(preparation),
+            )?,
+        };
+        if recipe.fingerprint() != self.recipe.fingerprint() {
+            bail!("parent scene controls differ from current native job");
+        }
+        Ok(())
+    }
     pub(crate) fn recipe_for_producer(
         &self,
         source: &mut Source,

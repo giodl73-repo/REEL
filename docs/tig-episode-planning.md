@@ -183,17 +183,28 @@ correspondence. Native reference evidence retains its own schema and is not
 represented as an original producer receipt. The legacy provider-based conform
 entry points remain separate.
 
-Changed scenes still require current native scene controls. Native presentation
-invocations with content overrides or editable source-text units also require
+For a changed scene, `CurrentSceneControls::compile` recompiles metadata under
+the matched current native job and binds it to the selected guarded delivery
+receipt. `from_current_component_controls` consumes these sealed controls along
+with current scene correspondence and optional presentations. It replaces the
+scene's job, semantic scope, receipt and master references in memory, retaining
+only the four native render controls and exact receipt. Assembly supplies those
+frozen controls directly and rejects caller replacement. The original conform
+and producer evidence remain immutable. The existing constructors continue
+refusing changed scenes without this control coverage.
+
+Native presentation invocations with content overrides or editable source-text units also require
 their current content-binding contract; they cannot silently reuse an unrelated
 render. Those extensions remain open. The native parent compiler currently
 handles source-owned presentation content with empty invocation overrides.
 
 This low-level assembly primitive is not a capacity scheduler; production
 execution needs the existing bounded job runner. CLI/scheduler integration,
-changed-scene control compilation, full child-retention handoff, generated-input freshness
+full child-retention handoff, generated-input freshness
 and actual project adoption remain separate work.
 See [the output publication review](reviews/2026-10-29-episode-output-publication.md).
+See [current scene controls](reviews/2026-10-30-current-scene-parent-controls.md)
+for the sparse-edit fixture and exact qualification requirements.
 
 ## Retained presentation controls without a checkout
 

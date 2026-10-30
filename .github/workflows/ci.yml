@@ -101,6 +101,9 @@ jobs:
       - name: Verify protected Tig scene outputs without the render directory
         if: runner.os == 'Windows'
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::cached_scene_bundle_rechecks_without_render_directory_and_rejects_bad_bytes --locked -- --ignored --exact
+      - name: Verify changed scene controls rebuild the parent without an old movie
+        if: runner.os == 'Windows'
+        run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::current_scene_controls::sparse_scene_edit_compiles_parent_without_manual_conform_or_old_movie --locked -- --ignored --exact
       - name: Verify explicit mono duplication preserves source level and rejects stereo
         run: cargo test --test scene_delivery duplicate_mono_preserves_source_level_and_rejects_stereo -- --ignored --exact
       - name: Verify independent native audio matches full-scene stems and rejects stale evidence

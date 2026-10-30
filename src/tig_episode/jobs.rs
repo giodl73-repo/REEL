@@ -59,7 +59,7 @@ impl<'a> CompositionJobPlan<'a> {
         programs: &'a BoundPrograms,
         proofs: &BTreeMap<String, CurrentScene>,
     ) -> Result<Self> {
-        Self::from_components(source, request, context, programs, proofs, None)
+        Self::from_components(source, request, context, programs, proofs, None, None)
     }
     /// Admit exact scene correspondence plus freshly verified presentations.
     /// Keep their owners and metadata providers alive; this borrows all byte,
@@ -79,6 +79,28 @@ impl<'a> CompositionJobPlan<'a> {
             programs,
             scenes,
             Some(presentations),
+            None,
+        )
+    }
+    /// Use native controls recompiled from the matched current scene jobs.
+    /// An empty presentation map supports a scene-only composition.
+    pub fn from_current_component_controls(
+        source: &mut Source,
+        request: &Request,
+        context: &'a ProductionContext,
+        programs: &'a BoundPrograms,
+        scenes: &BTreeMap<String, CurrentScene>,
+        presentations: &'a BTreeMap<String, VerifiedPresentation<'a>>,
+        controls: &BTreeMap<String, CurrentSceneControls>,
+    ) -> Result<Self> {
+        Self::from_components(
+            source,
+            request,
+            context,
+            programs,
+            scenes,
+            Some(presentations),
+            Some(controls),
         )
     }
     fn from_components(
@@ -88,11 +110,36 @@ impl<'a> CompositionJobPlan<'a> {
         programs: &'a BoundPrograms,
         proofs: &BTreeMap<String, CurrentScene>,
         presentations: Option<&'a BTreeMap<String, VerifiedPresentation<'a>>>,
+        scene_controls: Option<&BTreeMap<String, CurrentSceneControls>>,
     ) -> Result<Self> {
         let plan = require_current_scenes(source, request, proofs)?;
+        let empty = BTreeMap::new();
+        let scene_controls = scene_controls.unwrap_or(&empty);
+        for (id, controls) in scene_controls {
+            let component = plan
+                .components
+                .iter()
+                .find(|component| &component.segment_id == id && component.kind == "scene")
+                .context("current scene controls have no matching component")?;
+            let proof = &proofs[id];
+            if controls.segment != *id
+                || controls.checkpoint != plan.source_checkpoint
+                || controls.output != component.record
+                || controls.selected != component.selected
+                || controls.claim != *proof.claim()
+                || controls.protection_recipe != *proof.protection_recipe()
+                || controls.language != plan.language
+            {
+                bail!("current scene controls differ from admitted current component");
+            }
+        }
         if plan.components.iter().any(|component| {
             component.changed_from_baseline
-                && (component.kind == "scene" || presentations.is_none())
+                && (if component.kind == "scene" {
+                    !scene_controls.contains_key(&component.segment_id)
+                } else {
+                    presentations.is_none()
+                })
         }) {
             bail!(
                 "current component outputs differ from pinned conform; recompile parent controls before execution"
@@ -132,13 +179,14 @@ impl<'a> CompositionJobPlan<'a> {
             .flat_map(|proofs| proofs.iter())
             .map(|(id, proof)| (id.clone(), proof))
             .collect::<BTreeMap<_, _>>();
-        let current_controls = if presentations.is_empty() {
+        let current_controls = if presentations.is_empty() && scene_controls.is_empty() {
             None
         } else {
             Some(super::current_controls::CurrentControls::compile(
                 source,
                 &plan,
                 &presentations,
+                scene_controls,
             )?)
         };
         if let Some(controls) = &current_controls {

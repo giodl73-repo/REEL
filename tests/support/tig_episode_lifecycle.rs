@@ -36,6 +36,8 @@ mod child_protection;
 mod composition_protection;
 #[path = "tig_composition_runner.rs"]
 mod composition_runner;
+#[path = "tig_episode_current_scenes.rs"]
+mod current_scene_controls;
 #[path = "tig_episode_publication.rs"]
 mod episode_publication;
 #[path = "tig_episode_parent_controls.rs"]
