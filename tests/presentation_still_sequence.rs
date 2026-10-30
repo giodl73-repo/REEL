@@ -213,6 +213,7 @@ fn still_geometry_fixture(with_audio: bool, song_clock: bool, portrait: bool, no
         serde_json::from_slice(&fs::read(root.join("render/receipt.json")).unwrap()).unwrap();
     assert_eq!(receipt["frames"], 48);
     assert_eq!(receipt["samples"], 96_000);
+    verify_primary_reference(root);
     if portrait {
         let probe = Command::new("ffprobe")
             .args([
@@ -334,6 +335,388 @@ fn still_geometry_fixture(with_audio: bool, song_clock: bool, portrait: bool, no
             String::from_utf8_lossy(&rejected.stderr).contains("hash, bytes or cache URI mismatch")
         );
     }
+    if song_clock {
+        cached_producer_without_original_files(root, &receipt);
+    }
     fs::write(root.join("render/editable-layer.ass"), b"tampered").unwrap();
     assert!(!run(root, "check").status.success());
+}
+
+fn plain_pin(root: &Path, name: &str) -> reel::scene_delivery::FileRef {
+    let mut value = reference(root, name);
+    value.as_object_mut().unwrap().remove("cache_uri");
+    serde_json::from_value(value).unwrap()
+}
+
+fn verify_primary_reference(root: &Path) {
+    use reel::presentation_still_sequence::{RetainedOutputs, compare_retained_to_primaries};
+    let manifest = plain_pin(root, "manifest.json");
+    let dir = root.join("render");
+    let receipt = plain_pin(&dir, "receipt.json");
+    let master = plain_pin(&dir, "master.mkv");
+    let review = plain_pin(&dir, "review.mp4");
+    let layer = plain_pin(&dir, "editable-layer.ass");
+    let selected = RetainedOutputs {
+        receipt: &receipt,
+        master: &master,
+        review: &review,
+        editable_layer: &layer,
+        fonts: &[],
+    };
+    let source = root.to_path_buf();
+    let exhausted =
+        compare_retained_to_primaries(&manifest, &source, &source, &dir, selected, root, 0)
+            .err()
+            .unwrap();
+    assert!(exhausted.to_string().contains("staging budget"));
+    let checked = compare_retained_to_primaries(
+        &manifest,
+        &source,
+        &source,
+        &dir,
+        selected,
+        root,
+        1024 * 1024,
+    )
+    .unwrap();
+    assert_eq!(checked.master().sha256, master.sha256);
+    assert_eq!(checked.manifest().sha256, manifest.sha256);
+    assert_eq!(checked.picture_sha256().0.len(), 64);
+    assert_eq!(checked.picture_sha256().1.len(), 64);
+    assert_eq!(checked.audio_sha256().len(), 64);
+    assert_eq!(checked.staged_bytes(), layer.bytes);
+    assert!(!fs::read_dir(root).unwrap().any(|p| {
+        p.unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".presentation-primary-check-")
+    }));
+}
+
+fn cached_producer_without_original_files(root: &Path, expected: &serde_json::Value) {
+    use reel::scene_delivery::{FileRef, InputFiles, MediaProgram};
+    use std::{collections::BTreeMap, path::PathBuf};
+    struct Files {
+        root: PathBuf,
+        names: BTreeMap<PathBuf, FileRef>,
+        programs: BTreeMap<MediaProgram, PathBuf>,
+        _guards: Vec<fs::File>,
+    }
+    impl InputFiles for Files {
+        fn verified_path(&self, item: &FileRef) -> anyhow::Result<PathBuf> {
+            let selected = self
+                .names
+                .get(&item.path)
+                .ok_or_else(|| anyhow::anyhow!("unbound producer input"))?;
+            anyhow::ensure!(
+                selected.sha256 == item.sha256 && selected.bytes == item.bytes,
+                "producer pin changed"
+            );
+            self.root.verified_path(selected)
+        }
+        fn media_program(&self, program: MediaProgram) -> anyhow::Result<PathBuf> {
+            self.programs
+                .get(&program)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("unbound producer tool"))
+        }
+    }
+    let cache = root.join("producer-cache");
+    fs::create_dir(&cache).unwrap();
+    let mut files = Files {
+        root: cache.clone(),
+        names: BTreeMap::new(),
+        programs: BTreeMap::new(),
+        _guards: Vec::new(),
+    };
+    for program in [MediaProgram::Ffmpeg, MediaProgram::Ffprobe] {
+        let name = if cfg!(windows) {
+            format!("{}.exe", program.ambient_name())
+        } else {
+            program.ambient_name().into()
+        };
+        let path = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+            .map(|p| p.join(&name))
+            .find(|p| p.is_file())
+            .unwrap()
+            .canonicalize()
+            .unwrap();
+        files.programs.insert(program, path);
+    }
+    let names = [
+        "manifest.json",
+        "template.json",
+        "red.png",
+        "blue.png",
+        "layer.ass",
+        "audio.wav",
+        "timing.json",
+        "clock.json",
+        "anchor-evidence.json",
+    ];
+    let pin = |name: &str| -> FileRef {
+        let mut value = reference(root, name);
+        value.as_object_mut().unwrap().remove("cache_uri");
+        serde_json::from_value(value).unwrap()
+    };
+    for name in names {
+        let logical = pin(name);
+        let actual = FileRef {
+            path: logical.sha256.clone().into(),
+            ..logical.clone()
+        };
+        let target = cache.join(&actual.path);
+        fs::copy(root.join(name), &target).unwrap();
+        let mut options = fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.share_mode(1);
+        }
+        files._guards.push(options.open(target).unwrap());
+        files.names.insert(logical.path, actual);
+    }
+    let manifest = pin("manifest.json");
+    let source = files.names.remove(Path::new("red.png")).unwrap();
+    let rejected = root.join("producer-missing");
+    assert!(
+        reel::presentation_still_sequence::build_with_control_files(
+            &manifest, &files, &files, &rejected
+        )
+        .is_err()
+    );
+    assert!(!rejected.exists());
+    files.names.insert("red.png".into(), source);
+    for name in names {
+        fs::remove_file(root.join(name)).unwrap();
+    }
+    let output = root.join("cache-produced");
+    reel::presentation_still_sequence::build_with_control_files(&manifest, &files, &files, &output)
+        .unwrap();
+    reel::presentation_still_sequence::check_with_control_files(&manifest, &files, &files, &output)
+        .unwrap();
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(output.join("receipt.json")).unwrap()).unwrap();
+    for field in [
+        "manifest_sha256",
+        "template_sha256",
+        "picture_sha256",
+        "editable_layer_sha256",
+        "audio_sha256",
+        "picture_frames",
+        "picture_timing_sha256",
+        "frames",
+        "samples",
+    ] {
+        assert_eq!(receipt[field], expected[field], "{field}");
+    }
+    for video in [true, false] {
+        let decode = |path: &Path| {
+            let mut c = Command::new(files.programs.get(&MediaProgram::Ffmpeg).unwrap());
+            c.args(["-v", "error", "-i"]).arg(path);
+            if video {
+                c.args(["-map", "0:v:0", "-pix_fmt", "yuv444p", "-f", "rawvideo"]);
+            } else {
+                c.args(["-map", "0:a:0", "-c:a", "pcm_s24le", "-f", "s24le"]);
+            }
+            let o = c.arg("-").output().unwrap();
+            assert!(o.status.success());
+            o.stdout
+        };
+        assert_eq!(
+            decode(&root.join("render/master.mkv")),
+            decode(&output.join("master.mkv"))
+        );
+    }
+    let mut retained = BTreeMap::new();
+    for name in [
+        "receipt.json",
+        "master.mkv",
+        "review.mp4",
+        "editable-layer.ass",
+    ] {
+        let mut value = reference(&output, name);
+        value.as_object_mut().unwrap().remove("cache_uri");
+        let mut logical: FileRef = serde_json::from_value(value).unwrap();
+        let actual = FileRef {
+            path: logical.sha256.clone().into(),
+            ..logical.clone()
+        };
+        let target = cache.join(&actual.path);
+        if !target.exists() {
+            fs::copy(output.join(name), &target).unwrap();
+            let mut options = fs::OpenOptions::new();
+            options.read(true);
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::OpenOptionsExt;
+                options.share_mode(1);
+            }
+            files._guards.push(options.open(target).unwrap());
+        }
+        logical.path = format!("retained/{name}").into();
+        files.names.insert(logical.path.clone(), actual);
+        retained.insert(name, logical);
+    }
+    let tool = files.programs.remove(&MediaProgram::Ffprobe).unwrap();
+    assert!(
+        reel::presentation_still_sequence::check_with_control_files(
+            &manifest, &files, &files, &output
+        )
+        .is_err()
+    );
+    files.programs.insert(MediaProgram::Ffprobe, tool);
+    fs::write(output.join("editable-layer.ass"), b"tampered").unwrap();
+    assert!(
+        reel::presentation_still_sequence::check_with_control_files(
+            &manifest, &files, &files, &output,
+        )
+        .is_err()
+    );
+    fs::rename(&output, root.join("producer-output-offline")).unwrap();
+    let check = |files: &Files| {
+        reel::presentation_still_sequence::check_retained_with_files(
+            &manifest,
+            files,
+            files,
+            files,
+            reel::presentation_still_sequence::RetainedOutputs {
+                receipt: &retained["receipt.json"],
+                master: &retained["master.mkv"],
+                review: &retained["review.mp4"],
+                editable_layer: &retained["editable-layer.ass"],
+                fonts: &[],
+            },
+        )
+    };
+    check(&files).unwrap();
+    let selected = reel::presentation_still_sequence::RetainedOutputs {
+        receipt: &retained["receipt.json"],
+        master: &retained["master.mkv"],
+        review: &retained["review.mp4"],
+        editable_layer: &retained["editable-layer.ass"],
+        fonts: &[],
+    };
+    reel::presentation_still_sequence::compare_retained_to_primaries(
+        &manifest,
+        &files,
+        &files,
+        &files,
+        selected,
+        root,
+        1024 * 1024,
+    )
+    .unwrap();
+    let unavailable_receipt = files.names.remove(&selected.receipt.path).unwrap();
+    reel::presentation_still_sequence::compare_master_to_primaries(
+        &manifest,
+        &files,
+        &files,
+        &files,
+        selected.master,
+        root,
+        1024 * 1024,
+    )
+    .unwrap();
+    files
+        .names
+        .insert(selected.receipt.path.clone(), unavailable_receipt);
+    // Deliberately forged fixture metadata can still satisfy the old receipt
+    // checks after a same-geometry cel replacement. The full reference must
+    // detect that the retained movie never consumed the replacement.
+    let store_metadata = |files: &mut Files, name: &str, value: &serde_json::Value| -> FileRef {
+        let raw = serde_json::to_vec(value).unwrap();
+        let sha256 = hash(&raw);
+        let actual = FileRef {
+            path: sha256.clone().into(),
+            sha256,
+            bytes: raw.len() as u64,
+        };
+        let target = cache.join(&actual.path);
+        fs::write(&target, raw).unwrap();
+        let mut options = fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.share_mode(1);
+        }
+        files._guards.push(options.open(target).unwrap());
+        let logical = FileRef {
+            path: name.into(),
+            ..actual.clone()
+        };
+        files.names.insert(logical.path.clone(), actual);
+        logical
+    };
+    let mut changed: serde_json::Value =
+        serde_json::from_slice(&fs::read(files.verified_path(&manifest).unwrap()).unwrap())
+            .unwrap();
+    let blue = files.names[Path::new("blue.png")].clone();
+    changed["pictures"][0]["sha256"] = json!(blue.sha256);
+    changed["pictures"][0]["bytes"] = json!(blue.bytes);
+    changed["pictures"][0]["cache_uri"] = json!(format!("cache://sha256/{}", blue.sha256));
+    let changed_manifest = store_metadata(&mut files, "changed/manifest.json", &changed);
+    let mut forged: serde_json::Value =
+        serde_json::from_slice(&fs::read(files.verified_path(selected.receipt).unwrap()).unwrap())
+            .unwrap();
+    forged["manifest_sha256"] = json!(changed_manifest.sha256);
+    forged["picture_sha256"][0] = json!(blue.sha256);
+    let changed_receipt = store_metadata(&mut files, "changed/receipt.json", &forged);
+    let original_red = files.names.insert("red.png".into(), blue).unwrap();
+    let forged_selection = reel::presentation_still_sequence::RetainedOutputs {
+        receipt: &changed_receipt,
+        ..selected
+    };
+    reel::presentation_still_sequence::check_retained_with_files(
+        &changed_manifest,
+        &files,
+        &files,
+        &files,
+        forged_selection,
+    )
+    .unwrap();
+    let mismatch = reel::presentation_still_sequence::compare_retained_to_primaries(
+        &changed_manifest,
+        &files,
+        &files,
+        &files,
+        forged_selection,
+        root,
+        1024 * 1024,
+    )
+    .err()
+    .unwrap();
+    assert!(
+        mismatch
+            .to_string()
+            .contains("differs from primary reference")
+    );
+    files.names.insert("red.png".into(), original_red);
+    let mut wrong = retained["master.mkv"].clone();
+    wrong.bytes += 1;
+    let error = reel::presentation_still_sequence::check_retained_with_files(
+        &manifest,
+        &files,
+        &files,
+        &files,
+        reel::presentation_still_sequence::RetainedOutputs {
+            receipt: &retained["receipt.json"],
+            master: &wrong,
+            review: &retained["review.mp4"],
+            editable_layer: &retained["editable-layer.ass"],
+            fonts: &[],
+        },
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("output pins differ from producer receipt")
+    );
+    files.names.remove(&retained["master.mkv"].path);
+    assert!(check(&files).is_err());
+    assert!(!output.exists());
+    assert!(!root.join("manifest.json").exists());
 }
