@@ -27,6 +27,7 @@ pub struct JobPlan<'a> {
     composition: BTreeMap<LogicalPath, Object>,
     target: Reference,
     master: FileRef,
+    production_definitions: BTreeSet<String>,
 }
 pub struct Readback<'p, 'a> {
     plan: &'p JobPlan<'a>,
@@ -50,8 +51,33 @@ pub struct VerifiedPresentation<'a> {
     output: Reference,
     recipe: Digest,
     comparison: presentation_still_sequence::PrimaryComparison,
+    resources: &'a job::JobContext,
+    production_definitions: &'a BTreeSet<String>,
 }
 impl VerifiedPresentation<'_> {
+    pub(crate) fn checkpoint(&self) -> &Digest {
+        &self.checkpoint
+    }
+    pub(crate) fn resources(&self) -> &job::JobContext {
+        self.resources
+    }
+    pub(crate) fn source_identity(&self) -> &Key {
+        self.owner.source_identity()
+    }
+    pub(crate) fn production_definitions(&self) -> &BTreeSet<String> {
+        self.production_definitions
+    }
+    pub(crate) fn declaration(&self) -> Result<Vec<u8>> {
+        let (yuv, rgb) = self.comparison.picture_sha256();
+        Ok(identity::canonical_json(&json!({
+            "schema":"reel.tig-presentation-verification.experimental-1",
+            "checkpoint":self.checkpoint,"source":self.source,"output":self.output,
+            "job":self.resources.selection(),"recipe":self.recipe,
+            "manifest":self.comparison.manifest(),"master":self.comparison.master(),
+            "yuv_sha256":yuv,"rgb_sha256":rgb,"pcm_sha256":self.comparison.audio_sha256(),
+            "approval":false,"original_producer_assertion":false,
+        }))?)
+    }
     pub fn selected(&self) -> &FileRef {
         self.comparison.master()
     }
@@ -179,6 +205,18 @@ impl<'a> JobPlan<'a> {
             composition,
             target,
             master,
+            production_definitions: request
+                .primary_definitions
+                .iter()
+                .chain([
+                    &request.source_definition,
+                    &request.template_definition,
+                    &request.timing_definition,
+                    &request.clock_definition,
+                    &request.evidence_definition,
+                ])
+                .cloned()
+                .collect(),
         })
     }
     pub fn recipe(&self) -> &Plan {
@@ -384,6 +422,8 @@ impl ProtectedPresentation<'_, '_> {
             output: plan.target.clone(),
             recipe: plan.recipe.fingerprint().clone(),
             comparison,
+            resources: &self.readback.resources,
+            production_definitions: &plan.production_definitions,
         })
     }
 }

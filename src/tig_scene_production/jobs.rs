@@ -316,6 +316,9 @@ pub(crate) struct ScopedSource {
     _fence: admission::MetadataLock,
 }
 impl ScopedSource {
+    pub(crate) fn source_identity(&self) -> &Key {
+        &self.stamp.identity.source
+    }
     pub(crate) fn protect(
         journal: &mut SourceJournal,
         coordination: &Coordination,

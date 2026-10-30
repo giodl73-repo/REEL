@@ -2,6 +2,7 @@
 use super::*;
 use crate::{
     media_runtime::BoundPrograms,
+    tig_presentation::jobs::VerifiedPresentation,
     tig_scene_production::jobs::{Coordination, Identity, ScopedSource},
 };
 use tig_assets::graph::recipe;
@@ -16,7 +17,8 @@ use tig_store::{
 };
 
 /// Every selected component and original scene claim is derived from the single
-/// admitted source view. Presentation-specific proof is not implemented here.
+/// admitted source view. Presentation proofs retain their byte/runtime/source
+/// guards through this plan; they cannot be replaced by a status label.
 pub struct CompositionJobPlan<'a> {
     pub(super) context: &'a ProductionContext,
     pub(super) programs: &'a BoundPrograms,
@@ -26,6 +28,8 @@ pub struct CompositionJobPlan<'a> {
     evidence: BTreeMap<LogicalPath, Object>,
     children: BTreeMap<String, Digest>,
     child_declaration: Vec<u8>,
+    pub(super) presentations: BTreeMap<String, &'a VerifiedPresentation<'a>>,
+    presentation_documents: BTreeMap<LogicalPath, Vec<u8>>,
     pub(super) conform: Object,
 }
 pub struct CompositionReadback<'p, 'a> {
@@ -54,26 +58,121 @@ impl<'a> CompositionJobPlan<'a> {
         programs: &'a BoundPrograms,
         proofs: &BTreeMap<String, CurrentScene>,
     ) -> Result<Self> {
+        Self::from_components(source, request, context, programs, proofs, None)
+    }
+    /// Admit exact scene correspondence plus freshly verified presentations.
+    /// Keep their owners and metadata providers alive; this borrows all byte,
+    /// source and runtime guards and retains their declared resource union.
+    pub fn from_current_components(
+        source: &mut Source,
+        request: &Request,
+        context: &'a ProductionContext,
+        programs: &'a BoundPrograms,
+        scenes: &BTreeMap<String, CurrentScene>,
+        presentations: &'a BTreeMap<String, VerifiedPresentation<'a>>,
+    ) -> Result<Self> {
+        Self::from_components(
+            source,
+            request,
+            context,
+            programs,
+            scenes,
+            Some(presentations),
+        )
+    }
+    fn from_components(
+        source: &mut Source,
+        request: &Request,
+        context: &'a ProductionContext,
+        programs: &'a BoundPrograms,
+        proofs: &BTreeMap<String, CurrentScene>,
+        presentations: Option<&'a BTreeMap<String, VerifiedPresentation<'a>>>,
+    ) -> Result<Self> {
         let plan = require_current_scenes(source, request, proofs)?;
-        if plan.components.iter().any(|c| c.kind != "scene") {
-            bail!("composition job requires separately implemented presentation eligibility");
+        if plan
+            .components
+            .iter()
+            .any(|component| component.changed_from_baseline)
+        {
+            bail!(
+                "current component outputs differ from pinned conform; recompile parent controls before execution"
+            );
+        }
+        let expected = plan
+            .components
+            .iter()
+            .filter(|c| c.kind == "episode-presentation")
+            .collect::<Vec<_>>();
+        if expected.len() != presentations.map_or(0, BTreeMap::len)
+            || expected.iter().any(|component| {
+                presentations
+                    .and_then(|proofs| proofs.get(&component.segment_id))
+                    .is_none_or(|proof| {
+                        proof.checkpoint() != &plan.source_checkpoint
+                            || proof.output() != &component.record
+                            || proof.selected().sha256 != component.selected.sha256.as_str()
+                            || proof.selected().bytes != component.selected.bytes
+                            || request
+                                .component_definitions
+                                .iter()
+                                .any(|id| proof.production_definitions().contains(id))
+                    })
+            })
+        {
+            bail!("composition presentation eligibility requires exact current guarded coverage");
         }
         let producer = Object::from_bytes(programs.manifest_bytes());
         let recipe = composition_recipe(source, request, context, &producer)?;
         let mut composition = BTreeMap::new();
         let mut evidence = BTreeMap::new();
         let mut children = BTreeMap::new();
+        let mut presentation_documents = BTreeMap::new();
+        let presentations = presentations
+            .into_iter()
+            .flat_map(|proofs| proofs.iter())
+            .map(|(id, proof)| (id.clone(), proof))
+            .collect::<BTreeMap<_, _>>();
         for component in &plan.components {
             // Native segment labels are not paths and may contain slashes or
             // reserved names. Their hashes have no platform-specific aliases.
             let name = LogicalPath::parse(Digest::blob(component.segment_id.as_bytes()).as_str())?;
-            let proof = &proofs[&component.segment_id];
             composition.insert(name.clone(), component.selected.clone());
-            evidence.insert(name, proof.claim().clone());
-            children.insert(
-                component.segment_id.clone(),
-                proof.protection_recipe().clone(),
-            );
+            if component.kind == "scene" {
+                let proof = &proofs[&component.segment_id];
+                evidence.insert(name, proof.claim().clone());
+                children.insert(
+                    component.segment_id.clone(),
+                    proof.protection_recipe().clone(),
+                );
+            } else {
+                let proof = presentations[&component.segment_id];
+                let declaration = proof.declaration()?;
+                if declaration.len() > 65_536 {
+                    bail!("presentation evidence exceeds budget");
+                }
+                evidence.insert(name.clone(), Object::from_bytes(&declaration));
+                presentation_documents.insert(name.clone(), declaration);
+                // Flat exact obligations make the complete child set visible to
+                // retention without treating an opaque receipt as a closure.
+                for object in proof
+                    .resources()
+                    .objects()
+                    .iter()
+                    .chain(std::iter::once(&proof.resources().selection().root))
+                {
+                    evidence.insert(
+                        LogicalPath::parse(&format!(
+                            "presentation-resources/{}/{}",
+                            name.as_str(),
+                            object.sha256.as_str()
+                        ))?,
+                        object.clone(),
+                    );
+                    if evidence.len() > 65_536 {
+                        bail!("composition evidence exceeds budget");
+                    }
+                }
+            }
         }
         let runtime = programs
             .components()
@@ -87,9 +186,19 @@ impl<'a> CompositionJobPlan<'a> {
                 ))
             })
             .collect::<Result<_>>()?;
-        let child_declaration = identity::canonical_json(&serde_json::json!({
+        let mut declared = serde_json::json!({
             "schema":"reel.tig-composition-child-jobs.experimental-1", "recipes":children,
-        }))?;
+        });
+        if !presentations.is_empty() {
+            declared["schema"] = "reel.tig-composition-child-jobs.experimental-2".into();
+            declared["presentations"] = serde_json::to_value(
+                presentations
+                    .iter()
+                    .map(|(id, proof)| (id, proof.resources().selection()))
+                    .collect::<BTreeMap<_, _>>(),
+            )?;
+        }
+        let child_declaration = identity::canonical_json(&declared)?;
         if child_declaration.len() > 65_536 {
             bail!("composition child declaration exceeds budget");
         }
@@ -106,6 +215,8 @@ impl<'a> CompositionJobPlan<'a> {
             evidence,
             children,
             child_declaration,
+            presentations,
+            presentation_documents,
             conform: plan.conform,
         })
     }
@@ -142,6 +253,11 @@ impl<'a> CompositionJobPlan<'a> {
         )?)
     }
     pub(super) fn put_interpretation(&self, store: &mut impl NodeStore) -> Result<()> {
+        for raw in self.presentation_documents.values() {
+            if store.put(raw)? != Object::from_bytes(raw) {
+                bail!("presentation proof publication differs");
+            }
+        }
         if store.put(&self.child_declaration)? != Object::from_bytes(&self.child_declaration) {
             bail!("composition child declaration publication differs");
         }
@@ -171,6 +287,11 @@ impl<'a> CompositionJobPlan<'a> {
         })
     }
     pub(super) fn verify_interpretation(&self, store: &mut impl NodeStore) -> Result<()> {
+        for raw in self.presentation_documents.values() {
+            if store.get(&Object::from_bytes(raw))?.as_deref() != Some(raw.as_slice()) {
+                bail!("presentation proof missing or substituted");
+            }
+        }
         if store.get(&self.recipe.operation().producer)?.as_deref()
             != Some(self.programs.manifest_bytes())
         {
@@ -201,6 +322,11 @@ impl<'p, 'a> CompositionReadback<'p, 'a> {
         if source.checkpoint() != self.plan.recipe.checkpoint()
             || !children.matches(source.checkpoint(), &self.plan.children)
             || children.contains_source(&identity.source)
+            || self
+                .plan
+                .presentations
+                .values()
+                .any(|proof| proof.source_identity() == &identity.source)
             || budget.max_objects == 0
             || budget.max_objects > 1_000_000
             || budget.max_logical_bytes == 0
@@ -209,6 +335,9 @@ impl<'p, 'a> CompositionReadback<'p, 'a> {
             bail!("composition source, child ownership or resource budget differs");
         }
         children.verify_current(source, journal)?;
+        for proof in self.plan.presentations.values() {
+            proof.verify_current(source, journal)?;
+        }
         let mut sizes = BTreeMap::new();
         let mut bytes = 0u64;
         for object in children.objects().iter().chain(self.resources.objects()) {
@@ -322,6 +451,9 @@ impl ProtectedComposition<'_, '_> {
             bail!("composition or child source snapshot differs");
         }
         self.source.check(journal)?;
+        for proof in self.readback.plan.presentations.values() {
+            proof.verify_current(source, journal)?;
+        }
         children.verify_current(source, journal)
     }
     /// Caller supplies actual byte guards and the bounded native action. Check

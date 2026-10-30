@@ -43,7 +43,9 @@ pub use controls::{ControlTree, ParentControls};
 #[cfg(feature = "tig-publication")]
 mod production;
 #[cfg(feature = "tig-publication")]
-pub use production::{CompositionFiles, PublishedComposition, RenderedComposition};
+pub use production::{
+    CompositionFiles, PresentationComponents, PublishedComposition, RenderedComposition,
+};
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
@@ -184,10 +186,7 @@ fn plan_inner(source: &mut Source, request: &Request) -> Result<Plan> {
         .iter()
         .map(|s| s.id.as_str())
         .collect::<BTreeSet<_>>();
-    if scenes.is_empty()
-        || scenes.len() > 128
-        || scene_ids.len() != scenes.len()
-        || scene_ids.iter().any(|s| !token(s))
+    if scenes.len() > 128 || scene_ids.len() != scenes.len() || scene_ids.iter().any(|s| !token(s))
     {
         bail!("invalid episode scene identities");
     }

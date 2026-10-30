@@ -33,6 +33,12 @@ pub struct CompositionFiles<'a> {
     pub inputs: &'a BTreeMap<String, &'a dyn InputFiles>,
     pub outputs: &'a BTreeMap<String, &'a dyn InputFiles>,
 }
+/// Exact metadata/source/output providers for the independently verified
+/// presentation components. The managed plan separately owns their currency.
+pub struct PresentationComponents<'a> {
+    pub files: &'a BTreeMap<String, episode_conform::PresentationFiles<'a>>,
+    pub controls: &'a BTreeMap<String, &'a dyn InputFiles>,
+}
 
 /// Only constructed after native full-frame/PCM/timestamp verification under
 /// current parent/child ownership. Borrowing the plan retains the parent fence.
@@ -71,7 +77,36 @@ impl ProtectedComposition<'_, '_> {
         output: &Path,
         files: CompositionFiles<'_>,
     ) -> Result<RenderedComposition<'_>> {
+        self.assemble_with_presentations(
+            source,
+            children,
+            journal,
+            output,
+            files,
+            PresentationComponents {
+                files: &BTreeMap::new(),
+                controls: &BTreeMap::new(),
+            },
+        )
+    }
+    /// Recheck current scene and presentation owners before and after native
+    /// assembly, retaining every borrowed child guard through the operation.
+    /// Explicit provider refusals never fall back to a historical checkout.
+    pub fn assemble_with_presentations(
+        &self,
+        source: &Source,
+        children: &ProtectedScenes<'_, '_>,
+        journal: &mut SourceJournal,
+        output: &Path,
+        files: CompositionFiles<'_>,
+        presentations: PresentationComponents<'_>,
+    ) -> Result<RenderedComposition<'_>> {
         let plan = self.plan();
+        if !plan.presentations.keys().eq(presentations.files.keys())
+            || !plan.presentations.keys().eq(presentations.controls.keys())
+        {
+            bail!("composition presentation providers differ from verified component coverage");
+        }
         let reference = files.parent.manifest_ref();
         if reference.sha256 != plan.conform.sha256.as_str() || reference.bytes != plan.conform.bytes
         {
@@ -80,19 +115,20 @@ impl ProtectedComposition<'_, '_> {
         self.with_current(source, children, journal, |_| {
             let local = PathBuf::from(".");
             let programs = plan.programs.with_inputs(&local);
-            let receipt = episode_conform::build_with_all_control_files(
+            let receipt = episode_conform::build_with_component_controls(
                 reference,
-                Path::new(""),
-                Path::new(""),
                 output,
                 episode_conform::Files {
                     scene_inputs: files.inputs,
                     scene_outputs: files.outputs,
-                    presentations: &BTreeMap::new(),
+                    presentations: presentations.files,
                     programs: &programs,
                 },
-                files.parent,
-                files.scenes,
+                episode_conform::ComponentControls {
+                    parent: files.parent,
+                    scenes: files.scenes,
+                    presentations: presentations.controls,
+                },
             )?;
             if receipt.manifest_sha256 != plan.conform.sha256.as_str()
                 || !receipt.decoded_master_matches_ordered_segments

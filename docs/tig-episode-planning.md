@@ -144,11 +144,48 @@ adds the checked outputs, receipt and claim. It still reports incomplete claim
 coverage: full child primary/control closures belong to the independent child
 owners. Keep them active; no child retirement or cache eviction is authorized.
 
-The path currently supports direct native scene components, not actual retained
-opening/credits presentation eligibility. This low-level assembly primitive is
-not a capacity scheduler; production execution needs the existing bounded job
-runner. Parent native CLI/scheduler integration, full child-retention handoff,
-generated-input freshness and actual project adoption remain separate work.
+The scene-only constructor retains its explicit scene coverage requirement.
+`CompositionJobPlan::from_current_components` additionally accepts sealed
+`VerifiedPresentation` values from the native presentation verification job.
+The selected output record, hash, size and captured source must match each
+presentation occurrence exactly. Component-output definitions cannot be admitted
+as its source/control/primary definitions. A status label or an arbitrary movie
+pin cannot construct this capability.
+
+The plan borrows the verified presentation values, retaining their source,
+runtime, primary and output guards. It records each exact child job selection
+and comparison document and explicitly includes the child's complete declared
+resource set in its evidence obligations. It does not rely on an opaque receipt
+to supply a hidden closure. Presentation movies remain Composition dependencies;
+they never become Primary inputs. Scene child obligations remain separately
+protected until complete handoff is implemented.
+
+Parent adoption and each native action check all presentation owners as well
+as the scene and parent owners. A withdrawn presentation invalidates its parent
+before an action; it does not invalidate an independent source job. A parent
+cannot replace a child by adopting the same source identity. Resource limits
+cover the union before any parent journal change. A presentation-only composition
+can have an empty scene-owner set, while still requiring exact nonempty native
+component coverage and its actual presentation guards.
+
+`assemble_with_presentations` takes `PresentationComponents`, which supplies
+explicit legacy adoption metadata/source/output providers alongside the native
+scene providers. Their keys must match the guarded plan exactly. It uses the
+existing complete component-control path; it cannot fall back to a checkout.
+The scene-only `assemble` wrapper supplies no presentation providers and therefore
+refuses a plan that requires them.
+
+Execution also refuses a current component selection that differs from the
+pinned conform's movie reference. Metadata planning still reports that change;
+the parent controls must be recompiled before execution. Otherwise a current
+child proof could be combined with an older conform and accidentally attest a
+movie assembled from its old components. This refusal is not an automatic parent
+compiler: deriving updated controls from new selected outputs remains required.
+
+This low-level assembly primitive is not a capacity scheduler; production
+execution needs the existing bounded job runner. Parent native compiler and
+CLI/scheduler integration, full child-retention handoff, generated-input freshness
+and actual project adoption remain separate work.
 See [the output publication review](reviews/2026-10-29-episode-output-publication.md).
 
 ## Retained presentation controls without a checkout
@@ -186,6 +223,33 @@ Tig-selected presentation manifest + controls     retained source movie
 This closes the local-control dependency of the native presentation checker.
 It does not establish the source movie's producer lineage, creative approval,
 complete primary closure, child-owner handoff or eviction authority. The sealed
-Tig composition admission path still requires separate presentation currency
-support before it can accept retained openings and credits. Low-level conform
-is not a storage-capacity scheduler.
+Tig composition admission path separately requires the guarded native
+presentation proof described above before it can accept retained openings and
+credits. Low-level conform is not a storage-capacity scheduler.
+
+## Producer checklist findings for presentation admission
+
+- Editing: occurrence order stays in the admitted native conform. Exact output
+  scope and current-source comparisons cannot substitute a different occurrence.
+  Changed selected movies require new parent controls before execution.
+- Sound: the native proof binds matched PCM as well as both picture hashes;
+  retained ownership covers the primary recording through use.
+- Provenance: comparison evidence explicitly records that it is not approval or
+  an original-producer assertion. Historical receipt hashes remain unchanged.
+- Storage: flatten exact child obligations into retained evidence, preserve
+  independently owned scene obligations, and retain live guards. This does not
+  authorize retirement or eviction, prove independent backups or establish
+  complete font/environment isolation.
+
+These are producer-applied checklist findings, not independent or human review.
+The new parent test qualifies metadata/resource adoption over a genuine native
+presentation comparison, including offline source records and a withdrawn owner.
+It does not claim a real mixed episode's complete native render or cutover.
+
+Local qualification of this extension: locked all-target/all-feature Clippy
+passes with warnings denied; 216 library tests pass (nine explicitly ignored),
+all 13 episode-planning tests pass, and all eight presentation-source tests pass.
+The stale-conform counterexample refuses before execution. The explicit complete
+fake-episode lifecycle also passes (93.60 seconds), including the changed-scene
+rebuild, Git history, retained outputs and verified synthetic cache eviction.
+Hosted checks must qualify the exact proposed revision before adoption.

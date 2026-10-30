@@ -95,7 +95,7 @@ pub fn protect_current_scenes<'p, 'a>(
     }
     let plan = require_current_scenes(source, request, proofs)?;
     let count = plan.components.iter().filter(|c| c.kind == "scene").count();
-    if count == 0 || admissions.len() != count {
+    if admissions.len() != count {
         bail!("episode requires exact child job admission coverage");
     }
     let mut sources = BTreeSet::new();
