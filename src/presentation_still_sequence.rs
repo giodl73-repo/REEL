@@ -324,6 +324,13 @@ fn check_media(path: &Path, template: &Template, files: &dyn InputFiles) -> Resu
     {
         bail!("presentation picture/audio format or frame count mismatch");
     }
+    crate::episode_delivery::verify_timestamps_with_inputs(
+        path,
+        template.sample_rate,
+        u64::from(template.frame_rate),
+        1,
+        files,
+    )?;
     let decoded = command(files, MediaProgram::Ffmpeg)?
         .args(["-v", "error", "-i"])
         .arg(path)
@@ -486,10 +493,54 @@ fn build_manifest(
     if output_dir.exists() {
         bail!("output directory already exists");
     }
-    let (manifest, template, pictures, audio, manifest_bytes, picture_frames) =
-        load(raw, controls, inputs)?;
+    let loaded = load(raw, controls, inputs)?;
     fs::create_dir_all(output_dir)?;
     let output_dir = fs::canonicalize(output_dir)?;
+    prepare_layers(&loaded.0, inputs, &output_dir)?;
+    let mut cmd = render_command(&loaded, inputs, &output_dir, "ffv1")?;
+    cmd.arg(output_dir.join("master.mkv"));
+    run(cmd)?;
+    let (manifest, template, _, _, manifest_bytes, picture_frames) = loaded;
+    let (frames, samples) = check_media(&output_dir.join("master.mkv"), &template, inputs)?;
+    write_review(&output_dir, inputs)?;
+    let master = output_dir.join("master.mkv");
+    let review = output_dir.join("review.mp4");
+    let receipt = Receipt {
+        schema: "reel.presentation-still-sequence-receipt.v1".into(),
+        episode_id: manifest.episode_id,
+        language: manifest.language,
+        role: manifest.role,
+        template_id: template.template_id,
+        template_sha256: manifest.template.sha256,
+        manifest_sha256: hash(&manifest_bytes),
+        picture_sha256: manifest.pictures.iter().map(|p| p.sha256.clone()).collect(),
+        editable_layer_sha256: manifest.editable_layer.sha256,
+        audio_sha256: manifest.audio.map(|a| a.sha256),
+        audio_treatment: manifest.audio_treatment,
+        font_sha256: manifest
+            .fonts
+            .iter()
+            .map(|font| font.sha256.clone())
+            .collect(),
+        master_sha256: episode_conform::file_sha(&master)?,
+        master_bytes: fs::metadata(&master)?.len(),
+        review_sha256: episode_conform::file_sha(&review)?,
+        review_bytes: fs::metadata(&review)?.len(),
+        frames,
+        samples,
+        picture_frames,
+        picture_timing_sha256: manifest.picture_timing.map(|t| t.sha256),
+        publication: "not-authorized".into(),
+    };
+    fs::write(
+        output_dir.join("receipt.json"),
+        serde_json::to_vec_pretty(&receipt)?,
+    )?;
+    println!("{} {} {} frames", receipt.role, receipt.language, frames);
+    Ok(())
+}
+
+fn prepare_layers(manifest: &Manifest, inputs: &dyn InputFiles, output_dir: &Path) -> Result<()> {
     fs::copy(
         verified(inputs, &manifest.editable_layer)?,
         output_dir.join("editable-layer.ass"),
@@ -503,11 +554,28 @@ fn build_manifest(
             )?;
         }
     }
+    Ok(())
+}
+
+fn render_command(
+    loaded: &LoadedPresentation,
+    inputs: &dyn InputFiles,
+    output_dir: &Path,
+    video_codec: &str,
+) -> Result<Command> {
+    let (manifest, template, pictures, audio, _, picture_frames) = loaded;
     let total_seconds = template.frames() as f64 / template.frame_rate as f64;
     let mut cmd = command(inputs, MediaProgram::Ffmpeg)?;
-    cmd.current_dir(&output_dir).args(["-y", "-v", "error"]);
-    for (picture, frames) in pictures.iter().zip(&picture_frames) {
+    cmd.current_dir(output_dir)
+        .args(["-y", "-v", "error", "-nostdin"]);
+    if video_codec == "rawvideo" {
+        cmd.args(["-filter_complex_threads", "1"]);
+    }
+    for (picture, frames) in pictures.iter().zip(picture_frames) {
         let seconds_each = *frames as f64 / template.frame_rate as f64;
+        if video_codec == "rawvideo" {
+            cmd.args(["-threads", "1"]);
+        }
         cmd.args([
             "-loop",
             "1",
@@ -519,7 +587,7 @@ fn build_manifest(
         ])
         .arg(picture);
     }
-    if let Some(source) = &audio {
+    if let Some(source) = audio {
         cmd.arg("-i").arg(source);
     } else {
         cmd.args(["-f", "lavfi", "-i"])
@@ -557,10 +625,8 @@ fn build_manifest(
         "[v]",
         "-map",
         "[a]",
-        "-frames:v",
-        &template.frames().to_string(),
         "-c:v",
-        "ffv1",
+        video_codec,
         "-pix_fmt",
         "yuv444p",
         "-c:a",
@@ -569,10 +635,17 @@ fn build_manifest(
         &template.sample_rate.to_string(),
         "-ac",
         "2",
-    ])
-    .arg(output_dir.join("master.mkv"));
-    run(cmd)?;
-    let (frames, samples) = check_media(&output_dir.join("master.mkv"), &template, inputs)?;
+    ]);
+    if video_codec == "rawvideo" {
+        cmd.args(["-threads:v", "1"]);
+    }
+    if video_codec == "ffv1" {
+        cmd.args(["-frames:v", &template.frames().to_string()]);
+    }
+    Ok(cmd)
+}
+
+fn write_review(output_dir: &Path, inputs: &dyn InputFiles) -> Result<()> {
     run({
         let mut c = command(inputs, MediaProgram::Ffmpeg)?;
         c.args(["-y", "-v", "error", "-i"])
@@ -597,42 +670,7 @@ fn build_manifest(
             ])
             .arg(output_dir.join("review.mp4"));
         c
-    })?;
-    let master = output_dir.join("master.mkv");
-    let review = output_dir.join("review.mp4");
-    let receipt = Receipt {
-        schema: "reel.presentation-still-sequence-receipt.v1".into(),
-        episode_id: manifest.episode_id,
-        language: manifest.language,
-        role: manifest.role,
-        template_id: template.template_id,
-        template_sha256: manifest.template.sha256,
-        manifest_sha256: hash(&manifest_bytes),
-        picture_sha256: manifest.pictures.iter().map(|p| p.sha256.clone()).collect(),
-        editable_layer_sha256: manifest.editable_layer.sha256,
-        audio_sha256: manifest.audio.map(|a| a.sha256),
-        audio_treatment: manifest.audio_treatment,
-        font_sha256: manifest
-            .fonts
-            .iter()
-            .map(|font| font.sha256.clone())
-            .collect(),
-        master_sha256: episode_conform::file_sha(&master)?,
-        master_bytes: fs::metadata(&master)?.len(),
-        review_sha256: episode_conform::file_sha(&review)?,
-        review_bytes: fs::metadata(&review)?.len(),
-        frames,
-        samples,
-        picture_frames,
-        picture_timing_sha256: manifest.picture_timing.map(|t| t.sha256),
-        publication: "not-authorized".into(),
-    };
-    fs::write(
-        output_dir.join("receipt.json"),
-        serde_json::to_vec_pretty(&receipt)?,
-    )?;
-    println!("{} {} {} frames", receipt.role, receipt.language, frames);
-    Ok(())
+    })
 }
 
 pub fn check(manifest_path: &Path, root: &Path, output_dir: &Path) -> Result<()> {
@@ -680,12 +718,224 @@ fn check_manifest(
 /// Exact retained output subjects, independent of their physical directory.
 /// Fonts are in the producer manifest's declared order. These pins and a
 /// successful check do not confer approval, custody or native job currency.
+#[derive(Clone, Copy)]
 pub struct RetainedOutputs<'a> {
     pub receipt: &'a scene_delivery::FileRef,
     pub master: &'a scene_delivery::FileRef,
     pub review: &'a scene_delivery::FileRef,
     pub editable_layer: &'a scene_delivery::FileRef,
     pub fonts: &'a [scene_delivery::FileRef],
+}
+
+/// Full native primary-reference comparison. This capability is not a native
+/// job enrollment, original-producer assertion, creative approval or custody.
+pub struct PrimaryComparison {
+    manifest: scene_delivery::FileRef,
+    master: scene_delivery::FileRef,
+    yuv: String,
+    rgb: String,
+    audio: String,
+    staged_bytes: u64,
+}
+impl PrimaryComparison {
+    pub fn manifest(&self) -> &scene_delivery::FileRef {
+        &self.manifest
+    }
+    pub fn master(&self) -> &scene_delivery::FileRef {
+        &self.master
+    }
+    pub fn picture_sha256(&self) -> (&str, &str) {
+        (&self.yuv, &self.rgb)
+    }
+    pub fn audio_sha256(&self) -> &str {
+        &self.audio
+    }
+    pub fn staged_bytes(&self) -> u64 {
+        self.staged_bytes
+    }
+}
+
+/// Reconstruct every expected native picture/audio sample into stream hashes,
+/// then compare the retained master. Only ASS/fonts are copied into owned
+/// temporary scratch, bounded by their exact declared lengths. No movie is
+/// created. Keep all provider guards alive; the caller supplies admitted scratch.
+pub fn compare_retained_to_primaries(
+    manifest: &scene_delivery::FileRef,
+    controls: &dyn InputFiles,
+    inputs: &dyn InputFiles,
+    outputs: &dyn InputFiles,
+    selected: RetainedOutputs<'_>,
+    stage_parent: &Path,
+    max_staged_bytes: u64,
+) -> Result<PrimaryComparison> {
+    scene_delivery::control_name(&manifest.path)?;
+    staging_bytes(
+        &scene_delivery::read_control(controls, manifest)?,
+        max_staged_bytes,
+    )?;
+    check_retained_with_files(manifest, controls, inputs, outputs, selected)?;
+    compare_master_to_primaries(
+        manifest,
+        controls,
+        inputs,
+        outputs,
+        selected.master,
+        stage_parent,
+        max_staged_bytes,
+    )
+}
+
+/// Independently compare one exact master with the current primary render.
+/// Old receipts, reviews and output-directory layouts are not prerequisites.
+/// Original producer/approval evidence remains separate; this comparison is
+/// neither a rewritten production history nor native job admission.
+pub fn compare_master_to_primaries(
+    manifest: &scene_delivery::FileRef,
+    controls: &dyn InputFiles,
+    inputs: &dyn InputFiles,
+    outputs: &dyn InputFiles,
+    master: &scene_delivery::FileRef,
+    stage_parent: &Path,
+    max_staged_bytes: u64,
+) -> Result<PrimaryComparison> {
+    scene_delivery::control_name(&manifest.path)?;
+    scene_delivery::control_name(&master.path)?;
+    let raw = scene_delivery::read_control(controls, manifest)?;
+    let staged_bytes = staging_bytes(&raw, max_staged_bytes)?;
+    let loaded = load(&raw, controls, inputs)?;
+    let master_path = outputs.verified_path(master)?;
+    check_media(&master_path, &loaded.1, inputs)?;
+    let stage = tempfile::Builder::new()
+        .prefix(".presentation-primary-check-")
+        .tempdir_in(stage_parent)?;
+    prepare_layers(&loaded.0, inputs, stage.path())?;
+    let mut matched = Vec::new();
+    for pixel_format in ["yuv444p", "rgb24"] {
+        let mut reference = render_command(&loaded, inputs, stage.path(), "rawvideo")?;
+        reference.args(["-pix_fmt", pixel_format]);
+        let expected = stream_hashes(reference)?;
+        let mut retained = command(inputs, MediaProgram::Ffmpeg)?;
+        retained
+            .args(["-v", "error", "-nostdin", "-i"])
+            .arg(&master_path)
+            .args([
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a:0",
+                "-c:v",
+                "rawvideo",
+                "-threads:v",
+                "1",
+                "-pix_fmt",
+                pixel_format,
+                "-c:a",
+                "pcm_s24le",
+            ]);
+        let actual = stream_hashes(retained)?;
+        if actual != expected {
+            bail!("retained presentation differs from primary reference ({pixel_format})");
+        }
+        matched.push(actual);
+    }
+    if matched[0].1 != matched[1].1 {
+        bail!("presentation primary comparison audio is inconsistent");
+    }
+    Ok(PrimaryComparison {
+        manifest: manifest.clone(),
+        master: master.clone(),
+        yuv: matched[0].0.clone(),
+        rgb: matched[1].0.clone(),
+        audio: matched[0].1.clone(),
+        staged_bytes,
+    })
+}
+
+fn staging_bytes(raw: &[u8], maximum: u64) -> Result<u64> {
+    let parsed: Manifest = serde_json::from_slice(raw)?;
+    let bytes = parsed
+        .fonts
+        .iter()
+        .try_fold(parsed.editable_layer.bytes, |sum, font| {
+            sum.checked_add(font.bytes)
+                .context("presentation staging byte count overflow")
+        })?;
+    if bytes > maximum {
+        bail!("presentation primary comparison exceeds staging budget");
+    }
+    Ok(bytes)
+}
+
+fn stream_hashes(mut cmd: Command) -> Result<(String, String)> {
+    let result = cmd
+        .args(["-f", "streamhash", "-hash", "sha256", "-"])
+        .output()?;
+    if !result.status.success() {
+        bail!("presentation stream hashing failed");
+    }
+    let output =
+        std::str::from_utf8(&result.stdout).context("invalid presentation stream hashes")?;
+    parse_stream_hashes(output)
+}
+
+fn parse_stream_hashes(output: &str) -> Result<(String, String)> {
+    let lines = output.lines().map(str::trim).collect::<Vec<_>>();
+    // FFmpeg 8.1 emits the original index/type/algorithm form. Newer builds
+    // emit versioned stream-checksum headers and index/byte-count/hash records.
+    let version2 = lines.first() == Some(&"#format: stream checksums");
+    if version2
+        && ![
+            "#version: 2",
+            "#hash: SHA256",
+            "#media_type 0: video",
+            "#codec_id 0: rawvideo",
+            "#media_type 1: audio",
+            "#codec_id 1: pcm_s24le",
+        ]
+        .iter()
+        .all(|required| lines.contains(required))
+    {
+        bail!("unsupported presentation stream hash headers");
+    }
+    let mut hashes = BTreeMap::new();
+    for line in lines {
+        if version2 && line.starts_with('#') {
+            continue;
+        }
+        let parts = line.split(',').map(str::trim).collect::<Vec<_>>();
+        if parts.len() != 3 || !matches!(parts[0], "0" | "1") {
+            bail!("unexpected presentation stream hash subject");
+        }
+        let digest = if version2 {
+            if parts[1].parse::<u64>().ok().is_none_or(|bytes| bytes == 0) {
+                bail!("empty or invalid presentation stream size");
+            }
+            parts[2]
+        } else {
+            if !matches!((parts[0], parts[1]), ("0", "v") | ("1", "a")) {
+                bail!("unexpected presentation stream hash type");
+            }
+            let (algorithm, digest) = parts[2]
+                .split_once('=')
+                .context("missing presentation stream digest")?;
+            if !algorithm.eq_ignore_ascii_case("sha256") {
+                bail!("unsupported presentation stream hash algorithm");
+            }
+            digest
+        };
+        if digest.len() != 64
+            || !digest.bytes().all(|b| b.is_ascii_hexdigit())
+            || hashes
+                .insert(parts[0], digest.to_ascii_lowercase())
+                .is_some()
+        {
+            bail!("invalid or duplicate presentation stream digest");
+        }
+    }
+    if hashes.len() != 2 {
+        bail!("incomplete presentation stream hashes");
+    }
+    Ok((hashes["0"].clone(), hashes["1"].clone()))
 }
 
 /// Recheck directly from guarded control, primary and retained-output readers.
@@ -875,6 +1125,31 @@ pub fn cli() {
 #[cfg(test)]
 mod timing_tests {
     use super::*;
+
+    #[test]
+    fn stream_hash_protocols_bind_both_exact_streams_and_sha256() {
+        let video = "a".repeat(64);
+        let audio = "b".repeat(64);
+        let legacy = format!("0,v,SHA256={video}\n1,a,SHA256={audio}\n");
+        let current = format!(
+            "#format: stream checksums\n#version: 2\n#hash: SHA256\n#media_type 0: video\n#codec_id 0: rawvideo\n#media_type 1: audio\n#codec_id 1: pcm_s24le\n0, 123, {video}\n1, 456, {audio}\n"
+        );
+        assert_eq!(
+            parse_stream_hashes(&legacy).unwrap(),
+            (video.clone(), audio.clone())
+        );
+        assert_eq!(parse_stream_hashes(&current).unwrap(), (video, audio));
+        for bad in [
+            legacy.replace("1,a", "0,v"),
+            legacy.replace("SHA256", "SHA512"),
+            legacy.lines().next().unwrap().into(),
+            current.replace("#version: 2", "#version: 3"),
+            current.replace("pcm_s24le", "pcm_s16le"),
+            current.replace("0, 123", "0, 0"),
+        ] {
+            assert!(parse_stream_hashes(&bad).is_err());
+        }
+    }
 
     fn fixture() -> (Template, PictureTiming, SourceClock) {
         let file = || FileRef {

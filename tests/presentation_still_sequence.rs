@@ -213,6 +213,7 @@ fn still_geometry_fixture(with_audio: bool, song_clock: bool, portrait: bool, no
         serde_json::from_slice(&fs::read(root.join("render/receipt.json")).unwrap()).unwrap();
     assert_eq!(receipt["frames"], 48);
     assert_eq!(receipt["samples"], 96_000);
+    verify_primary_reference(root);
     if portrait {
         let probe = Command::new("ffprobe")
             .args([
@@ -339,6 +340,57 @@ fn still_geometry_fixture(with_audio: bool, song_clock: bool, portrait: bool, no
     }
     fs::write(root.join("render/editable-layer.ass"), b"tampered").unwrap();
     assert!(!run(root, "check").status.success());
+}
+
+fn plain_pin(root: &Path, name: &str) -> reel::scene_delivery::FileRef {
+    let mut value = reference(root, name);
+    value.as_object_mut().unwrap().remove("cache_uri");
+    serde_json::from_value(value).unwrap()
+}
+
+fn verify_primary_reference(root: &Path) {
+    use reel::presentation_still_sequence::{RetainedOutputs, compare_retained_to_primaries};
+    let manifest = plain_pin(root, "manifest.json");
+    let dir = root.join("render");
+    let receipt = plain_pin(&dir, "receipt.json");
+    let master = plain_pin(&dir, "master.mkv");
+    let review = plain_pin(&dir, "review.mp4");
+    let layer = plain_pin(&dir, "editable-layer.ass");
+    let selected = RetainedOutputs {
+        receipt: &receipt,
+        master: &master,
+        review: &review,
+        editable_layer: &layer,
+        fonts: &[],
+    };
+    let source = root.to_path_buf();
+    let exhausted =
+        compare_retained_to_primaries(&manifest, &source, &source, &dir, selected, root, 0)
+            .err()
+            .unwrap();
+    assert!(exhausted.to_string().contains("staging budget"));
+    let checked = compare_retained_to_primaries(
+        &manifest,
+        &source,
+        &source,
+        &dir,
+        selected,
+        root,
+        1024 * 1024,
+    )
+    .unwrap();
+    assert_eq!(checked.master().sha256, master.sha256);
+    assert_eq!(checked.manifest().sha256, manifest.sha256);
+    assert_eq!(checked.picture_sha256().0.len(), 64);
+    assert_eq!(checked.picture_sha256().1.len(), 64);
+    assert_eq!(checked.audio_sha256().len(), 64);
+    assert_eq!(checked.staged_bytes(), layer.bytes);
+    assert!(!fs::read_dir(root).unwrap().any(|p| {
+        p.unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".presentation-primary-check-")
+    }));
 }
 
 fn cached_producer_without_original_files(root: &Path, expected: &serde_json::Value) {
@@ -539,6 +591,109 @@ fn cached_producer_without_original_files(root: &Path, expected: &serde_json::Va
         )
     };
     check(&files).unwrap();
+    let selected = reel::presentation_still_sequence::RetainedOutputs {
+        receipt: &retained["receipt.json"],
+        master: &retained["master.mkv"],
+        review: &retained["review.mp4"],
+        editable_layer: &retained["editable-layer.ass"],
+        fonts: &[],
+    };
+    reel::presentation_still_sequence::compare_retained_to_primaries(
+        &manifest,
+        &files,
+        &files,
+        &files,
+        selected,
+        root,
+        1024 * 1024,
+    )
+    .unwrap();
+    let unavailable_receipt = files.names.remove(&selected.receipt.path).unwrap();
+    reel::presentation_still_sequence::compare_master_to_primaries(
+        &manifest,
+        &files,
+        &files,
+        &files,
+        selected.master,
+        root,
+        1024 * 1024,
+    )
+    .unwrap();
+    files
+        .names
+        .insert(selected.receipt.path.clone(), unavailable_receipt);
+    // Deliberately forged fixture metadata can still satisfy the old receipt
+    // checks after a same-geometry cel replacement. The full reference must
+    // detect that the retained movie never consumed the replacement.
+    let store_metadata = |files: &mut Files, name: &str, value: &serde_json::Value| -> FileRef {
+        let raw = serde_json::to_vec(value).unwrap();
+        let sha256 = hash(&raw);
+        let actual = FileRef {
+            path: sha256.clone().into(),
+            sha256,
+            bytes: raw.len() as u64,
+        };
+        let target = cache.join(&actual.path);
+        fs::write(&target, raw).unwrap();
+        let mut options = fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.share_mode(1);
+        }
+        files._guards.push(options.open(target).unwrap());
+        let logical = FileRef {
+            path: name.into(),
+            ..actual.clone()
+        };
+        files.names.insert(logical.path.clone(), actual);
+        logical
+    };
+    let mut changed: serde_json::Value =
+        serde_json::from_slice(&fs::read(files.verified_path(&manifest).unwrap()).unwrap())
+            .unwrap();
+    let blue = files.names[Path::new("blue.png")].clone();
+    changed["pictures"][0]["sha256"] = json!(blue.sha256);
+    changed["pictures"][0]["bytes"] = json!(blue.bytes);
+    changed["pictures"][0]["cache_uri"] = json!(format!("cache://sha256/{}", blue.sha256));
+    let changed_manifest = store_metadata(&mut files, "changed/manifest.json", &changed);
+    let mut forged: serde_json::Value =
+        serde_json::from_slice(&fs::read(files.verified_path(selected.receipt).unwrap()).unwrap())
+            .unwrap();
+    forged["manifest_sha256"] = json!(changed_manifest.sha256);
+    forged["picture_sha256"][0] = json!(blue.sha256);
+    let changed_receipt = store_metadata(&mut files, "changed/receipt.json", &forged);
+    let original_red = files.names.insert("red.png".into(), blue).unwrap();
+    let forged_selection = reel::presentation_still_sequence::RetainedOutputs {
+        receipt: &changed_receipt,
+        ..selected
+    };
+    reel::presentation_still_sequence::check_retained_with_files(
+        &changed_manifest,
+        &files,
+        &files,
+        &files,
+        forged_selection,
+    )
+    .unwrap();
+    let mismatch = reel::presentation_still_sequence::compare_retained_to_primaries(
+        &changed_manifest,
+        &files,
+        &files,
+        &files,
+        forged_selection,
+        root,
+        1024 * 1024,
+    )
+    .err()
+    .unwrap();
+    assert!(
+        mismatch
+            .to_string()
+            .contains("differs from primary reference")
+    );
+    files.names.insert("red.png".into(), original_red);
     let mut wrong = retained["master.mkv"].clone();
     wrong.bytes += 1;
     let error = reel::presentation_still_sequence::check_retained_with_files(

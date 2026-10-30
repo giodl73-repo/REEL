@@ -47,6 +47,53 @@ picture/audio sample from the primary inputs. Keep that distinction when
 admitting a retained result under a newly compiled recipe: never rewrite original
 receipt or plan hashes to substitute a new production history.
 
+## Primary-reference comparison without movie duplication
+
+`compare_master_to_primaries` checks one exact master against the shared native
+rendering command using stream hashes. It does not require an old receipt or
+review file and never rewrites historical evidence to fit a new recipe.
+`compare_retained_to_primaries` additionally checks the original retained set and
+receipt before that comparison. Both compare YUV444 and displayed RGB24 picture bytes, plus PCM24
+audio, with the retained master. Native frame/sample counts and continuous
+timestamps are checked separately. A format-correct movie at the wrong cadence
+cannot pass by retaining the same frame sequence.
+
+Only the exact declared ASS and fonts are copied into owned temporary scratch.
+Their summed logical lengths must fit an explicit caller-supplied staging byte
+budget before scratch creation. The renderer emits its movie bytes to the hash
+muxer, not another media file. Temporary staging is removed on success or error.
+This budget covers those copied bytes; the managed job runner must separately
+reserve capacity and bound runtime/resources.
+
+The sealed `PrimaryComparison` returns the exact manifest/master pins and matched
+stream digests. It has no public constructor. The future Tig job adapter must
+bind this result to its current source, recipe and admitted runtime before
+issuing currency or publication capabilities. It is not an original-producer
+assertion or a new approval.
+
+The stream parser supports the original
+[FFmpeg 8.1 protocol](https://github.com/FFmpeg/FFmpeg/blob/n8.1/libavformat/hashenc.c)
+and the version-2 stream-checksum headers emitted by newer tools. It requires
+exactly one raw picture stream and one PCM24 audio stream under SHA-256 and
+rejects duplicate, missing, wrong-type, wrong-algorithm and unsupported headers.
+No version-specific command option is imposed on the older implementation.
+
+The regression fixture deliberately replaces a cel with a same-geometry image
+and writes **new forged fixture metadata**, leaving original objects intact.
+Receipt/format checking can pass that metadata; the primary-reference comparison
+must reject its actual pixels. This demonstrates why metadata checks cannot
+substitute for primary-to-output validation.
+
+A separate fixture withdraws the old receipt binding while preserving the exact
+master and primary inputs; the master-only comparison still passes. This permits
+honest revalidation against a new declared render without pretending that an old
+producer emitted a new receipt. Historical provenance and creative approvals
+remain separate immutable subjects.
+
+Reference image decoding, raw encoding and filter execution use explicit thread
+limits. This limits the verifier's burst concurrency; it is not a replacement
+for a managed job's process/runtime reservations.
+
 ## Producer checklist findings
 
 Scope: still-sequence extraction and guarded producer inputs. Owner: native
@@ -82,3 +129,12 @@ offline, missing retained subjects and contradictory movie pins. Its final run
 passes all five integration cases (15.93 seconds), 213 library tests with nine
 explicitly ignored (13.50 seconds), and locked all-target/all-feature Clippy with
 warnings denied. Hosted qualification remains pending.
+
+The final primary-reference extension passes all five integration cases (12.16
+seconds), including silent/audio-envelope/source-clock geometry cases, cache-only
+comparison, missing old receipt, budget refusal and the forged cel metadata
+counterexample. Library tests pass 214 with nine explicitly ignored (3.52
+seconds); protocol parsing also rejects malformed version/type/algorithm/stream
+coverage. Locked all-target/all-feature Clippy passes with warnings denied.
+These are fixture results, not a claim that actual project masters have yet
+passed primary-reference comparison or native job admission.
