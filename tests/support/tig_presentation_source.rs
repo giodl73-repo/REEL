@@ -1,5 +1,7 @@
 use super::*;
 use reel::tig_presentation::{self, Request};
+#[path = "tig_presentation_intake.rs"]
+mod intake;
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "tig_presentation_jobs.rs"]
 mod jobs;

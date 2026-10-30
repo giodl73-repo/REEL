@@ -14,12 +14,17 @@ struct Args {
     /// Register explicit component masters from exact native episode conforms.
     #[arg(long, conflicts_with_all = ["versioned", "package_assets"])]
     conform_components: bool,
+    /// Register retained still-sequence controls and explicit primary identities.
+    #[arg(long, conflicts_with_all = ["versioned", "package_assets", "conform_components"])]
+    presentation_source: bool,
     profile: PathBuf,
     output: PathBuf,
 }
 fn main() -> ExitCode {
     let args = Args::parse();
-    let result = if args.conform_components {
+    let result = if args.presentation_source {
+        reel::tig_presentation_registration::run(&args.profile, &args.output)
+    } else if args.conform_components {
         reel::tig_conform_registration::run(&args.profile, &args.output)
     } else if args.package_assets {
         reel::tig_package_registration::run(&args.profile, &args.output)

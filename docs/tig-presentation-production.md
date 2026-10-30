@@ -9,9 +9,10 @@ No legacy project script or new presentation format is required.
 
 `tig_presentation` compiles a small source record whose `authored.document`
 names pictures, audio, editable layer, fonts and control records by logical Tig
-ID. Every primary pin resolves from one captured source view. Template, timing,
-source clock and evidence are literal documents on separately versioned records;
-the compiler supplies their canonical JSON directly in memory. No source
+ID. Every primary pin resolves from one captured source view. Template, timing
+and source clock are literal documents on separately versioned records. Evidence
+can be a literal document or a small reference to its original selected report;
+the compiler supplies canonical control JSON directly in memory. No source
 directory, second caller-maintained hash inventory or copied media is needed.
 
 ```text
@@ -177,6 +178,17 @@ These are producer-applied checklist findings, not independent or human review.
 
 ## Managed verification of a selected master
 
+A reusable source can have a different scope from its episode occurrence. For
+example, an opening produced as `SEASON-OPENING / opening-source` can occur as
+`episode-10 / series-opening`. The output record may explicitly declare
+`presentation_scope: {"episode_id":"SEASON-OPENING","role":"opening-source"}`.
+Those fields must match the referenced native source exactly; its ordinary
+`episode_id` and `source_segment_id` retain the occurrence identity. Language
+and source ID still match exactly. Without the explicit scope, the original
+same-scope contract applies. This does not rename historical producer metadata.
+Two occurrences share the consumed native recipe but retain separate selected
+output-record and frozen job identities.
+
 With `tig-publication`, `tig_presentation::jobs::JobPlan` binds the native recipe
 to a held runtime and one explicitly admitted selected output. The output record
 must name its source presentation, episode, language and segment role, with a
@@ -229,7 +241,100 @@ correspondence never rewrites original production or approval evidence. The
 master format check also requires exactly two streams, YUV444 picture format
 and square pixels, in addition to existing native clocks and sample checks.
 
+## Intake of retained native plans
+
+```text
+reel-tig-register --presentation-source PROFILE.json NEW-DIRECTORY
+
+retained v1/v2 manifest object + exact control objects
+                 │
+       explicit stable asset IDs and filenames
+                 │
+        bound candidate .tig records
+                 │
+       Git review/commit → capture Tig view
+                 │
+      native compile → managed verification
+```
+
+`tig_presentation_registration` reuses the bounded registration provider and
+writer. It opens only the manifest, template, and optional timing/clock/evidence
+objects, each at most 4 MiB and at most 16 MiB in total. It never opens picture,
+audio, layer or font payloads. Those pins come from the original native plan,
+not a caller-maintained duplicate hash inventory. Candidate records are bound
+to exact supplied definitions and schemas before the new directory is created.
+Existing output directories are refused. No Git operation, cache publication,
+selection change, job adoption or media generation occurs.
+
+The profile schema is `reel.tig-presentation-registration.experimental-1`:
+
+| Field | Contract |
+| --- | --- |
+| `manifest` | Exact original native manifest object: SHA-256 and byte length. |
+| `byte_source` | Existing named cache places and bounded read policy. |
+| `definitions` | Exactly `source`, `template`, `timing`, `clock`, `evidence`, `primary`; each supplies absolute hash-bound `definition` and `authored_schema` FileRefs. Definition IDs differ. |
+| `nodes` | Exactly the five control roles, each with explicit `id` and portable `.tig` `filename`. Unused v1 timing roles emit no record. |
+| `bindings` | Exactly the used `picture/0..N`, `layer`, optional `audio`, and `font/0..N` keys. Each names a stable ID. New records require a portable filename and project-authored fields. |
+| `primary_selection_state` | Explicit project data, retained on new primaries; never a grant of creative approval. |
+| `existing_source` | Optional exact committed Tig input profile for existing identity reuse/collision checks. No payloads are read from it. |
+| `existing_primary_definitions` | Explicit admitted primary definition IDs for reused bindings, disjoint from controls. |
+| `extra_audio` | Optional exact audio object for a **new** v1 desired contract based on an original picture-only plan. It cannot replace an existing recording or change a v2 source clock. |
+| `metadata` | Optional project metadata; cannot override the registration provenance member. |
+| `max_output_bytes` | Explicit total candidate budget, at most 16 MiB. Every emitted record is additionally limited to 64 KiB. |
+
+For example, one binding may be:
+
+```json
+"picture/0": {
+  "id": "show/opening/cel-a",
+  "filename": "cel-a.tig",
+  "authored": {"media_kind": "picture"}
+}
+```
+
+An existing binding instead uses `{"id":"show/opening/cel-a","existing":true}`,
+with no replacement filename/authored fields. Its admitted type, selected object
+and selection state must match. Identity collision checks use the entire exact
+captured metadata namespace, including records outside the selected type
+admissions. An unadmitted existing record cannot be silently shadowed.
+Shared new IDs require identical selected objects, authored fields and filenames.
+IDs are explicit; filenames and hashes never manufacture asset identities.
+
+Definitions control the project-authored fields. Large inventories, receipts
+and reports stay assets; they must not be embedded as oversized literal records.
+Clock measurement evidence remains its exact original selected byte asset. Its
+small authored document uses `reel.presentation-clock-evidence-reference.v1`
+with the matching original object pin. The compiler rejects a disagreement
+between that pin and the record's selected object. The report is not parsed into
+Git metadata: decimal measurements and large report bodies stay in byte storage.
+This association preserves provenance; it does not grant approval or prove
+independent archival custody.
+The original manifest object and any explicit audio extension are retained as
+provenance. Historical producer receipts and approval subjects are not rewritten.
+A new v1 audio contract still needs independent full master comparison before
+reuse. Registration does not assert that its bytes exist or match that output.
+
+The result includes a small `source_request` for the native compiler. Definition
+files remain separate reusable repository data; this command emits instance
+records. Intake lives outside the fingerprinted compiler/input-adapter modules.
+The compiler's evidence-reference interpretation is a separate semantic change
+and therefore intentionally changes its fingerprint.
+
 ## Local qualification
+
+The intake extension passes all 16 presentation-source tests, including eight
+intake cases. They cover bounded metadata-only import, shared identity reuse,
+unadmitted identity collisions, record size limits, raw decimal measurement
+reports, evidence-link drift, unchanged retained-master content and reusable
+source/occurrence scopes. Locked all-target/all-feature Clippy passes with
+warnings denied. Actual project metadata intake succeeded separately; decoded
+project parity and runtime adoption remain separate requirements.
+
+Producer-applied provenance and editing checklists found two requirements:
+measurement reports must remain exact asset bytes, and a reusable opening must
+retain its original source identity independently of its episode occurrence.
+The reference validator and explicit `presentation_scope` implement those
+requirements. These checks are not independent review or creative approval.
 
 All five still-sequence integration cases pass, including source-clock cache
 production and decoded parity with originals unavailable (4.35 seconds total).
