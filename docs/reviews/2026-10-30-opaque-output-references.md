@@ -25,3 +25,12 @@ creative approval, consumer binding or eviction authority is added. The failed
 real attempt retained diagnostics and its complete input context, released all
 24 temporary component sources, and produced no parent output. These are
 technical findings, not independent approval or a completed consumer cutover.
+
+Local qualification passed strict locked all-target/all-feature Clippy, the
+filesystem guard regression, and both complete CLI fixtures in 288.46 seconds.
+The first actual retry rejected the historical composition context before job
+adoption because that context pins the input adapter's implementation bytes.
+A new capture under the tested executable reopened all 24 controls exactly and
+adopted no job or media. The real retry uses that capture; refreshing a compiler
+context does not revise source records or approve previously selected outputs.
+Actual assembly and hosted qualification remain separate acceptance results.
