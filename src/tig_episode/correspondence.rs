@@ -157,14 +157,34 @@ pub fn require_current_scenes(
     request: &Request,
     scenes: &BTreeMap<String, CurrentScene>,
 ) -> Result<Plan> {
+    require_scene_components(source, request, scenes, &BTreeMap::new())
+}
+pub(super) fn require_scene_components(
+    source: &mut Source,
+    request: &Request,
+    scenes: &BTreeMap<String, CurrentScene>,
+    references: &BTreeMap<String, &crate::tig_scene_production::jobs::reference::VerifiedScene<'_>>,
+) -> Result<Plan> {
     let plan = plan(source, request)?;
     let expected = plan
         .components
         .iter()
         .filter(|c| c.kind == "scene")
         .collect::<Vec<_>>();
-    if expected.len() != scenes.len()
+    if expected.len() != scenes.len() + references.len()
+        || scenes.keys().any(|id| references.contains_key(id))
         || expected.iter().any(|c| {
+            if let Some(proof) = references.get(&c.segment_id) {
+                return proof.checkpoint() != &plan.source_checkpoint
+                    || proof.output() != &c.record
+                    || Some(proof.scene()) != c.source_scene.as_ref()
+                    || proof.selected().sha256 != c.selected.sha256.as_str()
+                    || proof.selected().bytes != c.selected.bytes
+                    || request
+                        .component_definitions
+                        .iter()
+                        .any(|id| proof.production_definitions().contains(id));
+            }
             scenes.get(&c.segment_id).is_none_or(|proof| {
                 request
                     .component_definitions

@@ -42,6 +42,8 @@ mod current_scene_controls;
 mod episode_publication;
 #[path = "tig_episode_parent_controls.rs"]
 mod parent_controls;
+#[path = "tig_reference_scene_parent.rs"]
+mod reference_scene_parent;
 #[path = "tig_scene_reference.rs"]
 mod scene_reference;
 fn key(value: &str) -> Key {

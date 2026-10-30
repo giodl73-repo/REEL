@@ -36,8 +36,9 @@ can be deserialized to skip verification.
 Production callers must reserve staging capacity and run inside the bounded
 worker. This module does not install runtime bindings, schedule work, authorize
 eviction, grant creative approval or establish independent backup custody.
-Parent compilation/assembly must explicitly accept this proof and retain the
-complete child resource and ownership closure; that integration remains separate.
+The [parent integration](2026-10-30-reference-scene-parent.md) now explicitly
+accepts this proof and retains the declared child resource and ownership closure.
+Bounded orchestration and actual project acceptance remain separate requirements.
 
 Producer-applied editor, sound-designer and provenance checklists require exact
 pixel/audio clocks, live byte guards, unchanged historical assertions and clear

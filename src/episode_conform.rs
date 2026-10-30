@@ -23,6 +23,11 @@ type NativePresentations<'a> =
     BTreeMap<String, &'a crate::tig_presentation::jobs::VerifiedPresentation<'a>>;
 #[cfg(not(feature = "tig-publication"))]
 type NativePresentations<'a> = BTreeMap<String, &'a ()>;
+#[cfg(feature = "tig-publication")]
+type NativeScenes<'a> =
+    BTreeMap<String, &'a crate::tig_scene_production::jobs::reference::VerifiedScene<'a>>;
+#[cfg(not(feature = "tig-publication"))]
+type NativeScenes<'a> = BTreeMap<String, &'a ()>;
 
 pub const SCHEMA: &str = "reel.episode-conform.v1";
 
@@ -1553,13 +1558,15 @@ pub fn build_with_component_controls(
 }
 
 #[cfg(feature = "tig-publication")]
-pub(crate) fn build_with_current_presentations(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_with_current_components(
     manifest: &scene_delivery::FileRef,
     output: &Path,
     files: Files<'_>,
     controls: &dyn scene_delivery::InputFiles,
     scenes: &BTreeMap<String, SceneControls<'_>>,
     native: &NativePresentations<'_>,
+    native_scenes: &NativeScenes<'_>,
 ) -> Result<Receipt> {
     build_impl(
         &manifest.path,
@@ -1574,6 +1581,7 @@ pub(crate) fn build_with_current_presentations(
             manifest: Some(manifest),
             scene_controls: Some(scenes),
             native_presentations: Some(native),
+            native_scenes: Some(native_scenes),
             ..Provided::default()
         },
     )
@@ -1615,6 +1623,43 @@ fn native_presentation(
     Ok(None)
 }
 
+#[cfg(feature = "tig-publication")]
+fn native_scene(
+    native: Option<&NativeScenes<'_>>,
+    segment: &Segment,
+) -> Result<Option<(PathBuf, serde_json::Value)>> {
+    let Some(proof) = native.and_then(|proofs| proofs.get(&segment.id)) else {
+        return Ok(None);
+    };
+    let raw = proof.declaration()?;
+    if segment.kind != SegmentKind::Scene
+        || segment.adoption_manifest.is_some()
+        || segment.delivery_job.is_some()
+        || segment.delivery_receipt.is_some()
+        || segment.semantic_delivery.is_some()
+        || segment.imported_source_manifest.is_some()
+        || segment.imported_source_root.is_some()
+        || segment.source_text_evidence.is_some()
+        || segment.master.sha256 != proof.selected().sha256
+        || segment.master.bytes != proof.selected().bytes
+        || segment.source_receipt.sha256 != sha(&raw)
+        || segment.source_receipt.bytes != raw.len() as u64
+    {
+        bail!("native scene differs from sealed current component proof");
+    }
+    Ok(Some((
+        proof.selected_path()?,
+        serde_json::from_slice(&raw)?,
+    )))
+}
+#[cfg(not(feature = "tig-publication"))]
+fn native_scene(
+    _native: Option<&NativeScenes<'_>>,
+    _segment: &Segment,
+) -> Result<Option<(PathBuf, serde_json::Value)>> {
+    Ok(None)
+}
+
 fn read_parent_control(
     files: &dyn scene_delivery::InputFiles,
     reference: &scene_delivery::FileRef,
@@ -1644,6 +1689,7 @@ struct Provided<'a> {
     scene_controls: Option<&'a BTreeMap<String, SceneControls<'a>>>,
     presentation_controls: Option<&'a BTreeMap<String, &'a dyn scene_delivery::InputFiles>>,
     native_presentations: Option<&'a NativePresentations<'a>>,
+    native_scenes: Option<&'a NativeScenes<'a>>,
 }
 
 fn build_impl(
@@ -1663,6 +1709,7 @@ fn build_impl(
         scene_controls,
         presentation_controls,
         native_presentations,
+        native_scenes,
     } = provided;
     let explicit_programs = programs.is_some();
     let local_programs = PathBuf::from(".");
@@ -1684,6 +1731,20 @@ fn build_impl(
         fs::read(manifest_path)?
     };
     let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
+    if let Some(native) = native_scenes {
+        let scenes = manifest
+            .segments
+            .iter()
+            .filter(|s| s.kind == SegmentKind::Scene)
+            .collect::<Vec<_>>();
+        let ids = scenes
+            .iter()
+            .map(|s| s.id.as_str())
+            .collect::<BTreeSet<_>>();
+        if ids.len() != scenes.len() || native.keys().any(|id| !ids.contains(id.as_str())) {
+            bail!("native scene proof coverage differs from parent segments");
+        }
+    }
     if let Some(native) = native_presentations {
         let ids = manifest
             .segments
@@ -1699,20 +1760,28 @@ fn build_impl(
         let ids = manifest
             .segments
             .iter()
-            .filter(|s| s.kind == SegmentKind::Scene)
+            .filter(|s| {
+                s.kind == SegmentKind::Scene && native_scenes.is_none_or(|p| !p.contains_key(&s.id))
+            })
             .map(|s| s.id.as_str())
             .collect::<BTreeSet<_>>();
         if ids.len()
             != manifest
                 .segments
                 .iter()
-                .filter(|s| s.kind == SegmentKind::Scene)
+                .filter(|s| {
+                    s.kind == SegmentKind::Scene
+                        && native_scenes.is_none_or(|p| !p.contains_key(&s.id))
+                })
                 .count()
             || scenes.len() != ids.len()
             || !scenes.keys().all(|id| ids.contains(id.as_str()))
             || manifest.segments.iter().any(|s| {
                 if s.kind == SegmentKind::EpisodePresentation {
                     return presentation_controls.is_none() && native_presentations.is_none();
+                }
+                if native_scenes.is_some_and(|p| p.contains_key(&s.id)) {
+                    return false;
                 }
                 s.semantic_delivery.is_none()
                     || s.delivery_job.is_none()
@@ -1765,7 +1834,9 @@ fn build_impl(
         let scenes = manifest
             .segments
             .iter()
-            .filter(|s| s.kind == SegmentKind::Scene)
+            .filter(|s| {
+                s.kind == SegmentKind::Scene && native_scenes.is_none_or(|p| !p.contains_key(&s.id))
+            })
             .collect::<Vec<_>>();
         let ids = scenes
             .iter()
@@ -1935,7 +2006,11 @@ fn build_impl(
             .and_then(|outputs| outputs.get(&segment.id))
             .copied()
             .or_else(|| provided_presentation.map(|p| p.outputs));
-        let native = native_presentation(native_presentations, segment)?;
+        let native = if segment.kind == SegmentKind::Scene {
+            native_scene(native_scenes, segment)?
+        } else {
+            native_presentation(native_presentations, segment)?
+        };
         let (master, receipt, receipt_path) = if let Some((master, receipt)) = &native {
             (master.clone(), receipt.clone(), None)
         } else {
@@ -1964,7 +2039,7 @@ fn build_impl(
             bail!("imported scene source proof belongs to another episode");
         }
         let presentation_rechecked = if native.is_some() {
-            true
+            segment.kind == SegmentKind::EpisodePresentation
         } else {
             match (segment.kind, &segment.adoption_manifest) {
                 (SegmentKind::Scene, None) => false,
@@ -2052,121 +2127,148 @@ fn build_impl(
                 }
             }
         };
-        let rechecked = match (
-            segment.kind,
-            &segment.delivery_job,
-            &segment.delivery_receipt,
-        ) {
-            (SegmentKind::Scene, Some(job_ref), Some(delivery_ref)) => {
-                let provided_controls = scene_controls.and_then(|scenes| scenes.get(&segment.id));
-                let (source_root, job_path) = if provided_controls.is_some() {
-                    (None, None)
-                } else {
-                    let source_root =
-                        scoped_import_root(input_root, segment.imported_source_root.as_deref())?;
-                    let job_path = scene_delivery::checked_file(&source_root, job_ref)?;
-                    (Some(source_root), Some(job_path))
-                };
-                if let Some(controls) = provided_controls {
-                    verify_semantic_scene_controls(
-                        segment,
-                        &manifest.language,
-                        &receipt,
-                        controls.files,
-                    )?;
-                } else if segment.semantic_delivery.is_some() {
-                    verify_semantic_scene_scope(segment, &manifest.language, &receipt, input_root)?;
-                } else {
-                    verify_native_delivery_proof(&receipt, job_ref, delivery_ref)?;
-                }
-                let checked = if let Some(files) = provided_outputs {
-                    let inputs = scene_inputs
-                        .and_then(|items| items.get(&segment.id))
-                        .context("missing provided scene inputs")?;
-                    let mut reference = delivery_ref.clone();
-                    reference.path = "receipt.json".into();
+        let rechecked = if native.is_some() && segment.kind == SegmentKind::Scene {
+            true
+        } else {
+            match (
+                segment.kind,
+                &segment.delivery_job,
+                &segment.delivery_receipt,
+            ) {
+                (SegmentKind::Scene, Some(job_ref), Some(delivery_ref)) => {
+                    let provided_controls =
+                        scene_controls.and_then(|scenes| scenes.get(&segment.id));
+                    let (source_root, job_path) = if provided_controls.is_some() {
+                        (None, None)
+                    } else {
+                        let source_root = scoped_import_root(
+                            input_root,
+                            segment.imported_source_root.as_deref(),
+                        )?;
+                        let job_path = scene_delivery::checked_file(&source_root, job_ref)?;
+                        (Some(source_root), Some(job_path))
+                    };
                     if let Some(controls) = provided_controls {
-                        scene_delivery::check_with_all_files(
-                            job_ref,
-                            controls.production,
-                            *inputs,
-                            files,
-                            &reference,
-                            controls.files,
-                        )?
-                    } else {
-                        scene_delivery::check_with_output_files(
-                            job_path.as_ref().context("local job path missing")?,
-                            *inputs,
-                            files,
-                            &reference,
-                        )?
-                    }
-                } else {
-                    let job_path = job_path
-                        .as_ref()
-                        .context("scene controls require explicit output files")?;
-                    let source_root = source_root
-                        .as_deref()
-                        .context("local source root missing")?;
-                    let delivery_path = scene_delivery::checked_file(asset_root, delivery_ref)?;
-                    if delivery_path
-                        .file_name()
-                        .is_none_or(|name| name != "receipt.json")
-                    {
-                        bail!("scene delivery receipt must be named receipt.json");
-                    }
-                    let delivery_root = delivery_path
-                        .parent()
-                        .context("scene delivery receipt has no parent")?;
-                    if master != delivery_root.join("master.mkv") {
-                        bail!("selected scene master is outside rechecked delivery directory");
-                    }
-                    if let Some(inputs) = scene_inputs {
-                        let inputs = inputs
-                            .get(&segment.id)
-                            .context("missing provided scene inputs")?;
-                        scene_delivery::check_with_inputs(job_path, *inputs, delivery_root)?
-                    } else if let Some(imported) = &segment.imported_source_manifest {
-                        imported_scene_proof::recheck(
-                            source_root,
-                            imported,
-                            asset_root,
-                            delivery_root,
+                        verify_semantic_scene_controls(
+                            segment,
+                            &manifest.language,
                             &receipt,
-                        )?
-                    } else if receipt["schema"] == "reel.scene-build-receipt.v1" {
-                        // The exact native proof above binds a successful full check.
-                        // Rehash all current source/output bytes and compare the plan;
-                        // final conform still decodes and compares every ordered frame.
-                        scene_delivery::recheck_native_receipt(job_path, asset_root, delivery_root)?
+                            controls.files,
+                        )?;
+                    } else if segment.semantic_delivery.is_some() {
+                        verify_semantic_scene_scope(
+                            segment,
+                            &manifest.language,
+                            &receipt,
+                            input_root,
+                        )?;
                     } else {
-                        scene_delivery::check(job_path, asset_root, delivery_root)?
+                        verify_native_delivery_proof(&receipt, job_ref, delivery_ref)?;
                     }
-                };
-                let checked_master = checked
-                    .outputs
-                    .get("master.mkv")
-                    .context("rechecked scene delivery lacks master")?;
-                if checked_master.sha256 != segment.master.sha256
-                    || checked_master.bytes != segment.master.bytes
-                {
-                    bail!("rechecked scene delivery differs from selected master");
+                    let checked = if let Some(files) = provided_outputs {
+                        let inputs = scene_inputs
+                            .and_then(|items| items.get(&segment.id))
+                            .context("missing provided scene inputs")?;
+                        let mut reference = delivery_ref.clone();
+                        reference.path = "receipt.json".into();
+                        if let Some(controls) = provided_controls {
+                            scene_delivery::check_with_all_files(
+                                job_ref,
+                                controls.production,
+                                *inputs,
+                                files,
+                                &reference,
+                                controls.files,
+                            )?
+                        } else {
+                            scene_delivery::check_with_output_files(
+                                job_path.as_ref().context("local job path missing")?,
+                                *inputs,
+                                files,
+                                &reference,
+                            )?
+                        }
+                    } else {
+                        let job_path = job_path
+                            .as_ref()
+                            .context("scene controls require explicit output files")?;
+                        let source_root = source_root
+                            .as_deref()
+                            .context("local source root missing")?;
+                        let delivery_path = scene_delivery::checked_file(asset_root, delivery_ref)?;
+                        if delivery_path
+                            .file_name()
+                            .is_none_or(|name| name != "receipt.json")
+                        {
+                            bail!("scene delivery receipt must be named receipt.json");
+                        }
+                        let delivery_root = delivery_path
+                            .parent()
+                            .context("scene delivery receipt has no parent")?;
+                        if master != delivery_root.join("master.mkv") {
+                            bail!("selected scene master is outside rechecked delivery directory");
+                        }
+                        if let Some(inputs) = scene_inputs {
+                            let inputs = inputs
+                                .get(&segment.id)
+                                .context("missing provided scene inputs")?;
+                            scene_delivery::check_with_inputs(job_path, *inputs, delivery_root)?
+                        } else if let Some(imported) = &segment.imported_source_manifest {
+                            imported_scene_proof::recheck(
+                                source_root,
+                                imported,
+                                asset_root,
+                                delivery_root,
+                                &receipt,
+                            )?
+                        } else if receipt["schema"] == "reel.scene-build-receipt.v1" {
+                            // The exact native proof above binds a successful full check.
+                            // Rehash all current source/output bytes and compare the plan;
+                            // final conform still decodes and compares every ordered frame.
+                            scene_delivery::recheck_native_receipt(
+                                job_path,
+                                asset_root,
+                                delivery_root,
+                            )?
+                        } else {
+                            scene_delivery::check(job_path, asset_root, delivery_root)?
+                        }
+                    };
+                    let checked_master = checked
+                        .outputs
+                        .get("master.mkv")
+                        .context("rechecked scene delivery lacks master")?;
+                    if checked_master.sha256 != segment.master.sha256
+                        || checked_master.bytes != segment.master.bytes
+                    {
+                        bail!("rechecked scene delivery differs from selected master");
+                    }
+                    true
                 }
-                true
-            }
-            (SegmentKind::Scene, None, None) => false,
-            (SegmentKind::Scene, _, _) => {
-                bail!("scene delivery recheck requires both job and receipt")
-            }
-            (SegmentKind::EpisodePresentation, None, None) => false,
-            (SegmentKind::EpisodePresentation, _, _) => {
-                bail!("episode presentation cannot supply a scene delivery recheck")
+                (SegmentKind::Scene, None, None) => false,
+                (SegmentKind::Scene, _, _) => {
+                    bail!("scene delivery recheck requires both job and receipt")
+                }
+                (SegmentKind::EpisodePresentation, None, None) => false,
+                (SegmentKind::EpisodePresentation, _, _) => {
+                    bail!("episode presentation cannot supply a scene delivery recheck")
+                }
             }
         };
         match segment.kind {
             SegmentKind::Scene => {
-                presentation_counts.push(None);
+                presentation_counts.push(if native.is_some() {
+                    Some((
+                        receipt["frames"]
+                            .as_u64()
+                            .context("scene reference lacks frames")?,
+                        receipt["samples"]
+                            .as_u64()
+                            .context("scene reference lacks samples")?,
+                    ))
+                } else {
+                    None
+                });
                 seen_scenes.push(segment.id.clone());
                 let role = segment.role.as_deref().unwrap_or("chapter-scenes");
                 if role != "chapter-scenes" || observed_roles.last().is_none_or(|last| last != role)
@@ -2373,8 +2475,9 @@ fn build_impl(
         if segment.kind == SegmentKind::Scene
             && facts.video_codec == "h264"
             && (segment.delivery_job.is_none() || segment.delivery_receipt.is_none())
+            && native_scenes.is_none_or(|proofs| !proofs.contains_key(&segment.id))
         {
-            bail!("H264 scene requires its verified lossless delivery job and receipt");
+            bail!("H264 scene requires its verified delivery or sealed primary-reference proof");
         }
         if let Some(first) = &common {
             if manifest.output_geometry.is_some()

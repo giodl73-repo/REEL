@@ -22,6 +22,10 @@ impl CurrentControls {
         plan: &Plan,
         proofs: &BTreeMap<String, &VerifiedPresentation<'_>>,
         scenes: &BTreeMap<String, CurrentSceneControls>,
+        references: &BTreeMap<
+            String,
+            &crate::tig_scene_production::jobs::reference::VerifiedScene<'_>,
+        >,
     ) -> Result<Self> {
         let raw = source.read_metadata(&plan.conform, 4 * 1024 * 1024)?;
         let mut value = identity::parse_json(&raw)?;
@@ -72,6 +76,28 @@ impl CurrentControls {
                 bail!("current parent segment order differs");
             }
             if component.kind == "scene" {
+                if let Some(proof) = references.get(&component.segment_id) {
+                    let raw = proof.declaration()?;
+                    let object = Object::from_bytes(&raw);
+                    metadata.insert(object.clone(), raw);
+                    let name = Digest::blob(component.segment_id.as_bytes());
+                    segment["master"] = serde_json::json!({"path":format!("current/{}/master.mkv",name.as_str()),"sha256":component.selected.sha256,"bytes":component.selected.bytes});
+                    segment["source_receipt"] = serde_json::json!({"path":format!("current/{}/reference.json",name.as_str()),"sha256":object.sha256,"bytes":object.bytes});
+                    let fields = segment
+                        .as_object_mut()
+                        .context("invalid reference scene segment")?;
+                    for key in [
+                        "adoption_manifest",
+                        "delivery_job",
+                        "delivery_receipt",
+                        "semantic_delivery",
+                        "imported_source_manifest",
+                        "imported_source_root",
+                    ] {
+                        fields.remove(key);
+                    }
+                    continue;
+                }
                 if let Some(controls) = scenes.get(&component.segment_id) {
                     metadata.extend(controls.metadata.clone());
                     scene_production

@@ -34,6 +34,10 @@ pub struct PrimaryReference {
     picture_processes: usize,
 }
 impl PrimaryReference {
+    /// Exact decoded frame and PCM-sample totals checked by this comparison.
+    pub fn counts(&self) -> (u64, u64) {
+        (self.frames, self.samples)
+    }
     pub fn declaration(&self) -> Value {
         json!({"schema":"reel.scene-primary-reference.experimental-1","job":self.job,"master":self.master,
             "frames":self.frames,"samples":self.samples,"yuv_sha256":self.yuv,"rgb_sha256":self.rgb,"pcm_sha256":self.pcm,
