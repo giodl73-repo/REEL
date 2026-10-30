@@ -2,6 +2,8 @@ use reel::scene_delivery;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path, process::Command};
+#[path = "support/scene_primary_reference.rs"]
+mod primary_reference;
 
 fn assert_picture_frames_match(before: &Path, after: &Path, pictures: &[&str]) {
     for name in pictures {
@@ -81,6 +83,7 @@ fn focal_and_pan_camera_render_real_pixels_and_preserve_native_audio() {
         write_json(&job_path, &job);
         let output = root.join(name);
         scene_delivery::render(&job_path, root, &output).unwrap();
+        primary_reference::check(root, &job_path, &output);
         let (job, plan) = scene_delivery::plan(&job_path, root).unwrap();
         let cadence = reel::motioncraft_cadence::analyze(&job, &plan, &output).unwrap();
         assert_eq!(cadence["passed"], true, "{cadence}");
@@ -588,6 +591,7 @@ fn temporal_lossless_scene_encoding_preserves_every_decoded_pixel_and_sample() {
     job["still_sequence_encoding"] = json!("h264-lossless");
     write_json(&root.join("job-compact.json"), &job);
     scene_delivery::render(&root.join("job-compact.json"), root, &root.join("compact")).unwrap();
+    primary_reference::check(root, &root.join("job-compact.json"), &root.join("compact"));
     for (stream, format) in [("0:v:0", "rawvideo"), ("0:a:0", "s24le")] {
         let decode = |folder: &str| {
             let mut command = Command::new("ffmpeg");
@@ -2006,6 +2010,7 @@ fn selected_ass_layer_changes_rendered_pixels_and_is_checked() {
     write_json(&root.join("job.json"), &job);
     let output = root.join("rendered");
     let receipt = scene_delivery::render(&root.join("job.json"), root, &output).unwrap();
+    primary_reference::check(root, &root.join("job.json"), &output);
     assert_eq!(
         receipt.plan.rendered_external_layers,
         vec!["editable-title"]
@@ -2386,6 +2391,7 @@ fn two_timed_overlays_render_and_check_as_independent_semantic_layers() {
     write_json(&root.join("job.json"), &job);
     let output = root.join("rendered");
     let receipt = scene_delivery::render(&root.join("job.json"), root, &output).unwrap();
+    primary_reference::check(root, &root.join("job.json"), &output);
     assert_eq!(
         receipt.plan.rendered_external_layers,
         vec!["storm-light", "storm-rain"]
@@ -2462,6 +2468,7 @@ fn timed_effect_and_final_ass_preserve_text_timing_and_audio() {
     write_json(&root.join("mixed.json"), &job);
     let output = root.join("mixed");
     let receipt = scene_delivery::render(&root.join("mixed.json"), root, &output).unwrap();
+    primary_reference::check(root, &root.join("mixed.json"), &output);
     assert_eq!(
         receipt.plan.rendered_external_layers,
         vec!["effect", "text"]
@@ -2702,6 +2709,7 @@ fn post_compose_camera_is_scoped_to_selected_frames_and_checked() {
     scene_delivery::plan(&root.join("job.json"), root).unwrap();
     let out = root.join("camera-render");
     scene_delivery::render(&root.join("job.json"), root, &out).unwrap();
+    primary_reference::check(root, &root.join("job.json"), &out);
     scene_delivery::check(&root.join("job.json"), root, &out).unwrap();
     assert!(out.join("pre-camera-picture.mkv").exists());
     assert_compositor_encoding_parity(root, &job, &out);
