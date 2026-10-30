@@ -128,7 +128,7 @@ impl Request {
         }
         Ok(serde_json::from_value(identity::parse_json(&raw)?)?)
     }
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         let mut definitions = BTreeSet::new();
         for id in [&self.assembly_definition, &self.episode_definition]
             .into_iter()

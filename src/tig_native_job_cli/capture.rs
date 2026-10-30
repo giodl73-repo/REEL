@@ -5,6 +5,7 @@ use anyhow::Context;
 use reel_assets::admission;
 
 const SCHEMA: &str = "reel.tig-native-capture-profile.experimental-1";
+const EPISODE_SCHEMA: &str = "reel.tig-episode-capture-profile.experimental-1";
 const MAX_OUTPUT: usize = 65_536;
 
 #[derive(Debug)]
@@ -20,12 +21,36 @@ impl std::fmt::Display for CaptureStage {
 struct Capture {
     schema: String,
     source: Value,
-    request: Request,
+    request: Value,
     metadata_root: PathBuf,
     metadata_minimum: Checkpoint,
     metadata_cache: PathBuf,
     preparation_cache: PathBuf,
     cache: Config,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum Contract {
+    Scene(Request),
+    Episode(crate::tig_episode::Request),
+}
+impl Contract {
+    fn parse(schema: &str, value: Value) -> Result<Self> {
+        match schema {
+            SCHEMA => {
+                let request: Request = serde_json::from_value(value)?;
+                request.validate()?;
+                Ok(Self::Scene(request))
+            }
+            EPISODE_SCHEMA => {
+                let request: crate::tig_episode::Request = serde_json::from_value(value)?;
+                request.validate()?;
+                Ok(Self::Episode(request))
+            }
+            _ => bail!("unsupported capture profile"),
+        }
+    }
 }
 
 fn existing_absolute(path: &Path) -> Result<()> {
@@ -38,10 +63,7 @@ fn existing_absolute(path: &Path) -> Result<()> {
 fn capture(profile: &Path, output: &Path) -> Result<Value> {
     let capture: Capture = read(profile, 128 * 1024, None)
         .map_err(|_| anyhow::anyhow!("invalid bounded capture profile"))?;
-    if capture.schema != SCHEMA {
-        bail!("unsupported capture profile");
-    }
-    capture.request.validate()?;
+    let contract = Contract::parse(&capture.schema, capture.request.clone())?;
     let source_profile: crate::tig_inputs::Profile = serde_json::from_value(capture.source.clone())
         .map_err(|_| anyhow::anyhow!("invalid committed-source profile"))?;
     if source_profile.schema != crate::tig_inputs::PROFILE_SCHEMA {
@@ -124,13 +146,21 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
         bail!("metadata bounds changed before capture");
     }
     let before = preparation.path().join("capture");
-    let context = tig_scene::freeze_render_context(
-        &mut source,
-        &capture.request,
-        &before,
-        &mut store,
-        TreeLimits::default(),
-    )
+    let context = match &contract {
+        Contract::Scene(request) => tig_scene::freeze_render_context(
+            &mut source,
+            request,
+            &before,
+            &mut store,
+            TreeLimits::default(),
+        ),
+        Contract::Episode(request) => crate::tig_episode::freeze_composition_context(
+            &mut source,
+            request,
+            &mut store,
+            TreeLimits::default(),
+        ),
+    }
     .context(CaptureStage("native freeze"))?;
     let mut archive = json!({
         "schema": crate::tig_inputs::ARCHIVE_PROFILE_SCHEMA,
@@ -151,14 +181,23 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
             .context(CaptureStage("readback open"))?,
         &wait,
     );
-    let (_, restored) = tig_scene::restore_render_context(
-        serde_json::from_value(archive.clone())?,
-        &capture.request,
-        context.selection(),
-        &preparation.path().join("readback"),
-        &mut reader,
-        TreeLimits::default(),
-    )
+    let (_, restored) = match &contract {
+        Contract::Scene(request) => tig_scene::restore_render_context(
+            serde_json::from_value(archive.clone())?,
+            request,
+            context.selection(),
+            &preparation.path().join("readback"),
+            &mut reader,
+            TreeLimits::default(),
+        ),
+        Contract::Episode(request) => crate::tig_episode::restore_composition_context(
+            serde_json::from_value(archive.clone())?,
+            request,
+            context.selection(),
+            &mut reader,
+            TreeLimits::default(),
+        ),
+    }
     .context(CaptureStage("native readback"))?;
     if restored.selection() != context.selection()
         || restored.descriptor() != context.descriptor()
@@ -167,22 +206,27 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
     {
         bail!("frozen context differs from committed source");
     }
-    for name in ["production.json", "contract.json", "job.json"] {
-        if read_bytes(
-            &before.join("delivery").join(name),
-            crate::tig_inputs::JOB_BYTES_MAX,
-            None,
-        )? != read_bytes(
-            &preparation.path().join("readback/delivery").join(name),
-            crate::tig_inputs::JOB_BYTES_MAX,
-            None,
-        )? {
-            bail!("capture contracts differ on readback");
+    if matches!(&contract, Contract::Scene(_)) {
+        for name in ["production.json", "contract.json", "job.json"] {
+            if read_bytes(
+                &before.join("delivery").join(name),
+                crate::tig_inputs::JOB_BYTES_MAX,
+                None,
+            )? != read_bytes(
+                &preparation.path().join("readback/delivery").join(name),
+                crate::tig_inputs::JOB_BYTES_MAX,
+                None,
+            )? {
+                bail!("capture contracts differ on readback");
+            }
         }
     }
-    let fragment = json!({"context_mode":"compiled", "metadata_root":capture.metadata_root,
+    let mut fragment = json!({"metadata_root":capture.metadata_root,
         "metadata_minimum":witness, "source":archive, "context":context.selection(),
-        "request":capture.request});
+        "request":contract});
+    if matches!(&contract, Contract::Scene(_)) {
+        fragment["context_mode"] = json!("compiled");
+    }
     let bytes = serde_json::to_vec(&fragment)?;
     if bytes.len() > MAX_OUTPUT {
         bail!("capture fragment exceeds budget");
@@ -199,6 +243,7 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
         .map_err(|_| anyhow::anyhow!("capture output publication refused"))?;
     Ok(
         json!({"schema":"reel.tig-native-capture-summary.experimental-1",
+        "context_kind":match contract {Contract::Scene(_)=>"scene",Contract::Episode(_)=>"episode"},
         "readback_equal":true, "fragment_bytes":bytes.len(),
         "roots":context.roots().len(), "primary":context.requirements().primary().len(),
         "controls":context.requirements().controls().len(), "media_rendered":false,
@@ -217,4 +262,31 @@ pub fn capture_context(profile: &Path, output: &Path) -> Result<Value> {
             None=>anyhow::anyhow!("source capture refused; verify profile, roots, capacity and source contracts"),
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn capture_schema_selects_one_strict_request_family_before_store_access() {
+        let episode = json!({"schema":crate::tig_episode::SCHEMA,"assembly_id":"assembly/es","assembly_definition":"types/assembly",
+            "episode_definition":"types/episode","scene_definitions":["types/scene"],"component_definitions":["types/output"]});
+        assert!(matches!(
+            Contract::parse(EPISODE_SCHEMA, episode.clone()).unwrap(),
+            Contract::Episode(_)
+        ));
+        assert!(Contract::parse(SCHEMA, episode.clone()).is_err());
+        assert!(Contract::parse("unknown", episode.clone()).is_err());
+        let mut ambiguous = episode;
+        ambiguous["component_definitions"] = json!(["types/scene"]);
+        assert!(Contract::parse(EPISODE_SCHEMA, ambiguous).is_err());
+        let scene = json!({"schema":tig_scene::SCHEMA,"scene_id":"scene/a","scene_definition":"types/scene",
+            "primary_definitions":["types/media"],"language":"es","controls":{"catalog":"catalog","episode":"episode","policy":"policy","profile":"profile","template_receipt":null},
+            "delivery_id":"scene-a","delivery_title":"synthetic"});
+        assert!(matches!(
+            Contract::parse(SCHEMA, scene.clone()).unwrap(),
+            Contract::Scene(_)
+        ));
+        assert!(Contract::parse(EPISODE_SCHEMA, scene).is_err());
+    }
 }

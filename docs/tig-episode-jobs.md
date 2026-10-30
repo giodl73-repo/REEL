@@ -5,6 +5,24 @@ an already captured source and existing caches, metadata and source-journal
 stores. It performs no cache or daemon setup. Keep the machine profile, raw
 reports and runtime receipts outside Git.
 
+First capture a committed episode with
+`reel-tig-job capture-context PRIVATE_CAPTURE_PROFILE.json NEW_FRAGMENT.json`.
+Use capture schema `reel.tig-episode-capture-profile.experimental-1` and supply
+`source` (the committed-source profile), the episode `request`, existing
+`metadata_root`/`metadata_minimum`, `metadata_cache`, `preparation_cache` and
+`cache`. Metadata and fragment output must share the explicitly admitted volume.
+The command reserves bounded metadata/preparation capacity, freezes the episode
+context, finishes/reopens the provider and independently restores the selection,
+descriptor, requirements and archive before publishing a new private fragment.
+It refuses to overwrite an existing fragment. It renders no media and adopts no
+job; capture alone does not establish child-primary eligibility or byte custody.
+
+The fragment supplies `source`, `context` and `request` for the job's `inputs`,
+and the updated `metadata_root`/`metadata_minimum` for the job profile. Runtime,
+component requests, owners, output contracts and budgets remain explicit job
+admissions. The existing scene capture schema and compiled-context fragment
+remain supported by the same command.
+
 ```text
 captured source + admitted episode/component requests
                      |
