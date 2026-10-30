@@ -298,32 +298,7 @@ fn check_media(path: &Path, template: &Template, files: &dyn InputFiles) -> Resu
         .as_array()
         .context("missing streams")?
         .clone();
-    let video = streams
-        .iter()
-        .find(|s| s["codec_type"] == "video")
-        .context("missing video")?;
-    let audio = streams
-        .iter()
-        .find(|s| s["codec_type"] == "audio")
-        .context("missing audio")?;
-    let frames = template.frames();
-    let samples = frames * template.sample_rate as u64 / template.frame_rate as u64;
-    if video["codec_name"] != "ffv1"
-        || video["width"] != template.width
-        || video["height"] != template.height
-        || video["nb_read_frames"]
-            .as_str()
-            .and_then(|s| s.parse::<u64>().ok())
-            != Some(frames)
-        || audio["codec_name"] != "pcm_s24le"
-        || audio["sample_rate"]
-            .as_str()
-            .and_then(|s| s.parse::<u32>().ok())
-            != Some(template.sample_rate)
-        || audio["channels"] != 2
-    {
-        bail!("presentation picture/audio format or frame count mismatch");
-    }
+    let (frames, samples) = check_stream_contract(&streams, template)?;
     crate::episode_delivery::verify_timestamps_with_inputs(
         path,
         template.sample_rate,
@@ -346,6 +321,39 @@ fn check_media(path: &Path, template: &Template, files: &dyn InputFiles) -> Resu
             .args(["-f", "null", "-"]);
         c
     })?;
+    Ok((frames, samples))
+}
+
+fn check_stream_contract(streams: &[serde_json::Value], template: &Template) -> Result<(u64, u64)> {
+    let video = streams
+        .iter()
+        .find(|s| s["codec_type"] == "video")
+        .context("missing video")?;
+    let audio = streams
+        .iter()
+        .find(|s| s["codec_type"] == "audio")
+        .context("missing audio")?;
+    let frames = template.frames();
+    let samples = frames * template.sample_rate as u64 / template.frame_rate as u64;
+    if streams.len() != 2
+        || video["codec_name"] != "ffv1"
+        || video["pix_fmt"] != "yuv444p"
+        || video["sample_aspect_ratio"] != "1:1"
+        || video["width"] != template.width
+        || video["height"] != template.height
+        || video["nb_read_frames"]
+            .as_str()
+            .and_then(|s| s.parse::<u64>().ok())
+            != Some(frames)
+        || audio["codec_name"] != "pcm_s24le"
+        || audio["sample_rate"]
+            .as_str()
+            .and_then(|s| s.parse::<u32>().ok())
+            != Some(template.sample_rate)
+        || audio["channels"] != 2
+    {
+        bail!("presentation picture/audio format or frame count mismatch");
+    }
     Ok((frames, samples))
 }
 
@@ -419,6 +427,7 @@ fn control_plan(
     Ok((manifest, template, picture_frames))
 }
 
+#[cfg(feature = "tig")]
 pub(crate) fn validate_metadata(raw: &[u8], controls: &dyn InputFiles) -> Result<()> {
     control_plan(raw, controls).map(|_| ())
 }
@@ -1140,6 +1149,31 @@ pub fn cli() {
 #[cfg(test)]
 mod timing_tests {
     use super::*;
+
+    #[test]
+    fn master_contract_rejects_extra_streams_non_square_pixels_and_wrong_pixel_format() {
+        let (template, _, _) = fixture();
+        let video = serde_json::json!({"codec_type":"video","codec_name":"ffv1","pix_fmt":"yuv444p","sample_aspect_ratio":"1:1","width":64,"height":64,"nb_read_frames":"48"});
+        let audio = serde_json::json!({"codec_type":"audio","codec_name":"pcm_s24le","sample_rate":"48000","channels":2});
+        let streams = vec![video, audio];
+        assert_eq!(
+            check_stream_contract(&streams, &template).unwrap(),
+            (48, 96000)
+        );
+        for (field, value) in [
+            ("sample_aspect_ratio", "2:1"),
+            ("sample_aspect_ratio", "0:1"),
+            ("pix_fmt", "yuv420p"),
+        ] {
+            let mut changed = streams.clone();
+            changed[0][field] = serde_json::json!(value);
+            assert!(check_stream_contract(&changed, &template).is_err());
+        }
+        let mut extra = streams.clone();
+        extra.push(streams[1].clone());
+        assert!(check_stream_contract(&extra, &template).is_err());
+        assert!(check_stream_contract(&streams[..1], &template).is_err());
+    }
 
     #[test]
     fn stream_hash_protocols_bind_both_exact_streams_and_sha256() {

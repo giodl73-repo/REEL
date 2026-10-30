@@ -18,6 +18,8 @@ use tig_core::{Digest, Object, identity};
 pub const SCHEMA: &str = "reel.tig-presentation-source.experimental-1";
 mod context;
 pub use context::{freeze_context, recipe, requirements, restore_context};
+#[cfg(feature = "tig-publication")]
+pub mod jobs;
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

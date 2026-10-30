@@ -158,7 +158,7 @@ rights/provenance checklists, not independent or human approval.
   establish complete runtime closure.
 
 The native presentation source compiler and metadata recipe are implemented.
-Managed presentation currency admission, bounded parent execution and complete
+Parent presentation currency admission, bounded parent execution and complete
 resource-owner handoff remain open. Producer-applied checklist review of this
 extension preserves these findings:
 
@@ -174,6 +174,60 @@ extension preserves these findings:
   prerequisites for full reproducibility; the compiler adds no such claim.
 
 These are producer-applied checklist findings, not independent or human review.
+
+## Managed verification of a selected master
+
+With `tig-publication`, `tig_presentation::jobs::JobPlan` binds the native recipe
+to a held runtime and one explicitly admitted selected output. The output record
+must name its source presentation, episode, language and segment role, with a
+separate output definition. Wrong scope or a primary/control definition refuses
+before opening media. Selection is project data, not inferred creative approval.
+
+The frozen job retains the complete declared primary set, source interpretation,
+runtime, canonical generated controls and the target output record. The selected
+master is a **Composition** dependency, never a Primary. Caller-supplied logical
+byte/object limits are checked before source adoption. These describe retained
+obligations, not allocated storage or a render capacity reservation.
+
+```text
+captured source + native recipe + bound runtime + selected master
+       │
+freeze job → finish/reopen metadata → exact readback
+       │
+budget preflight → adopt one source obligation
+       │
+guard primary bytes AND selected master through Tig
+       │
+fresh primary-reference comparison; check ownership again
+       │
+VerifiedPresentation owns byte guards and borrows source/runtime guards
+```
+
+Ownership reuses the existing per-source fence and journal. Independent source
+identities can proceed together; there is no shared-cache/render lock. Resume
+requires the exact current owner, revision and frozen selection. Dropping a
+guard releases only its local fence and byte handles, preserving the durable
+obligation for explicit reconciliation.
+
+`verify_selected_master` obtains both primary and output handles from the same
+captured Tig source. It does not accept an unguarded output path or a replacement
+master pin. The sealed proof retains those guards through use and refuses a
+withdrawn owner. Original receipts need not exist, and no historical production
+or approval evidence is rewritten.
+
+This low-level operation must run inside the bounded scheduler in production.
+It does not itself reserve capacity, provide a CLI, publish/adopt an output,
+establish complete font/environment isolation or retire child obligations.
+Parent composition integration and actual-project acceptance remain required
+before consumer cutover. The source repository or installed bindings do not
+change as a side effect of compiling, freezing or checking these records.
+
+Producer-applied checklist findings for managed verification: the retained
+master is an output dependency, never a primary; per-source ownership cannot
+become a global cache lock; both media sides retain byte guards; technical
+correspondence never rewrites original production or approval evidence. The
+master format check also requires exactly two streams, YUV444 picture format
+and square pixels, in addition to existing native clocks and sample checks.
 
 ## Local qualification
 
@@ -206,3 +260,11 @@ regressions pass 215 library tests (nine explicitly ignored), one runtime-provid
 test, five still-sequence tests and 78 Tig input tests (12 explicitly ignored).
 Locked all-target/all-feature Clippy passes with warnings denied. Hosted checks
 must qualify the exact proposed head before merge or runtime-pin updates.
+
+The managed-verification extension passes 216 library tests (nine explicitly
+ignored), all five still-sequence cases and all eight presentation-source cases.
+Its ownership scenario runs with Git and working records/definitions hidden,
+reopens frozen metadata, permits an independent peer, retains all five media
+guards and rejects withdrawn ownership. Locked all-target/all-feature Clippy
+passes with warnings denied. These remain synthetic results; actual project
+acceptance and exact-head hosted qualification are separate.
