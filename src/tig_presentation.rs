@@ -220,11 +220,28 @@ fn document(
         bail!("presentation control definition differs from admission");
     }
     result.records.insert(id.into(), record.reference().clone());
-    record
+    let document = record
         .authored()
         .get("document")
         .cloned()
-        .context("presentation authored document missing")
+        .context("presentation authored document missing")?;
+    if document.get("schema").and_then(Value::as_str)
+        == Some("reel.presentation-clock-evidence-reference.v1")
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct EvidenceReference {
+            schema: String,
+            original: Object,
+        }
+        let reference: EvidenceReference = serde_json::from_value(document.clone())?;
+        if reference.schema != "reel.presentation-clock-evidence-reference.v1"
+            || record.selected()? != &reference.original
+        {
+            bail!("clock evidence asset differs from its declared reference");
+        }
+    }
+    Ok(document)
 }
 fn primary(
     source: &Source,

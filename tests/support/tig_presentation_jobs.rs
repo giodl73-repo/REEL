@@ -143,7 +143,8 @@ fn managed_presentation_retains_exact_resources_allows_peers_and_refuses_stale_o
         "language",
         "source_segment_id",
         "component_kind",
-        "episode"
+        "episode",
+        "presentation_scope"
     ]);
     let output_definition = write(f.root(), path, &definition);
     for admission in f.profile["admitted"].as_array_mut().unwrap() {
@@ -188,6 +189,17 @@ fn managed_presentation_retains_exact_resources_allows_peers_and_refuses_stale_o
         );
     }
     let parent_request = add_parent(&mut f, &selected, &receipt);
+    let mut reused: Value =
+        serde_json::from_slice(&fs::read(f.root().join("records/output-main.tig")).unwrap())
+            .unwrap();
+    reused["id"] = json!("output/reused");
+    reused["authored"]["episode_id"] = json!("another-episode");
+    reused["authored"]["source_segment_id"] = json!("intro-occurrence");
+    reused["authored"]["presentation_scope"] = json!({"episode_id":"fixture","role":"opening"});
+    write(f.root(), "records/output-reused.tig", &reused);
+    reused["id"] = json!("output/wrong-source-scope");
+    reused["authored"]["presentation_scope"]["role"] = json!("another-source");
+    write(f.root(), "records/output-wrong-scope.tig", &reused);
     commit(&mut f);
     let mut source = f.source();
     let metadata = f.root().join("managed-metadata");
@@ -226,6 +238,29 @@ fn managed_presentation_retains_exact_resources_allows_peers_and_refuses_stale_o
     )
     .unwrap();
     let frozen = plan.freeze(&mut writer, TreeLimits::default()).unwrap();
+    let reuse = JobPlan::from_context(
+        &mut source,
+        &request,
+        &context,
+        &programs,
+        "output/reused",
+        "types/presentation-output",
+    )
+    .unwrap();
+    assert_eq!(reuse.recipe().fingerprint(), plan.recipe().fingerprint());
+    let reused_frozen = reuse.freeze(&mut writer, TreeLimits::default()).unwrap();
+    assert_ne!(reused_frozen.selection(), frozen.selection());
+    assert!(
+        JobPlan::from_context(
+            &mut source,
+            &request,
+            &context,
+            &programs,
+            "output/wrong-source-scope",
+            "types/presentation-output"
+        )
+        .is_err()
+    );
     assert_eq!(frozen.of(Role::Primary).len(), 4);
     assert_eq!(frozen.of(Role::Composition).len(), 1);
     assert!(frozen.of(Role::ClaimedOutput).is_empty());

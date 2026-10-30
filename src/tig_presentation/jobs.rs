@@ -105,6 +105,12 @@ fn object(pin: &crate::media_runtime::ByteIdentity) -> Result<Object> {
         bytes: pin.bytes,
     })
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceScope {
+    episode_id: String,
+    role: String,
+}
 fn target(
     source: &Source,
     request: &Request,
@@ -122,6 +128,29 @@ fn target(
     let spec: Spec = serde_json::from_value(
         source.record(&request.presentation_id)?.authored()["document"].clone(),
     )?;
+    let episode = output
+        .authored()
+        .get("episode_id")
+        .and_then(Value::as_str)
+        .context("presentation occurrence episode missing")?;
+    let occurrence = output
+        .authored()
+        .get("source_segment_id")
+        .and_then(Value::as_str)
+        .context("presentation occurrence role missing")?;
+    token(episode)?;
+    token(occurrence)?;
+    // A season opening is a reusable source; its occurrence in an episode can
+    // have another ID. Explicitly bind that source scope, never infer a rename.
+    let scope = output
+        .authored()
+        .get("presentation_scope")
+        .map(|value| serde_json::from_value::<SourceScope>(value.clone()))
+        .transpose()?
+        .unwrap_or_else(|| SourceScope {
+            episode_id: episode.into(),
+            role: occurrence.into(),
+        });
     if output.definition().id != definition
         || controls.iter().any(|id| id.as_str() == definition)
         || request.primary_definitions.contains(definition)
@@ -131,8 +160,8 @@ fn target(
         )
         || output.authored().get("presentation") != Some(&json!({"id":request.presentation_id}))
         || output.authored().get("language") != Some(&json!(spec.language))
-        || output.authored().get("episode_id") != Some(&json!(spec.episode_id))
-        || output.authored().get("source_segment_id") != Some(&json!(spec.role))
+        || scope.episode_id != spec.episode_id
+        || scope.role != spec.role
         || output.authored().get("component_kind") != Some(&json!("episode-presentation"))
     {
         bail!("presentation output differs from admitted source, type or scope");
