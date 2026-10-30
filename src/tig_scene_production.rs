@@ -23,6 +23,8 @@ pub(crate) mod publication;
 #[cfg(feature = "tig-publication")]
 pub use publication::{DeliveryBudget, Publication, PublishedCandidate};
 #[cfg(feature = "tig-publication")]
+pub(crate) mod control_snapshot;
+#[cfg(feature = "tig-publication")]
 pub mod jobs;
 
 /// Explicit project mapping; no inference from filenames, language or status.

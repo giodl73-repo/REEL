@@ -1,14 +1,11 @@
 //! Deterministic current presentation controls; historical receipts stay intact.
 use super::*;
+use crate::tig_scene_production::control_snapshot::frame;
 use crate::{
     scene_delivery::{FileRef, InputFiles},
     tig_presentation::jobs::VerifiedPresentation,
 };
 use std::path::PathBuf;
-use tig_core::{
-    LogicalPath,
-    tree::{MemoryNodes, NodeStore, Tree, TreeLimits},
-};
 
 pub(super) struct CurrentControls {
     pub baseline: Object,
@@ -160,34 +157,6 @@ impl CurrentControls {
             scene_production,
         })
     }
-}
-
-// Existing Tig trees and bounded opaque metadata nodes frame large control
-// bodies. These are generated provider data, never another authored inventory.
-fn frame(bodies: &BTreeMap<Object, Vec<u8>>) -> Result<(Object, BTreeMap<Object, Vec<u8>>)> {
-    let mut nodes = MemoryNodes::default();
-    let mut names = BTreeMap::new();
-    for (object, raw) in bodies {
-        let prefix = object.sha256.as_str();
-        let identity = identity::canonical_json(&serde_json::json!(object))?;
-        names.insert(
-            LogicalPath::parse(&format!("{prefix}/identity"))?,
-            nodes.put(&identity)?,
-        );
-        for (index, part) in raw.chunks(tig_store::metadata::MAX_NODE_BYTES).enumerate() {
-            names.insert(
-                LogicalPath::parse(&format!("{prefix}/part-{index:04}"))?,
-                nodes.put(part)?,
-            );
-        }
-    }
-    let (tree, _) = Tree::build(&names, &mut nodes, TreeLimits::default())?;
-    let root = tree.root().clone();
-    let storage = nodes
-        .objects()
-        .map(|(_, raw)| (Object::from_bytes(raw), raw.to_vec()))
-        .collect();
-    Ok((root, storage))
 }
 
 #[cfg(test)]
