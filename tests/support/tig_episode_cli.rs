@@ -4,17 +4,32 @@ use reel::media_runtime::ByteIdentity;
 use std::io::Read;
 use tig_core::tree::NodeStore;
 use tig_store::source_claims::Selection as SourceSelection;
+#[path = "tig_mixed_episode_cli.rs"]
+mod mixed_components;
 
 #[test]
 #[ignore = "requires native FFmpeg; bounded episode CLI with captured source and old jobs offline"]
 fn bounded_episode_cli_reopens_source_verifies_components_and_retains_checked_movie() {
+    exercise(false);
+}
+#[test]
+#[ignore = "requires native FFmpeg; mixed scene/presentation episode with source checkout offline"]
+fn mixed_episode_cli_checks_opening_scenes_and_credits_with_complete_owned_handoff() {
+    exercise(true);
+}
+fn exercise(mixed: bool) {
     let mut p = Project::new();
     let scenes = (0..4)
         .map(|i| p.render_delivery(i, "cli-v1"))
         .collect::<Vec<_>>();
     p.assemble(&scenes, "cli-v1");
-    let request = add_episode_assembly(&mut p, "episode-cli-v1.json");
+    let mut request = add_episode_assembly(&mut p, "episode-cli-v1.json");
     let _parent_controls = parent_controls::exercise(&p, &request);
+    let presentations = if mixed {
+        mixed_components::configure(&mut p, &mut request)
+    } else {
+        Vec::new()
+    };
     let mut source = p.source();
     let metadata = p.data.path().join("episode-cli-metadata");
     let mut writer = MetadataStore::create(
@@ -44,7 +59,7 @@ fn bounded_episode_cli_reopens_source_verifies_components_and_retains_checked_mo
     runtime["host"] = serde_json::to_value(ByteIdentity::observe_file(&binary).unwrap()).unwrap();
     let config = json!({"path_policy":"configured-local-roots","cache_roots":[p.hot()],"coordination_root":p.data.path().join("coordination"),"capacity":{"minimum_free_bytes":0,"minimum_free_basis_points":0}});
     let inputs = json!({"source":archive,"context":context.selection(),"request":request,"runtime":runtime,
-        "scenes":p.requests.iter().zip(UNITS).map(|(request,id)|json!({"id":id,"request":request,"output_id":format!("output/{id}"),"output_definition":"types/output","compiled":id=="scene-b"})).collect::<Vec<_>>(),"presentations":[]});
+        "scenes":p.requests.iter().zip(UNITS).filter(|(_,id)|!mixed || matches!(*id,"scene-a"|"scene-b")).map(|(request,id)|json!({"id":id,"request":request,"output_id":format!("output/{id}"),"output_definition":"types/output","compiled":id=="scene-b"})).collect::<Vec<_>>(),"presentations":presentations});
     let profile = json!({"schema":"reel.tig-episode-job.experimental-1","inputs":inputs,"cache":config,
         "preparation_cache":p.hot(),"metadata_root":metadata,"metadata_minimum":minimum,
         "journal_root":p.data.path().join("owners"),"journal_minimum":p.owners.checkpoint(),
@@ -67,6 +82,15 @@ fn bounded_episode_cli_reopens_source_verifies_components_and_retains_checked_mo
         p.data.path().join("offline-jobs"),
     )
     .unwrap();
+    if mixed {
+        for unit in ["opening", "credits"] {
+            fs::rename(
+                p.data.path().join(format!("mixed-original-{unit}")),
+                p.data.path().join(format!("offline-mixed-{unit}")),
+            )
+            .unwrap();
+        }
+    }
     let mut rejected = profile.clone();
     rejected["outputs"] = json!({"../replacement.mkv":1});
     let rejected_path = p.data.path().join("refused-episode-profile.json");
@@ -83,6 +107,28 @@ fn bounded_episode_cli_reopens_source_verifies_components_and_retains_checked_mo
             .unwrap()
             .is_none()
     );
+    if mixed {
+        let mut incomplete = profile.clone();
+        incomplete["inputs"]["presentations"]
+            .as_array_mut()
+            .unwrap()
+            .pop();
+        let path = p.data.path().join("incomplete-mixed-profile.json");
+        write(p.data.path(), "incomplete-mixed-profile.json", &incomplete);
+        let refused = std::process::Command::new(&binary)
+            .arg("run-episode")
+            .arg(path)
+            .output()
+            .unwrap();
+        assert!(!refused.status.success());
+        assert!(String::from_utf8_lossy(&refused.stderr).contains("complete component coverage"));
+        assert!(
+            p.owners
+                .source(&key("bounded-episode-cli"))
+                .unwrap()
+                .is_none()
+        );
+    }
     let output = std::process::Command::new(&binary)
         .arg("run-episode")
         .arg(&profile_path)
@@ -140,6 +186,13 @@ fn bounded_episode_cli_reopens_source_verifies_components_and_retains_checked_mo
     assert_eq!(receipt["total_frames"], 96);
     assert_eq!(receipt["decoded_master_matches_ordered_segments"], true);
     assert_eq!(receipt["timestamps_verified"], true);
+    let segments = receipt["segments"].as_array().unwrap();
+    assert_eq!(segments.len(), 4);
+    for (index, segment) in segments.iter().enumerate() {
+        let presentation = mixed && matches!(index, 0 | 3);
+        assert_eq!(segment["upstream_presentation_verified"], presentation);
+        assert_eq!(segment["upstream_delivery_verified"], !presentation);
+    }
     let journal_minimum = serde_json::from_value(result["journal_checkpoint"].clone()).unwrap();
     let mut journal = SourceJournal::open(&p.data.path().join("owners"), &journal_minimum).unwrap();
     let retained = journal
