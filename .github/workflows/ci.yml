@@ -113,6 +113,9 @@ jobs:
       - name: Verify bounded episode CLI and complete temporary-owner handoff
         if: runner.os == 'Windows'
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::episode_cli::bounded_episode_cli_reopens_source_verifies_components_and_retains_checked_movie --locked -- --ignored --exact
+      - name: Verify mixed scene and presentation episode CLI with original renders offline
+        if: runner.os == 'Windows'
+        run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::episode_cli::mixed_episode_cli_checks_opening_scenes_and_credits_with_complete_owned_handoff --locked -- --ignored --exact
       - name: Verify explicit mono duplication preserves source level and rejects stereo
         run: cargo test --test scene_delivery duplicate_mono_preserves_source_level_and_rejects_stereo -- --ignored --exact
       - name: Verify independent native audio matches full-scene stems and rejects stale evidence
