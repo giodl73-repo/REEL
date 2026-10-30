@@ -2,11 +2,12 @@
 use super::*;
 
 struct Fixture {
-    _root: tempfile::TempDir,
     profile: Profile,
     journal: SourceJournal,
     report: PathBuf,
     report_bytes: Vec<u8>,
+    // Drop journal handles before the owned temporary directory on Windows.
+    _root: tempfile::TempDir,
 }
 fn tree(store: &mut impl NodeStore, name: &str, value: Value, extra: &[Object]) -> Selection {
     let raw = identity::canonical_json(&value).unwrap();
@@ -53,6 +54,9 @@ fn adopt(journal: &mut SourceJournal, source: &str, selection: Selection, revisi
 }
 impl Fixture {
     fn new() -> Self {
+        Self::case(true, [2, 2])
+    }
+    fn case(succeeded: bool, states: [u8; 2]) -> Self {
         let root = tempfile::tempdir().unwrap();
         let base = root.path().canonicalize().unwrap();
         let cache = base.join("cache");
@@ -110,10 +114,10 @@ impl Fixture {
         fs::write(&report, &report_bytes).unwrap();
         let raw =
             identity::canonical_json(&json!({"schema":"reel.tig-runner-retention.experimental-1",
-            "source_id":"episode","owner":"fixture","revision":2,"succeeded":true,"source":input}))
+            "source_id":"episode","owner":"fixture","revision":2,"succeeded":succeeded,"source":input}))
             .unwrap();
         let retention = store.put(&raw).unwrap();
-        let names = BTreeMap::from([
+        let mut names = BTreeMap::from([
             (
                 LogicalPath::parse("retention/identity").unwrap(),
                 retention.clone(),
@@ -127,6 +131,29 @@ impl Fixture {
                 report_object,
             ),
         ]);
+        for name in ["result/request", "result/evidence"] {
+            names.insert(
+                LogicalPath::parse(name).unwrap(),
+                store
+                    .put(
+                        &identity::canonical_json(
+                            &json!({"synthetic_diagnostic":name,"succeeded":succeeded}),
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap(),
+            );
+        }
+        if !succeeded {
+            names.remove(
+                &LogicalPath::parse(&format!(
+                    "outputs/{}",
+                    Digest::blob(b"worker.json").as_str()
+                ))
+                .unwrap(),
+            );
+            fs::remove_file(&report).unwrap();
+        }
         let result = Selection {
             root: Tree::build(&names, &mut store, TreeLimits::default())
                 .unwrap()
@@ -146,8 +173,36 @@ impl Fixture {
         .unwrap();
         adopt(&mut journal, "episode", input, 0);
         adopt(&mut journal, "episode", result, 2);
-        adopt(&mut journal, &temporary[0], child, 0);
-        adopt(&mut journal, &temporary[1], parent, 0);
+        for ((source, selection), (status, label)) in temporary
+            .iter()
+            .zip([child, parent])
+            .zip(states.into_iter().zip(["scene/scene-a", "parent"]))
+        {
+            match status {
+                0 => {}
+                1 => {
+                    let identity = Identity {
+                        source: key(source).unwrap(),
+                        owner: key("fixture").unwrap(),
+                    };
+                    let operation =
+                        phase("episode", "run-v1", &format!("protect/{label}")).unwrap();
+                    journal
+                        .apply(
+                            jobs::phase(&identity, &operation, "prepare").unwrap(),
+                            Command::Prepare {
+                                source: identity.source,
+                                owner: identity.owner,
+                                expected_revision: 0,
+                                selection,
+                            },
+                        )
+                        .unwrap();
+                }
+                2 => adopt(&mut journal, source, selection, 0),
+                _ => panic!("invalid synthetic source stage"),
+            }
+        }
         let fake_pin = json!({"sha256":Digest::blob(b"never-open-this-tool"),"bytes":20});
         let mut fake_file = fake_pin.clone();
         fake_file["path"] = json!(base.join("tool-does-not-exist"));
@@ -271,4 +326,118 @@ fn foreign_prepare_or_different_pending_packet_keeps_every_obligation_live() {
             );
         }
     }
+}
+
+#[test]
+fn failed_episode_retains_diagnostics_and_every_present_or_prepared_component_before_release() {
+    for stages in [[0, 0], [1, 0], [2, 0], [2, 1], [2, 2]] {
+        let mut f = Fixture::case(false, stages);
+        assert!(
+            !f.report.exists(),
+            "a failed worker need not emit a success report"
+        );
+        let before = f.state().current.unwrap().selection;
+        let mut reader =
+            MetadataReader::open(&f.profile.metadata_root, &f.profile.metadata_minimum).unwrap();
+        let original = entries(&before, &mut reader).unwrap();
+        let expected = expected(&f.profile).unwrap();
+        let mut held = Vec::new();
+        for source in &expected {
+            if let Some(state) = f.journal.source(&key(source).unwrap()).unwrap() {
+                held.push(
+                    state
+                        .current
+                        .map(|state| state.selection)
+                        .or_else(|| state.pending.map(|state| state.selection))
+                        .unwrap(),
+                );
+            }
+        }
+        if stages == [2, 1] {
+            assert!(
+                finish_after_prepare(&f.profile, &mut f.journal, || bail!("stop failed handoff"))
+                    .is_err()
+            );
+            assert_eq!(f.state().revision, 5);
+            assert_eq!(
+                f.journal
+                    .source(&key(&expected[1]).unwrap())
+                    .unwrap()
+                    .unwrap()
+                    .revision,
+                1
+            );
+            f.journal =
+                SourceJournal::open(&f.profile.journal_root, &f.journal.checkpoint()).unwrap();
+        }
+        let finished = finish(&f.profile, &mut f.journal).unwrap();
+        assert_eq!(finished["succeeded"], false);
+        assert_eq!(finished["temporary_owner_cleanup_required"], false);
+        let state = f.state();
+        assert_eq!(state.revision, 6);
+        let kept = entries(&state.current.unwrap().selection, &mut reader).unwrap();
+        for object in original.values().chain(std::iter::once(&before.root)) {
+            assert!(kept.values().any(|kept| kept == object));
+        }
+        for selection in held {
+            assert!(kept.values().any(|kept| kept == &selection.root));
+            assert!(
+                entries(&selection, &mut reader)
+                    .unwrap()
+                    .values()
+                    .all(|object| kept.values().any(|kept| kept == object))
+            );
+        }
+        for (source, stage) in expected.iter().zip(stages) {
+            let state = f.journal.source(&key(source).unwrap()).unwrap();
+            if stage == 0 {
+                assert!(state.is_none());
+            } else {
+                let state = state.unwrap();
+                assert_eq!(state.revision, u64::from(stage) + 1);
+                assert!(state.current.is_none() && state.pending.is_none());
+            }
+        }
+        let checkpoint = f.journal.checkpoint();
+        finish(&f.profile, &mut f.journal).unwrap();
+        assert_eq!(f.journal.checkpoint(), checkpoint);
+    }
+}
+
+#[test]
+fn failed_episode_refuses_a_foreign_component_prepare_without_changing_claims() {
+    let mut original = Fixture::new();
+    let source = expected(&original.profile).unwrap()[0].clone();
+    let selection = original
+        .journal
+        .source(&key(&source).unwrap())
+        .unwrap()
+        .unwrap()
+        .current
+        .unwrap()
+        .selection;
+    let mut f = Fixture::case(false, [0, 0]);
+    f.journal
+        .apply(
+            key("foreign-component-prepare").unwrap(),
+            Command::Prepare {
+                source: key(&source).unwrap(),
+                owner: key("fixture").unwrap(),
+                expected_revision: 0,
+                selection,
+            },
+        )
+        .unwrap();
+    let checkpoint = f.journal.checkpoint();
+    assert!(finish(&f.profile, &mut f.journal).is_err());
+    assert_eq!(f.journal.checkpoint(), checkpoint);
+    assert_eq!(f.state().revision, 4);
+    assert_eq!(
+        f.journal
+            .source(&key(&source).unwrap())
+            .unwrap()
+            .unwrap()
+            .revision,
+        1
+    );
 }

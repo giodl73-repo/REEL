@@ -10,6 +10,8 @@ struct Temporary {
     source: String,
     selection: Selection,
     revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    prepared: Option<source_claims::Reference>,
 }
 fn expected(p: &Profile) -> Result<Vec<String>> {
     p.inputs
@@ -150,7 +152,7 @@ fn finish_after_prepare(
             },
         )?);
     }
-    let (selection, temporary, metadata) = if let Some(header) =
+    let (selection, temporary, metadata, succeeded) = if let Some(header) =
         retained.get(&LogicalPath::parse("handoff/identity")?)
     {
         if state.pending.is_some() || header.sha256 != current.context {
@@ -166,10 +168,28 @@ fn finish_after_prepare(
             bail!("episode retained context belongs to another attempt");
         }
         let temporary: Vec<Temporary> = serde_json::from_value(header["temporary"].clone())?;
-        if !temporary.iter().map(|t| &t.source).eq(expected.iter()) {
+        let succeeded = header.get("succeeded").map_or(Ok(true), |value| {
+            value.as_bool().context("episode handoff outcome missing")
+        })?;
+        let present: std::collections::BTreeSet<_> = temporary.iter().map(|t| &t.source).collect();
+        if present.len() != temporary.len()
+            || !temporary.iter().map(|t| &t.source).eq(expected
+                .iter()
+                .filter(|id| succeeded || present.contains(id)))
+            || header
+                .get("expected_temporary")
+                .is_some_and(|value| value != &json!(expected))
+        {
             bail!("episode retained temporary scope differs");
         }
-        (current, temporary, None)
+        if !succeeded {
+            for source in expected.iter().filter(|id| !present.contains(id)) {
+                if journal.source(&key(source)?)?.is_some() {
+                    bail!("episode absent temporary source changed");
+                }
+            }
+        }
+        (current, temporary, None, succeeded)
     } else {
         let header_object = retained
             .get(&LogicalPath::parse("retention/identity")?)
@@ -198,9 +218,18 @@ fn finish_after_prepare(
             || header["source_id"] != p.source_id
             || header["owner"] != p.owner
             || header["revision"].as_u64() != Some(started)
-            || header["succeeded"] != true
         {
             bail!("episode result is not the completed admitted attempt");
+        }
+        let succeeded = header["succeeded"]
+            .as_bool()
+            .context("episode runner outcome missing")?;
+        if !succeeded
+            && ["result/request", "result/evidence"]
+                .iter()
+                .any(|name| !retained.contains_key(&LogicalPath::parse(name).expect("fixed path")))
+        {
+            bail!("episode failed result diagnostics missing");
         }
         let input_selection: Selection = serde_json::from_value(header["source"].clone())?;
         let input_entries = entries(&input_selection, &mut reader)?;
@@ -208,64 +237,123 @@ fn finish_after_prepare(
         if input_header["source"] != serde_json::to_value(&p.inputs.context)? {
             bail!("episode result source context differs");
         }
-        let report = read_report(
-            p,
-            retained
-                .get(&LogicalPath::parse(&format!(
-                    "outputs/{}",
-                    Digest::blob(b"worker.json").as_str()
-                ))?)
-                .context("episode completion report missing")?,
-        )?;
-        if report["schema"] != "reel.tig-episode-worker-result.experimental-1"
-            || report["recipe"] != input_header["recipe"]
-            || report["decoded_master_matches_ordered_segments"] != true
-            || report["timestamps_verified"] != true
-            || report["temporary_sources"] != json!(expected)
-        {
-            bail!("episode completion scope or native checks differ");
-        }
-        let parent_selection: Selection = serde_json::from_value(report["resources"].clone())?;
-        let parent_entries = entries(&parent_selection, &mut reader)?;
-        let parent_header = job_header(&parent_selection, &parent_entries, &reader)?;
-        for field in [
-            "source",
-            "checkpoint",
-            "admission",
-            "binding",
-            "consumption",
-            "recipe",
-            "operation",
-        ] {
-            if parent_header[field] != input_header[field] {
-                bail!("episode parent context differs from admitted composition");
+        let parent_selection = if succeeded {
+            let report = read_report(
+                p,
+                retained
+                    .get(&LogicalPath::parse(&format!(
+                        "outputs/{}",
+                        Digest::blob(b"worker.json").as_str()
+                    ))?)
+                    .context("episode completion report missing")?,
+            )?;
+            if report["schema"] != "reel.tig-episode-worker-result.experimental-1"
+                || report["recipe"] != input_header["recipe"]
+                || report["decoded_master_matches_ordered_segments"] != true
+                || report["timestamps_verified"] != true
+                || report["temporary_sources"] != json!(expected)
+            {
+                bail!("episode completion scope or native checks differ");
             }
-        }
+            let parent_selection: Selection = serde_json::from_value(report["resources"].clone())?;
+            let parent_entries = entries(&parent_selection, &mut reader)?;
+            let parent_header = job_header(&parent_selection, &parent_entries, &reader)?;
+            for field in [
+                "source",
+                "checkpoint",
+                "admission",
+                "binding",
+                "consumption",
+                "recipe",
+                "operation",
+            ] {
+                if parent_header[field] != input_header[field] {
+                    bail!("episode parent context differs from admitted composition");
+                }
+            }
+            Some(parent_selection)
+        } else {
+            None
+        };
         let budget = protection(p.max_objects, p.max_logical_bytes)?;
         let mut objects = BTreeMap::new();
         let mut logical_bytes = 0;
         for object in retained
             .values()
             .chain(input_entries.values())
-            .chain(parent_entries.values())
-            .chain([&current.root, &input_selection.root, &parent_selection.root])
+            .chain([&current.root, &input_selection.root])
         {
             retain(&mut objects, &mut logical_bytes, object, &budget)?;
         }
         let mut temporary = Vec::new();
         for source in &expected {
-            let child = journal
-                .source(&key(source)?)?
-                .context("episode temporary source missing")?;
-            if child.owner != identity.owner || child.revision != 2 || child.pending.is_some() {
+            let Some(child) = journal.source(&key(source)?)? else {
+                if succeeded {
+                    bail!("episode temporary source missing");
+                }
+                continue;
+            };
+            let prepared = child
+                .pending
+                .as_ref()
+                .map(|pending| pending.reference.clone());
+            let selection = match (&child.current, &child.pending) {
+                (Some(current), None) if child.revision == 2 => current.selection.clone(),
+                (None, Some(pending)) if !succeeded && child.revision == 1 => {
+                    pending.selection.clone()
+                }
+                _ => bail!("episode temporary source changed before handoff"),
+            };
+            if child.owner != identity.owner {
                 bail!("episode temporary source changed before handoff");
             }
-            let selection = child
-                .current
-                .context("episode temporary source withdrawn before handoff")?
-                .selection;
+            if let Some(reference) = &prepared {
+                let label = p
+                    .inputs
+                    .scenes
+                    .iter()
+                    .map(|spec| format!("scene/{}", spec.id))
+                    .chain(
+                        p.inputs
+                            .presentations
+                            .iter()
+                            .map(|spec| format!("presentation/{}", spec.id)),
+                    )
+                    .chain(std::iter::once("parent".into()))
+                    .find(|label| {
+                        phase(&p.source_id, &p.operation, label)
+                            .is_ok_and(|id| id.as_str() == source)
+                    })
+                    .context("episode pending component scope missing")?;
+                let worker_operation =
+                    phase(&p.source_id, &p.operation, &format!("protect/{label}"))?;
+                let acknowledged = SourceJournal::acknowledge(
+                    &p.journal_root,
+                    &p.journal_minimum,
+                    jobs::phase(
+                        &Identity {
+                            source: key(source)?,
+                            owner: identity.owner.clone(),
+                        },
+                        &worker_operation,
+                        "prepare",
+                    )?,
+                    Command::Prepare {
+                        source: key(source)?,
+                        owner: identity.owner.clone(),
+                        expected_revision: 0,
+                        selection: selection.clone(),
+                    },
+                )?;
+                if &acknowledged.reference != reference {
+                    bail!("episode pending component preparation differs");
+                }
+            }
             if source == expected.last().context("episode parent source missing")? {
-                if selection != parent_selection {
+                if parent_selection
+                    .as_ref()
+                    .is_some_and(|parent| &selection != parent)
+                {
                     bail!("episode parent selection differs from report");
                 }
             } else if !input_entries
@@ -275,14 +363,30 @@ fn finish_after_prepare(
                 bail!("episode child source was not in the declared input closure");
             }
             let nodes = entries(&selection, &mut reader)?;
-            job_header(&selection, &nodes, &reader)?;
+            let header = job_header(&selection, &nodes, &reader)?;
+            if source == expected.last().context("episode parent source missing")? {
+                for field in [
+                    "source",
+                    "checkpoint",
+                    "admission",
+                    "binding",
+                    "consumption",
+                    "recipe",
+                    "operation",
+                ] {
+                    if header[field] != input_header[field] {
+                        bail!("episode parent context differs from admitted composition");
+                    }
+                }
+            }
             for object in nodes.values().chain(std::iter::once(&selection.root)) {
                 retain(&mut objects, &mut logical_bytes, object, &budget)?;
             }
             temporary.push(Temporary {
                 source: source.clone(),
                 selection,
-                revision: 2,
+                revision: child.revision,
+                prepared,
             });
         }
         let next = completed
@@ -290,7 +394,7 @@ fn finish_after_prepare(
             .context("episode handoff revision overflow")?;
         let raw = identity::canonical_json(
             &json!({"schema":HEADER,"source_id":p.source_id,"owner":p.owner,"operation":p.operation,
-            "previous":current,"root_revision_before":completed,"root_revision_after":next,"temporary":temporary,
+            "previous":current,"root_revision_before":completed,"root_revision_after":next,"temporary":temporary,"expected_temporary":expected,"succeeded":succeeded,
             "native_production_claim":null,"approval":false,"resource_objects":objects.len()}),
         )?;
         if raw.len() > 65536 {
@@ -381,7 +485,7 @@ fn finish_after_prepare(
         {
             bail!("episode handoff no longer current");
         }
-        (selection, temporary, Some(witness))
+        (selection, temporary, Some(witness), succeeded)
     };
     // This loop is reached only after complete context publication, reopening
     // and root adoption. Failure leaves remaining roots live; finish can resume.
@@ -390,18 +494,21 @@ fn finish_after_prepare(
         let state = journal
             .source(&source)?
             .context("episode temporary source missing during retirement")?;
-        if state.owner != identity.owner || state.pending.is_some() {
+        if state.owner != identity.owner {
             bail!("episode temporary owner changed");
         }
-        if state.current.is_none() && state.revision == temp.revision + 1 {
+        if state.current.is_none() && state.pending.is_none() && state.revision == temp.revision + 1
+        {
             continue;
         }
-        if state.revision != temp.revision
-            || state
-                .current
-                .as_ref()
-                .is_none_or(|state| state.selection != temp.selection)
-        {
+        let matches = match (&temp.prepared, &state.current, &state.pending) {
+            (None, Some(current), None) => current.selection == temp.selection,
+            (Some(reference), None, Some(pending)) => {
+                &pending.reference == reference && pending.selection == temp.selection
+            }
+            _ => false,
+        };
+        if state.revision != temp.revision || !matches {
             bail!("episode temporary selection changed");
         }
         journal.apply(
@@ -410,16 +517,25 @@ fn finish_after_prepare(
                 &p.operation,
                 &format!("handoff/withdraw/{}", temp.source),
             )?,
-            Command::Withdraw {
-                source,
-                owner: identity.owner.clone(),
-                expected_revision: temp.revision,
+            if let Some(reference) = &temp.prepared {
+                Command::Abort {
+                    source,
+                    owner: identity.owner.clone(),
+                    expected_revision: temp.revision,
+                    prepared: reference.clone(),
+                }
+            } else {
+                Command::Withdraw {
+                    source,
+                    owner: identity.owner.clone(),
+                    expected_revision: temp.revision,
+                }
             },
         )?;
     }
     drop(guards);
     Ok(
-        json!({"schema":HEADER,"selection":selection,"sources_withdrawn":temporary.len(),"temporary_owner_cleanup_required":false,
+        json!({"schema":HEADER,"selection":selection,"sources_released":temporary.len(),"sources_withdrawn":temporary.iter().filter(|temp|temp.prepared.is_none()).count(),"succeeded":succeeded,"temporary_owner_cleanup_required":false,
         "metadata_checkpoint":metadata,"journal_checkpoint":journal.checkpoint(),"approval":false,"authorizes_eviction":false}),
     )
 }

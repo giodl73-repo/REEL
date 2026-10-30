@@ -241,4 +241,149 @@ fn bounded_episode_cli_reopens_source_verifies_components_and_retains_checked_mo
     assert!(!stale.status.success());
     assert_eq!(journal.source(&source).unwrap().unwrap().revision, 5);
     assert!(journal.source(&source).unwrap().unwrap().current.is_some());
+
+    // Oversized failed output cannot be salvaged: staging and all claims stay
+    // live. A refused retirement must never look like completed cleanup.
+    let mut failed_profile = profile.clone();
+    failed_profile["source_id"] = json!("bounded-episode-cli-unretained");
+    failed_profile["outputs"]["receipt.json"] = json!(1);
+    let before_sources = journal
+        .obligations(1024)
+        .unwrap()
+        .iter()
+        .map(|item| item.source.as_str().to_owned())
+        .collect::<std::collections::BTreeSet<_>>();
+    write(
+        p.data.path(),
+        "bounded-episode-unretained-profile.json",
+        &failed_profile,
+    );
+    let unsafe_failure = std::process::Command::new(&binary)
+        .arg("run-episode")
+        .arg(
+            p.data
+                .path()
+                .join("bounded-episode-unretained-profile.json"),
+        )
+        .output()
+        .unwrap();
+    assert!(!unsafe_failure.status.success());
+    assert!(unsafe_failure.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&unsafe_failure.stderr)
+            .contains("staging preserved because retirement verification failed")
+    );
+    let state = journal
+        .source(&key("bounded-episode-cli-unretained"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(state.revision, 2);
+    assert!(state.current.is_some());
+    let new_sources = journal
+        .obligations(1024)
+        .unwrap()
+        .iter()
+        .map(|item| item.source.as_str().to_owned())
+        .filter(|source| !before_sources.contains(source))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        new_sources.len(),
+        6,
+        "root and all five worker claims must remain live"
+    );
+    for source in new_sources {
+        let state = journal.source(&key(&source)).unwrap().unwrap();
+        assert_eq!(state.revision, 2);
+        assert!(state.current.is_some() && state.pending.is_none());
+    }
+
+    // Fail after component ownership, before writing outputs, by admitting a
+    // valid but insufficient primary-reference staging budget. The runner
+    // retains this failure's diagnostics before returning an error.
+    let mut failed_profile = profile.clone();
+    failed_profile["source_id"] = json!("bounded-episode-cli-failed");
+    failed_profile["reference_staging_bytes"] = json!(1);
+    write(
+        p.data.path(),
+        "bounded-episode-failed-profile.json",
+        &failed_profile,
+    );
+    let failed_path = p.data.path().join("bounded-episode-failed-profile.json");
+    let failed = std::process::Command::new(&binary)
+        .arg("run-episode")
+        .arg(&failed_path)
+        .output()
+        .unwrap();
+    assert!(!failed.status.success());
+    let failed: Value = serde_json::from_slice(&failed.stdout).unwrap_or_else(|_| {
+        panic!(
+            "failed CLI did not retain/clean its context: {}",
+            String::from_utf8_lossy(&failed.stderr)
+        )
+    });
+    assert_eq!(failed["succeeded"], false);
+    assert_eq!(failed["result"]["schema"], "reel.failed-job-result.v1");
+    assert_eq!(failed["handoff"]["succeeded"], false);
+    assert_eq!(failed["temporary_owner_cleanup_required"], false);
+    let state = journal
+        .source(&key("bounded-episode-cli-failed"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(state.revision, 6);
+    let retained = tig_core::tree::Tree::from_root(state.current.unwrap().selection.root)
+        .entries(&mut reader, TreeLimits::default())
+        .unwrap()
+        .0;
+    let object = retained
+        .get(&tig_core::LogicalPath::parse("handoff/identity").unwrap())
+        .unwrap();
+    let packet: Value = serde_json::from_slice(&reader.get(object).unwrap().unwrap()).unwrap();
+    assert_eq!(packet["succeeded"], false);
+    assert_eq!(packet["temporary"].as_array().unwrap().len(), 4);
+    let prior: SourceSelection = serde_json::from_value(packet["previous"].clone()).unwrap();
+    let prior_nodes = tig_core::tree::Tree::from_root(prior.root.clone())
+        .entries(&mut reader, TreeLimits::default())
+        .unwrap()
+        .0;
+    assert!(
+        prior_nodes
+            .values()
+            .chain(std::iter::once(&prior.root))
+            .all(|object| retained.values().any(|kept| kept == object))
+    );
+    for name in ["result/request", "result/evidence"] {
+        let object = prior_nodes
+            .get(&tig_core::LogicalPath::parse(name).unwrap())
+            .unwrap();
+        assert!(retained.values().any(|kept| kept == object));
+        let path = object_file(&p.hot(), object);
+        let reopened = ByteIdentity::observe_file(&path).unwrap();
+        assert_eq!(reopened.sha256, object.sha256.as_str());
+        assert_eq!(reopened.bytes, object.bytes);
+    }
+    for item in packet["temporary"].as_array().unwrap() {
+        let state = journal
+            .source(&key(item["source"].as_str().unwrap()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(state.revision, 3);
+        assert!(state.current.is_none() && state.pending.is_none());
+    }
+    let checkpoint = journal.checkpoint();
+    let finish = std::process::Command::new(&binary)
+        .arg("finish-episode")
+        .arg(&failed_path)
+        .output()
+        .unwrap();
+    assert!(
+        finish.status.success(),
+        "{}",
+        String::from_utf8_lossy(&finish.stderr)
+    );
+    let finish: Value = serde_json::from_slice(&finish.stdout).unwrap();
+    assert_eq!(finish["succeeded"], false);
+    assert_eq!(
+        finish["journal_checkpoint"],
+        serde_json::to_value(checkpoint).unwrap()
+    );
 }

@@ -367,9 +367,20 @@ pub fn run(path: &Path) -> Result<Value> {
             metadata_minimum: &minimum,
             tree_limits: TreeLimits::default(),
         },
-    )?;
-    let succeeded = result["schema"] != "reel.failed-job-result.v1";
-    let handoff = handoff::finish(&p, &mut journal)?;
+    );
+    // A contained worker failure still returns an error after its diagnostic
+    // result was durably retained. Cleanup follows that authoritative retained
+    // outcome, never the presence/absence of a success report or error wording.
+    let handoff = handoff::finish(&p, &mut journal).with_context(|| {
+        result.as_ref().err().map_or_else(
+            || "episode retained-context handoff incomplete".to_owned(),
+            |error| {
+                format!("episode retained-context handoff incomplete after worker error: {error}")
+            },
+        )
+    })?;
+    let succeeded = result.is_ok() && handoff["succeeded"] == true;
+    let result = result.unwrap_or_else(|error| json!({"schema":"reel.failed-job-result.v1","error":error.to_string(),"outputs":{},"production_claim":null}));
     Ok(
         json!({"schema":"reel.tig-episode-job-result.experimental-1","succeeded":succeeded,"result":result,"journal_checkpoint":journal.checkpoint(),
         "production_claim":null,"approval":false,"bindings_changed":false,"handoff":handoff,"temporary_owner_cleanup_required":false}),

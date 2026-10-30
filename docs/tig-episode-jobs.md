@@ -75,11 +75,20 @@ retained result and still-current children. Both the pending selection and the
 exact previously committed prepare command must match before adoption. It never
 reconstructs a packet from an unchecked pending label alone.
 
-A changed owner/selection/revision, foreign preparation, missing evidence or
-budget refusal leaves remaining obligations live. It does not bind or execute
-the rendering program. Failed-job cleanup and interruptions earlier in worker or
-runner retention still need recovery workflows before production cutover; do not
-drop those roots manually.
+A retained failed result follows the same retain-before-release sequence. It
+keeps the original request, failure diagnostics, full declared inputs and every
+present component context. A worker may have created no component claims, prepared
+some, or adopted some. Prepared components require the exact worker prepare
+acknowledgment; they are aborted only after root adoption. Adopted components are
+withdrawn afterward. The result and handoff both preserve `succeeded: false`.
+The command exits unsuccessfully even when failure cleanup completes safely.
+
+`finish-episode` can complete or repeat that cleanup without rendering; successful
+execution of this metadata command does not turn the retained render into a
+success. An absent component that subsequently appears, a changed
+owner/selection/revision, foreign preparation, missing evidence or budget refusal
+leaves remaining obligations live. Interruptions before a complete runner result
+is adopted still need a separate recovery route; do not drop those roots manually.
 
 Withdrawing a redundant source claim never removes payload bytes or authorizes
 eviction. Cache removal still requires the separate custody and demotion rules.

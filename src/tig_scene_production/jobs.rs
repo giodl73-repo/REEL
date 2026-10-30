@@ -278,7 +278,7 @@ pub(crate) fn fence(
         .join(Digest::blob(identity.source.as_str().as_bytes()).as_str());
     admission::lock(&root).map_err(|error| anyhow::anyhow!("native job fence unavailable: {error}"))
 }
-fn phase(identity: &Identity, operation: &Key, label: &str) -> Result<Key> {
+pub(crate) fn phase(identity: &Identity, operation: &Key, label: &str) -> Result<Key> {
     let bytes = identity::canonical_json(&serde_json::json!({
         "schema":"reel.native-job-operation.experimental-1",
         "source":identity.source.as_str(),"operation":operation.as_str(),"phase":label,
