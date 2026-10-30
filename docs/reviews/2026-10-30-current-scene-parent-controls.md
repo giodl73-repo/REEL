@@ -11,6 +11,12 @@ selected delivery receipt. The receipt must bind the selected master. The
 constructor rejects a wrong source, output, scene, job or receipt. Projected and
 declared native job modes use their existing compiler paths.
 
+Scene correspondence still requires independently admitted original producer and
+claim evidence. This constructor cannot qualify an arbitrary legacy movie by
+rewriting its receipt or relabeling a fresh plan as original production. A legacy
+movie without that correspondence needs its own independent primary-reference
+acceptance path.
+
 Only the four render-control documents and the exact receipt are retained.
 Intermediate authoring projections, compiler reports and diagnostic inventories
 do not enter the parent dependency set. Bodies are bounded to 4 MiB each and
