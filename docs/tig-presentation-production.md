@@ -320,6 +320,43 @@ records. Intake lives outside the fingerprinted compiler/input-adapter modules.
 The compiler's evidence-reference interpretation is a separate semantic change
 and therefore intentionally changes its fingerprint.
 
+## Explicit presentation inspection and comparison
+
+`reel-tig-job inspect-presentation PROFILE.json` compiles a committed native
+presentation source and reports its checkpoint, manifest pin and dependency
+counts. It opens no primary media and needs no runtime or shared-store setup.
+
+`reel-tig-job compare-presentation PROFILE.json` independently compares the
+selected output with that source's complete expected decoded pictures and PCM.
+Its profile schema is `reel.tig-presentation-check-profile.experimental-1`:
+
+- `source`: exact committed `reel.tig-input-profile.experimental-1` profile;
+- `request`: native presentation compiler request;
+- `comparison`: null for inspection, or an explicit object containing
+  `output_id`, `output_definition`, exact `runtime` bindings, existing absolute
+  `stage_parent`, `max_staged_bytes`, `max_objects` and `max_logical_bytes`.
+
+Set the source's record scopes to the complete work unit being checked, including
+all shared dependencies and the selected output. Freezing archives every record
+in those explicit scopes, not just records reached by the render recipe. A
+whole-project namespace may therefore exceed bounded metadata work even when a
+presentation is small. Validate the full repository namespace separately; missing
+dependencies in the scoped production view must still fail resolution.
+
+Comparison binds the output's type, source, language and occurrence through the
+same job-plan factory. It freezes and reads back metadata in memory, checks the
+declared resource budget, and holds verified primary, selected-output and runtime
+guards through comparison. It accepts no caller substitute for the selected
+master's hash. Only bounded editable-layer/font bytes enter owned temporary
+scratch; the selected movie and caches are not copied or changed.
+
+These commands are synchronous acceptance tools. They do not create shared
+stores, reserve scheduler capacity, acquire a global cache lock, adopt durable
+jobs, publish results, establish production currency or authorize eviction.
+Production execution still requires the bounded scheduler and managed ownership
+path. A matching observation keeps original production history and human
+selection separate, and is not a complete environment reproducibility claim.
+
 ## Local qualification
 
 The intake extension passes all 16 presentation-source tests, including eight
