@@ -107,6 +107,9 @@ jobs:
       - name: Verify independent retained scene ownership without source checkout
         if: runner.os == 'Windows'
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::scene_reference::retained_scene_matches_without_history_and_with_independent_owners --locked -- --ignored --exact
+      - name: Verify retained scene proofs assemble a current owned parent with old jobs offline
+        if: runner.os == 'Windows'
+        run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::reference_scene_parent::verified_scene_owners_assemble_current_parent_and_survive_independent_withdrawal --locked -- --ignored --exact
       - name: Verify explicit mono duplication preserves source level and rejects stereo
         run: cargo test --test scene_delivery duplicate_mono_preserves_source_level_and_rejects_stereo -- --ignored --exact
       - name: Verify independent native audio matches full-scene stems and rejects stale evidence

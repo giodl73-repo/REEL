@@ -3,6 +3,7 @@ use super::*;
 use crate::{
     media_runtime::BoundPrograms,
     tig_presentation::jobs::VerifiedPresentation,
+    tig_scene_production::jobs::reference::VerifiedScene,
     tig_scene_production::jobs::{Coordination, Identity, ScopedSource},
 };
 use tig_assets::graph::recipe;
@@ -29,6 +30,7 @@ pub struct CompositionJobPlan<'a> {
     children: BTreeMap<String, Digest>,
     child_declaration: Vec<u8>,
     pub(super) presentations: BTreeMap<String, &'a VerifiedPresentation<'a>>,
+    pub(super) scene_references: BTreeMap<String, &'a VerifiedScene<'a>>,
     presentation_documents: BTreeMap<LogicalPath, Vec<u8>>,
     pub(super) conform: Object,
     pub(super) current_controls: Option<super::current_controls::CurrentControls>,
@@ -59,7 +61,7 @@ impl<'a> CompositionJobPlan<'a> {
         programs: &'a BoundPrograms,
         proofs: &BTreeMap<String, CurrentScene>,
     ) -> Result<Self> {
-        Self::from_components(source, request, context, programs, proofs, None, None)
+        Self::from_components(source, request, context, programs, proofs, None, None, None)
     }
     /// Admit exact scene correspondence plus freshly verified presentations.
     /// Keep their owners and metadata providers alive; this borrows all byte,
@@ -79,6 +81,7 @@ impl<'a> CompositionJobPlan<'a> {
             programs,
             scenes,
             Some(presentations),
+            None,
             None,
         )
     }
@@ -101,8 +104,31 @@ impl<'a> CompositionJobPlan<'a> {
             scenes,
             Some(presentations),
             Some(controls),
+            None,
         )
     }
+    /// Current independently checked scenes and presentations, with no asserted
+    /// historical scene producer. Retain all borrowed owners through execution.
+    pub fn from_verified_components(
+        source: &mut Source,
+        request: &Request,
+        context: &'a ProductionContext,
+        programs: &'a BoundPrograms,
+        scenes: &'a BTreeMap<String, VerifiedScene<'a>>,
+        presentations: &'a BTreeMap<String, VerifiedPresentation<'a>>,
+    ) -> Result<Self> {
+        Self::from_components(
+            source,
+            request,
+            context,
+            programs,
+            &BTreeMap::new(),
+            Some(presentations),
+            None,
+            Some(scenes),
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
     fn from_components(
         source: &mut Source,
         request: &Request,
@@ -111,8 +137,19 @@ impl<'a> CompositionJobPlan<'a> {
         proofs: &BTreeMap<String, CurrentScene>,
         presentations: Option<&'a BTreeMap<String, VerifiedPresentation<'a>>>,
         scene_controls: Option<&BTreeMap<String, CurrentSceneControls>>,
+        references: Option<&'a BTreeMap<String, VerifiedScene<'a>>>,
     ) -> Result<Self> {
-        let plan = require_current_scenes(source, request, proofs)?;
+        let scene_references = references
+            .into_iter()
+            .flat_map(|p| p.iter())
+            .map(|(id, proof)| (id.clone(), proof))
+            .collect::<BTreeMap<_, _>>();
+        let plan = super::correspondence::require_scene_components(
+            source,
+            request,
+            proofs,
+            &scene_references,
+        )?;
         let empty = BTreeMap::new();
         let scene_controls = scene_controls.unwrap_or(&empty);
         for (id, controls) in scene_controls {
@@ -137,6 +174,7 @@ impl<'a> CompositionJobPlan<'a> {
             component.changed_from_baseline
                 && (if component.kind == "scene" {
                     !scene_controls.contains_key(&component.segment_id)
+                        && !scene_references.contains_key(&component.segment_id)
                 } else {
                     presentations.is_none()
                 })
@@ -179,16 +217,19 @@ impl<'a> CompositionJobPlan<'a> {
             .flat_map(|proofs| proofs.iter())
             .map(|(id, proof)| (id.clone(), proof))
             .collect::<BTreeMap<_, _>>();
-        let current_controls = if presentations.is_empty() && scene_controls.is_empty() {
-            None
-        } else {
-            Some(super::current_controls::CurrentControls::compile(
-                source,
-                &plan,
-                &presentations,
-                scene_controls,
-            )?)
-        };
+        let current_controls =
+            if presentations.is_empty() && scene_controls.is_empty() && scene_references.is_empty()
+            {
+                None
+            } else {
+                Some(super::current_controls::CurrentControls::compile(
+                    source,
+                    &plan,
+                    &presentations,
+                    scene_controls,
+                    &scene_references,
+                )?)
+            };
         if let Some(controls) = &current_controls {
             for object in controls.storage.keys() {
                 evidence.insert(
@@ -206,7 +247,7 @@ impl<'a> CompositionJobPlan<'a> {
             // reserved names. Their hashes have no platform-specific aliases.
             let name = LogicalPath::parse(Digest::blob(component.segment_id.as_bytes()).as_str())?;
             composition.insert(name.clone(), component.selected.clone());
-            if component.kind == "scene" {
+            if component.kind == "scene" && !scene_references.contains_key(&component.segment_id) {
                 let proof = &proofs[&component.segment_id];
                 evidence.insert(name, proof.claim().clone());
                 children.insert(
@@ -214,8 +255,13 @@ impl<'a> CompositionJobPlan<'a> {
                     proof.protection_recipe().clone(),
                 );
             } else {
-                let proof = presentations[&component.segment_id];
-                let declaration = proof.declaration()?;
+                let (declaration, resources) = if component.kind == "scene" {
+                    let proof = scene_references[&component.segment_id];
+                    (proof.declaration()?, proof.resources())
+                } else {
+                    let proof = presentations[&component.segment_id];
+                    (proof.declaration()?, proof.resources())
+                };
                 if declaration.len() > 65_536 {
                     bail!("presentation evidence exceeds budget");
                 }
@@ -223,11 +269,10 @@ impl<'a> CompositionJobPlan<'a> {
                 presentation_documents.insert(name.clone(), declaration);
                 // Flat exact obligations make the complete child set visible to
                 // retention without treating an opaque receipt as a closure.
-                for object in proof
-                    .resources()
+                for object in resources
                     .objects()
                     .iter()
-                    .chain(std::iter::once(&proof.resources().selection().root))
+                    .chain(std::iter::once(&resources.selection().root))
                 {
                     evidence.insert(
                         LogicalPath::parse(&format!(
@@ -267,6 +312,15 @@ impl<'a> CompositionJobPlan<'a> {
                     .collect::<BTreeMap<_, _>>(),
             )?;
         }
+        if !scene_references.is_empty() {
+            declared["schema"] = "reel.tig-composition-child-jobs.experimental-3".into();
+            declared["scene_references"] = serde_json::to_value(
+                scene_references
+                    .iter()
+                    .map(|(id, proof)| (id, proof.resources().selection()))
+                    .collect::<BTreeMap<_, _>>(),
+            )?;
+        }
         let child_declaration = identity::canonical_json(&declared)?;
         if child_declaration.len() > 65_536 {
             bail!("composition child declaration exceeds budget");
@@ -285,6 +339,7 @@ impl<'a> CompositionJobPlan<'a> {
             children,
             child_declaration,
             presentations,
+            scene_references,
             presentation_documents,
             conform: current_controls
                 .as_ref()
@@ -418,6 +473,11 @@ impl<'p, 'a> CompositionReadback<'p, 'a> {
                 .presentations
                 .values()
                 .any(|proof| proof.source_identity() == &identity.source)
+            || self
+                .plan
+                .scene_references
+                .values()
+                .any(|proof| proof.source_identity() == &identity.source)
             || budget.max_objects == 0
             || budget.max_objects > 1_000_000
             || budget.max_logical_bytes == 0
@@ -427,6 +487,9 @@ impl<'p, 'a> CompositionReadback<'p, 'a> {
         }
         children.verify_current(source, journal)?;
         for proof in self.plan.presentations.values() {
+            proof.verify_current(source, journal)?;
+        }
+        for proof in self.plan.scene_references.values() {
             proof.verify_current(source, journal)?;
         }
         let mut sizes = BTreeMap::new();
@@ -543,6 +606,9 @@ impl ProtectedComposition<'_, '_> {
         }
         self.source.check(journal)?;
         for proof in self.readback.plan.presentations.values() {
+            proof.verify_current(source, journal)?;
+        }
+        for proof in self.readback.plan.scene_references.values() {
             proof.verify_current(source, journal)?;
         }
         children.verify_current(source, journal)

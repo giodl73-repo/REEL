@@ -289,5 +289,9 @@ For retained scenes without an original native Tig claim, the
 current controls and selected-output resources, reopens them, and retains a
 source owner plus byte guards through independent picture/PCM comparison.
 Its sealed `VerifiedScene` is separate from historical recipe correspondence.
-Parent admission and assembly must explicitly consume this proof before it can
-qualify a complete legacy episode; that handoff remains open.
+The [verified-scene parent path](reviews/2026-10-30-reference-scene-parent.md)
+now explicitly consumes these proofs, borrows their guards and retains complete
+declared child obligations through checked native assembly. Its tiny episode
+fixture replaces one cel without editing the authored conform, with old jobs
+and the obsolete movie unavailable. Actual legacy episode acceptance, bounded
+orchestration and runtime cutover remain required.

@@ -156,7 +156,7 @@ impl ProtectedComposition<'_, '_> {
                         },
                     );
                 }
-                episode_conform::build_with_current_presentations(
+                episode_conform::build_with_current_components(
                     &compiled.reference,
                     output,
                     episode_conform::Files {
@@ -168,6 +168,7 @@ impl ProtectedComposition<'_, '_> {
                     &controls,
                     &scenes,
                     &plan.presentations,
+                    &plan.scene_references,
                 )?
             } else {
                 episode_conform::build_with_component_controls(

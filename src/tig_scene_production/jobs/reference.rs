@@ -48,8 +48,21 @@ pub struct VerifiedScene<'a> {
     recipe: Digest,
     comparison: PrimaryReference,
     resources: &'a job::JobContext,
+    production_definitions: std::collections::BTreeSet<String>,
 }
 impl VerifiedScene<'_> {
+    pub(crate) fn checkpoint(&self) -> &Digest {
+        &self.checkpoint
+    }
+    pub(crate) fn selected_path(&self) -> Result<PathBuf> {
+        self.outputs.verified_path(&self.master)
+    }
+    pub(crate) fn source_identity(&self) -> &Key {
+        self.owner.source_identity()
+    }
+    pub(crate) fn production_definitions(&self) -> &std::collections::BTreeSet<String> {
+        &self.production_definitions
+    }
     pub fn selected(&self) -> &FileRef {
         &self.master
     }
@@ -66,11 +79,13 @@ impl VerifiedScene<'_> {
         self.resources
     }
     pub fn declaration(&self) -> Result<Vec<u8>> {
+        let (frames, samples) = self.comparison.counts();
         Ok(identity::canonical_json(&serde_json::json!({
             "schema":"reel.tig-scene-reference.experimental-1",
             "checkpoint":self.checkpoint,"scene":self.scene,"output":self.output,
             "recipe":self.recipe,"resources":self.resources.selection(),
             "comparison":self.comparison.declaration(),
+            "frames":frames,"samples":samples,"timestamps_verified":true,
             "original_producer_assertion":false,"approval":false,
             "authorizes_eviction":false,
         }))?)
@@ -377,6 +392,15 @@ impl ProtectedReference<'_, '_, '_> {
             recipe: plan.native.recipe().fingerprint().clone(),
             comparison: result?,
             resources: &self.readback.resources,
+            production_definitions: plan
+                .native
+                .request
+                .primary_definitions
+                .iter()
+                .chain(&plan.native.request.control_definitions)
+                .chain(std::iter::once(&plan.native.request.scene_definition))
+                .cloned()
+                .collect(),
         })
     }
 }

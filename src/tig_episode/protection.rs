@@ -27,6 +27,19 @@ pub struct ProtectedScenes<'p, 'a> {
     logical_bytes: u64,
 }
 impl ProtectedScenes<'_, '_> {
+    /// Explicitly omit historical producer jobs. A parent requiring such jobs
+    /// still rejects this empty recipe map; independently verified scene owners
+    /// must instead be borrowed and checked by that parent's reference plan.
+    pub fn without_legacy_jobs(source: &Source) -> Self {
+        Self {
+            checkpoint: source.checkpoint().clone(),
+            jobs: BTreeMap::new(),
+            recipes: BTreeMap::new(),
+            objects: BTreeSet::new(),
+            primary: BTreeSet::new(),
+            logical_bytes: 0,
+        }
+    }
     pub(super) fn matches(&self, checkpoint: &Digest, recipes: &BTreeMap<String, Digest>) -> bool {
         &self.checkpoint == checkpoint && &self.recipes == recipes
     }
