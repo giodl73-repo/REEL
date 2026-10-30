@@ -18,6 +18,12 @@ use std::{
     process::{Command, Stdio},
 };
 
+#[cfg(feature = "tig-publication")]
+type NativePresentations<'a> =
+    BTreeMap<String, &'a crate::tig_presentation::jobs::VerifiedPresentation<'a>>;
+#[cfg(not(feature = "tig-publication"))]
+type NativePresentations<'a> = BTreeMap<String, &'a ()>;
+
 pub const SCHEMA: &str = "reel.episode-conform.v1";
 
 fn verify_native_delivery_proof(
@@ -1541,8 +1547,72 @@ pub fn build_with_component_controls(
             manifest: Some(manifest),
             scene_controls: Some(controls.scenes),
             presentation_controls: Some(controls.presentations),
+            ..Provided::default()
         },
     )
+}
+
+#[cfg(feature = "tig-publication")]
+pub(crate) fn build_with_current_presentations(
+    manifest: &scene_delivery::FileRef,
+    output: &Path,
+    files: Files<'_>,
+    controls: &dyn scene_delivery::InputFiles,
+    scenes: &BTreeMap<String, SceneControls<'_>>,
+    native: &NativePresentations<'_>,
+) -> Result<Receipt> {
+    build_impl(
+        &manifest.path,
+        Path::new(""),
+        Path::new(""),
+        output,
+        Provided {
+            scene_inputs: Some(files.scene_inputs),
+            scene_outputs: Some(files.scene_outputs),
+            programs: Some(files.programs),
+            controls: Some(controls),
+            manifest: Some(manifest),
+            scene_controls: Some(scenes),
+            native_presentations: Some(native),
+            ..Provided::default()
+        },
+    )
+}
+
+#[cfg(feature = "tig-publication")]
+fn native_presentation(
+    native: Option<&NativePresentations<'_>>,
+    segment: &Segment,
+) -> Result<Option<(PathBuf, serde_json::Value)>> {
+    let Some(proof) = native.and_then(|proofs| proofs.get(&segment.id)) else {
+        return Ok(None);
+    };
+    let raw = proof.declaration()?;
+    if segment.kind != SegmentKind::EpisodePresentation
+        || segment.adoption_manifest.is_some()
+        || segment.delivery_job.is_some()
+        || segment.delivery_receipt.is_some()
+        || segment.semantic_delivery.is_some()
+        || segment.imported_source_manifest.is_some()
+        || segment.imported_source_root.is_some()
+        || segment.master.sha256 != proof.selected().sha256
+        || segment.master.bytes != proof.selected().bytes
+        || segment.source_receipt.sha256 != sha(&raw)
+        || segment.source_receipt.bytes != raw.len() as u64
+    {
+        bail!("native presentation differs from sealed current component proof");
+    }
+    Ok(Some((
+        proof.selected_path()?,
+        serde_json::from_slice(&raw)?,
+    )))
+}
+#[cfg(not(feature = "tig-publication"))]
+fn native_presentation(
+    _native: Option<&NativePresentations<'_>>,
+    _segment: &Segment,
+) -> Result<Option<(PathBuf, serde_json::Value)>> {
+    Ok(None)
 }
 
 fn read_parent_control(
@@ -1553,10 +1623,11 @@ fn read_parent_control(
     if reference.bytes > MAX {
         bail!("episode parent control exceeds metadata budget");
     }
-    let path = files.verified_path(reference)?;
-    let mut raw = Vec::new();
-    fs::File::open(path)?.take(MAX + 1).read_to_end(&mut raw)?;
-    if raw.len() as u64 != reference.bytes || sha(&raw) != reference.sha256 {
+    let raw = files.control_bytes(reference)?;
+    if raw.len() as u64 != reference.bytes
+        || raw.len() as u64 > MAX
+        || sha(&raw) != reference.sha256
+    {
         bail!("episode parent control differs from its admitted pin");
     }
     Ok(raw)
@@ -1572,6 +1643,7 @@ struct Provided<'a> {
     manifest: Option<&'a scene_delivery::FileRef>,
     scene_controls: Option<&'a BTreeMap<String, SceneControls<'a>>>,
     presentation_controls: Option<&'a BTreeMap<String, &'a dyn scene_delivery::InputFiles>>,
+    native_presentations: Option<&'a NativePresentations<'a>>,
 }
 
 fn build_impl(
@@ -1590,6 +1662,7 @@ fn build_impl(
         manifest: pinned_manifest,
         scene_controls,
         presentation_controls,
+        native_presentations,
     } = provided;
     let explicit_programs = programs.is_some();
     let local_programs = PathBuf::from(".");
@@ -1611,6 +1684,17 @@ fn build_impl(
         fs::read(manifest_path)?
     };
     let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
+    if let Some(native) = native_presentations {
+        let ids = manifest
+            .segments
+            .iter()
+            .filter(|s| s.kind == SegmentKind::EpisodePresentation)
+            .map(|s| s.id.as_str())
+            .collect::<BTreeSet<_>>();
+        if ids.len() != native.len() || !native.keys().all(|id| ids.contains(id.as_str())) {
+            bail!("native presentation proof coverage differs from parent segments");
+        }
+    }
     if let Some(scenes) = scene_controls {
         let ids = manifest
             .segments
@@ -1628,7 +1712,7 @@ fn build_impl(
             || !scenes.keys().all(|id| ids.contains(id.as_str()))
             || manifest.segments.iter().any(|s| {
                 if s.kind == SegmentKind::EpisodePresentation {
-                    return presentation_controls.is_none();
+                    return presentation_controls.is_none() && native_presentations.is_none();
                 }
                 s.semantic_delivery.is_none()
                     || s.delivery_job.is_none()
@@ -1669,7 +1753,10 @@ fn build_impl(
         if ids.len() != selected.len()
             || ids.len() != files.len()
             || files.keys().any(|id| !ids.contains(id.as_str()))
-            || selected.iter().any(|s| s.adoption_manifest.is_none())
+            || selected.iter().any(|s| {
+                s.adoption_manifest.is_none()
+                    && native_presentations.is_none_or(|p| !p.contains_key(&s.id))
+            })
         {
             bail!("provided presentation files require exact adopted recheck coverage");
         }
@@ -1778,8 +1865,16 @@ fn build_impl(
     if episode.episode_id != manifest.episode_id {
         bail!("episode conform identity mismatch");
     }
+    let mut selected_episode = episode.clone();
+    if native_presentations.is_some() {
+        // Validate the layout/catalog contract, while selected byte authority
+        // comes from the current Tig component records and their sealed proofs.
+        for invocation in &mut selected_episode.presentation {
+            invocation.asset_binding = None;
+        }
+    }
     let presentation =
-        resolve_episode_presentation(&catalog, &episode, &season, &episode_bindings)?;
+        resolve_episode_presentation(&catalog, &selected_episode, &season, &episode_bindings)?;
     let selected_master_template = catalog
         .templates
         .iter()
@@ -1840,105 +1935,121 @@ fn build_impl(
             .and_then(|outputs| outputs.get(&segment.id))
             .copied()
             .or_else(|| provided_presentation.map(|p| p.outputs));
-        let (master, receipt_path) = if let Some(files) = provided_outputs {
-            let mut master = segment.master.clone();
-            master.path = "master.mkv".into();
-            let mut receipt = segment.source_receipt.clone();
-            receipt.path = "receipt.json".into();
-            (
-                files.verified_path(&master)?,
-                files.verified_path(&receipt)?,
-            )
+        let native = native_presentation(native_presentations, segment)?;
+        let (master, receipt, receipt_path) = if let Some((master, receipt)) = &native {
+            (master.clone(), receipt.clone(), None)
         } else {
-            (
-                scene_delivery::checked_file(asset_root, &segment.master)?,
-                scene_delivery::checked_file(asset_root, &segment.source_receipt)?,
-            )
+            let (master, receipt_path) = if let Some(files) = provided_outputs {
+                let mut master = segment.master.clone();
+                master.path = "master.mkv".into();
+                let mut receipt = segment.source_receipt.clone();
+                receipt.path = "receipt.json".into();
+                (
+                    files.verified_path(&master)?,
+                    files.verified_path(&receipt)?,
+                )
+            } else {
+                (
+                    scene_delivery::checked_file(asset_root, &segment.master)?,
+                    scene_delivery::checked_file(asset_root, &segment.source_receipt)?,
+                )
+            };
+            let receipt: serde_json::Value = serde_json::from_slice(&fs::read(&receipt_path)?)?;
+            selected_receipt(segment, &manifest.language, &receipt)?;
+            (master, receipt, Some(receipt_path))
         };
-        let receipt: serde_json::Value = serde_json::from_slice(&fs::read(&receipt_path)?)?;
-        selected_receipt(segment, &manifest.language, &receipt)?;
         if segment.imported_source_manifest.is_some()
             && receipt["episode_id"] != manifest.episode_id
         {
             bail!("imported scene source proof belongs to another episode");
         }
-        let presentation_rechecked = match (segment.kind, &segment.adoption_manifest) {
-            (SegmentKind::Scene, None) => false,
-            (SegmentKind::Scene, Some(_)) => {
-                bail!("scene cannot supply a presentation adoption manifest")
-            }
-            (SegmentKind::EpisodePresentation, Some(adoption)) => {
-                if receipt["technical_validation_state"] != "decoded-source-equivalent" {
-                    bail!("adoption manifest requires decoded-source-equivalent receipt");
+        let presentation_rechecked = if native.is_some() {
+            true
+        } else {
+            match (segment.kind, &segment.adoption_manifest) {
+                (SegmentKind::Scene, None) => false,
+                (SegmentKind::Scene, Some(_)) => {
+                    bail!("scene cannot supply a presentation adoption manifest")
                 }
-                let stage_parent = output
-                    .parent()
-                    .filter(|path| !path.as_os_str().is_empty())
-                    .unwrap_or(Path::new("."));
-                if let Some(metadata) = presentation_controls.and_then(|p| p.get(&segment.id)) {
-                    let files =
-                        provided_presentation.context("presentation media provider missing")?;
-                    let mut master = segment.master.clone();
-                    master.path = "master.mkv".into();
-                    let mut receipt = segment.source_receipt.clone();
-                    receipt.path = "receipt.json".into();
-                    presentation_adopt::check_with_control_files(
-                        &presentation_adopt::Selection {
-                            manifest: adoption,
-                            master: &master,
-                            receipt: &receipt,
-                        },
-                        *metadata,
-                        files.inputs,
-                        files.outputs,
-                        stage_parent,
-                    )?;
-                    presentation_cache_misses += 1;
-                } else if let Some(files) = provided_presentation {
-                    let adoption_path = scene_delivery::checked_file(input_root, adoption)?;
-                    presentation_adopt::check(
-                        &adoption_path,
-                        files.inputs,
-                        files.inputs,
-                        &master,
-                        &receipt_path,
-                        stage_parent,
-                    )?;
-                    presentation_cache_misses += 1;
-                } else if manifest.reuse_verified_presentations {
-                    let adoption_path = scene_delivery::checked_file(input_root, adoption)?;
-                    let hit = presentation_adopt::check_cached(
-                        &adoption_path,
-                        input_root,
-                        asset_root,
-                        &master,
-                        &receipt_path,
-                        stage_parent,
-                        &asset_root.join(".reel-verification-cache/presentation-adoption-v1"),
-                    )?;
-                    if hit {
-                        presentation_cache_hits += 1;
-                    } else {
-                        presentation_cache_misses += 1;
+                (SegmentKind::EpisodePresentation, Some(adoption)) => {
+                    if receipt["technical_validation_state"] != "decoded-source-equivalent" {
+                        bail!("adoption manifest requires decoded-source-equivalent receipt");
                     }
-                } else {
-                    let adoption_path = scene_delivery::checked_file(input_root, adoption)?;
-                    presentation_adopt::check(
-                        &adoption_path,
-                        input_root,
-                        asset_root,
-                        &master,
-                        &receipt_path,
-                        stage_parent,
-                    )?;
+                    let stage_parent = output
+                        .parent()
+                        .filter(|path| !path.as_os_str().is_empty())
+                        .unwrap_or(Path::new("."));
+                    if let Some(metadata) = presentation_controls.and_then(|p| p.get(&segment.id)) {
+                        let files =
+                            provided_presentation.context("presentation media provider missing")?;
+                        let mut master = segment.master.clone();
+                        master.path = "master.mkv".into();
+                        let mut receipt = segment.source_receipt.clone();
+                        receipt.path = "receipt.json".into();
+                        presentation_adopt::check_with_control_files(
+                            &presentation_adopt::Selection {
+                                manifest: adoption,
+                                master: &master,
+                                receipt: &receipt,
+                            },
+                            *metadata,
+                            files.inputs,
+                            files.outputs,
+                            stage_parent,
+                        )?;
+                        presentation_cache_misses += 1;
+                    } else if let Some(files) = provided_presentation {
+                        let adoption_path = scene_delivery::checked_file(input_root, adoption)?;
+                        presentation_adopt::check(
+                            &adoption_path,
+                            files.inputs,
+                            files.inputs,
+                            &master,
+                            receipt_path
+                                .as_deref()
+                                .context("legacy presentation receipt path missing")?,
+                            stage_parent,
+                        )?;
+                        presentation_cache_misses += 1;
+                    } else if manifest.reuse_verified_presentations {
+                        let adoption_path = scene_delivery::checked_file(input_root, adoption)?;
+                        let hit = presentation_adopt::check_cached(
+                            &adoption_path,
+                            input_root,
+                            asset_root,
+                            &master,
+                            receipt_path
+                                .as_deref()
+                                .context("legacy presentation receipt path missing")?,
+                            stage_parent,
+                            &asset_root.join(".reel-verification-cache/presentation-adoption-v1"),
+                        )?;
+                        if hit {
+                            presentation_cache_hits += 1;
+                        } else {
+                            presentation_cache_misses += 1;
+                        }
+                    } else {
+                        let adoption_path = scene_delivery::checked_file(input_root, adoption)?;
+                        presentation_adopt::check(
+                            &adoption_path,
+                            input_root,
+                            asset_root,
+                            &master,
+                            receipt_path
+                                .as_deref()
+                                .context("legacy presentation receipt path missing")?,
+                            stage_parent,
+                        )?;
+                    }
+                    true
                 }
-                true
-            }
-            (SegmentKind::EpisodePresentation, None) => {
-                if receipt["technical_validation_state"] == "decoded-source-equivalent" {
-                    bail!("adopted presentation needs its source manifest recheck");
+                (SegmentKind::EpisodePresentation, None) => {
+                    if receipt["technical_validation_state"] == "decoded-source-equivalent" {
+                        bail!("adopted presentation needs its source manifest recheck");
+                    }
+                    false
                 }
-                false
             }
         };
         let rechecked = match (
@@ -2072,12 +2183,13 @@ fn build_impl(
                     .context("presentation receipt lacks decoded sample count")?;
                 if input_frames == 0
                     || input_samples == 0
-                    || receipt["episode_id"] != manifest.episode_id
                     || receipt["timestamps_verified"] != true
-                    || !matches!(
-                        receipt["technical_validation_state"].as_str(),
-                        Some("decoded-source-equivalent" | "rendered-and-checked")
-                    )
+                    || (native.is_none()
+                        && (receipt["episode_id"] != manifest.episode_id
+                            || !matches!(
+                                receipt["technical_validation_state"].as_str(),
+                                Some("decoded-source-equivalent" | "rendered-and-checked")
+                            )))
                 {
                     bail!("presentation source receipt lacks selected technical validation");
                 }
@@ -2091,41 +2203,59 @@ fn build_impl(
                     .iter()
                     .find(|p| p.role == segment.id)
                     .context("unknown episode presentation role")?;
-                let key = invocation
-                    .asset_binding
-                    .as_deref()
-                    .context("presentation requires selected episode binding")?;
-                let asset = presentation
-                    .selected_inputs
-                    .get(key)
-                    .context("missing selected presentation master")?;
-                if asset.sha256 != segment.master.sha256 || asset.bytes != segment.master.bytes {
-                    bail!("presentation master differs from selected scoped asset");
-                }
-                if receipt["template_id"] != invocation.template_id {
-                    bail!("presentation template mismatch");
-                }
-                let template_sha = presentation
-                    .template_definitions
-                    .get(&invocation.template_id)
-                    .context("selected presentation template definition missing")?;
-                if receipt["template_definition_sha256"] != *template_sha {
-                    bail!("presentation receipt differs from selected template definition");
-                }
-                if ordered_units_v2 {
-                    verify_source_text_evidence(
-                        &master_template.ordered_units[segment_index],
-                        segment,
-                        &manifest,
-                        &receipt,
-                        invocation,
-                        [&episode_bindings, &season],
-                        presentation_controls
-                            .and_then(|p| p.get(&segment.id))
-                            .copied()
-                            .or(controls)
-                            .unwrap_or(&local_controls),
-                    )?;
+                if native.is_some() {
+                    if !invocation
+                        .content
+                        .as_object()
+                        .is_some_and(|content| content.is_empty())
+                    {
+                        bail!("native presentation requires a current invocation-content binding");
+                    }
+                    if ordered_units_v2
+                        && !master_template.ordered_units[segment_index]
+                            .source_ids
+                            .is_empty()
+                    {
+                        bail!("native editable display requires its current source-text contract");
+                    }
+                } else {
+                    let key = invocation
+                        .asset_binding
+                        .as_deref()
+                        .context("presentation requires selected episode binding")?;
+                    let asset = presentation
+                        .selected_inputs
+                        .get(key)
+                        .context("missing selected presentation master")?;
+                    if asset.sha256 != segment.master.sha256 || asset.bytes != segment.master.bytes
+                    {
+                        bail!("presentation master differs from selected scoped asset");
+                    }
+                    if receipt["template_id"] != invocation.template_id {
+                        bail!("presentation template mismatch");
+                    }
+                    let template_sha = presentation
+                        .template_definitions
+                        .get(&invocation.template_id)
+                        .context("selected presentation template definition missing")?;
+                    if receipt["template_definition_sha256"] != *template_sha {
+                        bail!("presentation receipt differs from selected template definition");
+                    }
+                    if ordered_units_v2 {
+                        verify_source_text_evidence(
+                            &master_template.ordered_units[segment_index],
+                            segment,
+                            &manifest,
+                            &receipt,
+                            invocation,
+                            [&episode_bindings, &season],
+                            presentation_controls
+                                .and_then(|p| p.get(&segment.id))
+                                .copied()
+                                .or(controls)
+                                .unwrap_or(&local_controls),
+                        )?;
+                    }
                 }
             }
         }

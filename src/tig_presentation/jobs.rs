@@ -51,10 +51,15 @@ pub struct VerifiedPresentation<'a> {
     output: Reference,
     recipe: Digest,
     comparison: presentation_still_sequence::PrimaryComparison,
+    frames: u64,
+    samples: u64,
     resources: &'a job::JobContext,
     production_definitions: &'a BTreeSet<String>,
 }
 impl VerifiedPresentation<'_> {
+    pub(crate) fn selected_path(&self) -> Result<std::path::PathBuf> {
+        self.outputs.verified_path(self.selected())
+    }
     pub(crate) fn checkpoint(&self) -> &Digest {
         &self.checkpoint
     }
@@ -75,6 +80,7 @@ impl VerifiedPresentation<'_> {
             "job":self.resources.selection(),"recipe":self.recipe,
             "manifest":self.comparison.manifest(),"master":self.comparison.master(),
             "yuv_sha256":yuv,"rgb_sha256":rgb,"pcm_sha256":self.comparison.audio_sha256(),
+            "frames":self.frames,"samples":self.samples,"timestamps_verified":true,
             "approval":false,"original_producer_assertion":false,
         }))?)
     }
@@ -256,6 +262,42 @@ impl<'a> JobPlan<'a> {
     }
     pub fn selected_master(&self) -> &FileRef {
         &self.master
+    }
+    fn counts(&self) -> Result<(u64, u64)> {
+        let manifest =
+            identity::parse_json(&self.compiled.control_bytes(self.compiled.manifest())?)?;
+        let template = &manifest["template"];
+        let template = FileRef {
+            path: serde_json::from_value(template["path"].clone())?,
+            sha256: template["sha256"]
+                .as_str()
+                .context("native template hash missing")?
+                .into(),
+            bytes: template["bytes"]
+                .as_u64()
+                .context("native template length missing")?,
+        };
+        let template = identity::parse_json(&self.compiled.control_bytes(&template)?)?;
+        let integer = |key: &str| {
+            template[key]
+                .as_u64()
+                .context("native frame clock field missing")
+        };
+        let frames = match template.get("total_frames").and_then(Value::as_u64) {
+            Some(frames) => frames,
+            None => integer("picture_count")?
+                .checked_mul(integer("frames_per_picture")?)
+                .context("native frame count overflow")?,
+        };
+        let fps = integer("frame_rate")?;
+        let samples = frames
+            .checked_mul(integer("sample_rate")?)
+            .and_then(|n| n.checked_div(fps))
+            .context("native sample clock overflow")?;
+        if frames == 0 || samples == 0 {
+            bail!("empty checked native frame clock");
+        }
+        Ok((frames, samples))
     }
     fn admission(&self) -> job::Admission<'_> {
         job::Admission {
@@ -444,6 +486,7 @@ impl ProtectedPresentation<'_, '_> {
         );
         self.verify_current(source, journal)?;
         let comparison = result?;
+        let (frames, samples) = plan.counts()?;
         Ok(VerifiedPresentation {
             owner: &self.source,
             _programs: plan.programs,
@@ -454,6 +497,8 @@ impl ProtectedPresentation<'_, '_> {
             output: plan.target.clone(),
             recipe: plan.recipe.fingerprint().clone(),
             comparison,
+            frames,
+            samples,
             resources: &self.readback.resources,
             production_definitions: &plan.production_definitions,
         })

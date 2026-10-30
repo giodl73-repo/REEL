@@ -39,6 +39,8 @@ pub use jobs::{
 #[cfg(feature = "tig-publication")]
 mod controls;
 #[cfg(feature = "tig-publication")]
+mod current_controls;
+#[cfg(feature = "tig-publication")]
 pub use controls::{ControlTree, ParentControls};
 #[cfg(feature = "tig-publication")]
 mod production;

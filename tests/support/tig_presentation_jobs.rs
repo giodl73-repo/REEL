@@ -43,8 +43,7 @@ fn key(value: &str) -> Key {
     Key::parse(value).unwrap()
 }
 
-// Metadata planning fixture. The genuine native master/receipt come from the
-// producer above; this does not claim to execute the legacy adoption route.
+// Native presentation-only parent. No legacy adoption receipt is synthesized.
 fn add_parent(f: &mut Fixture, master: &Object, receipt: &Object) -> reel::tig_episode::Request {
     let schema = Object::from_bytes(&fs::read(f.root().join("definitions/authored.json")).unwrap());
     let mut definitions = BTreeMap::new();
@@ -79,11 +78,20 @@ fn add_parent(f: &mut Fixture, master: &Object, receipt: &Object) -> reel::tig_e
         object
     };
     let episode = cached(
-        &json!({"schema":"reel.episode-authoring.v1","episode_id":"fixture","season_id":"season","authoring_state":"draft","master_template_id":"master","scene_policy_id":"policy","presentation":[{"role":"opening","template_id":"opening","content":{}}],"score_palette":[],"scene_ids":[]}),
+        &json!({"schema":"reel.episode-authoring.v1","episode_id":"fixture","season_id":"season","authoring_state":"ready-for-private-build","master_template_id":"master","scene_policy_id":"policy","presentation":[{"role":"opening","template_id":"opening","content":{}}],"score_palette":[],"scene_ids":[]}),
     );
-    let opaque = cached(&json!({}));
+    let master_template = cached(
+        &json!({"schema":"reel.episode-master-template.v2","template_id":"master","ordered_units":[{"kind":"episode-presentation","id":"opening"}]}),
+    );
+    let catalog = cached(
+        &json!({"schema":"reel.scene-template-catalog.v1","templates":[{"template_id":"master","kind":"episode-master","definition_sha256":master_template.sha256,"required_content_keys":[]},{"template_id":"opening","kind":"opening","definition_sha256":Object::from_bytes(b"opening layout contract").sha256,"required_content_keys":[]}]}),
+    );
+    let season =
+        cached(&json!({"schema":"reel.scene-asset-bindings.v1","scope_id":"season","assets":{}}));
+    let bindings =
+        cached(&json!({"schema":"reel.scene-asset-bindings.v1","scope_id":"fixture","assets":{}}));
     let conform = cached(
-        &json!({"schema":"reel.episode-conform.v1","episode_id":"fixture","language":"es","output_sample_rate":48000,"catalog":reference("catalog.json",&opaque),"master_template_definition":reference("master.json",&opaque),"episode":reference("episode.json",&episode),"season_bindings":reference("season.json",&opaque),"episode_bindings":reference("bindings.json",&opaque),"segments":[{"kind":"episode-presentation","id":"opening","master":reference("master.mkv",master),"source_receipt":reference("receipt.json",receipt)}]}),
+        &json!({"schema":"reel.episode-conform.v1","episode_id":"fixture","language":"es","output_sample_rate":48000,"catalog":reference("catalog.json",&catalog),"master_template_definition":reference("master.json",&master_template),"episode":reference("episode.json",&episode),"season_bindings":reference("season.json",&season),"episode_bindings":reference("bindings.json",&bindings),"segments":[{"kind":"episode-presentation","id":"opening","master":reference("master.mkv",master),"source_receipt":reference("receipt.json",receipt)}]}),
     );
     for (kind, authored, selected, streams) in [
         (
@@ -381,9 +389,8 @@ fn managed_presentation_retains_exact_resources_allows_peers_and_refuses_stale_o
         &no_scenes,
         &verified,
     )
-    .err()
     .unwrap();
-    assert!(stale.to_string().contains("recompile parent controls"));
+    assert!(stale.compiled_conform().is_some());
     assert!(
         reel::tig_episode::CompositionJobPlan::from_current_scenes(
             &mut source,
@@ -414,6 +421,8 @@ fn managed_presentation_retains_exact_resources_allows_peers_and_refuses_stale_o
         &verified,
     )
     .unwrap();
+    assert_eq!(parent_plan.compiled_conform(), stale.compiled_conform());
+    let parent_plan = stale;
     let mut parent_writer = MetadataStore::open(&metadata, &witness).unwrap();
     let parent_frozen = parent_plan
         .freeze(&mut parent_writer, TreeLimits::default())
@@ -422,6 +431,11 @@ fn managed_presentation_retains_exact_resources_allows_peers_and_refuses_stale_o
     drop(parent_writer);
     assert!(parent_frozen.of(Role::Primary).is_empty());
     assert!(frozen.objects().is_subset(parent_frozen.objects()));
+    assert!(
+        !parent_frozen
+            .objects()
+            .contains(&Object::from_bytes(b"stale selected baseline"))
+    );
     let empty_children = reel::tig_episode::protect_current_scenes(
         &mut source,
         &parent_request,
@@ -433,6 +447,33 @@ fn managed_presentation_retains_exact_resources_allows_peers_and_refuses_stale_o
     )
     .unwrap();
     let mut parent_reader = MetadataReader::open(&metadata, &parent_witness).unwrap();
+    let reference = parent_plan.compiled_conform().unwrap();
+    let compiled_object = Object {
+        sha256: tig_core::Digest::parse(&reference.sha256).unwrap(),
+        bytes: reference.bytes,
+    };
+    let mut missing_controls = tig_core::tree::MemoryNodes::default();
+    for object in parent_frozen.objects() {
+        if object.bytes <= tig_store::metadata::MAX_NODE_BYTES as u64
+            && object != &compiled_object
+            && let Some(raw) = tig_core::tree::NodeStore::get(&parent_reader, object).unwrap()
+        {
+            tig_core::tree::NodeStore::put(&mut missing_controls, &raw).unwrap();
+        }
+    }
+    let refused = parent_plan
+        .readback(
+            parent_frozen.selection(),
+            &mut missing_controls,
+            TreeLimits::default(),
+        )
+        .err()
+        .unwrap();
+    assert!(
+        refused
+            .to_string()
+            .contains("current parent control missing")
+    );
     let ownership = reel::tig_episode::CompositionOwnership {
         coordination: &coordination,
         identity: Identity {
@@ -460,6 +501,39 @@ fn managed_presentation_retains_exact_resources_allows_peers_and_refuses_stale_o
     parent
         .verify_current(&source, &empty_children, &mut owners)
         .unwrap();
+    let baseline = reel::tig_episode::plan(&mut source, &stale_request)
+        .unwrap()
+        .conform;
+    let controls = reel::tig_episode::ParentControls::open(
+        serde_json::from_value(f.profile["byte_source"].clone()).unwrap(),
+        &baseline,
+    )
+    .unwrap();
+    let scene_controls = BTreeMap::new();
+    let input_files = BTreeMap::new();
+    let output_files = BTreeMap::new();
+    let rendered = parent
+        .assemble(
+            &source,
+            &empty_children,
+            &mut owners,
+            &f.root().join("current-native-parent"),
+            reel::tig_episode::CompositionFiles {
+                parent: &controls,
+                scenes: &scene_controls,
+                inputs: &input_files,
+                outputs: &output_files,
+            },
+        )
+        .unwrap();
+    assert!(rendered.receipt().decoded_master_matches_ordered_segments);
+    assert!(rendered.receipt().timestamps_verified);
+    assert!(rendered.receipt().segments[0].upstream_presentation_verified);
+    assert_eq!(
+        rendered.receipt().segments[0].selected_master_sha256,
+        selected.sha256.as_str()
+    );
+    drop(rendered);
     owners
         .apply(
             key("external-withdraw"),

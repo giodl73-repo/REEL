@@ -31,6 +31,7 @@ pub struct CompositionJobPlan<'a> {
     pub(super) presentations: BTreeMap<String, &'a VerifiedPresentation<'a>>,
     presentation_documents: BTreeMap<LogicalPath, Vec<u8>>,
     pub(super) conform: Object,
+    pub(super) current_controls: Option<super::current_controls::CurrentControls>,
 }
 pub struct CompositionReadback<'p, 'a> {
     plan: &'p CompositionJobPlan<'a>,
@@ -89,11 +90,10 @@ impl<'a> CompositionJobPlan<'a> {
         presentations: Option<&'a BTreeMap<String, VerifiedPresentation<'a>>>,
     ) -> Result<Self> {
         let plan = require_current_scenes(source, request, proofs)?;
-        if plan
-            .components
-            .iter()
-            .any(|component| component.changed_from_baseline)
-        {
+        if plan.components.iter().any(|component| {
+            component.changed_from_baseline
+                && (component.kind == "scene" || presentations.is_none())
+        }) {
             bail!(
                 "current component outputs differ from pinned conform; recompile parent controls before execution"
             );
@@ -132,6 +132,27 @@ impl<'a> CompositionJobPlan<'a> {
             .flat_map(|proofs| proofs.iter())
             .map(|(id, proof)| (id.clone(), proof))
             .collect::<BTreeMap<_, _>>();
+        let current_controls = if presentations.is_empty() {
+            None
+        } else {
+            Some(super::current_controls::CurrentControls::compile(
+                source,
+                &plan,
+                &presentations,
+            )?)
+        };
+        if let Some(controls) = &current_controls {
+            for object in controls.storage.keys() {
+                evidence.insert(
+                    LogicalPath::parse(&format!("current-controls/{}", object.sha256.as_str()))?,
+                    object.clone(),
+                );
+            }
+            evidence.insert(
+                LogicalPath::parse("current-controls-root")?,
+                controls.root.clone(),
+            );
+        }
         for component in &plan.components {
             // Native segment labels are not paths and may contain slashes or
             // reserved names. Their hashes have no platform-specific aliases.
@@ -217,11 +238,19 @@ impl<'a> CompositionJobPlan<'a> {
             child_declaration,
             presentations,
             presentation_documents,
-            conform: plan.conform,
+            conform: current_controls
+                .as_ref()
+                .map_or_else(|| plan.conform.clone(), |c| Object::from_bytes(&c.raw)),
+            current_controls,
         })
     }
     pub fn recipe(&self) -> &recipe::Plan {
         &self.recipe
+    }
+    pub fn compiled_conform(&self) -> Option<&crate::scene_delivery::FileRef> {
+        self.current_controls
+            .as_ref()
+            .map(|controls| &controls.reference)
     }
     pub(super) fn admission(&self) -> job::Admission<'_> {
         job::Admission {
@@ -253,6 +282,13 @@ impl<'a> CompositionJobPlan<'a> {
         )?)
     }
     pub(super) fn put_interpretation(&self, store: &mut impl NodeStore) -> Result<()> {
+        if let Some(controls) = &self.current_controls {
+            for (object, raw) in &controls.storage {
+                if store.put(raw)? != *object {
+                    bail!("current parent control publication differs");
+                }
+            }
+        }
         for raw in self.presentation_documents.values() {
             if store.put(raw)? != Object::from_bytes(raw) {
                 bail!("presentation proof publication differs");
@@ -287,6 +323,13 @@ impl<'a> CompositionJobPlan<'a> {
         })
     }
     pub(super) fn verify_interpretation(&self, store: &mut impl NodeStore) -> Result<()> {
+        if let Some(controls) = &self.current_controls {
+            for (object, raw) in &controls.storage {
+                if store.get(object)?.as_deref() != Some(raw.as_slice()) {
+                    bail!("current parent control missing or substituted");
+                }
+            }
+        }
         for raw in self.presentation_documents.values() {
             if store.get(&Object::from_bytes(raw))?.as_deref() != Some(raw.as_slice()) {
                 bail!("presentation proof missing or substituted");
