@@ -136,6 +136,27 @@ fn exercise(mixed: bool) {
             .unwrap()
             .is_none()
     );
+    let mut undersized = profile.clone();
+    undersized["cache"]["capacity"]["max_object_bytes"] = json!(128 * 1024 * 1024);
+    undersized["inputs"]["source"] = json!({}); // Must refuse before reading this invalid archive.
+    let path = p.data.path().join("undersized-episode-policy.json");
+    write(p.data.path(), "undersized-episode-policy.json", &undersized);
+    let denied = std::process::Command::new(&binary)
+        .arg("run-episode")
+        .arg(path)
+        .output()
+        .unwrap();
+    assert!(!denied.status.success());
+    assert!(
+        String::from_utf8_lossy(&denied.stderr)
+            .contains("workspace budget exceeds configured operation allowance")
+    );
+    assert!(
+        p.owners
+            .source(&key("bounded-episode-cli"))
+            .unwrap()
+            .is_none()
+    );
     if mixed {
         let mut incomplete = profile.clone();
         incomplete["inputs"]["presentations"]
