@@ -130,3 +130,16 @@ validation, Git edit, selected version, draft/root claim, complete job enrollmen
 independent backup or creative approval. Keep source bytes until those separate
 retention/adoption obligations are met. No daemon, cache creation, discovery,
 render, upload or automatic retirement occurs.
+
+## Restore an exact PCM recording
+
+`reel-tig-job recover-pcm-wave PRIVATE_PROFILE` verifies a canonical WAV streamed
+from an existing lossless carrier against its independently known original hash
+and length. Add `--publish` only with explicit existing-publisher admission to
+restore that identity into the configured cache. The normal path creates no
+payload file. Publication streams directly through the existing byte publisher;
+retries reuse verified destination bytes. This does not select the recovered
+recording or grant custody, approval or retirement authority.
+
+The bounded profile and fixture contract are described in
+[exact PCM recovery](reviews/2026-10-30-exact-pcm-recovery.md).
