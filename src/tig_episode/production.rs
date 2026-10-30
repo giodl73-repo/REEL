@@ -102,34 +102,63 @@ impl ProtectedComposition<'_, '_> {
         presentations: PresentationComponents<'_>,
     ) -> Result<RenderedComposition<'_>> {
         let plan = self.plan();
-        if !plan.presentations.keys().eq(presentations.files.keys())
+        if plan.current_controls.is_some() {
+            if !presentations.files.is_empty() || !presentations.controls.is_empty() {
+                bail!(
+                    "current native presentations use their sealed providers, not caller replacements"
+                );
+            }
+        } else if !plan.presentations.keys().eq(presentations.files.keys())
             || !plan.presentations.keys().eq(presentations.controls.keys())
         {
             bail!("composition presentation providers differ from verified component coverage");
         }
         let reference = files.parent.manifest_ref();
-        if reference.sha256 != plan.conform.sha256.as_str() || reference.bytes != plan.conform.bytes
-        {
+        let baseline = plan
+            .current_controls
+            .as_ref()
+            .map_or(&plan.conform, |c| &c.baseline);
+        if reference.sha256 != baseline.sha256.as_str() || reference.bytes != baseline.bytes {
             bail!("composition controls differ from admitted conform");
         }
         self.with_current(source, children, journal, |_| {
             let local = PathBuf::from(".");
             let programs = plan.programs.with_inputs(&local);
-            let receipt = episode_conform::build_with_component_controls(
-                reference,
-                output,
-                episode_conform::Files {
-                    scene_inputs: files.inputs,
-                    scene_outputs: files.outputs,
-                    presentations: presentations.files,
-                    programs: &programs,
-                },
-                episode_conform::ComponentControls {
-                    parent: files.parent,
-                    scenes: files.scenes,
-                    presentations: presentations.controls,
-                },
-            )?;
+            let receipt = if let Some(compiled) = &plan.current_controls {
+                let controls = super::current_controls::CurrentParent {
+                    baseline: files.parent,
+                    compiled,
+                };
+                episode_conform::build_with_current_presentations(
+                    &compiled.reference,
+                    output,
+                    episode_conform::Files {
+                        scene_inputs: files.inputs,
+                        scene_outputs: files.outputs,
+                        presentations: presentations.files,
+                        programs: &programs,
+                    },
+                    &controls,
+                    files.scenes,
+                    &plan.presentations,
+                )?
+            } else {
+                episode_conform::build_with_component_controls(
+                    reference,
+                    output,
+                    episode_conform::Files {
+                        scene_inputs: files.inputs,
+                        scene_outputs: files.outputs,
+                        presentations: presentations.files,
+                        programs: &programs,
+                    },
+                    episode_conform::ComponentControls {
+                        parent: files.parent,
+                        scenes: files.scenes,
+                        presentations: presentations.controls,
+                    },
+                )?
+            };
             if receipt.manifest_sha256 != plan.conform.sha256.as_str()
                 || !receipt.decoded_master_matches_ordered_segments
                 || !receipt.timestamps_verified

@@ -168,23 +168,30 @@ cover the union before any parent journal change. A presentation-only compositio
 can have an empty scene-owner set, while still requiring exact nonempty native
 component coverage and its actual presentation guards.
 
-`assemble_with_presentations` takes `PresentationComponents`, which supplies
-explicit legacy adoption metadata/source/output providers alongside the native
-scene providers. Their keys must match the guarded plan exactly. It uses the
-existing complete component-control path; it cannot fall back to a checkout.
-The scene-only `assemble` wrapper supplies no presentation providers and therefore
-refuses a plan that requires them.
+`from_current_components` compiles effective native presentation controls from
+the captured component records and their sealed proofs. The pinned conform
+provides order and layout; its older presentation movie/receipt references are
+replaced in memory. Historical receipts are not rewritten. Generated controls,
+technical proof declarations and complete top-level metadata bodies enter the
+frozen job's evidence and are checked again on readback. They do not enter Git.
 
-Execution also refuses a current component selection that differs from the
-pinned conform's movie reference. Metadata planning still reports that change;
-the parent controls must be recompiled before execution. Otherwise a current
-child proof could be combined with an older conform and accidentally attest a
-movie assembled from its old components. This refusal is not an automatic parent
-compiler: deriving updated controls from new selected outputs remains required.
+The ordinary `assemble` route can consume that compiled plan. Native selected
+movie paths come from the proof's retained byte guards, with no caller substitute
+or historical adoption directory. The native kernel validates catalog, ready
+state, binding scope, role order, frame/sample counts and final decoded/timestamp
+correspondence. Native reference evidence retains its own schema and is not
+represented as an original producer receipt. The legacy provider-based conform
+entry points remain separate.
+
+Changed scenes still require current native scene controls. Native presentation
+invocations with content overrides or editable source-text units also require
+their current content-binding contract; they cannot silently reuse an unrelated
+render. Those extensions remain open. The native parent compiler currently
+handles source-owned presentation content with empty invocation overrides.
 
 This low-level assembly primitive is not a capacity scheduler; production
-execution needs the existing bounded job runner. Parent native compiler and
-CLI/scheduler integration, full child-retention handoff, generated-input freshness
+execution needs the existing bounded job runner. CLI/scheduler integration,
+changed-scene control compilation, full child-retention handoff, generated-input freshness
 and actual project adoption remain separate work.
 See [the output publication review](reviews/2026-10-29-episode-output-publication.md).
 
@@ -231,7 +238,8 @@ credits. Low-level conform is not a storage-capacity scheduler.
 
 - Editing: occurrence order stays in the admitted native conform. Exact output
   scope and current-source comparisons cannot substitute a different occurrence.
-  Changed selected movies require new parent controls before execution.
+  Current presentation controls are generated from the selected output and its
+  sealed proof; changed scenes retain their explicit native-control gate.
 - Sound: the native proof binds matched PCM as well as both picture hashes;
   retained ownership covers the primary recording through use.
 - Provenance: comparison evidence explicitly records that it is not approval or
@@ -242,14 +250,19 @@ credits. Low-level conform is not a storage-capacity scheduler.
   complete font/environment isolation.
 
 These are producer-applied checklist findings, not independent or human review.
-The new parent test qualifies metadata/resource adoption over a genuine native
-presentation comparison, including offline source records and a withdrawn owner.
-It does not claim a real mixed episode's complete native render or cutover.
+The parent fixture now uses a real ordered-unit layout and performs native
+assembly over a genuine current presentation proof with source records offline.
+Its authored conform deliberately names a stale movie; the compiler substitutes
+the current selection without reading that obsolete movie. The fixture also
+checks missing generated metadata and a withdrawn child owner. It does not claim
+a real mixed episode's complete native render, full scene-control conversion or
+cutover.
 
-Local qualification of this extension: locked all-target/all-feature Clippy
+Prior PR245 qualification: locked all-target/all-feature Clippy
 passes with warnings denied; 216 library tests pass (nine explicitly ignored),
 all 13 episode-planning tests pass, and all eight presentation-source tests pass.
 The stale-conform counterexample refuses before execution. The explicit complete
 fake-episode lifecycle also passes (93.60 seconds), including the changed-scene
 rebuild, Git history, retained outputs and verified synthetic cache eviction.
-Hosted checks must qualify the exact proposed revision before adoption.
+The current control-compiler extension requires its own final tests and exact
+hosted qualification before adoption.
