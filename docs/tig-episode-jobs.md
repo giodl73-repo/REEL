@@ -68,12 +68,18 @@ The final result reports `temporary_owner_cleanup_required: false`; the immutabl
 worker report preserves its earlier point-in-time state.
 
 `reel-tig-job finish-episode PRIVATE_PROFILE.json` performs only this metadata
-handoff. It can repeat an already completed handoff without journal changes and
-resume withdrawals after root adoption. A changed owner/selection/revision,
-failed render, or pending transition refuses and leaves remaining obligations
-live for explicit recovery. It does not bind or execute the rendering program.
-Pending prepare/adopt interruption and failed-job cleanup still need a complete
-recovery workflow before production cutover; do not drop those roots manually.
+handoff. It can repeat an already completed handoff without journal changes,
+resume withdrawals after root adoption, and recover a stop between handoff
+prepare and adopt. Recovery rebuilds and reopens the complete context from the
+retained result and still-current children. Both the pending selection and the
+exact previously committed prepare command must match before adoption. It never
+reconstructs a packet from an unchecked pending label alone.
+
+A changed owner/selection/revision, foreign preparation, missing evidence or
+budget refusal leaves remaining obligations live. It does not bind or execute
+the rendering program. Failed-job cleanup and interruptions earlier in worker or
+runner retention still need recovery workflows before production cutover; do not
+drop those roots manually.
 
 Withdrawing a redundant source claim never removes payload bytes or authorizes
 eviction. Cache removal still requires the separate custody and demotion rules.

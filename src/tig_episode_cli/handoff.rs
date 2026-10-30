@@ -101,6 +101,13 @@ fn read_report(p: &Profile, object: &Object) -> Result<Value> {
     Ok(identity::parse_json(&raw)?)
 }
 pub(super) fn finish(p: &Profile, journal: &mut SourceJournal) -> Result<Value> {
+    finish_after_prepare(p, journal, || Ok(()))
+}
+fn finish_after_prepare(
+    p: &Profile,
+    journal: &mut SourceJournal,
+    after_prepare: impl FnOnce() -> Result<()>,
+) -> Result<Value> {
     let coordination = Coordination {
         root: p
             .cache
@@ -116,8 +123,8 @@ pub(super) fn finish(p: &Profile, journal: &mut SourceJournal) -> Result<Value> 
     let state = journal
         .source(&identity.source)?
         .context("episode result source missing")?;
-    if state.owner != identity.owner || state.pending.is_some() {
-        bail!("episode result owner or pending state differs");
+    if state.owner != identity.owner {
+        bail!("episode result owner differs");
     }
     let current = state
         .current
@@ -146,6 +153,9 @@ pub(super) fn finish(p: &Profile, journal: &mut SourceJournal) -> Result<Value> 
     let (selection, temporary, metadata) = if let Some(header) =
         retained.get(&LogicalPath::parse("handoff/identity")?)
     {
+        if state.pending.is_some() || header.sha256 != current.context {
+            bail!("episode retained context identity or pending state differs");
+        }
         let header = document(&reader, header)?;
         if header["schema"] != HEADER
             || header["source_id"] != p.source_id
@@ -164,6 +174,9 @@ pub(super) fn finish(p: &Profile, journal: &mut SourceJournal) -> Result<Value> 
         let header_object = retained
             .get(&LogicalPath::parse("retention/identity")?)
             .context("episode runner retention header missing")?;
+        if header_object.sha256 != current.context {
+            bail!("episode runner retention context identity differs");
+        }
         let header = document(&reader, header_object)?;
         let started = p
             .expected_revision
@@ -172,7 +185,15 @@ pub(super) fn finish(p: &Profile, journal: &mut SourceJournal) -> Result<Value> 
         let completed = started
             .checked_add(2)
             .context("episode revision overflow")?;
-        if state.revision != completed
+        let interrupted = completed
+            .checked_add(1)
+            .context("episode revision overflow")?;
+        if state.revision
+            != if state.pending.is_some() {
+                interrupted
+            } else {
+                completed
+            }
             || header["schema"] != "reel.tig-runner-retention.experimental-1"
             || header["source_id"] != p.source_id
             || header["owner"] != p.owner
@@ -264,13 +285,12 @@ pub(super) fn finish(p: &Profile, journal: &mut SourceJournal) -> Result<Value> 
                 revision: 2,
             });
         }
-        let next = state
-            .revision
+        let next = completed
             .checked_add(2)
             .context("episode handoff revision overflow")?;
         let raw = identity::canonical_json(
             &json!({"schema":HEADER,"source_id":p.source_id,"owner":p.owner,"operation":p.operation,
-            "previous":current,"root_revision_before":state.revision,"root_revision_after":next,"temporary":temporary,
+            "previous":current,"root_revision_before":completed,"root_revision_after":next,"temporary":temporary,
             "native_production_claim":null,"approval":false,"resource_objects":objects.len()}),
         )?;
         if raw.len() > 65536 {
@@ -313,15 +333,32 @@ pub(super) fn finish(p: &Profile, journal: &mut SourceJournal) -> Result<Value> 
             root: tree.root().clone(),
             context: object.sha256,
         };
+        // Rebuild/reopen the entire packet on recovery. Only the identical
+        // pending selection and exact previously committed prepare may resume.
+        if state
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.selection != selection)
+        {
+            bail!("episode pending handoff selection differs");
+        }
         let prepared = journal.apply(
             phase(&p.source_id, &p.operation, "handoff/prepare")?,
             Command::Prepare {
                 source: identity.source.clone(),
                 owner: identity.owner.clone(),
-                expected_revision: state.revision,
+                expected_revision: completed,
                 selection: selection.clone(),
             },
         )?;
+        if state
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.reference != prepared.reference)
+        {
+            bail!("episode pending handoff preparation differs");
+        }
+        after_prepare()?;
         journal.apply(
             phase(&p.source_id, &p.operation, "handoff/adopt")?,
             Command::Adopt {
@@ -395,6 +432,9 @@ pub fn finish_episode(path: &Path) -> Result<Value> {
     let mut journal = SourceJournal::open(&p.journal_root, &p.journal_minimum)?;
     finish(&p, &mut journal)
 }
+
+#[cfg(all(test, windows))]
+mod recovery_tests;
 
 #[cfg(test)]
 mod tests {
