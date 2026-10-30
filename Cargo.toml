@@ -63,3 +63,4 @@ resolver = "3"
 
 [dev-dependencies]
 reel-assets = { path = "crates/reel-assets" }
+flate2 = "1"

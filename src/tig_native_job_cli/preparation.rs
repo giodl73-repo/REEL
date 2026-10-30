@@ -56,7 +56,7 @@ pub(super) fn worker_allowance(profile: &Profile) -> Result<u64> {
         .try_fold(0, |maximum, n| n.map(|n| maximum.max(n)))
 }
 
-pub(super) struct Preparation {
+pub(crate) struct Preparation {
     directory: Option<tempfile::TempDir>,
     reservation: Option<Reservation>,
 }
@@ -80,7 +80,7 @@ impl Preparation {
         let root = Self::cache(profile)?;
         Self::open_on(&profile.cache, &profile.journal_root, root, 2).map(Some)
     }
-    pub(super) fn open_on(
+    pub(crate) fn open_on(
         config: &Config,
         namespace: &Path,
         root: &Path,
@@ -127,10 +127,10 @@ impl Preparation {
         let _ = self.directory.take().expect("live preparation").keep();
         self.reservation.take();
     }
-    pub(super) fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         self.directory.as_ref().expect("live preparation").path()
     }
-    pub(super) fn finish(mut self) -> Result<()> {
+    pub(crate) fn finish(mut self) -> Result<()> {
         if let Some(directory) = self.directory.take() {
             if let Err(error) = directory.close() {
                 // End this writer but retain conservative capacity for explicit

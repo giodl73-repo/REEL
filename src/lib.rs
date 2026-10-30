@@ -75,6 +75,8 @@ pub mod sung_lyric_alignment;
 pub mod tig_conform_registration;
 #[cfg(feature = "tig")]
 pub mod tig_episode;
+#[cfg(feature = "tig-publication")]
+pub mod tig_episode_cli;
 #[cfg(feature = "tig")]
 pub mod tig_inputs;
 #[cfg(feature = "tig-publication")]
