@@ -194,7 +194,7 @@ fn validate(p: &Profile) -> Result<()> {
         || !p.preparation_cache.join("objects/sha256").is_dir()
         || !p.metadata_root.is_absolute()
         || !p.journal_root.is_absolute()
-        || !(1..=86400).contains(&p.timeout_seconds)
+        || !(1..=runner::MAX_STEP_TIMEOUT_SECONDS).contains(&p.timeout_seconds)
         || p.reference_staging_bytes == 0
         || p.reference_staging_bytes > p.scratch_bytes
         || !(2..=130).contains(&p.reference_picture_processes)
@@ -319,7 +319,7 @@ pub fn run(path: &Path) -> Result<Value> {
         json!({"path":"worker.json","max_bytes":65536}),
     );
     let request = identity::canonical_json(
-        &json!({"output_count_limit":16,"budget_bytes":p.budget_bytes,"scratch_bytes":p.scratch_bytes,
+        &json!({"output_count_limit":16,"budget_bytes":p.budget_bytes,"scratch_bytes":p.scratch_bytes,"step_timeout_limit_seconds":p.timeout_seconds,
         "inputs":{},"tools":{},"installed_tools":{"worker":{"path":std::env::current_exe()?.canonicalize()?,"sha256":p.inputs.runtime.host.sha256,"bytes":p.inputs.runtime.host.bytes}},
         "files":{"episode-ticket.json":std::str::from_utf8(&ticket)?},"prepare_output_parents":false,
         "steps":[{"tool":"worker","args":["episode-worker","episode-ticket.json","--sha256",ticket_pin.sha256,"--bytes",ticket_pin.bytes.to_string()],"timeout_seconds":p.timeout_seconds}],"outputs":outputs}),

@@ -442,6 +442,17 @@ fn exercise(mixed: bool) {
         let reopened = ByteIdentity::observe_file(&path).unwrap();
         assert_eq!(reopened.sha256, object.sha256.as_str());
         assert_eq!(reopened.bytes, object.bytes);
+        if name == "result/request" {
+            let request = read(&path);
+            assert_eq!(
+                request["step_timeout_limit_seconds"],
+                profile["timeout_seconds"]
+            );
+            assert_eq!(
+                request["steps"][0]["timeout_seconds"],
+                profile["timeout_seconds"]
+            );
+        }
     }
     for item in packet["temporary"].as_array().unwrap() {
         let state = journal
