@@ -427,7 +427,7 @@ pub(crate) fn checked_file(root: &Path, item: &FileRef) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn timed_overlay_source<'a>(
+pub(crate) fn timed_overlay_source<'a>(
     root: &(impl InputFiles + ?Sized),
     layer: &'a ExternalLayer,
 ) -> Result<&'a FileRef> {
@@ -1238,6 +1238,73 @@ fn plan_from_bytes(
     Ok((job, plan))
 }
 
+pub(crate) fn post_camera_filter(
+    plan: &Plan,
+    camera: &PostComposeCamera,
+    width: u64,
+    height: u64,
+) -> String {
+    let mut zoom = "1".to_string();
+    for window in camera.windows.iter().rev() {
+        zoom = format!(
+            "if(between(on,{},{}),min({},1+{}*(on-{})),{})",
+            window.start_frame,
+            window.end_frame - 1,
+            camera.zoom_max,
+            camera.zoom_step,
+            window.start_frame,
+            zoom
+        );
+    }
+    let mut offset_x = "0".to_string();
+    let mut offset_y = "0".to_string();
+    if let Some(translation) = &camera.translation {
+        for window in camera.windows.iter().rev() {
+            offset_x = format!(
+                "if(between(on,{},{}),{}*sin(2*PI*(on-{})/{}),{})",
+                window.start_frame,
+                window.end_frame - 1,
+                translation.amplitude_x_pixels,
+                window.start_frame,
+                translation.period_frames,
+                offset_x
+            );
+            offset_y = format!(
+                "if(between(on,{},{}),{}*sin(2*PI*(on-{})/{}+PI/2),{})",
+                window.start_frame,
+                window.end_frame - 1,
+                translation.amplitude_y_pixels,
+                window.start_frame,
+                translation.period_frames,
+                offset_y
+            );
+        }
+    }
+    let fps = format!("{}/{}", plan.fps_numerator, plan.fps_denominator);
+    format!(
+        "zoompan=z='{zoom}':x='max(0,min(iw-iw/zoom,iw/2-iw/zoom/2+{offset_x}))':y='max(0,min(ih-ih/zoom,ih/2-ih/zoom/2+{offset_y}))':d=1:s={width}x{height}:fps={fps},format=yuv444p"
+    )
+}
+
+pub(crate) fn ass_overlay_filter(font_bound: bool, name: &str) -> String {
+    if font_bound {
+        format!("ass={name}:fontsdir=fonts")
+    } else {
+        format!("ass={name}")
+    }
+}
+pub(crate) fn timed_overlay_filter(plan: &Plan, span: &Span) -> String {
+    let count = span.end_frame - span.start_frame;
+    format!(
+        "[1:v]setpts=N*{}/{}/TB,trim=start_frame=0:end_frame={count},setpts=PTS-STARTPTS+{}/{}/TB[effect];[0:v][effect]overlay=eof_action=repeat:repeatlast=1:shortest=0:format=auto:enable='gte(n,{})*lt(n,{})'[v]",
+        plan.fps_denominator,
+        plan.fps_numerator,
+        span.start_frame * plan.fps_denominator,
+        plan.fps_numerator,
+        span.start_frame,
+        span.end_frame
+    )
+}
 pub(crate) fn ffmpeg(args: &[String]) -> Result<()> {
     ffmpeg_with_inputs(Path::new("."), args)
 }
@@ -1286,7 +1353,7 @@ fn arg(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-fn lossless_video_encoding(encoding: Option<&str>) -> Vec<&'static str> {
+pub(crate) fn lossless_video_encoding(encoding: Option<&str>) -> Vec<&'static str> {
     if encoding == Some("h264-lossless") {
         vec!["-c:v", "libx264", "-crf", "0", "-preset", "veryfast"]
     } else {
@@ -1374,7 +1441,7 @@ mod provider_font_names {
     }
 }
 
-fn copy_ass_layer(
+pub(crate) fn copy_ass_layer(
     root: &Path,
     asset_root: &(impl InputFiles + ?Sized),
     layer: &ExternalLayer,
@@ -1404,11 +1471,7 @@ fn render_ass_overlay(
     output_name: &str,
     encoding: Option<&str>,
 ) -> Result<()> {
-    let filter = if font_bound {
-        format!("ass={ass}:fontsdir=fonts")
-    } else {
-        format!("ass={ass}")
-    };
+    let filter = ass_overlay_filter(font_bound, ass);
     let output = Command::new(asset_root.media_program(MediaProgram::Ffmpeg)?)
         .current_dir(root)
         .args(["-hide_banner", "-v", "error", "-nostdin", "-n", "-i", input])
@@ -1436,19 +1499,10 @@ fn render_timed_video_overlay(
     picture_output: &str,
     encoding: Option<&str>,
 ) -> Result<()> {
-    let count = span.end_frame - span.start_frame;
     // Frame-synchronized secondary EOF can precede the last selected main
     // frame when timestamps round to milliseconds. Hold the final source
     // frame, and bound visibility explicitly on the delivered frame clock.
-    let graph = format!(
-        "[1:v]setpts=N*{}/{}/TB,trim=start_frame=0:end_frame={count},setpts=PTS-STARTPTS+{}/{}/TB[effect];[0:v][effect]overlay=eof_action=repeat:repeatlast=1:shortest=0:format=auto:enable='gte(n,{})*lt(n,{})'[v]",
-        plan.fps_denominator,
-        plan.fps_numerator,
-        span.start_frame * plan.fps_denominator,
-        plan.fps_numerator,
-        span.start_frame,
-        span.end_frame
-    );
+    let graph = timed_overlay_filter(plan, span);
     let output = Command::new(asset_root.media_program(MediaProgram::Ffmpeg)?)
         .current_dir(root)
         .args(["-hide_banner", "-v", "error", "-nostdin", "-n"])
@@ -1481,43 +1535,6 @@ fn render_post_compose_camera(
 ) -> Result<()> {
     let before = root.join("pre-camera-picture.mkv");
     fs::rename(root.join("picture.mkv"), &before)?;
-    let mut zoom = "1".to_string();
-    for window in camera.windows.iter().rev() {
-        zoom = format!(
-            "if(between(on,{},{}),min({},1+{}*(on-{})),{})",
-            window.start_frame,
-            window.end_frame - 1,
-            camera.zoom_max,
-            camera.zoom_step,
-            window.start_frame,
-            zoom
-        );
-    }
-    let mut offset_x = "0".to_string();
-    let mut offset_y = "0".to_string();
-    if let Some(translation) = &camera.translation {
-        for window in camera.windows.iter().rev() {
-            offset_x = format!(
-                "if(between(on,{},{}),{}*sin(2*PI*(on-{})/{}),{})",
-                window.start_frame,
-                window.end_frame - 1,
-                translation.amplitude_x_pixels,
-                window.start_frame,
-                translation.period_frames,
-                offset_x
-            );
-            offset_y = format!(
-                "if(between(on,{},{}),{}*sin(2*PI*(on-{})/{}+PI/2),{})",
-                window.start_frame,
-                window.end_frame - 1,
-                translation.amplitude_y_pixels,
-                window.start_frame,
-                translation.period_frames,
-                offset_y
-            );
-        }
-    }
-    let fps = format!("{}/{}", plan.fps_numerator, plan.fps_denominator);
     // Geometry comes from the decoded composed picture, not a source still.
     let picture = probe_with_inputs(asset_root, &before)?;
     let stream = picture["streams"]
@@ -1534,9 +1551,7 @@ fn render_post_compose_camera(
     let height = stream["height"]
         .as_u64()
         .context("composed picture height unavailable")?;
-    let filter = format!(
-        "zoompan=z='{zoom}':x='max(0,min(iw-iw/zoom,iw/2-iw/zoom/2+{offset_x}))':y='max(0,min(ih-ih/zoom,ih/2-ih/zoom/2+{offset_y}))':d=1:s={width}x{height}:fps={fps},format=yuv444p"
-    );
+    let filter = post_camera_filter(plan, camera, width, height);
     let mut arguments = vec![
         "-i".into(),
         arg(&before),
@@ -2021,127 +2036,7 @@ pub fn render_with_inputs(
         })
         .collect();
     let overlay = overlays.first().copied();
-    let mut inputs = Vec::new();
-    let mut filters = Vec::new();
-    let mut groups = Vec::new();
-    let mut start = 0;
-    while start < job.pictures.len() {
-        let mut end = start + 1;
-        if let Some(group) = &job.pictures[start].motion_group_id {
-            while end < job.pictures.len()
-                && job.pictures[end].motion_group_id.as_ref() == Some(group)
-            {
-                end += 1;
-            }
-        }
-        groups.push((start, end));
-        start = end;
-    }
-    for (i, &(start, end)) in groups.iter().enumerate() {
-        let p = &job.pictures[start];
-        let s = &plan.pictures[start];
-        let group_frames = plan.pictures[end - 1].end_frame - s.start_frame;
-        let path = asset_root.verified_path(&p.source)?;
-        let info = probe_with_inputs(asset_root, &path)?;
-        let stream = info["streams"]
-            .as_array()
-            .and_then(|xs| xs.iter().find(|s| s["codec_type"] == "video"))
-            .context("picture has no video stream")?;
-        if let Some(c) = &p.crop {
-            if u64::from(c.x) + u64::from(c.width) > stream["width"].as_u64().unwrap_or(0)
-                || u64::from(c.y) + u64::from(c.height) > stream["height"].as_u64().unwrap_or(0)
-            {
-                bail!("crop outside source");
-            }
-        }
-        if p.kind == PictureKind::Still {
-            inputs.extend(["-loop".into(), "1".into(), "-framerate".into(), fps.clone()]);
-        }
-        inputs.extend(["-i".into(), arg(&path)]);
-        let crop = p
-            .crop
-            .as_ref()
-            .map(|c| format!("crop={}:{}:{}:{},", c.width, c.height, c.x, c.y))
-            .unwrap_or_default();
-        let source_end = p
-            .source_start_frame
-            .checked_add(group_frames)
-            .context("source frame offset overflow")?;
-        let region = picture_layout(&job)?
-            .map(|layout| layout.picture_region)
-            .unwrap_or(crate::caption_presentation::PixelRect {
-                x: 0,
-                y: 0,
-                width: job.width,
-                height: job.height,
-            });
-        let output_pad = if region.width != job.width || region.height != job.height {
-            format!(
-                "pad={}:{}:{}:{},",
-                job.width, job.height, region.x, region.y
-            )
-        } else {
-            String::new()
-        };
-        // RGB preserves odd-sized reserved regions exactly before final chroma
-        // conversion; YUV padding may otherwise round a caption boundary.
-        let layout_format = if output_pad.is_empty() {
-            ""
-        } else {
-            "format=rgb24,"
-        };
-        let visual = match &p.motion {
-            Some(PictureMotion::PhasedCamera { plan: motion }) => {
-                let [left, top, right, bottom] =
-                    reel_assembly::motioncraft::camera_geometry(motion)?;
-                format!(
-                    "{layout_format}scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,perspective=x0='{left}':y0='{top}':x1='{right}':y1='{top}':x2='{left}':y2='{bottom}':x3='{right}':y3='{bottom}':interpolation=cubic:sense=source:eval=frame,{output_pad}",
-                    region.width, region.height, region.width, region.height
-                )
-            }
-            Some(PictureMotion::Zoompan {
-                scale_width,
-                scale_height,
-                crop_width,
-                crop_height,
-                zoom_step,
-                zoom_max,
-            }) => format!(
-                "scale={scale_width}:{scale_height}:force_original_aspect_ratio=increase,crop={crop_width}:{crop_height},zoompan=z='min(zoom+{zoom_step},{zoom_max})':d={}:s={}x{}:fps={fps},",
-                group_frames, job.width, job.height
-            ),
-            Some(PictureMotion::CenteredZoompan {
-                scale_width,
-                scale_height,
-                crop_width,
-                crop_height,
-                zoom_step,
-                zoom_max,
-            }) => format!(
-                "scale={scale_width}:{scale_height}:force_original_aspect_ratio=increase,crop={crop_width}:{crop_height},zoompan=z='min(zoom+{zoom_step},{zoom_max})':x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2':d={}:s={}x{}:fps={fps},",
-                group_frames, job.width, job.height
-            ),
-            None => format!(
-                "{crop}{layout_format}scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,{output_pad}",
-                region.width, region.height, region.width, region.height
-            ),
-        };
-        filters.push(format!("[{i}:v]{visual}setsar=1,fps={fps},trim=start_frame={}:end_frame={source_end},setpts=PTS-STARTPTS[v{i}]",p.source_start_frame));
-    }
-    filters.push(format!(
-        "{}concat=n={}:v=1:a=0[v]",
-        (0..groups.len())
-            .map(|i| format!("[v{i}]"))
-            .collect::<String>(),
-        groups.len()
-    ));
-    inputs.extend([
-        "-filter_complex".into(),
-        filters.join(";"),
-        "-map".into(),
-        "[v]".into(),
-        "-an".into(),
-    ]);
+    let mut inputs = picture_filter_command(&job, &plan, asset_root)?;
     inputs.extend(
         lossless_video_encoding(job.still_sequence_encoding.as_deref())
             .into_iter()
@@ -2364,7 +2259,137 @@ pub fn render_with_inputs(
     Ok(verified)
 }
 
-fn render_audio_stems(
+pub(crate) fn picture_filter_command(
+    job: &Job,
+    plan: &Plan,
+    asset_root: &(impl InputFiles + ?Sized),
+) -> Result<Vec<String>> {
+    let fps = format!("{}/{}", plan.fps_numerator, plan.fps_denominator);
+    let mut inputs = Vec::new();
+    let mut filters = Vec::new();
+    let mut groups = Vec::new();
+    let mut start = 0;
+    while start < job.pictures.len() {
+        let mut end = start + 1;
+        if let Some(group) = &job.pictures[start].motion_group_id {
+            while end < job.pictures.len()
+                && job.pictures[end].motion_group_id.as_ref() == Some(group)
+            {
+                end += 1;
+            }
+        }
+        groups.push((start, end));
+        start = end;
+    }
+    for (i, &(start, end)) in groups.iter().enumerate() {
+        let p = &job.pictures[start];
+        let s = &plan.pictures[start];
+        let group_frames = plan.pictures[end - 1].end_frame - s.start_frame;
+        let path = asset_root.verified_path(&p.source)?;
+        let info = probe_with_inputs(asset_root, &path)?;
+        let stream = info["streams"]
+            .as_array()
+            .and_then(|xs| xs.iter().find(|s| s["codec_type"] == "video"))
+            .context("picture has no video stream")?;
+        if let Some(c) = &p.crop {
+            if u64::from(c.x) + u64::from(c.width) > stream["width"].as_u64().unwrap_or(0)
+                || u64::from(c.y) + u64::from(c.height) > stream["height"].as_u64().unwrap_or(0)
+            {
+                bail!("crop outside source");
+            }
+        }
+        if p.kind == PictureKind::Still {
+            inputs.extend(["-loop".into(), "1".into(), "-framerate".into(), fps.clone()]);
+        }
+        inputs.extend(["-i".into(), arg(&path)]);
+        let crop = p
+            .crop
+            .as_ref()
+            .map(|c| format!("crop={}:{}:{}:{},", c.width, c.height, c.x, c.y))
+            .unwrap_or_default();
+        let source_end = p
+            .source_start_frame
+            .checked_add(group_frames)
+            .context("source frame offset overflow")?;
+        let region = picture_layout(job)?
+            .map(|layout| layout.picture_region)
+            .unwrap_or(crate::caption_presentation::PixelRect {
+                x: 0,
+                y: 0,
+                width: job.width,
+                height: job.height,
+            });
+        let output_pad = if region.width != job.width || region.height != job.height {
+            format!(
+                "pad={}:{}:{}:{},",
+                job.width, job.height, region.x, region.y
+            )
+        } else {
+            String::new()
+        };
+        // RGB preserves odd-sized reserved regions exactly before final chroma
+        // conversion; YUV padding may otherwise round a caption boundary.
+        let layout_format = if output_pad.is_empty() {
+            ""
+        } else {
+            "format=rgb24,"
+        };
+        let visual = match &p.motion {
+            Some(PictureMotion::PhasedCamera { plan: motion }) => {
+                let [left, top, right, bottom] =
+                    reel_assembly::motioncraft::camera_geometry(motion)?;
+                format!(
+                    "{layout_format}scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,perspective=x0='{left}':y0='{top}':x1='{right}':y1='{top}':x2='{left}':y2='{bottom}':x3='{right}':y3='{bottom}':interpolation=cubic:sense=source:eval=frame,{output_pad}",
+                    region.width, region.height, region.width, region.height
+                )
+            }
+            Some(PictureMotion::Zoompan {
+                scale_width,
+                scale_height,
+                crop_width,
+                crop_height,
+                zoom_step,
+                zoom_max,
+            }) => format!(
+                "scale={scale_width}:{scale_height}:force_original_aspect_ratio=increase,crop={crop_width}:{crop_height},zoompan=z='min(zoom+{zoom_step},{zoom_max})':d={}:s={}x{}:fps={fps},",
+                group_frames, job.width, job.height
+            ),
+            Some(PictureMotion::CenteredZoompan {
+                scale_width,
+                scale_height,
+                crop_width,
+                crop_height,
+                zoom_step,
+                zoom_max,
+            }) => format!(
+                "scale={scale_width}:{scale_height}:force_original_aspect_ratio=increase,crop={crop_width}:{crop_height},zoompan=z='min(zoom+{zoom_step},{zoom_max})':x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2':d={}:s={}x{}:fps={fps},",
+                group_frames, job.width, job.height
+            ),
+            None => format!(
+                "{crop}{layout_format}scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,{output_pad}",
+                region.width, region.height, region.width, region.height
+            ),
+        };
+        filters.push(format!("[{i}:v]{visual}setsar=1,fps={fps},trim=start_frame={}:end_frame={source_end},setpts=PTS-STARTPTS[v{i}]",p.source_start_frame));
+    }
+    filters.push(format!(
+        "{}concat=n={}:v=1:a=0[v]",
+        (0..groups.len())
+            .map(|i| format!("[v{i}]"))
+            .collect::<String>(),
+        groups.len()
+    ));
+    inputs.extend([
+        "-filter_complex".into(),
+        filters.join(";"),
+        "-map".into(),
+        "[v]".into(),
+        "-an".into(),
+    ]);
+    Ok(inputs)
+}
+
+pub(crate) fn render_audio_stems(
     job: &Job,
     plan: &Plan,
     asset_root: &(impl InputFiles + ?Sized),

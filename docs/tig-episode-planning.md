@@ -206,6 +206,12 @@ See [the output publication review](reviews/2026-10-29-episode-output-publicatio
 See [current scene controls](reviews/2026-10-30-current-scene-parent-controls.md)
 for the sparse-edit fixture and exact qualification requirements.
 
+For legacy masters without native produced correspondence, the separate
+[primary-reference comparator](reviews/2026-10-30-scene-primary-reference.md)
+reconstructs native pixels and PCM independently of old receipts, using video
+pipes and bounded audio/font staging. It is a technical observation primitive;
+current-source-owned Tig proof and parent admission remain separate integration.
+
 ## Retained presentation controls without a checkout
 
 `presentation_adopt::build_with_control_files` takes an exact manifest `FileRef`

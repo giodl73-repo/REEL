@@ -57,6 +57,7 @@ pub mod scene_authoring_inputs;
 pub mod scene_cue_compose;
 pub mod scene_delivery;
 pub mod scene_delivery_compile;
+pub mod scene_primary_reference;
 pub mod scene_review;
 pub mod screen_demo;
 pub mod selection_lock;
