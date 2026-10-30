@@ -8,6 +8,11 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Operation {
+    /// Compile a committed presentation source without media reads or writes.
+    InspectPresentation { profile: PathBuf },
+    /// Independently compare a selected presentation master with its primaries.
+    /// This read-only observation does not adopt a managed job or publish media.
+    ComparePresentation { profile: PathBuf },
     /// Publish one exact caller-owned file through an explicitly enrolled cache.
     PublishFile { profile: PathBuf, output: PathBuf },
     /// Recheck retained native outputs and compare their master with a baseline.
@@ -38,6 +43,8 @@ fn main() -> ExitCode {
     let operation = Args::parse().operation;
     let comparison = matches!(&operation, Operation::CompareRetained { .. });
     let result = match operation {
+        Operation::InspectPresentation { profile } => reel::tig_presentation_cli::inspect(&profile),
+        Operation::ComparePresentation { profile } => reel::tig_presentation_cli::compare(&profile),
         Operation::PublishFile { profile, output } => {
             reel::tig_native_job_cli::publish_file(&profile, &output)
         }

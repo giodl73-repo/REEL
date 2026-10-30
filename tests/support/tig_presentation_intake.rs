@@ -380,4 +380,110 @@ fn imported_source_reproduces_the_retained_master_from_guarded_original_primarie
     .unwrap();
     assert_eq!(proof.master().sha256, selected.sha256.as_str());
     assert_eq!(provider.opened.len(), 5);
+    #[cfg(feature = "tig-publication")]
+    {
+        drop(inputs);
+        drop(source);
+        check_cli_master(&mut f, &request, &selected, &output);
+    }
+}
+
+#[cfg(feature = "tig-publication")]
+#[test]
+fn check_cli_inspects_committed_import_without_runtime_or_media() {
+    let (mut f, value, mut provider, _) = fixture(false);
+    let (prepared, request) =
+        intake::prepare(&serde_json::from_value(value).unwrap(), &mut provider).unwrap();
+    install(&mut f, &prepared);
+    let profile = json!({"schema":"reel.tig-presentation-check-profile.experimental-1","source":f.profile,"request":request,"comparison":null});
+    write(f.root(), "check-profile.json", &profile);
+    let result = Command::new(env!("CARGO_BIN_EXE_reel-tig-job"))
+        .args(["inspect-presentation"])
+        .arg(f.root().join("check-profile.json"))
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["primary_media_opened"], 0);
+    assert_eq!(report["primary_names"], 4);
+    assert_eq!(report["adopted"], false);
+    let result = Command::new(env!("CARGO_BIN_EXE_reel-tig-job"))
+        .args(["compare-presentation"])
+        .arg(f.root().join("check-profile.json"))
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+}
+
+#[cfg(all(windows, feature = "tig-publication"))]
+fn check_cli_master(f: &mut Fixture, request: &Request, selected: &Object, output: &Path) {
+    let definition_path = "definitions/presentation-output.json";
+    let mut definition: Value =
+        serde_json::from_slice(&fs::read(f.root().join(definition_path)).unwrap()).unwrap();
+    definition["authoring"]["properties"] = json!([
+        "document",
+        "presentation",
+        "episode_id",
+        "language",
+        "source_segment_id",
+        "component_kind"
+    ]);
+    let definition = write(f.root(), definition_path, &definition);
+    for admission in f.profile["admitted"].as_array_mut().unwrap() {
+        if admission["id"] == "types/presentation-output" {
+            admission["object"] = json!(definition);
+        }
+    }
+    write(
+        f.root(),
+        "records/checked-output.tig",
+        &json!({"schema":"tig.instance.design-1","id":"checked/output","definition":{"id":"types/presentation-output","sha256":definition.sha256,"bytes":definition.bytes},"authored":{"document":{},"presentation":{"id":request.presentation_id},"episode_id":"fixture","language":"es","source_segment_id":"opening","component_kind":"episode-presentation"},"selected":selected,"streams":[],"status":{},"metadata":{}}),
+    );
+    fs::copy(
+        output.join("master.mkv"),
+        f.root()
+            .join("cache/objects")
+            .join(selected.sha256.as_str()),
+    )
+    .unwrap();
+    commit(f);
+    let tool = PathBuf::from(env!("CARGO_BIN_EXE_reel-tig-job"));
+    let program = |name: &str| {
+        let path = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+            .map(|root| root.join(format!("{name}.exe")))
+            .find(|path| path.is_file())
+            .unwrap()
+            .canonicalize()
+            .unwrap();
+        let identity = reel::media_runtime::ByteIdentity::observe_file(&path).unwrap();
+        json!({"path":path,"sha256":identity.sha256,"bytes":identity.bytes})
+    };
+    let mut profile = json!({"schema":"reel.tig-presentation-check-profile.experimental-1","source":f.profile,"request":request,"comparison":{"output_id":"checked/output","output_definition":"types/presentation-output","runtime":{"host":reel::media_runtime::ByteIdentity::observe_file(&tool).unwrap(),"ffmpeg":program("ffmpeg"),"ffprobe":program("ffprobe"),"dependencies":{}},"stage_parent":f.root(),"max_staged_bytes":1048576,"max_objects":8192,"max_logical_bytes":2147483648u64}});
+    let run = |profile: &Value| {
+        write(f.root(), "check-profile.json", profile);
+        Command::new(&tool)
+            .arg("compare-presentation")
+            .arg(f.root().join("check-profile.json"))
+            .output()
+            .unwrap()
+    };
+    let result = run(&profile);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["equal"], true);
+    assert_eq!(report["adopted"], false);
+    assert_eq!(report["production_current"], false);
+    assert_eq!(report["master"]["sha256"], selected.sha256.as_str());
+    profile["comparison"]["max_objects"] = json!(1);
+    let refused = run(&profile);
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("resources exceed admission"));
 }

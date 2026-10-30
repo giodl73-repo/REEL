@@ -254,6 +254,9 @@ impl<'a> JobPlan<'a> {
     pub fn compiled(&self) -> &CompiledPresentation {
         &self.compiled
     }
+    pub fn selected_master(&self) -> &FileRef {
+        &self.master
+    }
     fn admission(&self) -> job::Admission<'_> {
         job::Admission {
             context: self.context,

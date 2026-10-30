@@ -86,6 +86,8 @@ pub mod tig_native_registration;
 pub mod tig_package_registration;
 #[cfg(feature = "tig")]
 pub mod tig_presentation;
+#[cfg(feature = "tig-publication")]
+pub mod tig_presentation_cli;
 #[cfg(feature = "tig")]
 pub mod tig_presentation_registration;
 #[cfg(feature = "tig-publication")]
