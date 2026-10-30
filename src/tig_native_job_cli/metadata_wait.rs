@@ -229,6 +229,7 @@ mod tests {
         struct Observed {
             inner: MetadataStore,
             release: Option<std::sync::mpsc::Sender<()>>,
+            writer: Option<std::thread::JoinHandle<metadata::Checkpoint>>,
             calls: usize,
         }
         impl NodeStore for Observed {
@@ -241,6 +242,10 @@ mod tests {
                 if result.as_ref().is_err_and(tree_busy) {
                     if let Some(release) = self.release.take() {
                         release.send(()).unwrap();
+                        // Observe the real Busy result before releasing its
+                        // writer, then synchronize that commit. CI scheduling
+                        // and disk latency are not the production wait budget.
+                        self.writer.take().unwrap().join().unwrap();
                     }
                 }
                 result
@@ -251,6 +256,7 @@ mod tests {
             Observed {
                 inner: second,
                 release: Some(release),
+                writer: Some(writer),
                 calls: 0,
             },
             &wait,
@@ -259,7 +265,7 @@ mod tests {
         let object = pending.put(&body).unwrap();
         assert!(pending.inner.calls > 1);
         let witness = wait.run(|| pending.inner.inner.finish()).unwrap();
-        writer.join().unwrap();
+        assert!(pending.inner.writer.is_none());
         drop(pending);
         let reader = MetadataReader::open(&root.path().join("nodes"), &witness).unwrap();
         assert!(reader.get(&first_object).unwrap().is_some());
