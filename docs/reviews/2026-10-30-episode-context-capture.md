@@ -26,6 +26,12 @@ Final local qualification passes strict locked all-target/all-feature Clippy,
 CLI variants together in 256.84 seconds. Formatting and whitespace checks pass.
 Hosted qualification remains required.
 
+A real S2E10 capture against qualified Melena source also passes: one root,
+24 composition controls and a 5,303-byte private fragment restore exactly in
+the existing F: metadata store. The command reports no media rendering, source
+owner adoption or eviction authority. This is real composition-metadata
+acceptance, not proof of every component's primary closure or managed production.
+
 Producer-applied provenance review requires exact committed-source and definition
 pins, private fragments, retained witnesses and independent restore before use.
 Editor/sound review leaves component eligibility and decoded output checks with
