@@ -8,6 +8,12 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Operation {
+    /// Verify exact PCM-WAV reconstruction; publish only with explicit admission.
+    RecoverPcmWave {
+        profile: PathBuf,
+        #[arg(long)]
+        publish: bool,
+    },
     /// Compile a committed presentation source without media reads or writes.
     InspectPresentation { profile: PathBuf },
     /// Independently compare a selected presentation master with its primaries.
@@ -43,6 +49,9 @@ fn main() -> ExitCode {
     let operation = Args::parse().operation;
     let comparison = matches!(&operation, Operation::CompareRetained { .. });
     let result = match operation {
+        Operation::RecoverPcmWave { profile, publish } => {
+            reel::tig_pcm_recovery::run(&profile, publish)
+        }
         Operation::InspectPresentation { profile } => reel::tig_presentation_cli::inspect(&profile),
         Operation::ComparePresentation { profile } => reel::tig_presentation_cli::compare(&profile),
         Operation::PublishFile { profile, output } => {
