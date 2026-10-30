@@ -39,7 +39,7 @@ enum Operation {
     Setup { profile: PathBuf, output: PathBuf },
     /// Check existing named stores against private trusted-minimum bindings.
     CheckStores { bindings: PathBuf },
-    /// Freeze and read back a committed source; write a private worker fragment.
+    /// Freeze and read back a committed scene/episode into a private fragment.
     CaptureContext { profile: PathBuf, output: PathBuf },
     /// Adopt planned resources, render in bounded scratch and retain exact results.
     Run { profile: PathBuf },

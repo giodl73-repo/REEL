@@ -30,7 +30,6 @@ fn exercise(mixed: bool) {
     } else {
         Vec::new()
     };
-    let mut source = p.source();
     let metadata = p.data.path().join("episode-cli-metadata");
     let mut writer = MetadataStore::create(
         &metadata,
@@ -42,23 +41,53 @@ fn exercise(mixed: bool) {
         },
     )
     .unwrap();
-    let context = reel::tig_episode::freeze_composition_context(
-        &mut source,
-        &request,
-        &mut writer,
-        TreeLimits::default(),
-    )
-    .unwrap();
     let minimum = writer.finish().unwrap();
     drop(writer);
-    let archive = json!({"schema":reel::tig_inputs::ARCHIVE_PROFILE_SCHEMA,"archive":context.archive(),"checkpoint":source.checkpoint(),"admitted":p.profile["admitted"],"byte_source":p.profile["byte_source"]});
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_reel-tig-job"))
         .canonicalize()
         .unwrap();
     let mut runtime = serde_json::to_value(&p.runtime).unwrap();
     runtime["host"] = serde_json::to_value(ByteIdentity::observe_file(&binary).unwrap()).unwrap();
     let config = json!({"path_policy":"configured-local-roots","cache_roots":[p.hot()],"coordination_root":p.data.path().join("coordination"),"capacity":{"minimum_free_bytes":0,"minimum_free_basis_points":0}});
-    let inputs = json!({"source":archive,"context":context.selection(),"request":request,"runtime":runtime,
+    let capture = json!({"schema":"reel.tig-episode-capture-profile.experimental-1","source":p.profile,"request":request,
+        "metadata_root":metadata,"metadata_minimum":minimum,"metadata_cache":p.hot(),"preparation_cache":p.hot(),"cache":config});
+    write(p.data.path(), "episode-capture-profile.json", &capture);
+    let fragment_path = p.data.path().join("episode-context.json");
+    let captured = std::process::Command::new(&binary)
+        .arg("capture-context")
+        .arg(p.data.path().join("episode-capture-profile.json"))
+        .arg(&fragment_path)
+        .output()
+        .unwrap();
+    assert!(
+        captured.status.success(),
+        "{}",
+        String::from_utf8_lossy(&captured.stderr)
+    );
+    let summary: Value = serde_json::from_slice(&captured.stdout).unwrap();
+    assert_eq!(summary["context_kind"], "episode");
+    assert_eq!(summary["readback_equal"], true);
+    assert_eq!(summary["media_rendered"], false);
+    assert_eq!(summary["job_adopted"], false);
+    assert!(
+        p.owners
+            .source(&key("bounded-episode-cli"))
+            .unwrap()
+            .is_none()
+    );
+    let fragment = read(&fragment_path);
+    let original = fs::read(&fragment_path).unwrap();
+    let repeated = std::process::Command::new(&binary)
+        .arg("capture-context")
+        .arg(p.data.path().join("episode-capture-profile.json"))
+        .arg(&fragment_path)
+        .output()
+        .unwrap();
+    assert!(!repeated.status.success());
+    assert_eq!(fs::read(&fragment_path).unwrap(), original);
+    let minimum: tig_store::metadata::Checkpoint =
+        serde_json::from_value(fragment["metadata_minimum"].clone()).unwrap();
+    let inputs = json!({"source":fragment["source"],"context":fragment["context"],"request":fragment["request"],"runtime":runtime,
         "scenes":p.requests.iter().zip(UNITS).filter(|(_,id)|!mixed || matches!(*id,"scene-a"|"scene-b")).map(|(request,id)|json!({"id":id,"request":request,"output_id":format!("output/{id}"),"output_definition":"types/output","compiled":id=="scene-b"})).collect::<Vec<_>>(),"presentations":presentations});
     let profile = json!({"schema":"reel.tig-episode-job.experimental-1","inputs":inputs,"cache":config,
         "preparation_cache":p.hot(),"metadata_root":metadata,"metadata_minimum":minimum,
