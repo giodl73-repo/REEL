@@ -270,7 +270,7 @@ pub fn compare_master_to_primaries(
     stage_parent: &Path,
     budget: &Budget,
 ) -> Result<PrimaryReference> {
-    scene_delivery::control_name(&master.path)?;
+    outputs.validate_reference_name(master)?;
     if !stage_parent.is_absolute()
         || !stage_parent.is_dir()
         || budget.max_staged_bytes == 0

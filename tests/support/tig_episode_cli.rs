@@ -25,11 +25,29 @@ fn exercise(mixed: bool) {
     p.assemble(&scenes, "cli-v1");
     let mut request = add_episode_assembly(&mut p, "episode-cli-v1.json");
     let _parent_controls = parent_controls::exercise(&p, &request);
-    let presentations = if mixed {
+    let mut presentations = if mixed {
         mixed_components::configure(&mut p, &mut request)
     } else {
         Vec::new()
     };
+    // Logical output IDs are not filenames. Exercise the production namespace
+    // through capture, independent comparisons, parent assembly and handoff.
+    let mut assembly = read(p.repo.path().join("records/assembly.tig"));
+    for id in UNITS {
+        let name = format!("records/output-{id}.tig");
+        let mut output = read(p.repo.path().join(&name));
+        let logical = format!("{id}:master:es");
+        output["id"] = json!(logical);
+        write(p.repo.path(), &name, &output);
+        assembly["authored"]["components"][id] = json!({"id":logical});
+        for presentation in &mut presentations {
+            if presentation["id"] == id {
+                presentation["output_id"] = json!(logical);
+            }
+        }
+    }
+    write(p.repo.path(), "records/assembly.tig", &assembly);
+    p.commit("use opaque language-scoped component IDs");
     let metadata = p.data.path().join("episode-cli-metadata");
     let mut writer = MetadataStore::create(
         &metadata,
@@ -88,7 +106,7 @@ fn exercise(mixed: bool) {
     let minimum: tig_store::metadata::Checkpoint =
         serde_json::from_value(fragment["metadata_minimum"].clone()).unwrap();
     let inputs = json!({"source":fragment["source"],"context":fragment["context"],"request":fragment["request"],"runtime":runtime,
-        "scenes":p.requests.iter().zip(UNITS).filter(|(_,id)|!mixed || matches!(*id,"scene-a"|"scene-b")).map(|(request,id)|json!({"id":id,"request":request,"output_id":format!("output/{id}"),"output_definition":"types/output","compiled":id=="scene-b"})).collect::<Vec<_>>(),"presentations":presentations});
+        "scenes":p.requests.iter().zip(UNITS).filter(|(_,id)|!mixed || matches!(*id,"scene-a"|"scene-b")).map(|(request,id)|json!({"id":id,"request":request,"output_id":format!("{id}:master:es"),"output_definition":"types/output","compiled":id=="scene-b"})).collect::<Vec<_>>(),"presentations":presentations});
     let profile = json!({"schema":"reel.tig-episode-job.experimental-1","inputs":inputs,"cache":config,
         "preparation_cache":p.hot(),"metadata_root":metadata,"metadata_minimum":minimum,
         "journal_root":p.data.path().join("owners"),"journal_minimum":p.owners.checkpoint(),

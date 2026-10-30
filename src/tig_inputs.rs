@@ -665,6 +665,10 @@ impl Inputs {
     }
 }
 impl InputFiles for Inputs {
+    fn validate_reference_name(&self, item: &FileRef) -> Result<()> {
+        logical(&item.path)?;
+        Ok(())
+    }
     fn verified_path(&self, expected: &FileRef) -> Result<PathBuf> {
         let name = logical(&expected.path)?;
         let object = self
