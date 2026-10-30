@@ -44,3 +44,10 @@ pixel/audio clocks, live byte guards, unchanged historical assertions and clear
 technical/creative boundaries. The tiny episode fixture exercises offline
 controls, missing-node refusal, wrong output/type refusal, concurrent owners,
 mutation exclusion and withdrawal. It does not qualify all real project scenes.
+
+Local qualification passes strict locked all-target/all-feature Clippy, the
+40.71-second ownership fixture, 222 library tests, 27 enabled scene-delivery
+tests, 13 episode-planning tests and 88 enabled input/lifecycle tests. The
+explicit changed-scene parent render also passes in 87.92 seconds after the
+shared control-framing extraction. Formatting and whitespace checks pass.
+Hosted exact-head qualification and actual project acceptance remain required.

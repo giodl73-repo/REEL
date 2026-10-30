@@ -12,6 +12,9 @@ fn retained_scene_matches_without_history_and_with_independent_owners() {
     let _scene = p.render_delivery(1, "retained");
     p.commit("select retained scene master");
     let mut source = p.source();
+    let cel: Object =
+        serde_json::from_value(read(p.repo.path().join("records/cel-a.tig"))["selected"].clone())
+            .unwrap();
     let mut nodes = MemoryNodes::default();
     let context = tig_scene::freeze_context(
         &mut source,
@@ -169,10 +172,7 @@ fn retained_scene_matches_without_history_and_with_independent_owners() {
     assert!(
         fs::OpenOptions::new()
             .write(true)
-            .open(object_file(
-                &p.hot(),
-                source.record("cel/a").unwrap().selected().unwrap()
-            ))
+            .open(object_file(&p.hot(), &cel))
             .is_err()
     );
     let peer_proof = peer
