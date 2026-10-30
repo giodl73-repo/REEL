@@ -349,11 +349,10 @@ fn check_media(path: &Path, template: &Template, files: &dyn InputFiles) -> Resu
     Ok((frames, samples))
 }
 
-fn load(
+fn control_plan(
     manifest_bytes: &[u8],
     controls: &dyn InputFiles,
-    inputs: &dyn InputFiles,
-) -> Result<LoadedPresentation> {
+) -> Result<(Manifest, Template, Vec<u64>)> {
     let manifest: Manifest = serde_json::from_slice(manifest_bytes)?;
     if !matches!(
         manifest.schema.as_str(),
@@ -395,10 +394,6 @@ fn load(
     {
         bail!("invalid presentation still template or picture count");
     }
-    verified(inputs, &manifest.editable_layer)?;
-    for font in &manifest.fonts {
-        verified(inputs, font)?;
-    }
     if manifest.audio_treatment.is_some() && manifest.audio.is_none() {
         bail!("audio treatment requires a selected audio source");
     }
@@ -407,16 +402,6 @@ fn load(
     }
     let samples = template.frames() * template.sample_rate as u64 / template.frame_rate as u64;
     audio_envelope(manifest.audio_treatment.as_ref(), samples)?;
-    let pictures = manifest
-        .pictures
-        .iter()
-        .map(|item| verified(inputs, item))
-        .collect::<Result<Vec<_>>>()?;
-    let audio = manifest
-        .audio
-        .as_ref()
-        .map(|item| verified(inputs, item))
-        .transpose()?;
     let picture_frames = if let Some(timing_ref) = &manifest.picture_timing {
         let bytes = read_control(controls, timing_ref)?;
         let timing: PictureTiming = serde_json::from_slice(&bytes)?;
@@ -427,6 +412,39 @@ fn load(
             .audio
             .as_ref()
             .context("source clock requires selected audio")?;
+        compile_picture_frames(&timing, &clock, &template, &audio_ref.sha256)?
+    } else {
+        vec![template.frames_per_picture as u64; manifest.pictures.len()]
+    };
+    Ok((manifest, template, picture_frames))
+}
+
+pub(crate) fn validate_metadata(raw: &[u8], controls: &dyn InputFiles) -> Result<()> {
+    control_plan(raw, controls).map(|_| ())
+}
+
+fn load(
+    raw: &[u8],
+    controls: &dyn InputFiles,
+    inputs: &dyn InputFiles,
+) -> Result<LoadedPresentation> {
+    let (manifest, template, picture_frames) = control_plan(raw, controls)?;
+    verified(inputs, &manifest.editable_layer)?;
+    for font in &manifest.fonts {
+        verified(inputs, font)?;
+    }
+    let pictures = manifest
+        .pictures
+        .iter()
+        .map(|item| verified(inputs, item))
+        .collect::<Result<Vec<_>>>()?;
+    let audio = manifest
+        .audio
+        .as_ref()
+        .map(|item| verified(inputs, item))
+        .transpose()?;
+    if manifest.picture_timing.is_some() {
+        let samples = template.frames() * template.sample_rate as u64 / template.frame_rate as u64;
         let source = audio.as_ref().context("missing source audio")?;
         let source_facts = facts(source, inputs)?;
         let stream = source_facts["streams"]
@@ -451,16 +469,13 @@ fn load(
         if !decoded.status.success() || decoded.stdout.len() as u64 != samples * 6 {
             bail!("source-clock audio decoded length differs from the complete clock");
         }
-        compile_picture_frames(&timing, &clock, &template, &audio_ref.sha256)?
-    } else {
-        vec![template.frames_per_picture as u64; pictures.len()]
-    };
+    }
     Ok((
         manifest,
         template,
         pictures,
         audio,
-        manifest_bytes.to_vec(),
+        raw.to_vec(),
         picture_frames,
     ))
 }

@@ -312,6 +312,9 @@ impl<T: InputFiles + ?Sized> InputFiles for RuntimeInputs<'_, T> {
     fn verified_path(&self, item: &FileRef) -> Result<PathBuf> {
         self.inputs.verified_path(item)
     }
+    fn control_bytes(&self, item: &FileRef) -> Result<Vec<u8>> {
+        self.inputs.control_bytes(item)
+    }
     fn media_program(&self, program: MediaProgram) -> Result<PathBuf> {
         self.programs
             .programs

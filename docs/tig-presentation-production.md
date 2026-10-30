@@ -5,6 +5,51 @@ source-clock still-sequence producer as library code. The existing command is
 a thin wrapper; original manifests and receipts keep their schemas and fields.
 No legacy project script or new presentation format is required.
 
+## Native Tig source and recipe
+
+`tig_presentation` compiles a small source record whose `authored.document`
+names pictures, audio, editable layer, fonts and control records by logical Tig
+ID. Every primary pin resolves from one captured source view. Template, timing,
+source clock and evidence are literal documents on separately versioned records;
+the compiler supplies their canonical JSON directly in memory. No source
+directory, second caller-maintained hash inventory or copied media is needed.
+
+```text
+source.tig ── template.tig
+    │       timing.tig ── clock.tig ── evidence.tig
+    │                          └──── cue.tig (measured object pinned)
+    └── cel.tig / cue.tig / layer.tig / font.tig
+                        │
+            captured metadata + logical primary IDs
+                        │
+               compiled native manifest
+                        │
+            frozen Production graph and recipe
+                        │
+         guarded Tig primary reader + native producer
+```
+
+Source/control and primary definitions must be disjoint. The request explicitly
+admits primary definition IDs and selection-state values; no universal creative
+status is built into the schema. An output definition cannot enter as a primary.
+A source clock names both its logical recording and the exact object measured:
+changing the selected recording requires a new measured clock before execution.
+
+`requirements`, `freeze_context`, `restore_context` and `recipe` validate the
+same compiler interpretation and declared Production graph. A recipe consumes
+literal documents and primary payloads, excluding review annotations. A changed
+cel, template, timing or recording changes consumed meaning; an annotation-only
+commit can retain the recipe while still creating a distinct source checkpoint.
+Frozen contexts can be replayed without Git or working control files. A different
+request, source, compiler or kernel is refused. All these operations read zero
+primary bytes.
+
+The synthetic integration test renders through the actual guarded Tig reader,
+checks the generated receipt and independently compares the master to its
+primary inputs. Metadata never needs filesystem materialization. This is a
+producer test, not yet a managed presentation job, parent-composition admission,
+complete runtime/font isolation, creative approval or permission to evict inputs.
+
 `build_with_control_files` accepts an exact manifest pin and separate metadata
 and primary-input providers. Template, timing, source clock and clock evidence
 use bounded hash-checked metadata reads. Pictures, audio, editable layer and
@@ -112,8 +157,23 @@ rights/provenance checklists, not independent or human approval.
   selection and the runtime environment; explicit program paths alone cannot
   establish complete runtime closure.
 
-Native presentation recipe/currency admission, bounded parent execution and
-complete resource-owner handoff remain open.
+The native presentation source compiler and metadata recipe are implemented.
+Managed presentation currency admission, bounded parent execution and complete
+resource-owner handoff remain open. Producer-applied checklist review of this
+extension preserves these findings:
+
+- Editing: stable logical cel IDs resolve their selected objects in one source
+  snapshot; image and timing changes invalidate the consumed recipe.
+- Sound: a recording change cannot reuse a measured clock for another object;
+  actual decoding/sample checks remain mandatory during execution.
+- Provenance: inline clock evidence is retained as metadata, never treated as
+  independent approval. Recipe matching does not change creative status or
+  rewrite an old producer's receipt.
+- Runtime: in-memory controls preserve explicit provider refusals and remain
+  pin-checked. Font fallback and complete runtime isolation remain unresolved
+  prerequisites for full reproducibility; the compiler adds no such claim.
+
+These are producer-applied checklist findings, not independent or human review.
 
 ## Local qualification
 
@@ -138,3 +198,11 @@ seconds); protocol parsing also rejects malformed version/type/algorithm/stream
 coverage. Locked all-target/all-feature Clippy passes with warnings denied.
 These are fixture results, not a claim that actual project masters have yet
 passed primary-reference comparison or native job admission.
+
+The native source/context extension passes seven new scenarios, including an
+actual guarded render, primary comparison, source-clock refusal, output-role
+refusal, sparse cel changes, offline replay and recipe invalidation. Final local
+regressions pass 215 library tests (nine explicitly ignored), one runtime-provider
+test, five still-sequence tests and 78 Tig input tests (12 explicitly ignored).
+Locked all-target/all-feature Clippy passes with warnings denied. Hosted checks
+must qualify the exact proposed head before merge or runtime-pin updates.
