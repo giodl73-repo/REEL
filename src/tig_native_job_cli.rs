@@ -31,7 +31,7 @@ const TICKET_SCHEMA: &str = "reel.tig-native-worker.experimental-1";
 mod capture;
 mod comparison;
 pub(crate) mod metadata_wait;
-pub use comparison::compare_retained;
+pub use comparison::{compare_retained, revalidate_retained};
 pub(crate) mod handoff;
 mod planning;
 pub(crate) mod preparation;

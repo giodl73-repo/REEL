@@ -71,15 +71,18 @@ pub fn exercise(
         .unwrap()
         .checkpoint()
         .clone();
-    let invoke = |value: &Value, destination: &Path| {
+    let invoke_operation = |operation: &str, value: &Value, destination: &Path| {
         fs::write(&input, serde_json::to_vec(value).unwrap()).unwrap();
         Command::new(binary)
-            .arg("compare-retained")
+            .arg(operation)
             .arg(&input)
             .arg(destination)
             .env("PATH", "")
             .output()
             .unwrap()
+    };
+    let invoke = |value: &Value, destination: &Path| {
+        invoke_operation("compare-retained", value, destination)
     };
     // Source Git/records/definitions are still physically offline here. All
     // validation tools must come from their held declarations, never PATH.
@@ -148,6 +151,50 @@ pub fn exercise(
         derived_evidence["output_count"],
         evidence["outputs"].as_object().unwrap().len()
     );
+    // Revalidation is explicitly selected and has no claim-replay or new
+    // production authority, even when all controls and decoded bytes match.
+    let mut revalidation = derived.clone();
+    revalidation["schema"] = json!("reel.tig-retained-revalidation.experimental-1");
+    let revalidated_report = root.join("retained-revalidation.json");
+    assert!(!invoke(&revalidation, &revalidated_report).status.success());
+    assert!(!revalidated_report.exists());
+    let checked = invoke_operation("revalidate-retained", &revalidation, &revalidated_report);
+    assert!(
+        checked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    let observed: Value = serde_json::from_slice(&fs::read(&revalidated_report).unwrap()).unwrap();
+    assert_eq!(observed["contract_equivalent"], true);
+    assert_eq!(observed["native_checked"], true);
+    assert_eq!(observed["parity"]["equal"], true);
+    assert_eq!(observed["original_claim_replayed"], false);
+    assert!(observed["production_claim"].is_null());
+    assert_eq!(observed["authorizes_production"], false);
+    assert_eq!(observed["historical_claim"], comparison["claim"]);
+    assert_eq!(
+        observed["original_producer_admission"],
+        comparison["producer"]
+    );
+    assert!(observed.get("outputs").is_none());
+    assert_eq!(observed["output_manifest"], comparison["receipt"]);
+    clean(cache);
+    for case in ["request", "archive", "duplicate-map"] {
+        let mut denied = revalidation.clone();
+        match case {
+            "request" => denied["request"]["delivery_title"] = json!("Changed title"),
+            "archive" => denied["source"]["archive"] = json!(Object::from_bytes(b"other archive")),
+            _ => denied["outputs"] = comparison["outputs"].clone(),
+        }
+        let output = root.join(format!("refused-revalidation-{case}.json"));
+        assert!(
+            !invoke_operation("revalidate-retained", &denied, &output)
+                .status
+                .success()
+        );
+        assert!(!output.exists());
+        clean(cache);
+    }
     for case in ["requests", "bytes", "duplicate-map", "missing-v1-map"] {
         let mut denied = derived.clone();
         match case {
