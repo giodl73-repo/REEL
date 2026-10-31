@@ -119,6 +119,9 @@ input predecessors, grant approval or finish child-owner handoff. Incomplete
 and unpublished workspace salvage remains separate.
 The report preserves the original `succeeded` value: safe retirement of a failed
 job's retained candidates does not make that job successful.
+If interrupted removal leaves a partial directory without `job.json`, further
+removal currently refuses. A resumable retirement transaction remains separate
+work; preserve the remaining directory rather than bypassing identity checks.
 
 ## Set up shared stores once
 

@@ -30,3 +30,5 @@ one owned workspace, and technical custody conveys no creative approval. These
 are checklist findings, not independent human approval. Current implementation
 requires Windows read-sharing guards. Incomplete/unpublished salvage, child
 handoff and actual consumer cutover remain open.
+Interrupted partial removal that loses the manifest currently refuses retry;
+resumable retirement transactions remain an explicit acceptance gap.
