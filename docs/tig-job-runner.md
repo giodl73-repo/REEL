@@ -76,6 +76,84 @@ and rejects a published-result admission. Both commands preserve the original
 success/failure outcome and grant no producer, approval or scratch-removal claim.
 Incomplete packets and unpublished workspace recovery remain separate work.
 
+### Unpublished interrupted workspace salvage API
+
+The Rust `tig_job_runner::salvage_unpublished` API accepts the original admitted
+input `JobContext`, source owner/revision and runner profile, plus an explicit
+`reel_assets::jobs::Salvage` containing the absolute workspace path, exact
+`request_sha256`, positive `max_workspace_bytes` and `apply` flag. It holds only
+that source's fence. The default caller choice should be `apply:false`.
+
+Dry-run reads and verifies without publishing bytes or changing the journal.
+Apply publishes present declared outputs, the exact request and bounded
+diagnostics, then uses the existing retention sink to retain a failed-job packet.
+Missing declared outputs are allowed; unsafe or oversized present outputs refuse.
+Undeclared intermediates are never published. Even a present `result.json` cannot
+make an interrupted job successful. This operation runs no tools, changes no
+creative selection and leaves the workspace intact.
+
+Both modes require an ordinary workspace under the exact enrolled cache staging
+parent and no reservation record or lease for that job. Canonical inputs/tools
+must still exist and match their admitted roles and bytes; a remaining scratch
+hard link cannot replace them. Installed tools are not executed and their present
+availability is not asserted. Windows read-sharing guards exclude mutation and
+deletion of opened files. Bounded snapshots detect workspace changes before
+retention. Other jobs' reservations remain independent.
+
+Apply reserves publication capacity in the existing cache. Published candidates
+and controls are verified and guarded through the retention callback. A failed
+callback preserves scratch; byte publication before the callback does not itself
+establish source ownership. Retry while the original input remains current uses
+the same deterministic request/evidence pins. If interruption recorded prepare,
+use `adopt-prepared` with the original admission. After successful retention,
+normal verified retirement is a separate explicit operation.
+
+This API does not discover workspaces, remove reservations, salvage arbitrary
+unbounded files, attest a native producer, or restore incomplete metadata trees.
+Consumer integration remains separate from this Rust API.
+
+### Salvage an unpublished workspace from the CLI
+
+```text
+reel-tig-job salvage-workspace <private-salvage-profile.json>
+reel-tig-job salvage-workspace <private-salvage-profile.json> --apply
+```
+
+The strict profile schema is
+`reel.tig-workspace-salvage-profile.experimental-1`:
+
+| Fields | Admission |
+| --- | --- |
+| `artifact_root` | Existing absolute runner artifact directory; publication bookkeeping stays outside Git |
+| `workspace`, `request`, `max_workspace_bytes` | Exact absolute staging workspace, original request Object (`sha256`, `bytes`), positive bound |
+| `original_input` | Exact journal-owned input-job Selection (`root`, `context`) |
+| `source_id`, `owner`, `expected_revision`, `retain_operation` | Original input owner/revision and explicit retention operation |
+| `journal_root`, `journal_minimum` | Existing journal and trusted minimum |
+| `metadata_root`, `metadata_minimum` | Existing metadata provider and trusted minimum |
+| `cache`, `coordination_root` | Existing cache configuration and shared coordination root; the two coordination bindings must agree |
+
+The command reads the immutable role roster from the owned job and source-context
+trees. It supports the known input-job context schemas, including composition,
+input evidence and variant interpretation. Header pins, namespace counts, links,
+role names and conflicting lengths are checked. Unknown shapes, output claims
+and foreign variant sources refuse. These checks preserve historical input
+admission; they do not replay an old compiler, establish a new recipe match or
+assert producer currency. Production commands still require their planned
+`JobContext` admission.
+
+The source must still own the original input at the exact revision with no
+pending result. Dry-run leaves source state and payload publication unchanged.
+Explicit apply retains a failed-job packet and advances the original ownership
+transition. A successful salvage command exits successfully even though its
+`succeeded` field remains false: the interrupted render is never reclassified as
+successful. Reopening a recorded prepare and verified workspace retirement use
+their separate commands.
+
+Stdout contains only counts, revision and authority flags. Public errors use a
+fixed message without nested paths, IDs or private evidence. Keep the profile
+private. There is no workspace discovery, daemon, tool execution, implicit apply,
+reservation release, asset selection or scratch removal.
+
 ### Verify and retire recovered job scratch
 
 ```text
@@ -640,14 +718,22 @@ vendored Tig/REEL source descriptor; intake is not an automatic runtime switch.
 reel-tig-job inspect-generation <private-profile.json> <new-private-report.json>
 ```
 
-This metadata-only command uses an existing archived Tig source and metadata
-provider. It starts no generator, reads no primary payloads and grants no job,
+This metadata-only command uses an exact committed Git source or an existing
+archived Tig source. It starts no generator, reads no primary payloads and grants no job,
 selection or removal authority. The explicit profile schema is
 `reel.tig-generation-inspection.experimental-1`: `metadata_root`,
-`metadata_minimum`, `source` (ArchiveProfile), `request`, `producer` (Object), and
+`metadata_minimum`, `source` (Git input Profile or ArchiveProfile), `request`, `producer` (Object), and
 optional `original` (`source`, `request`, independently admitted `producer`, and
 exact `claim` Object). Without original evidence, selected bytes remain
 `unproven`; an absent selection is `unbuilt`, not a successful generation.
+
+For a Git source without original evidence, omit both `metadata_root` and
+`metadata_minimum`: no metadata archive needs to be created first. The source's
+explicit commit and scopes define the view; uncommitted worktree edits do not
+change it. Archive sources and original evidence require both authority fields.
+Historical claim bytes are resolved through the original source's enrolled
+providers, which may differ from the current source's providers. Source formats
+cannot be mixed, and supplying only half the metadata authority is refused.
 
 The request schema is `reel.tig-generation-request.experimental-1`. It names
 `output_id`, `output_definition`, `spec_id`, `spec_definition`,
@@ -686,6 +772,39 @@ unproven upstream bases block downstream advice. Cycles, duplicate IDs, mixed
 source views and bounds refuse. This advice never executes a model. The single
 asset CLI deliberately reports `upstream_generation_checked: false`; it does not
 substitute its direct recipe match for a complete generation queue evaluation.
+
+### Inspect a set of generators together
+
+```text
+reel-tig-job inspect-generation-set <private-profile.json> <new-private-report.json>
+```
+
+Use schema `reel.tig-generation-set-inspection.experimental-1`, with the same
+`source` and optional paired `metadata_root`/`metadata_minimum` fields. Replace
+the single request with `targets`, an array of 1–128 objects containing
+`request`, `producer`, and optional `original` in their single-asset shapes.
+The profile and report are each bounded to 1 MiB. All targets use one captured
+source checkpoint; there is no per-target current source override.
+
+The private report orders entries upstream first, keeping `basis` separate
+from `advice`. A cue may have `basis: claimed_recipe_match` against the old
+translated text while its `advice` is `blocked` because that translation is
+stale or unproven. `catch_up_candidate` uses advice, so blocked descendants do
+not enter the proposed catch-up set. Reinspect at a new committed checkpoint
+after producing and selecting an upstream replacement.
+
+Registered upstream generators omitted from `targets` appear in
+`missing_upstream` and block their descendants. `declared_upstream_scope_complete`
+only means these registered links are covered; it does not prove every legacy
+input has generation provenance or that every project asset was included.
+Missing original claims remain unproven. Invalid or unavailable admitted
+evidence refuses the entire inspection and publishes no partial report.
+Duplicate targets, cycles, unknown controls and exceeded bounds also refuse.
+
+Stdout contains counts and authority flags, without asset IDs or private pins.
+The report is private and never overwrites an existing file. This command
+starts no generator or media job, selects nothing, verifies no primary payloads,
+and grants no execution, approval, delivery or eviction authority.
 
 Reports remain private, use no-clobber publication and distinguish declared basis
 matching from actual execution, available bytes, approval and complete semantic

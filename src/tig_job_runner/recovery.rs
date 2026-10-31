@@ -9,6 +9,7 @@ use tig_store::{
 };
 pub(super) mod cli;
 mod retirement;
+pub(super) mod salvage;
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]

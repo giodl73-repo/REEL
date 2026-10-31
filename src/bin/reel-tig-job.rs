@@ -10,10 +10,18 @@ struct Args {
 enum Operation {
     /// Inspect a declared generation basis; no model execution or primary reads.
     InspectGeneration { profile: PathBuf, output: PathBuf },
+    /// Inspect a declared generator set and order blocked/catch-up advice.
+    InspectGenerationSet { profile: PathBuf, output: PathBuf },
     /// Complete an already-recorded result adoption; never render or remove scratch.
     AdoptPrepared { profile: PathBuf },
     /// Verify a complete published packet, then record prepare/adopt; preserve scratch.
     RetainPublished { profile: PathBuf },
+    /// Retain declared interrupted-job candidates; dry-run unless --apply.
+    SalvageWorkspace {
+        profile: PathBuf,
+        #[arg(long)]
+        apply: bool,
+    },
     /// Verify owned scratch retirement; remove it only with explicit --apply.
     RetireWorkspace {
         profile: PathBuf,
@@ -82,8 +90,14 @@ fn main() -> ExitCode {
         Operation::InspectGeneration { profile, output } => {
             reel::tig_generation::inspect(&profile, &output)
         }
+        Operation::InspectGenerationSet { profile, output } => {
+            reel::tig_generation::inspect_set(&profile, &output)
+        }
         Operation::AdoptPrepared { profile } => reel::tig_job_runner::adopt_prepared(&profile),
         Operation::RetainPublished { profile } => reel::tig_job_runner::retain_published(&profile),
+        Operation::SalvageWorkspace { profile, apply } => {
+            reel::tig_job_runner::salvage_workspace(&profile, apply)
+        }
         Operation::RetireWorkspace { profile, apply } => {
             reel::tig_job_runner::retire_workspace(&profile, apply)
         }

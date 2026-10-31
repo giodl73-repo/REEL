@@ -467,3 +467,338 @@ fn generation_inspection_cli_uses_archived_metadata_and_keeps_missing_basis_unpr
         "generation inspection refused; verify source, definitions, request and original evidence"
     );
 }
+
+#[test]
+#[cfg(feature = "tig-publication")]
+fn generation_git_inspection_uses_exact_commit_without_archive_or_primary_bytes() {
+    let (f, request, _) = setup();
+    fs::rename(
+        f.root().join("cache/objects"),
+        f.root().join("cache/offline-objects"),
+    )
+    .unwrap();
+    let path = f.root().join("git-inspection.json");
+    let mut profile = json!({"schema":"reel.tig-generation-inspection.experimental-1","source":f.profile,"request":request,"producer":Object::from_bytes(b"synthetic generator")});
+    let invoke = |profile: &Value, name: &str| {
+        fs::write(&path, serde_json::to_vec(profile).unwrap()).unwrap();
+        let report = f.root().join(name);
+        let result = Command::new(env!("CARGO_BIN_EXE_reel-tig-job"))
+            .arg("inspect-generation")
+            .arg(&path)
+            .arg(&report)
+            .env("PATH", "")
+            .output()
+            .unwrap();
+        (result, report)
+    };
+    let (first, report) = invoke(&profile, "git-first.json");
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let before: Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+    assert_eq!(before["state"], "unproven");
+    assert_eq!(before["primary_payloads_verified"], false);
+    let mut spec = record(&f, "generation/translation");
+    spec["authored"]["document"]["parameters"]["target_language"] = json!("en-GB");
+    save(&f, "generation/translation", &spec);
+    let (dirty, report) = invoke(&profile, "git-dirty.json");
+    assert!(dirty.status.success());
+    let dirty: Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+    assert_eq!(before, dirty);
+    // Commit explicitly without borrowing the whole fixture mutably while the
+    // invocation closure retains its immutable root reference.
+    git(f.root(), &["add", "records"]);
+    git(f.root(), &["commit", "-m", "committed generation change"]);
+    profile["source"]["commit"] = json!(git(f.root(), &["rev-parse", "HEAD"]));
+    let (changed, report) = invoke(&profile, "git-changed.json");
+    assert!(changed.status.success());
+    let changed: Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+    assert_ne!(before["desired_recipe"], changed["desired_recipe"]);
+    for case in ["partial-authority", "mixed-source", "unadmitted-original"] {
+        let mut invalid = profile.clone();
+        match case {
+            "partial-authority" => invalid["metadata_root"] = json!(f.root()),
+            "mixed-source" => invalid["source"]["archive"] = json!(Object::from_bytes(b"archive")),
+            _ => {
+                invalid["original"] = json!({"source":{},"request":request,"producer":Object::from_bytes(b"producer"),"claim":Object::from_bytes(b"claim")})
+            }
+        }
+        let (denied, report) = invoke(&invalid, &format!("{case}.json"));
+        assert!(!denied.status.success(), "{case}");
+        assert!(!report.exists());
+        assert_eq!(
+            String::from_utf8_lossy(&denied.stderr).trim(),
+            "generation inspection refused; verify source, definitions, request and original evidence"
+        );
+    }
+}
+
+#[test]
+#[cfg(feature = "tig-publication")]
+fn generation_git_inspection_replays_claim_from_original_provider() {
+    use tig_store::metadata::{Limits, MetadataStore};
+    let (mut f, request, _) = setup();
+    let producer = Object::from_bytes(b"synthetic generator");
+    let metadata = f.root().join("generation-metadata");
+    let mut store = MetadataStore::create(
+        &metadata,
+        Limits {
+            nodes: 16384,
+            bytes: 16 * 1024 * 1024,
+            database_bytes: 32 * 1024 * 1024,
+            min_free_bytes: 65536,
+        },
+    )
+    .unwrap();
+    let mut source = f.source();
+    let context =
+        tig_generation::freeze_context(&mut source, &request, &mut store, TreeLimits::default())
+            .unwrap();
+    let basis = tig_generation::recipe(&mut source, &request, &producer).unwrap();
+    let target = source_record(&f, "text/en");
+    let subject = BoundSubject::resolve(
+        &target,
+        &Reference {
+            id: "types/generated".into(),
+            object: Object::from_bytes(
+                &fs::read(f.root().join("definitions/generated.json")).unwrap(),
+            ),
+        },
+        Selector::Selected {},
+    )
+    .unwrap()
+    .unwrap();
+    let claim = Claim::create(
+        &basis,
+        ContextPin {
+            root: context.selection().root.clone(),
+            identity: context.selection().context.clone(),
+        },
+        vec![subject.subject().clone()],
+    )
+    .unwrap();
+    let pin = cache(&f, claim.bytes());
+    let original = json!({"source":{"schema":reel::tig_inputs::ARCHIVE_PROFILE_SCHEMA,"archive":context.archive(),"checkpoint":source.checkpoint(),"admitted":f.profile["admitted"],"byte_source":f.profile["byte_source"]},"request":request,"producer":producer,"claim":pin});
+    let minimum = store.finish().unwrap();
+    drop(store);
+    drop(source);
+    // Current providers contain neither old claims nor any primary payloads.
+    let current = f.root().join("current-cache");
+    fs::create_dir(&current).unwrap();
+    f.profile["byte_source"]["places"][0]["root"] = json!(current);
+    let path = f.root().join("inspection.json");
+    for (name, expected) in [
+        ("matching", "claimed_recipe_match"),
+        ("changed", "stale_recipe"),
+    ] {
+        if name == "changed" {
+            let mut spec = record(&f, "generation/translation");
+            spec["authored"]["document"]["parameters"]["target_language"] = json!("en-GB");
+            save(&f, "generation/translation", &spec);
+            commit(&mut f);
+        }
+        let profile = json!({"schema":"reel.tig-generation-inspection.experimental-1","source":f.profile,"metadata_root":metadata,"metadata_minimum":minimum,"request":request,"producer":producer,"original":original});
+        fs::write(&path, serde_json::to_vec(&profile).unwrap()).unwrap();
+        let result = Command::new(env!("CARGO_BIN_EXE_reel-tig-job"))
+            .arg("inspect-generation")
+            .arg(&path)
+            .arg(f.root().join(format!("{name}.json")))
+            .env("PATH", "")
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let summary: Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(summary["state"], expected);
+        assert_eq!(summary["authorizes_execution"], false);
+    }
+    let invalid = json!({"schema":"reel.tig-generation-inspection.experimental-1","source":f.profile,"request":request,"producer":producer,"original":original});
+    fs::write(&path, serde_json::to_vec(&invalid).unwrap()).unwrap();
+    let report = f.root().join("no-authority.json");
+    let refused = Command::new(env!("CARGO_BIN_EXE_reel-tig-job"))
+        .arg("inspect-generation")
+        .arg(&path)
+        .arg(&report)
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(!report.exists());
+    assert_eq!(
+        String::from_utf8_lossy(&refused.stderr).trim(),
+        "generation inspection refused; verify source, definitions, request and original evidence"
+    );
+}
+
+#[test]
+#[cfg(feature = "tig-publication")]
+fn generation_set_cli_blocks_stale_or_missing_translation_before_matching_cue() {
+    use tig_store::metadata::{Limits, MetadataStore};
+    let (f, translation, speech) = setup();
+    let producer = Object::from_bytes(b"synthetic generator");
+    let metadata = f.root().join("set-metadata");
+    let mut store = MetadataStore::create(
+        &metadata,
+        Limits {
+            nodes: 16384,
+            bytes: 16 * 1024 * 1024,
+            database_bytes: 32 * 1024 * 1024,
+            min_free_bytes: 65536,
+        },
+    )
+    .unwrap();
+    let definition = Reference {
+        id: "types/generated".into(),
+        object: Object::from_bytes(&fs::read(f.root().join("definitions/generated.json")).unwrap()),
+    };
+    let mut targets = Vec::new();
+    let mut claims = Vec::new();
+    for request in [&speech, &translation] {
+        let mut source = f.source();
+        let context =
+            tig_generation::freeze_context(&mut source, request, &mut store, TreeLimits::default())
+                .unwrap();
+        let basis = tig_generation::recipe(&mut source, request, &producer).unwrap();
+        let subject = BoundSubject::resolve(
+            &source_record(&f, &request.output_id),
+            &definition,
+            Selector::Selected {},
+        )
+        .unwrap()
+        .unwrap();
+        let claim = Claim::create(
+            &basis,
+            ContextPin {
+                root: context.selection().root.clone(),
+                identity: context.selection().context.clone(),
+            },
+            vec![subject.subject().clone()],
+        )
+        .unwrap();
+        let pin = Object::from_bytes(claim.bytes());
+        claims.push((pin.clone(), claim.bytes().to_vec()));
+        let archive = json!({"schema":reel::tig_inputs::ARCHIVE_PROFILE_SCHEMA,"archive":context.archive(),"checkpoint":source.checkpoint(),"admitted":f.profile["admitted"],"byte_source":f.profile["byte_source"]});
+        targets.push(json!({"request":request,"producer":producer,"original":{"source":archive,"request":request,"producer":producer,"claim":pin}}));
+    }
+    let minimum = store.finish().unwrap();
+    drop(store);
+    fs::rename(
+        f.root().join("cache/objects"),
+        f.root().join("cache/offline-primary-objects"),
+    )
+    .unwrap();
+    fs::create_dir(f.root().join("cache/objects")).unwrap();
+    for (pin, raw) in claims {
+        fs::write(
+            f.root().join("cache/objects").join(pin.sha256.as_str()),
+            raw,
+        )
+        .unwrap();
+    }
+    let path = f.root().join("set-profile.json");
+    let invoke = |profile: &Value, name: &str| {
+        fs::write(&path, serde_json::to_vec(profile).unwrap()).unwrap();
+        let report = f.root().join(format!("{name}.json"));
+        let result = Command::new(env!("CARGO_BIN_EXE_reel-tig-job"))
+            .arg("inspect-generation-set")
+            .arg(&path)
+            .arg(&report)
+            .env("PATH", "")
+            .output()
+            .unwrap();
+        (result, report)
+    };
+    let mut profile = json!({"schema":"reel.tig-generation-set-inspection.experimental-1","source":f.profile,"metadata_root":metadata,"metadata_minimum":minimum,"targets":targets});
+    let (result, report) = invoke(&profile, "matching-set");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let matching: Value = serde_json::from_slice(&fs::read(&report).unwrap()).unwrap();
+    assert_eq!(matching["entries"][0]["output_id"], "text/en");
+    assert_eq!(matching["entries"][1]["output_id"], "cue/en");
+    assert_eq!(matching["entries"][1]["advice"], "claimed_recipe_match");
+    assert_eq!(matching["primary_payloads_verified"], false);
+    assert_eq!(matching["authorizes_execution"], false);
+    let preserved = fs::read(&report).unwrap();
+    assert!(!invoke(&profile, "matching-set").0.status.success());
+    assert_eq!(preserved, fs::read(&report).unwrap());
+    // Change source text without touching the English selection or cue.
+    let mut spanish = record(&f, "text/es");
+    spanish["selected"] = json!(Object::from_bytes(b"changed Spanish bytes unavailable"));
+    save(&f, "text/es", &spanish);
+    git(f.root(), &["add", "records"]);
+    git(f.root(), &["commit", "-m", "upstream source change"]);
+    profile["source"]["commit"] = json!(git(f.root(), &["rev-parse", "HEAD"]));
+    let (result, report) = invoke(&profile, "stale-set");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let stale: Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+    assert_eq!(stale["entries"][0]["basis"], "stale_recipe");
+    assert_eq!(stale["entries"][0]["catch_up_candidate"], true);
+    assert_eq!(stale["entries"][1]["basis"], "claimed_recipe_match");
+    assert_eq!(stale["entries"][1]["advice"], "blocked");
+    assert_eq!(stale["entries"][1]["catch_up_candidate"], false);
+    for case in ["missing", "unproven"] {
+        let mut p = profile.clone();
+        if case == "missing" {
+            p["targets"].as_array_mut().unwrap().pop();
+        } else {
+            p["targets"][1]["original"] = Value::Null;
+        }
+        let (result, report) = invoke(&p, case);
+        assert!(result.status.success());
+        assert!(!String::from_utf8_lossy(&result.stdout).contains("text/en"));
+        assert!(!String::from_utf8_lossy(&result.stdout).contains("sha256"));
+        let report: Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+        assert_eq!(
+            report["entries"].as_array().unwrap().last().unwrap()["advice"],
+            "blocked"
+        );
+        if case == "missing" {
+            assert_eq!(report["missing_upstream"], json!(["text/en"]));
+            assert_eq!(report["declared_upstream_scope_complete"], false);
+        }
+    }
+    for case in ["empty", "duplicate", "unknown", "too-many", "bad-original"] {
+        let mut p = profile.clone();
+        match case {
+            "empty" => p["targets"] = json!([]),
+            "duplicate" => {
+                let target = p["targets"][0].clone();
+                p["targets"].as_array_mut().unwrap().push(target);
+            }
+            "unknown" => p["future"] = json!(true),
+            "too-many" => p["targets"] = json!(vec![p["targets"][0].clone(); 129]),
+            _ => {
+                p["targets"][0]["original"]["claim"] =
+                    json!(Object::from_bytes(b"unavailable claim"))
+            }
+        }
+        let (result, report) = invoke(&p, case);
+        assert!(!result.status.success(), "{case}");
+        assert!(!report.exists());
+        assert_eq!(
+            String::from_utf8_lossy(&result.stderr).trim(),
+            "generation set inspection refused; verify source, scope, definitions and original evidence"
+        );
+    }
+    let mut spec = record(&f, "generation/translation");
+    spec["authored"]["document"]["inputs"]["source"]["id"] = json!("cue/en");
+    save(&f, "generation/translation", &spec);
+    git(f.root(), &["add", "records"]);
+    git(f.root(), &["commit", "-m", "cyclic generators"]);
+    profile["source"]["commit"] = json!(git(f.root(), &["rev-parse", "HEAD"]));
+    let (result, report) = invoke(&profile, "cycle");
+    assert!(!result.status.success());
+    assert!(!report.exists());
+}
