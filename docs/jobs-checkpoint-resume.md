@@ -38,7 +38,10 @@ This provides bounded recovery when a complete native verification needs more
 time. It changes no original JSON bytes or native validation, memory/disk bounds,
 tool identity, command or output requirement. The result and failure diagnostics
 explicitly report the effective extension rather than claiming the original
-timeout was enforced. Ordinary `run-job` retains its one-hour step cap.
+timeout was enforced. Ordinary `run-job` requests retain their one-hour default
+step cap. Fresh requests may explicitly declare `step_timeout_limit_seconds`
+(at most 86,400); each step must fit that finite declared limit. This does not
+change the separately scoped, hash-bound recovery-window rules below.
 
 For a fresh, unchanged recipe, `run-job-window <original-job.json>
 <registered-execution-window.json>` executes every original step. Its separately

@@ -55,6 +55,10 @@ The private profile schema is `reel.tig-episode-job.experimental-1`:
   `scratch_bytes` covers temporary compilation, audio and assembly files.
   `timeout_seconds` bounds the contained process tree. These are real runner
   admissions, not claims based on expected compression ratios.
+  The coordinator declares the same per-request `step_timeout_limit_seconds`
+  to the shared runner, up to its finite 24-hour maximum. Ordinary runner
+  requests that omit that limit keep their one-hour default. A long episode
+  deadline never changes another job's limit or its cache capacity admission.
 - `reference_staging_bytes` and `reference_picture_processes` bound each native
   scene comparison. `max_objects` and `max_logical_bytes` bound declared resource
   obligations; logical bytes are not allocated disk usage.

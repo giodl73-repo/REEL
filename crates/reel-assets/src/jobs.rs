@@ -15,6 +15,11 @@ use std::{
     time::Duration,
 };
 mod adapters;
+/// Explicit trusted-job deadlines remain finite; legacy requests default to one hour.
+pub const MAX_STEP_TIMEOUT_SECONDS: u64 = 24 * 60 * 60;
+fn step_timeout_limit_default() -> u64 {
+    3600
+}
 pub use adapters::{
     ResourceAuthority, ResourceRole, RetainedJob, RetainedObject, RetentionSink, RunContext,
 };
@@ -52,6 +57,8 @@ struct Step {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Job {
+    #[serde(default = "step_timeout_limit_default")]
+    step_timeout_limit_seconds: u64,
     #[serde(default = "output_count_default")]
     output_count_limit: u16,
     budget_bytes: u64,
@@ -119,6 +126,9 @@ fn add(total: &mut u64, amount: u64) -> Result<()> {
     Ok(())
 }
 fn validate(job: &Job) -> Result<()> {
+    if !(1..=MAX_STEP_TIMEOUT_SECONDS).contains(&job.step_timeout_limit_seconds) {
+        return Err("Invalid explicit job step deadline limit".into());
+    }
     if job.steps.is_empty()
         || job.steps.len() > 64
         || job.outputs.is_empty()
@@ -188,7 +198,7 @@ fn validate(job: &Job) -> Result<()> {
     for step in &job.steps {
         if !(job.tools.contains_key(&step.tool) || job.installed_tools.contains_key(&step.tool))
             || step.timeout_seconds == 0
-            || step.timeout_seconds > 3600
+            || step.timeout_seconds > job.step_timeout_limit_seconds
             || step.args.len() > 256
             || step.args.iter().any(|a| a.len() > 8192 || a.contains('\0'))
         {
@@ -770,6 +780,29 @@ mod process {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn longer_deadlines_require_an_explicit_finite_request_limit() {
+        let mut request = serde_json::json!({"budget_bytes":100,"scratch_bytes":0,
+            "inputs":{},"tools":{"tool.exe":{"sha256":"a".repeat(64),"bytes":1}},
+            "steps":[{"tool":"tool.exe","args":[],"timeout_seconds":3601}],
+            "outputs":{"report":{"path":"report.json","max_bytes":1}}});
+        let check =
+            |value: &serde_json::Value| super::check_request(&serde_json::to_vec(value).unwrap());
+        assert!(check(&request).is_err());
+        request["step_timeout_limit_seconds"] = serde_json::json!(21600);
+        request["steps"][0]["timeout_seconds"] = serde_json::json!(21600);
+        assert!(check(&request).is_ok());
+        request["steps"][0]["timeout_seconds"] = serde_json::json!(21601);
+        assert!(check(&request).is_err());
+        request["steps"][0]["timeout_seconds"] = serde_json::json!(1);
+        for limit in [0, super::MAX_STEP_TIMEOUT_SECONDS + 1, u64::MAX] {
+            request["step_timeout_limit_seconds"] = serde_json::json!(limit);
+            assert!(check(&request).is_err());
+        }
+        request["step_timeout_limit_seconds"] = serde_json::json!(super::MAX_STEP_TIMEOUT_SECONDS);
+        request["steps"][0]["timeout_seconds"] = serde_json::json!(super::MAX_STEP_TIMEOUT_SECONDS);
+        assert!(check(&request).is_ok());
+    }
     use super::*;
     #[test]
     fn explicit_output_count_preserves_default_and_bounds_large_native_sets() {
