@@ -81,6 +81,8 @@ pub mod tig_control_edit;
 pub mod tig_episode;
 #[cfg(feature = "tig-publication")]
 pub mod tig_episode_cli;
+#[cfg(feature = "tig-publication")]
+pub mod tig_frozen_job_cli;
 #[cfg(feature = "tig")]
 pub mod tig_generation;
 #[cfg(feature = "tig")]

@@ -488,8 +488,66 @@ fn managed_control_edit_retains_both_objects_before_an_isolated_git_proposal() {
     );
     assert_eq!(journal.checkpoint(), before);
     runner.identity.owner = identity.owner.clone();
-    let result =
-        tig_job_runner::run(&project, &manifest_path, &resources, &mut journal, &runner).unwrap();
+    let frozen = json!({"schema":reel::tig_frozen_job_cli::SCHEMA,"project":project,
+        "metadata_root":metadata,"metadata_minimum":minimum,"source_context":context.selection(),
+        "source_checkpoint":snapshot.checkpoint(),"profiles":profiles,
+        "consumption":[{"definition_id":"types/control","definition":profiles[0].definition,"fields":["label"]}],
+        "operation":operation,"runtime":runtime,"job_context":resources.selection(),
+        "manifest":{"path":manifest_path,"sha256":Object::from_bytes(&request).sha256,"bytes":request.len()},
+        "cache":{"path_policy":"configured-local-roots","cache_roots":[cache],"coordination_root":coordination.root,
+            "capacity":{"minimum_free_bytes":0,"minimum_free_basis_points":0}},"journal_root":owners,"journal_minimum":before,
+        "source_id":"edit","owner":"owner","expected_revision":2,"retain_operation":"retain"});
+    drop(journal);
+    let frozen_path = root.join("frozen.json");
+    let invoke = |profile: &Value| {
+        fs::write(&frozen_path, serde_json::to_vec(profile).unwrap()).unwrap();
+        Command::new(env!("CARGO_BIN_EXE_reel-tig-job"))
+            .arg("run-frozen")
+            .arg(&frozen_path)
+            .output()
+            .unwrap()
+    };
+    for changed in [
+        "owner",
+        "revision",
+        "checkpoint",
+        "request",
+        "runtime",
+        "selection",
+        "consumption",
+        "schema",
+    ] {
+        let mut bad = frozen.clone();
+        match changed {
+            "owner" => bad["owner"] = json!("foreign"),
+            "revision" => bad["expected_revision"] = json!(1),
+            "checkpoint" => bad["source_checkpoint"] = json!(Digest::blob(b"wrong")),
+            "request" => bad["manifest"]["sha256"] = json!(Digest::blob(b"wrong")),
+            "runtime" => bad["runtime"]["request"] = json!(Object::from_bytes(b"wrong")),
+            "selection" => bad["job_context"]["context"] = json!(Digest::blob(b"wrong")),
+            "consumption" => bad["consumption"][0]["fields"] = json!([]),
+            "schema" => bad["schema"] = json!("unknown"),
+            _ => unreachable!(),
+        }
+        let rejected = invoke(&bad);
+        assert!(!rejected.status.success(), "{changed}");
+        assert!(rejected.stdout.is_empty());
+        assert!(
+            !String::from_utf8_lossy(&rejected.stderr)
+                .contains(&root.to_string_lossy().to_string())
+        );
+        let reopened = SourceJournal::open(&owners, &before).unwrap();
+        assert_eq!(reopened.checkpoint(), before);
+    }
+    let executed = invoke(&frozen);
+    assert!(
+        executed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&executed.stderr)
+    );
+    let result: Value = serde_json::from_slice(&executed.stdout).unwrap();
+    assert_eq!(result["production_claim"], Value::Null);
+    assert_eq!(result["creative_approval"], false);
     assert_eq!(result["workspace_retained"], false);
     let record_bytes = fs::read(result["outputs"]["record"]["path"].as_str().unwrap()).unwrap();
     let control_bytes = fs::read(result["outputs"]["control"]["path"].as_str().unwrap()).unwrap();
@@ -497,6 +555,7 @@ fn managed_control_edit_retains_both_objects_before_an_isolated_git_proposal() {
     let control = Object::from_bytes(&control_bytes);
     assert_eq!(new_record["selected"]["sha256"], json!(control.sha256));
     assert_eq!(new_record["status"]["selection_state"], "draft-unreviewed");
+    let journal = SourceJournal::open(&owners, &before).unwrap();
     let checkpoint = journal.checkpoint();
     drop(journal);
     let mut journal = SourceJournal::open(&owners, &checkpoint).unwrap();

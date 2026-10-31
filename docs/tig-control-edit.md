@@ -51,6 +51,9 @@ Source files and existing destinations are never overwritten or cleaned up.
 
 ## Managed handoff
 
+The [frozen-job CLI](tig-frozen-job.md) replays an already enrolled generic job
+through this existing runner without adding setup or adoption authority.
+
 Use the existing job runner to retain **both** control and record as declared
 outputs. The inline request and installed worker must belong to the independently
 frozen/reopened job context; protect its exact source owner/revision before

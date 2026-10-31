@@ -8,6 +8,8 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Operation {
+    /// Replay an already enrolled generic job; no setup, source adoption or media claim.
+    RunFrozen { profile: PathBuf },
     /// Inspect a declared generation basis; no model execution or primary reads.
     InspectGeneration { profile: PathBuf, output: PathBuf },
     /// Inspect a declared generator set and order blocked/catch-up advice.
@@ -85,8 +87,12 @@ fn main() -> ExitCode {
         &operation,
         Operation::CompareRetained { .. } | Operation::RevalidateRetained { .. }
     );
-    let episode_job = matches!(&operation, Operation::RunEpisode { .. });
+    let episode_job = matches!(
+        &operation,
+        Operation::RunEpisode { .. } | Operation::RunFrozen { .. }
+    );
     let result = match operation {
+        Operation::RunFrozen { profile } => reel::tig_frozen_job_cli::run(&profile),
         Operation::InspectGeneration { profile, output } => {
             reel::tig_generation::inspect(&profile, &output)
         }
