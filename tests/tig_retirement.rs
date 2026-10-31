@@ -259,6 +259,21 @@ impl Fixture {
         assert_eq!(observed.checkpoint, self.checkpoint);
         assert!(self.workspace.exists());
     }
+    fn transactions(&self) -> Vec<PathBuf> {
+        fs::read_dir(&self.control)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("retirement-")
+                    && path
+                        .extension()
+                        .is_some_and(|extension| extension == "json")
+            })
+            .collect()
+    }
 }
 
 #[test]
@@ -273,6 +288,7 @@ fn retirement_requires_retained_originals_quiescence_and_explicit_apply() {
     let report: Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(report["dry_run"], true);
     assert_eq!(report["workspace_logical_bytes_removed"], 0);
+    assert!(f.transactions().is_empty());
     f.unchanged();
     let mut foreign = f.profile.clone();
     foreign["owner"] = json!("foreign-owner");
@@ -408,4 +424,113 @@ fn failed_job_candidates_remain_retained_without_changing_the_outcome() {
     let observed =
         SourceJournal::observe(&f.journal, &f.checkpoint, &key("retirement-source")).unwrap();
     assert_eq!(observed.checkpoint, f.checkpoint);
+}
+
+#[test]
+fn partial_retirement_reverifies_survivors_before_resuming_without_the_manifest() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let f = Fixture::new();
+    let blocked = f.workspace.join("blocked.tmp");
+    fs::write(&blocked, b"temporary scratch").unwrap();
+    let guard = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(&blocked)
+        .unwrap();
+    let interrupted = f.run(&f.profile, true);
+    assert!(!interrupted.status.success());
+    drop(guard);
+    assert!(f.workspace.exists());
+    let receipts = f.transactions();
+    assert_eq!(receipts.len(), 1);
+    let receipt = &receipts[0];
+    let prepared = fs::read(receipt).unwrap();
+    // Model interruption after the recursive removal has consumed job.json.
+    let manifest = f.workspace.join("job.json");
+    if manifest.exists() {
+        fs::remove_file(&manifest).unwrap();
+    }
+    let checked = f.run(&f.profile, false);
+    assert!(
+        checked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    let report: Value = serde_json::from_slice(&checked.stdout).unwrap();
+    assert_eq!(report["retirement_transaction"]["resumed"], true);
+    assert_eq!(fs::read(receipt).unwrap(), prepared); // Dry-run does not advance intent.
+    f.unchanged();
+    fs::write(
+        f.workspace.join("new-work.tmp"),
+        b"not in original retirement",
+    )
+    .unwrap();
+    assert!(!f.run(&f.profile, true).status.success());
+    fs::remove_file(f.workspace.join("new-work.tmp")).unwrap();
+    fs::write(&blocked, b"changed existing scratch").unwrap();
+    assert!(!f.run(&f.profile, true).status.success());
+    // Deletion is a valid surviving subset; changed/new files are not.
+    fs::remove_file(&blocked).unwrap();
+    let mut corrupt: Value = serde_json::from_slice(&prepared).unwrap();
+    corrupt["body"]["scope"]["owner"] = json!("different-owner");
+    fs::write(receipt, serde_json::to_vec(&corrupt).unwrap()).unwrap();
+    assert!(!f.run(&f.profile, true).status.success());
+    fs::write(receipt, &prepared).unwrap();
+    let resumed = f.run(&f.profile, true);
+    assert!(
+        resumed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resumed.stderr)
+    );
+    assert!(!f.workspace.exists());
+    let completed: Value = serde_json::from_slice(&fs::read(receipt).unwrap()).unwrap();
+    assert_eq!(completed["body"]["completed"], true);
+    assert!(completed["body"]["snapshot"].is_null());
+    assert!(fs::metadata(receipt).unwrap().len() < prepared.len() as u64);
+    assert_eq!(
+        fs::read(reel_assets::object(&f.cache, f.primary.sha256.as_str())).unwrap(),
+        b"primary"
+    );
+    let observed =
+        SourceJournal::observe(&f.journal, &f.checkpoint, &key("retirement-source")).unwrap();
+    assert_eq!(observed.checkpoint, f.checkpoint);
+}
+
+#[test]
+fn retirement_intent_cannot_be_reused_for_a_replacement_directory() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let f = Fixture::new();
+    let blocked = f.workspace.join("blocked.tmp");
+    fs::write(&blocked, b"scratch").unwrap();
+    let guard = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(&blocked)
+        .unwrap();
+    assert!(!f.run(&f.profile, true).status.success());
+    drop(guard);
+    let moved = f._temp.path().join("original-workspace");
+    let boundary = f._temp.path().canonicalize().unwrap();
+    assert!(f.workspace.canonicalize().unwrap().starts_with(&boundary));
+    assert_eq!(moved.parent().unwrap().canonicalize().unwrap(), boundary);
+    fs::rename(&f.workspace, &moved).unwrap();
+    fs::create_dir(&f.workspace).unwrap();
+    fs::write(f.workspace.join("new-item"), b"must survive").unwrap();
+    let refused = f.run(&f.profile, true);
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("identity"));
+    assert_eq!(
+        fs::read(f.workspace.join("new-item")).unwrap(),
+        b"must survive"
+    );
+    assert!(moved.exists());
+}
+
+#[test]
+fn missing_manifest_without_a_recorded_retirement_intent_refuses() {
+    let f = Fixture::new();
+    fs::remove_file(f.workspace.join("job.json")).unwrap();
+    assert!(!f.run(&f.profile, true).status.success());
+    assert!(f.transactions().is_empty());
+    f.unchanged();
 }

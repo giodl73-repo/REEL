@@ -1,5 +1,6 @@
 //! Remove only quiescent owned scratch after protected retained-byte readback.
 use super::*;
+mod transaction;
 use std::{
     fs::{self, File, OpenOptions},
     path::PathBuf,
@@ -15,6 +16,8 @@ pub(super) struct Spec {
 
 pub(super) struct Packet<'a> {
     pub job_id: &'a str,
+    pub result: &'a Selection,
+    pub journal: &'a Digest,
     pub request: &'a [u8],
     pub document: &'a Value,
     pub outputs: &'a serde_json::Map<String, Value>,
@@ -30,6 +33,8 @@ pub(super) struct Plan<'a> {
     verified: usize,
     verify_millis: u64,
     _installed_guards: Vec<File>,
+    snapshot: Option<reel_assets::jobs::WorkspaceSnapshot>,
+    transaction: transaction::Transaction,
 }
 
 fn no_reservation(profile: &Profile<'_>, job_id: &str) -> Result<()> {
@@ -151,6 +156,11 @@ pub(super) fn prepare<'a>(
     }
     let workspace = parent.join(packet.job_id);
     no_reservation(profile, packet.job_id)?;
+    let scope = json!({"schema":"reel.tig-retirement-scope.experimental-1",
+        "journal":packet.journal,"source":profile.identity.source.as_str(),"owner":profile.identity.owner.as_str(),
+        "input_revision":profile.expected_revision,"operation":profile.operation.as_str(),
+        "result":packet.result,"manifest":Object::from_bytes(packet.request),"workspace":workspace});
+    let transaction = transaction::Transaction::read(&profile.coordination.root, scope)?;
     let mut installed = Vec::new();
     for role in ["inputs", "tools"] {
         for value in packet.document[role]
@@ -197,6 +207,7 @@ pub(super) fn prepare<'a>(
         }
     }
     let manifest = Object::from_bytes(packet.request);
+    let mut snapshot = None;
     let bytes = match fs::symlink_metadata(&workspace) {
         Ok(_) => {
             let (canonical, bytes) =
@@ -205,11 +216,16 @@ pub(super) fn prepare<'a>(
             if canonical != workspace || bytes > spec.max_workspace_bytes {
                 bail!("workspace retirement exceeds admitted scope or size");
             }
-            drop(check_file(
-                &workspace.join("job.json"),
+            let observed = jobs::snapshot_owned_workspace(profile.config, &root, &workspace)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            transaction.check(&observed)?;
+            check_manifest(
+                &workspace,
                 &manifest,
                 budget.verify_millis,
-            )?);
+                transaction.prepared(),
+            )?;
+            snapshot = Some(observed);
             for (name, output) in packet.document["outputs"]
                 .as_object()
                 .context("request outputs missing")?
@@ -245,11 +261,13 @@ pub(super) fn prepare<'a>(
         verified: guards.len() + installed.len(),
         verify_millis: budget.verify_millis,
         _installed_guards: installed,
+        snapshot,
+        transaction,
     })
 }
 
 impl Plan<'_> {
-    pub(super) fn finish(self, apply: bool) -> Result<Value> {
+    pub(super) fn finish(mut self, apply: bool) -> Result<Value> {
         let id = self
             .workspace
             .file_name()
@@ -269,12 +287,21 @@ impl Plan<'_> {
                 if target != self.workspace || bytes != self.bytes || bytes > self.max_bytes {
                     bail!("workspace changed after retirement verification");
                 }
-                drop(check_file(
-                    &target.join("job.json"),
+                let observed =
+                    jobs::snapshot_owned_workspace(self.profile.config, &self.cache, &target)
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                if self.snapshot.as_ref() != Some(&observed) {
+                    bail!("workspace entries changed after retirement verification");
+                }
+                self.transaction.check(&observed)?;
+                check_manifest(
+                    &target,
                     &self.manifest,
                     self.verify_millis,
-                )?);
+                    self.transaction.prepared(),
+                )?;
                 if apply {
+                    self.transaction.begin(observed, bytes)?;
                     // Exact canonical target, enrolled staging parent and all
                     // non-reparse descendants checked above. CAS guards are
                     // still held by the caller; no shared payload is removed.
@@ -284,12 +311,29 @@ impl Plan<'_> {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => already_absent = true,
             Err(e) => return Err(e.into()),
         }
+        if apply {
+            self.transaction.complete()?;
+        }
         Ok(
             json!({"schema":"reel.tig-workspace-retirement.experimental-1","job_id":id,
             "dry_run":!apply,"staging_retired":apply,"already_absent":already_absent,
             "workspace_logical_bytes_verified":self.bytes,"workspace_logical_bytes_removed":if apply && !already_absent {self.bytes}else{0},
             "would_remove_workspace":!apply && !already_absent,"physical_bytes_freed":null,
             "retained_objects_verified":self.verified,"cache_objects_removed":0,"production_claim":null,"approval":false}),
-        )
+        ).map(|mut result| {
+            result["retirement_transaction"] = self.transaction.report();
+            result
+        })
+    }
+}
+
+fn check_manifest(workspace: &Path, manifest: &Object, millis: u64, prepared: bool) -> Result<()> {
+    match fs::symlink_metadata(workspace.join("job.json")) {
+        Ok(_) => {
+            drop(check_file(&workspace.join("job.json"), manifest, millis)?);
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && prepared => Ok(()),
+        Err(e) => Err(e.into()),
     }
 }

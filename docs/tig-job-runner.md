@@ -119,9 +119,28 @@ input predecessors, grant approval or finish child-owner handoff. Incomplete
 and unpublished workspace salvage remains separate.
 The report preserves the original `succeeded` value: safe retirement of a failed
 job's retained candidates does not make that job successful.
-If interrupted removal leaves a partial directory without `job.json`, further
-removal currently refuses. A resumable retirement transaction remains separate
-work; preserve the remaining directory rather than bypassing identity checks.
+Before the first applied removal, the command atomically publishes a checksummed
+private transaction in the existing coordination directory. It binds the source,
+journal, result selection, operation, manifest and canonical workspace, plus
+Windows volume/file/creation identities and a bounded snapshot of the directory.
+The transaction is local recovery metadata, never a producer/approval assertion
+or a second authored asset inventory. Dry-run does not create or advance it.
+
+After process interruption, retry rechecks the complete retained packet and all
+original bytes. It accepts only an unchanged surviving subset of the recorded
+entries in the same directory identity. Removed children may change directory
+timestamps; changed files, new entries and replacement directories refuse. A
+missing `job.json` is accepted only with that exact prepared transaction; a
+manifest missing without prior intent still refuses. Every remaining declared
+output is checked against its retained candidate again.
+
+After removal, the transaction is atomically compacted to a small completed
+record that retains scope and original directory identity. Completion-write
+failure can be retried from the prepared record even when the workspace is
+already absent. A completed record cannot authorize deletion of a new directory
+at the old path. `retirement_transaction` in the report exposes recorded state
+and whether a prepared transaction was resumed. Transaction records are bounded
+to 8 MiB before compaction, remain outside Git and do not change journal events.
 
 ## Set up shared stores once
 

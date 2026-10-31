@@ -338,6 +338,8 @@ fn recover_selection(
             spec,
             retirement::Packet {
                 job_id,
+                result: &selection,
+                journal: journal.identity(),
                 request: &raw,
                 document: &document,
                 outputs,

@@ -30,5 +30,11 @@ one owned workspace, and technical custody conveys no creative approval. These
 are checklist findings, not independent human approval. Current implementation
 requires Windows read-sharing guards. Incomplete/unpublished salvage, child
 handoff and actual consumer cutover remain open.
-Interrupted partial removal that loses the manifest currently refuses retry;
-resumable retirement transactions remain an explicit acceptance gap.
+Process-interrupted partial removal is covered by a separate bounded local
+transaction: apply atomically records the exact scope, original directory
+identity and entry snapshot before deleting anything. Retry rechecks custody and
+accepts only unchanged surviving entries; it can tolerate a missing manifest
+only with that prior intent. Directory timestamps may change as children are
+removed. File changes, new entries, directory replacement and corrupt/mismatched
+metadata refuse. No transaction advances during dry-run. Completed records are
+compacted and cannot authorize deletion of a replacement directory.
