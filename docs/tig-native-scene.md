@@ -555,6 +555,18 @@ acceptance, delivery approval or an output retention lease.
 
 ### Language-scoped declared inputs
 
+A valid catalog may include an unbuilt record whose selected payload is absent.
+Every catalog reference still passes identity, definition and selection-state
+admission. An unused unbuilt entry does not block a selected-language build;
+consuming that entry still refuses before materializing output. A missing named
+stream on a record with a selected root remains an error.
+
+When such entries exist, `native-source.json` reports `declared_inputs: null`,
+`declared_inputs_available: false` and their exact `unbuilt_catalog_records`.
+Null means whole-catalog demand is unknown, never zero. `language_inputs` still
+describes the exact consumed scope. Full requirements and legacy whole-catalog
+freeze remain strict. See the [regression review](reviews/2026-10-31-unbuilt-catalog-inputs.md).
+
 Native compilation now writes `language_inputs` alongside the conservative
 `declared_inputs` in its private asset-side `native-source.json`. The scope comes
 from the existing native authoring resolver's per-language binding set, including

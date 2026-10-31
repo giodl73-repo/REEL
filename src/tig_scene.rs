@@ -508,7 +508,8 @@ fn snapshot_graph(
 
 struct NativeState {
     parent: tig_assets::resolve::Resolved,
-    required: graph::ProductionRequirements,
+    required: Option<graph::ProductionRequirements>,
+    unbuilt_catalog_records: Vec<graph::Reference>,
     total: u64,
     scene_bytes: Vec<u8>,
     scene: Scene,
@@ -540,24 +541,35 @@ fn read_source(source: &mut Source, request: &Request) -> Result<NativeState> {
     // Admit every declared leaf's type/identity, including unused alternatives.
     // Native resolution checks production eligibility where each input is used;
     // an unused candidate in the authoring catalog is not a selected input.
+    let mut catalog_assets = BTreeMap::new();
+    let mut unbuilt_catalog_records = Vec::new();
     for id in &catalog.ids {
         let leaf = source.record(id)?;
         if !request.primary_definitions.contains(&leaf.definition().id) {
             bail!("binding is outside admitted primary definitions");
         }
-        source.resolve_asset(id)?;
+        let asset = source.catalog_asset(id)?;
+        if asset.is_none() {
+            unbuilt_catalog_records.push(leaf.reference().clone());
+        }
+        catalog_assets.insert(id.clone(), asset);
     }
     let assets = catalog
         .effective
         .iter()
-        .map(|(key, value)| {
-            Ok((
-                key.clone(),
-                source.resolve_asset(value["id"].as_str().unwrap())?,
-            ))
+        .filter_map(|(key, value)| {
+            catalog_assets[value["id"].as_str().unwrap()]
+                .as_ref()
+                .map(|asset| (key.clone(), asset.clone()))
         })
-        .collect::<Result<BTreeMap<_, _>>>()?;
-    let required = requirements(source, request)?;
+        .collect();
+    // Unknown whole-catalog payload demand is never represented by an empty set.
+    // The language projection below still derives and verifies its exact inputs.
+    let required = if unbuilt_catalog_records.is_empty() {
+        Some(requirements(source, request)?)
+    } else {
+        None
+    };
     let mut total = 0;
     let scene_bytes = metadata(source, parent.selected()?, &mut total)?;
     let scene: Scene = serde_json::from_slice(&scene_bytes)?;
@@ -619,6 +631,7 @@ fn read_source(source: &mut Source, request: &Request) -> Result<NativeState> {
     Ok(NativeState {
         parent,
         required,
+        unbuilt_catalog_records,
         total,
         scene_bytes,
         scene,
@@ -745,6 +758,7 @@ fn compile_with_scope(
     let NativeState {
         parent,
         required,
+        unbuilt_catalog_records,
         mut total,
         scene_bytes,
         scene,
@@ -864,10 +878,13 @@ fn compile_with_scope(
     let manifest = json!({"schema":"reel.scene-delivery-compile.v1","catalog":"catalog.json","episode":"episode.json","scene":"scene.json","policy":"policy.json", "season_bindings":"season-bindings.json","episode_bindings":"episode-bindings.json","scene_bindings":"scene-bindings.json","graph":"graph.json","pointer":"pointer.json","alignment_paths":"alignment-paths.json","profile":"profile.json","language":request.language,"delivery_id":request.delivery_id,"delivery_title":request.delivery_title,"output_dir":"delivery","template_receipt":template_path});
     let compile: CompileManifest = serde_json::from_value(manifest.clone())?;
     budget.compact(output, "compile.json", &manifest)?;
+    let declared_inputs = required.as_ref().map(|required| {
+        json!({"source_checkpoint":required.checkpoint(),"admission_sha256":required.admission(),"binding_sha256":required.binding_digest(),"primary_objects":required.primary(),"control_objects":required.controls(),"interpretation_objects":required.metadata(),"complete_semantic_coverage":false,"authorizes_eviction":false})
+    });
     budget.compact(
         output,
         "native-source.json",
-        &json!({"schema":"reel.tig-native-source.experimental-1","adapter_source_sha256":Object::from_bytes(include_bytes!("tig_scene.rs")).sha256,"tig_source_pin_sha256":Object::from_bytes(include_bytes!("../vendor/tig/source-pin.json")).sha256,"source_checkpoint":source.checkpoint(),"scene_record":parent.reference(),"control_objects":pins,"authored_controls":authored_controls,"primary_definition_ids":request.primary_definitions,"binding_count":bindings.assets.len(),"declared_inputs":{"source_checkpoint":required.checkpoint(),"admission_sha256":required.admission(),"binding_sha256":required.binding_digest(),"primary_objects":required.primary(),"control_objects":required.controls(),"interpretation_objects":required.metadata(),"complete_semantic_coverage":false,"authorizes_eviction":false},"language_inputs":language_scope,"new_production_approval":false,"complete_semantic_coverage":false}),
+        &json!({"schema":"reel.tig-native-source.experimental-1","adapter_source_sha256":Object::from_bytes(include_bytes!("tig_scene.rs")).sha256,"tig_source_pin_sha256":Object::from_bytes(include_bytes!("../vendor/tig/source-pin.json")).sha256,"source_checkpoint":source.checkpoint(),"scene_record":parent.reference(),"control_objects":pins,"authored_controls":authored_controls,"primary_definition_ids":request.primary_definitions,"binding_count":bindings.assets.len(),"declared_inputs_available":declared_inputs.is_some(),"declared_inputs":declared_inputs,"unbuilt_catalog_records":unbuilt_catalog_records,"language_inputs":language_scope,"new_production_approval":false,"complete_semantic_coverage":false}),
     )?;
     if evidence.is_empty() {
         scene_delivery_compile::compile_to_dir_with_budget(output, &compile, output, &mut budget)

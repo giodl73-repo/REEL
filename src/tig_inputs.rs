@@ -463,6 +463,33 @@ impl Source {
             selection_state: state.into(),
         })
     }
+    /// Admit a catalog record without requiring an unbuilt payload. This is not
+    /// consumption authority: strict resolution still applies when a key is used.
+    pub(crate) fn catalog_asset(&self, id: &str) -> Result<Option<AssetRef>> {
+        let asset = self.record(id)?;
+        let state = asset
+            .status()
+            .get("selection_state")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow!("asset has no native selection state"))?;
+        token(state, 128)?;
+        let unbuilt = matches!(asset.selected(), Err(tig_assets::resolve::Error::Planned));
+        let missing = match &self.admitted[&asset.definition().id].payload {
+            Payload::Selected {} => unbuilt,
+            Payload::Stream { slot } => {
+                unbuilt
+                    && matches!(
+                        asset.stream(slot),
+                        Err(tig_assets::resolve::Error::MissingStream)
+                    )
+            }
+        };
+        if missing {
+            Ok(None)
+        } else {
+            self.resolve_asset(id).map(Some)
+        }
+    }
     pub(crate) fn read_metadata(&mut self, object: &Object, max_bytes: usize) -> Result<Vec<u8>> {
         if max_bytes > JOB_BYTES_MAX || object.bytes > max_bytes as u64 {
             bail!("metadata exceeds byte budget");
