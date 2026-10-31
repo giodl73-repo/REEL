@@ -35,26 +35,29 @@ struct Inspection {
     producer: Object,
     original: Option<Original>,
 }
-fn run(path: &Path, output: &Path) -> Result<Value> {
+fn read_profile<T: serde::de::DeserializeOwned>(path: &Path, maximum: usize) -> Result<T> {
     let mut raw = Vec::new();
     fs::File::open(path)?
-        .take(128 * 1024 + 1)
+        .take(maximum as u64 + 1)
         .read_to_end(&mut raw)?;
-    if raw.len() > 128 * 1024 {
+    if raw.len() > maximum {
         bail!("inspection profile exceeds budget");
     }
-    let p: Inspection = serde_json::from_value(identity::parse_json(&raw)?)?;
+    Ok(serde_json::from_value(identity::parse_json(&raw)?)?)
+}
+fn open(
+    input: InputSource,
+    root: Option<PathBuf>,
+    minimum: Option<Checkpoint>,
+    output: &Path,
+) -> Result<(Source, Option<MetadataReader>)> {
     let parent = output
         .parent()
         .ok_or_else(|| anyhow::anyhow!("report parent missing"))?;
-    if p.schema != "reel.tig-generation-inspection.experimental-1"
-        || !output.is_absolute()
-        || output.symlink_metadata().is_ok()
-        || !parent.is_dir()
-    {
+    if !output.is_absolute() || output.symlink_metadata().is_ok() || !parent.is_dir() {
         bail!("explicit generation inspection stores and new report required");
     }
-    let mut reader = match (&p.metadata_root, &p.metadata_minimum) {
+    let mut reader = match (&root, &minimum) {
         (Some(root), Some(minimum)) => {
             if !root.is_absolute() || parent.canonicalize()?.starts_with(root.canonicalize()?) {
                 bail!("explicit metadata authority required");
@@ -64,7 +67,7 @@ fn run(path: &Path, output: &Path) -> Result<Value> {
         (None, None) => None,
         _ => bail!("metadata root and trusted minimum must be supplied together"),
     };
-    let mut source = match p.source {
+    let source = match input {
         InputSource::Git(profile) => Source::open(profile)?,
         InputSource::Archive(profile) => Source::from_archive(
             profile,
@@ -74,9 +77,22 @@ fn run(path: &Path, output: &Path) -> Result<Value> {
             TreeLimits::default(),
         )?,
     };
-    let desired = recipe(&mut source, &p.request, &p.producer)?;
-    let target = source.record(&p.request.output_id)?;
-    let a = source.admission(&p.request.output_definition)?;
+    Ok((source, reader))
+}
+fn basis(
+    source: &mut Source,
+    request: &Request,
+    producer: &Object,
+    original: Option<Original>,
+    reader: &mut Option<MetadataReader>,
+) -> Result<(
+    tig_assets::graph::recipe::Plan,
+    Correspondence,
+    Option<Object>,
+)> {
+    let desired = recipe(source, request, producer)?;
+    let target = source.record(&request.output_id)?;
+    let a = source.admission(&request.output_definition)?;
     let subject = BoundSubject::resolve(
         &target,
         &Reference {
@@ -85,8 +101,8 @@ fn run(path: &Path, output: &Path) -> Result<Value> {
         },
         Selector::Selected {},
     )?;
-    let original_pin = p.original.as_ref().map(|o| o.claim.clone());
-    let state = if let Some(original) = p.original {
+    let original_pin = original.as_ref().map(|o| o.claim.clone());
+    let state = if let Some(original) = original {
         let reader = reader
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("original evidence requires admitted metadata"))?;
@@ -108,27 +124,148 @@ fn run(path: &Path, output: &Path) -> Result<Value> {
     } else {
         produced::compare(&desired, subject.as_ref(), None)?
     };
-    let state = match state {
+    Ok((desired, state, original_pin))
+}
+fn correspondence_name(state: Correspondence) -> &'static str {
+    match state {
         Correspondence::Unbuilt => "unbuilt",
         Correspondence::Unproven => "unproven",
         Correspondence::ClaimedRecipeMatch => "claimed_recipe_match",
         Correspondence::StaleRecipe => "stale_recipe",
-    };
-    let report = identity::canonical_json(
-        &json!({"schema":"reel.generation-inspection.experimental-1","output_id":p.request.output_id,"source_checkpoint":source.checkpoint(),"desired_recipe":desired.fingerprint(),"original_claim":original_pin,"state":state,"upstream_generation_checked":false,"primary_payloads_verified":false,"execution_attested":false,"authorizes_execution":false,"authorizes_eviction":false,"complete_semantic_coverage":false}),
-    )?;
-    if report.len() > 65536 {
+    }
+}
+fn publish(output: &Path, value: &Value, maximum: usize) -> Result<()> {
+    let report = identity::canonical_json(value)?;
+    if report.len() > maximum {
         bail!("generation report exceeds bound");
     }
-    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    let mut file = tempfile::NamedTempFile::new_in(output.parent().unwrap())?;
     file.write_all(&report)?;
     file.as_file().sync_all()?;
     file.persist_noclobber(output)
         .map_err(|_| anyhow::anyhow!("generation report refused"))?;
+    Ok(())
+}
+fn run(path: &Path, output: &Path) -> Result<Value> {
+    let p: Inspection = read_profile(path, 128 * 1024)?;
+    if p.schema != "reel.tig-generation-inspection.experimental-1" {
+        bail!("invalid generation inspection schema");
+    }
+    let (mut source, mut reader) = open(p.source, p.metadata_root, p.metadata_minimum, output)?;
+    let (desired, state, original_pin) = basis(
+        &mut source,
+        &p.request,
+        &p.producer,
+        p.original,
+        &mut reader,
+    )?;
+    let state = correspondence_name(state);
+    publish(
+        output,
+        &json!({"schema":"reel.generation-inspection.experimental-1","output_id":p.request.output_id,"source_checkpoint":source.checkpoint(),"desired_recipe":desired.fingerprint(),"original_claim":original_pin,"state":state,"upstream_generation_checked":false,"primary_payloads_verified":false,"execution_attested":false,"authorizes_execution":false,"authorizes_eviction":false,"complete_semantic_coverage":false}),
+        65536,
+    )?;
     Ok(
         json!({"schema":"reel.generation-inspection-summary.experimental-1","state":state,"nodes":desired.nodes().len(),"upstream_generation_checked":false,"primary_payloads_verified":false,"authorizes_execution":false,"authorizes_eviction":false}),
     )
 }
 pub fn inspect(profile: &Path, output: &Path) -> Result<Value> {
     run(profile,output).map_err(|_|anyhow::anyhow!("generation inspection refused; verify source, definitions, request and original evidence"))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Target {
+    request: Request,
+    producer: Object,
+    original: Option<Original>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SetInspection {
+    schema: String,
+    metadata_root: Option<PathBuf>,
+    metadata_minimum: Option<Checkpoint>,
+    source: InputSource,
+    targets: Vec<Target>,
+}
+fn state_name(state: tig_assets::graph::recipe::assessment::State) -> &'static str {
+    use tig_assets::graph::recipe::assessment::State;
+    match state {
+        State::Unbuilt => "unbuilt",
+        State::Unproven => "unproven",
+        State::ClaimedRecipeMatch => "claimed_recipe_match",
+        State::StaleRecipe => "stale_recipe",
+        State::Blocked => "blocked",
+    }
+}
+fn run_set(path: &Path, output: &Path) -> Result<Value> {
+    use tig_assets::graph::recipe::assessment::State;
+    let p: SetInspection = read_profile(path, 1024 * 1024)?;
+    if p.schema != "reel.tig-generation-set-inspection.experimental-1"
+        || p.targets.is_empty()
+        || p.targets.len() > 128
+    {
+        bail!("invalid generation set inspection scope");
+    }
+    let (mut source, mut reader) = open(p.source, p.metadata_root, p.metadata_minimum, output)?;
+    let checkpoint = source.checkpoint().clone();
+    let mut nodes = Vec::new();
+    let mut details = BTreeMap::new();
+    for target in p.targets {
+        let request = target.request;
+        if details.contains_key(&request.output_id) {
+            bail!("duplicate generation target");
+        }
+        let (desired, state, original_pin) = basis(
+            &mut source,
+            &request,
+            &target.producer,
+            target.original,
+            &mut reader,
+        )?;
+        let upstream = upstream(&source, &request)?;
+        let state = match state {
+            Correspondence::Unbuilt => State::Unbuilt,
+            Correspondence::Unproven => State::Unproven,
+            Correspondence::ClaimedRecipeMatch => State::ClaimedRecipeMatch,
+            Correspondence::StaleRecipe => State::StaleRecipe,
+        };
+        details.insert(request.output_id.clone(), json!({"output_id":request.output_id,"desired_recipe":desired.fingerprint(),"original_claim":original_pin,"basis":state_name(state),"upstream":upstream}));
+        nodes.push(advice::Node {
+            asset_id: request.output_id,
+            checkpoint: checkpoint.clone(),
+            basis: Some(state),
+            upstream,
+        });
+    }
+    let missing: BTreeSet<_> = nodes
+        .iter()
+        .flat_map(|n| n.upstream.iter())
+        .filter(|id| !details.contains_key(*id))
+        .cloned()
+        .collect();
+    let ordered = advice::order(&checkpoint, &nodes, 128)?;
+    let mut entries = Vec::new();
+    let mut blocked = 0;
+    let mut candidates = 0;
+    for entry in ordered {
+        let mut detail = details.remove(&entry.asset_id).unwrap();
+        detail["advice"] = json!(state_name(entry.advice));
+        detail["catch_up_candidate"] = json!(entry.advice.catch_up_candidate());
+        blocked += usize::from(entry.advice == State::Blocked);
+        candidates += usize::from(entry.advice.catch_up_candidate());
+        entries.push(detail);
+    }
+    publish(
+        output,
+        &json!({"schema":"reel.generation-set-inspection.experimental-1","source_checkpoint":checkpoint,"entries":entries,"missing_upstream":missing,"declared_upstream_scope_complete":missing.is_empty(),"primary_payloads_verified":false,"execution_attested":false,"authorizes_execution":false,"authorizes_eviction":false,"complete_semantic_coverage":false}),
+        1024 * 1024,
+    )?;
+    Ok(
+        json!({"schema":"reel.generation-set-inspection-summary.experimental-1","targets":nodes.len(),"blocked":blocked,"catch_up_candidates":candidates,"missing_upstream":missing.len(),"declared_upstream_scope_complete":missing.is_empty(),"primary_payloads_verified":false,"authorizes_execution":false,"authorizes_eviction":false}),
+    )
+}
+pub fn inspect_set(profile: &Path, output: &Path) -> Result<Value> {
+    run_set(profile, output).map_err(|_|anyhow::anyhow!("generation set inspection refused; verify source, scope, definitions and original evidence"))
 }

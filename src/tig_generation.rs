@@ -296,7 +296,7 @@ pub fn restore_claim<'a>(
 }
 
 mod inspection;
-pub use inspection::inspect;
+pub use inspection::{inspect, inspect_set};
 pub mod advice;
 
 /// Registered upstream generators only; absence is not proof of manual origin
