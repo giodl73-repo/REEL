@@ -1,5 +1,43 @@
 # Run an already enrolled job
 
+## Capture the job metadata first
+
+```text
+reel-tig-job capture-frozen PRIVATE_CAPTURE_PROFILE NEW_PRIVATE_FRAGMENT
+```
+
+`reel.tig-frozen-job-capture-profile.experimental-1` admits a committed Tig
+`source` profile, expected `source_checkpoint`, one `root_id`, external graph
+`profiles`, `consumption`, `operation`, `runtime`, an absolute `descriptor`
+FileRef and an absolute `manifest` FileRef. The descriptor must match operation
+parameters; the manifest must match runtime `request`. It also supplies existing
+`metadata_root`, `metadata_minimum`, `metadata_cache` and runner `cache` Config.
+
+Capture resolves only the declared production closure, freezes source/job
+metadata, finishes the existing store, then independently reopens and replays
+both contexts before publishing the private fragment without replacement. It
+reserves the existing metadata database/rollback/output allowance on an explicit
+active cache volume; the metadata root and fragment must share that volume.
+Short metadata contention uses the same bounded retry as native capture. There
+is no media read, render, cache setup, source adoption or output retention. A late
+failure may leave deduplicated metadata nodes; existing roots remain intact and
+no usable fragment is reported as successful.
+
+The fragment contains the exact source and job selections, new metadata minimum,
+graph/recipe/runtime admission and manifest pin needed by `run-frozen`. Keep it
+private. It is a candidate, not an ownership claim. Use the existing `tig-source
+plan` and `apply` workflow for explicit prepare/adopt of that job Selection under
+the intended source ID and owner. Each transition uses its exact journal minimum,
+expected revision and operation key; adopt must name the actual prepare receipt.
+Do not reuse another session's source or invent a prepare reference.
+
+After adoption, combine the fragment's admission fields with the explicit project,
+cache and journal fields below, change the profile schema to the run schema and
+omit the fragment schema. Check the resulting source owner/revision before the
+run. This is an explicit operator handoff, not an automatic source transition.
+
+## Execute the protected job
+
 ```text
 reel-tig-job run-frozen PRIVATE_PROFILE
 ```

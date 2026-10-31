@@ -5,7 +5,7 @@ use crate::{
     tig_scene_production::jobs::{Coordination, Identity},
 };
 use anyhow::{Result, bail};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -23,7 +23,9 @@ use tig_store::{
 };
 
 pub const SCHEMA: &str = "reel.tig-frozen-job-profile.experimental-1";
-#[derive(Deserialize)]
+mod capture;
+pub use capture::capture;
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Consumption {
     definition_id: String,

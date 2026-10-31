@@ -469,6 +469,92 @@ fn managed_control_edit_retains_both_objects_before_an_isolated_git_proposal() {
     };
     config.capacity.minimum_free_bytes = 0;
     config.capacity.minimum_free_basis_points = 0;
+    let manifest_path = root.join("job.json");
+    fs::write(&manifest_path, &request).unwrap();
+    // Independently capture into an empty metadata store. The expected roots
+    // above were made through public APIs; this CLI must reproduce them without
+    // borrowing their stored metadata or reading the deliberately absent media.
+    let metadata = root.join("captured-metadata");
+    let mut empty = MetadataStore::create(&metadata, reader.limits()).unwrap();
+    let initial = empty.finish().unwrap();
+    drop(empty);
+    let descriptor_path = root.join("descriptor.json");
+    fs::write(&descriptor_path, &worker_profile).unwrap();
+    let cache_admission = json!({"path_policy":"configured-local-roots","cache_roots":[cache],"coordination_root":coordination.root,
+        "capacity":{"minimum_free_bytes":0,"minimum_free_basis_points":0}});
+    let capture = json!({"schema":"reel.tig-frozen-job-capture-profile.experimental-1",
+        "source":{"schema":reel::tig_inputs::PROFILE_SCHEMA,"git_executable":git_exe,"repository":repo_root,"commit":base.as_str(),
+            "records":["records"],"definitions":["definitions"],"admitted":[{"id":"types/control","object":profiles[0].definition,"payload":{"kind":"selected"}}],
+            "byte_source":{"places":[{"root":cache,"layout":"reel-cas"}],"required":"cooperative-immutable"}},
+        "source_checkpoint":snapshot.checkpoint(),"root_id":"control/one","profiles":profiles,
+        "consumption":[{"definition_id":"types/control","definition":profiles[0].definition,"fields":["label"]}],
+        "operation":operation,"runtime":runtime,
+        "descriptor":{"path":descriptor_path,"sha256":Object::from_bytes(&worker_profile).sha256,"bytes":worker_profile.len()},
+        "manifest":{"path":manifest_path,"sha256":Object::from_bytes(&request).sha256,"bytes":request.len()},
+        "metadata_root":metadata,"metadata_minimum":initial,"metadata_cache":cache,"cache":cache_admission});
+    let capture_profile = root.join("capture.json");
+    let capture_output = root.join("fragment.json");
+    let invoke_capture = |profile: &Value| {
+        fs::write(&capture_profile, serde_json::to_vec(profile).unwrap()).unwrap();
+        Command::new(env!("CARGO_BIN_EXE_reel-tig-job"))
+            .arg("capture-frozen")
+            .arg(&capture_profile)
+            .arg(&capture_output)
+            .output()
+            .unwrap()
+    };
+    let journal_before_capture = journal.checkpoint();
+    for changed in [
+        "schema",
+        "checkpoint",
+        "descriptor",
+        "runtime",
+        "definition",
+        "missing-store",
+    ] {
+        let mut bad = capture.clone();
+        match changed {
+            "schema" => bad["schema"] = json!("unknown"),
+            "checkpoint" => bad["source_checkpoint"] = json!(Digest::blob(b"wrong")),
+            "descriptor" => bad["descriptor"]["sha256"] = json!(Digest::blob(b"wrong")),
+            "runtime" => bad["runtime"]["request"] = json!(Object::from_bytes(b"wrong")),
+            "definition" => bad["profiles"][0]["definition"] = json!(Object::from_bytes(b"wrong")),
+            "missing-store" => bad["metadata_root"] = json!(root.join("missing-store")),
+            _ => unreachable!(),
+        }
+        let rejected = invoke_capture(&bad);
+        assert!(!rejected.status.success(), "{changed}");
+        assert!(rejected.stdout.is_empty());
+        assert!(!capture_output.exists());
+        assert!(
+            !String::from_utf8_lossy(&rejected.stderr)
+                .contains(&root.to_string_lossy().to_string())
+        );
+        assert_eq!(
+            MetadataReader::open(&metadata, &initial)
+                .unwrap()
+                .checkpoint(),
+            &initial
+        );
+    }
+    assert!(!root.join("missing-store").exists());
+    let captured = invoke_capture(&capture);
+    assert!(
+        captured.status.success(),
+        "{}",
+        String::from_utf8_lossy(&captured.stderr)
+    );
+    let capture_summary: Value = serde_json::from_slice(&captured.stdout).unwrap();
+    assert_eq!(capture_summary["job_adopted"], false);
+    assert_eq!(capture_summary["readback_equal"], true);
+    assert_eq!(journal.checkpoint(), journal_before_capture);
+    let fragment_bytes = fs::read(&capture_output).unwrap();
+    let fragment: Value = serde_json::from_slice(&fragment_bytes).unwrap();
+    assert_eq!(fragment["source_context"], json!(context.selection()));
+    assert_eq!(fragment["job_context"], json!(resources.selection()));
+    let minimum = serde_json::from_value(fragment["metadata_minimum"].clone()).unwrap();
+    assert!(!invoke_capture(&capture).status.success());
+    assert_eq!(fs::read(&capture_output).unwrap(), fragment_bytes);
     let mut runner = Runner {
         config: &config,
         coordination: &coordination,
@@ -479,8 +565,6 @@ fn managed_control_edit_retains_both_objects_before_an_isolated_git_proposal() {
         metadata_minimum: &minimum,
         tree_limits: TreeLimits::default(),
     };
-    let manifest_path = root.join("job.json");
-    fs::write(&manifest_path, &request).unwrap();
     let before = journal.checkpoint();
     runner.identity.owner = key("foreign");
     assert!(

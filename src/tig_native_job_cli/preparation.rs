@@ -30,7 +30,7 @@ fn peak(unit: u64, passes: u64) -> Result<u64> {
         .and_then(|n| n.checked_add(1024 * 1024))
         .ok_or_else(|| anyhow::anyhow!("preparation allocation allowance overflow"))
 }
-pub(super) fn metadata_allowance(root: &Path, database_bytes: u64, bootstrap: u64) -> Result<u64> {
+pub(crate) fn metadata_allowance(root: &Path, database_bytes: u64, bootstrap: u64) -> Result<u64> {
     let unit = admission::allocation_unit(root)
         .map_err(|_| anyhow::anyhow!("metadata allocation geometry unavailable"))?;
     unit.checked_mul(16)
