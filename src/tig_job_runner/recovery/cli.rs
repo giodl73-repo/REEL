@@ -11,6 +11,8 @@ struct Admission {
     original_input: Selection,
     #[serde(default)]
     published_result: Option<Selection>,
+    #[serde(default)]
+    retirement: Option<retirement::Spec>,
     cache: Config,
     coordination_root: PathBuf,
     journal_root: PathBuf,
@@ -28,16 +30,27 @@ struct Admission {
 /// This verifies ownership and bytes; it does not recreate a native producer
 /// assertion, execute tools, finish child handoff or authorize workspace removal.
 pub fn adopt_prepared(path: &Path) -> Result<Value> {
-    execute(path, false)
+    execute(path, Operation::Adopt)
 }
 
 /// Explicitly retain a complete published result when prepare was not recorded.
 /// This creates the original prepare only after full guarded packet verification.
 pub fn retain_published(path: &Path) -> Result<Value> {
-    execute(path, true)
+    execute(path, Operation::Publish)
 }
 
-fn execute(path: &Path, published: bool) -> Result<Value> {
+/// Dry-run by default; explicit apply only removes a verified owned workspace.
+pub fn retire_workspace(path: &Path, apply: bool) -> Result<Value> {
+    execute(path, Operation::Retire { apply })
+}
+
+enum Operation {
+    Adopt,
+    Publish,
+    Retire { apply: bool },
+}
+
+fn execute(path: &Path, operation: Operation) -> Result<Value> {
     let mut raw = Vec::new();
     File::open(path)?
         .take(128 * 1024 + 1)
@@ -46,13 +59,16 @@ fn execute(path: &Path, published: bool) -> Result<Value> {
         bail!("prepared recovery profile exceeds bound");
     }
     let a: Admission = serde_json::from_value(identity::parse_json(&raw)?)?;
+    let published = matches!(operation, Operation::Publish);
+    let retiring = matches!(operation, Operation::Retire { .. });
     if a.schema
-        != if published {
-            "reel.tig-published-recovery-profile.experimental-1"
-        } else {
-            "reel.tig-prepared-recovery-profile.experimental-1"
+        != match operation {
+            Operation::Adopt => "reel.tig-prepared-recovery-profile.experimental-1",
+            Operation::Publish => "reel.tig-published-recovery-profile.experimental-1",
+            Operation::Retire { .. } => "reel.tig-workspace-retirement-profile.experimental-1",
         }
         || a.published_result.is_some() != published
+        || a.retirement.is_some() != retiring
         || !a.coordination_root.is_absolute()
         || !a.coordination_root.is_dir()
         || !a.journal_root.is_absolute()
@@ -115,6 +131,10 @@ fn execute(path: &Path, published: bool) -> Result<Value> {
             job_id: &a.job_id,
             original_input: &a.original_input,
             published: a.published_result.as_ref(),
+            retirement: a
+                .retirement
+                .as_ref()
+                .map(|spec| (spec, matches!(operation, Operation::Retire { apply: true }))),
         },
         &mut journal,
         &profile,

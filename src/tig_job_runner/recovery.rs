@@ -8,6 +8,7 @@ use tig_store::{
     source_claims::PreviewDisposition,
 };
 pub(super) mod cli;
+mod retirement;
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -74,6 +75,7 @@ fn adopt_selection(
             job_id,
             original_input,
             published: None,
+            retirement: None,
         },
         journal,
         profile,
@@ -85,6 +87,7 @@ struct RecoverySubject<'a> {
     job_id: &'a str,
     original_input: &'a Selection,
     published: Option<&'a Selection>,
+    retirement: Option<(&'a retirement::Spec, bool)>,
 }
 
 fn recover_selection(
@@ -98,6 +101,7 @@ fn recover_selection(
         job_id,
         original_input,
         published,
+        retirement,
     } = subject;
     if !job_id.starts_with("job-")
         || job_id.len() > 100
@@ -124,10 +128,31 @@ fn recover_selection(
     if before.owner != profile.identity.owner {
         bail!("recovery source owner differs");
     }
+    let retained_result = retirement.and_then(|(spec, _)| spec.retained_result.as_ref());
+    if retirement.is_some()
+        && retained_result.is_none()
+        && (before.revision != completed_revision || before.pending.is_some())
+    {
+        bail!("workspace retirement requires a completed current result");
+    }
     let needs_prepare = before.revision == profile.expected_revision
         && before.pending.is_none()
         && published.is_some();
-    let selection = if needs_prepare {
+    let selection = if let Some(pin) = retained_result {
+        // Read-only cleanup of one exact retained result. Its packet binds the
+        // original input below; a separate direct input predecessor is not a
+        // second authored inventory or a requirement to retain duplicate roots.
+        if before.revision < completed_revision
+            || !before
+                .current
+                .iter()
+                .chain(before.predecessors.iter())
+                .any(|version| version.revision == completed_revision && version.selection == *pin)
+        {
+            bail!("pinned result version is no longer retained by this source");
+        }
+        pin.clone()
+    } else if needs_prepare {
         if before.current.as_ref().is_none_or(|c| {
             c.revision != profile.expected_revision || c.selection != *original_input
         }) {
@@ -192,10 +217,11 @@ fn recover_selection(
     };
     if prepared.as_ref().is_some_and(|prepared| {
         prepared.source_revision != prepared_revision
-            || before
-                .pending
-                .as_ref()
-                .is_some_and(|p| p.reference != prepared.reference)
+            || (before.revision == prepared_revision
+                && before
+                    .pending
+                    .as_ref()
+                    .is_some_and(|p| p.reference != prepared.reference))
     }) {
         bail!("retention prepare receipt differs");
     }
@@ -322,8 +348,34 @@ fn recover_selection(
             bail!("retained output differs from admitted pin or bound");
         }
     }
-    if journal.source(&profile.identity.source)? != Some(before) {
+    if journal.source(&profile.identity.source)?.as_ref() != Some(&before) {
         bail!("recovery source changed while verifying");
+    }
+    if let Some((spec, apply)) = retirement {
+        let plan = retirement::prepare(
+            profile,
+            spec,
+            retirement::Packet {
+                job_id,
+                result: &selection,
+                journal: journal.identity(),
+                request: &raw,
+                document: &document,
+                outputs,
+            },
+            &mut cache,
+            &mut guards,
+            budget,
+        )?;
+        if journal.source(&profile.identity.source)?.as_ref() != Some(&before) {
+            bail!("retirement source changed while verifying originals");
+        }
+        let mut result = plan.finish(apply)?;
+        result["succeeded"] = succeeded.into();
+        result["source_revision"] = before.revision.into();
+        result["result_revision"] = completed_revision.into();
+        result["journal_checkpoint"] = serde_json::to_value(journal.checkpoint())?;
+        return Ok(result);
     }
     let prepared = match prepared {
         Some(receipt) => receipt,

@@ -15,6 +15,8 @@ use std::{
     time::Duration,
 };
 mod adapters;
+mod workspace_snapshot;
+pub use workspace_snapshot::{WorkspaceEntry, WorkspaceSnapshot, snapshot_owned_workspace};
 /// Explicit trusted-job deadlines remain finite; legacy requests default to one hour.
 pub const MAX_STEP_TIMEOUT_SECONDS: u64 = 24 * 60 * 60;
 fn step_timeout_limit_default() -> u64 {
@@ -618,6 +620,18 @@ fn run_loaded(
             }
         }
     }
+}
+
+/// Inspect one enrolled owned workspace; no reservation, discovery or removal.
+/// Rejects links, more than 10,000 entries and depth greater than sixteen.
+pub fn inspect_owned_workspace(
+    cfg: &crate::Config,
+    cache: &Path,
+    workspace: &Path,
+) -> Result<(PathBuf, u64)> {
+    let canonical = lifecycle::checked_workspace(cfg, cache, workspace)?;
+    let bytes = usage(&canonical, 0, &mut 0)?;
+    Ok((canonical, bytes))
 }
 
 /// Discard only a named owned job workspace after proving retained originals.
