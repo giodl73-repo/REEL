@@ -793,6 +793,16 @@ stale or unproven. `catch_up_candidate` uses advice, so blocked descendants do
 not enter the proposed catch-up set. Reinspect at a new committed checkpoint
 after producing and selecting an upstream replacement.
 
+A typed input may still be planned with `selected: null`. Set inspection records
+its ID in `unavailable_inputs`; that dependent entry has `basis: null`,
+`desired_recipe: null` and blocked advice. No byte pin or recipe is fabricated.
+An upstream generator whose own inputs are ready can retain an actionable
+`unbuilt` basis, so the first recording/translation can be planned before its
+downstream render. Unselected manual inputs also block until recorded. Selected
+inputs outside the request's admitted states still refuse; planned inspection
+does not relax recipe capture, context freezing or producer admission. Historical
+claims remain validated even for blocked entries, including target identity.
+
 Registered upstream generators omitted from `targets` appear in
 `missing_upstream` and block their descendants. `declared_upstream_scope_complete`
 only means these registered links are covered; it does not prove every legacy
