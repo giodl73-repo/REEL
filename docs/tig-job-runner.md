@@ -76,6 +76,42 @@ and rejects a published-result admission. Both commands preserve the original
 success/failure outcome and grant no producer, approval or scratch-removal claim.
 Incomplete packets and unpublished workspace recovery remain separate work.
 
+### Unpublished interrupted workspace salvage API
+
+The Rust `tig_job_runner::salvage_unpublished` API accepts the original admitted
+input `JobContext`, source owner/revision and runner profile, plus an explicit
+`reel_assets::jobs::Salvage` containing the absolute workspace path, exact
+`request_sha256`, positive `max_workspace_bytes` and `apply` flag. It holds only
+that source's fence. The default caller choice should be `apply:false`.
+
+Dry-run reads and verifies without publishing bytes or changing the journal.
+Apply publishes present declared outputs, the exact request and bounded
+diagnostics, then uses the existing retention sink to retain a failed-job packet.
+Missing declared outputs are allowed; unsafe or oversized present outputs refuse.
+Undeclared intermediates are never published. Even a present `result.json` cannot
+make an interrupted job successful. This operation runs no tools, changes no
+creative selection and leaves the workspace intact.
+
+Both modes require an ordinary workspace under the exact enrolled cache staging
+parent and no reservation record or lease for that job. Canonical inputs/tools
+must still exist and match their admitted roles and bytes; a remaining scratch
+hard link cannot replace them. Installed tools are not executed and their present
+availability is not asserted. Windows read-sharing guards exclude mutation and
+deletion of opened files. Bounded snapshots detect workspace changes before
+retention. Other jobs' reservations remain independent.
+
+Apply reserves publication capacity in the existing cache. Published candidates
+and controls are verified and guarded through the retention callback. A failed
+callback preserves scratch; byte publication before the callback does not itself
+establish source ownership. Retry while the original input remains current uses
+the same deterministic request/evidence pins. If interruption recorded prepare,
+use `adopt-prepared` with the original admission. After successful retention,
+normal verified retirement is a separate explicit operation.
+
+This API does not discover workspaces, remove reservations, salvage arbitrary
+unbounded files, attest a native producer, or restore incomplete metadata trees.
+CLI admission and consumer integration remain separate from this Rust API.
+
 ### Verify and retire recovered job scratch
 
 ```text

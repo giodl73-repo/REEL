@@ -15,6 +15,8 @@ use std::{
     time::Duration,
 };
 mod adapters;
+mod salvage;
+pub use salvage::{Salvage, salvage_admitted};
 mod workspace_snapshot;
 pub use workspace_snapshot::{WorkspaceEntry, WorkspaceSnapshot, snapshot_owned_workspace};
 /// Explicit trusted-job deadlines remain finite; legacy requests default to one hour.
