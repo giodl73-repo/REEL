@@ -51,6 +51,13 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
     let wait = MetadataWait::default();
     let programs = BoundPrograms::bind(&t.inputs.runtime)?;
     let (mut source, context) = restore(&t.inputs, &t.metadata_root, &t.metadata_minimum, &wait)?;
+    let templates = records::prepare(
+        &t.inputs,
+        &t.metadata_root,
+        &t.metadata_minimum,
+        &context,
+        &t.output_roots,
+    )?;
     let mut journal = SourceJournal::open(&t.journal_root, &t.journal_minimum)?;
     check(&t, &mut journal)?;
     let coordination = Coordination {
@@ -262,7 +269,14 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
             check(&t, &mut journal)?;
             Ok((
                 spec.id.clone(),
-                owner.verify_selected_master(source, &mut journal, &stage, &reference_budget)?,
+                owner
+                    .verify_selected_master(source, &mut journal, &stage, &reference_budget)
+                    .with_context(|| {
+                        format!(
+                            "episode scene {} primary-reference verification failed",
+                            spec.id
+                        )
+                    })?,
             ))
         })
         .collect::<Result<BTreeMap<_, _>>>()?;
@@ -274,12 +288,14 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
             check(&t, &mut journal)?;
             Ok((
                 spec.id.clone(),
-                owner.verify_selected_master(
-                    source,
-                    &mut journal,
-                    &stage,
-                    t.reference_staging_bytes,
-                )?,
+                owner
+                    .verify_selected_master(source, &mut journal, &stage, t.reference_staging_bytes)
+                    .with_context(|| {
+                        format!(
+                            "episode presentation {} primary-reference verification failed",
+                            spec.id
+                        )
+                    })?,
             ))
         })
         .collect::<Result<BTreeMap<_, _>>>()?;
@@ -353,6 +369,12 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
         }
     }
     check(&t, &mut journal)?;
+    let candidates = crate::tig_native_job_cli::records::emit_candidate(
+        &templates,
+        rendered.outputs(),
+        rendered.receipt_object(),
+        |bindings| rendered.claim(bindings),
+    )?;
     let mut owners = t
         .inputs
         .scenes
@@ -376,7 +398,7 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
         "resources":frozen.selection(),"receipt":rendered.receipt_object(),"metadata_checkpoint":checkpoint,
         "journal_checkpoint":journal.checkpoint(),"temporary_sources":owners,"temporary_owner_cleanup_required":true,
         "decoded_master_matches_ordered_segments":rendered.receipt().decoded_master_matches_ordered_segments,
-        "timestamps_verified":rendered.receipt().timestamps_verified,"production_claim":null,"approval":false});
+        "timestamps_verified":rendered.receipt().timestamps_verified,"record_candidates":candidates,"record_contract":records::contract(&t.inputs)?,"production_claim":null,"approval":false});
     write_report(Path::new("worker.json"), &result)?;
     Ok(result)
 }

@@ -6,6 +6,8 @@ use tig_core::tree::NodeStore;
 use tig_store::source_claims::Selection as SourceSelection;
 #[path = "tig_mixed_episode_cli.rs"]
 mod mixed_components;
+#[path = "tig_episode_records.rs"]
+mod output_records;
 
 #[test]
 #[ignore = "requires native FFmpeg; bounded episode CLI with captured source and old jobs offline"]
@@ -47,7 +49,9 @@ fn exercise(mixed: bool) {
         }
     }
     write(p.repo.path(), "records/assembly.tig", &assembly);
+    let record_fixture = output_records::configure(&mut p);
     p.commit("use opaque language-scoped component IDs");
+    let git_base = git(p.repo.path(), &["rev-parse", "HEAD"]);
     let metadata = p.data.path().join("episode-cli-metadata");
     let mut writer = MetadataStore::create(
         &metadata,
@@ -106,6 +110,7 @@ fn exercise(mixed: bool) {
     let minimum: tig_store::metadata::Checkpoint =
         serde_json::from_value(fragment["metadata_minimum"].clone()).unwrap();
     let inputs = json!({"source":fragment["source"],"context":fragment["context"],"request":fragment["request"],"runtime":runtime,
+        "record_outputs":record_fixture.specs,"git_handoff":record_fixture.handoff(&p, &git_base),
         "scenes":p.requests.iter().zip(UNITS).filter(|(_,id)|!mixed || matches!(*id,"scene-a"|"scene-b")).map(|(request,id)|json!({"id":id,"request":request,"output_id":format!("{id}:master:es"),"output_definition":"types/output","compiled":id=="scene-b"})).collect::<Vec<_>>(),"presentations":presentations});
     let profile = json!({"schema":"reel.tig-episode-job.experimental-1","inputs":inputs,"cache":config,
         "preparation_cache":p.hot(),"metadata_root":metadata,"metadata_minimum":minimum,
@@ -129,6 +134,32 @@ fn exercise(mixed: bool) {
         p.data.path().join("offline-jobs"),
     )
     .unwrap();
+    let missing: Object = serde_json::from_value(
+        read(p.repo.path().join("offline-records/output-scene-b.tig"))["selected"].clone(),
+    )
+    .unwrap();
+    let missing_path = object_file(&p.hot(), &missing);
+    let backup = p.data.path().join("component-master-offline");
+    fs::rename(&missing_path, &backup).unwrap();
+    let denied = Command::new(&binary)
+        .arg("run-episode")
+        .arg(&profile_path)
+        .output()
+        .unwrap();
+    fs::rename(backup, missing_path).unwrap();
+    assert!(!denied.status.success());
+    let error = String::from_utf8_lossy(&denied.stderr);
+    assert!(
+        error.contains("episode component scene-b selected object"),
+        "{error}"
+    );
+    assert!(error.contains(missing.sha256.as_str()), "{error}");
+    assert!(
+        p.owners
+            .source(&key("bounded-episode-cli"))
+            .unwrap()
+            .is_none()
+    );
     if mixed {
         for unit in ["opening", "credits"] {
             fs::rename(
@@ -168,6 +199,26 @@ fn exercise(mixed: bool) {
     assert!(
         String::from_utf8_lossy(&denied.stderr)
             .contains("workspace budget exceeds configured operation allowance")
+    );
+    assert!(
+        p.owners
+            .source(&key("bounded-episode-cli"))
+            .unwrap()
+            .is_none()
+    );
+    let mut wrong_template = profile.clone();
+    wrong_template["inputs"]["record_outputs"][0]["template"]["object"] =
+        json!(Object::from_bytes(b"changed template"));
+    let bad_path = p.data.path().join("wrong-record-template.json");
+    write(p.data.path(), "wrong-record-template.json", &wrong_template);
+    let denied = Command::new(&binary)
+        .arg("run-episode")
+        .arg(bad_path)
+        .output()
+        .unwrap();
+    assert!(!denied.status.success());
+    assert!(
+        String::from_utf8_lossy(&denied.stderr).contains("template or definition is not admitted")
     );
     assert!(
         p.owners
@@ -313,8 +364,37 @@ fn exercise(mixed: bool) {
     assert_eq!(finished["temporary_owner_cleanup_required"], false);
     assert_eq!(
         finished["journal_checkpoint"],
-        serde_json::to_value(checkpoint).unwrap()
+        serde_json::to_value(&checkpoint).unwrap()
     );
+    let mut changed_contract = profile.clone();
+    changed_contract["inputs"]["record_outputs"] = json!([]);
+    changed_contract["inputs"]["git_handoff"] = Value::Null;
+    let changed_path = p.data.path().join("changed-record-contract.json");
+    write(
+        p.data.path(),
+        "changed-record-contract.json",
+        &changed_contract,
+    );
+    let refused = Command::new(&binary)
+        .arg("finish-episode")
+        .arg(changed_path)
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("another attempt"));
+    let candidate_path = outputs["record-candidates.json"]["path"].as_str().unwrap();
+    let original_index = fs::read(candidate_path).unwrap();
+    let mut corrupted = original_index.clone();
+    corrupted[0] ^= 1;
+    fs::write(candidate_path, corrupted).unwrap();
+    let refused = Command::new(&binary)
+        .arg("finish-episode")
+        .arg(&profile_path)
+        .output()
+        .unwrap();
+    fs::write(candidate_path, original_index).unwrap();
+    assert!(!refused.status.success());
+    assert_eq!(journal.checkpoint(), checkpoint);
     // Normal repeated source revision is refused rather than starting a second
     // unadmitted render or overwriting completed output obligations.
     let retry = std::process::Command::new(&binary)
@@ -518,4 +598,5 @@ fn exercise(mixed: bool) {
         finish["journal_checkpoint"],
         serde_json::to_value(checkpoint).unwrap()
     );
+    output_records::check(&p, &result, &git_base, &record_fixture);
 }

@@ -32,6 +32,7 @@ use tig_store::{
 };
 mod handoff;
 mod planning;
+mod records;
 mod worker;
 pub use handoff::finish_episode;
 pub use worker::worker;
@@ -66,6 +67,10 @@ struct Inputs {
     runtime: Bindings,
     scenes: Vec<Scene>,
     presentations: Vec<Presentation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    record_outputs: Vec<crate::tig_native_job_cli::records::Spec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    git_handoff: Option<crate::tig_native_job_cli::handoff::Handoff>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -113,6 +118,7 @@ struct Ticket {
     max_objects: usize,
     max_logical_bytes: u64,
     outputs: BTreeMap<String, u64>,
+    output_roots: Vec<PathBuf>,
 }
 fn read<T: DeserializeOwned>(path: &Path, limit: usize, expected: Option<&Object>) -> Result<T> {
     let mut raw = Vec::new();
@@ -184,6 +190,15 @@ fn admit(resources: &job::JobContext, budget: &ProtectionBudget) -> Result<()> {
     Ok(())
 }
 fn validate(p: &Profile) -> Result<()> {
+    let artifacts = records::limits(&p.inputs)?;
+    if p.inputs
+        .record_outputs
+        .iter()
+        .any(|spec| !p.outputs.contains_key(&spec.output))
+        || artifacts.len() + p.outputs.len() + 1 > 256
+    {
+        bail!("episode record mapping names an undeclared output or exceeds budget");
+    }
     p.cache
         .capacity
         .validate()
@@ -272,6 +287,33 @@ pub fn run(path: &Path) -> Result<Value> {
         2 * (p.inputs.scenes.len() + p.inputs.presentations.len()) as u64 + 2,
     )?;
     let (mut source, context) = restore(&p.inputs, &p.metadata_root, &p.metadata_minimum, &wait)?;
+    records::prepare(
+        &p.inputs,
+        &p.metadata_root,
+        &p.metadata_minimum,
+        &context,
+        &p.cache.cache_roots,
+    )?;
+    // Availability is independent of eligibility. Catch missing retained masters
+    // before compiling every child or adopting any source. The worker still
+    // obtains its own guarded bytes and fresh primary-reference proofs.
+    for component in tig_episode::plan(&mut source, &p.inputs.request)?.components {
+        let selected = crate::scene_delivery::FileRef {
+            path: component.record.id.clone().into(),
+            sha256: component.selected.sha256.as_str().into(),
+            bytes: component.selected.bytes,
+        };
+        source
+            .prepare_files(std::slice::from_ref(&selected))
+            .with_context(|| {
+                format!(
+                    "episode component {} selected object {} ({} bytes) unavailable",
+                    component.segment_id,
+                    component.selected.sha256.as_str(),
+                    component.selected.bytes,
+                )
+            })?;
+    }
     let mut store = Waiting::new(
         wait.run(|| MetadataStore::open(&p.metadata_root, &p.metadata_minimum))?,
         &wait,
@@ -306,7 +348,7 @@ pub fn run(path: &Path) -> Result<Value> {
         "resources":root.resources.selection(),"recipe":root.recipe.fingerprint(),
         "root_revision":p.expected_revision.checked_add(2).context("episode root revision overflow")?,
         "reference_staging_bytes":p.reference_staging_bytes,"reference_picture_processes":p.reference_picture_processes,
-        "timeout_seconds":p.timeout_seconds,"max_objects":p.max_objects,"max_logical_bytes":p.max_logical_bytes,"outputs":p.outputs}))?;
+        "timeout_seconds":p.timeout_seconds,"max_objects":p.max_objects,"max_logical_bytes":p.max_logical_bytes,"outputs":p.outputs,"output_roots":p.cache.cache_roots}))?;
     if ticket.len() > 65536 {
         bail!("episode worker ticket exceeds budget");
     }
@@ -325,8 +367,11 @@ pub fn run(path: &Path) -> Result<Value> {
         "worker.json".into(),
         json!({"path":"worker.json","max_bytes":65536}),
     );
+    for (name, max) in records::limits(&p.inputs)? {
+        outputs.insert(name.clone(), json!({"path":name,"max_bytes":max}));
+    }
     let request = identity::canonical_json(
-        &json!({"output_count_limit":16,"budget_bytes":p.budget_bytes,"scratch_bytes":p.scratch_bytes,"step_timeout_limit_seconds":p.timeout_seconds,
+        &json!({"output_count_limit":256,"budget_bytes":p.budget_bytes,"scratch_bytes":p.scratch_bytes,"step_timeout_limit_seconds":p.timeout_seconds,
         "inputs":{},"tools":{},"installed_tools":{"worker":{"path":std::env::current_exe()?.canonicalize()?,"sha256":p.inputs.runtime.host.sha256,"bytes":p.inputs.runtime.host.bytes}},
         "files":{"episode-ticket.json":std::str::from_utf8(&ticket)?},"prepare_output_parents":false,
         "steps":[{"tool":"worker","args":["episode-worker","episode-ticket.json","--sha256",ticket_pin.sha256,"--bytes",ticket_pin.bytes.to_string()],"timeout_seconds":p.timeout_seconds}],"outputs":outputs}),

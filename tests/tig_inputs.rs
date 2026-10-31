@@ -903,6 +903,7 @@ fn native_render_candidate_claims_only_independently_checked_matching_bytes() {
             &plan,
             &mut source,
             &mut owners,
+            &f.root().join("job-owner"),
             f.root(),
             (&metadata, &checkpoint),
             bind_as,
@@ -995,7 +996,8 @@ fn native_render_candidate_claims_only_independently_checked_matching_bytes() {
         tig_scene_production::render(&mut source, &request, &context, &producer, &job, &output)
             .is_err()
     );
-    assert!(!owners.obligations(10).unwrap().complete_claim_coverage());
+    // Include the independent prepared-recovery sources exercised above.
+    assert!(!owners.obligations(32).unwrap().complete_claim_coverage());
 }
 
 fn metadata_claim_fixture(

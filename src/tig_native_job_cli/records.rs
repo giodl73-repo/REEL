@@ -15,7 +15,7 @@ const CLAIM: &str = "production-claim.json";
 const INDEX: &str = "record-candidates.json";
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Spec {
+pub(crate) struct Spec {
     pub output: String,
     pub template: Reference,
     pub selector: Selector,
@@ -24,7 +24,7 @@ pub(super) struct Spec {
 }
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct StreamClass {
+pub(crate) struct StreamClass {
     role: String,
     group: String,
 }
@@ -34,7 +34,7 @@ struct Template {
     definition: Vec<u8>,
     schema: Vec<u8>,
 }
-pub(super) struct Prepared {
+pub(crate) struct Prepared {
     specs: Vec<Spec>,
     templates: BTreeMap<String, Template>,
     handoff: Option<handoff::Handoff>,
@@ -44,18 +44,24 @@ fn path(id: &str) -> String {
     format!("records/{}.tig", Digest::blob(id.as_bytes()).as_str())
 }
 pub(super) fn artifacts(worker: &Worker) -> Result<BTreeMap<String, u64>> {
-    validate_specs(&worker.record_outputs)?;
-    if let Some(handoff) = &worker.git_handoff {
-        handoff.validate(&worker.record_outputs)?;
+    artifact_limits(&worker.record_outputs, worker.git_handoff.as_ref())
+}
+pub(crate) fn artifact_limits(
+    specs: &[Spec],
+    handoff: Option<&handoff::Handoff>,
+) -> Result<BTreeMap<String, u64>> {
+    validate_specs(specs)?;
+    if let Some(handoff) = handoff {
+        handoff.validate(specs)?;
     }
-    if worker.record_outputs.is_empty() {
+    if specs.is_empty() {
         return Ok(BTreeMap::new());
     }
     let mut result = BTreeMap::from([(CLAIM.into(), BYTES), (INDEX.into(), BYTES)]);
-    if worker.git_handoff.is_some() {
+    if handoff.is_some() {
         result.insert(handoff::FILE.into(), BYTES);
     }
-    for spec in &worker.record_outputs {
+    for spec in specs {
         result.insert(path(&spec.template.id), BYTES);
     }
     Ok(result)
@@ -152,8 +158,46 @@ pub(super) fn prepare(
     context: &ProductionContext,
     roots: &[PathBuf],
 ) -> Result<Prepared> {
-    artifacts(worker)?;
-    if worker.record_outputs.is_empty() {
+    prepare_admission(Admission {
+        source: &worker.source,
+        metadata_root: &worker.metadata_root,
+        metadata_minimum: &worker.metadata_minimum,
+        specs: &worker.record_outputs,
+        handoff: worker.git_handoff.as_ref(),
+        input_definitions: std::iter::once(worker.request.scene_definition.as_str())
+            .chain(
+                worker
+                    .request
+                    .control_definitions
+                    .iter()
+                    .map(String::as_str),
+            )
+            .chain(
+                worker
+                    .request
+                    .primary_definitions
+                    .iter()
+                    .map(String::as_str),
+            )
+            .collect(),
+        context,
+        roots,
+    })
+}
+pub(crate) struct Admission<'a> {
+    pub source: &'a Value,
+    pub metadata_root: &'a Path,
+    pub metadata_minimum: &'a Checkpoint,
+    pub specs: &'a [Spec],
+    pub handoff: Option<&'a handoff::Handoff>,
+    pub input_definitions: BTreeSet<&'a str>,
+    pub context: &'a ProductionContext,
+    pub roots: &'a [PathBuf],
+}
+pub(crate) fn prepare_admission(a: Admission<'_>) -> Result<Prepared> {
+    artifact_limits(a.specs, a.handoff)?;
+    let context = a.context;
+    if a.specs.is_empty() {
         return Ok(Prepared {
             specs: vec![],
             templates: BTreeMap::new(),
@@ -161,13 +205,13 @@ pub(super) fn prepare(
             roots: vec![],
         });
     }
-    let profile: ArchiveProfile = serde_json::from_value(worker.source.clone())?;
+    let profile: ArchiveProfile = serde_json::from_value(a.source.clone())?;
     if &profile.archive != context.archive()
         || &profile.checkpoint != context.requirements().checkpoint()
     {
         bail!("record templates belong to another native context");
     }
-    let mut reader = MetadataReader::open(&worker.metadata_root, &worker.metadata_minimum)?;
+    let mut reader = MetadataReader::open(a.metadata_root, a.metadata_minimum)?;
     let mut snapshot = AssetSnapshot::from_metadata_archive(
         &mut reader,
         &profile.archive,
@@ -178,17 +222,17 @@ pub(super) fn prepare(
         bail!("record template checkpoint differs");
     }
     let mut prepared = Prepared {
-        specs: worker.record_outputs.clone(),
+        specs: a.specs.to_vec(),
         templates: BTreeMap::new(),
-        handoff: worker.git_handoff.clone(),
-        roots: if worker.git_handoff.is_some() {
-            roots.to_vec()
+        handoff: a.handoff.cloned(),
+        roots: if a.handoff.is_some() {
+            a.roots.to_vec()
         } else {
             vec![]
         },
     };
     let mut slots = BTreeSet::new();
-    for spec in &worker.record_outputs {
+    for spec in a.specs {
         LogicalPath::parse(&spec.output)?;
         if !slots.insert((spec.template.id.clone(), spec.selector.clone())) {
             bail!("duplicate native record selector");
@@ -207,15 +251,8 @@ pub(super) fn prepare(
             continue;
         }
         let resolved = snapshot.resolve_id(&spec.template.id)?;
-        if resolved.definition().id == worker.request.scene_definition
-            || worker
-                .request
-                .control_definitions
-                .contains(&resolved.definition().id)
-            || worker
-                .request
-                .primary_definitions
-                .contains(&resolved.definition().id)
+        if a.input_definitions
+            .contains(resolved.definition().id.as_str())
         {
             bail!("native output template uses a production-input definition");
         }
@@ -378,6 +415,19 @@ fn annotate(
     Ok(())
 }
 pub(super) fn emit(prepared: &Prepared, candidate: &RenderedCandidate) -> Result<Option<Value>> {
+    emit_candidate(
+        prepared,
+        &candidate.receipt().outputs,
+        candidate.receipt_object(),
+        |bindings| candidate.claim(bindings),
+    )
+}
+pub(crate) fn emit_candidate(
+    prepared: &Prepared,
+    outputs: &BTreeMap<String, crate::scene_delivery::FileRef>,
+    receipt: &Object,
+    make_claim: impl FnOnce(&[OutputBinding<'_>]) -> Result<tig_assets::graph::recipe::produced::Claim>,
+) -> Result<Option<Value>> {
     if prepared.specs.is_empty() {
         return Ok(None);
     }
@@ -392,9 +442,7 @@ pub(super) fn emit(prepared: &Prepared, candidate: &RenderedCandidate) -> Result
         })
         .collect();
     for spec in &prepared.specs {
-        let item = candidate
-            .receipt()
-            .outputs
+        let item = outputs
             .get(&spec.output)
             .ok_or_else(|| anyhow::anyhow!("native record output not produced"))?;
         assign(
@@ -428,7 +476,7 @@ pub(super) fn emit(prepared: &Prepared, candidate: &RenderedCandidate) -> Result
             subject,
         })
         .collect();
-    let claim = candidate.claim(&bindings)?;
+    let claim = make_claim(&bindings)?;
     let claim = tig_assets::graph::recipe::produced::Claim::parse(claim.object(), claim.bytes())?;
     let mut records = vec![];
     let mut bytes_by_path = BTreeMap::new();
@@ -439,7 +487,7 @@ pub(super) fn emit(prepared: &Prepared, candidate: &RenderedCandidate) -> Result
             template,
             &prepared.specs,
             claim.object(),
-            candidate.receipt_object(),
+            receipt,
         )?;
         bind(&value, template)?;
         let bytes = identity::canonical_json(&serde_json::to_value(&value)?)?;
@@ -467,7 +515,7 @@ pub(super) fn emit(prepared: &Prepared, candidate: &RenderedCandidate) -> Result
     let set = CandidateSet {
         schema: "reel.native-record-candidate-set.experimental-1".into(),
         claim: claim.object().clone(),
-        receipt: candidate.receipt_object().clone(),
+        receipt: receipt.clone(),
         records,
         git_proposal: handoff_bytes.as_deref().map(Object::from_bytes),
     };
@@ -500,13 +548,38 @@ pub(super) fn readback(
         return Ok(None);
     }
     let verified = retained::verify(profile, phase, journal)?;
+    let result = readback_verified(
+        prepared,
+        &profile.worker.context,
+        plan.recipe(),
+        phase,
+        &verified,
+    )?;
+    retained::owned_selection(
+        journal,
+        &Key::parse(&profile.source_id)?,
+        &Key::parse(&profile.owner)?,
+        phase.revision,
+    )?;
+    Ok(result)
+}
+pub(crate) fn readback_verified(
+    prepared: &Prepared,
+    context: &Selection,
+    recipe: &tig_assets::graph::recipe::Plan,
+    phase: &PhaseResult,
+    verified: &retained::Verified,
+) -> Result<Option<Value>> {
+    if prepared.specs.is_empty() {
+        return Ok(None);
+    }
     let claim = tig_assets::graph::recipe::produced::Claim::parse(
         verified.object(CLAIM)?,
         &verified.bytes(phase, CLAIM, BYTES as usize)?,
     )?;
-    let checked = claim.check_plan(plan.recipe())?;
-    if claim.context().root != profile.worker.context.root
-        || claim.context().identity != profile.worker.context.context
+    let checked = claim.check_plan(recipe)?;
+    if claim.context().root != context.root
+        || claim.context().identity != context.context
         || claim.outputs().len() != prepared.specs.len()
     {
         bail!("candidate claim context or subjects differ");
@@ -596,23 +669,14 @@ pub(super) fn readback(
         {
             let subject = BoundSubject::bind(&bound, &definition, spec.selector.clone())?
                 .ok_or_else(|| anyhow::anyhow!("retained candidate subject missing"))?;
-            if tig_assets::graph::recipe::produced::compare(
-                plan.recipe(),
-                Some(&subject),
-                Some(&checked),
-            )? != tig_assets::graph::recipe::produced::Correspondence::ClaimedRecipeMatch
+            if tig_assets::graph::recipe::produced::compare(recipe, Some(&subject), Some(&checked))?
+                != tig_assets::graph::recipe::produced::Correspondence::ClaimedRecipeMatch
             {
                 bail!("retained candidate correspondence differs");
             }
         }
         exported.push(json!({"asset_id":record.asset_id,"template":record.template,"record":record.object,"retained_path":phase.value["outputs"][&record.path]["path"]}));
     }
-    retained::owned_selection(
-        journal,
-        &Key::parse(&profile.source_id)?,
-        &Key::parse(&profile.owner)?,
-        phase.revision,
-    )?;
     Ok(Some(
         json!({"schema":"reel.native-record-candidates-readback.experimental-1","claim":claim.object(),"receipt":set.receipt,"index":verified.object(INDEX)?,"records":exported,"git_proposal":git_profile,"current_selection":false,"complete_semantic_coverage":false}),
     ))

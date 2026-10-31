@@ -44,6 +44,7 @@ pub fn exercise(
     plan: &JobPlan<'_>,
     source: &mut Source,
     owners: &mut SourceJournal,
+    journal_root: &Path,
     root: &Path,
     metadata: (&Path, &Checkpoint),
     bind_as: impl Fn(&str, &Object) -> BoundSubject,
@@ -346,7 +347,13 @@ pub fn exercise(
     drop(job);
     drop(peer);
     drop(backend);
-    super::tig_runner::exercise(plan, owners, root, (metadata.0, &output_witness));
+    super::tig_runner::exercise(
+        plan,
+        owners,
+        journal_root,
+        root,
+        (metadata.0, &output_witness),
+    );
     let current = owners.source(&identity.source).unwrap().unwrap();
     assert_eq!(
         current.current.unwrap().selection,

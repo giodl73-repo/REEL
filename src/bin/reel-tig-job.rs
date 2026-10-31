@@ -8,6 +8,10 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Operation {
+    /// Complete an already-recorded result adoption; never render or remove scratch.
+    AdoptPrepared { profile: PathBuf },
+    /// Verify a complete published packet, then record prepare/adopt; preserve scratch.
+    RetainPublished { profile: PathBuf },
     /// Verify retained components and assemble an episode in admitted scratch.
     RunEpisode { profile: PathBuf },
     /// Resume a completed episode job's verified metadata/owner handoff only.
@@ -62,6 +66,8 @@ fn main() -> ExitCode {
     let comparison = matches!(&operation, Operation::CompareRetained { .. });
     let episode_job = matches!(&operation, Operation::RunEpisode { .. });
     let result = match operation {
+        Operation::AdoptPrepared { profile } => reel::tig_job_runner::adopt_prepared(&profile),
+        Operation::RetainPublished { profile } => reel::tig_job_runner::retain_published(&profile),
         Operation::RunEpisode { profile } => reel::tig_episode_cli::run(&profile),
         Operation::FinishEpisode { profile } => reel::tig_episode_cli::finish_episode(&profile),
         Operation::EpisodeWorker {

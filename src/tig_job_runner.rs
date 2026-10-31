@@ -20,6 +20,9 @@ use tig_store::{
     metadata::{Checkpoint, MetadataReader, MetadataStore},
     source_claims::{Command, Selection, SourceJournal},
 };
+mod recovery;
+pub use recovery::cli::{adopt_prepared, retain_published};
+pub use recovery::{RecoveryBudget, adopt_prepared_result};
 
 pub struct Profile<'a> {
     pub config: &'a Config,
@@ -70,11 +73,14 @@ impl Session<'_> {
         Ok(())
     }
     fn phase(&self, label: &str) -> Result<Key> {
-        let bytes = identity::canonical_json(
-            &serde_json::json!({"schema":"reel.tig-runner-operation.experimental-1","source":self.profile.identity.source.as_str(),"operation":self.profile.operation.as_str(),"phase":label}),
-        )?;
-        Ok(Key::parse(Digest::blob(&bytes).as_str())?)
+        retention_phase(self.profile, label)
     }
+}
+fn retention_phase(profile: &Profile<'_>, label: &str) -> Result<Key> {
+    let bytes = identity::canonical_json(
+        &serde_json::json!({"schema":"reel.tig-runner-operation.experimental-1","source":profile.identity.source.as_str(),"operation":profile.operation.as_str(),"phase":label}),
+    )?;
+    Ok(Key::parse(Digest::blob(&bytes).as_str())?)
 }
 struct Authority<'a, 's>(&'a RefCell<Session<'s>>);
 impl ResourceAuthority for Authority<'_, '_> {
@@ -122,6 +128,7 @@ impl Sink<'_, '_> {
             "source":session.resources.selection(),"journal":session.journal_identity,
             "owner":p.identity.owner.as_str(),"source_id":p.identity.source.as_str(),
             "revision":p.expected_revision,"outputs":batch.outputs().len(),"production_claim":null,
+            "retention_operation":p.operation.as_str(),
         }))?;
         let header_object = Object::from_bytes(&header);
         let mut entries = BTreeMap::from([

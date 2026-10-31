@@ -1,5 +1,81 @@
 # Tig-backed bounded jobs
 
+## Prepared-result recovery
+
+The Rust `tig_job_runner::adopt_prepared_result` API resumes the narrow durable
+boundary where cached request/evidence/output bytes and result metadata are
+complete, and the source journal has recorded prepare but not adopt. Supply the
+existing journal path, exact job ID, original admitted `JobContext`, original
+runner profile and explicit verification budgets. It acquires only that source's
+fence, requires the exact original recorded operation, verifies the retained tree
+and guarded active-cache bytes, and then completes the original adoption. Repeated
+adoption is idempotent; another owner, operation, revision or later job refuses.
+The original success/failure outcome is preserved. This is generic retention
+recovery, never a native producer claim or creative approval.
+
+The API runs no tools and creates no payloads or stores. It reports
+`staging_retired:false` and `authorizes_workspace_removal:false`. A source with no
+prepared result remains held. Recovery of unretained scratch, retirement of an
+old workspace and child-owner handoff are separate steps; this API does not
+declare the full recovery/cutover milestone complete.
+
+```text
+reel-tig-job adopt-prepared <private-recovery-profile.json>
+```
+
+The strict profile has schema `reel.tig-prepared-recovery-profile.experimental-1`:
+
+| Fields | Admission |
+| --- | --- |
+| `job_id`, `original_input` | Original runner job ID and exact input-job Selection (`root` Object and `context` digest) |
+| `source_id`, `owner`, `expected_revision`, `retain_operation` | Original input owner's identity, revision and retention operation; not the prepared revision or a new operation |
+| `journal_root`, `journal_minimum` | Existing journal and trusted minimum checkpoint |
+| `metadata_root`, `metadata_minimum` | Existing metadata provider and trusted minimum checkpoint |
+| `cache`, `coordination_root` | Explicit existing active CAS roots and shared source-fence directory |
+| `budget` | `max_objects` (2–1024), `max_verify_bytes` (positive), `verify_millis` (1–300000 per read) |
+
+The CLI checks the exact input-job metadata identity and absence of an output
+claim, then requires that pin to match the original journal-owned input. It does
+not reconstruct a compiler plan, bind a media runtime or declare an old producer
+current. The recorded prepare must match the operation exactly; verified byte
+read guards stay live through adoption. No directory is discovered or initialized.
+Profiles and stdout retain private pins and must stay outside project Git.
+
+A successful command means metadata adoption completed or replayed. Inspect
+`succeeded` for the original job outcome: adopting a failed job correctly returns
+`succeeded:false`. Both outcomes leave scratch and approval unchanged. Output
+record proposal adoption and child-owner handoff remain explicit separate steps.
+
+### Published packet without a recorded prepare
+
+```text
+reel-tig-job retain-published <private-published-recovery-profile.json>
+```
+
+Use schema `reel.tig-published-recovery-profile.experimental-1`, the same fields
+as prepared recovery, and an explicit `published_result` Selection. This is an
+admitted complete result tree already written by the retention sink, including
+the request, evidence and exact output pins. This command does not discover that
+tree, reconstruct a packet from arbitrary files or infer a successful render.
+New retention packets bind their retention operation in the immutable header.
+Published recovery requires that exact binding. Older packets lacking it remain
+eligible only for recorded-prepare recovery; it is not inferred retroactively.
+
+When the source still owns the exact original input and has no pending selection,
+the command verifies the complete tree, scoped header, request/evidence agreement,
+declared bounds and protected cached bytes before recording the original prepare
+and adopt operations. Any verification failure leaves the source and journal
+unchanged. A crash after prepare can be retried with the same profile; another
+pending or current result refuses. Repeating a completed operation is idempotent.
+The original input remains a predecessor.
+
+The result schema is `reel.tig-published-retention-recovery.experimental-1`.
+`prepare_recorded_now` distinguishes a newly recorded prepare from replay. This
+does not change `adopt-prepared`: that command still requires a recorded prepare
+and rejects a published-result admission. Both commands preserve the original
+success/failure outcome and grant no producer, approval or scratch-removal claim.
+Incomplete packets and unpublished workspace recovery remain separate work.
+
 ## Set up shared stores once
 
 The managed Windows CLI can explicitly create the metadata provider and source

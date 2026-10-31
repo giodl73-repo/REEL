@@ -32,13 +32,13 @@ mod capture;
 mod comparison;
 pub(crate) mod metadata_wait;
 pub use comparison::compare_retained;
-mod handoff;
+pub(crate) mod handoff;
 mod planning;
 pub(crate) mod preparation;
 mod publication;
 pub use publication::publish_file;
-mod records;
-mod retained;
+pub(crate) mod records;
+pub(crate) mod retained;
 mod setup;
 pub use capture::capture_context;
 use preparation::ContextMode;
@@ -386,11 +386,11 @@ struct Phase {
     retain: Key,
     minimum: Checkpoint,
 }
-struct PhaseResult {
-    value: Value,
-    revision: u64,
-    resources: Selection,
-    minimum: Checkpoint,
+pub(crate) struct PhaseResult {
+    pub value: Value,
+    pub revision: u64,
+    pub resources: Selection,
+    pub minimum: Checkpoint,
 }
 fn execute_phase(
     profile: &Profile,
