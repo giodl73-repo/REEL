@@ -4,8 +4,9 @@
 use anyhow::{Context, Result, bail};
 use reel::scene_authoring_inputs::read_verified_alignments;
 use reel_assembly::scene_authoring::{
-    Episode, RenderedSpan, Scene, ScenePolicy, ScopedBindings, ScoreUse, TemplateCatalog,
-    audit_rendered_compositions, compile_native_event_spans, materialize_scene, resolve_scene,
+    Episode, RenderedSpan, Scene, SceneBindingScopes, ScenePolicy, ScopedBindings, ScoreUse,
+    TemplateCatalog, audit_rendered_compositions, compile_native_event_spans, materialize_scene,
+    resolve_scene_for_language,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -201,14 +202,17 @@ fn emit_changed_only_graph(index_path: &str, asset_root: &Path, output_path: &st
             serde_yaml::from_slice(&fs::read(&selected_job)?)?;
         let (catalog, episode, scene, policy, season, episode_bindings, scene_bindings, _) =
             scene_inputs(&root, &manifest)?;
-        let current = resolve_scene(
+        let current = resolve_scene_for_language(
             &catalog,
             &episode,
             &scene,
             &policy,
-            &season,
-            &episode_bindings,
-            &scene_bindings,
+            SceneBindingScopes {
+                season: &season,
+                episode: &episode_bindings,
+                scene: &scene_bindings,
+            },
+            &manifest.language,
         )?;
         let expected_fingerprint = current
             .language_fingerprints
@@ -722,14 +726,17 @@ fn build_scene(
     if scene.scene_id != manifest.scene_id {
         bail!("build manifest scene ID mismatch");
     }
-    let resolved = resolve_scene(
+    let resolved = resolve_scene_for_language(
         &catalog,
         &episode,
         &scene,
         &policy,
-        &season,
-        &episode_bindings,
-        &scene_bindings,
+        SceneBindingScopes {
+            season: &season,
+            episode: &episode_bindings,
+            scene: &scene_bindings,
+        },
+        &manifest.language,
     )?;
     let scene = materialize_scene(&scene)?;
     let language_fingerprint = resolved

@@ -1717,8 +1717,59 @@ pub fn resolve_scene(
     episode_bindings: &ScopedBindings,
     scene_bindings: &ScopedBindings,
 ) -> Result<ResolvedScene> {
+    resolve_scene_scope(
+        catalog,
+        episode,
+        scene,
+        policy,
+        SceneBindingScopes {
+            season,
+            episode: episode_bindings,
+            scene: scene_bindings,
+        },
+        None,
+    )
+}
+
+/// Explicit binding ownership for a language-scoped scene resolution.
+pub struct SceneBindingScopes<'a> {
+    pub season: &'a ScopedBindings,
+    pub episode: &'a ScopedBindings,
+    pub scene: &'a ScopedBindings,
+}
+
+/// Resolve eligibility and input fingerprints for one requested language.
+/// Shared presentation inputs remain required. Other languages' production
+/// eligibility is not granted or tested; structural materialization still runs.
+pub fn resolve_scene_for_language(
+    catalog: &TemplateCatalog,
+    episode: &Episode,
+    scene: &Scene,
+    policy: &ScenePolicy,
+    bindings: SceneBindingScopes<'_>,
+    language: &str,
+) -> Result<ResolvedScene> {
+    resolve_scene_scope(catalog, episode, scene, policy, bindings, Some(language))
+}
+
+fn resolve_scene_scope(
+    catalog: &TemplateCatalog,
+    episode: &Episode,
+    scene: &Scene,
+    policy: &ScenePolicy,
+    bindings: SceneBindingScopes<'_>,
+    selected_language: Option<&str>,
+) -> Result<ResolvedScene> {
+    let SceneBindingScopes {
+        season,
+        episode: episode_bindings,
+        scene: scene_bindings,
+    } = bindings;
     let materialized = materialize_scene(scene)?;
     let scene = &materialized;
+    if selected_language.is_some_and(|id| !scene.languages.contains_key(id)) {
+        bail!("requested scene language is missing");
+    }
     if catalog.schema != CATALOG_SCHEMA
         || episode.schema != EPISODE_SCHEMA
         || !matches!(scene.schema.as_str(), SCENE_SCHEMA | SCENE_SCHEMA_V2)
@@ -1820,6 +1871,9 @@ pub fn resolve_scene(
     let mut language_fingerprints = BTreeMap::new();
     let mut inputs_by_language = BTreeMap::new();
     for (language_id, language) in &scene.languages {
+        if selected_language.is_some_and(|id| id != language_id) {
+            continue;
+        }
         let mut language_inputs = BTreeMap::new();
         let mut used_scores = BTreeMap::<String, &ScoreBinding>::new();
         if let Some(use_) = &scene.presentation {
