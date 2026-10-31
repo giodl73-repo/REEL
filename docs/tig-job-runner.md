@@ -76,6 +76,50 @@ and rejects a published-result admission. Both commands preserve the original
 success/failure outcome and grant no producer, approval or scratch-removal claim.
 Incomplete packets and unpublished workspace recovery remain separate work.
 
+### Verify and retire recovered job scratch
+
+```text
+reel-tig-job retire-workspace <private-retirement-profile.json>
+reel-tig-job retire-workspace <private-retirement-profile.json> --apply
+```
+
+This separate command requires a completed current result and the original
+recorded prepare/adopt operation. It cannot adopt a pending result as a side
+effect. The default verifies and reports; `--apply` explicitly authorizes removal
+of that one owned workspace. It changes no source-journal selection or event.
+
+Use schema `reel.tig-workspace-retirement-profile.experimental-1`, the prepared
+recovery fields, and `retirement: {"workspace": ABSOLUTE_PATH,
+"max_workspace_bytes": POSITIVE_INTEGER}`. Omit `published_result`. The cache's
+explicit `coordination_root` must match the original capacity/fence root. The
+workspace name must equal `job_id` and its canonical parent must be the enrolled
+cache's exact `staging/caminos` directory. No cache or workspace is discovered.
+
+Verification holds the source fence and protected cached request/evidence/output
+bytes, then also protects every original request input and cached tool. Installed
+tools must remain verified outside the workspace. The request in `job.json` must
+match the retained bytes. Any existing declared output must exactly match its
+retained candidate; an unretained or changed output refuses removal. Missing
+canonical originals cannot be excused by remaining hard links in scratch.
+
+An exact job's reservation record or lease refuses retirement, even if stale;
+this command never breaks or releases it. Other jobs' reservations do not block
+the operation. Short capacity metadata checks do not span hashing or removal.
+The directory is bounded to 10,000 entries and depth sixteen, rejects reparse
+points, and is rechecked immediately before removal. No cache payload, shared
+LFS object, worktree or unrelated directory is removed. Windows mutation/deletion
+guards are currently required; other platforms refuse this operation.
+
+The private report distinguishes `workspace_logical_bytes_verified` and
+`workspace_logical_bytes_removed` from disk space: `physical_bytes_freed` is null,
+because hard-link view sizes are not physical reclamation measurements.
+`cache_objects_removed` is always zero. Repeating after removal verifies the
+retained packet/originals and reports `already_absent:true`. This does not release
+input predecessors, grant approval or finish child-owner handoff. Incomplete
+and unpublished workspace salvage remains separate.
+The report preserves the original `succeeded` value: safe retirement of a failed
+job's retained candidates does not make that job successful.
+
 ## Set up shared stores once
 
 The managed Windows CLI can explicitly create the metadata provider and source

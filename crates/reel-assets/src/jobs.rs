@@ -620,6 +620,18 @@ fn run_loaded(
     }
 }
 
+/// Inspect one enrolled owned workspace; no reservation, discovery or removal.
+/// Rejects links, more than 10,000 entries and depth greater than sixteen.
+pub fn inspect_owned_workspace(
+    cfg: &crate::Config,
+    cache: &Path,
+    workspace: &Path,
+) -> Result<(PathBuf, u64)> {
+    let canonical = lifecycle::checked_workspace(cfg, cache, workspace)?;
+    let bytes = usage(&canonical, 0, &mut 0)?;
+    Ok((canonical, bytes))
+}
+
 /// Discard only a named owned job workspace after proving retained originals.
 /// No objects/sha256, shared LFS path or old worktree is ever removed here.
 pub fn discard(root: &Path, id: &str, manifest_oid: &str, incomplete: bool) -> Result<Value> {

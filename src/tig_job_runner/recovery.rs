@@ -8,6 +8,7 @@ use tig_store::{
     source_claims::PreviewDisposition,
 };
 pub(super) mod cli;
+mod retirement;
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -74,6 +75,7 @@ fn adopt_selection(
             job_id,
             original_input,
             published: None,
+            retirement: None,
         },
         journal,
         profile,
@@ -85,6 +87,7 @@ struct RecoverySubject<'a> {
     job_id: &'a str,
     original_input: &'a Selection,
     published: Option<&'a Selection>,
+    retirement: Option<(&'a retirement::Spec, bool)>,
 }
 
 fn recover_selection(
@@ -98,6 +101,7 @@ fn recover_selection(
         job_id,
         original_input,
         published,
+        retirement,
     } = subject;
     if !job_id.starts_with("job-")
         || job_id.len() > 100
@@ -123,6 +127,9 @@ fn recover_selection(
         .context("recovery revision overflow")?;
     if before.owner != profile.identity.owner {
         bail!("recovery source owner differs");
+    }
+    if retirement.is_some() && (before.revision != completed_revision || before.pending.is_some()) {
+        bail!("workspace retirement requires a completed current result");
     }
     let needs_prepare = before.revision == profile.expected_revision
         && before.pending.is_none()
@@ -322,8 +329,31 @@ fn recover_selection(
             bail!("retained output differs from admitted pin or bound");
         }
     }
-    if journal.source(&profile.identity.source)? != Some(before) {
+    if journal.source(&profile.identity.source)?.as_ref() != Some(&before) {
         bail!("recovery source changed while verifying");
+    }
+    if let Some((spec, apply)) = retirement {
+        let plan = retirement::prepare(
+            profile,
+            spec,
+            retirement::Packet {
+                job_id,
+                request: &raw,
+                document: &document,
+                outputs,
+            },
+            &mut cache,
+            &mut guards,
+            budget,
+        )?;
+        if journal.source(&profile.identity.source)?.as_ref() != Some(&before) {
+            bail!("retirement source changed while verifying originals");
+        }
+        let mut result = plan.finish(apply)?;
+        result["succeeded"] = succeeded.into();
+        result["source_revision"] = before.revision.into();
+        result["journal_checkpoint"] = serde_json::to_value(journal.checkpoint())?;
+        return Ok(result);
     }
     let prepared = match prepared {
         Some(receipt) => receipt,

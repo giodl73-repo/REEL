@@ -12,6 +12,12 @@ enum Operation {
     AdoptPrepared { profile: PathBuf },
     /// Verify a complete published packet, then record prepare/adopt; preserve scratch.
     RetainPublished { profile: PathBuf },
+    /// Verify owned scratch retirement; remove it only with explicit --apply.
+    RetireWorkspace {
+        profile: PathBuf,
+        #[arg(long)]
+        apply: bool,
+    },
     /// Verify retained components and assemble an episode in admitted scratch.
     RunEpisode { profile: PathBuf },
     /// Resume a completed episode job's verified metadata/owner handoff only.
@@ -68,6 +74,9 @@ fn main() -> ExitCode {
     let result = match operation {
         Operation::AdoptPrepared { profile } => reel::tig_job_runner::adopt_prepared(&profile),
         Operation::RetainPublished { profile } => reel::tig_job_runner::retain_published(&profile),
+        Operation::RetireWorkspace { profile, apply } => {
+            reel::tig_job_runner::retire_workspace(&profile, apply)
+        }
         Operation::RunEpisode { profile } => reel::tig_episode_cli::run(&profile),
         Operation::FinishEpisode { profile } => reel::tig_episode_cli::finish_episode(&profile),
         Operation::EpisodeWorker {

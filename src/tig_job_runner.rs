@@ -21,7 +21,7 @@ use tig_store::{
     source_claims::{Command, Selection, SourceJournal},
 };
 mod recovery;
-pub use recovery::cli::{adopt_prepared, retain_published};
+pub use recovery::cli::{adopt_prepared, retain_published, retire_workspace};
 pub use recovery::{RecoveryBudget, adopt_prepared_result};
 
 pub struct Profile<'a> {
