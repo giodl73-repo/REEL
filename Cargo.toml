@@ -26,6 +26,7 @@ same-file = "1.0.6"
 reel-music = { path = "crates/reel-music" }
 reel-assembly = { path = "crates/reel-assembly" }
 reel-assets = { path = "crates/reel-assets", optional = true }
+flate2 = { version = "1", optional = true }
 tig-core = { path = "vendor/tig/crates/tig-core", optional = true }
 tig-assets = { path = "vendor/tig/crates/tig-assets", optional = true }
 tig-git = { path = "vendor/tig/crates/tig-git", features = ["assets"], optional = true }
@@ -34,7 +35,7 @@ tig-store = { path = "vendor/tig/crates/tig-store", optional = true }
 [features]
 test-fixtures = []
 tig = ["dep:tig-core", "dep:tig-assets", "dep:tig-git", "dep:tig-store"]
-tig-publication = ["tig", "dep:reel-assets"]
+tig-publication = ["tig", "dep:reel-assets", "dep:flate2"]
 
 [[bin]]
 name = "reel-tig-scene"

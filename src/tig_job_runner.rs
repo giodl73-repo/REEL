@@ -20,6 +20,8 @@ use tig_store::{
     metadata::{Checkpoint, MetadataReader, MetadataStore},
     source_claims::{Command, Selection, SourceJournal},
 };
+mod recovery;
+pub use recovery::{RecoveryBudget, adopt_prepared_result};
 
 pub struct Profile<'a> {
     pub config: &'a Config,
@@ -70,11 +72,14 @@ impl Session<'_> {
         Ok(())
     }
     fn phase(&self, label: &str) -> Result<Key> {
-        let bytes = identity::canonical_json(
-            &serde_json::json!({"schema":"reel.tig-runner-operation.experimental-1","source":self.profile.identity.source.as_str(),"operation":self.profile.operation.as_str(),"phase":label}),
-        )?;
-        Ok(Key::parse(Digest::blob(&bytes).as_str())?)
+        retention_phase(self.profile, label)
     }
+}
+fn retention_phase(profile: &Profile<'_>, label: &str) -> Result<Key> {
+    let bytes = identity::canonical_json(
+        &serde_json::json!({"schema":"reel.tig-runner-operation.experimental-1","source":profile.identity.source.as_str(),"operation":profile.operation.as_str(),"phase":label}),
+    )?;
+    Ok(Key::parse(Digest::blob(&bytes).as_str())?)
 }
 struct Authority<'a, 's>(&'a RefCell<Session<'s>>);
 impl ResourceAuthority for Authority<'_, '_> {

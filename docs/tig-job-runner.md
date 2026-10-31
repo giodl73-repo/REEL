@@ -1,5 +1,24 @@
 # Tig-backed bounded jobs
 
+## Prepared-result recovery
+
+The Rust `tig_job_runner::adopt_prepared_result` API resumes the narrow durable
+boundary where cached request/evidence/output bytes and result metadata are
+complete, and the source journal has recorded prepare but not adopt. Supply the
+existing journal path, exact job ID, original admitted `JobContext`, original
+runner profile and explicit verification budgets. It acquires only that source's
+fence, requires the exact original recorded operation, verifies the retained tree
+and guarded active-cache bytes, and then completes the original adoption. Repeated
+adoption is idempotent; another owner, operation, revision or later job refuses.
+The original success/failure outcome is preserved. This is generic retention
+recovery, never a native producer claim or creative approval.
+
+The API runs no tools and creates no payloads or stores. It reports
+`staging_retired:false` and `authorizes_workspace_removal:false`. A source with no
+prepared result remains held. Recovery of unretained scratch, retirement of an
+old workspace, child-owner handoff and a high-level recovery CLI are separate
+steps; this API does not declare the full recovery/cutover milestone complete.
+
 ## Set up shared stores once
 
 The managed Windows CLI can explicitly create the metadata provider and source

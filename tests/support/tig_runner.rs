@@ -15,6 +15,8 @@ use tig_store::{
     metadata::{Checkpoint, MetadataReader, MetadataStore},
     source_claims::SourceJournal,
 };
+#[path = "tig_runner_recovery.rs"]
+mod recovery;
 fn key(s: &str) -> Key {
     Key::parse(s).unwrap()
 }
@@ -187,7 +189,7 @@ pub fn exercise(
         assert_eq!(state.predecessors.len(), 1);
         let selection = state.current.unwrap().selection;
         let mut latest = MetadataReader::open(metadata.0, &witness).unwrap();
-        let (header, _) = Tree::from_root(selection.root)
+        let (header, _) = Tree::from_root(selection.root.clone())
             .get(
                 &LogicalPath::parse("retention/identity").unwrap(),
                 &mut latest,
@@ -198,6 +200,14 @@ pub fn exercise(
             serde_json::from_slice(&latest.get(&header.unwrap()).unwrap().unwrap()).unwrap();
         assert_eq!(header["succeeded"], mode == "success");
         assert!(header["production_claim"].is_null());
+        recovery::exercise(
+            resources.resources(),
+            journal,
+            &root.join("job-owner"),
+            &profile,
+            &selection,
+            mode == "success",
+        );
         assert!(
             fs::read_dir(cache.join("staging/caminos"))
                 .unwrap()
