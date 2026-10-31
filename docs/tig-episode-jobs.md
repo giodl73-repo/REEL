@@ -59,6 +59,10 @@ The private profile schema is `reel.tig-episode-job.experimental-1`:
   to the shared runner, up to its finite 24-hour maximum. Ordinary runner
   requests that omit that limit keep their one-hour default. A long episode
   deadline never changes another job's limit or its cache capacity admission.
+  The private cache policy's `max_object_bytes` also caps an admitted operation;
+  it must cover the complete workspace budget, not only the largest output.
+  This consistency check happens before opening source/runtime stores or
+  adopting a source. Final disk reservation remains transactional in the runner.
 - `reference_staging_bytes` and `reference_picture_processes` bound each native
   scene comparison. `max_objects` and `max_logical_bytes` bound declared resource
   obligations; logical bytes are not allocated disk usage.

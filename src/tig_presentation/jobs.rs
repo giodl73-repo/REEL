@@ -479,7 +479,7 @@ impl ProtectedPresentation<'_, '_> {
             plan.compiled.manifest(),
             &plan.compiled,
             &programs,
-            &outputs,
+            &crate::tig_scene_production::jobs::reference::SelectedOutputs(&outputs),
             &plan.master,
             stage_parent,
             max_staged_bytes,

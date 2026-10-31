@@ -823,7 +823,7 @@ pub fn compare_master_to_primaries(
     max_staged_bytes: u64,
 ) -> Result<PrimaryComparison> {
     scene_delivery::control_name(&manifest.path)?;
-    scene_delivery::control_name(&master.path)?;
+    outputs.validate_reference_name(master)?;
     let raw = scene_delivery::read_control(controls, manifest)?;
     let staged_bytes = staging_bytes(&raw, max_staged_bytes)?;
     let loaded = load(&raw, controls, inputs)?;

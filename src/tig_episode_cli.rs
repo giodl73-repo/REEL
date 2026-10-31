@@ -184,6 +184,13 @@ fn admit(resources: &job::JobContext, budget: &ProtectionBudget) -> Result<()> {
     Ok(())
 }
 fn validate(p: &Profile) -> Result<()> {
+    p.cache
+        .capacity
+        .validate()
+        .map_err(|error| anyhow::anyhow!("episode capacity policy invalid: {error}"))?;
+    if p.budget_bytes > p.cache.capacity.max_object_bytes {
+        bail!("episode workspace budget exceeds configured operation allowance");
+    }
     let budget = protection(p.max_objects, p.max_logical_bytes)?;
     let _ = budget;
     if p.schema != SCHEMA

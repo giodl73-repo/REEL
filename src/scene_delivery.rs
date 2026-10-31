@@ -357,6 +357,13 @@ impl MediaProgram {
 /// ambient tools. Provider locations are not serialized into jobs or receipts.
 pub trait InputFiles {
     fn verified_path(&self, item: &FileRef) -> Result<PathBuf>;
+    /// Validate a reference in this provider's namespace. Filesystem providers
+    /// require relative virtual paths; asset adapters may use opaque IDs. This
+    /// never replaces exact pin verification or the protected read guard.
+    fn validate_reference_name(&self, item: &FileRef) -> Result<()> {
+        control_name(&item.path)?;
+        Ok(())
+    }
     /// Exact metadata bytes may come directly from an immutable node provider.
     /// The caller still checks the declared pin. Explicit failure is terminal;
     /// it must not trigger a filesystem fallback. The default retains guarded
@@ -550,6 +557,18 @@ mod memory_control_tests {
                 bail!("explicit provider refusal");
             }
             Ok(b"{}".to_vec())
+        }
+    }
+    #[test]
+    fn filesystem_reference_names_stay_strict() {
+        let root = Path::new(".");
+        for name in ["scene:master:es", "../master.mkv", "/master.mkv", "a//b"] {
+            let pin = FileRef {
+                path: name.into(),
+                sha256: "0".repeat(64),
+                bytes: 1,
+            };
+            assert!(root.validate_reference_name(&pin).is_err(), "{name}");
         }
     }
     #[test]
