@@ -640,14 +640,22 @@ vendored Tig/REEL source descriptor; intake is not an automatic runtime switch.
 reel-tig-job inspect-generation <private-profile.json> <new-private-report.json>
 ```
 
-This metadata-only command uses an existing archived Tig source and metadata
-provider. It starts no generator, reads no primary payloads and grants no job,
+This metadata-only command uses an exact committed Git source or an existing
+archived Tig source. It starts no generator, reads no primary payloads and grants no job,
 selection or removal authority. The explicit profile schema is
 `reel.tig-generation-inspection.experimental-1`: `metadata_root`,
-`metadata_minimum`, `source` (ArchiveProfile), `request`, `producer` (Object), and
+`metadata_minimum`, `source` (Git input Profile or ArchiveProfile), `request`, `producer` (Object), and
 optional `original` (`source`, `request`, independently admitted `producer`, and
 exact `claim` Object). Without original evidence, selected bytes remain
 `unproven`; an absent selection is `unbuilt`, not a successful generation.
+
+For a Git source without original evidence, omit both `metadata_root` and
+`metadata_minimum`: no metadata archive needs to be created first. The source's
+explicit commit and scopes define the view; uncommitted worktree edits do not
+change it. Archive sources and original evidence require both authority fields.
+Historical claim bytes are resolved through the original source's enrolled
+providers, which may differ from the current source's providers. Source formats
+cannot be mixed, and supplying only half the metadata authority is refused.
 
 The request schema is `reel.tig-generation-request.experimental-1`. It names
 `output_id`, `output_definition`, `spec_id`, `spec_definition`,
