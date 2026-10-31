@@ -5,11 +5,11 @@ use reel::scene_cue_compose::{
 };
 use reel::scene_delivery_compile::{CompileManifest, compile_to_dir};
 use reel_assembly::scene_authoring::{
-    CacheObjectRef, Episode, ProviderWordImport, RenderedSpan, Scene, ScenePolicy, ScopedBindings,
-    TemplateCatalog, TriggerTextSpec, WhisperCppWordImport, WordTimingEvidence,
-    audit_rendered_compositions, authored_trigger_text, compile_selected_event_request,
-    import_provider_words, import_whispercpp_words, resolve_episode_presentation, resolve_scene,
-    resolve_text_triggers,
+    CacheObjectRef, Episode, ProviderWordImport, RenderedSpan, Scene, SceneBindingScopes,
+    ScenePolicy, ScopedBindings, TemplateCatalog, TriggerTextSpec, WhisperCppWordImport,
+    WordTimingEvidence, audit_rendered_compositions, authored_trigger_text,
+    compile_selected_event_request, import_provider_words, import_whispercpp_words,
+    resolve_episode_presentation, resolve_scene, resolve_scene_for_language, resolve_text_triggers,
 };
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
@@ -314,14 +314,17 @@ fn run() -> Result<()> {
             flag,
             output,
         ] if command == "resolve-language" && flag == "--output" => {
-            let resolved = resolve_scene(
+            let resolved = resolve_scene_for_language(
                 &read::<TemplateCatalog>(catalog)?,
                 &read::<Episode>(episode)?,
                 &read::<Scene>(scene)?,
                 &read::<ScenePolicy>(policy)?,
-                &read::<ScopedBindings>(season)?,
-                &read::<ScopedBindings>(episode_bindings)?,
-                &read::<ScopedBindings>(scene_bindings)?,
+                SceneBindingScopes {
+                    season: &read::<ScopedBindings>(season)?,
+                    episode: &read::<ScopedBindings>(episode_bindings)?,
+                    scene: &read::<ScopedBindings>(scene_bindings)?,
+                },
+                language,
             )?;
             let fingerprint = resolved
                 .language_fingerprints

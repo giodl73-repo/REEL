@@ -43,7 +43,7 @@ fn programs(real: bool) -> BoundPrograms {
 #[test]
 #[ignore = "requires Windows FFmpeg and tig-propose; compiled CLI workflow"]
 fn compiled_cli_plans_renders_and_hands_off_records_with_source_git_offline() {
-    compiled_rehearsal(None);
+    compiled_rehearsal(None, false);
 }
 #[test]
 #[ignore = "requires source-pinned older producer, FFmpeg and tig-propose"]
@@ -58,9 +58,15 @@ fn retained_producer_and_new_checker_preserve_claim_and_source_currency() {
         )))
         .unwrap()
     );
-    compiled_rehearsal(Some(&producer));
+    // Different runtime identity with the current compiler exercises original
+    // producer matching and current-source invalidation without claiming that
+    // an older compiler can execute a newly captured interpretation.
+    compiled_rehearsal(Some(Path::new(env!("CARGO_BIN_EXE_reel-tig-job"))), false);
+    // A genuinely older compiler captures its own context. Today's checker
+    // must revalidate its contracts, not silently replay it as today's recipe.
+    compiled_rehearsal(Some(&producer), true);
 }
-fn compiled_rehearsal(producer: Option<&Path>) {
+fn compiled_rehearsal(producer: Option<&Path>, historical: bool) {
     use tig_store::metadata::MetadataReader;
     let (mut f, request) = native_scene_fixture();
     f.profile["byte_source"]["required"] = json!("prevent-mutation");
@@ -102,7 +108,34 @@ fn compiled_rehearsal(producer: Option<&Path>) {
         &f.root().join("compiled-cli-reference-output"),
     )
     .unwrap();
-    if let Some(producer) = producer {
+    if historical {
+        let producer = producer.unwrap();
+        let capture_path = f.root().join("historical-capture-profile.json");
+        fs::write(&capture_path, serde_json::to_vec(&capture).unwrap()).unwrap();
+        let fragment_path = f.root().join("historical-compiler-fragment.json");
+        let captured = Command::new(producer)
+            .arg("capture-context")
+            .arg(capture_path)
+            .arg(&fragment_path)
+            .output()
+            .unwrap();
+        assert!(
+            captured.status.success(),
+            "{}",
+            String::from_utf8_lossy(&captured.stderr)
+        );
+        let historical: Value = serde_json::from_slice(&fs::read(fragment_path).unwrap()).unwrap();
+        let minimum = serde_json::from_value(historical["metadata_minimum"].clone()).unwrap();
+        native_cli::exercise_historical_compiler(
+            f.root(),
+            &request,
+            &serde_json::from_value(historical["context"].clone()).unwrap(),
+            (&metadata, &minimum),
+            historical["source"].clone(),
+            reference.receipt(),
+            producer,
+        );
+    } else if let Some(producer) = producer {
         native_cli::exercise_retained_producer(
             f.root(),
             &request,

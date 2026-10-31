@@ -38,3 +38,30 @@ runtime/operator tests), 51 assembly tests and strict locked all-target,
 all-feature Clippy. The synthetic regression's initial failure was corrected at
 the downstream compiler boundary, with production eligibility retained for all
 actually consumed inputs.
+
+Further front-door checking found `resolve-language` still calling the full-scene
+entry. Its CLI now uses the same scoped resolver; the regression invokes both
+language commands and explicit whole-scene validation, preserving refusal for
+the consumed draft and the all-language command.
+
+Hosted Windows qualification exposed a separate fixture error: a current
+compiler captured the context handed to the older producer. The producer
+correctly refused the foreign interpretation. Cross-version tests must capture
+historical contexts with the historical compiler. The fixture separates
+same-compiler/different-runtime source-currency checks from genuinely older
+compiler revalidation. The latter requires strict historical claim replay to
+refuse, and explicit retained-contract revalidation to verify old bytes without
+claiming current production. No production guard is relaxed and no existing
+source-currency case is removed.
+
+The optimized candidate independently passes the actual retained-scene
+revalidation: seven outputs and 163,084,352 bytes, exact decoded equality, no
+materialization, no historical claim replay or approval transfer. This does not
+override the hosted failure; the corrected fixture and full qualification remain
+required before the candidate can be installed.
+
+Corrected local qualification passes: the explicit source-pinned compatibility
+fixture runs both branches successfully (540.22 seconds), and strict locked
+all-target/all-feature Clippy passes. The front-door language regression also
+passes. Hosted checks must qualify the corrected head; the earlier failed head
+remains unqualified.

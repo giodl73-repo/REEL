@@ -355,6 +355,49 @@ fn other_language_drafts_do_not_block_current_language_but_consumed_drafts_refus
                 fs::read(f.root().join("after-draft/delivery").join(file)).unwrap()
             );
         }
+        // Public authoring entry points must agree with the native compiler.
+        // The explicit whole-scene command still checks every language.
+        for (language, allowed) in [(Some("en"), true), (Some("es"), false), (None, false)] {
+            let output = f
+                .root()
+                .join(format!("resolved-{}.json", language.unwrap_or("all")));
+            let mut command = Command::new(env!("CARGO_BIN_EXE_reel-scene-authoring"));
+            command.arg(if language.is_some() {
+                "resolve-language"
+            } else {
+                "resolve"
+            });
+            for file in [
+                "catalog.json",
+                "episode.json",
+                "scene.json",
+                "policy.json",
+                "season-bindings.json",
+                "episode-bindings.json",
+                "scene-bindings.json",
+            ] {
+                command.arg(f.root().join("after-draft").join(file));
+            }
+            if let Some(language) = language {
+                command.arg(language);
+            }
+            let result = command.arg("--output").arg(&output).output().unwrap();
+            assert_eq!(
+                result.status.success(),
+                allowed,
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            if allowed {
+                let resolved: Value = serde_json::from_slice(&fs::read(output).unwrap()).unwrap();
+                assert_eq!(
+                    resolved["fingerprint_sha256"],
+                    before["language_inputs"]["native_semantic_sha256"]
+                );
+            } else {
+                assert!(!output.exists());
+            }
+        }
         assert!(
             !f.root()
                 .join("cache/objects")
