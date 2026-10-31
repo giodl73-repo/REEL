@@ -25,3 +25,8 @@ removed; every materialized original has a guarded retained copy; external
 runtime changes are not reinterpreted as new producer claims or approval. This
 is a technical checklist, not independent approval. Actual consumer acceptance
 and incomplete/unpublished workspace salvage remain open.
+
+Hosted qualification also exposed runner storage exhaustion while building
+debug artifacts. CI now omits dev/test debug symbols and uses a fresh Rust cache
+prefix, matching local qualification. The complete test matrix and assertions
+remain enabled; no production cache or payload is removed to make room.
