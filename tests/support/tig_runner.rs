@@ -216,7 +216,122 @@ pub fn exercise(
                 .is_none()
         );
     }
+    exercise_unpublished(
+        plan,
+        frozen.selection(),
+        journal,
+        journal_root,
+        &project,
+        &cfg,
+        &coordination,
+        (metadata.0, &witness),
+        &ffmpeg,
+        &tool,
+    );
     assert!(!project.join("catalog.json").exists());
     assert!(!project.join("registry").exists());
     assert!(!journal.obligations(100).unwrap().complete_claim_coverage());
+}
+
+#[allow(clippy::too_many_arguments)]
+fn exercise_unpublished(
+    plan: &JobPlan<'_>,
+    selection: &tig_store::source_claims::Selection,
+    journal: &mut SourceJournal,
+    journal_root: &Path,
+    project: &Path,
+    cfg: &Config,
+    coordination: &Coordination,
+    metadata: (&Path, &Checkpoint),
+    ffmpeg: &Path,
+    tool: &ByteIdentity,
+) {
+    let mut reader = MetadataReader::open(metadata.0, metadata.1).unwrap();
+    let resources = plan
+        .readback(selection, &mut reader, TreeLimits::default())
+        .unwrap();
+    let identity = Identity {
+        source: key("salvage-unpublished"),
+        owner: key("salvage-owner"),
+    };
+    let held = plan
+        .readback(selection, &mut reader, TreeLimits::default())
+        .unwrap()
+        .protect(
+            journal,
+            coordination,
+            identity.clone(),
+            0,
+            &key("salvage-start"),
+        )
+        .unwrap();
+    drop(held);
+    let cache = &cfg.cache_roots[0];
+    let workspace = cache.join("staging/caminos/job-unpublished-fixture");
+    fs::create_dir_all(&workspace).unwrap();
+    let request=serde_json::to_vec(&json!({"budget_bytes":1024*1024,"scratch_bytes":65536,"inputs":{},"tools":{},"installed_tools":{"encoder":{"path":ffmpeg,"sha256":tool.sha256,"bytes":tool.bytes}},"steps":[{"tool":"encoder","args":[],"timeout_seconds":1}],"outputs":{"candidate":{"path":"partial.bin","max_bytes":1024},"absent":{"path":"absent.bin","max_bytes":1024}}})).unwrap();
+    fs::write(workspace.join("job.json"), &request).unwrap();
+    fs::write(
+        workspace.join("partial.bin"),
+        b"not a rendered video; unapproved candidate",
+    )
+    .unwrap();
+    let hash = tig_core::Object::from_bytes(&request).sha256;
+    let mut profile = Profile {
+        config: cfg,
+        coordination,
+        identity,
+        expected_revision: 2,
+        operation: key("salvage-retain"),
+        metadata_root: metadata.0,
+        metadata_minimum: metadata.1,
+        tree_limits: TreeLimits::default(),
+    };
+    let call = |journal: &mut SourceJournal, profile: &Profile<'_>, apply| {
+        tig_job_runner::salvage_unpublished(
+            project,
+            reel_assets::jobs::Salvage {
+                workspace: &workspace,
+                request_sha256: hash.as_str(),
+                max_workspace_bytes: 1024 * 1024,
+                apply,
+            },
+            resources.resources(),
+            journal,
+            profile,
+        )
+    };
+    let before = journal.checkpoint();
+    profile.identity.owner = key("wrong-owner");
+    assert!(call(journal, &profile, true).is_err());
+    profile.identity.owner = key("salvage-owner");
+    profile.expected_revision = 1;
+    assert!(call(journal, &profile, true).is_err());
+    profile.expected_revision = 2;
+    assert_eq!(journal.checkpoint(), before);
+    let dry = call(journal, &profile, false).unwrap();
+    assert_eq!(dry["applied"], false);
+    assert_eq!(journal.checkpoint(), before);
+    let result = call(journal, &profile, true).unwrap();
+    assert_eq!(result["succeeded"], false);
+    assert_eq!(result["source_revision"], 4);
+    assert_eq!(result["staging_retired"], false);
+    assert!(workspace.join("partial.bin").exists());
+    // The ordinary prepared-result verifier can reopen the salvaged failed
+    // packet; recovery must not turn its candidate into a successful render.
+    let result = tig_job_runner::adopt_prepared_result(
+        journal_root,
+        "job-unpublished-fixture",
+        resources.resources(),
+        journal,
+        &profile,
+        &tig_job_runner::RecoveryBudget {
+            max_objects: 16,
+            max_verify_bytes: 4 * 1024 * 1024,
+            verify_millis: 30000,
+        },
+    )
+    .unwrap();
+    assert_eq!(result["succeeded"], false);
+    assert!(workspace.exists());
 }
