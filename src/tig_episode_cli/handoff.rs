@@ -164,6 +164,7 @@ fn finish_after_prepare(
             || header["owner"] != p.owner
             || header["operation"] != p.operation
             || header["root_revision_after"].as_u64() != Some(state.revision)
+            || header["record_contract"] != serde_json::to_value(records::contract(&p.inputs)?)?
         {
             bail!("episode retained context belongs to another attempt");
         }
@@ -188,6 +189,27 @@ fn finish_after_prepare(
                     bail!("episode absent temporary source changed");
                 }
             }
+        }
+        if succeeded && !p.inputs.record_outputs.is_empty() {
+            let previous: Selection = serde_json::from_value(header["previous"].clone())?;
+            let original = entries(&previous, &mut reader)?;
+            for object in original.values().chain(std::iter::once(&previous.root)) {
+                if retained.get(&LogicalPath::parse(&format!(
+                    "objects/{}",
+                    object.sha256.as_str()
+                ))?) != Some(object)
+                {
+                    bail!("episode candidate result is outside retained handoff");
+                }
+            }
+            let identity = document(
+                &reader,
+                original
+                    .get(&LogicalPath::parse("retention/identity")?)
+                    .context("episode original result header missing")?,
+            )?;
+            let inputs: Selection = serde_json::from_value(identity["source"].clone())?;
+            records::verify_completed(p, journal, &previous, &inputs, &original, &mut reader)?;
         }
         (current, temporary, None, succeeded)
     } else {
@@ -238,6 +260,14 @@ fn finish_after_prepare(
             bail!("episode result source context differs");
         }
         let parent_selection = if succeeded {
+            records::verify_completed(
+                p,
+                journal,
+                &current,
+                &input_selection,
+                &retained,
+                &mut reader,
+            )?;
             let report = read_report(
                 p,
                 retained
@@ -248,6 +278,7 @@ fn finish_after_prepare(
                     .context("episode completion report missing")?,
             )?;
             if report["schema"] != "reel.tig-episode-worker-result.experimental-1"
+                || report["record_contract"] != serde_json::to_value(records::contract(&p.inputs)?)?
                 || report["recipe"] != input_header["recipe"]
                 || report["decoded_master_matches_ordered_segments"] != true
                 || report["timestamps_verified"] != true
@@ -395,7 +426,7 @@ fn finish_after_prepare(
         let raw = identity::canonical_json(
             &json!({"schema":HEADER,"source_id":p.source_id,"owner":p.owner,"operation":p.operation,
             "previous":current,"root_revision_before":completed,"root_revision_after":next,"temporary":temporary,"expected_temporary":expected,"succeeded":succeeded,
-            "native_production_claim":null,"approval":false,"resource_objects":objects.len()}),
+            "record_contract":records::contract(&p.inputs)?,"native_production_claim":null,"approval":false,"resource_objects":objects.len()}),
         )?;
         if raw.len() > 65536 {
             bail!("episode handoff header exceeds bound");

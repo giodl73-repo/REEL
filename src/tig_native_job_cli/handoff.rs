@@ -4,7 +4,7 @@ use tig_store::existing::{Profile as ByteProfile, ReadCache, RequiredProtection}
 pub(super) const FILE: &str = "git-proposal.json";
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Handoff {
+pub(crate) struct Handoff {
     git_executable: PathBuf,
     repository: PathBuf,
     base: String,

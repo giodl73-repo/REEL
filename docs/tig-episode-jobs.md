@@ -77,12 +77,37 @@ compilation and assembly consume those sealed proofs. Source, byte and runtime
 guards stay live across use; root and child identities remain separate to avoid
 reacquiring the runner's own fence.
 
+Before compiling child plans or adopting a source, the coordinator verifies the
+exact selected component masters through the configured byte provider. A missing
+master reports its segment, hash and byte length. This availability check grants
+no primary-reference eligibility and copies nothing; the contained worker still
+obtains fresh guarded inputs and independent proofs. It never scans or enrolls
+an archive tier implicitly.
+
 The runner contains all worker descendants, applies deadline/capacity policies,
 retains exact declared results in existing caches and independently reopens its
 root result metadata. No primary media are copied into the Git worktree. A job
 report does not select a master, approve a candidate, synchronize a delivery or
-change project bindings. Native output-record/Git proposal integration remains a
-separate step.
+change project bindings.
+
+Optional `inputs.record_outputs` and `inputs.git_handoff` use the same pinned
+template, selector and proposal contracts as native scene jobs. Each output
+mapping names a declared media output, an exact archived output-record template
+and either its selected slot or an explicitly classified named stream. Input,
+scene and component-output definitions cannot serve as parent-output templates.
+The engine validates templates before source adoption, emits small candidate
+records and an unsigned claim from the sealed assembled result, and retains
+those artifacts with the media and receipt. Inherited review status is cleared;
+unmapped history stays intact.
+
+The coordinator reopens the retained candidate set and checks exact subjects,
+recipe, context, template fields and proposal bytes before owner handoff. The
+record contract is pinned in the worker report and completed handoff, so changing
+the mapping during recovery refuses. Repeated `finish-episode` also verifies
+retained record artifacts. Candidates and proposals remain private artifacts;
+the renderer executes no Git commands. Use the retained `git-proposal.json`
+with the separately qualified `tig-propose check` and `tig-propose create`
+commands, then explicitly adopt the proposal through the project's Git workflow.
 
 After success the coordinator checks the retained worker report, original input
 context and live temporary owners. It publishes, finishes, reopens and adopts a

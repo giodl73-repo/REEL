@@ -1,7 +1,7 @@
 //! Readback of this coordinator's private completed phase, never arbitrary JSON.
 use super::*;
 use tig_core::tree::{NodeStore, Tree};
-pub(super) struct Verified {
+pub(crate) struct Verified {
     pub reader: MetadataReader,
     outputs: BTreeMap<String, Object>,
 }
@@ -18,7 +18,7 @@ impl Verified {
         read_bytes(Path::new(path), max, Some(self.object(name)?))
     }
 }
-pub(super) fn owned_selection(
+pub(crate) fn owned_selection(
     journal: &mut SourceJournal,
     source: &Key,
     owner: &Key,
@@ -43,13 +43,40 @@ pub(super) fn verify(
     result: &PhaseResult,
     journal: &mut SourceJournal,
 ) -> Result<Verified> {
+    verify_phase(
+        &profile.worker.metadata_root,
+        &profile.source_id,
+        &profile.owner,
+        result,
+        journal,
+    )
+}
+pub(crate) fn verify_phase(
+    metadata_root: &Path,
+    source_id: &str,
+    owner: &str,
+    result: &PhaseResult,
+    journal: &mut SourceJournal,
+) -> Result<Verified> {
     let selection = owned_selection(
         journal,
-        &Key::parse(&profile.source_id)?,
-        &Key::parse(&profile.owner)?,
+        &Key::parse(source_id)?,
+        &Key::parse(owner)?,
         result.revision,
     )?;
-    let mut reader = MetadataReader::open(&profile.worker.metadata_root, &result.minimum)?;
+    verify_selection(metadata_root, source_id, owner, result, journal, selection)
+}
+/// Caller must retain the source fence and establish that this is its live
+/// completed result, including when a handoff preparation is already pending.
+pub(crate) fn verify_selection(
+    metadata_root: &Path,
+    source_id: &str,
+    owner: &str,
+    result: &PhaseResult,
+    journal: &SourceJournal,
+    selection: Selection,
+) -> Result<Verified> {
+    let mut reader = MetadataReader::open(metadata_root, &result.minimum)?;
     let entries = Tree::from_root(selection.root)
         .entries(&mut reader, TreeLimits::default())?
         .0;
@@ -98,8 +125,8 @@ pub(super) fn verify(
         || header["succeeded"] != true
         || header["source"] != serde_json::to_value(&result.resources)?
         || header["journal"] != serde_json::to_value(journal.identity())?
-        || header["owner"] != profile.owner
-        || header["source_id"] != profile.source_id
+        || header["owner"] != owner
+        || header["source_id"] != source_id
         || header["revision"]
             != result
                 .revision
