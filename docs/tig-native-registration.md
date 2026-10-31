@@ -205,3 +205,10 @@ The caller must reconcile shared asset IDs and assign production/evidence/output
 semantics through trusted definitions/adapters. Full authored-schema and graph
 validation, historical byte readback and consumer qualification remain required
 before adoption. No registration mode installs runtimes or grants eviction.
+
+External versioned source-record evidence may contain ordinary finite decimal
+numbers in metadata that the adapter does not project. Its original bytes remain
+the exact source evidence object; they are not rewritten as canonical Tig JSON.
+Duplicate keys and bounded structure still refuse. Consumed identity/version/pin
+fields and the generated native instance retain strict typed/canonical admission.
+See [the evidence parser review](reviews/2026-10-31-versioned-source-evidence-json.md).
