@@ -5,7 +5,9 @@ Result adoption deliberately grants no deletion authority. The separate
 removal. It accepts only a completed current result and the exact original
 recorded operation; dry-run and apply leave source ownership and journal events
 unchanged. All retained packet objects and original request inputs/tools remain
-protected through the operation. Installed tools must be outside the workspace.
+protected through the operation. Installed tools execute in place; their
+namespaces must be outside the workspace. Their current availability/hash is not
+a proof required to remove unrelated historical scratch.
 
 The implementation reuses the runner's bounded owned-workspace inspection.
 Exact canonical cache/staging/job identity, non-reparse descendants, manifest

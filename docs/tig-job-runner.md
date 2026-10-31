@@ -97,7 +97,14 @@ cache's exact `staging/caminos` directory. No cache or workspace is discovered.
 
 Verification holds the source fence and protected cached request/evidence/output
 bytes, then also protects every original request input and cached tool. Installed
-tools must remain verified outside the workspace. The request in `job.json` must
+tools execute in place and are not materialized by the runner. Their paths must
+resolve outside the removal scope; obsolete external installations need not be
+restored or match their old executable hash for this non-executing cleanup. The
+nearest surviving ancestor is resolved when installation paths are missing;
+ambiguous or inaccessible namespaces refuse. An existing junction into scratch
+cannot hide an in-scope tool. `installed_tool_paths_outside_scope` reports scope
+exclusion, not executable availability or historical production revalidation.
+The request in `job.json` must
 match the retained bytes. Any existing declared output must exactly match its
 retained candidate; an unretained or changed output refuses removal. Missing
 canonical originals cannot be excused by remaining hard links in scratch.

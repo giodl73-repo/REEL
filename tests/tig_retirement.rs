@@ -60,6 +60,9 @@ impl Fixture {
         Self::with_outcome(true)
     }
     fn with_outcome(succeeded: bool) -> Self {
+        Self::with_installed_scope(succeeded, false)
+    }
+    fn with_installed_scope(succeeded: bool, inside: bool) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
         let cache = root.join("cache");
@@ -69,7 +72,12 @@ impl Fixture {
         let primary = put(&cache, b"primary");
         let tool = put(&cache, b"tool never executed");
         let output = put(&cache, b"rendered");
-        let installed = root.join("installed-tool.exe");
+        let installed = if inside {
+            cache.join("staging/caminos/job-retirement-proof/inside-tools/tool.exe")
+        } else {
+            root.join("old-worktree/bin/tool.exe")
+        };
+        fs::create_dir_all(installed.parent().unwrap()).unwrap();
         let installed_bytes = b"installed tool never executed";
         fs::write(&installed, installed_bytes).unwrap();
         let installed_pin = Object::from_bytes(installed_bytes);
@@ -295,9 +303,13 @@ fn retirement_requires_retained_originals_quiescence_and_explicit_apply() {
     assert!(!f.run(&foreign, true).status.success());
     let installed_saved = f.installed.with_extension("saved");
     fs::rename(&f.installed, &installed_saved).unwrap();
-    let refused = f.run(&f.profile, true);
+    let obsolete_tool = f.run(&f.profile, false);
     fs::rename(&installed_saved, &f.installed).unwrap();
-    assert!(!refused.status.success());
+    assert!(
+        obsolete_tool.status.success(),
+        "{}",
+        String::from_utf8_lossy(&obsolete_tool.stderr)
+    );
     f.unchanged();
     let primary = reel_assets::object(&f.cache, f.primary.sha256.as_str());
     let saved = primary.with_extension("saved");
@@ -785,4 +797,86 @@ fn interrupted_retirement_can_resume_after_its_result_becomes_a_predecessor() {
     assert!(!f.workspace.exists());
     let after = SourceJournal::observe(&f.journal, &checkpoint, &key("retirement-source")).unwrap();
     assert_eq!(after.checkpoint, checkpoint);
+}
+
+#[test]
+fn obsolete_external_installation_does_not_block_owned_scratch_retirement() {
+    let f = Fixture::new();
+    fs::remove_file(&f.installed).unwrap();
+    let bin = f.installed.parent().unwrap();
+    fs::remove_dir(bin).unwrap();
+    fs::remove_dir(bin.parent().unwrap()).unwrap();
+    let result = f.run(&f.profile, true);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["installed_tool_paths_outside_scope"], 1);
+    assert!(!f.workspace.exists());
+    assert_eq!(
+        fs::read(reel_assets::object(&f.cache, f.primary.sha256.as_str())).unwrap(),
+        b"primary"
+    );
+}
+
+#[test]
+fn upgraded_external_tool_is_neither_revalidated_as_old_production_nor_removed() {
+    let f = Fixture::new();
+    fs::write(&f.installed, b"newer external tool version").unwrap();
+    let result = f.run(&f.profile, true);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(
+        fs::read(&f.installed).unwrap(),
+        b"newer external tool version"
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&result.stdout).unwrap()["production_claim"],
+        Value::Null
+    );
+}
+
+#[test]
+fn installed_tool_inside_the_removal_scope_still_refuses() {
+    let f = Fixture::with_installed_scope(true, true);
+    let result = f.run(&f.profile, true);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("installed tool would be removed"));
+    assert!(f.installed.exists());
+    f.unchanged();
+    assert!(f.transactions().is_empty());
+}
+
+#[test]
+fn external_tool_path_junction_cannot_hide_a_tool_inside_scratch() {
+    let f = Fixture::new();
+    let saved = f._temp.path().join("external-runtime.saved");
+    fs::rename(&f.installed, &saved).unwrap();
+    let bin = f.installed.parent().unwrap();
+    fs::remove_dir(bin).unwrap();
+    let inside = f.workspace.join("inside-tools");
+    fs::create_dir(&inside).unwrap();
+    fs::write(inside.join("tool.exe"), b"installed tool never executed").unwrap();
+    let junction = Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(bin.to_string_lossy().replace('/', "\\"))
+        .arg(inside.to_string_lossy().replace('/', "\\"))
+        .output()
+        .unwrap();
+    assert!(
+        junction.status.success(),
+        "{}",
+        String::from_utf8_lossy(&junction.stderr)
+    );
+    let result = f.run(&f.profile, true);
+    assert!(!result.status.success());
+    fs::remove_dir(bin).unwrap(); // Junction itself, never its target.
+    assert!(inside.join("tool.exe").exists());
+    assert!(saved.exists());
+    f.unchanged();
 }
