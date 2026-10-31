@@ -8,6 +8,8 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Operation {
+    /// Inspect a declared generation basis; no model execution or primary reads.
+    InspectGeneration { profile: PathBuf, output: PathBuf },
     /// Complete an already-recorded result adoption; never render or remove scratch.
     AdoptPrepared { profile: PathBuf },
     /// Verify a complete published packet, then record prepare/adopt; preserve scratch.
@@ -77,6 +79,9 @@ fn main() -> ExitCode {
     );
     let episode_job = matches!(&operation, Operation::RunEpisode { .. });
     let result = match operation {
+        Operation::InspectGeneration { profile, output } => {
+            reel::tig_generation::inspect(&profile, &output)
+        }
         Operation::AdoptPrepared { profile } => reel::tig_job_runner::adopt_prepared(&profile),
         Operation::RetainPublished { profile } => reel::tig_job_runner::retain_published(&profile),
         Operation::RetireWorkspace { profile, apply } => {

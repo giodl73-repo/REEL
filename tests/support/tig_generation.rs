@@ -1,0 +1,469 @@
+use super::*;
+use reel::tig_generation::{self, Request};
+use tig_assets::graph::{
+    Reference,
+    recipe::produced::{self, BoundSubject, Claim, ContextPin, Correspondence, Selector},
+};
+use tig_core::tree::{MemoryNodes, TreeLimits};
+
+fn cache(f: &Fixture, bytes: &[u8]) -> Object {
+    let pin = Object::from_bytes(bytes);
+    fs::write(
+        f.root().join("cache/objects").join(pin.sha256.as_str()),
+        bytes,
+    )
+    .unwrap();
+    pin
+}
+fn record(f: &Fixture, id: &str) -> Value {
+    serde_json::from_slice(
+        &fs::read(
+            f.root()
+                .join(format!("records/{}.tig", id.replace('/', "-"))),
+        )
+        .unwrap(),
+    )
+    .unwrap()
+}
+fn save(f: &Fixture, id: &str, value: &Value) {
+    write(
+        f.root(),
+        &format!("records/{}.tig", id.replace('/', "-")),
+        value,
+    );
+}
+fn commit(f: &mut Fixture) {
+    git(f.root(), &["add", "records", "definitions"]);
+    git(f.root(), &["commit", "-m", "generation fixture edit"]);
+    f.profile["commit"] = json!(git(f.root(), &["rev-parse", "HEAD"]));
+}
+fn setup() -> (Fixture, Request, Request) {
+    let mut f = Fixture::new();
+    let schema = Object::from_bytes(&fs::read(f.root().join("definitions/authored.json")).unwrap());
+    let mut defs = BTreeMap::new();
+    for (kind, property) in [
+        ("generation-spec", "document"),
+        ("generation-profile", "document"),
+        ("generated", "generation_spec"),
+    ] {
+        let pin = write(
+            f.root(),
+            &format!("definitions/{kind}.json"),
+            &json!({"schema":"tig.definition.design-1","id":format!("types/{kind}"),"authored_schema":schema,"authoring":{"properties":[property],"required":[property],"defaults":{}},"stream_rules":{},"semantic_rules":{}}),
+        );
+        f.profile["admitted"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":format!("types/{kind}"),"object":pin,"payload":{"kind":"selected"}}));
+        defs.insert(kind, pin);
+    }
+    let media = Object::from_bytes(&fs::read(f.root().join("definitions/media.json")).unwrap());
+    for (id, kind, authored, selected) in [
+        (
+            "text/es",
+            "media",
+            json!({}),
+            Some(cache(&f, b"Buenos dias")),
+        ),
+        (
+            "text/en",
+            "generated",
+            json!({"generation_spec":{"id":"generation/translation"}}),
+            Some(cache(&f, b"Good day")),
+        ),
+        (
+            "cue/en",
+            "generated",
+            json!({"generation_spec":{"id":"generation/speech"}}),
+            Some(cache(&f, b"synthetic recorded cue bytes")),
+        ),
+        (
+            "profile/text",
+            "generation-profile",
+            json!({"document":{"media_type":"text/plain","max_bytes":4096}}),
+            None,
+        ),
+        (
+            "profile/audio",
+            "generation-profile",
+            json!({"document":{"media_type":"audio/wav","sample_rate":48000,"max_seconds":3}}),
+            None,
+        ),
+        (
+            "generation/translation",
+            "generation-spec",
+            json!({"document":{"schema":"reel.generation-spec.v1","operation":"text.translate","inputs":{"source":{"id":"text/es"}},"output_profile":{"id":"profile/text"},"parameters":{"source_language":"es","target_language":"en"}}}),
+            None,
+        ),
+        (
+            "generation/speech",
+            "generation-spec",
+            json!({"document":{"schema":"reel.generation-spec.v1","operation":"audio.record","inputs":{"text":{"id":"text/en"}},"output_profile":{"id":"profile/audio"},"parameters":{"language":"en","voice":"synthetic-fixture"}}}),
+            None,
+        ),
+    ] {
+        let pin = if kind == "media" { &media } else { &defs[kind] };
+        save(
+            &f,
+            id,
+            &json!({"schema":"tig.instance.design-1","id":id,"definition":{"id":format!("types/{kind}"),"sha256":pin.sha256,"bytes":pin.bytes},"authored":authored,"selected":selected,"streams":[],"status":{"selection_state":"selected-private-production"},"metadata":{}}),
+        );
+    }
+    commit(&mut f);
+    let req = |output, spec, operation| {
+        serde_json::from_value(json!({"schema":"reel.tig-generation-request.experimental-1","output_id":output,"output_definition":"types/generated","spec_id":spec,"spec_definition":"types/generation-spec","profile_definition":"types/generation-profile","primary_definitions":["types/media","types/generated"],"operation":operation,"allowed_input_states":["selected-private-production"]})).unwrap()
+    };
+    (
+        f,
+        req("text/en", "generation/translation", "text.translate"),
+        req("cue/en", "generation/speech", "audio.record"),
+    )
+}
+fn plan(f: &Fixture, r: &Request) -> tig_assets::graph::recipe::Plan {
+    let mut source = f.source();
+    let result = tig_generation::recipe(
+        &mut source,
+        r,
+        &Object::from_bytes(b"independently admitted synthetic generator"),
+    )
+    .unwrap();
+    assert_eq!(source.byte_requests(), 0);
+    result
+}
+
+#[test]
+fn generation_basis_changes_for_text_and_parameters_not_selected_results_or_annotations() {
+    let (mut f, mut translation, speech) = setup();
+    let before = plan(&f, &translation);
+    let cue_before = plan(&f, &speech);
+    let mut output = record(&f, "text/en");
+    output["selected"] = json!(cache(&f, b"New selected translation bytes"));
+    save(&f, "text/en", &output);
+    commit(&mut f);
+    let selected = plan(&f, &translation);
+    assert_eq!(before.fingerprint(), selected.fingerprint());
+    assert_ne!(before.checkpoint(), selected.checkpoint());
+    assert_ne!(cue_before.fingerprint(), plan(&f, &speech).fingerprint());
+    let mut spec = record(&f, "generation/translation");
+    spec["metadata"]["review_note"] = json!("Annotation only");
+    save(&f, "generation/translation", &spec);
+    commit(&mut f);
+    assert_eq!(selected.fingerprint(), plan(&f, &translation).fingerprint());
+    translation
+        .allowed_input_states
+        .insert("another-admitted-state".into());
+    assert_eq!(selected.fingerprint(), plan(&f, &translation).fingerprint());
+    let mut source = record(&f, "text/es");
+    source["selected"] = json!(cache(&f, b"Buenas noches"));
+    save(&f, "text/es", &source);
+    commit(&mut f);
+    let changed = plan(&f, &translation);
+    assert_ne!(selected.fingerprint(), changed.fingerprint());
+    // The cue still consumes the old English bytes. Upstream stale-generation
+    // eligibility must be evaluated separately; a direct match is not permission.
+    let cue = plan(&f, &speech);
+    let source = f.source();
+    assert!(
+        tig_generation::upstream(&source, &translation)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        tig_generation::upstream(&source, &speech).unwrap(),
+        std::collections::BTreeSet::from(["text/en".into()])
+    );
+    use tig_assets::graph::recipe::assessment::State;
+    use tig_generation::advice::{Node, order};
+    let checkpoint = source.checkpoint().clone();
+    let advice = order(
+        &checkpoint,
+        &[
+            Node {
+                asset_id: "text/en".into(),
+                checkpoint: checkpoint.clone(),
+                basis: Some(State::StaleRecipe),
+                upstream: std::collections::BTreeSet::new(),
+            },
+            Node {
+                asset_id: "cue/en".into(),
+                checkpoint: checkpoint.clone(),
+                basis: Some(State::ClaimedRecipeMatch),
+                upstream: tig_generation::upstream(&source, &speech).unwrap(),
+            },
+        ],
+        2,
+    )
+    .unwrap();
+    assert_eq!(advice[1].asset_id, "cue/en");
+    assert_eq!(advice[1].advice, State::Blocked);
+    assert_eq!(source.byte_requests(), 0);
+    spec["authored"]["document"]["parameters"]["target_language"] = json!("en-GB");
+    save(&f, "generation/translation", &spec);
+    commit(&mut f);
+    assert_ne!(changed.fingerprint(), plan(&f, &translation).fingerprint());
+    assert_eq!(cue.fingerprint(), plan(&f, &speech).fingerprint());
+    let before_profile = plan(&f, &speech);
+    let mut profile = record(&f, "profile/audio");
+    profile["authored"]["document"]["sample_rate"] = json!(44100);
+    save(&f, "profile/audio", &profile);
+    commit(&mut f);
+    assert_ne!(
+        before_profile.fingerprint(),
+        plan(&f, &speech).fingerprint()
+    );
+    let mut source = f.source();
+    assert_ne!(
+        plan(&f, &speech).fingerprint(),
+        tig_generation::recipe(
+            &mut source,
+            &speech,
+            &Object::from_bytes(b"different generator version")
+        )
+        .unwrap()
+        .fingerprint()
+    );
+}
+
+#[test]
+fn generation_claim_replays_archived_source_and_reports_stale_without_new_execution() {
+    let (mut f, request, _) = setup();
+    let producer = Object::from_bytes(b"independently admitted synthetic generator");
+    let mut source = f.source();
+    let mut nodes = MemoryNodes::default();
+    let context =
+        tig_generation::freeze_context(&mut source, &request, &mut nodes, TreeLimits::default())
+            .unwrap();
+    let basis = tig_generation::recipe(&mut source, &request, &producer).unwrap();
+    let definition = Reference {
+        id: "types/generated".into(),
+        object: serde_json::from_value(
+            f.profile["admitted"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|a| a["id"] == "types/generated")
+                .unwrap()["object"]
+                .clone(),
+        )
+        .unwrap(),
+    };
+    let subject = BoundSubject::resolve(
+        &source_record(&f, "text/en"),
+        &definition,
+        Selector::Selected {},
+    )
+    .unwrap()
+    .unwrap();
+    // Unsigned metadata fixture, never an assertion that a real generator ran.
+    let claim = Claim::create(
+        &basis,
+        ContextPin {
+            root: context.selection().root.clone(),
+            identity: context.selection().context.clone(),
+        },
+        vec![subject.subject().clone()],
+    )
+    .unwrap();
+    let archive:reel::tig_inputs::ArchiveProfile=serde_json::from_value(json!({"schema":reel::tig_inputs::ARCHIVE_PROFILE_SCHEMA,"archive":context.archive(),"checkpoint":source.checkpoint(),"admitted":f.profile["admitted"],"byte_source":f.profile["byte_source"]})).unwrap();
+    let mut spanish = record(&f, "text/es");
+    spanish["selected"] = json!(cache(&f, b"Changed Spanish source"));
+    save(&f, "text/es", &spanish);
+    commit(&mut f);
+    let desired = plan(&f, &request);
+    for dir in [".git", "records", "definitions"] {
+        fs::rename(f.root().join(dir), f.root().join(format!("offline-{dir}"))).unwrap();
+    }
+    for case in [
+        "asset",
+        "definition",
+        "definition-pin",
+        "selector",
+        "multiple",
+    ] {
+        let mut wire: Value = serde_json::from_slice(claim.bytes()).unwrap();
+        match case {
+            "asset" => wire["outputs"][0]["asset_id"] = json!("other/output"),
+            "definition" => wire["outputs"][0]["definition"]["id"] = json!("types/media"),
+            "definition-pin" => {
+                wire["outputs"][0]["definition"]["object"] =
+                    json!(Object::from_bytes(b"unadmitted definition"))
+            }
+            "selector" => {
+                wire["outputs"][0]["selector"] = json!(Selector::Stream {
+                    slot: "past".into()
+                })
+            }
+            _ => {
+                let mut other = wire["outputs"][0].clone();
+                other["asset_id"] = json!("other/output");
+                wire["outputs"].as_array_mut().unwrap().push(other);
+            }
+        }
+        let raw = serde_json::to_vec(&wire).unwrap();
+        let contradictory = Claim::parse(&Object::from_bytes(&raw), &raw).unwrap();
+        assert!(
+            tig_generation::restore_claim(
+                archive.clone(),
+                &request,
+                &producer,
+                &contradictory,
+                &mut nodes,
+                TreeLimits::default()
+            )
+            .is_err(),
+            "{case}"
+        );
+    }
+    let (reopened, replayed) = tig_generation::restore_claim(
+        archive,
+        &request,
+        &producer,
+        &claim,
+        &mut nodes,
+        TreeLimits::default(),
+    )
+    .unwrap();
+    assert_eq!(reopened.byte_requests(), 0);
+    assert_eq!(
+        produced::compare(&basis, Some(&subject), Some(replayed.checked())).unwrap(),
+        Correspondence::ClaimedRecipeMatch
+    );
+    assert_eq!(
+        produced::compare(&desired, Some(&subject), Some(replayed.checked())).unwrap(),
+        Correspondence::StaleRecipe
+    );
+    assert_eq!(
+        produced::compare(&desired, Some(&subject), None).unwrap(),
+        Correspondence::Unproven
+    );
+}
+fn source_record(f: &Fixture, id: &str) -> tig_assets::resolve::Resolved {
+    use tig_assets::resolve::AssetResolver;
+    let profile: reel::tig_inputs::Profile = serde_json::from_value(f.profile.clone()).unwrap();
+    let repo = tig_git::source::Repository::new(
+        profile.git_executable,
+        profile.repository,
+        Default::default(),
+    )
+    .unwrap();
+    let view = repo
+        .commit(tig_git::source::GitId::parse(&profile.commit).unwrap())
+        .unwrap();
+    let snapshot = repo
+        .native(
+            &view,
+            tig_git::source::Scope::new(vec![tig_core::LogicalPath::parse("records").unwrap()])
+                .unwrap(),
+            tig_git::source::Scope::new(vec![tig_core::LogicalPath::parse("definitions").unwrap()])
+                .unwrap(),
+            Default::default(),
+        )
+        .unwrap();
+    snapshot.resolve_id(id).unwrap()
+}
+
+#[test]
+fn self_reference_unknown_controls_and_unadmitted_inputs_refuse_without_payload_reads() {
+    for case in ["self", "unknown", "state", "type", "planned", "output-role"] {
+        let (mut f, mut r, _) = setup();
+        let mut spec = record(&f, "generation/translation");
+        match case {
+            "self" => spec["authored"]["document"]["inputs"]["source"]["id"] = json!("text/en"),
+            "unknown" => spec["authored"]["document"]["future"] = json!(true),
+            "output-role" => {
+                r.primary_definitions.remove("types/generated");
+            }
+            _ => {
+                let mut input = record(&f, "text/es");
+                if case == "state" {
+                    input["status"]["selection_state"] = json!("not-admitted");
+                } else if case == "planned" {
+                    input["selected"] = Value::Null;
+                } else {
+                    input["definition"] = record(&f, "profile/text")["definition"].clone();
+                    input["authored"] = json!({"document":{}});
+                }
+                save(&f, "text/es", &input);
+            }
+        }
+        save(&f, "generation/translation", &spec);
+        if case != "output-role" {
+            commit(&mut f);
+        }
+        let mut source = f.source();
+        assert!(
+            tig_generation::recipe(&mut source, &r, &Object::from_bytes(b"producer")).is_err(),
+            "{case}"
+        );
+        assert_eq!(source.byte_requests(), 0);
+    }
+}
+
+#[test]
+#[cfg(feature = "tig-publication")]
+fn generation_inspection_cli_uses_archived_metadata_and_keeps_missing_basis_unproven() {
+    use tig_store::metadata::{Limits, MetadataStore};
+    let (f, request, _) = setup();
+    let mut source = f.source();
+    let metadata = f.root().join("generation-metadata");
+    let mut store = MetadataStore::create(
+        &metadata,
+        Limits {
+            nodes: 16384,
+            bytes: 16 * 1024 * 1024,
+            database_bytes: 32 * 1024 * 1024,
+            min_free_bytes: 65536,
+        },
+    )
+    .unwrap();
+    let context =
+        tig_generation::freeze_context(&mut source, &request, &mut store, TreeLimits::default())
+            .unwrap();
+    let profile = json!({"schema":"reel.tig-generation-inspection.experimental-1","metadata_root":metadata,"metadata_minimum":store.finish().unwrap(),"source":{"schema":reel::tig_inputs::ARCHIVE_PROFILE_SCHEMA,"archive":context.archive(),"checkpoint":source.checkpoint(),"admitted":f.profile["admitted"],"byte_source":f.profile["byte_source"]},"request":request,"producer":Object::from_bytes(b"synthetic generator"),"original":null});
+    drop(store);
+    drop(source);
+    let path = f.root().join("generation-inspection.json");
+    fs::write(&path, serde_json::to_vec(&profile).unwrap()).unwrap();
+    for name in [".git", "records", "definitions"] {
+        fs::rename(
+            f.root().join(name),
+            f.root().join(format!("offline-{name}")),
+        )
+        .unwrap();
+    }
+    fs::rename(
+        f.root().join("cache/objects"),
+        f.root().join("cache/offline-objects"),
+    )
+    .unwrap();
+    let report = f.root().join("generation-report.json");
+    let invoke = || {
+        Command::new(env!("CARGO_BIN_EXE_reel-tig-job"))
+            .arg("inspect-generation")
+            .arg(&path)
+            .arg(&report)
+            .env("PATH", "")
+            .output()
+            .unwrap()
+    };
+    let result = invoke();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let summary: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(summary["state"], "unproven");
+    assert_eq!(summary["primary_payloads_verified"], false);
+    assert_eq!(summary["authorizes_execution"], false);
+    assert!(!String::from_utf8_lossy(&result.stdout).contains("text/en"));
+    assert!(!String::from_utf8_lossy(&result.stdout).contains("sha256"));
+    let original = fs::read(&report).unwrap();
+    let denied = invoke();
+    assert!(!denied.status.success());
+    assert_eq!(fs::read(&report).unwrap(), original);
+    assert_eq!(
+        String::from_utf8_lossy(&denied.stderr).trim(),
+        "generation inspection refused; verify source, definitions, request and original evidence"
+    );
+}

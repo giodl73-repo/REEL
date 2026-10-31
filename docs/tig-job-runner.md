@@ -634,6 +634,64 @@ Correcting destination settings creates a separate request; never edit retained
 objects in place. Preserve old runtime/context obligations when adopting a new
 vendored Tig/REEL source descriptor; intake is not an automatic runtime switch.
 
+## Inspect a declared generation basis
+
+```text
+reel-tig-job inspect-generation <private-profile.json> <new-private-report.json>
+```
+
+This metadata-only command uses an existing archived Tig source and metadata
+provider. It starts no generator, reads no primary payloads and grants no job,
+selection or removal authority. The explicit profile schema is
+`reel.tig-generation-inspection.experimental-1`: `metadata_root`,
+`metadata_minimum`, `source` (ArchiveProfile), `request`, `producer` (Object), and
+optional `original` (`source`, `request`, independently admitted `producer`, and
+exact `claim` Object). Without original evidence, selected bytes remain
+`unproven`; an absent selection is `unbuilt`, not a successful generation.
+
+The request schema is `reel.tig-generation-request.experimental-1`. It names
+`output_id`, `output_definition`, `spec_id`, `spec_definition`,
+`profile_definition`, `primary_definitions`, `operation`, and explicit
+`allowed_input_states`. Targets use an admitted primary definition. Claim replay
+requires exactly one selected output under that target's ID and definition;
+another asset, definition or slot cannot substitute for it. The output record's authored `generation_spec` is a single
+`{"id":"..."}` reference to its spec. The spec does not maintain a second output
+list. Its authored `document` has this shape:
+
+```json
+{
+  "schema": "reel.generation-spec.v1",
+  "operation": "text.translate",
+  "inputs": { "source": { "id": "text/es" } },
+  "output_profile": { "id": "profiles/english-text" },
+  "parameters": { "source_language": "es", "target_language": "en" }
+}
+```
+
+The output profile's authored `document` contains literal settings and standards.
+Asset dependencies belong in `inputs`; parameter/profile literals are not
+implicitly searched for more references. Tig's existing graph, consumed-field
+recipes and claim replay handle identity. The selected result is outside its own
+generation inputs. Changing text, parameters, producer or profile changes the
+basis; selecting a result or editing review annotations does not. Eligibility is
+checked separately on every plan/replay and never grants execution by itself.
+Dynamic self-reference refuses; use an independently pinned reference input for
+an edit based on an earlier image.
+
+`tig_generation::upstream` identifies registered input generators, and
+`tig_generation::advice::order` provides bounded ordering at one exact checkpoint.
+A stale translation blocks an otherwise matching cue basis until the translation
+is updated; then the cue's new text can make its own recipe stale. Missing or
+unproven upstream bases block downstream advice. Cycles, duplicate IDs, mixed
+source views and bounds refuse. This advice never executes a model. The single
+asset CLI deliberately reports `upstream_generation_checked: false`; it does not
+substitute its direct recipe match for a complete generation queue evaluation.
+
+Reports remain private, use no-clobber publication and distinguish declared basis
+matching from actual execution, available bytes, approval and complete semantic
+coverage. Production generator integration and project record enrollment remain
+separate acceptance work.
+
 ## Compare retained native output without rendering again
 
 ```text
