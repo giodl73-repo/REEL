@@ -684,3 +684,32 @@ comparison report. Existing reports are never overwritten. No metadata writer,
 source-journal adoption or Git operation is involved. Reports retain exact pins
 and must stay outside Git. Equality does not transfer human approval or prove
 complete semantic coverage, execution attestation, custody or eviction safety.
+
+### Revalidate retained controls after an interpreter update
+
+```text
+reel-tig-job revalidate-retained <private-revalidation-profile.json> <new-private-report.json>
+```
+
+Use schema `reel.tig-retained-revalidation.experimental-1` with the comparison
+profile fields above, omitting `outputs` as with receipt-derived comparison.
+The original source archive, context, producer admission, claim, receipt and
+baseline stay pinned. This command is an explicit alternative observation;
+`compare-retained` never falls back to it.
+
+The supported historical render descriptor must bind the exact admitted request
+and source checkpoint/archive. Today's compiler must reproduce all three original
+control files (`production.json`, `contract.json`, `job.json`) byte for byte.
+Unknown descriptor fields/semantics, different requests, source substitutions or
+any changed control refuse. The command then performs the same protected retained
+output checks and independent decoded comparison. It creates no media render,
+copies no retained payload, changes no asset record and overwrites no report.
+
+The distinct report records `contract_equivalent`, `original_claim_replayed:
+false`, `production_claim: null` and `authorizes_production: false`, with the
+historical claim and original producer admission preserved. This checks retained
+bytes against equivalent controls; it does not reinterpret the old claim as a
+new production, make its recipe current, or admit a new render. Original approval
+subjects remain unchanged. A decoded mismatch still produces its private report
+and a failure exit. Other refusals identify a fixed public check stage without
+exposing private provider/compiler errors.

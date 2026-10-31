@@ -1,5 +1,5 @@
 #![cfg(feature = "tig-publication")]
-use reel::tig_native_job_cli::compare_retained;
+use reel::tig_native_job_cli::{compare_retained, revalidate_retained};
 
 #[test]
 fn comparison_profile_refusals_hide_locators_and_untrusted_contents() {
@@ -18,6 +18,12 @@ fn comparison_profile_refusals_hide_locators_and_untrusted_contents() {
         assert_eq!(
             format!("{error:#}"),
             "retained comparison refused at profile admission"
+        );
+        assert!(!report.exists());
+        let error = revalidate_retained(&profile, &report).unwrap_err();
+        assert_eq!(
+            format!("{error:#}"),
+            "retained revalidation refused at profile admission"
         );
         assert!(!report.exists());
     }

@@ -45,6 +45,8 @@ enum Operation {
     PublishFile { profile: PathBuf, output: PathBuf },
     /// Recheck retained native outputs and compare their master with a baseline.
     CompareRetained { profile: PathBuf, output: PathBuf },
+    /// Recompile original controls and verify retained bytes; no production claim.
+    RevalidateRetained { profile: PathBuf, output: PathBuf },
     /// Explicit one-time shared metadata/journal setup; never invoked by Run.
     Setup { profile: PathBuf, output: PathBuf },
     /// Check existing named stores against private trusted-minimum bindings.
@@ -69,7 +71,10 @@ enum Operation {
 }
 fn main() -> ExitCode {
     let operation = Args::parse().operation;
-    let comparison = matches!(&operation, Operation::CompareRetained { .. });
+    let comparison = matches!(
+        &operation,
+        Operation::CompareRetained { .. } | Operation::RevalidateRetained { .. }
+    );
     let episode_job = matches!(&operation, Operation::RunEpisode { .. });
     let result = match operation {
         Operation::AdoptPrepared { profile } => reel::tig_job_runner::adopt_prepared(&profile),
@@ -100,6 +105,9 @@ fn main() -> ExitCode {
         }
         Operation::CompareRetained { profile, output } => {
             reel::tig_native_job_cli::compare_retained(&profile, &output)
+        }
+        Operation::RevalidateRetained { profile, output } => {
+            reel::tig_native_job_cli::revalidate_retained(&profile, &output)
         }
         Operation::Setup { profile, output } => {
             reel::tig_native_job_cli::setup_stores(&profile, &output)

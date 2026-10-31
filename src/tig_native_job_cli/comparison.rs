@@ -6,9 +6,16 @@ use tig_assets::graph::recipe::produced::Claim;
 use tig_store::existing::{
     ByteSource, Profile as ByteProfile, ReadCache, RequiredProtection, VerifiedRead,
 };
+mod revalidation;
 
 const SCHEMA: &str = "reel.tig-retained-comparison.experimental-1";
 const DERIVED_SCHEMA: &str = "reel.tig-retained-comparison.experimental-2";
+const REVALIDATION_SCHEMA: &str = "reel.tig-retained-revalidation.experimental-1";
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Replay,
+    Revalidate,
+}
 const META_BYTES: usize = 65_536;
 const RECEIPT_BYTES: usize = 4 * 1024 * 1024;
 #[derive(Deserialize)]
@@ -62,14 +69,16 @@ fn directory(path: &Path) -> Result<()> {
     }
     Ok(())
 }
-fn compare(profile: &Path, output: &Path, stage: &mut &'static str) -> Result<Value> {
+fn compare(profile: &Path, output: &Path, stage: &mut &'static str, mode: Mode) -> Result<Value> {
     let profile: Comparison = read(profile, 128 * 1024, None)?;
-    if !matches!(profile.schema.as_str(), SCHEMA | DERIVED_SCHEMA)
-        || (profile.schema == SCHEMA
-            && profile
-                .outputs
-                .as_ref()
-                .is_none_or(|o| o.is_empty() || o.len() > 511 || o.contains_key("receipt.json")))
+    if !(match mode {
+        Mode::Replay => matches!(profile.schema.as_str(), SCHEMA | DERIVED_SCHEMA),
+        Mode::Revalidate => profile.schema == REVALIDATION_SCHEMA && profile.outputs.is_none(),
+    }) || (profile.schema == SCHEMA
+        && profile
+            .outputs
+            .as_ref()
+            .is_none_or(|o| o.is_empty() || o.len() > 511 || o.contains_key("receipt.json")))
         || (profile.schema == DERIVED_SCHEMA && profile.outputs.is_some())
         || profile.max_output_bytes == 0
     {
@@ -197,15 +206,29 @@ fn compare(profile: &Path, output: &Path, stage: &mut &'static str) -> Result<Va
     *stage = "source replay";
     let mut reader = MetadataReader::open(&profile.metadata_root, &profile.metadata_minimum)?;
     let compile = prepared.path().join("compiled");
-    let (mut source, _replay) = tig_scene::restore_render_claim(
-        profile.source,
-        &profile.request,
-        &profile.producer,
-        &claim,
-        &compile,
-        &mut reader,
-        TreeLimits::default(),
-    )?;
+    let (mut source, equivalence) = if mode == Mode::Replay {
+        let (source, _replay) = tig_scene::restore_render_claim(
+            profile.source,
+            &profile.request,
+            &profile.producer,
+            &claim,
+            &compile,
+            &mut reader,
+            TreeLimits::default(),
+        )?;
+        (source, None)
+    } else {
+        *stage = "contract revalidation";
+        let (source, evidence) = revalidation::prepare(
+            profile.source,
+            &profile.request,
+            &profile.context,
+            &claim,
+            &compile,
+            &mut reader,
+        )?;
+        (source, Some(evidence))
+    };
     *stage = "primary inputs";
     let job_path = compile.join("delivery/job.json");
     let job = crate::tig_inputs::read_job(&job_path)?;
@@ -256,7 +279,7 @@ fn compare(profile: &Path, output: &Path, stage: &mut &'static str) -> Result<Va
         &shape,
     )?;
     *stage = "report publication";
-    let summary = json!({"schema":"reel.tig-retained-comparison-summary.experimental-1",
+    let mut summary = json!({"schema":"reel.tig-retained-comparison-summary.experimental-1",
         "equal":parity.equal,"native_checked":true,"outputs_verified":outputs.len(),
         "materialized_bytes":0,"verified_output_bytes":total,"approval_transferred":false,"authorizes_eviction":false});
     let mut report = json!({"schema":"reel.tig-retained-comparison-report.experimental-1",
@@ -265,11 +288,27 @@ fn compare(profile: &Path, output: &Path, stage: &mut &'static str) -> Result<Va
         "validator":pin(&programs)?,"context":profile.context,
         "metadata_minimum":reader.checkpoint(),"native_checked":true,"parity":parity,
         "execution_attested":false,"complete_semantic_coverage":false,"authorizes_eviction":false});
-    if profile.schema == DERIVED_SCHEMA {
+    if profile.schema == DERIVED_SCHEMA || mode == Mode::Revalidate {
         report["schema"] = json!("reel.tig-retained-comparison-report.experimental-2");
         report.as_object_mut().unwrap().remove("outputs");
         report["output_manifest"] = json!(profile.receipt);
         report["output_count"] = json!(receipt.outputs.len());
+    }
+    if let Some(equivalence) = equivalence {
+        report["schema"] = json!("reel.tig-retained-revalidation-report.experimental-1");
+        let fields = report.as_object_mut().unwrap();
+        let producer = fields.remove("producer").unwrap();
+        let claim = fields.remove("claim").unwrap();
+        fields.insert("original_producer_admission".into(), producer);
+        fields.insert("historical_claim".into(), claim);
+        report["revalidation"] = equivalence;
+        for document in [&mut report, &mut summary] {
+            document["contract_equivalent"] = json!(true);
+            document["original_claim_replayed"] = json!(false);
+            document["production_claim"] = Value::Null;
+            document["authorizes_production"] = json!(false);
+        }
+        summary["schema"] = json!("reel.tig-retained-revalidation-summary.experimental-1");
     }
     let report = serde_json::to_vec(&report)?;
     if report.len() > META_BYTES {
@@ -289,6 +328,14 @@ pub fn compare_retained(profile: &Path, output: &Path) -> Result<Value> {
     // Only fixed program-owned stage names escape this boundary. Never attach
     // the underlying error, which can contain private locators or identifiers.
     let mut stage = "profile admission";
-    compare(profile, output, &mut stage)
+    compare(profile, output, &mut stage, Mode::Replay)
         .map_err(|_| anyhow::anyhow!("retained comparison refused at {stage}"))
+}
+
+/// Explicit contract-equivalence observation under the current checker. Never
+/// replays or replaces the historical production claim, or grants production.
+pub fn revalidate_retained(profile: &Path, output: &Path) -> Result<Value> {
+    let mut stage = "profile admission";
+    compare(profile, output, &mut stage, Mode::Revalidate)
+        .map_err(|_| anyhow::anyhow!("retained revalidation refused at {stage}"))
 }
