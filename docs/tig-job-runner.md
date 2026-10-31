@@ -110,7 +110,49 @@ normal verified retirement is a separate explicit operation.
 
 This API does not discover workspaces, remove reservations, salvage arbitrary
 unbounded files, attest a native producer, or restore incomplete metadata trees.
-CLI admission and consumer integration remain separate from this Rust API.
+Consumer integration remains separate from this Rust API.
+
+### Salvage an unpublished workspace from the CLI
+
+```text
+reel-tig-job salvage-workspace <private-salvage-profile.json>
+reel-tig-job salvage-workspace <private-salvage-profile.json> --apply
+```
+
+The strict profile schema is
+`reel.tig-workspace-salvage-profile.experimental-1`:
+
+| Fields | Admission |
+| --- | --- |
+| `artifact_root` | Existing absolute runner artifact directory; publication bookkeeping stays outside Git |
+| `workspace`, `request`, `max_workspace_bytes` | Exact absolute staging workspace, original request Object (`sha256`, `bytes`), positive bound |
+| `original_input` | Exact journal-owned input-job Selection (`root`, `context`) |
+| `source_id`, `owner`, `expected_revision`, `retain_operation` | Original input owner/revision and explicit retention operation |
+| `journal_root`, `journal_minimum` | Existing journal and trusted minimum |
+| `metadata_root`, `metadata_minimum` | Existing metadata provider and trusted minimum |
+| `cache`, `coordination_root` | Existing cache configuration and shared coordination root; the two coordination bindings must agree |
+
+The command reads the immutable role roster from the owned job and source-context
+trees. It supports the known input-job context schemas, including composition,
+input evidence and variant interpretation. Header pins, namespace counts, links,
+role names and conflicting lengths are checked. Unknown shapes, output claims
+and foreign variant sources refuse. These checks preserve historical input
+admission; they do not replay an old compiler, establish a new recipe match or
+assert producer currency. Production commands still require their planned
+`JobContext` admission.
+
+The source must still own the original input at the exact revision with no
+pending result. Dry-run leaves source state and payload publication unchanged.
+Explicit apply retains a failed-job packet and advances the original ownership
+transition. A successful salvage command exits successfully even though its
+`succeeded` field remains false: the interrupted render is never reclassified as
+successful. Reopening a recorded prepare and verified workspace retirement use
+their separate commands.
+
+Stdout contains only counts, revision and authority flags. Public errors use a
+fixed message without nested paths, IDs or private evidence. Keep the profile
+private. There is no workspace discovery, daemon, tool execution, implicit apply,
+reservation release, asset selection or scratch removal.
 
 ### Verify and retire recovered job scratch
 

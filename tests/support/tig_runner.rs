@@ -312,10 +312,68 @@ fn exercise_unpublished(
     let dry = call(journal, &profile, false).unwrap();
     assert_eq!(dry["applied"], false);
     assert_eq!(journal.checkpoint(), before);
-    let result = call(journal, &profile, true).unwrap();
+    let admission = json!({"schema":"reel.tig-workspace-salvage-profile.experimental-1","artifact_root":project,"workspace":workspace,"request":tig_core::Object::from_bytes(&request),"max_workspace_bytes":1024*1024,"original_input":selection,"cache":{"path_policy":"configured-local-roots","cache_roots":cfg.cache_roots,"coordination_root":coordination.root,"capacity":{"minimum_free_bytes":0,"minimum_free_basis_points":0}},"coordination_root":coordination.root,"journal_root":journal_root,"journal_minimum":journal.checkpoint(),"metadata_root":metadata.0,"metadata_minimum":metadata.1,"source_id":profile.identity.source.as_str(),"owner":profile.identity.owner.as_str(),"expected_revision":2,"retain_operation":profile.operation.as_str()});
+    let path = project.join("salvage-profile.json");
+    let cli = |a: &Value, apply| {
+        fs::write(&path, serde_json::to_vec(a).unwrap()).unwrap();
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_reel-tig-job"));
+        command.arg("salvage-workspace").arg(&path).env("PATH", "");
+        if apply {
+            command.arg("--apply");
+        }
+        command.output().unwrap()
+    };
+    let output = cli(&admission, false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["applied"], false);
+    assert_eq!(summary["declared_candidates"], 1);
+    assert_eq!(summary["producer_currency_asserted"], false);
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("job-unpublished"));
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("sha256"));
+    assert_eq!(journal.checkpoint(), before);
+    for case in [
+        "owner",
+        "revision",
+        "input",
+        "request",
+        "unknown",
+        "coordination",
+    ] {
+        let mut a = admission.clone();
+        match case {
+            "owner" => a["owner"] = json!("foreign-owner"),
+            "revision" => a["expected_revision"] = json!(1),
+            "input" => {
+                a["original_input"]["root"] =
+                    json!(tig_core::Object::from_bytes(b"missing context"))
+            }
+            "request" => a["request"]["sha256"] = json!(tig_core::Digest::blob(b"wrong request")),
+            "coordination" => a["cache"]["coordination_root"] = json!(project),
+            _ => a["unknown"] = json!(true),
+        }
+        let denied = cli(&a, true);
+        assert!(!denied.status.success(), "{case}");
+        assert_eq!(
+            String::from_utf8_lossy(&denied.stderr).trim(),
+            "workspace salvage refused; verify original input ownership, request, stores and quiescent workspace"
+        );
+        assert_eq!(journal.checkpoint(), before);
+    }
+    let output = cli(&admission, true);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(result["succeeded"], false);
     assert_eq!(result["source_revision"], 4);
-    assert_eq!(result["staging_retired"], false);
+    assert_eq!(result["authorizes_workspace_removal"], false);
     assert!(workspace.join("partial.bin").exists());
     // The ordinary prepared-result verifier can reopen the salvaged failed
     // packet; recovery must not turn its candidate into a successful render.

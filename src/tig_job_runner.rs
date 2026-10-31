@@ -22,7 +22,21 @@ use tig_store::{
 };
 mod recovery;
 pub use recovery::cli::{adopt_prepared, retain_published, retire_workspace};
+pub use recovery::salvage::salvage_workspace;
 pub use recovery::{RecoveryBudget, adopt_prepared_result};
+
+trait ResourceView {
+    fn selection(&self) -> &Selection;
+    fn of(&self, role: Role) -> &std::collections::BTreeSet<Object>;
+}
+impl ResourceView for JobContext {
+    fn selection(&self) -> &Selection {
+        self.selection()
+    }
+    fn of(&self, role: Role) -> &std::collections::BTreeSet<Object> {
+        self.of(role)
+    }
+}
 
 /// Retain declared candidates from one interrupted, unpublished workspace.
 /// The exact original input owner/revision remains required. Dry-run changes
@@ -31,6 +45,15 @@ pub fn salvage_unpublished(
     root: &Path,
     spec: jobs::Salvage<'_>,
     resources: &JobContext,
+    journal: &mut SourceJournal,
+    profile: &Profile<'_>,
+) -> Result<serde_json::Value> {
+    salvage_with_resources(root, spec, resources, journal, profile)
+}
+fn salvage_with_resources(
+    root: &Path,
+    spec: jobs::Salvage<'_>,
+    resources: &dyn ResourceView,
     journal: &mut SourceJournal,
     profile: &Profile<'_>,
 ) -> Result<serde_json::Value> {
@@ -91,7 +114,7 @@ fn pin(object: &RetainedObject) -> Result<Object> {
 }
 struct Session<'a> {
     profile: &'a Profile<'a>,
-    resources: &'a JobContext,
+    resources: &'a dyn ResourceView,
     journal: &'a mut SourceJournal,
     journal_identity: Digest,
     completed: bool,
