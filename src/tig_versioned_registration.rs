@@ -14,6 +14,7 @@ use tig_core::{Object, identity};
 use tig_store::existing::{ByteSource, Profile as ByteProfile, ReadCache};
 
 const LIMIT: usize = 65_536;
+mod source_json;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Profile {
@@ -38,7 +39,10 @@ pub(crate) fn prepare_with_fields(
     if bytes.len() > LIMIT || Object::from_bytes(bytes) != *source {
         bail!("versioned source differs from its bounded admission");
     }
-    let doc = identity::parse_json(bytes)?;
+    // Raw legacy evidence is byte-pinned, not a Tig canonical identity document.
+    // Unprojected metadata may contain decimals; consumed pins remain typed and
+    // the resulting native instance still passes strict Tig binding below.
+    let doc = source_json::parse(bytes)?;
     let text = |value: &Value| -> Result<String> {
         let value = value.as_str().context("versioned identity missing")?;
         if value.is_empty() || value.len() > 256 || value.chars().any(char::is_control) {

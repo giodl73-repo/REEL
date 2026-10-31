@@ -33,6 +33,54 @@ fn candidate(value: &Value) -> anyhow::Result<Vec<u8>> {
     let bytes = serde_json::to_vec(value).unwrap();
     prepare(&Object::from_bytes(&bytes), &bytes, &definition, &schema)
 }
+
+#[test]
+fn fractional_evidence_is_raw_pinned_without_entering_native_identity() {
+    let (definition, schema) = definitions();
+    let base = serde_json::to_string(&source("review")).unwrap();
+    for metadata in [
+        r#"{"score":91.5,"weight":1e-3,"zero":-0.0}"#,
+        r#"{"score":0.1234567890123456789012345}"#,
+    ] {
+        let raw = format!("{{\"evidence\":{metadata},{}", &base[1..]);
+        let pin = Object::from_bytes(raw.as_bytes());
+        assert!(tig_core::identity::parse_json(raw.as_bytes()).is_err());
+        let output = prepare(&pin, raw.as_bytes(), &definition, &schema).unwrap();
+        let record = Instance::parse(&output).unwrap();
+        assert_eq!(record.value().streams[0].object.object(), pin);
+        assert!(record.value().metadata.get("evidence").is_none());
+        tig_core::identity::parse_json(&output).unwrap();
+    }
+}
+
+#[test]
+fn external_metadata_cannot_hide_ambiguous_keys_invalid_pins_or_excess_structure() {
+    let (definition, schema) = definitions();
+    let base = serde_json::to_string(&source("review")).unwrap();
+    for metadata in [
+        r#"{"score":1.5,"score":2.5}"#.to_string(),
+        r#"{"nested":[{"score":1,"score":2}]}"#.to_string(),
+        r#"{"score":1e400}"#.to_string(),
+        format!("{}0{}", "[".repeat(34), "]".repeat(34)),
+        format!("[{}]", vec!["0"; 4100].join(",")),
+    ] {
+        let raw = format!("{{\"evidence\":{metadata},{}", &base[1..]);
+        assert!(
+            prepare(
+                &Object::from_bytes(raw.as_bytes()),
+                raw.as_bytes(),
+                &definition,
+                &schema
+            )
+            .is_err()
+        );
+    }
+    for pin in [json!(2.0), json!(-1), json!(9_007_199_254_740_992_u64)] {
+        let mut value = source("review");
+        value["versions"][0]["manifest"]["bytes"] = pin;
+        assert!(candidate(&value).is_err());
+    }
+}
 #[test]
 fn multiple_families_preserve_identity_current_prior_and_raw_source_without_approval() {
     for kind in [
