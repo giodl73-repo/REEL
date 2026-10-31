@@ -184,7 +184,17 @@ pub fn exercise(
         let refused = invoke(&bad, &destination);
         assert!(!refused.status.success());
         assert!(!destination.exists());
-        assert!(!String::from_utf8_lossy(&refused.stderr).contains(&root.display().to_string()));
+        let diagnostic = String::from_utf8_lossy(&refused.stderr);
+        let stage = match case {
+            "output" | "missing" => "output contract",
+            "receipt" => "retained receipt",
+            _ => "retained metadata",
+        };
+        assert_eq!(
+            diagnostic.trim(),
+            format!("retained comparison refused at {stage}")
+        );
+        assert!(!diagnostic.contains(&root.display().to_string()));
         clean(cache);
     }
     let master_path = Path::new(retained["native/master.mkv"]["path"].as_str().unwrap());

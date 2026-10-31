@@ -62,7 +62,7 @@ fn directory(path: &Path) -> Result<()> {
     }
     Ok(())
 }
-fn compare(profile: &Path, output: &Path) -> Result<Value> {
+fn compare(profile: &Path, output: &Path, stage: &mut &'static str) -> Result<Value> {
     let profile: Comparison = read(profile, 128 * 1024, None)?;
     if !matches!(profile.schema.as_str(), SCHEMA | DERIVED_SCHEMA)
         || (profile.schema == SCHEMA
@@ -76,6 +76,7 @@ fn compare(profile: &Path, output: &Path) -> Result<Value> {
         bail!("unsupported comparison profile or output set");
     }
     profile.request.validate()?;
+    *stage = "store admission";
     directory(&profile.metadata_root)?;
     directory(&profile.preparation_cache)?;
     directory(
@@ -101,6 +102,7 @@ fn compare(profile: &Path, output: &Path) -> Result<Value> {
     if profile.byte_source.required != RequiredProtection::PreventMutation {
         bail!("retained comparison requires mandatory read protection");
     }
+    *stage = "retained metadata";
     if profile.receipt.bytes > profile.max_output_bytes
         || profile.claim.bytes > META_BYTES as u64
         || profile.receipt.bytes > RECEIPT_BYTES as u64
@@ -119,6 +121,7 @@ fn compare(profile: &Path, output: &Path) -> Result<Value> {
     {
         bail!("retained claim context or producer differs from independent admission");
     }
+    *stage = "retained receipt";
     let mut receipt_guard = cache.open_verified(&profile.receipt)?;
     let mut receipt_bytes = Vec::new();
     (&mut receipt_guard)
@@ -135,6 +138,7 @@ fn compare(profile: &Path, output: &Path) -> Result<Value> {
     {
         bail!("retained receipt output set differs");
     }
+    *stage = "output contract";
     let mut outputs = BTreeMap::new();
     let mut total = profile.receipt.bytes;
     for (name, item) in &receipt.outputs {
@@ -181,13 +185,16 @@ fn compare(profile: &Path, output: &Path) -> Result<Value> {
     {
         bail!("claim subject differs from admitted native outputs");
     }
+    *stage = "runtime bindings";
     let programs = BoundPrograms::bind(&profile.runtime)?;
+    *stage = "scratch admission";
     let prepared = preparation::Preparation::open_on(
         &profile.cache,
         &profile.metadata_root,
         &profile.preparation_cache,
         2,
     )?;
+    *stage = "source replay";
     let mut reader = MetadataReader::open(&profile.metadata_root, &profile.metadata_minimum)?;
     let compile = prepared.path().join("compiled");
     let (mut source, _replay) = tig_scene::restore_render_claim(
@@ -199,10 +206,12 @@ fn compare(profile: &Path, output: &Path) -> Result<Value> {
         &mut reader,
         TreeLimits::default(),
     )?;
+    *stage = "primary inputs";
     let job_path = compile.join("delivery/job.json");
     let job = crate::tig_inputs::read_job(&job_path)?;
     let inputs = source.prepare(&job)?;
     let bound = programs.with_inputs(&inputs);
+    *stage = "native plan";
     let (_, plan) = scene_delivery::plan_with_inputs(&job_path, &bound)?;
     if serde_json::to_value(&receipt.plan)? != serde_json::to_value(&plan)?
         || receipt.content_samples != plan.duration_samples
@@ -212,6 +221,7 @@ fn compare(profile: &Path, output: &Path) -> Result<Value> {
     {
         bail!("retained receipt differs from frozen native plan");
     }
+    *stage = "retained media";
     let reference = HeldReference {
         file: scene_delivery::FileRef {
             path: "reference.mkv".into(),
@@ -226,6 +236,7 @@ fn compare(profile: &Path, output: &Path) -> Result<Value> {
         receipt_guard,
         reader_limits,
     )?;
+    *stage = "native output check";
     scene_delivery::check_with_output_files(&job_path, &bound, &bundle, bundle.receipt_ref())?;
     let shape = media_parity::Shape {
         width: job.width,
@@ -236,6 +247,7 @@ fn compare(profile: &Path, output: &Path) -> Result<Value> {
         sample_rate: plan.sample_rate,
         samples: plan.duration_samples,
     };
+    *stage = "decoded comparison";
     let parity = media_parity::compare_with_inputs(
         &reference.file,
         &reference,
@@ -243,6 +255,7 @@ fn compare(profile: &Path, output: &Path) -> Result<Value> {
         &programs.with_inputs(&bundle),
         &shape,
     )?;
+    *stage = "report publication";
     let summary = json!({"schema":"reel.tig-retained-comparison-summary.experimental-1",
         "equal":parity.equal,"native_checked":true,"outputs_verified":outputs.len(),
         "materialized_bytes":0,"verified_output_bytes":total,"approval_transferred":false,"authorizes_eviction":false});
@@ -273,6 +286,9 @@ fn compare(profile: &Path, output: &Path) -> Result<Value> {
 /// Explicit CPU/read action with owned admitted scratch. The report is private;
 /// stdout and refusal diagnostics contain no paths, source IDs or raw hashes.
 pub fn compare_retained(profile: &Path, output: &Path) -> Result<Value> {
-    compare(profile, output).map_err(|_| anyhow::anyhow!(
-        "retained comparison refused; verify admissions, pins, native plan, programs and capacity"))
+    // Only fixed program-owned stage names escape this boundary. Never attach
+    // the underlying error, which can contain private locators or identifiers.
+    let mut stage = "profile admission";
+    compare(profile, output, &mut stage)
+        .map_err(|_| anyhow::anyhow!("retained comparison refused at {stage}"))
 }
