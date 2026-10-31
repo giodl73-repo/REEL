@@ -903,6 +903,7 @@ fn native_render_candidate_claims_only_independently_checked_matching_bytes() {
             &plan,
             &mut source,
             &mut owners,
+            &f.root().join("job-owner"),
             f.root(),
             (&metadata, &checkpoint),
             bind_as,

@@ -277,6 +277,7 @@ fn projected_managed_render_publishes_and_replays_checked_claim() {
         &plan,
         &mut source,
         &mut owners,
+        &root.join("owners"),
         &root,
         (&metadata, &witness),
         bind_as,

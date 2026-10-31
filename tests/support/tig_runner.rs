@@ -24,6 +24,7 @@ fn key(s: &str) -> Key {
 pub fn exercise(
     plan: &JobPlan<'_>,
     journal: &mut SourceJournal,
+    journal_root: &Path,
     root: &Path,
     metadata: (&Path, &Checkpoint),
 ) {
@@ -203,7 +204,7 @@ pub fn exercise(
         recovery::exercise(
             resources.resources(),
             journal,
-            &root.join("job-owner"),
+            journal_root,
             &profile,
             &selection,
             mode == "success",
