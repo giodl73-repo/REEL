@@ -5,6 +5,9 @@ use std::{path::PathBuf, process::ExitCode};
     about = "Register pinned native scenes or versioned packages as Tig candidates; no media copy or adoption"
 )]
 struct Args {
+    /// Register explicitly mapped current/historical binding assets.
+    #[arg(long, conflicts_with_all = ["versioned", "package_assets", "conform_components", "presentation_source"])]
+    binding_assets: bool,
     /// Register a family-neutral versioned package record into one new file.
     #[arg(long, conflicts_with = "package_assets")]
     versioned: bool,
@@ -22,7 +25,9 @@ struct Args {
 }
 fn main() -> ExitCode {
     let args = Args::parse();
-    let result = if args.presentation_source {
+    let result = if args.binding_assets {
+        reel::tig_binding_registration::run(&args.profile, &args.output)
+    } else if args.presentation_source {
         reel::tig_presentation_registration::run(&args.profile, &args.output)
     } else if args.conform_components {
         reel::tig_conform_registration::run(&args.profile, &args.output)

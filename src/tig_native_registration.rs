@@ -67,7 +67,7 @@ pub struct Profile {
     pub filenames: BTreeMap<String, String>,
     pub max_output_bytes: u64,
 }
-fn unique_map<'de, D, T>(d: D) -> std::result::Result<BTreeMap<String, T>, D::Error>
+pub(crate) fn unique_map<'de, D, T>(d: D) -> std::result::Result<BTreeMap<String, T>, D::Error>
 where
     D: Deserializer<'de>,
     T: Deserialize<'de>,
