@@ -12,6 +12,8 @@ use std::{
 pub(super) struct Spec {
     workspace: PathBuf,
     max_workspace_bytes: u64,
+    #[serde(default)]
+    pub(super) retained_result: Option<Selection>,
 }
 
 pub(super) struct Packet<'a> {

@@ -83,7 +83,7 @@ reel-tig-job retire-workspace <private-retirement-profile.json>
 reel-tig-job retire-workspace <private-retirement-profile.json> --apply
 ```
 
-This separate command requires a completed current result and the original
+By default this command requires a completed current result and the original
 recorded prepare/adopt operation. It cannot adopt a pending result as a side
 effect. The default verifies and reports; `--apply` explicitly authorizes removal
 of that one owned workspace. It changes no source-journal selection or event.
@@ -117,6 +117,16 @@ because hard-link view sizes are not physical reclamation measurements.
 retained packet/originals and reports `already_absent:true`. This does not release
 input predecessors, grant approval or finish child-owner handoff. Incomplete
 and unpublished workspace salvage remains separate.
+For an older completed job, set `retirement.retained_result` to its exact result
+Selection. The computed result version (`expected_revision + 2`) must still be
+the source's current version or one of its retained predecessors, with the same
+owner and original recorded operation. Wrong pins and released result versions
+refuse even if their bytes still exist. Its input binding is verified through
+that retained result; a second direct input-predecessor reference is not required.
+Only the old packet's exact `job_id` and workspace are eligible. Newer source
+versions, pending work, workspaces and reservations remain unchanged. The report's
+`result_revision` identifies the retired job version separately from the observed
+`source_revision`. Omitting the pin keeps the stricter current-only admission.
 The report preserves the original `succeeded` value: safe retirement of a failed
 job's retained candidates does not make that job successful.
 Before the first applied removal, the command atomically publishes a checksummed

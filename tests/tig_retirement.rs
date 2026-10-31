@@ -534,3 +534,255 @@ fn missing_manifest_without_a_recorded_retirement_intent_refuses() {
     assert!(f.transactions().is_empty());
     f.unchanged();
 }
+
+#[test]
+fn pinned_retirement_preserves_newer_work_and_does_not_require_a_duplicate_input_root() {
+    let f = Fixture::new();
+    let mut journal = SourceJournal::open(&f.journal, &f.checkpoint).unwrap();
+    let old_result = journal
+        .source(&key("retirement-source"))
+        .unwrap()
+        .unwrap()
+        .current
+        .unwrap()
+        .selection;
+    let new_input: Selection = serde_json::from_value(f.profile["original_input"].clone()).unwrap();
+    let pending = journal
+        .apply(
+            key("newer-input"),
+            source_claims::Command::Prepare {
+                source: key("retirement-source"),
+                owner: key("retirement-owner"),
+                expected_revision: 4,
+                selection: new_input,
+            },
+        )
+        .unwrap();
+    journal
+        .apply(
+            key("adopt-newer-input"),
+            source_claims::Command::Adopt {
+                source: key("retirement-source"),
+                owner: key("retirement-owner"),
+                expected_revision: 5,
+                prepared: pending.reference,
+            },
+        )
+        .unwrap();
+    // The retained result itself keeps its source binding. A second direct
+    // reference to input version 2 is not needed to retire redundant scratch.
+    journal
+        .apply(
+            key("retire-old-direct-input"),
+            source_claims::Command::Retire {
+                source: key("retirement-source"),
+                owner: key("retirement-owner"),
+                expected_revision: 6,
+                predecessor_revision: 2,
+            },
+        )
+        .unwrap();
+    let checkpoint = journal.checkpoint();
+    let expected_source = journal.source(&key("retirement-source")).unwrap().unwrap();
+    drop(journal);
+    let newer_workspace = f.cache.join("staging/caminos/job-newer-work");
+    fs::create_dir(&newer_workspace).unwrap();
+    fs::write(newer_workspace.join("new-input"), b"keep newer work").unwrap();
+    fs::write(
+        f.control.join("admissions/job-newer-work.lease"),
+        b"active unrelated job",
+    )
+    .unwrap();
+    assert!(!f.run(&f.profile, true).status.success()); // Default remains current-only.
+    let mut profile = f.profile.clone();
+    profile["retirement"]["retained_result"] = serde_json::to_value(&old_result).unwrap();
+    let checked = f.run(&profile, false);
+    assert!(
+        checked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    assert!(f.transactions().is_empty());
+    let mut wrong = profile.clone();
+    wrong["retirement"]["retained_result"] = f.profile["original_input"].clone();
+    assert!(!f.run(&wrong, true).status.success());
+    let retired = f.run(&profile, true);
+    assert!(
+        retired.status.success(),
+        "{}",
+        String::from_utf8_lossy(&retired.stderr)
+    );
+    let report: Value = serde_json::from_slice(&retired.stdout).unwrap();
+    assert_eq!(report["result_revision"], 4);
+    assert_eq!(report["source_revision"], 7);
+    assert!(!f.workspace.exists());
+    assert_eq!(
+        fs::read(newer_workspace.join("new-input")).unwrap(),
+        b"keep newer work"
+    );
+    assert!(f.control.join("admissions/job-newer-work.lease").exists());
+    let observed =
+        SourceJournal::observe(&f.journal, &checkpoint, &key("retirement-source")).unwrap();
+    assert_eq!(observed.checkpoint, checkpoint);
+    assert_eq!(observed.source, Some(expected_source));
+}
+
+#[test]
+fn pinned_retirement_refuses_a_released_result_even_when_bytes_still_exist() {
+    let f = Fixture::new();
+    let mut journal = SourceJournal::open(&f.journal, &f.checkpoint).unwrap();
+    let old = journal
+        .source(&key("retirement-source"))
+        .unwrap()
+        .unwrap()
+        .current
+        .unwrap()
+        .selection;
+    let prepared = journal
+        .apply(
+            key("replace-result"),
+            source_claims::Command::Prepare {
+                source: key("retirement-source"),
+                owner: key("retirement-owner"),
+                expected_revision: 4,
+                selection: serde_json::from_value(f.profile["original_input"].clone()).unwrap(),
+            },
+        )
+        .unwrap();
+    journal
+        .apply(
+            key("adopt-replacement"),
+            source_claims::Command::Adopt {
+                source: key("retirement-source"),
+                owner: key("retirement-owner"),
+                expected_revision: 5,
+                prepared: prepared.reference,
+            },
+        )
+        .unwrap();
+    journal
+        .apply(
+            key("release-result"),
+            source_claims::Command::Retire {
+                source: key("retirement-source"),
+                owner: key("retirement-owner"),
+                expected_revision: 6,
+                predecessor_revision: 4,
+            },
+        )
+        .unwrap();
+    let checkpoint = journal.checkpoint();
+    drop(journal);
+    let mut profile = f.profile.clone();
+    profile["retirement"]["retained_result"] = serde_json::to_value(old).unwrap();
+    assert!(!f.run(&profile, true).status.success());
+    assert!(f.workspace.exists());
+    assert!(f.transactions().is_empty());
+    let observed =
+        SourceJournal::observe(&f.journal, &checkpoint, &key("retirement-source")).unwrap();
+    assert_eq!(observed.checkpoint, checkpoint);
+}
+
+#[test]
+fn pinned_old_result_retirement_preserves_newer_pending_selection() {
+    let f = Fixture::new();
+    let mut journal = SourceJournal::open(&f.journal, &f.checkpoint).unwrap();
+    let old = journal
+        .source(&key("retirement-source"))
+        .unwrap()
+        .unwrap()
+        .current
+        .unwrap()
+        .selection;
+    journal
+        .apply(
+            key("pending-newer-work"),
+            source_claims::Command::Prepare {
+                source: key("retirement-source"),
+                owner: key("retirement-owner"),
+                expected_revision: 4,
+                selection: serde_json::from_value(f.profile["original_input"].clone()).unwrap(),
+            },
+        )
+        .unwrap();
+    let checkpoint = journal.checkpoint();
+    let before = journal.source(&key("retirement-source")).unwrap().unwrap();
+    drop(journal);
+    let mut profile = f.profile.clone();
+    profile["retirement"]["retained_result"] = serde_json::to_value(old).unwrap();
+    let result = f.run(&profile, true);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let after = SourceJournal::observe(&f.journal, &checkpoint, &key("retirement-source")).unwrap();
+    assert_eq!(after.checkpoint, checkpoint);
+    assert_eq!(after.source, Some(before));
+    assert!(!f.workspace.exists());
+}
+
+#[test]
+fn interrupted_retirement_can_resume_after_its_result_becomes_a_predecessor() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let f = Fixture::new();
+    let blocked = f.workspace.join("blocked.tmp");
+    fs::write(&blocked, b"scratch").unwrap();
+    let guard = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(&blocked)
+        .unwrap();
+    assert!(!f.run(&f.profile, true).status.success());
+    drop(guard);
+    let manifest = f.workspace.join("job.json");
+    if manifest.exists() {
+        fs::remove_file(manifest).unwrap();
+    }
+    let mut journal = SourceJournal::open(&f.journal, &f.checkpoint).unwrap();
+    let old = journal
+        .source(&key("retirement-source"))
+        .unwrap()
+        .unwrap()
+        .current
+        .unwrap()
+        .selection;
+    let prepared = journal
+        .apply(
+            key("next-input"),
+            source_claims::Command::Prepare {
+                source: key("retirement-source"),
+                owner: key("retirement-owner"),
+                expected_revision: 4,
+                selection: serde_json::from_value(f.profile["original_input"].clone()).unwrap(),
+            },
+        )
+        .unwrap();
+    journal
+        .apply(
+            key("adopt-next-input"),
+            source_claims::Command::Adopt {
+                source: key("retirement-source"),
+                owner: key("retirement-owner"),
+                expected_revision: 5,
+                prepared: prepared.reference,
+            },
+        )
+        .unwrap();
+    let checkpoint = journal.checkpoint();
+    drop(journal);
+    let mut profile = f.profile.clone();
+    profile["retirement"]["retained_result"] = serde_json::to_value(old).unwrap();
+    let result = f.run(&profile, true);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["retirement_transaction"]["resumed"], true);
+    assert_eq!(report["retirement_transaction"]["state"], "completed");
+    assert!(!f.workspace.exists());
+    let after = SourceJournal::observe(&f.journal, &checkpoint, &key("retirement-source")).unwrap();
+    assert_eq!(after.checkpoint, checkpoint);
+}

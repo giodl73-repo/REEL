@@ -38,3 +38,11 @@ only with that prior intent. Directory timestamps may change as children are
 removed. File changes, new entries, directory replacement and corrupt/mismatched
 metadata refuse. No transaction advances during dry-run. Completed records are
 compacted and cannot authorize deletion of a replacement directory.
+
+An optional exact retained-result pin permits cleanup after the source advances.
+The old result must still be owner-retained at its original version, and its
+packet/operation/input bindings and actual bytes must verify. A direct duplicate
+input predecessor may be retired without losing the binding through the result.
+Default current-only admission remains strict. The fixture advances ownership,
+retires the duplicate direct input reference, checks wrong/released result pins,
+and verifies that cleanup preserves the newer source and its workspace/lease.
