@@ -1,4 +1,4 @@
-//! Resume only an already recorded prepare. Never run tools or retire scratch.
+//! Explicit verified result retention. Never run tools or retire scratch.
 use super::*;
 use anyhow::Context;
 use serde_json::{Value, json};
@@ -68,6 +68,37 @@ fn adopt_selection(
     profile: &Profile<'_>,
     budget: &RecoveryBudget,
 ) -> Result<Value> {
+    recover_selection(
+        journal_root,
+        RecoverySubject {
+            job_id,
+            original_input,
+            published: None,
+        },
+        journal,
+        profile,
+        budget,
+    )
+}
+
+struct RecoverySubject<'a> {
+    job_id: &'a str,
+    original_input: &'a Selection,
+    published: Option<&'a Selection>,
+}
+
+fn recover_selection(
+    journal_root: &Path,
+    subject: RecoverySubject<'_>,
+    journal: &mut SourceJournal,
+    profile: &Profile<'_>,
+    budget: &RecoveryBudget,
+) -> Result<Value> {
+    let RecoverySubject {
+        job_id,
+        original_input,
+        published,
+    } = subject;
     if !job_id.starts_with("job-")
         || job_id.len() > 100
         || !job_id
@@ -93,7 +124,19 @@ fn adopt_selection(
     if before.owner != profile.identity.owner {
         bail!("recovery source owner differs");
     }
-    let selection = if before.revision == prepared_revision {
+    let needs_prepare = before.revision == profile.expected_revision
+        && before.pending.is_none()
+        && published.is_some();
+    let selection = if needs_prepare {
+        if before.current.as_ref().is_none_or(|c| {
+            c.revision != profile.expected_revision || c.selection != *original_input
+        }) {
+            bail!("published recovery original input ownership differs");
+        }
+        published
+            .context("published result admission missing")?
+            .clone()
+    } else if before.revision == prepared_revision {
         if before.current.as_ref().is_none_or(|c| {
             c.revision != profile.expected_revision || c.selection != *original_input
         }) {
@@ -124,30 +167,36 @@ fn adopt_selection(
     } else {
         bail!("no matching prepared retention; preserve workspace");
     };
+    if published.is_some_and(|p| *p != selection) {
+        bail!("published recovery result differs from retained selection");
+    }
     let command = Command::Prepare {
         source: profile.identity.source.clone(),
         owner: profile.identity.owner.clone(),
         expected_revision: profile.expected_revision,
         selection: selection.clone(),
     };
-    // Preview must identify the original exact recorded command; never create a
-    // new prepare to make a different operation look resumable.
-    let PreviewDisposition::Recorded { receipt: prepared } = SourceJournal::preview(
+    // Recorded-only recovery cannot invent prepare. Explicit published recovery
+    // may propose it, but cannot apply it until all packet bytes verify below.
+    let prepared = match SourceJournal::preview(
         journal_root,
         &journal.checkpoint(),
         retention_phase(profile, "prepare")?,
-        command,
+        command.clone(),
     )?
     .disposition
-    else {
-        bail!("retention prepare was not recorded by this operation");
-    };
-    if prepared.source_revision != prepared_revision
-        || before
-            .pending
-            .as_ref()
-            .is_some_and(|p| p.reference != prepared.reference)
     {
+        PreviewDisposition::Recorded { receipt } => Some(receipt),
+        PreviewDisposition::Proposed { .. } if needs_prepare => None,
+        _ => bail!("retention prepare was not recorded by this operation"),
+    };
+    if prepared.as_ref().is_some_and(|prepared| {
+        prepared.source_revision != prepared_revision
+            || before
+                .pending
+                .as_ref()
+                .is_some_and(|p| p.reference != prepared.reference)
+    }) {
         bail!("retention prepare receipt differs");
     }
     let mut reader = MetadataReader::open(profile.metadata_root, profile.metadata_minimum)?;
@@ -173,6 +222,12 @@ fn adopt_selection(
         || header["source_id"] != profile.identity.source.as_str()
         || header["revision"].as_u64() != Some(profile.expected_revision)
         || header.get("production_claim") != Some(&Value::Null)
+        || header
+            .get("retention_operation")
+            .is_some_and(|op| op.as_str() != Some(profile.operation.as_str()))
+        || (published.is_some()
+            && header.get("retention_operation").and_then(Value::as_str)
+                != Some(profile.operation.as_str()))
         || header["outputs"].as_u64() != entries.len().checked_sub(4).map(|n| n as u64)
     {
         bail!("prepared retention scope differs");
@@ -270,6 +325,13 @@ fn adopt_selection(
     if journal.source(&profile.identity.source)? != Some(before) {
         bail!("recovery source changed while verifying");
     }
+    let prepared = match prepared {
+        Some(receipt) => receipt,
+        None => journal.apply(retention_phase(profile, "prepare")?, command)?,
+    };
+    if prepared.source_revision != prepared_revision {
+        bail!("published recovery prepare revision differs");
+    }
     let receipt = journal.apply(
         retention_phase(profile, "adopt")?,
         Command::Adopt {
@@ -293,7 +355,8 @@ fn adopt_selection(
         bail!("recovered retention is no longer current");
     }
     Ok(
-        json!({"schema":"reel.tig-prepared-retention-recovery.experimental-1","job_id":job_id,
+        json!({"schema":if published.is_some() {"reel.tig-published-retention-recovery.experimental-1"} else {"reel.tig-prepared-retention-recovery.experimental-1"},"job_id":job_id,
+        "prepare_recorded_now":needs_prepare,
         "selection":selection,"source_revision":receipt.source_revision,"replayed":receipt.replayed,"succeeded":succeeded,
         "staging_retired":false,"authorizes_workspace_removal":false,"production_claim":null,"approval":false,
         "journal_checkpoint":journal.checkpoint()}),

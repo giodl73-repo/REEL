@@ -46,6 +46,36 @@ A successful command means metadata adoption completed or replayed. Inspect
 `succeeded:false`. Both outcomes leave scratch and approval unchanged. Output
 record proposal adoption and child-owner handoff remain explicit separate steps.
 
+### Published packet without a recorded prepare
+
+```text
+reel-tig-job retain-published <private-published-recovery-profile.json>
+```
+
+Use schema `reel.tig-published-recovery-profile.experimental-1`, the same fields
+as prepared recovery, and an explicit `published_result` Selection. This is an
+admitted complete result tree already written by the retention sink, including
+the request, evidence and exact output pins. This command does not discover that
+tree, reconstruct a packet from arbitrary files or infer a successful render.
+New retention packets bind their retention operation in the immutable header.
+Published recovery requires that exact binding. Older packets lacking it remain
+eligible only for recorded-prepare recovery; it is not inferred retroactively.
+
+When the source still owns the exact original input and has no pending selection,
+the command verifies the complete tree, scoped header, request/evidence agreement,
+declared bounds and protected cached bytes before recording the original prepare
+and adopt operations. Any verification failure leaves the source and journal
+unchanged. A crash after prepare can be retried with the same profile; another
+pending or current result refuses. Repeating a completed operation is idempotent.
+The original input remains a predecessor.
+
+The result schema is `reel.tig-published-retention-recovery.experimental-1`.
+`prepare_recorded_now` distinguishes a newly recorded prepare from replay. This
+does not change `adopt-prepared`: that command still requires a recorded prepare
+and rejects a published-result admission. Both commands preserve the original
+success/failure outcome and grant no producer, approval or scratch-removal claim.
+Incomplete packets and unpublished workspace recovery remain separate work.
+
 ## Set up shared stores once
 
 The managed Windows CLI can explicitly create the metadata provider and source

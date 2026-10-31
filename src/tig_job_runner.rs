@@ -21,7 +21,7 @@ use tig_store::{
     source_claims::{Command, Selection, SourceJournal},
 };
 mod recovery;
-pub use recovery::cli::adopt_prepared;
+pub use recovery::cli::{adopt_prepared, retain_published};
 pub use recovery::{RecoveryBudget, adopt_prepared_result};
 
 pub struct Profile<'a> {
@@ -128,6 +128,7 @@ impl Sink<'_, '_> {
             "source":session.resources.selection(),"journal":session.journal_identity,
             "owner":p.identity.owner.as_str(),"source_id":p.identity.source.as_str(),
             "revision":p.expected_revision,"outputs":batch.outputs().len(),"production_claim":null,
+            "retention_operation":p.operation.as_str(),
         }))?;
         let header_object = Object::from_bytes(&header);
         let mut entries = BTreeMap::from([

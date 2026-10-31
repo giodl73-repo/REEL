@@ -9,6 +9,8 @@ struct Admission {
     schema: String,
     job_id: String,
     original_input: Selection,
+    #[serde(default)]
+    published_result: Option<Selection>,
     cache: Config,
     coordination_root: PathBuf,
     journal_root: PathBuf,
@@ -26,6 +28,16 @@ struct Admission {
 /// This verifies ownership and bytes; it does not recreate a native producer
 /// assertion, execute tools, finish child handoff or authorize workspace removal.
 pub fn adopt_prepared(path: &Path) -> Result<Value> {
+    execute(path, false)
+}
+
+/// Explicitly retain a complete published result when prepare was not recorded.
+/// This creates the original prepare only after full guarded packet verification.
+pub fn retain_published(path: &Path) -> Result<Value> {
+    execute(path, true)
+}
+
+fn execute(path: &Path, published: bool) -> Result<Value> {
     let mut raw = Vec::new();
     File::open(path)?
         .take(128 * 1024 + 1)
@@ -34,7 +46,13 @@ pub fn adopt_prepared(path: &Path) -> Result<Value> {
         bail!("prepared recovery profile exceeds bound");
     }
     let a: Admission = serde_json::from_value(identity::parse_json(&raw)?)?;
-    if a.schema != "reel.tig-prepared-recovery-profile.experimental-1"
+    if a.schema
+        != if published {
+            "reel.tig-published-recovery-profile.experimental-1"
+        } else {
+            "reel.tig-prepared-recovery-profile.experimental-1"
+        }
+        || a.published_result.is_some() != published
         || !a.coordination_root.is_absolute()
         || !a.coordination_root.is_dir()
         || !a.journal_root.is_absolute()
@@ -91,10 +109,13 @@ pub fn adopt_prepared(path: &Path) -> Result<Value> {
         bail!("prepared recovery requires an original input job");
     }
     let mut journal = SourceJournal::open(&a.journal_root, &a.journal_minimum)?;
-    adopt_selection(
+    recover_selection(
         &a.journal_root,
-        &a.job_id,
-        &a.original_input,
+        RecoverySubject {
+            job_id: &a.job_id,
+            original_input: &a.original_input,
+            published: a.published_result.as_ref(),
+        },
         &mut journal,
         &profile,
         &a.budget,

@@ -18,6 +18,28 @@ pub(super) fn exercise(
     retained: &Selection,
     succeeded: bool,
 ) {
+    for recorded_prepare in [true, false] {
+        exercise_case(
+            resources,
+            journal,
+            journal_root,
+            original,
+            retained,
+            succeeded,
+            recorded_prepare,
+        );
+    }
+}
+
+fn exercise_case(
+    resources: &JobContext,
+    journal: &mut SourceJournal,
+    journal_root: &Path,
+    original: &Profile<'_>,
+    retained: &Selection,
+    succeeded: bool,
+    recorded_prepare: bool,
+) {
     let mut reader =
         MetadataReader::open(original.metadata_root, original.metadata_minimum).unwrap();
     let mut entries = Tree::from_root(retained.root.clone())
@@ -29,10 +51,11 @@ pub(super) fn exercise(
         serde_json::from_slice(&reader.get(&entries[&header_name]).unwrap().unwrap()).unwrap();
     let job_id = header["job_id"].as_str().unwrap().to_owned();
     let identity = Identity {
-        source: key(if succeeded {
-            "recover-success"
-        } else {
-            "recover-failure"
+        source: key(match (succeeded, recorded_prepare) {
+            (true, true) => "recover-success",
+            (false, true) => "recover-failure",
+            (true, false) => "recover-unprepared-success",
+            (false, false) => "recover-unprepared-failure",
         }),
         owner: original.identity.owner.clone(),
     };
@@ -48,11 +71,7 @@ pub(super) fn exercise(
     };
     let start = journal
         .apply(
-            key(if succeeded {
-                "recover-success-start"
-            } else {
-                "recover-failure-start"
-            }),
+            key(&format!("{}-start", profile.identity.source.as_str())),
             Command::Prepare {
                 source: profile.identity.source.clone(),
                 owner: profile.identity.owner.clone(),
@@ -63,11 +82,7 @@ pub(super) fn exercise(
         .unwrap();
     journal
         .apply(
-            key(if succeeded {
-                "recover-success-adopt"
-            } else {
-                "recover-failure-adopt"
-            }),
+            key(&format!("{}-adopt", profile.identity.source.as_str())),
             Command::Adopt {
                 source: profile.identity.source.clone(),
                 owner: profile.identity.owner.clone(),
@@ -98,6 +113,7 @@ pub(super) fn exercise(
     assert!(call(journal, &profile, &budget).is_err());
     assert_eq!(journal.checkpoint(), before);
     header["source_id"] = json!(profile.identity.source.as_str());
+    header["retention_operation"] = json!(profile.operation.as_str());
     let raw = identity::canonical_json(&header).unwrap();
     let mut writer = MetadataStore::open(profile.metadata_root, profile.metadata_minimum).unwrap();
     let object = writer.put(&raw).unwrap();
@@ -113,18 +129,20 @@ pub(super) fn exercise(
     };
     // This is the exact durable boundary reached by the retention sink: cached
     // bytes and metadata are complete, prepare is recorded, adopt is interrupted.
-    let prepared = journal
-        .apply(
-            operation(&profile, "prepare"),
-            Command::Prepare {
-                source: profile.identity.source.clone(),
-                owner: profile.identity.owner.clone(),
-                expected_revision: 2,
-                selection: selection.clone(),
-            },
-        )
-        .unwrap();
-    assert_eq!(prepared.source_revision, 3);
+    if recorded_prepare {
+        let prepared = journal
+            .apply(
+                operation(&profile, "prepare"),
+                Command::Prepare {
+                    source: profile.identity.source.clone(),
+                    owner: profile.identity.owner.clone(),
+                    expected_revision: 2,
+                    selection: selection.clone(),
+                },
+            )
+            .unwrap();
+        assert_eq!(prepared.source_revision, 3);
+    }
     let pending = journal.source(&profile.identity.source).unwrap().unwrap();
     let checkpoint = journal.checkpoint();
     let owner = profile.identity.owner.clone();
@@ -190,10 +208,18 @@ pub(super) fn exercise(
     } else {
         "recover-failure.json"
     });
+    if !recorded_prepare {
+        admission["schema"] = json!("reel.tig-published-recovery-profile.experimental-1");
+        admission["published_result"] = serde_json::to_value(&selection).unwrap();
+    }
     let invoke = |value: &Value| {
         fs::write(&admission_path, identity::canonical_json(value).unwrap()).unwrap();
         std::process::Command::new(env!("CARGO_BIN_EXE_reel-tig-job"))
-            .arg("adopt-prepared")
+            .arg(if recorded_prepare {
+                "adopt-prepared"
+            } else {
+                "retain-published"
+            })
             .arg(&admission_path)
             .output()
             .unwrap()
@@ -210,6 +236,31 @@ pub(super) fn exercise(
     admission["remove_scratch"] = json!(true);
     assert!(!invoke(&admission).status.success());
     admission.as_object_mut().unwrap().remove("remove_scratch");
+    if !recorded_prepare {
+        admission["retain_operation"] = json!("foreign-retention-operation");
+        assert!(!invoke(&admission).status.success());
+        admission["retain_operation"] = json!(profile.operation.as_str());
+        admission["budget"]["max_verify_bytes"] = json!(1);
+        assert!(!invoke(&admission).status.success());
+        admission["budget"]["max_verify_bytes"] = json!(32 * 1024 * 1024);
+        let original_bytes = fs::read(&path).unwrap();
+        let mut changed = original_bytes.clone();
+        changed[0] ^= 1;
+        fs::write(&path, changed).unwrap();
+        let output = invoke(&admission);
+        fs::write(&path, original_bytes).unwrap();
+        assert!(!output.status.success());
+        let selected = admission["published_result"].clone();
+        admission["published_result"] = serde_json::to_value(resources.selection()).unwrap();
+        assert!(!invoke(&admission).status.success());
+        admission["published_result"] = selected;
+        *journal = SourceJournal::open(journal_root, &checkpoint).unwrap();
+        assert_eq!(journal.checkpoint(), checkpoint);
+        assert_eq!(
+            journal.source(&profile.identity.source).unwrap().unwrap(),
+            pending
+        );
+    }
     let output = invoke(&admission);
     assert!(
         output.status.success(),
@@ -219,6 +270,7 @@ pub(super) fn exercise(
     let result: Value = serde_json::from_slice(&output.stdout).unwrap();
     *journal = SourceJournal::open(journal_root, &checkpoint).unwrap();
     assert_eq!(result["source_revision"], 4);
+    assert_eq!(result["prepare_recorded_now"], !recorded_prepare);
     assert_eq!(result["succeeded"], succeeded);
     assert_eq!(result["staging_retired"], false);
     assert_eq!(result["authorizes_workspace_removal"], false);
@@ -246,11 +298,7 @@ pub(super) fn exercise(
     assert_eq!(journal.checkpoint(), checkpoint);
     journal
         .apply(
-            key(if succeeded {
-                "new-success-work"
-            } else {
-                "new-failure-work"
-            }),
+            key(&format!("{}-new-work", profile.identity.source.as_str())),
             Command::Prepare {
                 source: profile.identity.source.clone(),
                 owner: profile.identity.owner.clone(),
