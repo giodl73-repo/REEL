@@ -6,8 +6,9 @@ use anyhow::{Context, Result, bail};
 use reel_assembly::{
     Graph, SelectedPointer,
     scene_authoring::{
-        AssetRef, Episode, Scene, ScenePolicy, ScopedBindings, ScoreUse, TemplateCatalog,
-        compile_native_event_spans, materialize_scene, resolve_motion_direction, resolve_scene,
+        AssetRef, Episode, Scene, SceneBindingScopes, ScenePolicy, ScopedBindings, ScoreUse,
+        TemplateCatalog, compile_native_event_spans, materialize_scene, resolve_motion_direction,
+        resolve_scene_for_language,
     },
     selected_closure,
 };
@@ -715,14 +716,17 @@ fn compile_with_budget(
         &mut input_sha256,
     )?;
     let scopes = [&scene_bindings, &episode_bindings, &season];
-    resolve_scene(
+    resolve_scene_for_language(
         &catalog,
         &episode,
         &source_scene,
         &policy,
-        &season,
-        &episode_bindings,
-        &scene_bindings,
+        SceneBindingScopes {
+            season: &season,
+            episode: &episode_bindings,
+            scene: &scene_bindings,
+        },
+        &request.language,
     )?;
     let graph: Graph = read(&checked(&root, &request.graph)?, "graph", &mut input_sha256)?;
     let pointer: SelectedPointer = read(

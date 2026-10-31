@@ -165,10 +165,30 @@ pub fn exercise_retained_producer(
         ProducerMode::Retained(producer),
     )
 }
+pub fn exercise_historical_compiler(
+    root: &Path,
+    request: &Request,
+    context: &Selection,
+    metadata: (&Path, &Checkpoint),
+    source: Value,
+    reference: &Receipt,
+    producer: &Path,
+) {
+    exercise_mode(
+        root,
+        request,
+        context,
+        metadata,
+        source,
+        reference,
+        ProducerMode::Historical(producer),
+    )
+}
 enum ProducerMode<'a> {
     Declared,
     Compiled,
     Retained(&'a Path),
+    Historical(&'a Path),
 }
 fn exercise_mode(
     root: &Path,
@@ -181,6 +201,7 @@ fn exercise_mode(
 ) {
     let compiled = !matches!(mode, ProducerMode::Declared);
     let retained_producer = matches!(mode, ProducerMode::Retained(_));
+    let historical_compiler = matches!(mode, ProducerMode::Historical(_));
     let locate = |name: &str| {
         std::env::split_paths(&std::env::var_os("PATH").unwrap())
             .map(|dir| dir.join(format!("{name}.exe")))
@@ -194,7 +215,7 @@ fn exercise_mode(
         json!({"path":path,"sha256":observed.sha256,"bytes":observed.bytes})
     };
     let binary = match mode {
-        ProducerMode::Retained(path) => path,
+        ProducerMode::Retained(path) | ProducerMode::Historical(path) => path,
         _ => Path::new(env!("CARGO_BIN_EXE_reel-tig-job")),
     }
     .canonicalize()
@@ -628,7 +649,11 @@ fn exercise_mode(
         }
         if mode == "automatic" {
             check_candidates(root, &completed, &original_record, &template);
-            if compiled {
+            if historical_compiler {
+                crate::retained_comparison::exercise_historical_compiler(
+                    root, &automatic, &completed, reference, &cache,
+                );
+            } else if compiled {
                 crate::retained_comparison::exercise(
                     root, &automatic, &completed, reference, &cache,
                 );

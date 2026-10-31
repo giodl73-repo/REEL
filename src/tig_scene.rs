@@ -604,14 +604,17 @@ fn read_source(source: &mut Source, request: &Request) -> Result<NativeState> {
         scope_id: episode.season_id.clone(),
         assets: BTreeMap::new(),
     };
-    let resolved_scene = scene_authoring::resolve_scene(
+    let resolved_scene = scene_authoring::resolve_scene_for_language(
         &serde_json::from_slice(&controls["catalog.json"])?,
         &episode,
         &scene,
         &serde_json::from_slice(&controls["policy.json"])?,
-        &empty_season,
-        &empty_episode,
-        &bindings,
+        scene_authoring::SceneBindingScopes {
+            season: &empty_season,
+            episode: &empty_episode,
+            scene: &bindings,
+        },
+        &request.language,
     )?;
     Ok(NativeState {
         parent,

@@ -21,6 +21,131 @@ fn clean(cache: &Path) {
         name.starts_with("native-prepare-") || name.starts_with("native-compare-")
     }));
 }
+
+/// A changed compiler is not the same historical recipe. The old producer must
+/// use its own captured context; current validation can prove retained contract
+/// equivalence without replaying that claim as current production.
+pub fn exercise_historical_compiler(
+    root: &Path,
+    profile: &Value,
+    completed: &Value,
+    reference: &Receipt,
+    cache: &Path,
+) {
+    let retained = &completed["result"]["outputs"];
+    let count = retained
+        .as_object()
+        .unwrap()
+        .keys()
+        .filter(|name| name.starts_with("native/") && name.as_str() != "native/receipt.json")
+        .count();
+    let baseline = cached(
+        cache,
+        &root
+            .join("compiled-cli-reference-output")
+            .join(&reference.outputs["master.mkv"].path),
+    );
+    let binary = Path::new(env!("CARGO_BIN_EXE_reel-tig-job"));
+    let mut runtime = profile["worker"]["runtime"].clone();
+    runtime["host"] = json!(reel::media_runtime::ByteIdentity::observe_file(binary).unwrap());
+    let comparison = json!({"schema":"reel.tig-retained-comparison.experimental-2",
+        "metadata_root":profile["worker"]["metadata_root"],"metadata_minimum":profile["worker"]["metadata_minimum"],
+        "source":profile["worker"]["source"],"context":profile["worker"]["context"],"request":profile["worker"]["request"],
+        "producer":completed["planning"]["producer"],"claim":completed["record_candidates"]["claim"],
+        "receipt":completed["record_candidates"]["receipt"],"reference":baseline,"runtime":runtime,
+        "byte_source":{"places":[{"root":cache,"layout":"reel-cas"}],"required":"prevent-mutation"},
+        "cache":profile["cache"],"preparation_cache":cache,"max_output_bytes":134217728_u64});
+    let minimum = serde_json::from_value(profile["worker"]["metadata_minimum"].clone()).unwrap();
+    let metadata = Path::new(profile["worker"]["metadata_root"].as_str().unwrap());
+    let before = MetadataReader::open(metadata, &minimum)
+        .unwrap()
+        .checkpoint()
+        .clone();
+    let invoke = |operation: &str, value: &Value, output: &Path| {
+        let input = root.join("historical-check-profile.json");
+        fs::write(&input, serde_json::to_vec(value).unwrap()).unwrap();
+        Command::new(binary)
+            .arg(operation)
+            .arg(input)
+            .arg(output)
+            .env("PATH", "")
+            .output()
+            .unwrap()
+    };
+    let denied = root.join("historical-strict-replay.json");
+    let strict = invoke("compare-retained", &comparison, &denied);
+    assert!(!strict.status.success());
+    assert!(!denied.exists());
+    assert!(String::from_utf8_lossy(&strict.stderr).contains("source replay"));
+    let mut revalidation = comparison.clone();
+    revalidation["schema"] = json!("reel.tig-retained-revalidation.experimental-1");
+    let output = root.join("historical-contract-revalidation.json");
+    let checked = invoke("revalidate-retained", &revalidation, &output);
+    assert!(
+        checked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    let observed: Value = serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
+    assert_eq!(observed["output_count"], count);
+    for flag in ["contract_equivalent", "native_checked"] {
+        assert_eq!(observed[flag], true);
+    }
+    for flag in [
+        "original_claim_replayed",
+        "authorizes_production",
+        "authorizes_eviction",
+    ] {
+        assert_eq!(observed[flag], false);
+    }
+    assert_eq!(observed["parity"]["equal"], true);
+    assert_eq!(observed["parity"]["approval_transferred"], false);
+    assert!(observed["production_claim"].is_null());
+    assert_eq!(observed["historical_claim"], comparison["claim"]);
+    assert_eq!(
+        observed["original_producer_admission"],
+        comparison["producer"]
+    );
+    assert_eq!(observed["context"], comparison["context"]);
+    assert_ne!(
+        observed["revalidation"]["original_compiler"],
+        observed["revalidation"]["current_compiler"]
+    );
+    assert_eq!(
+        observed["revalidation"]["current_production_currency"],
+        "not-asserted"
+    );
+    assert!(!root.join(".git").exists());
+    for case in ["producer", "context", "request", "archive", "budget"] {
+        let mut bad = revalidation.clone();
+        match case {
+            "producer" => bad["producer"] = json!(Object::from_bytes(b"foreign producer")),
+            "context" => {
+                bad["context"]["context"] = json!(Object::from_bytes(b"foreign context").sha256)
+            }
+            "request" => bad["request"]["language"] = json!("en"),
+            "archive" => bad["source"]["archive"] = json!(Object::from_bytes(b"foreign archive")),
+            _ => bad["max_output_bytes"] = json!(1),
+        }
+        let denied = root.join(format!("historical-refused-{case}.json"));
+        assert!(
+            !invoke("revalidate-retained", &bad, &denied)
+                .status
+                .success(),
+            "{case}"
+        );
+        assert!(!denied.exists());
+        clean(cache);
+    }
+    assert_eq!(
+        MetadataReader::open(metadata, &minimum)
+            .unwrap()
+            .checkpoint(),
+        &before
+    );
+    clean(cache);
+}
+
 pub fn exercise(
     root: &Path,
     profile: &Value,

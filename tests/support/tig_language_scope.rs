@@ -324,6 +324,108 @@ fn spanish_take_edit_preserves_english_scope_and_native_semantics() {
 }
 
 #[test]
+fn other_language_drafts_do_not_block_current_language_but_consumed_drafts_refuse() {
+    for name in ["cue-main", "alignment"] {
+        let (mut f, request) = bilingual();
+        let before = compile(&f, &request, "before-draft");
+        let mut record = load(&f, &format!("records/{name}.tig"));
+        record["status"]["selection_state"] = json!("draft-unreviewed");
+        let missing = Object::from_bytes(b"new other-language draft not materialized");
+        if name == "alignment" {
+            record["streams"][0]["object"] = json!(missing);
+        } else {
+            record["selected"] = json!(missing);
+        }
+        write(f.root(), &format!("records/{name}.tig"), &record);
+        save_commit(&mut f);
+        let after = compile(&f, &request, "after-draft");
+        assert_eq!(
+            primary(&before, "language_inputs"),
+            primary(&after, "language_inputs")
+        );
+        for field in ["binding_sha256", "native_semantic_sha256"] {
+            assert_eq!(
+                before["language_inputs"][field],
+                after["language_inputs"][field]
+            );
+        }
+        for file in ["production.json", "contract.json", "job.json"] {
+            assert_eq!(
+                fs::read(f.root().join("before-draft/delivery").join(file)).unwrap(),
+                fs::read(f.root().join("after-draft/delivery").join(file)).unwrap()
+            );
+        }
+        // Public authoring entry points must agree with the native compiler.
+        // The explicit whole-scene command still checks every language.
+        for (language, allowed) in [(Some("en"), true), (Some("es"), false), (None, false)] {
+            let output = f
+                .root()
+                .join(format!("resolved-{}.json", language.unwrap_or("all")));
+            let mut command = Command::new(env!("CARGO_BIN_EXE_reel-scene-authoring"));
+            command.arg(if language.is_some() {
+                "resolve-language"
+            } else {
+                "resolve"
+            });
+            for file in [
+                "catalog.json",
+                "episode.json",
+                "scene.json",
+                "policy.json",
+                "season-bindings.json",
+                "episode-bindings.json",
+                "scene-bindings.json",
+            ] {
+                command.arg(f.root().join("after-draft").join(file));
+            }
+            if let Some(language) = language {
+                command.arg(language);
+            }
+            let result = command.arg("--output").arg(&output).output().unwrap();
+            assert_eq!(
+                result.status.success(),
+                allowed,
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            if allowed {
+                let resolved: Value = serde_json::from_slice(&fs::read(output).unwrap()).unwrap();
+                assert_eq!(
+                    resolved["fingerprint_sha256"],
+                    before["language_inputs"]["native_semantic_sha256"]
+                );
+            } else {
+                assert!(!output.exists());
+            }
+        }
+        assert!(
+            !f.root()
+                .join("cache/objects")
+                .join(missing.sha256.as_str())
+                .exists()
+        );
+        let mut spanish: reel::tig_scene::Request =
+            serde_json::from_value(serde_json::to_value(&request).unwrap()).unwrap();
+        spanish.language = "es".into();
+        let refused = f.root().join("spanish-draft-refused");
+        let error = reel::tig_scene::compile(&mut f.source(), &spanish, &refused).unwrap_err();
+        assert!(
+            error.to_string().contains("not selected for production"),
+            "{error:#}"
+        );
+        assert!(!refused.exists());
+        // The same guard applies to shared and requested-language inputs.
+        let mut shared = load(&f, "records/cel-b.tig");
+        shared["status"]["selection_state"] = json!("draft-unreviewed");
+        write(f.root(), "records/cel-b.tig", &shared);
+        save_commit(&mut f);
+        let refused = f.root().join("shared-draft-refused");
+        assert!(reel::tig_scene::compile(&mut f.source(), &request, &refused).is_err());
+        assert!(!refused.exists());
+    }
+}
+
+#[test]
 fn shared_cel_replacement_changes_language_scope_and_old_git_view_keeps_old_inputs() {
     let (mut f, request) = bilingual();
     let mut old = f.source();

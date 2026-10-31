@@ -1,5 +1,9 @@
 # Tig-backed bounded jobs
 
+The [frozen generic job CLI](tig-frozen-job.md) runs an already enrolled job
+through these resource and retention ports. It replays the explicit source and
+recipe admission before checking the existing source owner; it performs no setup.
+
 ## Prepared-result recovery
 
 The Rust `tig_job_runner::adopt_prepared_result` API resumes the narrow durable
@@ -820,6 +824,14 @@ Reports remain private, use no-clobber publication and distinguish declared basi
 matching from actual execution, available bytes, approval and complete semantic
 coverage. Production generator integration and project record enrollment remain
 separate acceptance work.
+
+## Authored JSON control candidates
+
+[The control-edit worker](tig-control-edit.md) constructs an unreviewed record
+from an exact predecessor, definition, editor request and new JSON control.
+It can emit both files for the existing runner's declared-output retention and
+the generic Tig Git-proposal handoff. A bare worker invocation publishes no
+cache object and proves no source ownership or creative approval.
 
 ## Compare retained native output without rendering again
 
