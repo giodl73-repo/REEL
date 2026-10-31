@@ -695,6 +695,39 @@ source views and bounds refuse. This advice never executes a model. The single
 asset CLI deliberately reports `upstream_generation_checked: false`; it does not
 substitute its direct recipe match for a complete generation queue evaluation.
 
+### Inspect a set of generators together
+
+```text
+reel-tig-job inspect-generation-set <private-profile.json> <new-private-report.json>
+```
+
+Use schema `reel.tig-generation-set-inspection.experimental-1`, with the same
+`source` and optional paired `metadata_root`/`metadata_minimum` fields. Replace
+the single request with `targets`, an array of 1–128 objects containing
+`request`, `producer`, and optional `original` in their single-asset shapes.
+The profile and report are each bounded to 1 MiB. All targets use one captured
+source checkpoint; there is no per-target current source override.
+
+The private report orders entries upstream first, keeping `basis` separate
+from `advice`. A cue may have `basis: claimed_recipe_match` against the old
+translated text while its `advice` is `blocked` because that translation is
+stale or unproven. `catch_up_candidate` uses advice, so blocked descendants do
+not enter the proposed catch-up set. Reinspect at a new committed checkpoint
+after producing and selecting an upstream replacement.
+
+Registered upstream generators omitted from `targets` appear in
+`missing_upstream` and block their descendants. `declared_upstream_scope_complete`
+only means these registered links are covered; it does not prove every legacy
+input has generation provenance or that every project asset was included.
+Missing original claims remain unproven. Invalid or unavailable admitted
+evidence refuses the entire inspection and publishes no partial report.
+Duplicate targets, cycles, unknown controls and exceeded bounds also refuse.
+
+Stdout contains counts and authority flags, without asset IDs or private pins.
+The report is private and never overwrites an existing file. This command
+starts no generator or media job, selects nothing, verifies no primary payloads,
+and grants no execution, approval, delivery or eviction authority.
+
 Reports remain private, use no-clobber publication and distinguish declared basis
 matching from actual execution, available bytes, approval and complete semantic
 coverage. Production generator integration and project record enrollment remain
