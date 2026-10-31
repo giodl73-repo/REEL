@@ -61,6 +61,11 @@ fn descriptor(request: &Request) -> Result<Vec<u8>> {
     Ok(raw)
 }
 fn validate(source: &Source, r: &Request) -> Result<()> {
+    input_readiness(source, r, false).map(|_| ())
+}
+// Planning may describe a typed primary before its first selected bytes exist.
+// Execution/recipe validation always retains the strict eligibility check.
+fn input_readiness(source: &Source, r: &Request, allow_planned: bool) -> Result<BTreeSet<String>> {
     if r.schema != "reel.tig-generation-request.experimental-1"
         || [
             &r.output_id,
@@ -110,17 +115,22 @@ fn validate(source: &Source, r: &Request) -> Result<()> {
     {
         bail!("unsupported generation spec");
     }
+    let mut unavailable = BTreeSet::new();
     for input in doc.inputs.values() {
         if !token(&input.id) || input.id == r.output_id {
             bail!("self generation requires an independently pinned reference input");
         }
         let record = source.record(&input.id)?;
-        if !r.primary_definitions.contains(&record.definition().id)
-            || !record
-                .status()
-                .get("selection_state")
-                .and_then(Value::as_str)
-                .is_some_and(|s| r.allowed_input_states.contains(s))
+        if !r.primary_definitions.contains(&record.definition().id) {
+            bail!("generation input type not admitted");
+        }
+        if allow_planned && record.selected().is_err() {
+            unavailable.insert(input.id.clone());
+        } else if !record
+            .status()
+            .get("selection_state")
+            .and_then(Value::as_str)
+            .is_some_and(|s| r.allowed_input_states.contains(s))
         {
             bail!("generation input type or state not admitted");
         }
@@ -134,7 +144,7 @@ fn validate(source: &Source, r: &Request) -> Result<()> {
     {
         bail!("generation output profile not admitted");
     }
-    Ok(())
+    Ok(unavailable)
 }
 fn profiles(source: &Source, r: &Request) -> Result<Vec<Profile>> {
     let rule = |pointer: &str, collection| Rule {
@@ -302,7 +312,9 @@ pub mod advice;
 /// Registered upstream generators only; absence is not proof of manual origin
 /// or historical generation validity. No dependency payloads are opened.
 pub fn upstream(source: &Source, request: &Request) -> Result<BTreeSet<String>> {
-    validate(source, request)?;
+    // This metadata query is also valid while a primary is still planned.
+    // It does not make that primary eligible for recipe capture or execution.
+    input_readiness(source, request, true)?;
     let record = source.record(&request.spec_id)?;
     let spec: Spec = serde_json::from_value(record.authored()["document"].clone())?;
     let mut result = BTreeSet::new();

@@ -91,6 +91,18 @@ fn basis(
     Option<Object>,
 )> {
     let desired = recipe(source, request, producer)?;
+    let (state, original_pin) = original_basis(source, request, Some(&desired), original, reader)?;
+    Ok((desired, state.unwrap(), original_pin))
+}
+// Validate historical evidence even when an unbuilt input prevents a desired
+// recipe. A blocked plan must not hide corrupt or foreign original claims.
+fn original_basis(
+    source: &Source,
+    request: &Request,
+    desired: Option<&tig_assets::graph::recipe::Plan>,
+    original: Option<Original>,
+    reader: &mut Option<MetadataReader>,
+) -> Result<(Option<Correspondence>, Option<Object>)> {
     let target = source.record(&request.output_id)?;
     let a = source.admission(&request.output_definition)?;
     let subject = BoundSubject::resolve(
@@ -103,6 +115,11 @@ fn basis(
     )?;
     let original_pin = original.as_ref().map(|o| o.claim.clone());
     let state = if let Some(original) = original {
+        if original.request.output_id != request.output_id
+            || original.request.output_definition != request.output_definition
+        {
+            bail!("original generation target differs");
+        }
         let reader = reader
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("original evidence requires admitted metadata"))?;
@@ -120,11 +137,26 @@ fn basis(
             reader,
             TreeLimits::default(),
         )?;
-        produced::compare(&desired, subject.as_ref(), Some(replay.checked()))?
+        if desired.is_none()
+            && subject.as_ref().is_none_or(|subject| {
+                !replay
+                    .checked()
+                    .claim()
+                    .outputs()
+                    .contains(subject.subject())
+            })
+        {
+            bail!("blocked original claim does not name the current output subject");
+        }
+        desired
+            .map(|desired| produced::compare(desired, subject.as_ref(), Some(replay.checked())))
+            .transpose()?
     } else {
-        produced::compare(&desired, subject.as_ref(), None)?
+        desired
+            .map(|desired| produced::compare(desired, subject.as_ref(), None))
+            .transpose()?
     };
-    Ok((desired, state, original_pin))
+    Ok((state, original_pin))
 }
 fn correspondence_name(state: Correspondence) -> &'static str {
     match state {
@@ -217,25 +249,33 @@ fn run_set(path: &Path, output: &Path) -> Result<Value> {
         if details.contains_key(&request.output_id) {
             bail!("duplicate generation target");
         }
-        let (desired, state, original_pin) = basis(
-            &mut source,
-            &request,
-            &target.producer,
-            target.original,
-            &mut reader,
-        )?;
+        let unavailable = input_readiness(&source, &request, true)?;
         let upstream = upstream(&source, &request)?;
-        let state = match state {
+        let (desired, state, original_pin) = if unavailable.is_empty() {
+            let (desired, state, original) = basis(
+                &mut source,
+                &request,
+                &target.producer,
+                target.original,
+                &mut reader,
+            )?;
+            (Some(desired), Some(state), original)
+        } else {
+            let (state, original) =
+                original_basis(&source, &request, None, target.original, &mut reader)?;
+            (None, state, original)
+        };
+        let state = state.map(|state| match state {
             Correspondence::Unbuilt => State::Unbuilt,
             Correspondence::Unproven => State::Unproven,
             Correspondence::ClaimedRecipeMatch => State::ClaimedRecipeMatch,
             Correspondence::StaleRecipe => State::StaleRecipe,
-        };
-        details.insert(request.output_id.clone(), json!({"output_id":request.output_id,"desired_recipe":desired.fingerprint(),"original_claim":original_pin,"basis":state_name(state),"upstream":upstream}));
+        });
+        details.insert(request.output_id.clone(), json!({"output_id":request.output_id,"desired_recipe":desired.as_ref().map(|p| p.fingerprint()),"original_claim":original_pin,"basis":state.map(state_name),"unavailable_inputs":unavailable,"upstream":upstream}));
         nodes.push(advice::Node {
             asset_id: request.output_id,
             checkpoint: checkpoint.clone(),
-            basis: Some(state),
+            basis: state,
             upstream,
         });
     }

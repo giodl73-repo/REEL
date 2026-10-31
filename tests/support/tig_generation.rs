@@ -792,6 +792,97 @@ fn generation_set_cli_blocks_stale_or_missing_translation_before_matching_cue() 
             "generation set inspection refused; verify source, scope, definitions and original evidence"
         );
     }
+    // New planned upstream records have no selected bytes yet. Keep the
+    // upstream's actionable unbuilt basis, while downstream has no recipe.
+    let english = record(&f, "text/en");
+    let mut planned = english.clone();
+    planned["selected"] = Value::Null;
+    planned["status"]["selection_state"] = json!("planned-draft");
+    save(&f, "text/en", &planned);
+    git(f.root(), &["add", "records"]);
+    git(f.root(), &["commit", "-m", "planned upstream primary"]);
+    profile["source"]["commit"] = json!(git(f.root(), &["rev-parse", "HEAD"]));
+    // No original claim is admitted for the intentionally unselected output.
+    // The blocked cue keeps its independently replayed original evidence.
+    let translation_original = profile["targets"][1]["original"].clone();
+    profile["targets"][1]["original"] = Value::Null;
+    let (result, report) = invoke(&profile, "planned-upstream");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+    assert_eq!(report["entries"][0]["basis"], "unbuilt");
+    assert_eq!(report["entries"][0]["catch_up_candidate"], true);
+    assert!(report["entries"][0]["desired_recipe"].is_string());
+    assert_eq!(report["entries"][1]["basis"], Value::Null);
+    assert_eq!(report["entries"][1]["desired_recipe"], Value::Null);
+    assert_eq!(
+        report["entries"][1]["unavailable_inputs"],
+        json!(["text/en"])
+    );
+    assert_eq!(report["entries"][1]["advice"], "blocked");
+    assert_eq!(report["entries"][1]["catch_up_candidate"], false);
+    assert_eq!(report["authorizes_execution"], false);
+    assert_eq!(report["primary_payloads_verified"], false);
+    let mut corrupt = profile.clone();
+    corrupt["targets"][0]["original"]["claim"] =
+        json!(Object::from_bytes(b"missing blocked claim"));
+    let (result, report) = invoke(&corrupt, "blocked-bad-original");
+    assert!(!result.status.success());
+    assert!(!report.exists());
+    let mut foreign = profile.clone();
+    foreign["targets"][0]["original"] = translation_original;
+    let (result, report) = invoke(&foreign, "blocked-foreign-original");
+    assert!(!result.status.success());
+    assert!(!report.exists());
+    let cue = record(&f, "cue/en");
+    let mut changed_cue = cue.clone();
+    changed_cue["selected"] = json!(Object::from_bytes(b"different current cue"));
+    save(&f, "cue/en", &changed_cue);
+    git(f.root(), &["add", "records"]);
+    git(
+        f.root(),
+        &["commit", "-m", "different blocked output subject"],
+    );
+    let mut mismatch = profile.clone();
+    mismatch["source"]["commit"] = json!(git(f.root(), &["rev-parse", "HEAD"]));
+    let (result, report) = invoke(&mismatch, "blocked-subject-mismatch");
+    assert!(!result.status.success());
+    assert!(!report.exists());
+    save(&f, "cue/en", &cue);
+    // An ordinary not-yet-recorded primary also blocks planning, rather than
+    // supplying invented bytes or requiring a fake generator declaration.
+    let spanish = record(&f, "text/es");
+    let mut planned_spanish = spanish.clone();
+    planned_spanish["selected"] = Value::Null;
+    save(&f, "text/es", &planned_spanish);
+    git(f.root(), &["add", "records"]);
+    git(f.root(), &["commit", "-m", "unselected source primary"]);
+    profile["source"]["commit"] = json!(git(f.root(), &["rev-parse", "HEAD"]));
+    let (result, report) = invoke(&profile, "planned-source");
+    assert!(result.status.success());
+    let report: Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+    assert_eq!(
+        report["entries"][0]["unavailable_inputs"],
+        json!(["text/es"])
+    );
+    assert_eq!(report["entries"][0]["basis"], Value::Null);
+    assert_eq!(report["entries"][0]["advice"], "blocked");
+    assert_eq!(report["entries"][1]["advice"], "blocked");
+    // Selected but ineligible inputs are still refusals, not planned records.
+    save(&f, "text/es", &spanish);
+    let mut held = english.clone();
+    held["status"]["selection_state"] = json!("not-admitted");
+    save(&f, "text/en", &held);
+    git(f.root(), &["add", "records"]);
+    git(f.root(), &["commit", "-m", "ineligible selected input"]);
+    profile["source"]["commit"] = json!(git(f.root(), &["rev-parse", "HEAD"]));
+    let (result, report) = invoke(&profile, "held-selected");
+    assert!(!result.status.success());
+    assert!(!report.exists());
+    save(&f, "text/en", &english);
     let mut spec = record(&f, "generation/translation");
     spec["authored"]["document"]["inputs"]["source"]["id"] = json!("cue/en");
     save(&f, "generation/translation", &spec);
