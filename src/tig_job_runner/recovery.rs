@@ -7,7 +7,10 @@ use tig_store::{
     existing::{ByteSource, ReadCache, RequiredProtection, VerifiedRead},
     source_claims::PreviewDisposition,
 };
+pub(super) mod cli;
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RecoveryBudget {
     pub max_objects: u32,
     pub max_verify_bytes: u64,
@@ -44,6 +47,27 @@ pub fn adopt_prepared_result(
     profile: &Profile<'_>,
     budget: &RecoveryBudget,
 ) -> Result<Value> {
+    if !resources.of(Role::ClaimedOutput).is_empty() {
+        bail!("prepared recovery requires an input context");
+    }
+    adopt_selection(
+        journal_root,
+        job_id,
+        resources.selection(),
+        journal,
+        profile,
+        budget,
+    )
+}
+
+fn adopt_selection(
+    journal_root: &Path,
+    job_id: &str,
+    original_input: &Selection,
+    journal: &mut SourceJournal,
+    profile: &Profile<'_>,
+    budget: &RecoveryBudget,
+) -> Result<Value> {
     if !job_id.starts_with("job-")
         || job_id.len() > 100
         || !job_id
@@ -52,7 +76,6 @@ pub fn adopt_prepared_result(
         || !(2..=1024).contains(&budget.max_objects)
         || budget.max_verify_bytes == 0
         || !(1..=300000).contains(&budget.verify_millis)
-        || !resources.of(Role::ClaimedOutput).is_empty()
     {
         bail!("invalid prepared retention recovery admission");
     }
@@ -72,7 +95,7 @@ pub fn adopt_prepared_result(
     }
     let selection = if before.revision == prepared_revision {
         if before.current.as_ref().is_none_or(|c| {
-            c.revision != profile.expected_revision || c.selection != *resources.selection()
+            c.revision != profile.expected_revision || c.selection != *original_input
         }) {
             bail!("recovery original input ownership differs");
         }
@@ -83,9 +106,11 @@ pub fn adopt_prepared_result(
             .selection
             .clone()
     } else if before.revision == completed_revision && before.pending.is_none() {
-        if !before.predecessors.iter().any(|p| {
-            p.revision == profile.expected_revision && p.selection == *resources.selection()
-        }) {
+        if !before
+            .predecessors
+            .iter()
+            .any(|p| p.revision == profile.expected_revision && p.selection == *original_input)
+        {
             bail!("recovery input predecessor differs");
         }
         let current = before
@@ -132,7 +157,7 @@ pub fn adopt_prepared_result(
     let header = get(&entries, "retention/identity")?;
     if header.sha256 != selection.context
         || header.bytes > 65536
-        || get(&entries, "source/context")? != &resources.selection().root
+        || get(&entries, "source/context")? != &original_input.root
     {
         bail!("prepared retention identity differs");
     }
@@ -142,7 +167,7 @@ pub fn adopt_prepared_result(
         .context("retention outcome missing")?;
     if header["schema"] != "reel.tig-runner-retention.experimental-1"
         || header["job_id"] != job_id
-        || header["source"] != serde_json::to_value(resources.selection())?
+        || header["source"] != serde_json::to_value(original_input)?
         || header["journal"] != serde_json::to_value(journal.identity())?
         || header["owner"] != profile.identity.owner.as_str()
         || header["source_id"] != profile.identity.source.as_str()

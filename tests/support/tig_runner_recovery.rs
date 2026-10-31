@@ -174,7 +174,50 @@ pub(super) fn exercise(
         journal.source(&profile.identity.source).unwrap().unwrap(),
         pending
     );
-    let result = call(journal, &profile, &budget).unwrap();
+    let mut admission = json!({
+        "schema":"reel.tig-prepared-recovery-profile.experimental-1", "job_id":job_id,
+        "original_input":resources.selection(),
+        "cache":{"path_policy":"configured-local-roots","cache_roots":profile.config.cache_roots},
+        "coordination_root":profile.coordination.root,"journal_root":journal_root,
+        "journal_minimum":journal.checkpoint(),"metadata_root":profile.metadata_root,
+        "metadata_minimum":profile.metadata_minimum,"source_id":profile.identity.source.as_str(),
+        "owner":profile.identity.owner.as_str(),"expected_revision":profile.expected_revision,
+        "retain_operation":profile.operation.as_str(),
+        "budget":{"max_objects":16,"max_verify_bytes":32*1024*1024,"verify_millis":30000}
+    });
+    let admission_path = journal_root.join(if succeeded {
+        "recover-success.json"
+    } else {
+        "recover-failure.json"
+    });
+    let invoke = |value: &Value| {
+        fs::write(&admission_path, identity::canonical_json(value).unwrap()).unwrap();
+        std::process::Command::new(env!("CARGO_BIN_EXE_reel-tig-job"))
+            .arg("adopt-prepared")
+            .arg(&admission_path)
+            .output()
+            .unwrap()
+    };
+    admission["owner"] = json!("foreign-recovery-owner");
+    assert!(!invoke(&admission).status.success());
+    assert_eq!(journal.checkpoint(), checkpoint);
+    assert_eq!(
+        journal.source(&profile.identity.source).unwrap().unwrap(),
+        pending
+    );
+    admission["owner"] = json!(profile.identity.owner.as_str());
+    // Unknown fields fail closed before journal adoption.
+    admission["remove_scratch"] = json!(true);
+    assert!(!invoke(&admission).status.success());
+    admission.as_object_mut().unwrap().remove("remove_scratch");
+    let output = invoke(&admission);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    *journal = SourceJournal::open(journal_root, &checkpoint).unwrap();
     assert_eq!(result["source_revision"], 4);
     assert_eq!(result["succeeded"], succeeded);
     assert_eq!(result["staging_retired"], false);
@@ -188,6 +231,18 @@ pub(super) fn exercise(
     let checkpoint = journal.checkpoint();
     let replay = call(journal, &profile, &budget).unwrap();
     assert_eq!(replay["replayed"], true);
+    assert_eq!(journal.checkpoint(), checkpoint);
+    let output = invoke(&admission);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()["replayed"],
+        true
+    );
+    *journal = SourceJournal::open(journal_root, &checkpoint).unwrap();
     assert_eq!(journal.checkpoint(), checkpoint);
     journal
         .apply(

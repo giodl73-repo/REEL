@@ -16,8 +16,35 @@ recovery, never a native producer claim or creative approval.
 The API runs no tools and creates no payloads or stores. It reports
 `staging_retired:false` and `authorizes_workspace_removal:false`. A source with no
 prepared result remains held. Recovery of unretained scratch, retirement of an
-old workspace, child-owner handoff and a high-level recovery CLI are separate
-steps; this API does not declare the full recovery/cutover milestone complete.
+old workspace and child-owner handoff are separate steps; this API does not
+declare the full recovery/cutover milestone complete.
+
+```text
+reel-tig-job adopt-prepared <private-recovery-profile.json>
+```
+
+The strict profile has schema `reel.tig-prepared-recovery-profile.experimental-1`:
+
+| Fields | Admission |
+| --- | --- |
+| `job_id`, `original_input` | Original runner job ID and exact input-job Selection (`root` Object and `context` digest) |
+| `source_id`, `owner`, `expected_revision`, `retain_operation` | Original input owner's identity, revision and retention operation; not the prepared revision or a new operation |
+| `journal_root`, `journal_minimum` | Existing journal and trusted minimum checkpoint |
+| `metadata_root`, `metadata_minimum` | Existing metadata provider and trusted minimum checkpoint |
+| `cache`, `coordination_root` | Explicit existing active CAS roots and shared source-fence directory |
+| `budget` | `max_objects` (2–1024), `max_verify_bytes` (positive), `verify_millis` (1–300000 per read) |
+
+The CLI checks the exact input-job metadata identity and absence of an output
+claim, then requires that pin to match the original journal-owned input. It does
+not reconstruct a compiler plan, bind a media runtime or declare an old producer
+current. The recorded prepare must match the operation exactly; verified byte
+read guards stay live through adoption. No directory is discovered or initialized.
+Profiles and stdout retain private pins and must stay outside project Git.
+
+A successful command means metadata adoption completed or replayed. Inspect
+`succeeded` for the original job outcome: adopting a failed job correctly returns
+`succeeded:false`. Both outcomes leave scratch and approval unchanged. Output
+record proposal adoption and child-owner handoff remain explicit separate steps.
 
 ## Set up shared stores once
 
