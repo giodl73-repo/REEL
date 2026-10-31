@@ -644,6 +644,11 @@ This explicit read/CPU operation replays a frozen compiled scene, checks the
 retained native output set, and compares its master with an independently pinned
 reference. It does not render, select a candidate, publish, or evict assets.
 
+Refusals identify the fixed check stage, such as `source replay`, `runtime
+bindings`, or `retained media`. They omit underlying error chains, paths, asset
+IDs and hashes. A stage identifies where checking stopped; it does not establish
+that the input is corrupt or authorize replacing a source/producer pin.
+
 The strict profile has schema `reel.tig-retained-comparison.experimental-1`:
 
 | Field | Source and meaning |
@@ -663,9 +668,9 @@ An Object contains `sha256` and `bytes`. Validator host bindings must identify t
 executable actually running this check. Keep the independently admitted original
 producer distinct: a newer validator does not retroactively become the producer.
 
-The command reserves bounded compiler and copy scratch, reads protected cache
-objects, and copies only the named native outputs into its owned check directory.
-It never makes writable aliases to cache objects. Receipt names, pins, native
+The command reserves bounded compiler scratch and reads the named native outputs
+directly through protected cache handles. It does not stage another payload copy
+or make writable aliases to cache objects. Receipt names, pins, native
 plan, output contract, claim context/producer and subject roles must agree before
 the independent native checker runs. Every comparison probe and decode uses the
 declared validator tools, including when PATH is empty. Comparison checks exact
