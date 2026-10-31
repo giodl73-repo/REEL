@@ -821,6 +821,14 @@ matching from actual execution, available bytes, approval and complete semantic
 coverage. Production generator integration and project record enrollment remain
 separate acceptance work.
 
+## Authored JSON control candidates
+
+[The control-edit worker](tig-control-edit.md) constructs an unreviewed record
+from an exact predecessor, definition, editor request and new JSON control.
+It can emit both files for the existing runner's declared-output retention and
+the generic Tig Git-proposal handoff. A bare worker invocation publishes no
+cache object and proves no source ownership or creative approval.
+
 ## Compare retained native output without rendering again
 
 ```text

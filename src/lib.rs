@@ -76,6 +76,8 @@ pub mod tig_binding_registration;
 #[cfg(feature = "tig")]
 pub mod tig_conform_registration;
 #[cfg(feature = "tig")]
+pub mod tig_control_edit;
+#[cfg(feature = "tig")]
 pub mod tig_episode;
 #[cfg(feature = "tig-publication")]
 pub mod tig_episode_cli;
