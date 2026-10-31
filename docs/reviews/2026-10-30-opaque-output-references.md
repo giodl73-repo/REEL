@@ -6,8 +6,8 @@ record resolved correctly, but independent master comparison incorrectly applied
 the relative-filesystem-path contract to the adapter's logical asset ID.
 
 `InputFiles::validate_reference_name` now declares the provider's namespace.
-Its default retains strict bounded relative virtual paths. Protected Tig inputs
-accept bounded logical IDs; `verified_path` still requires the prepared exact
+Its default retains strict bounded relative virtual paths. The selected-output
+projection accepts prepared logical IDs; `verified_path` still requires the prepared exact
 ID, hash, length and live byte guard. No logical ID is passed to filesystem join,
 renamed, inferred from another record, or converted into a physical cache path.
 Both scene and presentation master comparison use the provider's validation.
@@ -34,3 +34,11 @@ A new capture under the tested executable reopened all 24 controls exactly and
 adopted no job or media. The real retry uses that capture; refreshing a compiler
 context does not revise source records or approve previously selected outputs.
 Actual assembly and hosted qualification remain separate acceptance results.
+
+Hosted original-producer coverage caught an unnecessary input-compiler context
+change: placing the output namespace override on `tig_inputs::Inputs` changed
+the source bytes pinned by the input interpretation contract. The override now
+belongs to a selected-output projection shared by scene, presentation ownership
+and standalone presentation comparison. The primary input adapter is byte-for-
+byte unchanged from the qualified base. Historical compiler checks remain strict;
+no original claim is reissued under a new input interpretation.

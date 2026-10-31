@@ -129,7 +129,7 @@ pub fn compare(path: &Path) -> Result<Value> {
         plan.compiled().manifest(),
         plan.compiled(),
         &programs.with_inputs(&inputs),
-        &outputs,
+        &crate::tig_scene_production::jobs::reference::SelectedOutputs(&outputs),
         plan.selected_master(),
         &comparison.stage_parent,
         comparison.max_staged_bytes,

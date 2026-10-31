@@ -11,6 +11,20 @@ use crate::{
 use anyhow::Context;
 use tig_assets::graph::Reference;
 
+/// Output IDs belong to the prepared asset namespace, not the filesystem.
+/// Keep this projection outside the primary-input compiler contract: output
+/// lookup changes must not change how an older producer interprets its inputs.
+pub(crate) struct SelectedOutputs<'a>(pub &'a Inputs);
+impl InputFiles for SelectedOutputs<'_> {
+    fn validate_reference_name(&self, item: &FileRef) -> Result<()> {
+        self.0.verified_path(item)?;
+        Ok(())
+    }
+    fn verified_path(&self, item: &FileRef) -> Result<PathBuf> {
+        self.0.verified_path(item)
+    }
+}
+
 /// A current native recipe plus exact selected output and compiled controls.
 /// Freeze/reopen this plan before taking source ownership. Preparation contains
 /// small controls only; no rendered media or legacy receipt is required.
@@ -374,7 +388,7 @@ impl ProtectedReference<'_, '_, '_> {
             &plan.production,
             plan,
             &programs,
-            &outputs,
+            &SelectedOutputs(&outputs),
             &plan.master,
             stage_parent,
             budget,
