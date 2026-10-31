@@ -34,7 +34,7 @@ pub(super) struct Plan<'a> {
     bytes: u64,
     verified: usize,
     verify_millis: u64,
-    _installed_guards: Vec<File>,
+    installed_paths_outside_scope: usize,
     snapshot: Option<reel_assets::jobs::WorkspaceSnapshot>,
     transaction: transaction::Transaction,
 }
@@ -60,6 +60,48 @@ fn no_reservation(profile: &Profile<'_>, job_id: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+// Installed tools run in place and are not materialized into scratch. Resolve
+// their namespace (including surviving ancestors of obsolete installations),
+// without treating current availability/hash as a historical render proof.
+fn installed_outside_scope(path: &Path, workspace: &Path) -> Result<()> {
+    if !path.is_absolute() {
+        bail!("absolute installed tool path required");
+    }
+    let mut ancestor = path.to_path_buf();
+    let mut missing = Vec::new();
+    for _ in 0..64 {
+        match ancestor.canonicalize() {
+            Ok(mut resolved) => {
+                for part in missing.iter().rev() {
+                    resolved.push(part);
+                }
+                if resolved.starts_with(workspace) {
+                    bail!("installed tool would be removed with scratch");
+                }
+                return Ok(());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let part = ancestor
+                    .file_name()
+                    .context("cannot resolve installed tool namespace")?;
+                let text = part
+                    .to_str()
+                    .context("installed tool path is not Unicode")?;
+                if text.ends_with(['.', ' ']) || text.contains(':') {
+                    bail!("ambiguous missing installed tool path component");
+                }
+                missing.push(part.to_os_string());
+                ancestor = ancestor
+                    .parent()
+                    .context("installed tool ancestor missing")?
+                    .to_path_buf();
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    bail!("installed tool namespace depth exceeded")
 }
 
 fn regular(path: &Path) -> Result<fs::Metadata> {
@@ -163,7 +205,7 @@ pub(super) fn prepare<'a>(
         "input_revision":profile.expected_revision,"operation":profile.operation.as_str(),
         "result":packet.result,"manifest":Object::from_bytes(packet.request),"workspace":workspace});
     let transaction = transaction::Transaction::read(&profile.coordination.root, scope)?;
-    let mut installed = Vec::new();
+    let mut installed_paths_outside_scope = 0;
     for role in ["inputs", "tools"] {
         for value in packet.document[role]
             .as_object()
@@ -180,7 +222,6 @@ pub(super) fn prepare<'a>(
             }
         }
     }
-    let mut installed_bytes = 0u64;
     if let Some(tools) = packet.document["installed_tools"].as_object() {
         for value in tools.values() {
             let path = PathBuf::from(
@@ -188,24 +229,8 @@ pub(super) fn prepare<'a>(
                     .as_str()
                     .context("installed tool path missing")?,
             );
-            let canonical = path.canonicalize()?;
-            if canonical.starts_with(&workspace) {
-                bail!("installed tool would be removed with scratch");
-            }
-            let pin: Object =
-                serde_json::from_value(json!({"sha256":value["sha256"],"bytes":value["bytes"]}))?;
-            installed_bytes = installed_bytes
-                .checked_add(pin.bytes)
-                .context("installed byte overflow")?;
-            if cache
-                .verification_bytes()
-                .checked_add(installed_bytes)
-                .is_none_or(|n| n > budget.max_verify_bytes)
-                || guards.len() + installed.len() + 1 > budget.max_objects as usize
-            {
-                bail!("installed tool verification exceeds retirement budget");
-            }
-            installed.push(check_file(&path, &pin, budget.verify_millis)?);
+            installed_outside_scope(&path, &workspace)?;
+            installed_paths_outside_scope += 1;
         }
     }
     let manifest = Object::from_bytes(packet.request);
@@ -260,9 +285,9 @@ pub(super) fn prepare<'a>(
         manifest,
         max_bytes: spec.max_workspace_bytes,
         bytes,
-        verified: guards.len() + installed.len(),
+        verified: guards.len(),
         verify_millis: budget.verify_millis,
-        _installed_guards: installed,
+        installed_paths_outside_scope,
         snapshot,
         transaction,
     })
@@ -321,7 +346,8 @@ impl Plan<'_> {
             "dry_run":!apply,"staging_retired":apply,"already_absent":already_absent,
             "workspace_logical_bytes_verified":self.bytes,"workspace_logical_bytes_removed":if apply && !already_absent {self.bytes}else{0},
             "would_remove_workspace":!apply && !already_absent,"physical_bytes_freed":null,
-            "retained_objects_verified":self.verified,"cache_objects_removed":0,"production_claim":null,"approval":false}),
+            "retained_objects_verified":self.verified,"installed_tool_paths_outside_scope":self.installed_paths_outside_scope,
+            "cache_objects_removed":0,"production_claim":null,"approval":false}),
         ).map(|mut result| {
             result["retirement_transaction"] = self.transaction.report();
             result
