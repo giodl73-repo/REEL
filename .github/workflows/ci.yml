@@ -54,6 +54,8 @@ jobs:
         run: node --test crates/reel-music/tests/note_editor_ui.test.cjs crates/reel-music/tests/underlay_editor_ui.test.cjs
       - name: Verify compiled scene delivery samples, stems, frames and tamper rejection
         run: cargo test --test scene_delivery real_delivery_preserves_sample_offset_stems_frames_and_rejects_tamper -- --ignored --exact
+      - name: Verify native recording-clock delivery without narration
+        run: cargo test --test scene_delivery real_recording_clock_delivery_without_narration --locked -- --ignored --exact
       - name: Verify injected scene inputs preserve pictures and PCM through independent checks
         run: cargo test --test scene_delivery real_mapped_input_provider_matches_local_pixels_and_pcm_and_rejects_stale_pins -- --ignored --exact
       - name: Verify borrowed presentation inputs and outputs through episode conform

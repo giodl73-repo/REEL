@@ -18,6 +18,9 @@ use crate::production;
 
 pub const CONTRACT_SCHEMA: &str = "reel.cue-relative-assembly.v0.1";
 pub const COMPILED_SCHEMA: &str = "reel.cue-relative-conform.v0.1";
+/// Explicit nonspoken clocks bound to production audio-event IDs.
+pub const AUDIO_EVENT_CONTRACT_SCHEMA: &str = "reel.audio-event-relative-assembly.v0.1";
+pub const AUDIO_EVENT_COMPILED_SCHEMA: &str = "reel.audio-event-relative-conform.v0.1";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -254,9 +257,10 @@ fn compile_loaded(
     contract: &Contract,
     load: impl FnOnce() -> Result<production::LoadedProductionManifest>,
 ) -> Result<CompiledConform> {
-    if contract.schema != CONTRACT_SCHEMA {
+    let audio_event_clock = contract.schema == AUDIO_EVENT_CONTRACT_SCHEMA;
+    if contract.schema != CONTRACT_SCHEMA && !audio_event_clock {
         bail!(
-            "unsupported schema {}; expected {CONTRACT_SCHEMA}",
+            "unsupported schema {}; expected {CONTRACT_SCHEMA} or {AUDIO_EVENT_CONTRACT_SCHEMA}",
             contract.schema
         );
     }
@@ -289,6 +293,14 @@ fn compile_loaded(
         .iter()
         .map(|x| x.id.as_str())
         .collect();
+    if audio_event_clock && audio.len() != manifest.audio_events.len() {
+        bail!("audio-event clock namespace contains duplicate IDs");
+    }
+    let clock_sources = if audio_event_clock {
+        &audio
+    } else {
+        &manifest_cues
+    };
 
     let mut cue_ranges = BTreeMap::new();
     let mut cue_markers = BTreeMap::new();
@@ -296,8 +308,11 @@ fn compile_loaded(
     let mut compiled_cues = Vec::new();
     for cue in &contract.cues {
         valid_id("cue", &cue.cue_id)?;
-        if !manifest_cues.contains(cue.cue_id.as_str()) {
+        if !clock_sources.contains(cue.cue_id.as_str()) {
             bail!("cue {} is missing from production manifest", cue.cue_id);
+        }
+        if audio_event_clock && !cue.markers.is_empty() {
+            bail!("audio-event clocks cannot claim word or phrase markers");
         }
         if cue.duration_samples == 0 {
             bail!("cue {} duration_samples must be positive", cue.cue_id);
@@ -348,7 +363,7 @@ fn compile_loaded(
         if !attachment_ids.insert(attachment.id.as_str()) {
             bail!("duplicate attachment {}", attachment.id);
         }
-        validate_target(&attachment.target, &shots, &beats, &audio, &manifest_cues)?;
+        validate_target(&attachment.target, &shots, &beats, &audio, clock_sources)?;
         let start = resolve_anchor(&attachment.start, &cue_ranges, &cue_markers)?;
         let end = match &attachment.end {
             Some(anchor) => resolve_anchor(anchor, &cue_ranges, &cue_markers)?,
@@ -390,7 +405,12 @@ fn compile_loaded(
     }
     compiled.sort_by(|a, b| (a.start_sample, &a.id).cmp(&(b.start_sample, &b.id)));
     Ok(CompiledConform {
-        schema: COMPILED_SCHEMA.into(),
+        schema: if audio_event_clock {
+            AUDIO_EVENT_COMPILED_SCHEMA
+        } else {
+            COMPILED_SCHEMA
+        }
+        .into(),
         contract_id: contract.id.clone(),
         production_manifest_sha256: production::sha256_bytes(&loaded.bytes),
         sample_rate: contract.sample_rate,
