@@ -1,4 +1,6 @@
 use super::*;
+#[path = "tig_delivery_template_context.rs"]
+mod context;
 use reel::tig_delivery_template::{self as adapter, Request};
 
 fn record(f: &Fixture, name: &str, edit: impl FnOnce(&mut Value)) {

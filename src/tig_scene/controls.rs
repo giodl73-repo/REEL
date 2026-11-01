@@ -20,7 +20,7 @@ pub(super) fn rule() -> Rule {
         binding: Binding::SnapshotSelected,
     }
 }
-pub(super) fn payloads(payload: &Payload) -> Payloads {
+pub(crate) fn payloads(payload: &Payload) -> Payloads {
     match payload {
         Payload::Selected {} => Payloads::SelectedObject,
         Payload::Stream { slot } => Payloads::Named {

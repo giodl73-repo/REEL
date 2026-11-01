@@ -43,7 +43,33 @@ Preparation is not a valid render receipt, output freshness decision or custody
 claim. The returned checkpoint identifies metadata; it does not adopt a job or
 hold payloads. Callers still need exact producer/recipe/runtime/resource/source
 admission, guarded prepare, native plan/render/check, result retention and owner
-handoff through existing systems. Complete derived recipe/managed enrollment,
+handoff through existing systems. Complete managed enrollment,
 CLI adoption and actual Recuerdos authoring remain open. A new cel updates its
 leaf; subsequent lowering changes the consuming Job pin without editing its
 parent. Older archived sources continue to lower their original pins.
+
+## Scoped requirements and recipe contexts
+
+`requirements` resolves the controls and consumed primary roots through the
+existing Tig graph. Unused alternatives are not dependency roots. This is an
+exact local production scope, not global demand or permission to remove bytes.
+`freeze_context` returns prepared controls and an ordinary Tig ProductionContext
+candidate through caller-supplied metadata ports. The descriptor pins the request,
+adapter code and lowered job/contract/production objects. Source provenance stays
+separate from consumed-input recipe identity; no per-project cache engine or
+another authored asset inventory is introduced.
+
+`restore_context` checks the admitted archive, exact roots, requirements and
+freshly lowered descriptor before binding the restored source. It uses the old
+source explicitly, never a newer checkout. Selected control objects still need
+their declared existing byte provider. `recipe` checks the frozen source/scope
+and derives a projected Tig recipe with an explicitly admitted producer object.
+An unused-alternative or annotation edit can preserve a fingerprint while having
+different source provenance; changing a used leaf, control or producer changes it.
+Lowered FileRefs bind actual consumed IDs, so omitting the whole alias catalog
+from the consumed-field projection does not erase effective input changes.
+
+None of these APIs attests to actual producer consumption, installed runtime,
+byte availability or custody. Context finish/readback, owner adoption, resource
+admission and worker/result handoff remain separate. Recipe equality alone
+cannot skip eligibility checks, authorize output reuse or claim a current render.

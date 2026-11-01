@@ -12,6 +12,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use tig_core::{Digest, Object};
 
 pub const SCHEMA: &str = "reel.tig-delivery-template.experimental-1";
+mod context;
+pub use context::{freeze_context, recipe, requirements, restore_context};
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
