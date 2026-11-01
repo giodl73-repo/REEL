@@ -1,5 +1,7 @@
 use super::*;
 use tig_core::tree::{MemoryNodes, TreeLimits};
+#[path = "tig_delivery_template_render.rs"]
+mod render;
 
 #[test]
 fn frozen_scope_has_only_consumed_primary_bytes_and_replays_without_git_or_cache() {

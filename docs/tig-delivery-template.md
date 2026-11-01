@@ -73,3 +73,20 @@ None of these APIs attests to actual producer consumption, installed runtime,
 byte availability or custody. Context finish/readback, owner adoption, resource
 admission and worker/result handoff remain separate. Recipe equality alone
 cannot skip eligibility checks, authorize output reuse or claim a current render.
+
+## Checked candidate execution
+
+`tig_scene_production::render_delivery_with_programs` checks the frozen recipe,
+prepares guarded exact primary inputs and borrows declared runtime capabilities.
+The lowered controls stay in memory through the existing InputFiles control port.
+`scene_delivery::render_with_control_files` uses the same rendering core as the
+file-based entry point and independently checks the staged result before normal
+publication. It does not create another loose job/contract/production directory.
+
+The returned existing RenderedCandidate supports the existing exact output-subject
+claim and candidate publication APIs. Rendering, receipt verification and output
+mapping still precede a claim; foreign output subjects and existing destinations
+refuse. Publication acknowledgments remain distinct from independent custody or
+owner handoff. This native producer function does not reserve space or enroll a
+job: the caller must already admit/own source, runtime, scratch and output capacity
+through the existing runner. Managed worker/CLI integration remains required.
