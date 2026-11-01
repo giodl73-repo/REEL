@@ -181,6 +181,45 @@ fn wrong_primary_type_and_used_draft_refuse_without_byte_reads() {
 }
 
 #[test]
+fn imported_selection_labels_never_promote_candidate_or_unclassified_records() {
+    // Migration sources can preserve both an older selection_status and a later
+    // candidate selection_state. Only explicit native consumption admission
+    // applies; selected bytes and historical labels cannot confer that authority.
+    for name in [
+        "root",
+        "control-job",
+        "control-contract",
+        "control-production",
+        "cel-b",
+    ] {
+        for state in [None, Some("candidate-producer-reviewed"), Some("draft")] {
+            let (mut f, request) = fixture();
+            record(&f, name, |r| {
+                let status = r["status"].as_object_mut().unwrap();
+                status.remove("selection_state");
+                if let Some(state) = state {
+                    status.insert("selection_state".into(), json!(state));
+                }
+                status.insert(
+                    "selection_status".into(),
+                    json!("selected-private-production"),
+                );
+                r["metadata"]["source_selection_status"] = json!("selected-private-production");
+                r["metadata"]["source_selection_state"] = json!("release-cleared");
+            });
+            commit(&mut f);
+            let mut source = f.source();
+            let error = adapter::lower(&mut source, &request).err().unwrap();
+            assert!(
+                error.to_string().contains("not selected"),
+                "{name}: {state:?}: {error}"
+            );
+            assert_eq!(source.byte_requests(), 0);
+        }
+    }
+}
+
+#[test]
 fn raw_file_pins_unknown_bindings_and_unresolved_variants_refuse() {
     let (mut f, request) = fixture();
     let original = fs::read(f.root().join("records/control-job.tig")).unwrap();
