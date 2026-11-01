@@ -146,6 +146,25 @@ pub fn exercise_compiled(
         ProducerMode::Compiled,
     )
 }
+pub fn exercise_delivery(
+    root: &Path,
+    request: &reel::tig_delivery_template::Request,
+    context: &Selection,
+    metadata: (&Path, &Checkpoint),
+    source: Value,
+    reference: &Receipt,
+) {
+    let _ = require_propose_tool();
+    exercise_mode(
+        root,
+        request,
+        context,
+        metadata,
+        source,
+        reference,
+        ProducerMode::Delivery,
+    )
+}
 pub fn exercise_retained_producer(
     root: &Path,
     request: &Request,
@@ -186,20 +205,22 @@ pub fn exercise_historical_compiler(
 }
 enum ProducerMode<'a> {
     Declared,
+    Delivery,
     Compiled,
     Retained(&'a Path),
     Historical(&'a Path),
 }
 fn exercise_mode(
     root: &Path,
-    request: &Request,
+    request: &impl serde::Serialize,
     context: &Selection,
     metadata: (&Path, &Checkpoint),
     source: Value,
     reference: &Receipt,
     mode: ProducerMode<'_>,
 ) {
-    let compiled = !matches!(mode, ProducerMode::Declared);
+    let compiled = !matches!(mode, ProducerMode::Declared | ProducerMode::Delivery);
+    let delivery = matches!(mode, ProducerMode::Delivery);
     let retained_producer = matches!(mode, ProducerMode::Retained(_));
     let historical_compiler = matches!(mode, ProducerMode::Historical(_));
     let locate = |name: &str| {
@@ -268,6 +289,9 @@ fn exercise_mode(
         profile["preparation_cache"] = json!(cache);
         profile["scratch_bytes"] = json!(512 * 1024 * 1024_u64);
         profile["budget_bytes"] = json!(1024 * 1024 * 1024_u64);
+    }
+    if delivery {
+        profile["worker"]["context_mode"] = json!("delivery");
     }
     let original_record = fs::read(root.join("records/native-output.tig")).unwrap();
     let template =
@@ -676,7 +700,9 @@ fn exercise_mode(
     let completed = handoff_result.unwrap();
     check_git_handoff(root, &completed, &git_base, &original_record, &cache);
     if retained_producer {
-        crate::producer_reuse::exercise(root, request, metadata, &profile, &completed);
+        let scene: Request =
+            serde_json::from_value(serde_json::to_value(request).unwrap()).unwrap();
+        crate::producer_reuse::exercise(root, &scene, metadata, &profile, &completed);
     }
 }
 

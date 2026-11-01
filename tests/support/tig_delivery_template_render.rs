@@ -13,6 +13,11 @@ fn guarded_delivery_candidate_uses_existing_claim_and_publication_contracts() {
         native::Instance,
     };
     let (mut f, request) = fixture();
+    #[cfg(feature = "tig-publication")]
+    {
+        let _ = native_cli::require_propose_tool();
+        native_cli::seed(&mut f);
+    }
     f.profile["byte_source"]["required"] = json!("prevent-mutation");
     let file = |path: PathBuf| {
         let path = path.canonicalize().unwrap();
@@ -193,6 +198,57 @@ fn guarded_delivery_candidate_uses_existing_claim_and_publication_contracts() {
         assert!(
             !f.root().join("managed-native-job").exists(),
             "delivery controls must remain in memory"
+        );
+        for name in [".git", "records", "definitions"] {
+            fs::rename(
+                f.root().join(format!("offline-{name}")),
+                f.root().join(name),
+            )
+            .unwrap();
+        }
+        let capture_cache = f.root().join("cache");
+        fs::create_dir_all(capture_cache.join("objects/sha256")).unwrap();
+        let coordination = f.root().join("delivery-capture-coordination");
+        fs::create_dir(&coordination).unwrap();
+        let capture = json!({"schema":"reel.tig-delivery-capture-profile.experimental-1",
+            "source":f.profile,"request":request,"metadata_root":metadata,"metadata_minimum":checkpoint,
+            "metadata_cache":capture_cache,
+            "cache":{"path_policy":"configured-local-roots","cache_roots":[capture_cache],
+                "coordination_root":coordination,"capacity":{"minimum_free_bytes":0,"minimum_free_basis_points":0}}});
+        let capture_path = f.root().join("delivery-capture.json");
+        fs::write(&capture_path, serde_json::to_vec(&capture).unwrap()).unwrap();
+        let fragment = f.root().join("delivery-fragment.json");
+        let captured = Command::new(env!("CARGO_BIN_EXE_reel-tig-job"))
+            .arg("capture-context")
+            .arg(&capture_path)
+            .arg(&fragment)
+            .output()
+            .unwrap();
+        assert!(
+            captured.status.success(),
+            "{}",
+            String::from_utf8_lossy(&captured.stderr)
+        );
+        let summary: Value = serde_json::from_slice(&captured.stdout).unwrap();
+        assert_eq!(summary["context_kind"], "delivery");
+        assert_eq!(summary["media_rendered"], false);
+        assert_eq!(summary["job_adopted"], false);
+        let captured: Value = serde_json::from_slice(&fs::read(fragment).unwrap()).unwrap();
+        assert_eq!(captured["context_mode"], "delivery");
+        assert_eq!(
+            captured["context"],
+            serde_json::to_value(managed_context.selection()).unwrap()
+        );
+        native_cli::exercise_delivery(
+            f.root(),
+            &request,
+            &serde_json::from_value(captured["context"].clone()).unwrap(),
+            (
+                &metadata,
+                &serde_json::from_value(captured["metadata_minimum"].clone()).unwrap(),
+            ),
+            captured["source"].clone(),
+            candidate.receipt(),
         );
     }
 }

@@ -42,6 +42,69 @@ pub(crate) mod retained;
 mod setup;
 pub use capture::capture_context;
 use preparation::ContextMode;
+#[derive(Serialize)]
+#[serde(untagged)]
+enum WorkerRequest {
+    Scene(Request),
+    Delivery(crate::tig_delivery_template::Request),
+}
+impl<'de> Deserialize<'de> for WorkerRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(reader: D) -> std::result::Result<Self, D::Error> {
+        let value = Value::deserialize(reader)?;
+        match value.get("schema").and_then(Value::as_str) {
+            Some(tig_scene::SCHEMA) => serde_json::from_value(value)
+                .map(Self::Scene)
+                .map_err(serde::de::Error::custom),
+            Some(crate::tig_delivery_template::SCHEMA) => serde_json::from_value(value)
+                .map(Self::Delivery)
+                .map_err(serde::de::Error::custom),
+            _ => Err(serde::de::Error::custom(
+                "unsupported native worker request schema",
+            )),
+        }
+    }
+}
+impl WorkerRequest {
+    fn scene(&self) -> Result<&Request> {
+        match self {
+            Self::Scene(r) => Ok(r),
+            _ => bail!("delivery request requires delivery context mode"),
+        }
+    }
+    fn delivery(&self) -> Result<&crate::tig_delivery_template::Request> {
+        match self {
+            Self::Delivery(r) => Ok(r),
+            _ => bail!("scene request cannot use delivery context mode"),
+        }
+    }
+    fn check_mode(&self, mode: ContextMode) -> Result<()> {
+        match (self, mode) {
+            (Self::Delivery(_), ContextMode::Delivery)
+            | (Self::Scene(_), ContextMode::Declared | ContextMode::Compiled) => Ok(()),
+            _ => bail!("native request and context mode differ"),
+        }
+    }
+    fn definitions(&self) -> BTreeSet<&str> {
+        match self {
+            Self::Scene(r) => std::iter::once(r.scene_definition.as_str())
+                .chain(
+                    r.primary_definitions
+                        .iter()
+                        .chain(&r.control_definitions)
+                        .map(String::as_str),
+                )
+                .collect(),
+            Self::Delivery(r) => std::iter::once(r.root_definition.as_str())
+                .chain(
+                    r.primary_definitions
+                        .iter()
+                        .chain(&r.control_definitions)
+                        .map(String::as_str),
+                )
+                .collect(),
+        }
+    }
+}
 pub use setup::{check_stores, setup_stores};
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -58,7 +121,7 @@ struct Worker {
     metadata_minimum: Checkpoint,
     source: Value,
     context: Selection,
-    request: Request,
+    request: WorkerRequest,
     runtime: Bindings,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     outputs: BTreeMap<String, u64>,
@@ -130,15 +193,25 @@ fn restore(
     crate::tig_inputs::Source,
     tig_git::source::native::context::ProductionContext,
 )> {
+    worker.request.check_mode(worker.context_mode)?;
     let profile: ArchiveProfile = serde_json::from_value(worker.source.clone())?;
     if !worker.metadata_root.is_absolute() {
         bail!("existing absolute metadata root required");
     }
     let mut reader = MetadataReader::open(&worker.metadata_root, &worker.metadata_minimum)?;
+    if worker.context_mode == ContextMode::Delivery {
+        return crate::tig_delivery_template::restore_context(
+            profile,
+            worker.request.delivery()?,
+            &worker.context,
+            &mut reader,
+            TreeLimits::default(),
+        );
+    }
     if worker.context_mode == ContextMode::Compiled {
         return tig_scene::restore_render_context(
             profile,
-            &worker.request,
+            worker.request.scene()?,
             &worker.context,
             output
                 .ok_or_else(|| anyhow::anyhow!("compiled restore requires admitted preparation"))?,
@@ -148,7 +221,7 @@ fn restore(
     }
     tig_scene::restore_context(
         profile,
-        &worker.request,
+        worker.request.scene()?,
         &worker.context,
         &mut reader,
         TreeLimits::default(),
@@ -156,17 +229,21 @@ fn restore(
 }
 fn job_plan<'a>(
     mode: ContextMode,
-    request: &'a Request,
+    request: &'a WorkerRequest,
     source: &mut crate::tig_inputs::Source,
     context: &'a tig_git::source::native::context::ProductionContext,
     programs: &'a BoundPrograms,
     output: Option<&Path>,
 ) -> Result<JobPlan<'a>> {
+    request.check_mode(mode)?;
     match mode {
-        ContextMode::Declared => JobPlan::from_context(source, request, context, programs),
+        ContextMode::Delivery => {
+            JobPlan::from_delivery_context(source, request.delivery()?, context, programs)
+        }
+        ContextMode::Declared => JobPlan::from_context(source, request.scene()?, context, programs),
         ContextMode::Compiled => JobPlan::from_render_context(
             source,
-            request,
+            request.scene()?,
             context,
             programs,
             output.ok_or_else(|| {
@@ -176,6 +253,7 @@ fn job_plan<'a>(
     }
 }
 fn output_names(worker: &Worker) -> Result<BTreeSet<String>> {
+    worker.request.check_mode(worker.context_mode)?;
     if let Some(budget) = &worker.output_budget {
         if !worker.outputs.is_empty() {
             bail!("native output map and budget policy are mutually exclusive");
@@ -409,13 +487,13 @@ fn execute_phase(
     }
     let ticket_pin = Object::from_bytes(ticket.as_bytes());
     let scratch_budget =
-        if spec.mode == Mode::Plan && profile.worker.context_mode == ContextMode::Declared {
+        if spec.mode == Mode::Plan && profile.worker.context_mode != ContextMode::Compiled {
             planning::scratch_budget(profile.scratch_bytes)
         } else {
             profile.scratch_bytes
         };
     let workspace_budget =
-        if spec.mode == Mode::Plan && profile.worker.context_mode == ContextMode::Declared {
+        if spec.mode == Mode::Plan && profile.worker.context_mode != ContextMode::Compiled {
             planning::workspace_budget(
                 profile.scratch_bytes,
                 ticket.len() as u64,
@@ -546,19 +624,33 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
         return planning::produce(&ticket, &mut source, &context, &programs);
     }
     records::check_names(&ticket.admission, &expected)?;
-    let render = match ticket.admission.context_mode {
-        ContextMode::Declared => tig_scene_production::render_with_programs_and_outputs,
-        ContextMode::Compiled => tig_scene_production::render_projected_with_programs_and_outputs,
+    let candidate = if ticket.admission.context_mode == ContextMode::Delivery {
+        tig_scene_production::render_delivery_with_programs_and_outputs(
+            &mut source,
+            ticket.admission.request.delivery()?,
+            &context,
+            &programs,
+            Path::new("native"),
+            Some(&expected),
+        )?
+    } else {
+        let render = match ticket.admission.context_mode {
+            ContextMode::Declared => tig_scene_production::render_with_programs_and_outputs,
+            ContextMode::Compiled => {
+                tig_scene_production::render_projected_with_programs_and_outputs
+            }
+            ContextMode::Delivery => unreachable!(),
+        };
+        render(
+            &mut source,
+            ticket.admission.request.scene()?,
+            &context,
+            &programs,
+            Path::new("compiled"),
+            Path::new("native"),
+            Some(&expected),
+        )?
     };
-    let candidate = render(
-        &mut source,
-        &ticket.admission.request,
-        &context,
-        &programs,
-        Path::new("compiled"),
-        Path::new("native"),
-        Some(&expected),
-    )?;
     let actual: BTreeSet<_> = candidate
         .receipt()
         .outputs
@@ -588,6 +680,34 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn delivery_family_is_explicit_and_never_falls_back_to_scene_mode() {
+        let value = json!({"schema":crate::tig_delivery_template::SCHEMA,"root_id":"delivery/source",
+            "root_definition":"types/root","primary_definitions":["types/media"],"control_definitions":["types/control"]});
+        let request: WorkerRequest = serde_json::from_value(value.clone()).unwrap();
+        assert!(request.check_mode(ContextMode::Delivery).is_ok());
+        assert!(request.check_mode(ContextMode::Declared).is_err());
+        assert!(request.check_mode(ContextMode::Compiled).is_err());
+        assert!(request.scene().is_err());
+        assert_eq!(request.definitions().len(), 3);
+        let mut invalid = value;
+        invalid["scene_id"] = json!("must-not-be-ignored");
+        assert!(serde_json::from_value::<WorkerRequest>(invalid).is_err());
+    }
+    #[test]
+    fn scene_worker_request_wire_format_stays_unwrapped_and_mode_checked() {
+        let scene: Request = serde_json::from_value(json!({"schema":tig_scene::SCHEMA,"scene_id":"scene",
+            "scene_definition":"types/scene","primary_definitions":["types/media"],"language":"es",
+            "controls":{"catalog":"catalog","episode":"episode","policy":"policy","profile":"profile","template_receipt":null},
+            "delivery_id":"delivery","delivery_title":"Fixture"})).unwrap();
+        let original = serde_json::to_value(&scene).unwrap();
+        let request = WorkerRequest::Scene(scene);
+        assert_eq!(original, serde_json::to_value(&request).unwrap());
+        assert!(request.check_mode(ContextMode::Declared).is_ok());
+        assert!(request.check_mode(ContextMode::Compiled).is_ok());
+        assert!(request.check_mode(ContextMode::Delivery).is_err());
+        assert!(serde_json::from_value::<WorkerRequest>(json!({"schema":"unknown"})).is_err());
+    }
     #[test]
     fn changed_worker_ticket_refuses_before_runtime_or_metadata_lookup() {
         let root = tempfile::tempdir().unwrap();

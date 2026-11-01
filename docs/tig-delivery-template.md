@@ -103,3 +103,35 @@ post-handoff checks still run before and after producer execution.
 This provides the managed SDK ownership path. CLI/process containment and actual
 project capacity/source enrollment still need their existing runner integration;
 constructing a plan does not reserve disk space or establish independent custody.
+
+## Explicit CLI workflow
+
+The existing `reel-tig-job` commands also accept delivery requests:
+
+```text
+reel-tig-job capture-context delivery-capture.json private-fragment.json
+reel-tig-job plan-outputs delivery-job.json
+reel-tig-job run delivery-job.json
+```
+
+Capture uses `reel.tig-delivery-capture-profile.experimental-1`, the committed
+source profile, a delivery-template request, existing metadata/cache bindings
+and a trusted metadata minimum. Omit `preparation_cache`: no loose controls are
+generated. Capture reserves metadata growth, finishes/reopens the provider and
+returns a private fragment with `context_mode: "delivery"`, exact archived source,
+request and context. It does not initialize stores, adopt a job or render media.
+
+Use that fragment in the existing `reel.tig-native-job-profile.experimental-1`
+worker. Add explicit runtime pins, source/journal/owner/revision bindings, active
+cache and capacity settings, workspace/scratch/time budgets and either exact
+output caps or an output-budget policy. The source request's schema must match
+the delivery mode; scene/compiled modes cannot silently interpret it. Small and
+large selected control objects retain their existing provider admission rules.
+
+Planning derives the native output set directly from in-memory controls, then
+applies output caps. The render worker checks that set before encoding and checks
+actual output sizes afterward. The existing contained child runner reserves
+resources, holds source/runtime obligations, retains outputs and retires owned
+scratch. Optional record-output templates and Git handoff use the same existing
+bounded candidate proposal path. Publication/retention still grants no human
+approval, current external delivery or independent backup custody.

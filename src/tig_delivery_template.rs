@@ -106,31 +106,39 @@ fn expand(
 /// Resolve all record types before interpreting controls. Unused alternatives
 /// may remain draft, but outputs/control types cannot masquerade as primaries.
 /// Request definition admission is trusted policy, not independent schema proof.
-pub fn lower(source: &mut Source, request: &Request) -> Result<Prepared> {
-    let all = request
-        .primary_definitions
-        .iter()
-        .chain(&request.control_definitions);
-    if request.schema != SCHEMA
-        || !token(&request.root_id)
-        || !token(&request.root_definition)
-        || request.primary_definitions.is_empty()
-        || request.primary_definitions.len() > 256
-        || request.control_definitions.is_empty()
-        || request.control_definitions.len() > 64
-        || all
-            .clone()
-            .any(|id| !token(id) || id == &request.root_definition)
-        || !request
+impl Request {
+    pub(crate) fn validate(&self) -> Result<()> {
+        let request = self;
+        let all = request
             .primary_definitions
-            .is_disjoint(&request.control_definitions)
-        || request
-            .authored_control_fields
             .iter()
-            .any(|(id, field)| !request.control_definitions.contains(id) || !token(field))
-    {
-        bail!("invalid delivery template admission");
+            .chain(&request.control_definitions);
+        if request.schema != SCHEMA
+            || !token(&request.root_id)
+            || !token(&request.root_definition)
+            || request.primary_definitions.is_empty()
+            || request.primary_definitions.len() > 256
+            || request.control_definitions.is_empty()
+            || request.control_definitions.len() > 64
+            || all
+                .clone()
+                .any(|id| !token(id) || id == &request.root_definition)
+            || !request
+                .primary_definitions
+                .is_disjoint(&request.control_definitions)
+            || request
+                .authored_control_fields
+                .iter()
+                .any(|(id, field)| !request.control_definitions.contains(id) || !token(field))
+        {
+            bail!("invalid delivery template admission");
+        }
+        Ok(())
     }
+}
+/// Lower one exact admitted snapshot; no source mutation or media reads.
+pub fn lower(source: &mut Source, request: &Request) -> Result<Prepared> {
+    request.validate()?;
     let parent = source.record(&request.root_id)?;
     if parent.definition().id != request.root_definition {
         bail!("root definition differs");

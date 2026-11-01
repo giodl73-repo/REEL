@@ -340,6 +340,16 @@ pub fn render_delivery_with_programs(
     programs: &crate::media_runtime::BoundPrograms,
     output: &Path,
 ) -> Result<RenderedCandidate> {
+    render_delivery_with_programs_and_outputs(source, request, context, programs, output, None)
+}
+pub(crate) fn render_delivery_with_programs_and_outputs(
+    source: &mut Source,
+    request: &crate::tig_delivery_template::Request,
+    context: &ProductionContext,
+    programs: &crate::media_runtime::BoundPrograms,
+    output: &Path,
+    expected: Option<&BTreeSet<String>>,
+) -> Result<RenderedCandidate> {
     let producer = Object::from_bytes(programs.manifest_bytes());
     let recipe = crate::tig_delivery_template::recipe(source, request, context, &producer)?;
     if output.symlink_metadata().is_ok() {
@@ -349,6 +359,19 @@ pub fn render_delivery_with_programs(
     let inputs = source.prepare(&prepared.job)?;
     let execution = programs.with_inputs(&inputs);
     let controls = DeliveryControls::new(prepared)?;
+    if let Some(expected) = expected {
+        let (job, plan) = scene_delivery::plan_with_control_files(
+            &controls.job,
+            &controls.production,
+            &execution,
+            &controls,
+        )?;
+        let mut actual = scene_delivery::output_contract(&job, &plan)?.names;
+        actual.insert("receipt.json".into());
+        if &actual != expected {
+            bail!("delivery worker output set differs from admission");
+        }
+    }
     let rendered = scene_delivery::render_with_control_files(
         &controls.job,
         &controls.production,
@@ -373,13 +396,13 @@ pub fn render_delivery_with_programs(
     checked_candidate(recipe, context, output, rendered, receipt)
 }
 
-struct DeliveryControls {
-    job: scene_delivery::FileRef,
-    production: scene_delivery::FileRef,
+pub(crate) struct DeliveryControls {
+    pub(crate) job: scene_delivery::FileRef,
+    pub(crate) production: scene_delivery::FileRef,
     bytes: std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>,
 }
 impl DeliveryControls {
-    fn new(prepared: crate::tig_delivery_template::Prepared) -> Result<Self> {
+    pub(crate) fn new(prepared: crate::tig_delivery_template::Prepared) -> Result<Self> {
         let bytes: std::collections::BTreeMap<PathBuf, Vec<u8>> =
             std::collections::BTreeMap::from([
                 ("job.json".into(), serde_json::to_vec(&prepared.job)?),

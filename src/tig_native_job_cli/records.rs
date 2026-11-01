@@ -164,22 +164,7 @@ pub(super) fn prepare(
         metadata_minimum: &worker.metadata_minimum,
         specs: &worker.record_outputs,
         handoff: worker.git_handoff.as_ref(),
-        input_definitions: std::iter::once(worker.request.scene_definition.as_str())
-            .chain(
-                worker
-                    .request
-                    .control_definitions
-                    .iter()
-                    .map(String::as_str),
-            )
-            .chain(
-                worker
-                    .request
-                    .primary_definitions
-                    .iter()
-                    .map(String::as_str),
-            )
-            .collect(),
+        input_definitions: worker.request.definitions(),
         context,
         roots,
     })
