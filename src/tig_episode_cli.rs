@@ -42,6 +42,35 @@ pub use worker::worker;
 const SCHEMA: &str = "reel.tig-episode-job.experimental-1";
 const TICKET: &str = "reel.tig-episode-worker.experimental-1";
 
+#[derive(Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+enum Purpose {
+    #[default]
+    Assemble,
+    VerifyComponents,
+}
+impl Purpose {
+    fn is_assemble(&self) -> bool {
+        *self == Self::Assemble
+    }
+}
+const VERIFICATION_MARKER: &[u8] =
+    b"reel.episode-purpose.experimental-1:verify-components;no-assembly;no-delivery-claim";
+fn purpose_path() -> Result<LogicalPath> {
+    Ok(LogicalPath::parse("input-evidence/verification/purpose")?)
+}
+fn check_purpose(purpose: Purpose, entries: &BTreeMap<LogicalPath, Object>) -> Result<()> {
+    let expected = if purpose == Purpose::VerifyComponents {
+        Some(Object::from_bytes(VERIFICATION_MARKER))
+    } else {
+        None
+    };
+    if entries.get(&purpose_path()?) != expected.as_ref() {
+        bail!("episode retained execution purpose differs");
+    }
+    Ok(())
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Scene {
@@ -63,6 +92,8 @@ struct Presentation {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Inputs {
+    #[serde(default, skip_serializing_if = "Purpose::is_assemble")]
+    purpose: Purpose,
     source: Value,
     context: Selection,
     request: tig_episode::Request,
@@ -192,6 +223,11 @@ fn admit(resources: &job::JobContext, budget: &ProtectionBudget) -> Result<()> {
     Ok(())
 }
 fn validate(p: &Profile) -> Result<()> {
+    if p.inputs.purpose == Purpose::VerifyComponents
+        && (!p.inputs.record_outputs.is_empty() || p.inputs.git_handoff.is_some())
+    {
+        bail!("component verification cannot emit media records or Git proposals");
+    }
     let artifacts = records::limits(&p.inputs)?;
     if p.inputs
         .record_outputs
@@ -256,8 +292,18 @@ fn validate(p: &Profile) -> Result<()> {
 /// Explicit execution only. Uses existing stores and runner admission; never
 /// initializes caches, changes project bindings or silently approves outputs.
 pub fn run(path: &Path) -> Result<Value> {
+    run_for(path, Purpose::Assemble)
+}
+/// Explicit contained component checks; no parent movie or delivery record.
+pub fn verify_components(path: &Path) -> Result<Value> {
+    run_for(path, Purpose::VerifyComponents)
+}
+fn run_for(path: &Path, purpose: Purpose) -> Result<Value> {
     let p: Profile = read(path, 128 * 1024, None)?;
     validate(&p)?;
+    if p.inputs.purpose != purpose {
+        bail!("episode profile purpose differs from command");
+    }
     let wait = MetadataWait::default();
     let programs = BoundPrograms::bind(&p.inputs.runtime)?;
     let coordination = Coordination {
@@ -365,6 +411,9 @@ pub fn run(path: &Path) -> Result<Value> {
             )
         })
         .collect::<BTreeMap<_, _>>();
+    if purpose == Purpose::VerifyComponents {
+        outputs.clear();
+    }
     outputs.insert(
         "worker.json".into(),
         json!({"path":"worker.json","max_bytes":65536}),
@@ -435,15 +484,42 @@ pub fn run(path: &Path) -> Result<Value> {
     })?;
     let succeeded = result.is_ok() && handoff["succeeded"] == true;
     let result = result.unwrap_or_else(|error| json!({"schema":"reel.failed-job-result.v1","error":error.to_string(),"outputs":{},"production_claim":null}));
-    Ok(
-        json!({"schema":"reel.tig-episode-job-result.experimental-1","succeeded":succeeded,"result":result,"journal_checkpoint":journal.checkpoint(),
-        "production_claim":null,"approval":false,"bindings_changed":false,"handoff":handoff,"temporary_owner_cleanup_required":false}),
-    )
+    let mut response = json!({"schema":"reel.tig-episode-job-result.experimental-1","succeeded":succeeded,"result":result,"journal_checkpoint":journal.checkpoint(),
+        "production_claim":null,"approval":false,"bindings_changed":false,"handoff":handoff,"temporary_owner_cleanup_required":false});
+    if purpose == Purpose::VerifyComponents {
+        response["schema"] =
+            json!("reel.tig-episode-component-verification-job-result.experimental-1");
+        response["purpose"] = json!(purpose);
+    }
+    Ok(response)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn verification_purpose_requires_the_exact_input_evidence_marker() {
+        let mut entries = BTreeMap::new();
+        assert!(check_purpose(Purpose::Assemble, &entries).is_ok());
+        assert!(check_purpose(Purpose::VerifyComponents, &entries).is_err());
+        let marker = Object::from_bytes(VERIFICATION_MARKER);
+        entries.insert(
+            LogicalPath::parse("evidence/verification/purpose").unwrap(),
+            marker.clone(),
+        );
+        assert!(
+            check_purpose(Purpose::VerifyComponents, &entries).is_err(),
+            "output evidence cannot substitute for input obligations"
+        );
+        entries.insert(purpose_path().unwrap(), marker);
+        assert!(check_purpose(Purpose::VerifyComponents, &entries).is_ok());
+        assert!(check_purpose(Purpose::Assemble, &entries).is_err());
+        entries.insert(
+            purpose_path().unwrap(),
+            Object::from_bytes(b"foreign purpose"),
+        );
+        assert!(check_purpose(Purpose::VerifyComponents, &entries).is_err());
+    }
     #[test]
     fn changed_episode_ticket_refuses_before_runtime_store_or_media_access() {
         let root = tempfile::tempdir().unwrap();

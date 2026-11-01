@@ -34,6 +34,8 @@ enum Operation {
     },
     /// Verify retained components and assemble an episode in admitted scratch.
     RunEpisode { profile: PathBuf },
+    /// Verify retained components against primaries without assembling an episode.
+    VerifyEpisode { profile: PathBuf },
     /// Freeze/read back complete episode resources without adopting or rendering.
     PrepareEpisode { profile: PathBuf, output: PathBuf },
     /// Resume a completed episode job's verified metadata/owner handoff only.
@@ -93,7 +95,9 @@ fn main() -> ExitCode {
     );
     let episode_job = matches!(
         &operation,
-        Operation::RunEpisode { .. } | Operation::RunFrozen { .. }
+        Operation::RunEpisode { .. }
+            | Operation::VerifyEpisode { .. }
+            | Operation::RunFrozen { .. }
     );
     let result = match operation {
         Operation::CaptureFrozen { profile, output } => {
@@ -115,6 +119,7 @@ fn main() -> ExitCode {
             reel::tig_job_runner::retire_workspace(&profile, apply)
         }
         Operation::RunEpisode { profile } => reel::tig_episode_cli::run(&profile),
+        Operation::VerifyEpisode { profile } => reel::tig_episode_cli::verify_components(&profile),
         Operation::PrepareEpisode { profile, output } => {
             reel::tig_episode_cli::prepare(&profile, &output)
         }

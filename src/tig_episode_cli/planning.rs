@@ -179,6 +179,13 @@ pub(super) fn freeze(
             &reference.freeze(store, TreeLimits::default())?,
         )?;
     }
+    if inputs.purpose == Purpose::VerifyComponents {
+        let marker = Object::from_bytes(VERIFICATION_MARKER);
+        if store.put(VERIFICATION_MARKER)? != marker {
+            bail!("episode purpose marker changed");
+        }
+        evidence.insert(LogicalPath::parse("verification/purpose")?, marker);
+    }
     let producer = Object::from_bytes(programs.manifest_bytes());
     let recipe = tig_episode::composition_recipe(source, &inputs.request, context, &producer)?;
     if store.put(programs.manifest_bytes())? != producer {

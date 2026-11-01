@@ -165,6 +165,9 @@ fn finish_after_prepare(
             || header["operation"] != p.operation
             || header["root_revision_after"].as_u64() != Some(state.revision)
             || header["record_contract"] != serde_json::to_value(records::contract(&p.inputs)?)?
+            || serde_json::from_value::<Purpose>(
+                header.get("purpose").cloned().unwrap_or(json!("assemble")),
+            )? != p.inputs.purpose
         {
             bail!("episode retained context belongs to another attempt");
         }
@@ -255,6 +258,7 @@ fn finish_after_prepare(
         }
         let input_selection: Selection = serde_json::from_value(header["source"].clone())?;
         let input_entries = entries(&input_selection, &mut reader)?;
+        check_purpose(p.inputs.purpose, &input_entries)?;
         let input_header = job_header(&input_selection, &input_entries, &reader)?;
         if input_header["source"] != serde_json::to_value(&p.inputs.context)? {
             bail!("episode result source context differs");
@@ -277,11 +281,27 @@ fn finish_after_prepare(
                     ))?)
                     .context("episode completion report missing")?,
             )?;
-            if report["schema"] != "reel.tig-episode-worker-result.experimental-1"
+            let native_checks = match p.inputs.purpose {
+                Purpose::Assemble => {
+                    report["schema"] == "reel.tig-episode-worker-result.experimental-1"
+                        && report["decoded_master_matches_ordered_segments"] == true
+                        && report["timestamps_verified"] == true
+                }
+                Purpose::VerifyComponents => {
+                    report["schema"]
+                        == "reel.tig-episode-component-verification-result.experimental-1"
+                        && report["component_primary_references_verified"] == true
+                        && report["components_verified"]
+                            == json!(p.inputs.scenes.len() + p.inputs.presentations.len())
+                        && report["episode_assembled"] == false
+                        && report["final_episode_output_verified"] == false
+                        && report["production_claim"].is_null()
+                        && report["approval"] == false
+                }
+            };
+            if !native_checks
                 || report["record_contract"] != serde_json::to_value(records::contract(&p.inputs)?)?
                 || report["recipe"] != input_header["recipe"]
-                || report["decoded_master_matches_ordered_segments"] != true
-                || report["timestamps_verified"] != true
                 || report["temporary_sources"] != json!(expected)
             {
                 bail!("episode completion scope or native checks differ");
@@ -426,7 +446,7 @@ fn finish_after_prepare(
         let raw = identity::canonical_json(
             &json!({"schema":HEADER,"source_id":p.source_id,"owner":p.owner,"operation":p.operation,
             "previous":current,"root_revision_before":completed,"root_revision_after":next,"temporary":temporary,"expected_temporary":expected,"succeeded":succeeded,
-            "record_contract":records::contract(&p.inputs)?,"native_production_claim":null,"approval":false,"resource_objects":objects.len()}),
+            "purpose":p.inputs.purpose,"record_contract":records::contract(&p.inputs)?,"native_production_claim":null,"approval":false,"resource_objects":objects.len()}),
         )?;
         if raw.len() > 65536 {
             bail!("episode handoff header exceeds bound");
