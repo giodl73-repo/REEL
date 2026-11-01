@@ -2,6 +2,8 @@ use reel::scene_delivery;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path, process::Command};
+#[path = "support/primary_png_sequence.rs"]
+mod png_sequence;
 #[path = "support/scene_primary_reference.rs"]
 mod primary_reference;
 

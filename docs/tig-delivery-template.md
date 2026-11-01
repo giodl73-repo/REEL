@@ -32,6 +32,9 @@ variant admission rather than silently selecting a language. Timed overlay
 receipts additionally verify all their exact nested input references against
 the same primary catalog; stale or unlisted pins refuse. Only explicitly selected control/receipt
 metadata is read under the existing bounded guarded provider. Media is not read.
+Ordered external-layer `frames` entries also use exactly `{"binding":"alias"}`;
+each resolves as a consumed primary. Sequence order is preserved even when byte
+guards deduplicate repeated objects. Per-job sequence references remain bounded.
 
 Consumption admission uses the native record's `status.selection_state`, for
 the root, each control and every used primary. A payload in `selected`, an

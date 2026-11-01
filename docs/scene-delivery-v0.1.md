@@ -163,6 +163,8 @@ evidence FileRef. `evidence-only` records a held external delivery. `ass-overlay
 renders one full-scene editable ASS layer. The explicit
 [`timed-still-overlay`](timed-still-overlay.md) mode holds a primary alpha PNG
 over a semantic effect/overlay interval without a derived movie input.
+An [ordered primary PNG sequence](primary-png-sequence-overlay.md) uses the same
+interval with one explicitly bound input per frame and no image payload copies.
 `timed-video-overlay` renders hash-bound
 alpha videos on effect or generic overlay attachments for their exact compiled
 frame spans. Multiple timed overlays compose in job order; each intermediate

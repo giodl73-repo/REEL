@@ -147,6 +147,64 @@ fn authored_controls_replay_from_archive_with_git_and_cache_unavailable() {
 }
 
 #[test]
+fn sequence_frames_are_current_primary_bindings_and_only_frame_use_requires_selection() {
+    let (mut f, request) = fixture();
+    record(&f, "control-job", |r| {
+        let job = &mut r["authored"]["document"];
+        job["pictures"].as_array_mut().unwrap().truncate(1);
+        job["external_layers"] = json!([{"attachment_id":"sequence","reason":"Binding fixture",
+            "render_mode":"timed-png-sequence-overlay","evidence":{"binding":"a"},
+            "frames":[{"binding":"a"},{"binding":"b"},{"binding":"a"}]}]);
+    });
+    commit(&mut f);
+    f.profile["byte_source"]["required"] = json!("prevent-mutation");
+    let mut source = f.source();
+    let lowered = adapter::lower(&mut source, &request).unwrap();
+    assert_eq!(source.byte_requests(), 0);
+    assert_eq!(
+        lowered.job.external_layers[0]
+            .frames
+            .iter()
+            .map(|f| f.path.to_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["cel/a", "cel/b", "cel/a"]
+    );
+    assert_eq!(lowered.consumed_bindings.len(), 3);
+    #[cfg(windows)]
+    {
+        let held = source.prepare(&lowered.job).unwrap();
+        let unique = lowered
+            .consumed_bindings
+            .values()
+            .map(|r| &r.sha256)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(held.objects() as usize, unique.len());
+        assert!(
+            reel::scene_delivery::InputFiles::verified_path(
+                &held,
+                &lowered.job.external_layers[0].frames[1]
+            )
+            .unwrap()
+            .is_absolute()
+        );
+    }
+    drop(source);
+    record(&f, "cel-b", |r| {
+        r["status"]["selection_state"] = json!("draft")
+    });
+    commit(&mut f);
+    let mut source = f.source();
+    assert!(
+        adapter::lower(&mut source, &request)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("not selected")
+    );
+    assert_eq!(source.byte_requests(), 0);
+}
+
+#[test]
 fn wrong_primary_type_and_used_draft_refuse_without_byte_reads() {
     let (mut f, request) = fixture();
     record(&f, "root", |r| {

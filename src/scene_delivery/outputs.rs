@@ -33,6 +33,7 @@ pub fn output_contract(job: &Job, plan: &Plan) -> Result<OutputContract> {
                 ExternalLayerRenderMode::AssOverlay
                     | ExternalLayerRenderMode::TimedVideoOverlay
                     | ExternalLayerRenderMode::TimedStillOverlay
+                    | ExternalLayerRenderMode::TimedPngSequenceOverlay
             )
         })
         .collect();

@@ -589,6 +589,7 @@ impl Source {
     /// Own all media/evidence guards before rendering. No primary byte copies.
     /// Failure drops every partial guard; byte/request budgets remain charged.
     pub fn prepare(&mut self, job: &Job) -> Result<Inputs> {
+        crate::scene_delivery::png_sequence::validate_counts(job)?;
         if !cfg!(windows) || self.required != RequiredProtection::PreventMutation {
             bail!("mandatory path protection unavailable");
         }
@@ -609,6 +610,9 @@ impl Source {
         }
         for layer in &job.external_layers {
             self.register(&mut inputs, &layer.evidence)?;
+            for frame in &layer.frames {
+                self.register(&mut inputs, frame)?;
+            }
             for file in [&layer.font, &layer.render_source, &layer.derivation_receipt]
                 .into_iter()
                 .flatten()
