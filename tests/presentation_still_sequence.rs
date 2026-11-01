@@ -45,19 +45,30 @@ fn semantic_song_clock_renders_variable_picture_boundaries_without_restarting_au
 
 #[test]
 fn portrait_fit_keeps_square_canvas_pixels() {
-    still_geometry_fixture(false, false, true, false);
+    still_geometry_fixture(false, false, true, false, false);
 }
 
 #[test]
 fn non_square_source_is_fit_by_display_aspect_before_square_canvas() {
-    still_geometry_fixture(false, false, true, true);
+    still_geometry_fixture(false, false, true, true, false);
+}
+
+#[test]
+fn retained_h264_reference_requires_every_primary_pixel_and_sample() {
+    still_geometry_fixture(true, false, false, false, true);
 }
 
 fn still_fixture(with_audio: bool, song_clock: bool) {
-    still_geometry_fixture(with_audio, song_clock, false, false);
+    still_geometry_fixture(with_audio, song_clock, false, false, false);
 }
 
-fn still_geometry_fixture(with_audio: bool, song_clock: bool, portrait: bool, non_square: bool) {
+fn still_geometry_fixture(
+    with_audio: bool,
+    song_clock: bool,
+    portrait: bool,
+    non_square: bool,
+    h264_reference: bool,
+) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     for (name, color) in [("red.png", "red"), ("blue.png", "blue")] {
@@ -214,6 +225,9 @@ fn still_geometry_fixture(with_audio: bool, song_clock: bool, portrait: bool, no
     assert_eq!(receipt["frames"], 48);
     assert_eq!(receipt["samples"], 96_000);
     verify_primary_reference(root);
+    if h264_reference {
+        verify_h264_primary_reference(root);
+    }
     if portrait {
         let probe = Command::new("ffprobe")
             .args([
@@ -346,6 +360,70 @@ fn plain_pin(root: &Path, name: &str) -> reel::scene_delivery::FileRef {
     let mut value = reference(root, name);
     value.as_object_mut().unwrap().remove("cache_uri");
     serde_json::from_value(value).unwrap()
+}
+
+fn verify_h264_primary_reference(root: &Path) {
+    use reel::presentation_still_sequence::compare_master_to_primaries;
+    let manifest = plain_pin(root, "manifest.json");
+    let files = root.to_path_buf();
+    for (name, quality, extra, equal) in [
+        ("exact", "0", vec![], true),
+        (
+            "late-picture",
+            "0",
+            vec!["-vf", "negate=enable='gte(n,24)'"],
+            false,
+        ),
+        ("audio", "0", vec!["-af", "volume=0"], false),
+        ("lossy", "40", vec![], false),
+    ] {
+        let name = format!("retained-h264-{name}.mkv");
+        let mut encoder = Command::new("ffmpeg");
+        encoder
+            .args(["-v", "error", "-nostdin", "-i"])
+            .arg(root.join("render/master.mkv"))
+            .args([
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a:0",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-crf",
+                quality,
+                "-pix_fmt",
+                "yuv444p",
+                "-c:a",
+                "pcm_s24le",
+            ])
+            .args(extra)
+            .arg(root.join(&name));
+        assert!(encoder.status().unwrap().success());
+        let selected = plain_pin(root, &name);
+        let result = compare_master_to_primaries(
+            &manifest,
+            &files,
+            &files,
+            &files,
+            &selected,
+            root,
+            1024 * 1024,
+        );
+        if equal {
+            assert_eq!(result.unwrap().master().sha256, selected.sha256);
+        } else {
+            assert!(
+                result
+                    .err()
+                    .expect("changed H264 content was accepted")
+                    .to_string()
+                    .contains("differs from primary reference"),
+                "{name} was not rejected by the decoded-content comparison"
+            );
+        }
+    }
 }
 
 fn verify_primary_reference(root: &Path) {

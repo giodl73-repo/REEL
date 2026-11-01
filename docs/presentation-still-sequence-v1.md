@@ -18,6 +18,20 @@ The builder writes `master.mkv` as FFV1/yuv444p with stereo PCM24, a browser `re
 
 The synthetic regression test uses two stills and checks 48 frames, 96,000 stereo samples, complete output closure and layer-tamper rejection.
 
+## Retained primary-reference comparison
+
+`compare_master_to_primaries` accepts retained FFV1 or H.264 masters with square
+pixels, the exact template geometry/frame count, `yuv444p` pictures and stereo
+PCM24 audio. It checks clocks, complete decoding and exact sample count, then
+compares every decoded YUV and displayed RGB frame and PCM sample against the
+current primary render. H.264 identification alone establishes no equality or
+lossless-encoding claim; lossy pictures or altered audio still fail.
+
+This applies only to the independent retained-reference comparison. Newly built
+outputs and their receipt checks continue to require FFV1. A matching reference
+does not authenticate the original producer, enroll a job, change a selection or
+approve a delivery.
+
 ## Variable cuts on a continuous source clock (V2)
 
 Use `reel.presentation-still-template.v2` with `total_frames` instead of
