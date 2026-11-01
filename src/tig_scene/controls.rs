@@ -6,7 +6,7 @@ pub(super) struct Catalog {
     pub ids: BTreeMap<String, String>,
     fields: BTreeMap<String, String>,
 }
-pub(super) struct Materialized {
+pub(crate) struct Materialized {
     pub bytes: Vec<u8>,
     pub pin: Object,
     pub authored: Option<Value>,
@@ -29,7 +29,7 @@ pub(super) fn payloads(payload: &Payload) -> Payloads {
         },
     }
 }
-fn prepare(
+pub(crate) fn prepare(
     source: &Source,
     record: &Resolved,
     fields: &BTreeMap<String, String>,

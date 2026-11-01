@@ -5,6 +5,8 @@ mod candidate_publication;
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_capture.rs"]
 mod capture;
+#[path = "support/tig_delivery_template.rs"]
+mod delivery_template;
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_episode_lifecycle.rs"]
 mod fake_episode_lifecycle;

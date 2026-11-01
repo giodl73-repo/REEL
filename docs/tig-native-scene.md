@@ -1,5 +1,10 @@
 # Compile a native scene from Tig
 
+For recording-clock edits that do not use the speech-alignment scene model,
+the experimental [delivery-template preparation API](tig-delivery-template.md)
+lowers explicit Tig bindings into the existing delivery controls. It does not
+replace this scene compiler or provide complete managed production enrollment.
+
 `reel-tig-scene compile-native` captures the explicit committed source profile
 and resolves the scene's current `authored.binding_ids` map. Each value is exactly
 `{"id":"opaque-asset-id"}`. The parent file need not change when a leaf changes.

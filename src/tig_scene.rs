@@ -30,7 +30,7 @@ use tig_store::source_claims::Selection;
 pub const SCHEMA: &str = "reel.tig-native-scene.experimental-1";
 const METADATA_MAX: u64 = 16 * 1024 * 1024;
 mod bindings;
-mod controls;
+pub(crate) mod controls;
 mod render_context;
 mod scoped;
 pub use render_context::{
