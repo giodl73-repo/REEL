@@ -32,9 +32,11 @@ use tig_store::{
 };
 mod handoff;
 mod planning;
+mod preparation;
 mod records;
 mod worker;
 pub use handoff::finish_episode;
+pub use preparation::prepare;
 pub use worker::worker;
 
 const SCHEMA: &str = "reel.tig-episode-job.experimental-1";

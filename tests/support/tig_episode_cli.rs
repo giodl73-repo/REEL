@@ -19,7 +19,26 @@ fn bounded_episode_cli_reopens_source_verifies_components_and_retains_checked_mo
 fn mixed_episode_cli_checks_opening_scenes_and_credits_with_complete_owned_handoff() {
     exercise(true);
 }
+#[test]
+#[ignore = "requires native FFmpeg to establish retained synthetic scene fixtures"]
+fn prepare_episode_freezes_child_resources_with_movie_and_source_journal_unavailable() {
+    exercise_mode(false, true);
+}
+#[test]
+#[ignore = "requires native FFmpeg to establish retained mixed-presentation fixtures"]
+fn prepare_mixed_episode_freezes_complete_resources_without_execution_admission() {
+    exercise_mode(true, true);
+}
 fn exercise(mixed: bool) {
+    exercise_mode(mixed, false);
+}
+fn exercise_mode(mixed: bool, preparation_only: bool) {
+    if !preparation_only {
+        assert!(
+            std::env::var_os("REEL_TEST_TIG_PROPOSE").is_some(),
+            "explicit pinned Tig proposal executable required before rendering fixtures"
+        );
+    }
     let mut p = Project::new();
     let scenes = (0..4)
         .map(|i| p.render_delivery(i, "cli-v1"))
@@ -141,6 +160,137 @@ fn exercise(mixed: bool) {
     let missing_path = object_file(&p.hot(), &missing);
     let backup = p.data.path().join("component-master-offline");
     fs::rename(&missing_path, &backup).unwrap();
+    // Planning must remain possible with source Git and a selected movie offline.
+    // It must not even open/create the source journal or pretend media is verified.
+    let mut preparation = profile.clone();
+    let absent_journal = p.data.path().join("preparation-must-not-create-journal");
+    preparation["journal_root"] = json!(absent_journal);
+    let preparation_profile = p.data.path().join("episode-preparation-profile.json");
+    write(
+        p.data.path(),
+        "episode-preparation-profile.json",
+        &preparation,
+    );
+    let report_path = p.data.path().join("episode-preparation-report.json");
+    let checkpoint_before = p.owners.checkpoint();
+    let forbidden = p
+        .hot()
+        .join("objects")
+        .join("..")
+        .join("objects")
+        .join("not-a-report");
+    let refused = Command::new(&binary)
+        .arg("prepare-episode")
+        .arg(&preparation_profile)
+        .arg(&forbidden)
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(!forbidden.exists());
+    let stream_path = p.data.path().join("preparation-report.json:stream");
+    let refused = Command::new(&binary)
+        .arg("prepare-episode")
+        .arg(&preparation_profile)
+        .arg(&stream_path)
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(!stream_path.exists());
+    let prepared = Command::new(&binary)
+        .arg("prepare-episode")
+        .arg(&preparation_profile)
+        .arg(&report_path)
+        .output()
+        .unwrap();
+    assert!(
+        prepared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&prepared.stderr)
+    );
+    let summary: Value = serde_json::from_slice(&prepared.stdout).unwrap();
+    assert_eq!(summary["components"], 4);
+    assert_eq!(summary["readback_equal"], true);
+    for field in [
+        "component_payloads_verified",
+        "production_currency_verified",
+        "job_adopted",
+        "execution_capacity_reserved",
+        "media_rendered",
+        "authorizes_production",
+        "authorizes_eviction",
+    ] {
+        assert_eq!(summary[field], false, "{field}");
+    }
+    assert!(summary["resource_objects"].as_u64().unwrap() > 4);
+    let prepared_report = read(&report_path);
+    let resources: SourceSelection =
+        serde_json::from_value(prepared_report["resources"].clone()).unwrap();
+    let minimum = serde_json::from_value(prepared_report["metadata_minimum"].clone()).unwrap();
+    let mut resource_reader = MetadataReader::open(&metadata, &minimum).unwrap();
+    let (entries, _) = tig_core::tree::Tree::from_root(resources.root)
+        .entries(&mut resource_reader, TreeLimits::default())
+        .unwrap();
+    let objects = entries
+        .values()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(
+        objects.contains(&missing),
+        "composition bytes must remain declared even when unavailable"
+    );
+    for primary in scenes
+        .iter()
+        .filter(|scene| !mixed || matches!(scene.unit.as_str(), "scene-a" | "scene-b"))
+        .flat_map(|scene| &scene.primary)
+    {
+        assert!(
+            objects.contains(primary),
+            "child primary input missing from complete resource plan"
+        );
+    }
+    drop(resource_reader);
+    assert_eq!(
+        prepared_report["profile"],
+        json!(Object::from_bytes(&fs::read(&preparation_profile).unwrap()))
+    );
+    assert_eq!(prepared_report["root_retention_enrolled"], false);
+    assert!(!absent_journal.exists());
+    assert_eq!(p.owners.checkpoint(), checkpoint_before);
+    assert!(!missing_path.exists());
+    let report_bytes = fs::read(&report_path).unwrap();
+    let repeated = Command::new(&binary)
+        .arg("prepare-episode")
+        .arg(&preparation_profile)
+        .arg(&report_path)
+        .output()
+        .unwrap();
+    assert!(!repeated.status.success());
+    assert_eq!(fs::read(&report_path).unwrap(), report_bytes);
+    preparation["max_objects"] = json!(1);
+    write(
+        p.data.path(),
+        "episode-preparation-profile.json",
+        &preparation,
+    );
+    let refused_report = p.data.path().join("refused-preparation-report.json");
+    let refused = Command::new(&binary)
+        .arg("prepare-episode")
+        .arg(&preparation_profile)
+        .arg(&refused_report)
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr)
+            .contains("complete input resource budget exceeded")
+    );
+    assert!(!refused_report.exists());
+    assert!(!absent_journal.exists());
+    assert_eq!(p.owners.checkpoint(), checkpoint_before);
+    if preparation_only {
+        fs::rename(&backup, &missing_path).unwrap();
+        return;
+    }
     let denied = Command::new(&binary)
         .arg("run-episode")
         .arg(&profile_path)
