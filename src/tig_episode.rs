@@ -80,6 +80,8 @@ pub struct Component {
     pub position: usize,
     pub segment_id: String,
     pub kind: String,
+    #[serde(skip_serializing_if = "zero")]
+    pub tail_hold_frames: u64,
     pub record: Reference,
     pub selected: Object,
     pub baseline: Object,
@@ -88,6 +90,9 @@ pub struct Component {
     pub source_scene: Option<Reference>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_scene_selected: Option<Object>,
+}
+fn zero(value: &u64) -> bool {
+    *value == 0
 }
 #[derive(Serialize)]
 pub struct Plan {
@@ -98,6 +103,8 @@ pub struct Plan {
     pub episode_selected: Object,
     pub conform: Object,
     pub language: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_frame_rate: Option<crate::episode_conform::OutputFrameRate>,
     pub components: Vec<Component>,
     pub unique_output_objects: usize,
     pub unique_output_bytes: u64,
@@ -204,6 +211,7 @@ fn plan_inner(source: &mut Source, request: &Request) -> Result<Plan> {
     let conform: Manifest = serde_json::from_value(identity::parse_json(
         &source.read_metadata(&conform_pin, 4 * 1024 * 1024)?,
     )?)?;
+    conform.validate_clock_and_range()?;
     if conform.schema != crate::episode_conform::SCHEMA
         || native.schema != reel_assembly::scene_authoring::EPISODE_SCHEMA
         || !token(&declared_episode)
@@ -306,6 +314,7 @@ fn plan_inner(source: &mut Source, request: &Request) -> Result<Plan> {
             position,
             segment_id: segment.id.clone(),
             kind: kind.into(),
+            tail_hold_frames: segment.tail_hold_frames,
             record: record.reference().clone(),
             changed_from_baseline: selected != baseline,
             selected,
@@ -333,6 +342,7 @@ fn plan_inner(source: &mut Source, request: &Request) -> Result<Plan> {
         episode_selected,
         conform: conform_pin,
         language: authored.language,
+        output_frame_rate: conform.output_frame_rate,
         components,
         unique_output_objects: outputs.len(),
         unique_output_bytes,

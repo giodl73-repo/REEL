@@ -30,6 +30,12 @@ type NativeScenes<'a> =
 type NativeScenes<'a> = BTreeMap<String, &'a ()>;
 
 pub const SCHEMA: &str = "reel.episode-conform.v1";
+mod clocks;
+mod holds;
+pub use clocks::{FrameRateVerification, OutputFrameRate};
+fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
 
 fn verify_native_delivery_proof(
     receipt: &serde_json::Value,
@@ -117,6 +123,9 @@ pub struct Manifest {
     /// Explicit delivery geometry. Without this, sources must have identical sizes.
     #[serde(default)]
     pub output_geometry: Option<OutputGeometry>,
+    /// Explicit clock conversion may repeat, but never discard, selected frames.
+    #[serde(default)]
+    pub output_frame_rate: Option<OutputFrameRate>,
     pub catalog: scene_delivery::FileRef,
     pub master_template_definition: scene_delivery::FileRef,
     #[serde(default)]
@@ -134,6 +143,26 @@ pub struct Manifest {
     /// dependencies and tool binaries have been rehashed. Defaults to full checks.
     #[serde(default)]
     pub reuse_verified_presentations: bool,
+}
+
+impl Manifest {
+    pub(crate) fn validate_clock_and_range(&self) -> Result<()> {
+        if let Some(rate) = &self.output_frame_rate {
+            rate.clock()?;
+            if self.audio_frame_conform.as_deref() != Some("pad-silence-to-picture-boundaries") {
+                bail!("repeat-only frame conversion requires non-trimming audio frame conform");
+            }
+        }
+        if self
+            .output_geometry
+            .as_ref()
+            .and_then(|g| g.assume_color_range_for_unspecified.as_deref())
+            .is_some_and(|range| range != "tv")
+        {
+            bail!("unsupported unspecified color-range declaration");
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -159,6 +188,9 @@ pub struct OutputGeometry {
     /// Resolve an unspecified matrix only when independent decoded RGB agrees.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assume_color_space_for_unspecified: Option<String>,
+    /// Resolve an unknown range only if decoded displayed RGB remains identical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assume_color_range_for_unspecified: Option<String>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -194,6 +226,8 @@ pub struct GeometryVerification {
     pub sample_aspect_ratio_assumed_square: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assumed_color_space: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assumed_color_range: Option<String>,
     pub color_properties: BTreeMap<String, String>,
     pub output_width: u64,
     pub output_height: u64,
@@ -233,6 +267,13 @@ pub struct Segment {
     /// Receipt beside the hydrated scene-delivery output files.
     #[serde(default)]
     pub delivery_receipt: Option<scene_delivery::FileRef>,
+    /// Explicit retained full-check witness for semantic-scoped master-only
+    /// consumption. Does not establish native producer currency or approval.
+    #[serde(default)]
+    pub master_proof: Option<scene_delivery::FileRef>,
+    /// Historical validator byte identity, never executed by the checker.
+    #[serde(default)]
+    pub master_proof_validator: Option<scene_delivery::FileRef>,
     /// Selected semantic scene scope for a direct scene-delivery receipt.
     /// This route always performs the full upstream delivery check.
     #[serde(default)]
@@ -252,6 +293,10 @@ pub struct Segment {
     /// Hash-bound source evidence remains unchanged when packages are hydrated.
     #[serde(default)]
     pub imported_source_root: Option<PathBuf>,
+    /// Repeat the final selected picture and append only silence, preserving
+    /// the complete input. Bounded to sixty seconds by the declared clock.
+    #[serde(default)]
+    pub tail_hold_frames: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -328,12 +373,18 @@ pub struct SegmentReceipt {
     pub frames: u64,
     pub samples: u64,
     pub audio_padding_samples: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub tail_hold_frames: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub tail_hold_samples: u64,
     pub start_frame: u64,
     pub start_sample: u64,
     pub decoded_picture_sha256: String,
     pub decoded_audio_sha256: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub geometry_verification: Option<GeometryVerification>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame_rate_verification: Option<FrameRateVerification>,
 }
 
 #[derive(Debug, Serialize)]
@@ -663,6 +714,23 @@ fn verify_color_space_declaration(
     Ok(())
 }
 
+fn verify_color_range_declaration(
+    source: &Path,
+    space: Option<&str>,
+    inputs: &(impl scene_delivery::InputFiles + ?Sized),
+) -> Result<()> {
+    let original = decoded_digest_with_options(source, true, 0, None, "rgb24", inputs)?;
+    let filter = match space {
+        Some(space) => format!("setparams=range=limited:colorspace={space}"),
+        None => "setparams=range=limited".into(),
+    };
+    let declared = decoded_digest_with_options(source, true, 0, Some(&filter), "rgb24", inputs)?;
+    if declared != original {
+        bail!("unspecified display range declaration changes decoded source colors");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod color_declaration_tests {
     use super::*;
@@ -805,6 +873,17 @@ fn decoded_digest_command(
 }
 
 fn selected_receipt(segment: &Segment, language: &str, receipt: &serde_json::Value) -> Result<()> {
+    if segment.master_proof_validator.is_some() && segment.master_proof.is_none() {
+        bail!("master proof validator requires a master proof");
+    }
+    if segment.master_proof.is_some()
+        && (segment.kind != SegmentKind::Scene
+            || segment.semantic_delivery.is_none()
+            || segment.imported_source_manifest.is_some()
+            || segment.imported_source_root.is_some())
+    {
+        bail!("scene master proof requires a semantic-scoped direct delivery receipt");
+    }
     if receipt["schema"] == "reel.scene-delivery-receipt.v0.1" {
         if segment.kind != SegmentKind::Scene
             || segment.semantic_delivery.is_none()
@@ -1603,6 +1682,8 @@ fn native_presentation(
         || segment.semantic_delivery.is_some()
         || segment.imported_source_manifest.is_some()
         || segment.imported_source_root.is_some()
+        || segment.master_proof.is_some()
+        || segment.master_proof_validator.is_some()
         || segment.master.sha256 != proof.selected().sha256
         || segment.master.bytes != proof.selected().bytes
         || segment.source_receipt.sha256 != sha(&raw)
@@ -1640,6 +1721,8 @@ fn native_scene(
         || segment.imported_source_manifest.is_some()
         || segment.imported_source_root.is_some()
         || segment.source_text_evidence.is_some()
+        || segment.master_proof.is_some()
+        || segment.master_proof_validator.is_some()
         || segment.master.sha256 != proof.selected().sha256
         || segment.master.bytes != proof.selected().bytes
         || segment.source_receipt.sha256 != sha(&raw)
@@ -1878,6 +1961,7 @@ fn build_impl(
     {
         bail!("unsupported episode audio frame conform policy");
     }
+    manifest.validate_clock_and_range()?;
     if manifest.schema != SCHEMA
         || manifest.episode_id.is_empty()
         || !matches!(manifest.language.as_str(), "es" | "en")
@@ -2171,7 +2255,29 @@ fn build_impl(
                             .context("missing provided scene inputs")?;
                         let mut reference = delivery_ref.clone();
                         reference.path = "receipt.json".into();
-                        if let Some(controls) = provided_controls {
+                        if let Some(proof) = &segment.master_proof {
+                            let proof_files = scene_delivery::MasterProofFiles {
+                                inputs: *inputs,
+                                outputs: files,
+                                evidence: controls.unwrap_or(&local_controls),
+                                receipt: &reference,
+                                proof,
+                                validator: segment.master_proof_validator.as_ref(),
+                            };
+                            if let Some(controls) = provided_controls {
+                                scene_delivery::recheck_master_proof_with_all_files(
+                                    job_ref,
+                                    controls.production,
+                                    controls.files,
+                                    &proof_files,
+                                )?
+                            } else {
+                                scene_delivery::recheck_master_proof_with_output_files(
+                                    job_path.as_ref().context("local job path missing")?,
+                                    &proof_files,
+                                )?
+                            }
+                        } else if let Some(controls) = provided_controls {
                             scene_delivery::check_with_all_files(
                                 job_ref,
                                 controls.production,
@@ -2208,7 +2314,48 @@ fn build_impl(
                         if master != delivery_root.join("master.mkv") {
                             bail!("selected scene master is outside rechecked delivery directory");
                         }
-                        if let Some(inputs) = scene_inputs {
+                        if let Some(proof) = &segment.master_proof {
+                            let proof_path = scene_delivery::checked_file(input_root, proof)?;
+                            let validator = segment
+                                .master_proof_validator
+                                .as_ref()
+                                .map(|item| scene_delivery::checked_file(input_root, item))
+                                .transpose()?;
+                            if let Some(inputs) = scene_inputs {
+                                let inputs = inputs
+                                    .get(&segment.id)
+                                    .context("missing provided scene inputs")?;
+                                let evidence = input_root.to_path_buf();
+                                let mut reference = delivery_ref.clone();
+                                reference.path = "receipt.json".into();
+                                scene_delivery::recheck_master_proof_with_output_files(
+                                    job_path,
+                                    &scene_delivery::MasterProofFiles {
+                                        inputs: *inputs,
+                                        outputs: &delivery_root.to_path_buf(),
+                                        evidence: &evidence,
+                                        receipt: &reference,
+                                        proof,
+                                        validator: segment.master_proof_validator.as_ref(),
+                                    },
+                                )?
+                            } else if let Some(validator) = validator.as_deref() {
+                                scene_delivery::recheck_master_proof_with_validator(
+                                    job_path,
+                                    asset_root,
+                                    delivery_root,
+                                    &proof_path,
+                                    validator,
+                                )?
+                            } else {
+                                scene_delivery::recheck_master_proof(
+                                    job_path,
+                                    asset_root,
+                                    delivery_root,
+                                    &proof_path,
+                                )?
+                            }
+                        } else if let Some(inputs) = scene_inputs {
                             let inputs = inputs
                                 .get(&segment.id)
                                 .context("missing provided scene inputs")?;
@@ -2406,6 +2553,31 @@ fn build_impl(
     for (index, (segment, source)) in manifest.segments.iter().zip(&sources).enumerate() {
         let facts = probe_with_inputs(source, programs)?;
         let mut output_facts = facts.clone();
+        let assumed_color_range = if let Some(range) = manifest
+            .output_geometry
+            .as_ref()
+            .and_then(|g| g.assume_color_range_for_unspecified.as_ref())
+        {
+            if range != "tv" {
+                bail!("unsupported unspecified color-range declaration");
+            }
+            (facts.color_properties["color_range"] == "unknown").then(|| range.clone())
+        } else {
+            None
+        };
+        if let Some(range) = &assumed_color_range {
+            output_facts
+                .color_properties
+                .insert("color_range".into(), range.clone());
+        }
+        let frame_filter = if let Some(rate) = &manifest.output_frame_rate {
+            let filter = rate.filter(&facts.fps)?;
+            let (n, d) = rate.clock()?;
+            output_facts.fps = format!("{n}/{d}");
+            filter
+        } else {
+            None
+        };
         let assumed_color_space = if let Some(space) = manifest
             .output_geometry
             .as_ref()
@@ -2472,6 +2644,18 @@ fn build_impl(
                 None => declaration,
             });
         }
+        if let Some(filter) = frame_filter {
+            scale_filter = Some(match scale_filter {
+                Some(existing) => format!("{existing},{filter}"),
+                None => filter,
+            });
+        }
+        if assumed_color_range.is_some() {
+            scale_filter = Some(match scale_filter {
+                Some(existing) => format!("{existing},setparams=range=limited"),
+                None => "setparams=range=limited".into(),
+            });
+        }
         if segment.kind == SegmentKind::Scene
             && facts.video_codec == "h264"
             && (segment.delivery_job.is_none() || segment.delivery_receipt.is_none())
@@ -2480,7 +2664,7 @@ fn build_impl(
             bail!("H264 scene requires its verified delivery or sealed primary-reference proof");
         }
         if let Some(first) = &common {
-            if manifest.output_geometry.is_some()
+            if (manifest.output_geometry.is_some() || manifest.output_frame_rate.is_some())
                 && output_facts.color_properties != first.color_properties
             {
                 bail!("explicit output geometry requires consistent source color properties");
@@ -2520,7 +2704,7 @@ fn build_impl(
             if let Some(filter) = &scale_filter {
                 encoder.args(["-vf", filter]);
             }
-            if manifest.output_geometry.is_some() {
+            if manifest.output_geometry.is_some() || manifest.output_frame_rate.is_some() {
                 for (key, flag) in [
                     ("color_range", "-color_range"),
                     ("color_space", "-colorspace"),
@@ -2579,7 +2763,8 @@ fn build_impl(
         if selected_facts.sample_rate != manifest.output_sample_rate {
             bail!("normalization sample rate mismatch");
         }
-        let (picture_hash, picture_bytes) = decoded_digest_with_inputs(&selected, true, programs)?;
+        let (mut picture_hash, picture_bytes) =
+            decoded_digest_with_inputs(&selected, true, programs)?;
         let (mut audio_hash, audio_bytes) = decoded_digest_with_inputs(&selected, false, programs)?;
         let frame_bytes = selected_facts.width * selected_facts.height * 3;
         if picture_bytes == 0
@@ -2589,7 +2774,7 @@ fn build_impl(
         {
             bail!("decoded segment does not contain complete frames/stereo samples");
         }
-        let frames = picture_bytes / frame_bytes;
+        let mut frames = picture_bytes / frame_bytes;
         let mut samples = audio_bytes / 6;
         let mut geometry_verification = None;
         let (input_frames, input_samples) = if !needs_normalization {
@@ -2597,7 +2782,9 @@ fn build_impl(
         } else {
             let (source_picture_hash, source_picture_bytes) =
                 decoded_digest_with_inputs(source, true, programs)?;
-            if let Some(space) = &assumed_color_space {
+            if assumed_color_range.is_some() {
+                verify_color_range_declaration(source, assumed_color_space.as_deref(), programs)?;
+            } else if let Some(space) = &assumed_color_space {
                 verify_color_space_declaration(source, space, programs)?;
             }
             let (source_audio_hash, source_audio_bytes) =
@@ -2610,7 +2797,10 @@ fn build_impl(
             let source_frame_bytes = facts.width * facts.height * 3;
             if source_picture_bytes == 0
                 || source_picture_bytes % source_frame_bytes != 0
-                || source_picture_bytes / source_frame_bytes != frames
+                || manifest.output_frame_rate.as_ref().map_or_else(
+                    || Ok(source_picture_bytes / source_frame_bytes),
+                    |rate| rate.frames(source_picture_bytes / source_frame_bytes, &facts.fps),
+                )? != frames
                 || expected_picture != (picture_hash.clone(), picture_bytes)
                 || source_audio_bytes % 6 != 0
                 || (facts.sample_rate == manifest.output_sample_rate
@@ -2632,6 +2822,7 @@ fn build_impl(
                     input_sample_aspect_ratio: facts.sample_aspect_ratio.clone(),
                     sample_aspect_ratio_assumed_square: assumed_square,
                     assumed_color_space: assumed_color_space.clone(),
+                    assumed_color_range: assumed_color_range.clone(),
                     color_properties: facts.color_properties.clone(),
                     output_width: selected_facts.width,
                     output_height: selected_facts.height,
@@ -2643,6 +2834,20 @@ fn build_impl(
             }
             (source_picture_bytes / source_frame_bytes, input_samples)
         };
+        let frame_rate_verification = if manifest.output_frame_rate.is_some() {
+            Some(FrameRateVerification {
+                input_fps: facts.fps.clone(),
+                output_fps: selected_facts.fps.clone(),
+                input_frames,
+                output_frames: frames,
+                repeated_frames: frames
+                    .checked_sub(input_frames)
+                    .context("repeat-only normalization discarded source frames")?,
+                transformed_source_matches_selected: true,
+            })
+        } else {
+            None
+        };
         if manifest.output_geometry.is_some() && geometry_verification.is_none() {
             geometry_verification = Some(GeometryVerification {
                 input_width: facts.width,
@@ -2650,6 +2855,7 @@ fn build_impl(
                 input_sample_aspect_ratio: facts.sample_aspect_ratio.clone(),
                 sample_aspect_ratio_assumed_square: assumed_square,
                 assumed_color_space: assumed_color_space.clone(),
+                assumed_color_range: assumed_color_range.clone(),
                 color_properties: facts.color_properties.clone(),
                 output_width: selected_facts.width,
                 output_height: selected_facts.height,
@@ -2663,7 +2869,7 @@ fn build_impl(
                 bail!("presentation decoded media differs from its source receipt");
             }
         }
-        if manifest.output_geometry.is_some() {
+        if manifest.output_geometry.is_some() || manifest.output_frame_rate.is_some() {
             let (num, den) = fps_parts(&facts.fps)?;
             episode_delivery::verify_timestamps_with_inputs(
                 source,
@@ -2693,10 +2899,17 @@ fn build_impl(
             audio_padding_samples = target
                 .checked_sub(samples)
                 .context("native audio exceeds selected picture boundary; trimming is forbidden")?;
-            if u128::from(audio_padding_samples) * u128::from(num)
-                > u128::from(manifest.output_sample_rate) * u128::from(den) + u128::from(num)
-            {
-                bail!("frame conform padding exceeds one frame");
+            let maximum_padding = if let Some(rate) = &manifest.output_frame_rate {
+                rate.padding_limit(manifest.output_sample_rate, &facts.fps)?
+            } else {
+                u64::try_from(
+                    (u128::from(manifest.output_sample_rate) * u128::from(den)) / u128::from(num)
+                        + 1,
+                )
+                .context("frame padding clock overflow")?
+            };
+            if audio_padding_samples > maximum_padding {
+                bail!("frame conform padding exceeds source and output clock bounds");
             }
             if audio_padding_samples != 0 {
                 let expected = decoded_digest_with_options(
@@ -2730,6 +2943,45 @@ fn build_impl(
                 samples = actual.1 / 6;
             }
         }
+        let mut tail_hold_samples = 0;
+        if segment.tail_hold_frames != 0 {
+            let (num, den) = fps_parts(&selected_facts.fps)?;
+            tail_hold_samples = holds::hold_samples(
+                segment.tail_hold_frames,
+                frame_cursor
+                    .checked_add(frames)
+                    .context("hold frame clock overflow")?,
+                manifest.output_sample_rate,
+                num,
+                den,
+            )?;
+            let held = temp.path().join(format!("held-{index:03}.mkv"));
+            let (picture, audio) = holds::append_silent_picture_hold(
+                &selected,
+                &held,
+                segment.tail_hold_frames,
+                tail_hold_samples,
+                target_codec,
+                programs,
+            )?;
+            frames = frames
+                .checked_add(segment.tail_hold_frames)
+                .context("hold frame overflow")?;
+            samples = samples
+                .checked_add(tail_hold_samples)
+                .context("hold sample overflow")?;
+            if picture.1
+                != frames
+                    .checked_mul(frame_bytes)
+                    .context("hold picture overflow")?
+                || audio.1 != samples.checked_mul(6).context("hold audio overflow")?
+            {
+                bail!("silent picture hold has wrong frame or sample count");
+            }
+            selected = held;
+            picture_hash = picture.0;
+            audio_hash = audio.0;
+        }
         records.push(SegmentReceipt {
             kind: if segment.kind == SegmentKind::Scene {
                 "scene"
@@ -2750,11 +3002,14 @@ fn build_impl(
             frames,
             samples,
             audio_padding_samples,
+            tail_hold_frames: segment.tail_hold_frames,
+            tail_hold_samples,
             start_frame: frame_cursor,
             start_sample: sample_cursor,
             decoded_picture_sha256: picture_hash,
             decoded_audio_sha256: audio_hash,
             geometry_verification,
+            frame_rate_verification,
         });
         frame_cursor += frames;
         sample_cursor += samples;

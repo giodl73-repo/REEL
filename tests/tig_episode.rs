@@ -204,6 +204,25 @@ impl Fixture {
     }
 }
 #[test]
+fn explicit_tail_holds_remain_visible_in_a_non_executable_composition_plan() {
+    let mut f = Fixture::new();
+    f.conform_edit(|v| {
+        v["segments"][1]["tail_hold_frames"] = json!(24);
+        v["output_frame_rate"] = json!({"numerator":24,"denominator":1,"policy":"repeat-only"});
+        v["audio_frame_conform"] = json!("pad-silence-to-picture-boundaries");
+    });
+    let mut source = f.source();
+    let plan = tig_episode::plan(&mut source, &f.request()).unwrap();
+    assert_eq!(plan.components[1].tail_hold_frames, 24);
+    assert_eq!(plan.components[0].tail_hold_frames, 0);
+    assert_eq!(plan.output_frame_rate.as_ref().unwrap().numerator, 24);
+    assert!(!plan.executable);
+    assert!(!plan.payloads_verified);
+    assert!(!plan.production_currency_verified);
+    assert_eq!(source.byte_requests(), 2);
+}
+
+#[test]
 fn order_comes_from_native_conform_and_outputs_are_not_opened_or_promoted() {
     let f = Fixture::new();
     let mut source = f.source();

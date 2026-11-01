@@ -141,6 +141,39 @@ fn ordered_geometry_fixture(
     unspecified: bool,
     color_declaration: bool,
 ) {
+    ordered_geometry_fixture_with_hold(
+        adopt,
+        clock_transition,
+        reuse_cache,
+        mixed,
+        unspecified,
+        color_declaration,
+        0,
+        None,
+    );
+}
+
+#[test]
+fn explicit_silent_holds_preserve_selected_scene_and_presentation_sources() {
+    ordered_geometry_fixture_with_hold(true, false, false, false, false, false, 48, None);
+}
+
+#[test]
+fn repeat_only_clock_and_declared_unknown_range_preserve_bilingual_source_content() {
+    ordered_geometry_fixture_with_hold(false, false, false, false, false, false, 0, Some(30));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ordered_geometry_fixture_with_hold(
+    adopt: bool,
+    clock_transition: bool,
+    reuse_cache: bool,
+    mixed: bool,
+    unspecified: bool,
+    color_declaration: bool,
+    tail_hold_frames: u64,
+    output_rate: Option<u32>,
+) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     fs::write(root.join("clean-picture.bin"), b"selected clean background").unwrap();
@@ -384,6 +417,9 @@ fn ordered_geometry_fixture(
                 "id":id,"master":reference(root,&format!("{id}-{lang}.mkv")),
                 "source_receipt":reference(root,&format!("{id}-{lang}-receipt.json"))
             });
+            if tail_hold_frames != 0 {
+                item["tail_hold_frames"] = tail_hold_frames.into();
+            }
             if id.starts_with("display") {
                 item["source_text_evidence"] = reference(root, &format!("{id}-{lang}-text.json"));
                 if adopt {
@@ -469,6 +505,30 @@ fn ordered_geometry_fixture(
                     "bt470bg".into();
             }
         }
+        if let Some(rate) = output_rate {
+            manifest["output_frame_rate"] =
+                json!({"numerator":rate,"denominator":1,"policy":"repeat-only"});
+            write(&root.join(&manifest_name), &manifest);
+            let rejected = run(root, &manifest_name, &format!("no-audio-policy-{lang}"));
+            assert!(!rejected.status.success());
+            assert!(String::from_utf8_lossy(&rejected.stderr).contains("non-trimming"));
+            manifest["audio_frame_conform"] = "pad-silence-to-picture-boundaries".into();
+            manifest["output_geometry"] = json!({"width":64,"height":64,"policy":"preserve-aspect-lanczos","assume_color_range_for_unspecified":"pc"});
+            write(&root.join(&manifest_name), &manifest);
+            let rejected = run(root, &manifest_name, &format!("invalid-range-{lang}"));
+            assert!(!rejected.status.success());
+            assert!(
+                String::from_utf8_lossy(&rejected.stderr)
+                    .contains("unsupported unspecified color-range")
+            );
+            manifest["output_geometry"]["assume_color_range_for_unspecified"] = "tv".into();
+            manifest["output_frame_rate"]["numerator"] = 23.into();
+            write(&root.join(&manifest_name), &manifest);
+            let rejected = run(root, &manifest_name, &format!("discarded-frames-{lang}"));
+            assert!(!rejected.status.success());
+            assert!(String::from_utf8_lossy(&rejected.stderr).contains("discard source frames"));
+            manifest["output_frame_rate"]["numerator"] = rate.into();
+        }
         write(&root.join(&manifest_name), &manifest);
         let output = run(root, &manifest_name, &format!("output-{lang}"));
         assert!(
@@ -480,11 +540,27 @@ fn ordered_geometry_fixture(
             &fs::read(root.join(format!("output-{lang}/receipt.json"))).unwrap(),
         )
         .unwrap();
-        assert_eq!(receipt["total_frames"], 96);
+        assert_eq!(
+            receipt["total_frames"],
+            4 * u64::from(output_rate.unwrap_or(24)) + 4 * tail_hold_frames
+        );
         assert_eq!(
             receipt["total_samples"],
-            if clock_transition { 176_400 } else { 192_000 }
+            if clock_transition {
+                176_400
+            } else {
+                192_000 + 4 * tail_hold_frames * 2000
+            }
         );
+        if tail_hold_frames != 0 {
+            for segment in receipt["segments"].as_array().unwrap() {
+                assert_eq!(segment["input_frames"], 24);
+                assert_eq!(segment["frames"], 24 + tail_hold_frames);
+                assert_eq!(segment["tail_hold_frames"], tail_hold_frames);
+                assert_eq!(segment["tail_hold_samples"], tail_hold_frames * 2000);
+                assert_eq!(segment["input_samples"], 48000);
+            }
+        }
         assert_eq!(receipt["decoded_master_matches_ordered_segments"], true);
         assert_eq!(receipt["timestamps_verified"], true);
         if mixed {
@@ -587,6 +663,22 @@ fn ordered_geometry_fixture(
                 "{}",
                 String::from_utf8_lossy(&rejected.stderr)
             );
+        } else if let Some(rate) = output_rate {
+            assert_eq!(receipt["output_geometry"], manifest["output_geometry"]);
+            for segment in receipt["segments"].as_array().unwrap() {
+                assert_eq!(segment["input_frames"], 24);
+                assert_eq!(segment["input_samples"], 48000);
+                assert_eq!(segment["samples"], 48000);
+                assert_eq!(segment["frame_rate_verification"]["output_frames"], rate);
+                assert_eq!(
+                    segment["frame_rate_verification"]["repeated_frames"],
+                    rate - 24
+                );
+                assert_eq!(
+                    segment["frame_rate_verification"]["transformed_source_matches_selected"],
+                    true
+                );
+            }
         } else {
             assert!(receipt.get("output_geometry").is_none());
             assert!(

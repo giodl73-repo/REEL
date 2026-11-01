@@ -10,7 +10,13 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
+mod master_proof;
 mod outputs;
+pub use master_proof::{
+    MasterProof, MasterProofFiles, prove_master, recheck_master_proof,
+    recheck_master_proof_with_all_files, recheck_master_proof_with_output_files,
+    recheck_master_proof_with_validator,
+};
 pub(crate) mod png_sequence;
 pub use outputs::{OutputContract, output_contract};
 

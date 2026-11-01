@@ -110,6 +110,84 @@ impl Fixture {
 }
 
 #[test]
+fn retained_master_witnesses_and_tail_holds_survive_registration_without_payload_reads() {
+    let mut f = Fixture::new();
+    for language in ["es", "en"] {
+        f.edit(language, |v| {
+            v["output_frame_rate"] = json!({"numerator":24,"denominator":1,"policy":"repeat-only"});
+            v["audio_frame_conform"] = json!("pad-silence-to-picture-boundaries");
+            v["output_geometry"] = json!({"width":64,"height":64,"policy":"preserve-aspect-lanczos","assume_color_range_for_unspecified":"tv"});
+            v["segments"][0]["tail_hold_frames"] = json!(24);
+            v["segments"][0]["master_proof"] = reference(b"proof not hydrated");
+            v["segments"][0]["master_proof_validator"] = reference(b"validator not hydrated");
+        });
+    }
+    let result = f.run();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    for language in ["es", "en"] {
+        let record: Value = serde_json::from_slice(
+            &fs::read(
+                f.root
+                    .path()
+                    .join(format!("candidates/inputs/{language}.tig")),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let original = f.conform(language);
+        assert_eq!(original["segments"][0]["tail_hold_frames"], 24);
+        assert_eq!(
+            record["streams"][0]["object"],
+            f.profile["conforms"][language]
+        );
+        for (slot, field) in [
+            ("master-proof", "master_proof"),
+            ("master-proof-validator", "master_proof_validator"),
+        ] {
+            let stream = record["streams"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|s| s["slot"] == slot)
+                .unwrap();
+            assert_eq!(
+                stream["object"]["sha256"],
+                original["segments"][0][field]["sha256"]
+            );
+            assert_eq!(
+                stream["object"]["bytes"],
+                original["segments"][0][field]["bytes"]
+            );
+            assert_eq!(stream["group"], "original-production");
+        }
+        assert_eq!(record["status"]["production_state"], "unclassified");
+    }
+}
+
+#[test]
+fn unsupported_clock_or_range_policies_refuse_before_candidate_creation() {
+    for case in 0..5 {
+        let mut f = Fixture::new();
+        f.edit("es", |v| {
+            v["output_frame_rate"] = json!({"numerator":24,"denominator":1,"policy":"repeat-only"});
+            v["audio_frame_conform"] = json!("pad-silence-to-picture-boundaries");
+            match case {
+                0 => v["output_frame_rate"]["numerator"] = json!(0),
+                1 => v["output_frame_rate"]["denominator"] = json!(0),
+                2 => v["output_frame_rate"]["policy"] = json!("drop"),
+                3 => { v.as_object_mut().unwrap().remove("audio_frame_conform"); },
+                _ => v["output_geometry"] = json!({"width":64,"height":64,"policy":"preserve-aspect-lanczos","assume_color_range_for_unspecified":"pc"}),
+            }
+        });
+        f.refused();
+    }
+}
+
+#[test]
 fn independent_outputs_preserve_exact_provenance_without_reading_any_media_or_claiming_currency() {
     let f = Fixture::new();
     let result = f.run();

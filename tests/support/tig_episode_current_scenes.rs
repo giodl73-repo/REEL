@@ -22,6 +22,20 @@ fn sparse_scene_edit_compiles_parent_without_manual_conform_or_old_movie() {
         .map(|index| p.render_delivery(index, "v1"))
         .collect::<Vec<_>>();
     p.assemble(&scenes, "v1");
+    // Retained legacy witnesses are not the new sealed native proofs. They
+    // must be cleared during replacement without hydrating absent evidence.
+    let baseline_path = p.data.path().join("episode-v1.json");
+    let mut baseline = read(&baseline_path);
+    for segment in baseline["segments"].as_array_mut().unwrap() {
+        segment["master_proof"] =
+            json!({"path":"legacy/proof.json","sha256":"a".repeat(64),"bytes":17});
+        segment["master_proof_validator"] =
+            json!({"path":"legacy/validator.exe","sha256":"b".repeat(64),"bytes":19});
+    }
+    baseline["segments"][0]["tail_hold_frames"] = json!(1);
+    baseline["output_frame_rate"] = json!({"numerator":24,"denominator":1,"policy":"repeat-only"});
+    baseline["audio_frame_conform"] = json!("pad-silence-to-picture-boundaries");
+    fs::write(&baseline_path, serde_json::to_vec(&baseline).unwrap()).unwrap();
     let request = add_episode_assembly(&mut p, "episode-v1.json");
     let original_conform = tig_episode::plan(&mut p.source(), &request)
         .unwrap()
@@ -322,7 +336,11 @@ fn sparse_scene_edit_compiles_parent_without_manual_conform_or_old_movie() {
         )
         .unwrap();
     assert!(rendered.receipt().decoded_master_matches_ordered_segments);
+    let held = &rendered.receipt().segments[0];
+    assert_eq!(held.tail_hold_frames, 1);
+    assert_eq!(held.frames, held.input_frames + 1);
+    assert!(held.tail_hold_samples > 0);
     assert!(rendered.receipt().timestamps_verified);
-    assert_eq!(rendered.receipt().total_frames, 96);
+    assert_eq!(rendered.receipt().total_frames, 97);
     assert!(!object_file(&p.hot(), old.subject.subject().object()).exists());
 }

@@ -90,6 +90,8 @@ impl CurrentControls {
                         "adoption_manifest",
                         "delivery_job",
                         "delivery_receipt",
+                        "master_proof",
+                        "master_proof_validator",
                         "semantic_delivery",
                         "imported_source_manifest",
                         "imported_source_root",
@@ -115,6 +117,8 @@ impl CurrentControls {
                         "imported_source_manifest",
                         "imported_source_root",
                         "adoption_manifest",
+                        "master_proof",
+                        "master_proof_validator",
                     ] {
                         fields.remove(key);
                     }
@@ -148,6 +152,8 @@ impl CurrentControls {
                 "adoption_manifest",
                 "delivery_job",
                 "delivery_receipt",
+                "master_proof",
+                "master_proof_validator",
                 "semantic_delivery",
                 "imported_source_manifest",
                 "imported_source_root",
