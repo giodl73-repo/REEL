@@ -72,6 +72,8 @@ jobs:
       - name: Verify native Tig source guards, versions and archived-source rendering
         if: runner.os == 'Windows'
         run: |
+          cargo test --all-features --test tig_inputs recording_clock::archived_recording_clock_renders_primary_bytes_without_git_or_narration --locked -- --ignored --exact
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --features tig --test tig_inputs native_tig_cli_renders_two_cels_shared_cue_then_replaces_only_cel_b --locked -- --ignored --exact
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --all-features --test tig_inputs native_render_candidate_claims_only_independently_checked_matching_bytes --locked -- --ignored --exact
