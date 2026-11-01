@@ -2024,6 +2024,49 @@ pub fn render_with_inputs(
     output: &Path,
 ) -> Result<Receipt> {
     let (job, plan) = plan_with_inputs(job_path, asset_root)?;
+    render_planned(job, plan, asset_root, output, |root| {
+        check_with_inputs(job_path, asset_root, root)
+    })
+}
+
+/// Render from explicit hash-bound control providers. Media and program lookup
+/// remain on `inputs`; no loose control files or source checkout are consulted.
+pub fn render_with_control_files(
+    job: &FileRef,
+    production: &FileRef,
+    inputs: &(impl InputFiles + ?Sized),
+    controls: &(impl InputFiles + ?Sized),
+    output: &Path,
+) -> Result<Receipt> {
+    let (parsed, plan) = plan_with_control_files(job, production, inputs, controls)?;
+    render_planned(parsed, plan, inputs, output, |root| {
+        let mut bytes = Vec::new();
+        fs::File::open(root.join("receipt.json"))?
+            .take(4 * 1024 * 1024 + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() > 4 * 1024 * 1024 {
+            bail!("delivery receipt exceeds metadata budget");
+        }
+        let sha256 = <sha2::Sha256 as sha2::Digest>::digest(&bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let receipt = FileRef {
+            path: "receipt.json".into(),
+            sha256,
+            bytes: bytes.len() as u64,
+        };
+        check_with_all_files(job, production, inputs, root, &receipt, controls)
+    })
+}
+
+fn render_planned(
+    job: Job,
+    plan: Plan,
+    asset_root: &(impl InputFiles + ?Sized),
+    output: &Path,
+    verify: impl FnOnce(&Path) -> Result<Receipt>,
+) -> Result<Receipt> {
     if job
         .still_sequence_encoding
         .as_deref()
@@ -2269,7 +2312,7 @@ pub fn render_with_inputs(
         root.join("receipt.json"),
         serde_json::to_vec_pretty(&receipt)?,
     )?;
-    let verified = check_with_inputs(job_path, asset_root, root)?;
+    let verified = verify(root)?;
     if serde_json::to_vec(&receipt.outputs)? != serde_json::to_vec(&verified.outputs)? {
         bail!("render and independent check disagree on output bytes");
     }

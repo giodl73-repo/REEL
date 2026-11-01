@@ -8,6 +8,7 @@ pub(super) enum ContextMode {
     #[default]
     Declared,
     Compiled,
+    Delivery,
 }
 impl ContextMode {
     pub(super) fn is_declared(&self) -> bool {
@@ -39,7 +40,11 @@ pub(crate) fn metadata_allowance(root: &Path, database_bytes: u64, bootstrap: u6
         .ok_or_else(|| anyhow::anyhow!("metadata allocation allowance overflow"))
 }
 pub(super) fn worker_allowance(profile: &Profile) -> Result<u64> {
-    if profile.worker.context_mode == ContextMode::Declared {
+    profile
+        .worker
+        .request
+        .check_mode(profile.worker.context_mode)?;
+    if profile.worker.context_mode != ContextMode::Compiled {
         return Ok(0);
     }
     profile
@@ -71,7 +76,7 @@ impl Preparation {
         Ok(root)
     }
     pub(super) fn open(profile: &Profile) -> Result<Option<Self>> {
-        if profile.worker.context_mode == ContextMode::Declared {
+        if profile.worker.context_mode != ContextMode::Compiled {
             if profile.preparation_cache.is_some() {
                 bail!("legacy context cannot select compiled preparation cache");
             }

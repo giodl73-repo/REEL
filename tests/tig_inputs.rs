@@ -5,6 +5,8 @@ mod candidate_publication;
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_capture.rs"]
 mod capture;
+#[path = "support/tig_delivery_template.rs"]
+mod delivery_template;
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_episode_lifecycle.rs"]
 mod fake_episode_lifecycle;
@@ -760,6 +762,8 @@ fn native_render_candidate_refuses_foreign_context_before_payload_or_output_io()
 #[test]
 #[ignore = "requires native FFmpeg; native render-to-candidate-claim handoff"]
 fn native_render_candidate_claims_only_independently_checked_matching_bytes() {
+    #[cfg(feature = "tig-publication")]
+    let _ = native_cli::require_propose_tool();
     use reel::tig_scene_production::{self, OutputBinding};
     use tig_assets::{
         graph::Reference,

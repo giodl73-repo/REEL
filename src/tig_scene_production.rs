@@ -300,6 +300,16 @@ fn render_inner(
     }
     let rendered = scene_delivery::render_with_inputs(&job_path, execution, output)?;
     let receipt = scene_delivery::check_with_inputs(&job_path, execution, output)?;
+    checked_candidate(recipe, context, output, rendered, receipt)
+}
+
+fn checked_candidate(
+    recipe: Plan,
+    context: &ProductionContext,
+    output: &Path,
+    rendered: Receipt,
+    receipt: Receipt,
+) -> Result<RenderedCandidate> {
     let bytes = receipt_bytes(output)?;
     let reread: Receipt = serde_json::from_slice(&bytes)?;
     if serde_json::to_value(&rendered)? != serde_json::to_value(&receipt)?
@@ -318,4 +328,116 @@ fn render_inner(
         receipt_object,
         output: output.canonicalize()?,
     })
+}
+
+/// Render a frozen delivery template with guarded primary and declared runtime
+/// capabilities. Caller must first own/admit source, runtime, output capacity and
+/// scratch through the existing job system. No source enrollment occurs here.
+pub fn render_delivery_with_programs(
+    source: &mut Source,
+    request: &crate::tig_delivery_template::Request,
+    context: &ProductionContext,
+    programs: &crate::media_runtime::BoundPrograms,
+    output: &Path,
+) -> Result<RenderedCandidate> {
+    render_delivery_with_programs_and_outputs(source, request, context, programs, output, None)
+}
+pub(crate) fn render_delivery_with_programs_and_outputs(
+    source: &mut Source,
+    request: &crate::tig_delivery_template::Request,
+    context: &ProductionContext,
+    programs: &crate::media_runtime::BoundPrograms,
+    output: &Path,
+    expected: Option<&BTreeSet<String>>,
+) -> Result<RenderedCandidate> {
+    let producer = Object::from_bytes(programs.manifest_bytes());
+    let recipe = crate::tig_delivery_template::recipe(source, request, context, &producer)?;
+    if output.symlink_metadata().is_ok() {
+        bail!("delivery candidate requires a new output directory");
+    }
+    let prepared = crate::tig_delivery_template::lower(source, request)?;
+    let inputs = source.prepare(&prepared.job)?;
+    let execution = programs.with_inputs(&inputs);
+    let controls = DeliveryControls::new(prepared)?;
+    if let Some(expected) = expected {
+        let (job, plan) = scene_delivery::plan_with_control_files(
+            &controls.job,
+            &controls.production,
+            &execution,
+            &controls,
+        )?;
+        let mut actual = scene_delivery::output_contract(&job, &plan)?.names;
+        actual.insert("receipt.json".into());
+        if &actual != expected {
+            bail!("delivery worker output set differs from admission");
+        }
+    }
+    let rendered = scene_delivery::render_with_control_files(
+        &controls.job,
+        &controls.production,
+        &execution,
+        &controls,
+        output,
+    )?;
+    let bytes = receipt_bytes(output)?;
+    let receipt_ref = crate::scene_delivery::FileRef {
+        path: "receipt.json".into(),
+        sha256: Object::from_bytes(&bytes).sha256.as_str().into(),
+        bytes: bytes.len() as u64,
+    };
+    let receipt = scene_delivery::check_with_all_files(
+        &controls.job,
+        &controls.production,
+        &execution,
+        output,
+        &receipt_ref,
+        &controls,
+    )?;
+    checked_candidate(recipe, context, output, rendered, receipt)
+}
+
+pub(crate) struct DeliveryControls {
+    pub(crate) job: scene_delivery::FileRef,
+    pub(crate) production: scene_delivery::FileRef,
+    bytes: std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>,
+}
+impl DeliveryControls {
+    pub(crate) fn new(prepared: crate::tig_delivery_template::Prepared) -> Result<Self> {
+        let bytes: std::collections::BTreeMap<PathBuf, Vec<u8>> =
+            std::collections::BTreeMap::from([
+                ("job.json".into(), serde_json::to_vec(&prepared.job)?),
+                ("contract.json".into(), prepared.contract_bytes),
+                ("production.json".into(), prepared.production_bytes),
+            ]);
+        let reference = |name: &str| {
+            let raw = &bytes[Path::new(name)];
+            let pin = Object::from_bytes(raw);
+            scene_delivery::FileRef {
+                path: name.into(),
+                sha256: pin.sha256.as_str().into(),
+                bytes: pin.bytes,
+            }
+        };
+        Ok(Self {
+            job: reference("job.json"),
+            production: reference("production.json"),
+            bytes,
+        })
+    }
+}
+impl scene_delivery::InputFiles for DeliveryControls {
+    fn verified_path(&self, _: &scene_delivery::FileRef) -> Result<PathBuf> {
+        bail!("delivery controls are in-memory bytes, not media paths")
+    }
+    fn control_bytes(&self, reference: &scene_delivery::FileRef) -> Result<Vec<u8>> {
+        let raw = self
+            .bytes
+            .get(&reference.path)
+            .ok_or_else(|| anyhow::anyhow!("unprepared delivery control"))?;
+        let pin = Object::from_bytes(raw);
+        if pin.sha256.as_str() != reference.sha256 || pin.bytes != reference.bytes {
+            bail!("delivery control pin differs");
+        }
+        Ok(raw.clone())
+    }
 }

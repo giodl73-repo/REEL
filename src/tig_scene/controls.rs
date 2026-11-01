@@ -6,7 +6,7 @@ pub(super) struct Catalog {
     pub ids: BTreeMap<String, String>,
     fields: BTreeMap<String, String>,
 }
-pub(super) struct Materialized {
+pub(crate) struct Materialized {
     pub bytes: Vec<u8>,
     pub pin: Object,
     pub authored: Option<Value>,
@@ -20,7 +20,7 @@ pub(super) fn rule() -> Rule {
         binding: Binding::SnapshotSelected,
     }
 }
-pub(super) fn payloads(payload: &Payload) -> Payloads {
+pub(crate) fn payloads(payload: &Payload) -> Payloads {
     match payload {
         Payload::Selected {} => Payloads::SelectedObject,
         Payload::Stream { slot } => Payloads::Named {
@@ -29,7 +29,7 @@ pub(super) fn payloads(payload: &Payload) -> Payloads {
         },
     }
 }
-fn prepare(
+pub(crate) fn prepare(
     source: &Source,
     record: &Resolved,
     fields: &BTreeMap<String, String>,

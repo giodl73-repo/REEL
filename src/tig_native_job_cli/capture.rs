@@ -6,6 +6,7 @@ use reel_assets::admission;
 
 const SCHEMA: &str = "reel.tig-native-capture-profile.experimental-1";
 const EPISODE_SCHEMA: &str = "reel.tig-episode-capture-profile.experimental-1";
+const DELIVERY_SCHEMA: &str = "reel.tig-delivery-capture-profile.experimental-1";
 const MAX_OUTPUT: usize = 65_536;
 
 #[derive(Debug)]
@@ -25,7 +26,8 @@ struct Capture {
     metadata_root: PathBuf,
     metadata_minimum: Checkpoint,
     metadata_cache: PathBuf,
-    preparation_cache: PathBuf,
+    #[serde(default)]
+    preparation_cache: Option<PathBuf>,
     cache: Config,
 }
 
@@ -34,10 +36,16 @@ struct Capture {
 enum Contract {
     Scene(Request),
     Episode(crate::tig_episode::Request),
+    Delivery(crate::tig_delivery_template::Request),
 }
 impl Contract {
     fn parse(schema: &str, value: Value) -> Result<Self> {
         match schema {
+            DELIVERY_SCHEMA => {
+                let request: crate::tig_delivery_template::Request = serde_json::from_value(value)?;
+                request.validate()?;
+                Ok(Self::Delivery(request))
+            }
             SCHEMA => {
                 let request: Request = serde_json::from_value(value)?;
                 request.validate()?;
@@ -75,12 +83,18 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
         .coordination_root
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("capture requires shared coordination"))?;
+    let delivery = matches!(&contract, Contract::Delivery(_));
+    if delivery == capture.preparation_cache.is_some() {
+        bail!("only scene/episode capture requires a preparation cache");
+    }
     for root in [
         coordination,
         capture.metadata_root.as_path(),
         capture.metadata_cache.as_path(),
-        capture.preparation_cache.as_path(),
-    ] {
+    ]
+    .into_iter()
+    .chain(capture.preparation_cache.as_deref())
+    {
         existing_absolute(root)?;
     }
     if !output.is_absolute() || output.file_name().is_none() || output.symlink_metadata().is_ok() {
@@ -91,10 +105,10 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
         .ok_or_else(|| anyhow::anyhow!("capture output parent required"))?;
     existing_absolute(parent)?;
     if !capture.cache.cache_roots.contains(&capture.metadata_cache)
-        || !capture
-            .cache
-            .cache_roots
-            .contains(&capture.preparation_cache)
+        || capture
+            .preparation_cache
+            .as_ref()
+            .is_some_and(|root| !capture.cache.cache_roots.contains(root))
     {
         bail!("capture roots must be explicitly configured active caches");
     }
@@ -128,13 +142,14 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
         metadata_bytes,
     )
     .map_err(|_| anyhow::Error::msg(CaptureStage("metadata capacity")))?;
-    let preparation = preparation::Preparation::open_on(
-        &capture.cache,
-        &capture.metadata_root,
-        &capture.preparation_cache,
-        2,
-    )
-    .context(CaptureStage("preparation"))?;
+    let preparation = capture
+        .preparation_cache
+        .as_deref()
+        .map(|root| {
+            preparation::Preparation::open_on(&capture.cache, &capture.metadata_root, root, 2)
+        })
+        .transpose()
+        .context(CaptureStage("preparation"))?;
     let mut source = crate::tig_inputs::Source::open(source_profile)
         .context(CaptureStage("committed source"))?;
     let mut store = Waiting::new(
@@ -145,12 +160,14 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
     if store.inner.limits() != bounds {
         bail!("metadata bounds changed before capture");
     }
-    let before = preparation.path().join("capture");
+    let before = preparation.as_ref().map(|p| p.path().join("capture"));
     let context = match &contract {
         Contract::Scene(request) => tig_scene::freeze_render_context(
             &mut source,
             request,
-            &before,
+            before
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("scene preparation missing"))?,
             &mut store,
             TreeLimits::default(),
         ),
@@ -160,6 +177,13 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
             &mut store,
             TreeLimits::default(),
         ),
+        Contract::Delivery(request) => crate::tig_delivery_template::freeze_context(
+            &mut source,
+            request,
+            &mut store,
+            TreeLimits::default(),
+        )
+        .map(|(_, context)| context),
     }
     .context(CaptureStage("native freeze"))?;
     let mut archive = json!({
@@ -186,11 +210,22 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
             serde_json::from_value(archive.clone())?,
             request,
             context.selection(),
-            &preparation.path().join("readback"),
+            &preparation
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("scene preparation missing"))?
+                .path()
+                .join("readback"),
             &mut reader,
             TreeLimits::default(),
         ),
         Contract::Episode(request) => crate::tig_episode::restore_composition_context(
+            serde_json::from_value(archive.clone())?,
+            request,
+            context.selection(),
+            &mut reader,
+            TreeLimits::default(),
+        ),
+        Contract::Delivery(request) => crate::tig_delivery_template::restore_context(
             serde_json::from_value(archive.clone())?,
             request,
             context.selection(),
@@ -209,11 +244,20 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
     if matches!(&contract, Contract::Scene(_)) {
         for name in ["production.json", "contract.json", "job.json"] {
             if read_bytes(
-                &before.join("delivery").join(name),
+                &before
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("scene preparation missing"))?
+                    .join("delivery")
+                    .join(name),
                 crate::tig_inputs::JOB_BYTES_MAX,
                 None,
             )? != read_bytes(
-                &preparation.path().join("readback/delivery").join(name),
+                &preparation
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("scene preparation missing"))?
+                    .path()
+                    .join("readback/delivery")
+                    .join(name),
                 crate::tig_inputs::JOB_BYTES_MAX,
                 None,
             )? {
@@ -227,15 +271,20 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
     if matches!(&contract, Contract::Scene(_)) {
         fragment["context_mode"] = json!("compiled");
     }
+    if delivery {
+        fragment["context_mode"] = json!("delivery");
+    }
     let bytes = serde_json::to_vec(&fragment)?;
     if bytes.len() > MAX_OUTPUT {
         bail!("capture fragment exceeds budget");
     }
     // Clean only our scratch before publishing a usable fragment. Failed cleanup
     // retains conservative preparation accounting via the existing guard.
-    preparation
-        .finish()
-        .context(CaptureStage("preparation cleanup"))?;
+    if let Some(preparation) = preparation {
+        preparation
+            .finish()
+            .context(CaptureStage("preparation cleanup"))?;
+    }
     let mut file = tempfile::NamedTempFile::new_in(parent)?;
     file.write_all(&bytes)?;
     file.as_file().sync_all()?;
@@ -243,7 +292,7 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
         .map_err(|_| anyhow::anyhow!("capture output publication refused"))?;
     Ok(
         json!({"schema":"reel.tig-native-capture-summary.experimental-1",
-        "context_kind":match contract {Contract::Scene(_)=>"scene",Contract::Episode(_)=>"episode"},
+        "context_kind":match contract {Contract::Scene(_)=>"scene",Contract::Episode(_)=>"episode",Contract::Delivery(_)=>"delivery"},
         "readback_equal":true, "fragment_bytes":bytes.len(),
         "roots":context.roots().len(), "primary":context.requirements().primary().len(),
         "controls":context.requirements().controls().len(), "media_rendered":false,
@@ -267,6 +316,18 @@ pub fn capture_context(profile: &Path, output: &Path) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn delivery_capture_requires_its_own_schema_and_bounded_request_before_store_access() {
+        let mut value = json!({"schema":crate::tig_delivery_template::SCHEMA,"root_id":"delivery/source",
+            "root_definition":"types/root","primary_definitions":["types/media"],"control_definitions":["types/control"]});
+        assert!(matches!(
+            Contract::parse(DELIVERY_SCHEMA, value.clone()).unwrap(),
+            Contract::Delivery(_)
+        ));
+        assert!(Contract::parse(SCHEMA, value.clone()).is_err());
+        value["primary_definitions"] = json!([]);
+        assert!(Contract::parse(DELIVERY_SCHEMA, value).is_err());
+    }
     #[test]
     fn capture_schema_selects_one_strict_request_family_before_store_access() {
         let episode = json!({"schema":crate::tig_episode::SCHEMA,"assembly_id":"assembly/es","assembly_definition":"types/assembly",

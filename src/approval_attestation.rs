@@ -999,7 +999,7 @@ fn finalize_hex(hasher: Sha256) -> String {
         .collect()
 }
 
-fn ensure_no_duplicate_keys(bytes: &[u8]) -> Result<()> {
+pub(crate) fn ensure_no_duplicate_keys(bytes: &[u8]) -> Result<()> {
     let mut deserializer = serde_json::Deserializer::from_slice(bytes);
     StrictShape::deserialize(&mut deserializer).map_err(|error| anyhow!("{error}"))?;
     deserializer.end().map_err(|error| anyhow!("{error}"))?;

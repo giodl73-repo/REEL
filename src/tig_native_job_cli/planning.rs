@@ -102,29 +102,49 @@ pub(super) fn produce(
         .output_budget
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("planning requires output budget policy"))?;
-    match ticket.admission.context_mode {
-        ContextMode::Declared => {
-            tig_scene::compile(source, &ticket.admission.request, Path::new("compiled"))?;
-        }
-        ContextMode::Compiled => {
-            let recipe = tig_scene::render_recipe(
-                source,
-                &ticket.admission.request,
-                context,
-                &pin(programs)?,
-                Path::new("compiled"),
-            )?;
-            if recipe.fingerprint() != &ticket.recipe {
-                bail!("compiled output planning recipe differs");
+    let contract = if ticket.admission.context_mode == ContextMode::Delivery {
+        let prepared =
+            crate::tig_delivery_template::lower(source, ticket.admission.request.delivery()?)?;
+        let inputs = source.prepare(&prepared.job)?;
+        let controls = tig_scene_production::DeliveryControls::new(prepared)?;
+        let bound = programs.with_inputs(&inputs);
+        let (job, plan) = crate::scene_delivery::plan_with_control_files(
+            &controls.job,
+            &controls.production,
+            &bound,
+            &controls,
+        )?;
+        crate::scene_delivery::output_contract(&job, &plan)?
+    } else {
+        match ticket.admission.context_mode {
+            ContextMode::Declared => {
+                tig_scene::compile(
+                    source,
+                    ticket.admission.request.scene()?,
+                    Path::new("compiled"),
+                )?;
             }
+            ContextMode::Compiled => {
+                let recipe = tig_scene::render_recipe(
+                    source,
+                    ticket.admission.request.scene()?,
+                    context,
+                    &pin(programs)?,
+                    Path::new("compiled"),
+                )?;
+                if recipe.fingerprint() != &ticket.recipe {
+                    bail!("compiled output planning recipe differs");
+                }
+            }
+            ContextMode::Delivery => unreachable!(),
         }
-    }
-    let path = Path::new("compiled/delivery/job.json").canonicalize()?;
-    let job = crate::tig_inputs::read_job(&path)?;
-    let inputs = source.prepare(&job)?;
-    let bound = programs.with_inputs(&inputs);
-    let (job, plan) = crate::scene_delivery::plan_with_inputs(&path, &bound)?;
-    let contract = crate::scene_delivery::output_contract(&job, &plan)?;
+        let path = Path::new("compiled/delivery/job.json").canonicalize()?;
+        let job = crate::tig_inputs::read_job(&path)?;
+        let inputs = source.prepare(&job)?;
+        let bound = programs.with_inputs(&inputs);
+        let (job, plan) = crate::scene_delivery::plan_with_inputs(&path, &bound)?;
+        crate::scene_delivery::output_contract(&job, &plan)?
+    };
     records::check_names(&ticket.admission, &names(&contract))?;
     let outputs = policy.apply(&names(&contract))?;
     let report = Report {

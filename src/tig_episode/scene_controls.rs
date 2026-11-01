@@ -114,7 +114,7 @@ impl CurrentSceneControls {
         )?;
         let scope: SemanticDelivery = serde_json::from_slice(body(&metadata, &semantic)?)?;
         if scope.scene_id.as_deref() != Some(segment.as_str())
-            || scope.language.as_deref() != Some(current.native_request().language.as_str())
+            || scope.language.as_deref() != Some(current.native_request()?.language.as_str())
             || scene_delivery::scoped_control(&semantic, &scope.scene_delivery_job)? != job_ref
         {
             bail!("compiled scene semantic scope differs");
@@ -140,7 +140,7 @@ impl CurrentSceneControls {
             claim: proof.claim().clone(),
             protection_recipe: proof.protection_recipe().clone(),
             segment,
-            language: current.native_request().language.clone(),
+            language: current.native_request()?.language.clone(),
             job: job_ref,
             semantic,
             production,

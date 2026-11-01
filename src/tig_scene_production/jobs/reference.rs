@@ -124,7 +124,7 @@ impl<'a, 'n> ReferencePlan<'a, 'n> {
         output_definition: &str,
         preparation: &Path,
     ) -> Result<Self> {
-        let request = native.native_request();
+        let request = native.native_request()?;
         let scene = source.record(&request.scene_id)?;
         let output = source.record(output_id)?;
         let segment = scene.authored()["scene_id"]
@@ -379,6 +379,7 @@ impl ProtectedReference<'_, '_, '_> {
     ) -> Result<VerifiedScene<'s>> {
         self.verify_current(source, journal)?;
         let plan = self.readback.plan;
+        let request = plan.native.native_request()?;
         let job: Job = serde_json::from_slice(body(&plan.metadata, &plan.job)?)?;
         let inputs = source.prepare(&job)?;
         let outputs = source.prepare_files(std::slice::from_ref(&plan.master))?;
@@ -406,13 +407,11 @@ impl ProtectedReference<'_, '_, '_> {
             recipe: plan.native.recipe().fingerprint().clone(),
             comparison: result?,
             resources: &self.readback.resources,
-            production_definitions: plan
-                .native
-                .request
+            production_definitions: request
                 .primary_definitions
                 .iter()
-                .chain(&plan.native.request.control_definitions)
-                .chain(std::iter::once(&plan.native.request.scene_definition))
+                .chain(&request.control_definitions)
+                .chain(std::iter::once(&request.scene_definition))
                 .cloned()
                 .collect(),
         })
