@@ -4,6 +4,64 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::Path, process::Command};
 #[path = "support/primary_png_sequence.rs"]
 mod png_sequence;
+
+#[test]
+fn explicit_stretch_fills_canvas_while_default_and_explicit_contain_preserve_padding() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let mut job = fixture(root);
+    fs::write(
+        root.join("wide.ppm"),
+        [b"P6\n2 1\n255\n".as_slice(), &[255u8; 6]].concat(),
+    )
+    .unwrap();
+    job["pictures"][0]["source"] = file(root, "wide.ppm");
+    let mut default = None;
+    for (label, fit, pixel) in [
+        ("default", None, 0u8),
+        ("contain", Some("contain"), 0),
+        ("stretch", Some("stretch"), 255),
+    ] {
+        if let Some(fit) = fit {
+            job["pictures"][0]["fit"] = json!(fit)
+        }
+        write_json(&root.join("job.json"), &job);
+        let out = root.join(label);
+        scene_delivery::render(&root.join("job.json"), root, &out).unwrap();
+        scene_delivery::check(&root.join("job.json"), root, &out).unwrap();
+        primary_reference::check(root, &root.join("job.json"), &out);
+        let decoded = Command::new("ffmpeg")
+            .args(["-v", "error", "-nostdin", "-i"])
+            .arg(out.join("picture.mkv"))
+            .args(["-frames:v", "1", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"])
+            .output()
+            .unwrap();
+        assert!(decoded.status.success());
+        assert!(
+            decoded.stdout[..64 * 3].iter().all(|value| *value == pixel),
+            "{label}"
+        );
+        if label == "default" {
+            default = Some(out.clone());
+        }
+        if label == "contain" {
+            assert_picture_frames_match(
+                default.as_ref().unwrap(),
+                &out,
+                &["picture.mkv", "master.mkv"],
+            )
+        }
+    }
+    job["pictures"][0]["motion"] = json!({"kind":"zoompan","scale_width":64,"scale_height":64,
+        "crop_width":64,"crop_height":64,"zoom_step":0,"zoom_max":1});
+    write_json(&root.join("job.json"), &job);
+    assert!(
+        scene_delivery::plan(&root.join("job.json"), root)
+            .unwrap_err()
+            .to_string()
+            .contains("motion recipe")
+    );
+}
 #[path = "support/scene_primary_reference.rs"]
 mod primary_reference;
 

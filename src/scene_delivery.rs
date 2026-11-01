@@ -148,6 +148,9 @@ pub struct Picture {
     pub attachment_id: String,
     pub source: FileRef,
     pub kind: PictureKind,
+    /// Omission preserves the historical contain-and-pad behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit: Option<PictureFit>,
     /// Offset after resampling the source to the declared delivery frame rate.
     #[serde(default)]
     pub source_start_frame: u64,
@@ -171,6 +174,13 @@ pub struct Picture {
 pub enum PictureKind {
     Still,
     Video,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PictureFit {
+    Contain,
+    Stretch,
 }
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -752,6 +762,9 @@ fn plan_from_bytes(
         asset_root.verified_path(&p.source)?;
         if p.kind == PictureKind::Still && p.source_start_frame != 0 {
             bail!("still pictures cannot have a source frame offset");
+        }
+        if p.fit == Some(PictureFit::Stretch) && p.motion.is_some() {
+            bail!("stretch picture fit cannot be combined with a motion recipe");
         }
         if let Some(c) = &p.crop {
             if c.width == 0 || c.height == 0 {
@@ -2593,6 +2606,10 @@ pub(crate) fn picture_filter_command(
             }) => format!(
                 "scale={scale_width}:{scale_height}:force_original_aspect_ratio=increase,crop={crop_width}:{crop_height},zoompan=z='min(zoom+{zoom_step},{zoom_max})':x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2':d={}:s={}x{}:fps={fps},",
                 group_frames, job.width, job.height
+            ),
+            None if p.fit == Some(PictureFit::Stretch) => format!(
+                "{crop}{layout_format}scale={}:{},{output_pad}",
+                region.width, region.height
             ),
             None => format!(
                 "{crop}{layout_format}scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,{output_pad}",
