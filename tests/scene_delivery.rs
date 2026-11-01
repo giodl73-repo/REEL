@@ -2,6 +2,8 @@ use reel::scene_delivery;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path, process::Command};
+#[path = "support/primary_png_sequence.rs"]
+mod png_sequence;
 #[path = "support/scene_primary_reference.rs"]
 mod primary_reference;
 
@@ -2235,6 +2237,157 @@ fn selected_ass_layer_changes_rendered_pixels_and_is_checked() {
     );
     fs::write(output.join("presentation.ass"), b"tampered").unwrap();
     assert!(scene_delivery::check(&root.join("job.json"), root, &output).is_err());
+}
+
+#[test]
+fn timed_primary_alpha_png_needs_no_intermediate_movie_and_replays_from_primaries() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let mut job = fixture(root);
+    let mut contract: Value =
+        serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
+    contract["attachments"].as_array_mut().unwrap().push(json!({
+        "id":"still-patch", "target":{"kind":"overlay","shot_id":"shot","overlay_id":"storm-glow"},
+        "start":{"kind":"cue-start","cue_id":"a","offset_samples":24000},
+        "end":{"kind":"cue-start","cue_id":"b","offset_samples":24000}
+    }));
+    write_json(&root.join("contract.json"), &contract);
+    let image = |name: &str, geometry: &str, format: &str| {
+        let result = Command::new("ffmpeg")
+            .args(["-v", "error", "-nostdin", "-f", "lavfi", "-i"])
+            .arg(format!("color=c=lime@0.75:s={geometry}:r=24,format=rgba"))
+            .args([
+                "-frames:v",
+                "1",
+                "-c:v",
+                "png",
+                "-pix_fmt",
+                format,
+                "-update",
+                "1",
+            ])
+            .arg(root.join(name))
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    };
+    image("patch.png", "64x64", "rgba");
+    image("opaque.png", "64x64", "rgb24");
+    image("gray.png", "64x64", "gray");
+    image("small.png", "32x32", "rgba");
+    let animation = Command::new("ffmpeg")
+        .args([
+            "-v",
+            "error",
+            "-nostdin",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=64x64:rate=24,format=rgba",
+            "-frames:v",
+            "2",
+            "-plays",
+            "0",
+            "-f",
+            "apng",
+        ])
+        .arg(root.join("animated.png"))
+        .output()
+        .unwrap();
+    assert!(
+        animation.status.success(),
+        "{}",
+        String::from_utf8_lossy(&animation.stderr)
+    );
+    let animated_probe = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-count_frames",
+            "-show_entries",
+            "stream=codec_name,nb_read_frames",
+            "-of",
+            "json",
+        ])
+        .arg(root.join("animated.png"))
+        .output()
+        .unwrap();
+    let animated_info: Value = serde_json::from_slice(&animated_probe.stdout).unwrap();
+    assert_eq!(
+        animated_info["streams"][0]["codec_name"], "apng",
+        "{animated_info}"
+    );
+    assert_eq!(
+        animated_info["streams"][0]["nb_read_frames"], "2",
+        "{animated_info}"
+    );
+    job["contract"] = file(root, "contract.json");
+    job["external_layers"] = json!([{
+        "attachment_id":"still-patch", "reason":"Primary patch across a picture cut",
+        "evidence":file(root,"patch.png"), "render_mode":"timed-still-overlay"
+    }]);
+    let selected = job.clone();
+    for name in ["opaque.png", "gray.png", "small.png", "animated.png"] {
+        job["external_layers"][0]["evidence"] = file(root, name);
+        write_json(&root.join("job.json"), &job);
+        assert!(
+            scene_delivery::plan(&root.join("job.json"), root).is_err(),
+            "{name}"
+        );
+    }
+    for field in ["font", "render_source", "derivation_receipt"] {
+        job = selected.clone();
+        job["external_layers"][0][field] = file(root, "patch.png");
+        write_json(&root.join("job.json"), &job);
+        assert!(
+            scene_delivery::plan(&root.join("job.json"), root).is_err(),
+            "{field}"
+        );
+    }
+    job = selected;
+    write_json(&root.join("job.json"), &job);
+    let (_, plan) = scene_delivery::plan(&root.join("job.json"), root).unwrap();
+    assert_eq!(
+        (
+            plan.external_layer_spans[0].start_frame,
+            plan.external_layer_spans[0].end_frame
+        ),
+        (12, 37)
+    );
+    let output = root.join("still-rendered");
+    let receipt = scene_delivery::render(&root.join("job.json"), root, &output).unwrap();
+    assert!(receipt.outputs.contains_key("selected-overlay.png"));
+    assert!(!receipt.outputs.contains_key("selected-overlay.mkv"));
+    assert_eq!(
+        receipt.outputs["selected-overlay.png"].sha256,
+        job["external_layers"][0]["evidence"]["sha256"]
+    );
+    scene_delivery::check(&root.join("job.json"), root, &output).unwrap();
+    primary_reference::check(root, &root.join("job.json"), &output);
+    fs::write(output.join("selected-overlay.png"), b"foreign bytes").unwrap();
+    assert!(scene_delivery::check(&root.join("job.json"), root, &output).is_err());
+
+    contract["attachments"].as_array_mut().unwrap().push(json!({
+        "id":"end-patch", "target":{"kind":"overlay","shot_id":"shot","overlay_id":"storm-glow"},
+        "start":{"kind":"cue-start","cue_id":"b","offset_samples":36000},
+        "end":{"kind":"cue-end","cue_id":"b"}
+    }));
+    write_json(&root.join("contract.json"), &contract);
+    job["contract"] = file(root, "contract.json");
+    let mut second = job["external_layers"][0].clone();
+    second["attachment_id"] = json!("end-patch");
+    job["external_layers"].as_array_mut().unwrap().push(second);
+    write_json(&root.join("job.json"), &job);
+    let output = root.join("two-still-rendered");
+    let receipt = scene_delivery::render(&root.join("job.json"), root, &output).unwrap();
+    assert!(receipt.outputs.contains_key("selected-overlay-000.png"));
+    assert!(receipt.outputs.contains_key("selected-overlay-001.png"));
+    scene_delivery::check(&root.join("job.json"), root, &output).unwrap();
+    primary_reference::check(root, &root.join("job.json"), &output);
 }
 
 #[test]

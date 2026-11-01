@@ -615,6 +615,7 @@ buses: {{ D: {{ state: present, reason: narration }}, M: {{ state: intentional-s
                 font: None,
                 render_source: None,
                 derivation_receipt: None,
+                frames: vec![],
             });
         assert!(
             validate_event_bindings(

@@ -32,6 +32,18 @@ variant admission rather than silently selecting a language. Timed overlay
 receipts additionally verify all their exact nested input references against
 the same primary catalog; stale or unlisted pins refuse. Only explicitly selected control/receipt
 metadata is read under the existing bounded guarded provider. Media is not read.
+Ordered external-layer `frames` entries also use exactly `{"binding":"alias"}`;
+each resolves as a consumed primary. Sequence order is preserved even when byte
+guards deduplicate repeated objects. Per-job sequence references remain bounded.
+
+Consumption admission uses the native record's `status.selection_state`, for
+the root, each control and every used primary. A payload in `selected`, an
+imported `selection_status`, or an approval-looking provenance field does not
+substitute for that decision. In particular, historical selected labels alongside
+`candidate-producer-reviewed` remain ineligible. Migration must reconcile their
+exact authority subjects explicitly; it must not copy a historical label into
+the native admission field merely to make lowering pass. Production eligibility
+does not itself grant creative approval or public distribution rights.
 
 Bounds: 4,096 binding aliases, 256 primary and 64 control types; three controls of
 at most 4 MiB each / 16 MiB aggregate, 4 MiB lowered job, 4 MiB per derived receipt / 16 MiB aggregate,

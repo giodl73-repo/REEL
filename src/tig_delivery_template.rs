@@ -243,6 +243,17 @@ pub fn lower(source: &mut Source, request: &Request) -> Result<Prepared> {
                     expand(value, source, &aliases, &mut consumed)?;
                 }
             }
+            if field == "external_layers" {
+                if let Some(frames) = entry.get_mut("frames") {
+                    let frames = frames.as_array_mut().context("frames must be an array")?;
+                    if frames.len() > 4096 {
+                        bail!("sequence frames exceed bounds");
+                    }
+                    for frame in frames {
+                        expand(frame, source, &aliases, &mut consumed)?;
+                    }
+                }
+            }
             if field == "audio" {
                 if let Some(value) = entry.pointer_mut("/placement_offset/evidence") {
                     expand(value, source, &aliases, &mut consumed)?;

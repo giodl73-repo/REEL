@@ -160,7 +160,12 @@ field retains the global sample-grid partition above.
 For any compiled beat/camera/effect/title/caption attachment owned by another
 layer, list an `external_layers` item with `attachment_id`, `reason` and exact
 evidence FileRef. `evidence-only` records a held external delivery. `ass-overlay`
-renders one full-scene editable ASS layer. `timed-video-overlay` renders hash-bound
+renders one full-scene editable ASS layer. The explicit
+[`timed-still-overlay`](timed-still-overlay.md) mode holds a primary alpha PNG
+over a semantic effect/overlay interval without a derived movie input.
+An [ordered primary PNG sequence](primary-png-sequence-overlay.md) uses the same
+interval with one explicitly bound input per frame and no image payload copies.
+`timed-video-overlay` renders hash-bound
 alpha videos on effect or generic overlay attachments for their exact compiled
 frame spans. Multiple timed overlays compose in job order; each intermediate
 picture and selected overlay source is retained and checked separately. A mixed

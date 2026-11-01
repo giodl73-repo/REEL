@@ -79,7 +79,7 @@ fn picture_pipeline(
     plan: &Plan,
     inputs: &dyn InputFiles,
     root: &Path,
-) -> Result<Vec<Command>> {
+) -> Result<(Vec<Command>, Vec<tempfile::NamedTempFile>)> {
     let args = scene_delivery::picture_filter_command(job, plan, inputs)?;
     let mut first = command(inputs, MediaProgram::Ffmpeg, root)?;
     for arg in args {
@@ -95,13 +95,17 @@ fn picture_pipeline(
     ]);
     encode(&mut first, job);
     let mut commands = vec![first];
+    let mut sequence_controls = vec![];
     for (index, layer) in job
         .external_layers
         .iter()
         .filter(|layer| {
             matches!(
                 layer.render_mode,
-                ExternalLayerRenderMode::AssOverlay | ExternalLayerRenderMode::TimedVideoOverlay
+                ExternalLayerRenderMode::AssOverlay
+                    | ExternalLayerRenderMode::TimedVideoOverlay
+                    | ExternalLayerRenderMode::TimedStillOverlay
+                    | ExternalLayerRenderMode::TimedPngSequenceOverlay
             )
         })
         .enumerate()
@@ -121,18 +125,31 @@ fn picture_pipeline(
                     &format!("{}/{}", plan.fps_numerator, plan.fps_denominator),
                 ]);
             }
-            ExternalLayerRenderMode::TimedVideoOverlay => {
-                let source = scene_delivery::timed_overlay_source(inputs, layer)?;
-                let path = inputs.verified_path(source)?;
+            ExternalLayerRenderMode::TimedVideoOverlay
+            | ExternalLayerRenderMode::TimedStillOverlay
+            | ExternalLayerRenderMode::TimedPngSequenceOverlay => {
+                let path = if layer.render_mode == ExternalLayerRenderMode::TimedPngSequenceOverlay
+                {
+                    let file = scene_delivery::png_sequence::prepare(inputs, root, &layer.frames)?;
+                    let path = file.path().to_owned();
+                    sequence_controls.push(file);
+                    path
+                } else {
+                    inputs.verified_path(scene_delivery::timed_overlay_source(inputs, layer)?)?
+                };
                 let span = plan
                     .external_layer_spans
                     .iter()
                     .find(|span| span.attachment_id == layer.attachment_id)
                     .context("reference overlay span missing")?;
                 protocol(&mut next);
+                next.args(scene_delivery::timed_overlay_input_options(
+                    plan,
+                    &layer.render_mode,
+                ));
                 next.args(["-threads", "1", "-i"]).arg(path).args([
                     "-filter_complex",
-                    &scene_delivery::timed_overlay_filter(plan, span),
+                    &scene_delivery::timed_overlay_filter_for_mode(plan, span, &layer.render_mode),
                     "-map",
                     "[v]",
                     "-an",
@@ -170,7 +187,7 @@ fn picture_pipeline(
     hash.args(["-i", "pipe:0"]);
     hash_video(&mut hash, false);
     commands.push(hash);
-    Ok(commands)
+    Ok((commands, sequence_controls))
 }
 fn hash_video(command: &mut Command, audio: bool) {
     command.args([
@@ -219,6 +236,11 @@ fn staging_bound(job: &Job, plan: &Plan) -> Result<u64> {
         }
     }
     for layer in &job.external_layers {
+        if layer.render_mode == ExternalLayerRenderMode::TimedPngSequenceOverlay {
+            bytes = bytes
+                .checked_add(scene_delivery::png_sequence::CONTROL_BYTES)
+                .context("sequence control staging overflow")?;
+        }
         if layer.render_mode == ExternalLayerRenderMode::AssOverlay {
             bytes = bytes
                 .checked_add(layer.evidence.bytes)
@@ -300,6 +322,8 @@ pub fn compare_master_to_primaries(
                     layer.render_mode,
                     ExternalLayerRenderMode::AssOverlay
                         | ExternalLayerRenderMode::TimedVideoOverlay
+                        | ExternalLayerRenderMode::TimedStillOverlay
+                        | ExternalLayerRenderMode::TimedPngSequenceOverlay
                 )
             })
             .count();
@@ -314,14 +338,13 @@ pub fn compare_master_to_primaries(
     let stage = tempfile::Builder::new()
         .prefix(".scene-primary-reference-")
         .tempdir_in(stage_parent)?;
+    let (picture_commands, sequence_controls) =
+        picture_pipeline(&native, &plan, inputs, stage.path())?;
     let expected_picture = parse_hashes(
-        &pipeline::run(
-            picture_pipeline(&native, &plan, inputs, stage.path())?,
-            16384,
-            deadline,
-        )?,
+        &pipeline::run(picture_commands, 16384, deadline)?,
         &['v', 'v'],
     )?;
+    drop(sequence_controls);
     scene_delivery::render_audio_stems(&native, &plan, inputs, stage.path())?;
     let mut audio = command(inputs, MediaProgram::Ffmpeg, stage.path())?;
     protocol(&mut audio);
