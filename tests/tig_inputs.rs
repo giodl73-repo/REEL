@@ -25,6 +25,9 @@ mod presentation_source;
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_producer_reuse.rs"]
 mod producer_reuse;
+#[cfg(windows)]
+#[path = "support/tig_recording_clock.rs"]
+mod recording_clock;
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_retained_comparison.rs"]
 mod retained_comparison;
