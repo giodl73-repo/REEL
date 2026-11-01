@@ -24,6 +24,16 @@ pub struct Request {
     pub control_definitions: BTreeSet<String>,
     #[serde(default)]
     pub authored_control_fields: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub private_review: Option<PrivateReview>,
+}
+/// Caller-authorized private review, never source selection or release authority.
+/// Only exact unselected records consumed at this checkpoint may be listed.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrivateReview {
+    pub checkpoint: Digest,
+    pub records: BTreeMap<String, Object>,
 }
 /// Private operational controls. No paths are created and no bytes are protected.
 pub struct Prepared {
@@ -57,14 +67,63 @@ fn references(value: &Value) -> Result<BTreeMap<String, String>> {
         })
         .collect()
 }
-fn selected(status: &Map<String, Value>) -> Result<()> {
-    if !matches!(
+fn is_selected(status: &Map<String, Value>) -> bool {
+    matches!(
         status.get("selection_state").and_then(Value::as_str),
         Some("selected-private-production" | "principal-approved" | "release-cleared")
-    ) {
-        bail!("consumed record is not selected for production");
+    )
+}
+struct Eligibility<'a> {
+    review: Option<&'a PrivateReview>,
+    used: BTreeSet<String>,
+}
+impl<'a> Eligibility<'a> {
+    fn new(source: &Source, request: &'a Request) -> Result<Self> {
+        if let Some(review) = &request.private_review {
+            if &review.checkpoint != source.checkpoint() {
+                bail!("private review source checkpoint differs");
+            }
+            for (id, pin) in &review.records {
+                if source.record(id)?.reference().object != *pin {
+                    bail!("private review record revision differs");
+                }
+            }
+        }
+        Ok(Self {
+            review: request.private_review.as_ref(),
+            used: BTreeSet::new(),
+        })
     }
-    Ok(())
+    fn check(&mut self, record: &tig_assets::resolve::Resolved) -> Result<()> {
+        if is_selected(record.status()) {
+            return Ok(());
+        }
+        let state = record.status().get("selection_state");
+        let reviewable = state.is_none()
+            || matches!(
+                state.and_then(Value::as_str),
+                Some("draft" | "candidate" | "candidate-producer-reviewed")
+            );
+        if reviewable
+            && self.review.is_some_and(|review| {
+                review.records.get(&record.reference().id) == Some(&record.reference().object)
+            })
+        {
+            self.used.insert(record.reference().id.clone());
+            return Ok(());
+        }
+        bail!(
+            "consumed record is not selected for production or explicitly admitted for private review"
+        )
+    }
+    fn finish(self) -> Result<()> {
+        if let Some(review) = self.review {
+            if self.used.len() != review.records.len() {
+                bail!("private review admission includes unused or already selected records");
+            }
+        }
+        Ok(())
+    }
 }
 fn bounded(value: &Value) -> Result<Vec<u8>> {
     let raw = serde_json::to_vec(value)?;
@@ -78,6 +137,7 @@ fn expand(
     source: &Source,
     aliases: &BTreeMap<String, String>,
     consumed: &mut BTreeMap<String, FileRef>,
+    eligibility: &mut Eligibility<'_>,
 ) -> Result<()> {
     let r = value.as_object().context("input must name a binding")?;
     let alias = r
@@ -91,13 +151,16 @@ fn expand(
         .get(alias)
         .context("input binding is not declared")?;
     let leaf = source.record(id)?;
-    selected(leaf.status())?;
-    let asset = source.resolve_asset(id)?;
+    eligibility.check(&leaf)?;
+    let pin = match &source.admission(&leaf.definition().id)?.payload {
+        crate::tig_inputs::Payload::Selected {} => leaf.selected()?,
+        crate::tig_inputs::Payload::Stream { slot } => leaf.stream(slot)?,
+    };
     tig_core::LogicalPath::parse(id)?;
     let file = FileRef {
         path: id.into(),
-        sha256: asset.sha256,
-        bytes: asset.bytes,
+        sha256: pin.sha256.as_str().into(),
+        bytes: pin.bytes,
     };
     consumed.insert(alias.into(), file.clone());
     *value = serde_json::to_value(file)?;
@@ -109,6 +172,18 @@ fn expand(
 impl Request {
     pub(crate) fn validate(&self) -> Result<()> {
         let request = self;
+        if let Some(review) = &request.private_review {
+            if review.records.is_empty()
+                || review.records.len() > 4164
+                || review
+                    .records
+                    .iter()
+                    .any(|(id, pin)| !token(id) || pin.bytes == 0 || pin.bytes > 65536)
+                || serde_json::to_vec(review)?.len() > 65536
+            {
+                bail!("private review admission exceeds bounds");
+            }
+        }
         let all = request
             .primary_definitions
             .iter()
@@ -139,11 +214,12 @@ impl Request {
 /// Lower one exact admitted snapshot; no source mutation or media reads.
 pub fn lower(source: &mut Source, request: &Request) -> Result<Prepared> {
     request.validate()?;
+    let mut eligibility = Eligibility::new(source, request)?;
     let parent = source.record(&request.root_id)?;
     if parent.definition().id != request.root_definition {
         bail!("root definition differs");
     }
-    selected(parent.status())?;
+    eligibility.check(&parent)?;
     if parent.authored().contains_key("language_binding_ids") {
         bail!("delivery template variants require explicit resolved admission");
     }
@@ -182,7 +258,7 @@ pub fn lower(source: &mut Source, request: &Request) -> Result<Prepared> {
         {
             bail!("control definition differs");
         }
-        selected(control.status())?;
+        eligibility.check(&control)?;
         let prepared = crate::tig_scene::controls::prepare(
             source,
             &control,
@@ -240,7 +316,7 @@ pub fn lower(source: &mut Source, request: &Request) -> Result<Prepared> {
             };
             for key in fields {
                 if let Some(value) = entry.get_mut(*key).filter(|v| !v.is_null()) {
-                    expand(value, source, &aliases, &mut consumed)?;
+                    expand(value, source, &aliases, &mut consumed, &mut eligibility)?;
                 }
             }
             if field == "external_layers" {
@@ -250,19 +326,19 @@ pub fn lower(source: &mut Source, request: &Request) -> Result<Prepared> {
                         bail!("sequence frames exceed bounds");
                     }
                     for frame in frames {
-                        expand(frame, source, &aliases, &mut consumed)?;
+                        expand(frame, source, &aliases, &mut consumed, &mut eligibility)?;
                     }
                 }
             }
             if field == "audio" {
                 if let Some(value) = entry.pointer_mut("/placement_offset/evidence") {
-                    expand(value, source, &aliases, &mut consumed)?;
+                    expand(value, source, &aliases, &mut consumed, &mut eligibility)?;
                 }
             }
         }
     }
     if let Some(value) = job.pointer_mut("/post_compose_camera/evidence") {
-        expand(value, source, &aliases, &mut consumed)?;
+        expand(value, source, &aliases, &mut consumed, &mut eligibility)?;
     }
     job["schema"] = json!("reel.scene-delivery.v0.1");
     let pin = Object::from_bytes(&contract_bytes);
@@ -314,7 +390,13 @@ pub fn lower(source: &mut Source, request: &Request) -> Result<Prepared> {
                     .get(id)
                     .context("derivation input is outside primary bindings")?;
                 let mut deferred = json!({"binding":alias});
-                expand(&mut deferred, source, &aliases, &mut consumed)?;
+                expand(
+                    &mut deferred,
+                    source,
+                    &aliases,
+                    &mut consumed,
+                    &mut eligibility,
+                )?;
                 if serde_json::from_value::<FileRef>(deferred)? != *expected {
                     bail!("derivation input pin is stale");
                 }
@@ -323,6 +405,7 @@ pub fn lower(source: &mut Source, request: &Request) -> Result<Prepared> {
             bail!("derived render source requires its exact receipt");
         }
     }
+    eligibility.finish()?;
     Ok(Prepared {
         source_checkpoint: source.checkpoint().clone(),
         job,

@@ -64,8 +64,15 @@ fn scope(source: &mut Source, request: &Request) -> Result<Scope> {
             },
         });
     }
+    // Authorization is checked by lower and retained as managed-job input evidence.
+    // It must not become consumed rendering meaning or invalidate unchanged media.
+    let mut render_request = serde_json::to_value(request)?;
+    render_request
+        .as_object_mut()
+        .unwrap()
+        .remove("private_review");
     let descriptor = tig_core::identity::canonical_json(&json!({
-        "schema":"reel.tig-delivery-context.experimental-1", "request":request,
+        "schema":"reel.tig-delivery-context.experimental-1", "request":render_request,
         "adapter":Object::from_bytes(include_bytes!("../tig_delivery_template.rs")),
         "context_adapter":Object::from_bytes(include_bytes!("context.rs")),
         "compiled":{

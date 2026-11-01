@@ -74,6 +74,8 @@ jobs:
         run: |
           cargo test --all-features --test tig_inputs delivery_template::context::render::guarded_delivery_candidate_uses_existing_claim_and_publication_contracts --locked -- --ignored --exact
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --all-features --test tig_inputs delivery_template::context::render::private_review_candidate_uses_managed_capture_render_retention_and_git_handoff --locked -- --ignored --exact
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --all-features --test tig_inputs delivery_template::context::frozen_context_replay_prepares_and_checks_recording_delivery_without_source_checkout --locked -- --ignored --exact
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --all-features --test tig_inputs delivery_template::lowered_archived_controls_render_without_loose_json_or_git --locked -- --ignored --exact

@@ -79,6 +79,19 @@ pub fn exercise(
             .of(Role::Runtime)
             .contains(&plan.recipe().operation().producer)
     );
+    for object in frozen.of(Role::Evidence) {
+        assert!(
+            plan.readback(
+                frozen.selection(),
+                &mut Missing {
+                    inner: &reader,
+                    object: object.clone(),
+                },
+                TreeLimits::default()
+            )
+            .is_err()
+        );
+    }
     assert!(plan.runtime().len() >= 3);
     for object in plan.runtime().values() {
         assert!(frozen.of(Role::Runtime).contains(object));

@@ -295,7 +295,18 @@ pub fn run(
     journal: &mut SourceJournal,
     profile: &Profile<'_>,
 ) -> Result<serde_json::Value> {
-    run_inner(root, manifest, resources, journal, profile, false)
+    run_inner(root, manifest, resources, journal, profile, false, false)
+}
+/// Retain already replay-checked input evidence without admitting it as an input.
+/// Composition and claimed outputs still refuse; ordinary input roles are unchanged.
+pub fn run_with_retained_evidence(
+    root: &Path,
+    manifest: &Path,
+    resources: &JobContext,
+    journal: &mut SourceJournal,
+    profile: &Profile<'_>,
+) -> Result<serde_json::Value> {
+    run_inner(root, manifest, resources, journal, profile, false, true)
 }
 /// Explicit generic consumption of already admitted Composition/Evidence bytes.
 /// Roles remain distinct; this is not native episode freshness, primary closure,
@@ -307,7 +318,7 @@ pub fn run_with_dependencies(
     journal: &mut SourceJournal,
     profile: &Profile<'_>,
 ) -> Result<serde_json::Value> {
-    run_inner(root, manifest, resources, journal, profile, true)
+    run_inner(root, manifest, resources, journal, profile, true, true)
 }
 fn run_inner(
     root: &Path,
@@ -316,11 +327,11 @@ fn run_inner(
     journal: &mut SourceJournal,
     profile: &Profile<'_>,
     dependencies: bool,
+    retained_evidence: bool,
 ) -> Result<serde_json::Value> {
     if !resources.of(Role::ClaimedOutput).is_empty()
-        || (!dependencies
-            && (!resources.of(Role::Evidence).is_empty()
-                || !resources.of(Role::Composition).is_empty()))
+        || (!retained_evidence && !resources.of(Role::Evidence).is_empty())
+        || (!dependencies && !resources.of(Role::Composition).is_empty())
     {
         bail!("runner requires a planned input context");
     }
