@@ -2,6 +2,199 @@ use super::*;
 use tig_core::tree::{MemoryNodes, TreeLimits};
 use tig_store::metadata::{Limits as StoreLimits, MetadataReader, MetadataStore};
 
+fn unbuilt_catalog(template: &str) -> (Fixture, reel::tig_scene::Request) {
+    let (mut f, request) = bilingual();
+    let mut record = load(&f, template);
+    record["id"] = json!("primary/future-unused");
+    record["selected"] = Value::Null;
+    record["streams"] = json!([]);
+    record["status"]["selection_state"] = json!("planned-draft");
+    write(f.root(), "records/future-unused.tig", &record);
+    let mut parent = load(&f, "records/scene.tig");
+    parent["authored"]["binding_ids"]["future-unused"] = json!({"id":"primary/future-unused"});
+    write(f.root(), "records/scene.tig", &parent);
+    save_commit(&mut f);
+    (f, request)
+}
+
+#[test]
+fn unbuilt_named_payload_is_optional_only_in_an_unused_catalog_entry() {
+    let (mut f, request) = unbuilt_catalog("records/alignment.tig");
+    let out = f.root().join("unbuilt-stream-catalog");
+    reel::tig_scene::compile_language_context(&mut f.source(), &request, &out).unwrap();
+    // A selected record with a missing admitted stream is malformed, not unbuilt.
+    let mut record = load(&f, "records/future-unused.tig");
+    record["selected"] = json!(Object::from_bytes(
+        b"selected root cannot replace a named payload"
+    ));
+    write(f.root(), "records/future-unused.tig", &record);
+    save_commit(&mut f);
+    let mut source = f.source();
+    let out = f.root().join("missing-stream-refused");
+    assert!(reel::tig_scene::compile_language_context(&mut source, &request, &out).is_err());
+    assert_eq!(source.byte_requests(), 0);
+    assert!(!out.exists());
+}
+
+#[test]
+fn consumed_unbuilt_primary_still_refuses_before_materializing_controls() {
+    let (mut f, request) = bilingual();
+    let mut record = load(&f, "records/cue-english.tig");
+    record["selected"] = Value::Null;
+    record["status"]["selection_state"] = json!("planned-draft");
+    write(f.root(), "records/cue-english.tig", &record);
+    save_commit(&mut f);
+    let out = f.root().join("consumed-unbuilt-refused");
+    assert!(reel::tig_scene::compile_language_context(&mut f.source(), &request, &out).is_err());
+    assert!(!out.exists());
+    let mut nodes = MemoryNodes::default();
+    assert!(
+        reel::tig_scene::freeze_language_context(
+            &mut f.source(),
+            &request,
+            &mut nodes,
+            TreeLimits::default()
+        )
+        .is_err()
+    );
+    assert_eq!(nodes.objects().count(), 0);
+}
+
+#[test]
+fn unbuilt_other_language_preserves_selected_language_but_does_not_become_selected() {
+    let (mut f, request) = bilingual();
+    let before = f.root().join("english-before-unbuilt-spanish");
+    reel::tig_scene::compile_language_context(&mut f.source(), &request, &before).unwrap();
+    let mut record = load(&f, "records/cue-main.tig");
+    let cue_id = record["id"].as_str().unwrap().to_owned();
+    record["selected"] = Value::Null;
+    record["status"]["selection_state"] = json!("planned-draft");
+    write(f.root(), "records/cue-main.tig", &record);
+    save_commit(&mut f);
+    let after = f.root().join("english-after-unbuilt-spanish");
+    reel::tig_scene::compile_language_context(&mut f.source(), &request, &after).unwrap();
+    assert_eq!(
+        fs::read(before.join("delivery/job.json")).unwrap(),
+        fs::read(after.join("delivery/job.json")).unwrap()
+    );
+    let mut spanish = request;
+    spanish.language = "es".into();
+    let out = f.root().join("unbuilt-spanish-refused");
+    assert!(reel::tig_scene::compile_language_context(&mut f.source(), &spanish, &out).is_err());
+    assert!(!out.exists());
+    let error = f.source().resolve_asset(&cue_id).unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<tig_assets::resolve::Error>(),
+        Some(tig_assets::resolve::Error::Planned)
+    ));
+}
+
+#[test]
+fn unbuilt_catalog_keeps_strict_type_identity_and_status_admission() {
+    for case in ["type", "identity", "status"] {
+        let (mut f, request) = unbuilt_catalog("records/cue-main.tig");
+        if case == "status" {
+            let mut record = load(&f, "records/future-unused.tig");
+            record["status"]["selection_state"] = json!("");
+            write(f.root(), "records/future-unused.tig", &record);
+        } else {
+            let mut parent = load(&f, "records/scene.tig");
+            parent["authored"]["binding_ids"]["bad-unused"] = json!({"id":if case == "type" { request.scene_id.as_str() } else { "missing/future" }});
+            write(f.root(), "records/scene.tig", &parent);
+        }
+        save_commit(&mut f);
+        let mut source = f.source();
+        let out = f.root().join("bad-unbuilt-catalog-refused");
+        assert!(reel::tig_scene::compile_language_context(&mut source, &request, &out).is_err());
+        assert_eq!(source.byte_requests(), 0);
+        assert!(!out.exists());
+    }
+}
+
+#[test]
+fn unbuilt_unused_record_replays_from_scoped_archive_without_becoming_payload_demand() {
+    let (f, request) = unbuilt_catalog("records/cue-main.tig");
+    let mut source = f.source();
+    // Whole-catalog demand and legacy freezing remain strict; null is not zero.
+    assert!(reel::tig_scene::requirements(&mut source, &request).is_err());
+    let mut nodes = MemoryNodes::default();
+    assert!(
+        reel::tig_scene::freeze_context(&mut source, &request, &mut nodes, TreeLimits::default())
+            .is_err()
+    );
+    let context = reel::tig_scene::freeze_language_context(
+        &mut source,
+        &request,
+        &mut nodes,
+        TreeLimits::default(),
+    )
+    .unwrap();
+    assert_eq!(context.requirements().primary().len(), 4);
+    let profile = archived_profile(&f, context.archive().clone(), source.checkpoint().clone());
+    drop(source);
+    for name in [".git", "records", "definitions"] {
+        fs::rename(
+            f.root().join(name),
+            f.root().join(format!("offline-unbuilt-{name}")),
+        )
+        .unwrap();
+    }
+    let (mut restored, replay) = reel::tig_scene::restore_language_context(
+        profile,
+        &request,
+        context.selection(),
+        &mut nodes,
+        TreeLimits::default(),
+    )
+    .unwrap();
+    assert_eq!(replay.requirements(), context.requirements());
+    let error = restored.resolve_asset("primary/future-unused").unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<tig_assets::resolve::Error>(),
+        Some(tig_assets::resolve::Error::Planned)
+    ));
+    let out = f.root().join("offline-unbuilt-compilation");
+    reel::tig_scene::compile_language_context(&mut restored, &request, &out).unwrap();
+    let report: Value =
+        serde_json::from_slice(&fs::read(out.join("native-source.json")).unwrap()).unwrap();
+    assert!(report["declared_inputs"].is_null());
+    assert_eq!(report["declared_inputs_available"], false);
+    assert_eq!(report["language_inputs"]["authorizes_eviction"], false);
+}
+
+#[test]
+fn unused_unbuilt_primary_in_catalog_does_not_block_scoped_compilation() {
+    let (mut f, request) = bilingual();
+    let before = f.root().join("before-unbuilt-catalog");
+    reel::tig_scene::compile_language_context(&mut f.source(), &request, &before).unwrap();
+    let mut record = load(&f, "records/cue-main.tig");
+    record["id"] = json!("cue/planned-unused");
+    record["selected"] = Value::Null;
+    record["status"]["selection_state"] = json!("planned-draft");
+    write(f.root(), "records/planned-unused.tig", &record);
+    let mut parent = load(&f, "records/scene.tig");
+    parent["authored"]["binding_ids"]["planned-unused"] = json!({"id":"cue/planned-unused"});
+    write(f.root(), "records/scene.tig", &parent);
+    save_commit(&mut f);
+    let after = f.root().join("after-unbuilt-catalog");
+    reel::tig_scene::compile_language_context(&mut f.source(), &request, &after).unwrap();
+    for name in ["production.json", "contract.json", "job.json"] {
+        assert_eq!(
+            fs::read(before.join("delivery").join(name)).unwrap(),
+            fs::read(after.join("delivery").join(name)).unwrap()
+        );
+    }
+    let report: Value =
+        serde_json::from_slice(&fs::read(after.join("native-source.json")).unwrap()).unwrap();
+    assert_eq!(report["declared_inputs_available"], false);
+    assert!(report["declared_inputs"].is_null());
+    assert_eq!(
+        report["unbuilt_catalog_records"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(report["complete_semantic_coverage"], false);
+}
+
 #[test]
 fn explicit_scoped_compile_reproduces_original_contracts_offline_and_refuses_other_modes() {
     let (f, request) = bilingual();
