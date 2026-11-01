@@ -1,5 +1,35 @@
 # Data-driven episode conform
 
+Segments may declare `tail_hold_frames` (default zero). A hold preserves every
+selected source frame/sample, repeats the final picture and adds only silent
+audio. It is limited to sixty seconds and uses checked global fractional-frame
+sample boundaries. The encoder result is compared against independently decoded
+picture, displayed RGB and PCM expectations; known source color declarations
+are retained. Segment receipts expose the added frame/sample counts.
+
+A semantic-scoped direct scene may also retain `master_proof` and an optional
+`master_proof_validator` FileRef. The latter identifies historical validator
+bytes and is never executed. `prove-scene` issues a witness only after the full
+output set passes the checker:
+
+```text
+reel-episode-conform prove-scene <job.json> --asset-root <primary-root> --output-dir <checked-delivery> --proof-path <new-proof.json>
+```
+
+Master-only rechecking replans current primary inputs, checks the consumed
+master, receipt, witness and media-tool identities, and needs no unused stems or
+review siblings. Guarded output/evidence/control providers support opaque CAS
+paths; explicit denials never fall back to local files or ambient tools.
+Witness metadata is bounded before planning or provider access.
+
+These retained witnesses are technical provenance admitted by the caller, not
+authenticated approvals or fresh sealed native producer proofs. New native
+composition replaces obsolete witnesses with its own verified references while
+preserving the parent's declared holds. Conform still checks the complete
+ordered decoded output. Low-level filesystem APIs retain their caller-owned
+resource/custody responsibilities; no cache initialization, staging reservation
+or eviction authority is created by these fields.
+
 `reel-episode-conform` builds one language-local lossless FFV1/PCM24 master from
 selected scene and presentation masters:
 

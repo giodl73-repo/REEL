@@ -110,6 +110,62 @@ impl Fixture {
 }
 
 #[test]
+fn retained_master_witnesses_and_tail_holds_survive_registration_without_payload_reads() {
+    let mut f = Fixture::new();
+    for language in ["es", "en"] {
+        f.edit(language, |v| {
+            v["segments"][0]["tail_hold_frames"] = json!(24);
+            v["segments"][0]["master_proof"] = reference(b"proof not hydrated");
+            v["segments"][0]["master_proof_validator"] = reference(b"validator not hydrated");
+        });
+    }
+    let result = f.run();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    for language in ["es", "en"] {
+        let record: Value = serde_json::from_slice(
+            &fs::read(
+                f.root
+                    .path()
+                    .join(format!("candidates/inputs/{language}.tig")),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let original = f.conform(language);
+        assert_eq!(original["segments"][0]["tail_hold_frames"], 24);
+        assert_eq!(
+            record["streams"][0]["object"],
+            f.profile["conforms"][language]
+        );
+        for (slot, field) in [
+            ("master-proof", "master_proof"),
+            ("master-proof-validator", "master_proof_validator"),
+        ] {
+            let stream = record["streams"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|s| s["slot"] == slot)
+                .unwrap();
+            assert_eq!(
+                stream["object"]["sha256"],
+                original["segments"][0][field]["sha256"]
+            );
+            assert_eq!(
+                stream["object"]["bytes"],
+                original["segments"][0][field]["bytes"]
+            );
+            assert_eq!(stream["group"], "original-production");
+        }
+        assert_eq!(record["status"]["production_state"], "unclassified");
+    }
+}
+
+#[test]
 fn independent_outputs_preserve_exact_provenance_without_reading_any_media_or_claiming_currency() {
     let f = Fixture::new();
     let result = f.run();

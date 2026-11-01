@@ -30,6 +30,10 @@ type NativeScenes<'a> =
 type NativeScenes<'a> = BTreeMap<String, &'a ()>;
 
 pub const SCHEMA: &str = "reel.episode-conform.v1";
+mod holds;
+fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
 
 fn verify_native_delivery_proof(
     receipt: &serde_json::Value,
@@ -233,6 +237,13 @@ pub struct Segment {
     /// Receipt beside the hydrated scene-delivery output files.
     #[serde(default)]
     pub delivery_receipt: Option<scene_delivery::FileRef>,
+    /// Explicit retained full-check witness for semantic-scoped master-only
+    /// consumption. Does not establish native producer currency or approval.
+    #[serde(default)]
+    pub master_proof: Option<scene_delivery::FileRef>,
+    /// Historical validator byte identity, never executed by the checker.
+    #[serde(default)]
+    pub master_proof_validator: Option<scene_delivery::FileRef>,
     /// Selected semantic scene scope for a direct scene-delivery receipt.
     /// This route always performs the full upstream delivery check.
     #[serde(default)]
@@ -252,6 +263,10 @@ pub struct Segment {
     /// Hash-bound source evidence remains unchanged when packages are hydrated.
     #[serde(default)]
     pub imported_source_root: Option<PathBuf>,
+    /// Repeat the final selected picture and append only silence, preserving
+    /// the complete input. Bounded to sixty seconds by the declared clock.
+    #[serde(default)]
+    pub tail_hold_frames: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -328,6 +343,10 @@ pub struct SegmentReceipt {
     pub frames: u64,
     pub samples: u64,
     pub audio_padding_samples: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub tail_hold_frames: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub tail_hold_samples: u64,
     pub start_frame: u64,
     pub start_sample: u64,
     pub decoded_picture_sha256: String,
@@ -805,6 +824,17 @@ fn decoded_digest_command(
 }
 
 fn selected_receipt(segment: &Segment, language: &str, receipt: &serde_json::Value) -> Result<()> {
+    if segment.master_proof_validator.is_some() && segment.master_proof.is_none() {
+        bail!("master proof validator requires a master proof");
+    }
+    if segment.master_proof.is_some()
+        && (segment.kind != SegmentKind::Scene
+            || segment.semantic_delivery.is_none()
+            || segment.imported_source_manifest.is_some()
+            || segment.imported_source_root.is_some())
+    {
+        bail!("scene master proof requires a semantic-scoped direct delivery receipt");
+    }
     if receipt["schema"] == "reel.scene-delivery-receipt.v0.1" {
         if segment.kind != SegmentKind::Scene
             || segment.semantic_delivery.is_none()
@@ -1603,6 +1633,8 @@ fn native_presentation(
         || segment.semantic_delivery.is_some()
         || segment.imported_source_manifest.is_some()
         || segment.imported_source_root.is_some()
+        || segment.master_proof.is_some()
+        || segment.master_proof_validator.is_some()
         || segment.master.sha256 != proof.selected().sha256
         || segment.master.bytes != proof.selected().bytes
         || segment.source_receipt.sha256 != sha(&raw)
@@ -1640,6 +1672,8 @@ fn native_scene(
         || segment.imported_source_manifest.is_some()
         || segment.imported_source_root.is_some()
         || segment.source_text_evidence.is_some()
+        || segment.master_proof.is_some()
+        || segment.master_proof_validator.is_some()
         || segment.master.sha256 != proof.selected().sha256
         || segment.master.bytes != proof.selected().bytes
         || segment.source_receipt.sha256 != sha(&raw)
@@ -2171,7 +2205,29 @@ fn build_impl(
                             .context("missing provided scene inputs")?;
                         let mut reference = delivery_ref.clone();
                         reference.path = "receipt.json".into();
-                        if let Some(controls) = provided_controls {
+                        if let Some(proof) = &segment.master_proof {
+                            let proof_files = scene_delivery::MasterProofFiles {
+                                inputs: *inputs,
+                                outputs: files,
+                                evidence: controls.unwrap_or(&local_controls),
+                                receipt: &reference,
+                                proof,
+                                validator: segment.master_proof_validator.as_ref(),
+                            };
+                            if let Some(controls) = provided_controls {
+                                scene_delivery::recheck_master_proof_with_all_files(
+                                    job_ref,
+                                    controls.production,
+                                    controls.files,
+                                    &proof_files,
+                                )?
+                            } else {
+                                scene_delivery::recheck_master_proof_with_output_files(
+                                    job_path.as_ref().context("local job path missing")?,
+                                    &proof_files,
+                                )?
+                            }
+                        } else if let Some(controls) = provided_controls {
                             scene_delivery::check_with_all_files(
                                 job_ref,
                                 controls.production,
@@ -2208,7 +2264,48 @@ fn build_impl(
                         if master != delivery_root.join("master.mkv") {
                             bail!("selected scene master is outside rechecked delivery directory");
                         }
-                        if let Some(inputs) = scene_inputs {
+                        if let Some(proof) = &segment.master_proof {
+                            let proof_path = scene_delivery::checked_file(input_root, proof)?;
+                            let validator = segment
+                                .master_proof_validator
+                                .as_ref()
+                                .map(|item| scene_delivery::checked_file(input_root, item))
+                                .transpose()?;
+                            if let Some(inputs) = scene_inputs {
+                                let inputs = inputs
+                                    .get(&segment.id)
+                                    .context("missing provided scene inputs")?;
+                                let evidence = input_root.to_path_buf();
+                                let mut reference = delivery_ref.clone();
+                                reference.path = "receipt.json".into();
+                                scene_delivery::recheck_master_proof_with_output_files(
+                                    job_path,
+                                    &scene_delivery::MasterProofFiles {
+                                        inputs: *inputs,
+                                        outputs: &delivery_root.to_path_buf(),
+                                        evidence: &evidence,
+                                        receipt: &reference,
+                                        proof,
+                                        validator: segment.master_proof_validator.as_ref(),
+                                    },
+                                )?
+                            } else if let Some(validator) = validator.as_deref() {
+                                scene_delivery::recheck_master_proof_with_validator(
+                                    job_path,
+                                    asset_root,
+                                    delivery_root,
+                                    &proof_path,
+                                    validator,
+                                )?
+                            } else {
+                                scene_delivery::recheck_master_proof(
+                                    job_path,
+                                    asset_root,
+                                    delivery_root,
+                                    &proof_path,
+                                )?
+                            }
+                        } else if let Some(inputs) = scene_inputs {
                             let inputs = inputs
                                 .get(&segment.id)
                                 .context("missing provided scene inputs")?;
@@ -2579,7 +2676,8 @@ fn build_impl(
         if selected_facts.sample_rate != manifest.output_sample_rate {
             bail!("normalization sample rate mismatch");
         }
-        let (picture_hash, picture_bytes) = decoded_digest_with_inputs(&selected, true, programs)?;
+        let (mut picture_hash, picture_bytes) =
+            decoded_digest_with_inputs(&selected, true, programs)?;
         let (mut audio_hash, audio_bytes) = decoded_digest_with_inputs(&selected, false, programs)?;
         let frame_bytes = selected_facts.width * selected_facts.height * 3;
         if picture_bytes == 0
@@ -2589,7 +2687,7 @@ fn build_impl(
         {
             bail!("decoded segment does not contain complete frames/stereo samples");
         }
-        let frames = picture_bytes / frame_bytes;
+        let mut frames = picture_bytes / frame_bytes;
         let mut samples = audio_bytes / 6;
         let mut geometry_verification = None;
         let (input_frames, input_samples) = if !needs_normalization {
@@ -2730,6 +2828,45 @@ fn build_impl(
                 samples = actual.1 / 6;
             }
         }
+        let mut tail_hold_samples = 0;
+        if segment.tail_hold_frames != 0 {
+            let (num, den) = fps_parts(&selected_facts.fps)?;
+            tail_hold_samples = holds::hold_samples(
+                segment.tail_hold_frames,
+                frame_cursor
+                    .checked_add(frames)
+                    .context("hold frame clock overflow")?,
+                manifest.output_sample_rate,
+                num,
+                den,
+            )?;
+            let held = temp.path().join(format!("held-{index:03}.mkv"));
+            let (picture, audio) = holds::append_silent_picture_hold(
+                &selected,
+                &held,
+                segment.tail_hold_frames,
+                tail_hold_samples,
+                target_codec,
+                programs,
+            )?;
+            frames = frames
+                .checked_add(segment.tail_hold_frames)
+                .context("hold frame overflow")?;
+            samples = samples
+                .checked_add(tail_hold_samples)
+                .context("hold sample overflow")?;
+            if picture.1
+                != frames
+                    .checked_mul(frame_bytes)
+                    .context("hold picture overflow")?
+                || audio.1 != samples.checked_mul(6).context("hold audio overflow")?
+            {
+                bail!("silent picture hold has wrong frame or sample count");
+            }
+            selected = held;
+            picture_hash = picture.0;
+            audio_hash = audio.0;
+        }
         records.push(SegmentReceipt {
             kind: if segment.kind == SegmentKind::Scene {
                 "scene"
@@ -2750,6 +2887,8 @@ fn build_impl(
             frames,
             samples,
             audio_padding_samples,
+            tail_hold_frames: segment.tail_hold_frames,
+            tail_hold_samples,
             start_frame: frame_cursor,
             start_sample: sample_cursor,
             decoded_picture_sha256: picture_hash,

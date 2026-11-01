@@ -136,6 +136,8 @@ pub fn prepare(profile: &Profile, source: &mut impl ByteSource) -> Result<Prepar
                 .chain(segment.delivery_job.iter())
                 .chain(segment.delivery_receipt.iter())
                 .chain(segment.semantic_delivery.iter())
+                .chain(segment.master_proof.iter())
+                .chain(segment.master_proof_validator.iter())
                 .chain(segment.adoption_manifest.iter())
                 .chain(segment.source_text_evidence.iter())
                 .chain(segment.imported_source_manifest.iter())
@@ -177,6 +179,11 @@ pub fn prepare(profile: &Profile, source: &mut impl ByteSource) -> Result<Prepar
             ("delivery-job", segment.delivery_job.as_ref()),
             ("delivery-receipt", segment.delivery_receipt.as_ref()),
             ("semantic-delivery", segment.semantic_delivery.as_ref()),
+            ("master-proof", segment.master_proof.as_ref()),
+            (
+                "master-proof-validator",
+                segment.master_proof_validator.as_ref(),
+            ),
             ("adoption-manifest", segment.adoption_manifest.as_ref()),
             (
                 "source-text-evidence",

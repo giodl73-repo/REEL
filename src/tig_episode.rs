@@ -80,6 +80,8 @@ pub struct Component {
     pub position: usize,
     pub segment_id: String,
     pub kind: String,
+    #[serde(skip_serializing_if = "zero")]
+    pub tail_hold_frames: u64,
     pub record: Reference,
     pub selected: Object,
     pub baseline: Object,
@@ -88,6 +90,9 @@ pub struct Component {
     pub source_scene: Option<Reference>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_scene_selected: Option<Object>,
+}
+fn zero(value: &u64) -> bool {
+    *value == 0
 }
 #[derive(Serialize)]
 pub struct Plan {
@@ -306,6 +311,7 @@ fn plan_inner(source: &mut Source, request: &Request) -> Result<Plan> {
             position,
             segment_id: segment.id.clone(),
             kind: kind.into(),
+            tail_hold_frames: segment.tail_hold_frames,
             record: record.reference().clone(),
             changed_from_baseline: selected != baseline,
             selected,
