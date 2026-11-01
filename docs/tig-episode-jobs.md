@@ -5,6 +5,56 @@ an already captured source and existing caches, metadata and source-journal
 stores. It performs no cache or daemon setup. Keep the machine profile, raw
 reports and runtime receipts outside Git.
 
+## Prepare the complete resource plan before execution
+
+```text
+reel-tig-job prepare-episode PRIVATE_JOB_PROFILE NEW_PRIVATE_REPORT
+```
+
+This explicit operation uses the same episode job profile and complete child
+planning/readback code as execution. It binds the declared runtime, compiles
+small native controls and freezes the parent, child reference and runtime
+resource set in existing metadata storage. Bounded coordinator preparation space
+is reserved and released; this is a writing operation, not a read-only preview.
+It never opens the source journal, adopts a job or starts a media producer.
+
+The fresh, at-most-64-KiB report must use the preparation volume outside metadata,
+source-journal and CAS object directories. It records the exact raw profile pin,
+source checkpoint, frozen resource selection, recipe, runtime manifest, metadata
+checkpoint, unique resource count/logical bytes and configured output/workspace/
+scratch ceilings. The full resource list remains in the frozen metadata tree;
+no expanding inventory is added to Git or stdout. Output ceilings and logical
+resource bytes are not physical allocation estimates or promised render sizes.
+
+Preparation does not verify selected component movies or primary media. A missing
+movie can therefore be represented in a successfully prepared resource plan.
+This establishes declared requirements, not availability or producer currency.
+The report explicitly denies execution capacity reservation, root retention
+enrollment, production and eviction authority. It is not an execution ticket or
+lease. A later `run-episode` still repeats preparation, verifies component media,
+checks current owner/revision state, reserves execution capacity and obtains fresh
+guarded primary-reference proofs. A prepared report never bypasses those checks.
+
+Scope controls: entry source `6b403aa1ec6730b826f265796092355af6fc1d82`;
+Tig WP-005/011/015/016, REQ-001/003/006/007/010, existing native source/job and
+resource interfaces. Allowed scope is shared episode metadata orchestration and
+private reporting. L0: format/lint; L1: profile/path/budget refusal; L2: synthetic
+real-Git scene-only and mixed-presentation CLI fixtures with Git and a selected
+movie offline, no source-journal creation/advance, verified metadata readback,
+no-replace reporting and unchanged execution refusal for missing movies.
+Implementation, test results, hosted qualification and actual project adoption
+remain distinct. Existing rights/provenance review requires the explicit false
+approval/currency/production flags; technical preparation grants no selection.
+
+Local producer verification passes both focused native preparation fixtures,
+102 regular Tig-input regressions (19 explicit native fixtures ignored), strict
+Clippy for the library/job CLI/Tig-input tests, formatting and diff checks.
+The first full native regression reached retained output/proposal handling but
+failed because the local fixture lacked `REEL_TEST_TIG_PROPOSE`; that is not a
+full-test pass. Full fixtures now require this binding before producing their
+synthetic media. Hosted full workflow qualification and actual project resource
+preparation remain separate from these local checks.
+
 First capture a committed episode with
 `reel-tig-job capture-context PRIVATE_CAPTURE_PROFILE.json NEW_FRAGMENT.json`.
 Use capture schema `reel.tig-episode-capture-profile.experimental-1` and supply
