@@ -120,6 +120,7 @@ pub enum ExternalLayerRenderMode {
     EvidenceOnly,
     AssOverlay,
     TimedVideoOverlay,
+    TimedStillOverlay,
     TimedPictureTransform,
 }
 
@@ -1053,7 +1054,8 @@ fn plan_from_bytes(
                 )?;
                 rendered_external_layers.push(layer.attachment_id.clone());
             }
-            ExternalLayerRenderMode::TimedVideoOverlay => {
+            ExternalLayerRenderMode::TimedVideoOverlay
+            | ExternalLayerRenderMode::TimedStillOverlay => {
                 if !matches!(a.target, Target::Effect { .. } | Target::Overlay { .. })
                     || layer.font.is_some()
                 {
@@ -1079,6 +1081,21 @@ fn plan_from_bytes(
                     explicit_picture_frames,
                 )?;
                 let source = asset_root.verified_path(timed_overlay_source(asset_root, layer)?)?;
+                if layer.render_mode == ExternalLayerRenderMode::TimedStillOverlay {
+                    // Demuxer probing of Windows extended paths can expose only
+                    // an APNG's default PNG frame. Inspect its content directly.
+                    let mut limits = image::Limits::default();
+                    limits.max_alloc = Some(8 * 1024 * 1024);
+                    limits.max_image_width = Some(job.width);
+                    limits.max_image_height = Some(job.height);
+                    let png = image::codecs::png::PngDecoder::with_limits(
+                        std::io::BufReader::new(fs::File::open(&source)?),
+                        limits,
+                    )?;
+                    if png.is_apng()? {
+                        bail!("timed still overlay cannot consume an animated PNG");
+                    }
+                }
                 let info = probe_with_inputs(asset_root, &source)?;
                 let video = info["streams"]
                     .as_array()
@@ -1090,6 +1107,22 @@ fn plan_from_bytes(
                     || video["height"].as_u64() != Some(u64::from(job.height))
                 {
                     bail!("timed overlay needs exact scene geometry and an alpha pixel format");
+                }
+                if layer.render_mode == ExternalLayerRenderMode::TimedStillOverlay {
+                    if layer.render_source.is_some()
+                        || layer.derivation_receipt.is_some()
+                        || video["codec_name"] != "png"
+                        || !matches!(pixel_format, "rgba" | "rgba64be" | "ya8" | "ya16be")
+                        || decoded_video_frames(asset_root, &source)? != 1
+                    {
+                        bail!(
+                            "timed still overlay requires one primary alpha PNG without derived sources"
+                        );
+                    }
+                    rendered_external_layers.push(layer.attachment_id.clone());
+                    external_layers.push(layer.attachment_id.clone());
+                    external_layer_spans.push(layer_span);
+                    continue;
                 }
                 let rate = video["avg_frame_rate"]
                     .as_str()
@@ -1384,9 +1417,39 @@ fn indexed_layer_source_name(layer: &ExternalLayer, index: usize) -> String {
     match layer.render_mode {
         ExternalLayerRenderMode::AssOverlay => format!("presentation-{index:03}.ass"),
         ExternalLayerRenderMode::TimedVideoOverlay => format!("selected-overlay-{index:03}.mkv"),
+        ExternalLayerRenderMode::TimedStillOverlay => format!("selected-overlay-{index:03}.png"),
         ExternalLayerRenderMode::EvidenceOnly | ExternalLayerRenderMode::TimedPictureTransform => {
             unreachable!()
         }
+    }
+}
+
+pub(crate) fn timed_overlay_input_options(
+    plan: &Plan,
+    mode: &ExternalLayerRenderMode,
+) -> Vec<String> {
+    if *mode == ExternalLayerRenderMode::TimedStillOverlay {
+        vec![
+            "-loop".into(),
+            "1".into(),
+            "-framerate".into(),
+            format!("{}/{}", plan.fps_numerator, plan.fps_denominator),
+            "-f".into(),
+            "image2".into(),
+            "-pattern_type".into(),
+            "none".into(),
+        ]
+    } else {
+        vec![]
+    }
+}
+
+fn single_overlay_source_name(layer: &ExternalLayer) -> &'static str {
+    match layer.render_mode {
+        ExternalLayerRenderMode::AssOverlay => "presentation.ass",
+        ExternalLayerRenderMode::TimedVideoOverlay => "selected-overlay.mkv",
+        ExternalLayerRenderMode::TimedStillOverlay => "selected-overlay.png",
+        _ => unreachable!(),
     }
 }
 
@@ -1517,6 +1580,7 @@ fn render_timed_video_overlay(
     overlay_input: &str,
     picture_output: &str,
     encoding: Option<&str>,
+    mode: &ExternalLayerRenderMode,
 ) -> Result<()> {
     // Frame-synchronized secondary EOF can precede the last selected main
     // frame when timestamps round to milliseconds. Hold the final source
@@ -1525,7 +1589,9 @@ fn render_timed_video_overlay(
     let output = Command::new(asset_root.media_program(MediaProgram::Ffmpeg)?)
         .current_dir(root)
         .args(["-hide_banner", "-v", "error", "-nostdin", "-n"])
-        .args(["-i", picture_input, "-i", overlay_input])
+        .args(["-i", picture_input])
+        .args(timed_overlay_input_options(plan, mode))
+        .args(["-i", overlay_input])
         .args(["-filter_complex", &graph, "-map", "[v]", "-an"])
         .args(lossless_video_encoding(encoding))
         .args([
@@ -2093,7 +2159,9 @@ fn render_planned(
         .filter(|layer| {
             matches!(
                 layer.render_mode,
-                ExternalLayerRenderMode::AssOverlay | ExternalLayerRenderMode::TimedVideoOverlay
+                ExternalLayerRenderMode::AssOverlay
+                    | ExternalLayerRenderMode::TimedVideoOverlay
+                    | ExternalLayerRenderMode::TimedStillOverlay
             )
         })
         .collect();
@@ -2143,7 +2211,8 @@ fn render_planned(
                         job.still_sequence_encoding.as_deref(),
                     )?;
                 }
-                ExternalLayerRenderMode::TimedVideoOverlay => {
+                ExternalLayerRenderMode::TimedVideoOverlay
+                | ExternalLayerRenderMode::TimedStillOverlay => {
                     let span = plan
                         .external_layer_spans
                         .iter()
@@ -2151,8 +2220,9 @@ fn render_planned(
                         .context("timed overlay span missing")?;
                     let source =
                         asset_root.verified_path(timed_overlay_source(asset_root, layer)?)?;
-                    if decoded_video_frames(asset_root, &source)?
-                        < span.end_frame - span.start_frame
+                    if layer.render_mode == ExternalLayerRenderMode::TimedVideoOverlay
+                        && decoded_video_frames(asset_root, &source)?
+                            < span.end_frame - span.start_frame
                     {
                         bail!("timed overlay lacks frames for its selected span");
                     }
@@ -2166,6 +2236,7 @@ fn render_planned(
                         &selected,
                         &output,
                         job.still_sequence_encoding.as_deref(),
+                        &layer.render_mode,
                     )?;
                 }
                 ExternalLayerRenderMode::EvidenceOnly
@@ -2187,26 +2258,32 @@ fn render_planned(
                     job.still_sequence_encoding.as_deref(),
                 )?;
             }
-            ExternalLayerRenderMode::TimedVideoOverlay => {
+            ExternalLayerRenderMode::TimedVideoOverlay
+            | ExternalLayerRenderMode::TimedStillOverlay => {
                 let span = plan
                     .external_layer_spans
                     .iter()
                     .find(|span| span.attachment_id == layer.attachment_id)
                     .context("timed overlay span missing")?;
                 let source = asset_root.verified_path(timed_overlay_source(asset_root, layer)?)?;
-                if decoded_video_frames(asset_root, &source)? < span.end_frame - span.start_frame {
+                if layer.render_mode == ExternalLayerRenderMode::TimedVideoOverlay
+                    && decoded_video_frames(asset_root, &source)?
+                        < span.end_frame - span.start_frame
+                {
                     bail!("timed overlay lacks frames for its selected span");
                 }
-                fs::copy(source, root.join("selected-overlay.mkv"))?;
+                let selected = single_overlay_source_name(layer);
+                fs::copy(source, root.join(selected))?;
                 render_timed_video_overlay(
                     asset_root,
                     root,
                     &plan,
                     span,
                     "clean-picture.mkv",
-                    "selected-overlay.mkv",
+                    selected,
                     "picture.mkv",
                     job.still_sequence_encoding.as_deref(),
+                    &layer.render_mode,
                 )?;
             }
             ExternalLayerRenderMode::EvidenceOnly
@@ -2698,7 +2775,9 @@ fn check_outputs_impl(
         .filter(|layer| {
             matches!(
                 layer.render_mode,
-                ExternalLayerRenderMode::AssOverlay | ExternalLayerRenderMode::TimedVideoOverlay
+                ExternalLayerRenderMode::AssOverlay
+                    | ExternalLayerRenderMode::TimedVideoOverlay
+                    | ExternalLayerRenderMode::TimedStillOverlay
             )
         })
         .collect();
@@ -2912,8 +2991,9 @@ fn check_outputs_impl(
                     );
                 }
             }
-            ExternalLayerRenderMode::TimedVideoOverlay => {
-                if receipt.outputs["selected-overlay.mkv"].sha256
+            ExternalLayerRenderMode::TimedVideoOverlay
+            | ExternalLayerRenderMode::TimedStillOverlay => {
+                if receipt.outputs[single_overlay_source_name(layer)].sha256
                     != timed_overlay_source(asset_root, layer)?.sha256
                 {
                     bail!("rendered timed-overlay source differs from selected evidence");
@@ -3181,6 +3261,7 @@ mod timed_overlay_end_frame_tests {
             "a.mkv",
             "first.mkv",
             None,
+            &ExternalLayerRenderMode::TimedVideoOverlay,
         )?;
         render_timed_video_overlay(
             root,
@@ -3191,6 +3272,7 @@ mod timed_overlay_end_frame_tests {
             "b.mkv",
             "actual.mkv",
             None,
+            &ExternalLayerRenderMode::TimedVideoOverlay,
         )?;
         let base = frames(root, "base.mkv", 132)?;
         let source_a = frames(root, "a.mkv", 47)?;

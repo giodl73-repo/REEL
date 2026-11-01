@@ -17,6 +17,7 @@ pub(super) fn check(root: &Path, job_path: &Path, rendered: &Path) {
                 layer.render_mode,
                 scene_delivery::ExternalLayerRenderMode::AssOverlay
                     | scene_delivery::ExternalLayerRenderMode::TimedVideoOverlay
+                    | scene_delivery::ExternalLayerRenderMode::TimedStillOverlay
             )
         })
     {

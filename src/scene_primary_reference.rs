@@ -101,7 +101,9 @@ fn picture_pipeline(
         .filter(|layer| {
             matches!(
                 layer.render_mode,
-                ExternalLayerRenderMode::AssOverlay | ExternalLayerRenderMode::TimedVideoOverlay
+                ExternalLayerRenderMode::AssOverlay
+                    | ExternalLayerRenderMode::TimedVideoOverlay
+                    | ExternalLayerRenderMode::TimedStillOverlay
             )
         })
         .enumerate()
@@ -121,7 +123,8 @@ fn picture_pipeline(
                     &format!("{}/{}", plan.fps_numerator, plan.fps_denominator),
                 ]);
             }
-            ExternalLayerRenderMode::TimedVideoOverlay => {
+            ExternalLayerRenderMode::TimedVideoOverlay
+            | ExternalLayerRenderMode::TimedStillOverlay => {
                 let source = scene_delivery::timed_overlay_source(inputs, layer)?;
                 let path = inputs.verified_path(source)?;
                 let span = plan
@@ -130,6 +133,10 @@ fn picture_pipeline(
                     .find(|span| span.attachment_id == layer.attachment_id)
                     .context("reference overlay span missing")?;
                 protocol(&mut next);
+                next.args(scene_delivery::timed_overlay_input_options(
+                    plan,
+                    &layer.render_mode,
+                ));
                 next.args(["-threads", "1", "-i"]).arg(path).args([
                     "-filter_complex",
                     &scene_delivery::timed_overlay_filter(plan, span),
@@ -300,6 +307,7 @@ pub fn compare_master_to_primaries(
                     layer.render_mode,
                     ExternalLayerRenderMode::AssOverlay
                         | ExternalLayerRenderMode::TimedVideoOverlay
+                        | ExternalLayerRenderMode::TimedStillOverlay
                 )
             })
             .count();

@@ -30,7 +30,9 @@ pub fn output_contract(job: &Job, plan: &Plan) -> Result<OutputContract> {
         .filter(|layer| {
             matches!(
                 layer.render_mode,
-                ExternalLayerRenderMode::AssOverlay | ExternalLayerRenderMode::TimedVideoOverlay
+                ExternalLayerRenderMode::AssOverlay
+                    | ExternalLayerRenderMode::TimedVideoOverlay
+                    | ExternalLayerRenderMode::TimedStillOverlay
             )
         })
         .collect();
@@ -45,14 +47,7 @@ pub fn output_contract(job: &Job, plan: &Plan) -> Result<OutputContract> {
             }
         }
     } else if let Some(layer) = overlays.first() {
-        names.insert(
-            match layer.render_mode {
-                ExternalLayerRenderMode::AssOverlay => "presentation.ass",
-                ExternalLayerRenderMode::TimedVideoOverlay => "selected-overlay.mkv",
-                _ => unreachable!(),
-            }
-            .into(),
-        );
+        names.insert(single_overlay_source_name(layer).into());
     }
     if job.post_compose_camera.is_some() {
         names.insert("pre-camera-picture.mkv".into());
