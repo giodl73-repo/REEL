@@ -28,8 +28,9 @@ witness. Sealed native proof routes reject legacy witness fields, and derived
 current controls remove those fields when replacing the old component. They
 preserve the independently declared parent hold.
 
-Producer-applied editor and sound-design review requires intact cuts, moving
-picture/audio prefixes, bounded additional duration and strictly silent padding.
+Producer-applied animation, editor and sound-design review requires intact cuts,
+moving picture/audio prefixes, bounded additional duration and strictly silent
+padding. Repeat-only conversion preserves source motion without interpolation.
 Rights/provenance review requires preserved evidence identity, explicit provider
 admission and separation from creative approval or release. No role supplies
 independent review, ownership, consent, production selection or publication.
@@ -41,12 +42,21 @@ interpretation must preserve independently decoded RGB. Metadata intake and
 non-executable plans validate the same scalar policies as rendering.
 
 The first hold/proof integration passed 13 focused library checks and 60 regular
-integration tests. The subsequent clock/range additions are being validated.
-The explicit Windows guarded-native parent test also passes: a sparse cel edit
-and one-frame parent hold produce 97 verified frames while the obsolete witness
-files and old movie are unavailable. Strict all-target/all-feature Clippy passes
-with warnings denied. Fifteen other scene native tests remain explicitly ignored
+integration tests. The final clock/range source passes 14 focused episode library
+checks and 30 integration tests: nine ordered-conform, seven registration and
+fourteen episode-plan checks. The updated Windows guarded-native parent test
+also passes with an explicit output clock: a sparse cel edit and one-frame
+parent hold produce 97 verified frames while the obsolete witness files and old
+movie are unavailable. Warnings-denied all-target/all-feature Clippy, formatting
+and whitespace checks pass. Fifteen other scene native tests remain explicitly ignored
 in the regular suite; their coverage is not claimed by this local run.
+
+An actual retained bilingual conform now produces 24 metadata-only component
+candidates without removing source fields or opening primary media. Independent
+authored-schema and correspondence checks confirm every selected subject, all
+authored fields and all 152 declared evidence streams. This is candidate intake,
+not payload verification, producer authentication, runtime adoption or delivery
+approval. Exact tool/source pins and detailed reports remain private asset-side.
 
 The synthetic regressions cover full-check witness issuance, absent unconsumed
 outputs, changed inputs/receipts/masters, opaque provider paths, explicit
