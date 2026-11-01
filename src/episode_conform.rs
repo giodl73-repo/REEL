@@ -30,7 +30,9 @@ type NativeScenes<'a> =
 type NativeScenes<'a> = BTreeMap<String, &'a ()>;
 
 pub const SCHEMA: &str = "reel.episode-conform.v1";
+mod clocks;
 mod holds;
+pub use clocks::{FrameRateVerification, OutputFrameRate};
 fn is_zero(value: &u64) -> bool {
     *value == 0
 }
@@ -121,6 +123,9 @@ pub struct Manifest {
     /// Explicit delivery geometry. Without this, sources must have identical sizes.
     #[serde(default)]
     pub output_geometry: Option<OutputGeometry>,
+    /// Explicit clock conversion may repeat, but never discard, selected frames.
+    #[serde(default)]
+    pub output_frame_rate: Option<OutputFrameRate>,
     pub catalog: scene_delivery::FileRef,
     pub master_template_definition: scene_delivery::FileRef,
     #[serde(default)]
@@ -138,6 +143,26 @@ pub struct Manifest {
     /// dependencies and tool binaries have been rehashed. Defaults to full checks.
     #[serde(default)]
     pub reuse_verified_presentations: bool,
+}
+
+impl Manifest {
+    pub(crate) fn validate_clock_and_range(&self) -> Result<()> {
+        if let Some(rate) = &self.output_frame_rate {
+            rate.clock()?;
+            if self.audio_frame_conform.as_deref() != Some("pad-silence-to-picture-boundaries") {
+                bail!("repeat-only frame conversion requires non-trimming audio frame conform");
+            }
+        }
+        if self
+            .output_geometry
+            .as_ref()
+            .and_then(|g| g.assume_color_range_for_unspecified.as_deref())
+            .is_some_and(|range| range != "tv")
+        {
+            bail!("unsupported unspecified color-range declaration");
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -163,6 +188,9 @@ pub struct OutputGeometry {
     /// Resolve an unspecified matrix only when independent decoded RGB agrees.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assume_color_space_for_unspecified: Option<String>,
+    /// Resolve an unknown range only if decoded displayed RGB remains identical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assume_color_range_for_unspecified: Option<String>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -198,6 +226,8 @@ pub struct GeometryVerification {
     pub sample_aspect_ratio_assumed_square: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assumed_color_space: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assumed_color_range: Option<String>,
     pub color_properties: BTreeMap<String, String>,
     pub output_width: u64,
     pub output_height: u64,
@@ -353,6 +383,8 @@ pub struct SegmentReceipt {
     pub decoded_audio_sha256: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub geometry_verification: Option<GeometryVerification>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame_rate_verification: Option<FrameRateVerification>,
 }
 
 #[derive(Debug, Serialize)]
@@ -678,6 +710,23 @@ fn verify_color_space_declaration(
     )?;
     if declared != original {
         bail!("unspecified color-space declaration changes decoded source colors");
+    }
+    Ok(())
+}
+
+fn verify_color_range_declaration(
+    source: &Path,
+    space: Option<&str>,
+    inputs: &(impl scene_delivery::InputFiles + ?Sized),
+) -> Result<()> {
+    let original = decoded_digest_with_options(source, true, 0, None, "rgb24", inputs)?;
+    let filter = match space {
+        Some(space) => format!("setparams=range=limited:colorspace={space}"),
+        None => "setparams=range=limited".into(),
+    };
+    let declared = decoded_digest_with_options(source, true, 0, Some(&filter), "rgb24", inputs)?;
+    if declared != original {
+        bail!("unspecified display range declaration changes decoded source colors");
     }
     Ok(())
 }
@@ -1912,6 +1961,7 @@ fn build_impl(
     {
         bail!("unsupported episode audio frame conform policy");
     }
+    manifest.validate_clock_and_range()?;
     if manifest.schema != SCHEMA
         || manifest.episode_id.is_empty()
         || !matches!(manifest.language.as_str(), "es" | "en")
@@ -2503,6 +2553,31 @@ fn build_impl(
     for (index, (segment, source)) in manifest.segments.iter().zip(&sources).enumerate() {
         let facts = probe_with_inputs(source, programs)?;
         let mut output_facts = facts.clone();
+        let assumed_color_range = if let Some(range) = manifest
+            .output_geometry
+            .as_ref()
+            .and_then(|g| g.assume_color_range_for_unspecified.as_ref())
+        {
+            if range != "tv" {
+                bail!("unsupported unspecified color-range declaration");
+            }
+            (facts.color_properties["color_range"] == "unknown").then(|| range.clone())
+        } else {
+            None
+        };
+        if let Some(range) = &assumed_color_range {
+            output_facts
+                .color_properties
+                .insert("color_range".into(), range.clone());
+        }
+        let frame_filter = if let Some(rate) = &manifest.output_frame_rate {
+            let filter = rate.filter(&facts.fps)?;
+            let (n, d) = rate.clock()?;
+            output_facts.fps = format!("{n}/{d}");
+            filter
+        } else {
+            None
+        };
         let assumed_color_space = if let Some(space) = manifest
             .output_geometry
             .as_ref()
@@ -2569,6 +2644,18 @@ fn build_impl(
                 None => declaration,
             });
         }
+        if let Some(filter) = frame_filter {
+            scale_filter = Some(match scale_filter {
+                Some(existing) => format!("{existing},{filter}"),
+                None => filter,
+            });
+        }
+        if assumed_color_range.is_some() {
+            scale_filter = Some(match scale_filter {
+                Some(existing) => format!("{existing},setparams=range=limited"),
+                None => "setparams=range=limited".into(),
+            });
+        }
         if segment.kind == SegmentKind::Scene
             && facts.video_codec == "h264"
             && (segment.delivery_job.is_none() || segment.delivery_receipt.is_none())
@@ -2577,7 +2664,7 @@ fn build_impl(
             bail!("H264 scene requires its verified delivery or sealed primary-reference proof");
         }
         if let Some(first) = &common {
-            if manifest.output_geometry.is_some()
+            if (manifest.output_geometry.is_some() || manifest.output_frame_rate.is_some())
                 && output_facts.color_properties != first.color_properties
             {
                 bail!("explicit output geometry requires consistent source color properties");
@@ -2617,7 +2704,7 @@ fn build_impl(
             if let Some(filter) = &scale_filter {
                 encoder.args(["-vf", filter]);
             }
-            if manifest.output_geometry.is_some() {
+            if manifest.output_geometry.is_some() || manifest.output_frame_rate.is_some() {
                 for (key, flag) in [
                     ("color_range", "-color_range"),
                     ("color_space", "-colorspace"),
@@ -2695,7 +2782,9 @@ fn build_impl(
         } else {
             let (source_picture_hash, source_picture_bytes) =
                 decoded_digest_with_inputs(source, true, programs)?;
-            if let Some(space) = &assumed_color_space {
+            if assumed_color_range.is_some() {
+                verify_color_range_declaration(source, assumed_color_space.as_deref(), programs)?;
+            } else if let Some(space) = &assumed_color_space {
                 verify_color_space_declaration(source, space, programs)?;
             }
             let (source_audio_hash, source_audio_bytes) =
@@ -2708,7 +2797,10 @@ fn build_impl(
             let source_frame_bytes = facts.width * facts.height * 3;
             if source_picture_bytes == 0
                 || source_picture_bytes % source_frame_bytes != 0
-                || source_picture_bytes / source_frame_bytes != frames
+                || manifest.output_frame_rate.as_ref().map_or_else(
+                    || Ok(source_picture_bytes / source_frame_bytes),
+                    |rate| rate.frames(source_picture_bytes / source_frame_bytes, &facts.fps),
+                )? != frames
                 || expected_picture != (picture_hash.clone(), picture_bytes)
                 || source_audio_bytes % 6 != 0
                 || (facts.sample_rate == manifest.output_sample_rate
@@ -2730,6 +2822,7 @@ fn build_impl(
                     input_sample_aspect_ratio: facts.sample_aspect_ratio.clone(),
                     sample_aspect_ratio_assumed_square: assumed_square,
                     assumed_color_space: assumed_color_space.clone(),
+                    assumed_color_range: assumed_color_range.clone(),
                     color_properties: facts.color_properties.clone(),
                     output_width: selected_facts.width,
                     output_height: selected_facts.height,
@@ -2741,6 +2834,20 @@ fn build_impl(
             }
             (source_picture_bytes / source_frame_bytes, input_samples)
         };
+        let frame_rate_verification = if manifest.output_frame_rate.is_some() {
+            Some(FrameRateVerification {
+                input_fps: facts.fps.clone(),
+                output_fps: selected_facts.fps.clone(),
+                input_frames,
+                output_frames: frames,
+                repeated_frames: frames
+                    .checked_sub(input_frames)
+                    .context("repeat-only normalization discarded source frames")?,
+                transformed_source_matches_selected: true,
+            })
+        } else {
+            None
+        };
         if manifest.output_geometry.is_some() && geometry_verification.is_none() {
             geometry_verification = Some(GeometryVerification {
                 input_width: facts.width,
@@ -2748,6 +2855,7 @@ fn build_impl(
                 input_sample_aspect_ratio: facts.sample_aspect_ratio.clone(),
                 sample_aspect_ratio_assumed_square: assumed_square,
                 assumed_color_space: assumed_color_space.clone(),
+                assumed_color_range: assumed_color_range.clone(),
                 color_properties: facts.color_properties.clone(),
                 output_width: selected_facts.width,
                 output_height: selected_facts.height,
@@ -2761,7 +2869,7 @@ fn build_impl(
                 bail!("presentation decoded media differs from its source receipt");
             }
         }
-        if manifest.output_geometry.is_some() {
+        if manifest.output_geometry.is_some() || manifest.output_frame_rate.is_some() {
             let (num, den) = fps_parts(&facts.fps)?;
             episode_delivery::verify_timestamps_with_inputs(
                 source,
@@ -2791,10 +2899,17 @@ fn build_impl(
             audio_padding_samples = target
                 .checked_sub(samples)
                 .context("native audio exceeds selected picture boundary; trimming is forbidden")?;
-            if u128::from(audio_padding_samples) * u128::from(num)
-                > u128::from(manifest.output_sample_rate) * u128::from(den) + u128::from(num)
-            {
-                bail!("frame conform padding exceeds one frame");
+            let maximum_padding = if let Some(rate) = &manifest.output_frame_rate {
+                rate.padding_limit(manifest.output_sample_rate, &facts.fps)?
+            } else {
+                u64::try_from(
+                    (u128::from(manifest.output_sample_rate) * u128::from(den)) / u128::from(num)
+                        + 1,
+                )
+                .context("frame padding clock overflow")?
+            };
+            if audio_padding_samples > maximum_padding {
+                bail!("frame conform padding exceeds source and output clock bounds");
             }
             if audio_padding_samples != 0 {
                 let expected = decoded_digest_with_options(
@@ -2894,6 +3009,7 @@ fn build_impl(
             decoded_picture_sha256: picture_hash,
             decoded_audio_sha256: audio_hash,
             geometry_verification,
+            frame_rate_verification,
         });
         frame_cursor += frames;
         sample_cursor += samples;

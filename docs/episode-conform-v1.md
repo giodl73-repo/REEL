@@ -30,6 +30,24 @@ ordered decoded output. Low-level filesystem APIs retain their caller-owned
 resource/custody responsibilities; no cache initialization, staging reservation
 or eviction authority is created by these fields.
 
+An optional `output_frame_rate` contains positive `numerator`/`denominator`
+integers and `policy: "repeat-only"`. The rational clock is reduced, bounded to
+120 fps, and may keep or increase the source rate. A lower rate refuses instead
+of discarding selected frames. The output count uses a checked ceiling, and
+segment receipts record original, normalized and repeated frames separately from
+explicit tail holds. This requires `audio_frame_conform:
+"pad-silence-to-picture-boundaries"`; all selected PCM is retained. Permitted
+padding accounts for the original partial picture interval and, when the clock
+changes, the additional output rounding interval. Arbitrary extra silence and
+audio trimming remain outside that policy.
+
+`output_geometry.assume_color_range_for_unspecified: "tv"` resolves only an
+unknown source range. Known range declarations remain authoritative. The
+interpretation is admitted only when independent decoded RGB agrees with the
+original source, and is recorded in geometry verification. Other range values
+refuse. Registration, non-executable parent planning and rendering share these
+clock/range scalar checks; metadata planning does not claim media verification.
+
 `reel-episode-conform` builds one language-local lossless FFV1/PCM24 master from
 selected scene and presentation masters:
 

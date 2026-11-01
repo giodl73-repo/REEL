@@ -33,6 +33,8 @@ fn sparse_scene_edit_compiles_parent_without_manual_conform_or_old_movie() {
             json!({"path":"legacy/validator.exe","sha256":"b".repeat(64),"bytes":19});
     }
     baseline["segments"][0]["tail_hold_frames"] = json!(1);
+    baseline["output_frame_rate"] = json!({"numerator":24,"denominator":1,"policy":"repeat-only"});
+    baseline["audio_frame_conform"] = json!("pad-silence-to-picture-boundaries");
     fs::write(&baseline_path, serde_json::to_vec(&baseline).unwrap()).unwrap();
     let request = add_episode_assembly(&mut p, "episode-v1.json");
     let original_conform = tig_episode::plan(&mut p.source(), &request)

@@ -106,6 +106,7 @@ pub fn prepare(profile: &Profile, source: &mut impl ByteSource) -> Result<Prepar
         remember(&mut sizes, object)?;
         let raw = read_metadata(source, object, &mut remaining)?;
         let manifest: Manifest = serde_json::from_value(identity::parse_json(&raw)?)?;
+        manifest.validate_clock_and_range()?;
         if manifest.schema != crate::episode_conform::SCHEMA
             || manifest.episode_id != profile.episode_id
             || &manifest.language != language

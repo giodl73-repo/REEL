@@ -103,6 +103,8 @@ pub struct Plan {
     pub episode_selected: Object,
     pub conform: Object,
     pub language: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_frame_rate: Option<crate::episode_conform::OutputFrameRate>,
     pub components: Vec<Component>,
     pub unique_output_objects: usize,
     pub unique_output_bytes: u64,
@@ -209,6 +211,7 @@ fn plan_inner(source: &mut Source, request: &Request) -> Result<Plan> {
     let conform: Manifest = serde_json::from_value(identity::parse_json(
         &source.read_metadata(&conform_pin, 4 * 1024 * 1024)?,
     )?)?;
+    conform.validate_clock_and_range()?;
     if conform.schema != crate::episode_conform::SCHEMA
         || native.schema != reel_assembly::scene_authoring::EPISODE_SCHEMA
         || !token(&declared_episode)
@@ -339,6 +342,7 @@ fn plan_inner(source: &mut Source, request: &Request) -> Result<Plan> {
         episode_selected,
         conform: conform_pin,
         language: authored.language,
+        output_frame_rate: conform.output_frame_rate,
         components,
         unique_output_objects: outputs.len(),
         unique_output_bytes,

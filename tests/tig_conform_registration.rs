@@ -114,6 +114,9 @@ fn retained_master_witnesses_and_tail_holds_survive_registration_without_payload
     let mut f = Fixture::new();
     for language in ["es", "en"] {
         f.edit(language, |v| {
+            v["output_frame_rate"] = json!({"numerator":24,"denominator":1,"policy":"repeat-only"});
+            v["audio_frame_conform"] = json!("pad-silence-to-picture-boundaries");
+            v["output_geometry"] = json!({"width":64,"height":64,"policy":"preserve-aspect-lanczos","assume_color_range_for_unspecified":"tv"});
             v["segments"][0]["tail_hold_frames"] = json!(24);
             v["segments"][0]["master_proof"] = reference(b"proof not hydrated");
             v["segments"][0]["master_proof_validator"] = reference(b"validator not hydrated");
@@ -162,6 +165,25 @@ fn retained_master_witnesses_and_tail_holds_survive_registration_without_payload
             assert_eq!(stream["group"], "original-production");
         }
         assert_eq!(record["status"]["production_state"], "unclassified");
+    }
+}
+
+#[test]
+fn unsupported_clock_or_range_policies_refuse_before_candidate_creation() {
+    for case in 0..5 {
+        let mut f = Fixture::new();
+        f.edit("es", |v| {
+            v["output_frame_rate"] = json!({"numerator":24,"denominator":1,"policy":"repeat-only"});
+            v["audio_frame_conform"] = json!("pad-silence-to-picture-boundaries");
+            match case {
+                0 => v["output_frame_rate"]["numerator"] = json!(0),
+                1 => v["output_frame_rate"]["denominator"] = json!(0),
+                2 => v["output_frame_rate"]["policy"] = json!("drop"),
+                3 => { v.as_object_mut().unwrap().remove("audio_frame_conform"); },
+                _ => v["output_geometry"] = json!({"width":64,"height":64,"policy":"preserve-aspect-lanczos","assume_color_range_for_unspecified":"pc"}),
+            }
+        });
+        f.refused();
     }
 }
 

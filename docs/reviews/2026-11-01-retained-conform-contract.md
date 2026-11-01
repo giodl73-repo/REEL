@@ -1,12 +1,14 @@
 # Retained episode contract integration
 
 Current shared REEL rejected retained episode conforms containing explicit tail
-holds and master-only check witnesses. Those fields now have typed semantics
+holds, master-only check witnesses, repeat-only output clocks and unknown-range
+declarations. Those fields now have typed semantics
 through registration, planning, execution and receipt generation. Unknown fields
 still refuse; no source manifest is rewritten to hide unsupported information.
 
 This adapts the hold implementation from `fa1d382` and master-check witness
-implementation from `92891df`/`cda71b5`, preserving current guarded native
+implementation from `92891df`/`cda71b5`, clock conversion from `21c3341` and range
+interpretation from `c91553c`, preserving current guarded native
 providers and producer APIs rather than replacing files with older branch
 versions. It does not merge unrelated speech workers or the older phased
 checkpoint implementation.
@@ -32,7 +34,14 @@ Rights/provenance review requires preserved evidence identity, explicit provider
 admission and separation from creative approval or release. No role supplies
 independent review, ownership, consent, production selection or publication.
 
-Validation: 13 focused library checks and 60 regular integration tests pass.
+The repeat-only clock retains every selected source frame in order and preserves
+the complete PCM prefix. Checked frame counts and source/output rounding bounds
+prevent dropping frames, unbounded padding or trimming audio. Unknown range
+interpretation must preserve independently decoded RGB. Metadata intake and
+non-executable plans validate the same scalar policies as rendering.
+
+The first hold/proof integration passed 13 focused library checks and 60 regular
+integration tests. The subsequent clock/range additions are being validated.
 The explicit Windows guarded-native parent test also passes: a sparse cel edit
 and one-frame parent hold produce 97 verified frames while the obsolete witness
 files and old movie are unavailable. Strict all-target/all-feature Clippy passes
