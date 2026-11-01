@@ -104,6 +104,11 @@ jobs:
       - name: Verify original producer and new checker keep source currency and claims distinct
         if: runner.os == 'Windows'
         run: cargo test --all-features --test tig_inputs language_scope::projected_jobs::retained_producer_and_new_checker_preserve_claim_and_source_currency --locked -- --ignored --exact
+      - name: Verify component-only jobs, retained evidence and owner cleanup
+        # Component-only jobs must retain their evidence and release temporary
+        # owners without claiming that an episode movie was assembled.
+        if: runner.os == 'Windows'
+        run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::episode_cli::verify_ --locked -- --ignored --test-threads=1
       - name: Verify synthetic episode edit, delivery, parallel publication and verified cache eviction
         if: runner.os == 'Windows'
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::fake_episode_runs_v1_then_rebuilds_only_the_changed_scene --locked -- --ignored --exact

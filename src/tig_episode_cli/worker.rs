@@ -41,6 +41,21 @@ fn write_report(path: &Path, value: &Value) -> Result<()> {
     file.sync_all()?;
     Ok(())
 }
+fn temporary_sources(t: &Ticket) -> Result<Vec<String>> {
+    t.inputs
+        .scenes
+        .iter()
+        .map(|s| format!("scene/{}", s.id))
+        .chain(
+            t.inputs
+                .presentations
+                .iter()
+                .map(|s| format!("presentation/{}", s.id)),
+        )
+        .chain(std::iter::once("parent".to_owned()))
+        .map(|label| identity(t, &label).map(|id| id.source.as_str().to_owned()))
+        .collect()
+}
 /// Internal trusted route. Use run() for capacity, process-tree containment,
 /// timeout, result retention and root-source authority.
 pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
@@ -334,6 +349,18 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
             },
             &phase(&t.source_id, &t.operation, "protect/parent")?,
         )?;
+    if t.inputs.purpose == Purpose::VerifyComponents {
+        check(&t, &mut journal)?;
+        parent.verify_current(&source, &children, &mut journal)?;
+        let result = json!({"schema":"reel.tig-episode-component-verification-result.experimental-1",
+            "recipe":t.recipe,"resources":frozen.selection(),"metadata_checkpoint":checkpoint,
+            "journal_checkpoint":journal.checkpoint(),"temporary_sources":temporary_sources(&t)?,
+            "temporary_owner_cleanup_required":true,"components_verified":scenes.len()+presentations.len(),
+            "component_primary_references_verified":true,"episode_assembled":false,
+            "final_episode_output_verified":false,"record_contract":null,"production_claim":null,"approval":false});
+        write_report(Path::new("worker.json"), &result)?;
+        return Ok(result);
+    }
     let archive: ArchiveProfile = serde_json::from_value(t.inputs.source.clone())?;
     let parent_plan = tig_episode::plan(&mut source, &t.inputs.request)?;
     let controls = tig_episode::ParentControls::open(archive.byte_source, &parent_plan.conform)?;
@@ -375,25 +402,7 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
         rendered.receipt_object(),
         |bindings| rendered.claim(bindings),
     )?;
-    let mut owners = t
-        .inputs
-        .scenes
-        .iter()
-        .map(|spec| {
-            identity(&t, &format!("scene/{}", spec.id)).map(|id| id.source.as_str().to_owned())
-        })
-        .collect::<Result<Vec<_>>>()?;
-    owners.extend(
-        t.inputs
-            .presentations
-            .iter()
-            .map(|spec| {
-                identity(&t, &format!("presentation/{}", spec.id))
-                    .map(|id| id.source.as_str().to_owned())
-            })
-            .collect::<Result<Vec<_>>>()?,
-    );
-    owners.push(identity(&t, "parent")?.source.as_str().to_owned());
+    let owners = temporary_sources(&t)?;
     let result = json!({"schema":"reel.tig-episode-worker-result.experimental-1","recipe":t.recipe,
         "resources":frozen.selection(),"receipt":rendered.receipt_object(),"metadata_checkpoint":checkpoint,
         "journal_checkpoint":journal.checkpoint(),"temporary_sources":owners,"temporary_owner_cleanup_required":true,

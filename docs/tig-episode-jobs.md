@@ -5,6 +5,55 @@ an already captured source and existing caches, metadata and source-journal
 stores. It performs no cache or daemon setup. Keep the machine profile, raw
 reports and runtime receipts outside Git.
 
+## Verify retained components without assembling an episode
+
+```text
+reel-tig-job verify-episode PRIVATE_VERIFICATION_JOB_PROFILE
+```
+
+Set `inputs.purpose` to `verify-components` in the otherwise normal episode job
+profile. `run-episode` requires the default `assemble` purpose; the two commands
+refuse mismatched profiles before opening stores. Verification profiles must not
+declare output-record mappings or a Git handoff. The ordinary episode output
+contract remains part of the source and its resource plan, but the contained
+verification request declares only `worker.json` as its output.
+
+This is an actual managed job: component availability checks, capacity admission,
+process containment and source ownership still apply. The worker obtains the
+same fresh scene/presentation primary-reference proofs as assembly and verifies
+the protected parent and children again before reporting. It skips the parent
+assembly call entirely. The result states the component count and verified
+primary references, with `episode_assembled: false`,
+`final_episode_output_verified: false`, no production claim and no approval.
+Reference checking may use bounded temporary decoded/staged data; it does not
+produce a new episode movie or promote any selected asset.
+
+The verification purpose is pinned into the frozen resource tree. Retention and
+recovery validate that pin and the distinct worker report schema. A successful
+verification cannot be interpreted as a completed assembly; failed verification
+remains failed after diagnostic retention and cleanup. The existing retained
+context handoff keeps the full evidence before withdrawing temporary owners.
+Use `finish-episode` with the unchanged verification profile for recovery; changing
+its purpose refuses instead of changing the meaning of the retained result.
+Older profiles and retained contexts without a purpose retain assembly semantics.
+
+Scope: entry source `9c64941fb86278aef00e02b2a55ac62735278fcd`, Tig
+WP-005/011/015/016 and REQ-001/003/006/007/010. Reuse the existing verification,
+runner, source-journal and handoff mechanisms; no new proof engine/provider.
+L0 format/lint; L1 purpose separation, output-contract refusal and immutable
+mode binding; L2 native scene-only/mixed jobs, missing movie before adoption,
+missing primary after adoption, result retention, owner cleanup, idempotent
+recovery and changed-purpose refusal. Rights/provenance producer review must
+keep component equivalence distinct from final-delivery verification and approval.
+
+Local native verification passes both scene-only and mixed-presentation fixtures,
+including missing-primary failure retention and changed-purpose recovery refusal.
+The first run exposed a namespace mismatch: dependency obligations use
+`input-evidence/`, while `evidence/` is for output-claim attachments. Recovery now
+requires the exact marker in the input namespace; a focused regression rejects
+missing, foreign or output-only markers. Hosted assembly compatibility and actual
+project verification remain separate acceptance work.
+
 ## Prepare the complete resource plan before execution
 
 ```text

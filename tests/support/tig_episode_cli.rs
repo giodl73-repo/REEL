@@ -29,11 +29,124 @@ fn prepare_episode_freezes_child_resources_with_movie_and_source_journal_unavail
 fn prepare_mixed_episode_freezes_complete_resources_without_execution_admission() {
     exercise_mode(true, true);
 }
+#[test]
+#[ignore = "requires native FFmpeg; source-owned component verification and recovery"]
+fn verify_episode_components_retains_proofs_without_assembling_or_emitting_records() {
+    exercise_purpose(false, false, true);
+}
+#[test]
+#[ignore = "requires native FFmpeg; mixed component verification without assembly"]
+fn verify_mixed_episode_components_checks_primaries_and_cleans_owned_sources() {
+    exercise_purpose(true, false, true);
+}
+fn check_verification(p: &Project, binary: &Path, profile: &Value, path: &Path, scenes: &[Scene]) {
+    let wrong = Command::new(binary)
+        .arg("run-episode")
+        .arg(path)
+        .output()
+        .unwrap();
+    assert!(!wrong.status.success());
+    assert!(String::from_utf8_lossy(&wrong.stderr).contains("purpose differs"));
+    let run = Command::new(binary)
+        .arg("verify-episode")
+        .arg(path)
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let result: Value = serde_json::from_slice(&run.stdout).unwrap();
+    assert_eq!(result["succeeded"], true);
+    assert_eq!(result["purpose"], "verify-components");
+    assert_eq!(result["temporary_owner_cleanup_required"], false);
+    assert_eq!(result["result"]["outputs"].as_object().unwrap().len(), 1);
+    let report = read(
+        result["result"]["outputs"]["worker.json"]["path"]
+            .as_str()
+            .unwrap(),
+    );
+    assert_eq!(report["components_verified"], 4);
+    assert_eq!(report["component_primary_references_verified"], true);
+    assert_eq!(report["episode_assembled"], false);
+    assert_eq!(report["final_episode_output_verified"], false);
+    assert!(report["production_claim"].is_null());
+    assert_eq!(report["approval"], false);
+    let minimum = serde_json::from_value(result["journal_checkpoint"].clone()).unwrap();
+    let mut journal = SourceJournal::open(&p.data.path().join("owners"), &minimum).unwrap();
+    for id in report["temporary_sources"].as_array().unwrap() {
+        let state = journal.source(&key(id.as_str().unwrap())).unwrap().unwrap();
+        assert!(state.current.is_none() && state.pending.is_none());
+    }
+    let checkpoint = journal.checkpoint();
+    let finish = Command::new(binary)
+        .arg("finish-episode")
+        .arg(path)
+        .output()
+        .unwrap();
+    assert!(
+        finish.status.success(),
+        "{}",
+        String::from_utf8_lossy(&finish.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&finish.stdout).unwrap()["journal_checkpoint"],
+        json!(checkpoint)
+    );
+    let mut changed = profile.clone();
+    changed["inputs"]["purpose"] = json!("assemble");
+    let changed_path = p.data.path().join("changed-purpose.json");
+    write(p.data.path(), "changed-purpose.json", &changed);
+    let refused = Command::new(binary)
+        .arg("finish-episode")
+        .arg(changed_path)
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert_eq!(journal.checkpoint(), checkpoint);
+
+    // A missing primary reaches the contained checker, fails, and retains failure
+    // diagnostics before releasing temporary sources. It must not become success.
+    let missing = scenes[1].primary.iter().next().unwrap();
+    let original = object_file(&p.hot(), missing);
+    let backup = p.data.path().join("verification-primary-offline");
+    fs::rename(&original, &backup).unwrap();
+    let mut failed = profile.clone();
+    failed["source_id"] = json!("bounded-component-verification-failure");
+    failed["operation"] = json!("verify-fail-v1");
+    let failed_path = p.data.path().join("failed-component-verification.json");
+    write(p.data.path(), "failed-component-verification.json", &failed);
+    let run = Command::new(binary)
+        .arg("verify-episode")
+        .arg(&failed_path)
+        .output()
+        .unwrap();
+    fs::rename(&backup, &original).unwrap();
+    assert!(!run.status.success());
+    let failed: Value = serde_json::from_slice(&run.stdout).unwrap();
+    assert_eq!(failed["succeeded"], false);
+    assert_eq!(failed["handoff"]["succeeded"], false);
+    assert_eq!(failed["temporary_owner_cleanup_required"], false);
+    let finish = Command::new(binary)
+        .arg("finish-episode")
+        .arg(failed_path)
+        .output()
+        .unwrap();
+    assert!(finish.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&finish.stdout).unwrap()["succeeded"],
+        false
+    );
+}
 fn exercise(mixed: bool) {
     exercise_mode(mixed, false);
 }
 fn exercise_mode(mixed: bool, preparation_only: bool) {
-    if !preparation_only {
+    exercise_purpose(mixed, preparation_only, false);
+}
+fn exercise_purpose(mixed: bool, preparation_only: bool, verification_only: bool) {
+    if !preparation_only && !verification_only {
         assert!(
             std::env::var_os("REEL_TEST_TIG_PROPOSE").is_some(),
             "explicit pinned Tig proposal executable required before rendering fixtures"
@@ -128,9 +241,14 @@ fn exercise_mode(mixed: bool, preparation_only: bool) {
     assert_eq!(fs::read(&fragment_path).unwrap(), original);
     let minimum: tig_store::metadata::Checkpoint =
         serde_json::from_value(fragment["metadata_minimum"].clone()).unwrap();
-    let inputs = json!({"source":fragment["source"],"context":fragment["context"],"request":fragment["request"],"runtime":runtime,
+    let mut inputs = json!({"source":fragment["source"],"context":fragment["context"],"request":fragment["request"],"runtime":runtime,
         "record_outputs":record_fixture.specs,"git_handoff":record_fixture.handoff(&p, &git_base),
         "scenes":p.requests.iter().zip(UNITS).filter(|(_,id)|!mixed || matches!(*id,"scene-a"|"scene-b")).map(|(request,id)|json!({"id":id,"request":request,"output_id":format!("{id}:master:es"),"output_definition":"types/output","compiled":id=="scene-b"})).collect::<Vec<_>>(),"presentations":presentations});
+    if verification_only {
+        inputs["purpose"] = json!("verify-components");
+        inputs["record_outputs"] = json!([]);
+        inputs["git_handoff"] = Value::Null;
+    }
     let profile = json!({"schema":"reel.tig-episode-job.experimental-1","inputs":inputs,"cache":config,
         "preparation_cache":p.hot(),"metadata_root":metadata,"metadata_minimum":minimum,
         "journal_root":p.data.path().join("owners"),"journal_minimum":p.owners.checkpoint(),
@@ -292,7 +410,11 @@ fn exercise_mode(mixed: bool, preparation_only: bool) {
         return;
     }
     let denied = Command::new(&binary)
-        .arg("run-episode")
+        .arg(if verification_only {
+            "verify-episode"
+        } else {
+            "run-episode"
+        })
         .arg(&profile_path)
         .output()
         .unwrap();
@@ -310,6 +432,10 @@ fn exercise_mode(mixed: bool, preparation_only: bool) {
             .unwrap()
             .is_none()
     );
+    if verification_only {
+        check_verification(&p, &binary, &profile, &profile_path, &scenes);
+        return;
+    }
     if mixed {
         for unit in ["opening", "credits"] {
             fs::rename(
