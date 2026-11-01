@@ -60,6 +60,14 @@ pub fn exercise(
     let resources = plan
         .readback(frozen.selection(), &mut reader, TreeLimits::default())
         .unwrap();
+    let evidence = resources
+        .resources()
+        .of(tig_git::source::native::job::Role::Evidence);
+    let run = if evidence.is_empty() {
+        tig_job_runner::run
+    } else {
+        tig_job_runner::run_with_retained_evidence
+    };
     for mode in ["wrong-role", "success", "overbudget"] {
         let identity = Identity {
             source: key(&format!("runner-{mode}")),
@@ -117,8 +125,11 @@ pub fn exercise(
             "outputs":{"video":{"path":"out.mkv","max_bytes":if mode=="overbudget"{1024}else{1024*1024}}}});
         if mode == "wrong-role" {
             manifest["budget_bytes"] = json!(tool.bytes + 8 * 1024 * 1024);
-            manifest["inputs"] =
-                json!({"not-primary.bin":{"sha256":tool.sha256,"bytes":tool.bytes}});
+            manifest["inputs"] = if let Some(pin) = evidence.iter().next() {
+                json!({"not-primary.bin":pin})
+            } else {
+                json!({"not-primary.bin":{"sha256":tool.sha256,"bytes":tool.bytes}})
+            };
         }
         let path = root.join(format!("runner-{mode}.json"));
         fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
@@ -135,31 +146,32 @@ pub fn exercise(
         if mode == "success" {
             let before = journal.checkpoint();
             profile.identity.owner = key("foreign-runner-owner");
-            assert!(
-                tig_job_runner::run(&project, &path, resources.resources(), journal, &profile)
-                    .is_err()
-            );
+            assert!(run(&project, &path, resources.resources(), journal, &profile).is_err());
             profile.identity.owner = identity.owner.clone();
             profile.expected_revision = 1;
-            assert!(
-                tig_job_runner::run(&project, &path, resources.resources(), journal, &profile)
-                    .is_err()
-            );
+            assert!(run(&project, &path, resources.resources(), journal, &profile).is_err());
             profile.expected_revision = 2;
             let held = plan
                 .readback(frozen.selection(), &mut reader, TreeLimits::default())
                 .unwrap()
                 .resume(journal, &coordination, identity.clone(), 2)
                 .unwrap();
-            assert!(
-                tig_job_runner::run(&project, &path, resources.resources(), journal, &profile)
-                    .is_err()
-            );
+            assert!(run(&project, &path, resources.resources(), journal, &profile).is_err());
             drop(held);
             assert_eq!(journal.checkpoint(), before);
             assert!(!cache.join("staging/caminos").exists());
         }
-        let result = tig_job_runner::run(&project, &path, resources.resources(), journal, &profile);
+        if !evidence.is_empty() {
+            let checkpoint = journal.checkpoint();
+            assert!(
+                tig_job_runner::run(&project, &path, resources.resources(), journal, &profile)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("planned input context")
+            );
+            assert_eq!(journal.checkpoint(), checkpoint);
+        }
+        let result = run(&project, &path, resources.resources(), journal, &profile);
         if mode == "wrong-role" {
             let error = result.unwrap_err().to_string();
             assert!(error.contains("admitted Tig role"), "{error}");

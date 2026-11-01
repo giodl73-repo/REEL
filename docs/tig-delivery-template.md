@@ -26,8 +26,10 @@ the normal typed Job plus exact contract/production bytes and consumed bindings.
 It creates no directory and never mutates source records.
 
 Every catalog reference must resolve to an admitted primary type. Used inputs
-and controls must carry an explicit selected state. Unused draft alternatives
-need not have bytes; used drafts refuse. Variant maps refuse pending an explicit
+and controls must carry an explicit selected state unless an exact
+[private-review admission](delivery-private-review.md) permits the unselected
+record at this checkpoint. Unused draft alternatives need not have bytes;
+used drafts refuse by default. Variant maps refuse pending an explicit
 variant admission rather than silently selecting a language. Timed overlay
 receipts additionally verify all their exact nested input references against
 the same primary catalog; stale or unlisted pins refuse. Only explicitly selected control/receipt

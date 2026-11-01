@@ -560,7 +560,16 @@ fn execute_phase(
         .tempfile_in(&coordination.root)?;
     manifest.write_all(&request)?;
     manifest.as_file().sync_all()?;
-    let result = tig_job_runner::run(
+    let run = if resources
+        .resources()
+        .of(tig_git::source::native::job::Role::Evidence)
+        .is_empty()
+    {
+        tig_job_runner::run
+    } else {
+        tig_job_runner::run_with_retained_evidence
+    };
+    let result = run(
         &coordination.root,
         manifest.path(),
         resources.resources(),

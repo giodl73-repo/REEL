@@ -15,6 +15,22 @@ use tig_store::existing::{ByteSource, Profile as ByteProfile, ReadCache};
 
 const LIMIT: usize = 65_536;
 mod source_json;
+/// Preserve ordinary stream names; encode longer external labels without truncation.
+/// The disjoint prefix cannot collide with a literal `version/<name>` slot.
+pub fn version_slot(name: &str) -> Result<String> {
+    if name.is_empty() || name.len() > 256 || name.chars().any(char::is_control) {
+        bail!("version label exceeds bounded source contract");
+    }
+    let direct = format!("version/{name}");
+    Ok(if direct.len() <= 128 {
+        direct
+    } else {
+        format!(
+            "version-sha256/{}",
+            Object::from_bytes(name.as_bytes()).sha256.as_str()
+        )
+    })
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Profile {
@@ -22,6 +38,86 @@ struct Profile {
     source_record: Object,
     byte_source: ByteProfile,
     definition: DefinitionFiles,
+    #[serde(default)]
+    previous_instance: Option<Object>,
+}
+
+/// Update one preserved source without losing prior subjects or copying approval.
+/// Previous native bytes must be retained at their pin before adopting this result.
+pub fn prepare_update(
+    source: &Object,
+    bytes: &[u8],
+    previous: &Object,
+    previous_bytes: &[u8],
+    definition: &[u8],
+    schema: &[u8],
+) -> Result<Vec<u8>> {
+    let next = prepare(source, bytes, definition, schema)?;
+    if previous_bytes.len() > LIMIT || Object::from_bytes(previous_bytes) != *previous {
+        bail!("previous instance differs from bounded admission");
+    }
+    let old = Instance::parse(previous_bytes)?;
+    old.bind(definition, schema)?;
+    let selected = old
+        .value()
+        .selected
+        .as_ref()
+        .context("previous source has no selected package")?
+        .object();
+    if !old.value().streams.iter().any(|stream| {
+        stream.role == "source/package"
+            && stream.group == "version"
+            && stream.object.object() == selected
+    }) {
+        bail!("previous selected package is absent from its history");
+    }
+    let old_value: Value = serde_json::from_slice(previous_bytes)?;
+    let mut value: Value = serde_json::from_slice(&next)?;
+    if old.value().id != value["id"]
+        || old.value().authored.get("artifact_id") != value["authored"].get("artifact_id")
+        || old_value["metadata"]["versioned_registration"]["source_schema"]
+            != "caminos.artifact-record.v1"
+    {
+        bail!("previous instance is outside the source identity");
+    }
+    if old_value["metadata"]["versioned_registration"]["source_record"]
+        == serde_json::to_value(source)?
+    {
+        if old_value["authored"] != value["authored"]
+            || old_value["selected"] != value["selected"]
+            || value["streams"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| !old_value["streams"].as_array().unwrap().contains(entry))
+        {
+            bail!("previous instance contradicts unchanged source");
+        }
+        return Ok(previous_bytes.to_vec());
+    }
+    let streams = value["streams"].as_array_mut().unwrap();
+    streams.push(
+        json!({"slot":"previous-record","role":"evidence/native-record",
+        "group":"source-history","object":previous}),
+    );
+    for (index, entry) in old_value["streams"].as_array().unwrap().iter().enumerate() {
+        let slot = entry["slot"]
+            .as_str()
+            .context("previous stream slot missing")?;
+        if streams.contains(entry) {
+            continue;
+        }
+        let mut retained = entry.clone();
+        if streams.iter().any(|existing| existing["slot"] == slot) {
+            retained["slot"] = json!(format!("retained/{}/{index}", previous.sha256.as_str()));
+        }
+        streams.push(retained);
+    }
+    // New source keeps its unclassified status. The exact old record preserves
+    // its status and other metadata as evidence, without inheriting authority.
+    let output = serde_json::to_vec_pretty(&value)?;
+    Instance::parse(&output)?.bind(definition, schema)?;
+    Ok(output)
 }
 
 /// Pure projection; the caller supplies exact source and definition bytes.
@@ -97,8 +193,15 @@ pub(crate) fn prepare_with_fields(
         if name == current {
             selected = Some(object.clone());
         }
-        streams.push(json!({"slot":format!("version/{name}"),"role":"source/package","group":"version","object":object,
-            "provenance":{"version_lock_id":lock_version}}));
+        let slot = version_slot(&name)?;
+        let mut provenance = json!({"version_lock_id":lock_version});
+        if !slot.starts_with("version/") {
+            provenance["source_version_id"] = json!(name);
+        }
+        streams.push(
+            json!({"slot":slot,"role":"source/package","group":"version","object":object,
+            "provenance":provenance}),
+        );
     }
     let selected = selected.context("source current version is absent")?;
     let definition_value = Definition::parse(definition)?;
@@ -151,12 +254,34 @@ fn run_inner(input: &Path, output: &Path) -> Result<Value> {
         .open_verified(&profile.source_record)?
         .take(LIMIT as u64 + 1)
         .read_to_end(&mut source)?;
-    let candidate = prepare(&profile.source_record, &source, &definition, &schema)?;
+    let candidate = if let Some(previous) = &profile.previous_instance {
+        if previous.bytes > LIMIT as u64 {
+            bail!("previous instance exceeds bound");
+        }
+        let mut raw = Vec::new();
+        cache
+            .open_verified(previous)?
+            .take(LIMIT as u64 + 1)
+            .read_to_end(&mut raw)?;
+        prepare_update(
+            &profile.source_record,
+            &source,
+            previous,
+            &raw,
+            &definition,
+            &schema,
+        )?
+    } else {
+        prepare(&profile.source_record, &source, &definition, &schema)?
+    };
     let instance = Instance::parse(&candidate)?;
-    let result = json!({"schema":"reel.tig-versioned-registration-result.experimental-1",
-        "records":1,"record_bytes":candidate.len(),"versions":instance.value().streams.len()-1,
+    let mut result = json!({"schema":"reel.tig-versioned-registration-result.experimental-1",
+        "records":1,"record_bytes":candidate.len(),"versions":instance.value().streams.iter().filter(|stream| stream.role == "source/package" && stream.group == "version").count(),
         "source_records_verified":1,"package_media_opened":0,"adopted":false,
         "complete_semantic_coverage":false,"authorizes_eviction":false});
+    if profile.previous_instance.is_some() {
+        result["previous_instances_verified"] = json!(1);
+    }
     let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
     temporary.write_all(&candidate)?;
     temporary.as_file().sync_all()?;

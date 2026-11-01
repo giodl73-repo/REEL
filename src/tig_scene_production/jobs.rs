@@ -287,13 +287,80 @@ impl<'a> JobPlan<'a> {
         }
         Ok(())
     }
+    fn review_evidence(&self) -> Result<Option<Vec<u8>>> {
+        match self.request {
+            ProducerRequest::Delivery(request) if request.private_review.is_some() => {
+                Ok(Some(identity::canonical_json(&serde_json::json!({
+                    "schema":"reel.private-review-admission.experimental-1", "request":request
+                }))?))
+            }
+            _ => Ok(None),
+        }
+    }
+    fn freeze_resources(
+        &self,
+        output: Option<job::OutputEvidence<'_>>,
+        store: &mut impl NodeStore,
+        limits: TreeLimits,
+    ) -> Result<job::JobContext> {
+        let Some(raw) = self.review_evidence()? else {
+            return Ok(job::freeze(&self.admission(output), store, limits)?);
+        };
+        let pin = Object::from_bytes(&raw);
+        if store.put(&raw)? != pin {
+            bail!("private review evidence publication differs");
+        }
+        let evidence = BTreeMap::from([(LogicalPath::parse("review/admission")?, pin)]);
+        Ok(job::freeze_with_dependencies(
+            &self.admission(output),
+            &job::Dependencies {
+                composition: &BTreeMap::new(),
+                evidence: &evidence,
+            },
+            None,
+            store,
+            limits,
+        )?)
+    }
+    fn restore_resources(
+        &self,
+        selection: &Selection,
+        output: Option<job::OutputEvidence<'_>>,
+        store: &mut impl NodeStore,
+        limits: TreeLimits,
+    ) -> Result<job::JobContext> {
+        let Some(raw) = self.review_evidence()? else {
+            return Ok(job::restore(
+                selection,
+                &self.admission(output),
+                store,
+                limits,
+            )?);
+        };
+        let pin = Object::from_bytes(&raw);
+        if store.get(&pin)?.as_deref() != Some(&raw) {
+            bail!("private review evidence unavailable or changed");
+        }
+        let evidence = BTreeMap::from([(LogicalPath::parse("review/admission")?, pin)]);
+        Ok(job::restore_with_dependencies(
+            selection,
+            &self.admission(output),
+            &job::Dependencies {
+                composition: &BTreeMap::new(),
+                evidence: &evidence,
+            },
+            None,
+            store,
+            limits,
+        )?)
+    }
     /// Candidate metadata only; caller explicitly finishes/reopens its provider.
     pub fn freeze(
         &self,
         store: &mut impl NodeStore,
         limits: TreeLimits,
     ) -> Result<job::JobContext> {
-        let resources = job::freeze(&self.admission(None), store, limits)?;
+        let resources = self.freeze_resources(None, store, limits)?;
         self.put_manifest(store)?;
         Ok(resources)
     }
@@ -304,7 +371,7 @@ impl<'a> JobPlan<'a> {
         limits: TreeLimits,
     ) -> Result<Readback<'p, 'a>> {
         self.verify_manifest(store)?;
-        let resources = job::restore(selection, &self.admission(None), store, limits)?;
+        let resources = self.restore_resources(selection, None, store, limits)?;
         Ok(Readback {
             plan: self,
             resources,
@@ -639,11 +706,11 @@ impl ProtectedJob<'_, '_> {
             bail!("native publication belongs to another protected job");
         }
         let attachments = attachments(published)?;
-        let resources = job::freeze(
-            &self.plan.admission(Some(job::OutputEvidence {
+        let resources = self.plan.freeze_resources(
+            Some(job::OutputEvidence {
                 claim: published.published.claim(),
                 attachments: &attachments,
-            })),
+            }),
             store,
             limits,
         )?;
@@ -665,12 +732,12 @@ impl ProtectedJob<'_, '_> {
         }
         self.plan.verify_manifest(store)?;
         let attachments = attachments(published)?;
-        let resources = job::restore(
+        let resources = self.plan.restore_resources(
             selection,
-            &self.plan.admission(Some(job::OutputEvidence {
+            Some(job::OutputEvidence {
                 claim: published.published.claim(),
                 attachments: &attachments,
-            })),
+            }),
             store,
             limits,
         )?;

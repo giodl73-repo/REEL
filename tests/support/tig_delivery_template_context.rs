@@ -4,6 +4,97 @@ use tig_core::tree::{MemoryNodes, TreeLimits};
 mod render;
 
 #[test]
+fn refreshed_review_permission_is_context_provenance_not_a_render_invalidation() {
+    let (mut f, mut request) = review_fixture();
+    let producer = Object::from_bytes(b"explicit synthetic producer");
+    let mut nodes = MemoryNodes::default();
+    let mut source = f.source();
+    let (_, original) =
+        adapter::freeze_context(&mut source, &request, &mut nodes, Default::default()).unwrap();
+    let before = adapter::recipe(&mut source, &request, &original, &producer).unwrap();
+    record(&f, "cel-a", |r| {
+        r["metadata"]["review_note"] = json!("annotation only")
+    });
+    commit(&mut f);
+    let mut current = f.source();
+    assert!(
+        adapter::freeze_context(&mut current, &request, &mut nodes, Default::default()).is_err()
+    );
+    admit_review(&f, &current, &mut request);
+    let (_, refreshed) =
+        adapter::freeze_context(&mut current, &request, &mut nodes, Default::default()).unwrap();
+    let after = adapter::recipe(&mut current, &request, &refreshed, &producer).unwrap();
+    assert_eq!(original.descriptor(), refreshed.descriptor());
+    assert_ne!(original.selection(), refreshed.selection());
+    assert_ne!(before.checkpoint(), after.checkpoint());
+    assert_eq!(before.fingerprint(), after.fingerprint());
+    // A separate production selection also leaves the consumed render unchanged.
+    for name in [
+        "root",
+        "control-job",
+        "control-contract",
+        "control-production",
+        "cel-a",
+        "cel-b",
+        "cue-main",
+    ] {
+        record(&f, name, |r| {
+            r["status"]["selection_state"] = json!("selected-private-production")
+        });
+    }
+    commit(&mut f);
+    request.private_review = None;
+    let mut production = f.source();
+    let (_, selected) =
+        adapter::freeze_context(&mut production, &request, &mut nodes, Default::default()).unwrap();
+    let selected_recipe = adapter::recipe(&mut production, &request, &selected, &producer).unwrap();
+    assert_eq!(refreshed.descriptor(), selected.descriptor());
+    assert_ne!(refreshed.selection(), selected.selection());
+    assert_eq!(before.fingerprint(), selected_recipe.fingerprint());
+    assert_eq!(production.byte_requests(), 0);
+}
+
+#[test]
+fn private_review_context_replays_exact_admission_offline_and_refuses_production_request() {
+    let (f, mut request) = review_fixture();
+    let mut source = f.source();
+    let mut nodes = MemoryNodes::default();
+    let (_, context) =
+        adapter::freeze_context(&mut source, &request, &mut nodes, Default::default()).unwrap();
+    assert_eq!(context.requirements().primary().len(), 3);
+    let profile = archived_profile(&f, context.archive().clone(), source.checkpoint().clone());
+    drop(source);
+    for name in [".git", "records", "definitions", "cache"] {
+        fs::rename(
+            f.root().join(name),
+            f.root().join(format!("offline-{name}")),
+        )
+        .unwrap();
+    }
+    let (mut replay, _) = adapter::restore_context(
+        profile.clone(),
+        &request,
+        context.selection(),
+        &mut nodes,
+        Default::default(),
+    )
+    .unwrap();
+    assert_eq!(replay.byte_requests(), 0);
+    assert!(adapter::lower(&mut replay, &request).is_ok());
+    request.private_review = None;
+    assert!(
+        adapter::restore_context(
+            profile,
+            &request,
+            context.selection(),
+            &mut nodes,
+            Default::default()
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn frozen_scope_has_only_consumed_primary_bytes_and_replays_without_git_or_cache() {
     let (f, request) = fixture();
     let mut source = f.source();

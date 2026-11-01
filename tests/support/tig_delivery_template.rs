@@ -90,10 +90,246 @@ fn fixture() -> (Fixture, Request) {
             primary_definitions: BTreeSet::from(["types/media".into()]),
             control_definitions: BTreeSet::from(["types/control".into()]),
             authored_control_fields: BTreeMap::from([("types/control".into(), "document".into())]),
+            private_review: None,
         },
     )
 }
 use std::collections::BTreeSet;
+
+fn admit_review(f: &Fixture, source: &Source, request: &mut Request) {
+    request.private_review = Some(adapter::PrivateReview {
+        checkpoint: source.checkpoint().clone(),
+        records: [
+            "root",
+            "control-job",
+            "control-contract",
+            "control-production",
+            "cel-a",
+            "cel-b",
+            "cue-main",
+        ]
+        .into_iter()
+        .map(|name| {
+            let raw = fs::read(f.root().join(format!("records/{name}.tig"))).unwrap();
+            let value: Value = serde_json::from_slice(&raw).unwrap();
+            (
+                value["id"].as_str().unwrap().into(),
+                Object::from_bytes(&raw),
+            )
+        })
+        .collect(),
+    });
+}
+fn review_fixture() -> (Fixture, Request) {
+    let (mut f, mut request) = fixture();
+    for name in [
+        "root",
+        "control-job",
+        "control-contract",
+        "control-production",
+        "cel-a",
+        "cel-b",
+        "cue-main",
+    ] {
+        record(&f, name, |r| {
+            r["status"]["selection_state"] = json!("draft")
+        });
+    }
+    commit(&mut f);
+    admit_review(&f, &f.source(), &mut request);
+    (f, request)
+}
+
+#[test]
+fn explicit_private_review_preserves_draft_records_and_default_production_refusal() {
+    let (f, mut request) = review_fixture();
+    let before = fs::read(f.root().join("records/root.tig")).unwrap();
+    let mut source = f.source();
+    let prepared = adapter::lower(&mut source, &request).unwrap();
+    assert_eq!(prepared.consumed_bindings.len(), 3);
+    assert_eq!(source.byte_requests(), 0);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&before).unwrap()["status"]["selection_state"],
+        "draft"
+    );
+    assert_eq!(before, fs::read(f.root().join("records/root.tig")).unwrap());
+    request.private_review = None;
+    assert!(adapter::lower(&mut source, &request).is_err());
+    assert!(
+        serde_json::to_value(&request)
+            .unwrap()
+            .get("private_review")
+            .is_none()
+    );
+}
+
+#[test]
+fn private_review_requires_exact_checkpoint_and_each_consumed_record_without_payload_reads() {
+    let (f, request) = review_fixture();
+    for mode in 0..4 {
+        let mut changed: Request =
+            serde_json::from_value(serde_json::to_value(&request).unwrap()).unwrap();
+        let review = changed.private_review.as_mut().unwrap();
+        match mode {
+            0 => review.checkpoint = Object::from_bytes(b"foreign checkpoint").sha256,
+            1 => {
+                review
+                    .records
+                    .insert("cel/b".into(), Object::from_bytes(b"foreign record"));
+            }
+            2 => {
+                review.records.remove("controls/job");
+            }
+            _ => {
+                review.records.clear();
+            }
+        }
+        let mut source = f.source();
+        assert!(adapter::lower(&mut source, &changed).is_err());
+        assert_eq!(source.byte_requests(), 0);
+    }
+}
+
+#[test]
+fn private_review_rejects_oversized_admission_and_unbuilt_payloads_without_reads() {
+    let (mut f, request) = review_fixture();
+    for mode in 0..4 {
+        let mut changed: Request =
+            serde_json::from_value(serde_json::to_value(&request).unwrap()).unwrap();
+        let review = changed.private_review.as_mut().unwrap();
+        match mode {
+            0 => review.records.get_mut("cel/a").unwrap().bytes = 0,
+            1 => review.records.get_mut("cel/a").unwrap().bytes = 65537,
+            2 => {
+                review.records = (0..4165)
+                    .map(|i| (format!("record/{i}"), Object::from_bytes(b"record")))
+                    .collect()
+            }
+            _ => {
+                review.records = (0..600)
+                    .map(|i| {
+                        (
+                            format!("{}-{i}", "x".repeat(128)),
+                            Object::from_bytes(b"record"),
+                        )
+                    })
+                    .collect()
+            }
+        }
+        let mut source = f.source();
+        assert!(
+            adapter::lower(&mut source, &changed)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("bounds")
+        );
+        assert_eq!(source.byte_requests(), 0);
+    }
+    record(&f, "cel-b", |r| r["selected"] = Value::Null);
+    commit(&mut f);
+    let mut source = f.source();
+    let mut request = request;
+    admit_review(&f, &source, &mut request);
+    assert!(adapter::lower(&mut source, &request).is_err());
+    assert_eq!(source.byte_requests(), 0);
+}
+
+#[test]
+fn review_admission_never_overrides_rejection_or_admits_an_output_as_a_primary() {
+    for state in [
+        json!("rejected"),
+        json!("withdrawn"),
+        json!("blocked"),
+        json!("unknown"),
+        Value::Null,
+        json!(3),
+    ] {
+        let (mut f, mut request) = review_fixture();
+        record(&f, "cel-b", |r| r["status"]["selection_state"] = state);
+        commit(&mut f);
+        let mut source = f.source();
+        admit_review(&f, &source, &mut request);
+        assert!(adapter::lower(&mut source, &request).is_err());
+        assert_eq!(source.byte_requests(), 0);
+    }
+    let (mut f, mut request) = review_fixture();
+    record(&f, "root", |r| {
+        r["authored"]["binding_ids"]["b"]["id"] = json!("controls/job")
+    });
+    commit(&mut f);
+    let mut source = f.source();
+    admit_review(&f, &source, &mut request);
+    assert!(
+        adapter::lower(&mut source, &request)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("primary definitions")
+    );
+    assert_eq!(source.byte_requests(), 0);
+}
+
+#[test]
+fn review_admission_cannot_include_unused_or_already_selected_records() {
+    let (mut f, mut request) = review_fixture();
+    record(&f, "control-job", |r| {
+        r["authored"]["document"]["pictures"]
+            .as_array_mut()
+            .unwrap()
+            .truncate(1);
+    });
+    commit(&mut f);
+    let mut source = f.source();
+    admit_review(&f, &source, &mut request);
+    assert!(
+        adapter::lower(&mut source, &request)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("unused")
+    );
+    request
+        .private_review
+        .as_mut()
+        .unwrap()
+        .records
+        .remove("cel/b");
+    assert!(adapter::lower(&mut source, &request).is_ok());
+    let (f, mut request) = fixture();
+    let mut source = f.source();
+    admit_review(&f, &source, &mut request);
+    assert!(
+        adapter::lower(&mut source, &request)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("already selected")
+    );
+}
+
+#[test]
+fn private_review_accepts_explicit_unselected_candidates_but_never_follows_a_new_revision() {
+    for state in [None, Some("candidate"), Some("candidate-producer-reviewed")] {
+        let (mut f, mut request) = review_fixture();
+        record(&f, "cel-b", |r| match state {
+            None => {
+                r["status"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("selection_state");
+            }
+            Some(state) => r["status"]["selection_state"] = json!(state),
+        });
+        commit(&mut f);
+        let mut source = f.source();
+        admit_review(&f, &source, &mut request);
+        assert!(adapter::lower(&mut source, &request).is_ok());
+        record(&f, "cel-b", |r| r["metadata"]["new"] = json!(true));
+        commit(&mut f);
+        assert!(adapter::lower(&mut f.source(), &request).is_err());
+    }
+}
 
 #[test]
 fn sparse_leaf_edit_lowers_current_pins_without_parent_edits_or_payload_reads() {

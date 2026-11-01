@@ -5,6 +5,18 @@ use super::*;
 #[test]
 #[ignore = "requires native FFmpeg; verified runtime, in-memory controls and candidate publication"]
 fn guarded_delivery_candidate_uses_existing_claim_and_publication_contracts() {
+    delivery_candidate(false);
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "requires native FFmpeg; exact private-review draft admission through managed worker"]
+fn private_review_candidate_uses_managed_capture_render_retention_and_git_handoff() {
+    delivery_candidate(true);
+}
+
+#[cfg(windows)]
+fn delivery_candidate(private_review: bool) {
     use reel::media_runtime::{Bindings, BoundPrograms, ByteIdentity};
     use reel::tig_scene_production::{self, OutputBinding};
     use tig_assets::{
@@ -12,13 +24,36 @@ fn guarded_delivery_candidate_uses_existing_claim_and_publication_contracts() {
         graph::recipe::produced::{BoundSubject, Selector},
         native::Instance,
     };
-    let (mut f, request) = fixture();
+    let (mut f, mut request) = fixture();
     #[cfg(feature = "tig-publication")]
     {
         let _ = native_cli::require_propose_tool();
         native_cli::seed(&mut f);
     }
     f.profile["byte_source"]["required"] = json!("prevent-mutation");
+    if private_review {
+        for name in [
+            "root",
+            "control-job",
+            "control-contract",
+            "control-production",
+            "cel-a",
+            "cel-b",
+            "cue-main",
+        ] {
+            record(&f, name, |r| {
+                r["status"]["selection_state"] = json!("draft")
+            });
+        }
+        // Exercise the registered-primary case too: payload present, no selection label.
+        record(&f, "cue-main", |r| {
+            r["status"]
+                .as_object_mut()
+                .unwrap()
+                .remove("selection_state");
+        });
+        commit(&mut f);
+    }
     let file = |path: PathBuf| {
         let path = path.canonicalize().unwrap();
         let pin = ByteIdentity::observe_file(&path).unwrap();
@@ -43,6 +78,9 @@ fn guarded_delivery_candidate_uses_existing_claim_and_publication_contracts() {
     })
     .unwrap();
     let mut source = f.source();
+    if private_review {
+        admit_review(&f, &source, &mut request);
+    }
     let mut nodes = MemoryNodes::default();
     let (_, context) =
         adapter::freeze_context(&mut source, &request, &mut nodes, Default::default()).unwrap();

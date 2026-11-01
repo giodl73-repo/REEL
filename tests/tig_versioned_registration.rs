@@ -1,5 +1,5 @@
 #![cfg(feature = "tig")]
-use reel::tig_versioned_registration::prepare;
+use reel::tig_versioned_registration::{prepare, prepare_update, version_slot};
 use serde_json::{Value, json};
 use std::{fs, path::Path, process::Command};
 use tig_assets::native::Instance;
@@ -32,6 +32,261 @@ fn candidate(value: &Value) -> anyhow::Result<Vec<u8>> {
     let (definition, schema) = definitions();
     let bytes = serde_json::to_vec(value).unwrap();
     prepare(&Object::from_bytes(&bytes), &bytes, &definition, &schema)
+}
+
+#[test]
+fn source_updates_preserve_conflicting_history_exact_previous_bytes_and_do_not_transfer_status() {
+    let (definition, schema) = definitions();
+    let mut old_value: Value =
+        serde_json::from_slice(&candidate(&source("episode")).unwrap()).unwrap();
+    old_value["status"]["approval"] = json!("only the exact previous subject");
+    let old = serde_json::to_vec_pretty(&old_value).unwrap();
+    let previous = Object::from_bytes(&old);
+    let mut changed = source("episode");
+    changed["versions"].as_array_mut().unwrap().remove(0);
+    let next_package = Object::from_bytes(b"replacement under the same display version");
+    changed["versions"][0]["manifest"] = json!({"sha256":next_package.sha256,"bytes":next_package.bytes,
+        "cache_uri":format!("cache://sha256/{}",next_package.sha256.as_str())});
+    changed["versions"][0]["version_lock"]["manifest_sha256"] = json!(next_package.sha256);
+    let raw = serde_json::to_vec(&changed).unwrap();
+    let result = prepare_update(
+        &Object::from_bytes(&raw),
+        &raw,
+        &previous,
+        &old,
+        &definition,
+        &schema,
+    )
+    .unwrap();
+    let record = Instance::parse(&result).unwrap();
+    assert_eq!(
+        record.value().selected.as_ref().unwrap().object(),
+        next_package
+    );
+    assert_eq!(record.value().status["production_state"], "unclassified");
+    assert!(record.value().status.get("approval").is_none());
+    assert_eq!(
+        record
+            .value()
+            .streams
+            .iter()
+            .find(|s| s.slot == "previous-record")
+            .unwrap()
+            .object
+            .object(),
+        previous
+    );
+    for (index, stream) in old_value["streams"].as_array().unwrap().iter().enumerate() {
+        let retained_slot = if stream["slot"] == "version/v1" {
+            "version/v1".into()
+        } else {
+            format!("retained/{}/{index}", previous.sha256.as_str())
+        };
+        let retained = record
+            .value()
+            .streams
+            .iter()
+            .find(|s| s.slot == retained_slot)
+            .unwrap();
+        assert_eq!(
+            retained.object.object(),
+            serde_json::from_value::<Object>(stream["object"].clone()).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&retained.provenance).unwrap(),
+            stream.get("provenance").cloned().unwrap_or(Value::Null)
+        );
+    }
+    // A retry against the same source is byte-identical, without another history link.
+    let again = prepare_update(
+        &Object::from_bytes(&raw),
+        &raw,
+        &Object::from_bytes(&result),
+        &result,
+        &definition,
+        &schema,
+    )
+    .unwrap();
+    assert_eq!(again, result);
+    changed["extra_legacy_metadata"]["next_observation"] = json!(true);
+    let later_raw = serde_json::to_vec(&changed).unwrap();
+    let later = prepare_update(
+        &Object::from_bytes(&later_raw),
+        &later_raw,
+        &Object::from_bytes(&result),
+        &result,
+        &definition,
+        &schema,
+    )
+    .unwrap();
+    let later = Instance::parse(&later).unwrap();
+    assert_eq!(
+        later
+            .value()
+            .streams
+            .iter()
+            .find(|s| s.slot == "previous-record")
+            .unwrap()
+            .object
+            .object(),
+        Object::from_bytes(&result)
+    );
+    for stream in &record.value().streams {
+        assert!(
+            later
+                .value()
+                .streams
+                .iter()
+                .any(|retained| retained.object == stream.object
+                    && retained.role == stream.role
+                    && retained.group == stream.group
+                    && retained.provenance == stream.provenance)
+        );
+    }
+}
+
+#[test]
+fn source_update_admission_rejects_wrong_previous_identity_pin_definition_and_inconsistent_retry() {
+    let (definition, schema) = definitions();
+    let value = source("episode");
+    let raw = serde_json::to_vec(&value).unwrap();
+    let pin = Object::from_bytes(&raw);
+    let good = candidate(&value).unwrap();
+    for case in 0..5 {
+        let mut previous: Value = serde_json::from_slice(&good).unwrap();
+        match case {
+            0 => previous["id"] = json!("other/item"),
+            1 => previous["definition"]["id"] = json!("types/other"),
+            2 => previous["selected"] = json!(Object::from_bytes(b"foreign selected bytes")),
+            3 => previous["authored"]["kind"] = json!("changed without changing source evidence"),
+            _ => {
+                previous["metadata"]["versioned_registration"]["source_schema"] =
+                    json!("other-format")
+            }
+        }
+        let previous = serde_json::to_vec(&previous).unwrap();
+        assert!(
+            prepare_update(
+                &pin,
+                &raw,
+                &Object::from_bytes(&previous),
+                &previous,
+                &definition,
+                &schema
+            )
+            .is_err()
+        );
+    }
+    assert!(
+        prepare_update(
+            &pin,
+            &raw,
+            &Object::from_bytes(b"foreign"),
+            &good,
+            &definition,
+            &schema
+        )
+        .is_err()
+    );
+    assert!(
+        prepare_update(
+            &pin,
+            &raw,
+            &Object::from_bytes(&vec![b' '; 65537]),
+            &vec![b' '; 65537],
+            &definition,
+            &schema
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn long_display_labels_keep_full_identity_without_exceeding_native_slot_limits() {
+    let mut value = source("episode-production-evidence");
+    let labels = [
+        format!("{}a", "x".repeat(144)),
+        format!("{}b", "x".repeat(144)),
+    ];
+    for (index, label) in labels.iter().enumerate() {
+        value["versions"][index]["version_id"] = json!(label);
+        value["versions"][index]["version_lock"]["version_id"] =
+            json!(format!("immutable-lock-{index}"));
+    }
+    value["current_version"] = json!(labels[1]);
+    let raw = serde_json::to_vec(&value).unwrap();
+    let bytes = candidate(&value).unwrap();
+    let parsed = Instance::parse(&bytes).unwrap();
+    let record = parsed.value();
+    assert_eq!(record.authored["current_version"], labels[1]);
+    assert_eq!(record.streams[0].object.object(), Object::from_bytes(&raw));
+    assert_eq!(
+        record.selected.as_ref().unwrap().object(),
+        Object::from_bytes(b"v2")
+    );
+    for (index, label) in labels.iter().enumerate() {
+        let stream = &record.streams[index + 1];
+        let expected = format!(
+            "version-sha256/{}",
+            Object::from_bytes(label.as_bytes()).sha256.as_str()
+        );
+        assert_eq!(stream.slot, expected);
+        assert!(stream.slot.len() <= 128);
+        assert_eq!(
+            stream.provenance.as_ref().unwrap()["source_version_id"],
+            *label
+        );
+        assert_eq!(
+            stream.provenance.as_ref().unwrap()["version_lock_id"],
+            format!("immutable-lock-{index}")
+        );
+    }
+    assert_ne!(record.streams[1].slot, record.streams[2].slot);
+    // Even a literal label resembling an encoded slot has a disjoint address.
+    let literal = record.streams[1].slot.clone();
+    assert_eq!(
+        version_slot(&literal).unwrap(),
+        format!("version/{literal}")
+    );
+    assert_ne!(version_slot(&literal).unwrap(), record.streams[1].slot);
+}
+
+#[test]
+fn slot_encoding_uses_utf8_byte_boundaries_and_never_relaxes_source_label_limits() {
+    for label in ["x".repeat(120), "é".repeat(60)] {
+        assert_eq!(version_slot(&label).unwrap().len(), 128);
+        assert_eq!(version_slot(&label).unwrap(), format!("version/{label}"));
+    }
+    for label in [
+        "x".repeat(121),
+        format!("{}x", "é".repeat(60)),
+        "é".repeat(61),
+        "x".repeat(256),
+    ] {
+        assert!(version_slot(&label).unwrap().starts_with("version-sha256/"));
+        let mut value = source("episode");
+        value["versions"][0]["version_id"] = json!(label);
+        assert!(candidate(&value).is_ok());
+    }
+    for label in [
+        String::new(),
+        "x".repeat(257),
+        "é".repeat(129),
+        "bad\nlabel".into(),
+    ] {
+        assert!(version_slot(&label).is_err());
+    }
+    let ordinary = candidate(&source("episode")).unwrap();
+    let record = Instance::parse(&ordinary).unwrap();
+    assert_eq!(record.value().streams[1].slot, "version/v1");
+    assert!(
+        record.value().streams[1]
+            .provenance
+            .as_ref()
+            .unwrap()
+            .get("source_version_id")
+            .is_none()
+    );
 }
 
 #[test]
@@ -159,7 +414,7 @@ fn malformed_versions_cannot_silently_drop_history_or_select_a_foreign_package()
                 value["public_release"] = Value::Null;
             }
             _ => {
-                let long = "x".repeat(129);
+                let long = "x".repeat(257);
                 value["versions"][0]["version_id"] = json!(long);
                 value["versions"][0]["version_lock"]["version_id"] = json!(long);
             }
@@ -275,4 +530,62 @@ fn explicit_cli_uses_only_named_source_metadata_and_never_overwrites_candidates(
         serde_json::to_vec(&profile).unwrap()
     );
     assert_eq!(fs::read_dir(root).unwrap().count(), 4);
+}
+
+#[test]
+fn update_cli_verifies_cached_previous_native_bytes_without_reading_packages() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let (definition, schema) = definitions();
+    let original = source("episode");
+    let old = candidate(&original).unwrap();
+    let previous = Object::from_bytes(&old);
+    let mut changed = original;
+    changed["extra_legacy_metadata"]["changed"] = json!(true);
+    let raw = serde_json::to_vec(&changed).unwrap();
+    let source_pin = Object::from_bytes(&raw);
+    let cache = root.join("cache");
+    fs::create_dir_all(cache.join("objects")).unwrap();
+    fs::write(cache.join("objects").join(source_pin.sha256.as_str()), &raw).unwrap();
+    let previous_path = cache.join("objects").join(previous.sha256.as_str());
+    fs::write(&previous_path, &old).unwrap();
+    let profile = json!({"schema":"reel.tig-versioned-registration.experimental-1",
+        "source_record":source_pin,"previous_instance":previous,
+        "byte_source":{"places":[{"root":cache,"layout":"flat"}],"required":"cooperative-immutable"},
+        "definition":{"definition":pinned_file(root,"definition.json",&definition),"authored_schema":pinned_file(root,"schema.json",&schema)}});
+    let input = root.join("profile.json");
+    fs::write(&input, serde_json::to_vec(&profile).unwrap()).unwrap();
+    let target = root.join("update.tig");
+    let invoke = || {
+        Command::new(env!("CARGO_BIN_EXE_reel-tig-register"))
+            .args(["--versioned"])
+            .arg(&input)
+            .arg(&target)
+            .env("PATH", "")
+            .output()
+            .unwrap()
+    };
+    let result = invoke();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["previous_instances_verified"], 1);
+    assert_eq!(report["package_media_opened"], 0);
+    assert_eq!(report["versions"], 2);
+    let produced = fs::read(&target).unwrap();
+    assert_eq!(
+        produced,
+        prepare_update(&source_pin, &raw, &previous, &old, &definition, &schema).unwrap()
+    );
+    assert!(!invoke().status.success());
+    assert_eq!(fs::read(&target).unwrap(), produced);
+    fs::remove_file(&target).unwrap();
+    fs::write(&previous_path, b"corrupt previous native record").unwrap();
+    let refused = invoke();
+    assert!(!refused.status.success());
+    assert!(!target.exists());
+    assert!(!String::from_utf8_lossy(&refused.stderr).contains(&root.display().to_string()));
 }
