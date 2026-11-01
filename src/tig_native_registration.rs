@@ -109,6 +109,24 @@ pub(crate) struct PackagePin {
     sha256: Digest,
     bytes: u64,
     cache_uri: String,
+    // Placement observations stay in the exact original package. They neither
+    // choose a provider path nor establish current payload availability.
+    #[serde(default, rename = "path", deserialize_with = "placement_observation")]
+    _placement_path: Option<String>,
+    #[serde(default, rename = "reused_active_object")]
+    _placement_reused: Option<bool>,
+}
+
+fn placement_observation<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error> {
+    let value = Option::<String>::deserialize(deserializer)?;
+    if value.as_ref().is_some_and(|path| {
+        path.is_empty() || path.len() > 4096 || path.chars().any(char::is_control)
+    }) {
+        return Err(de::Error::custom("invalid bounded placement observation"));
+    }
+    Ok(value)
 }
 impl PackagePin {
     pub(crate) fn object(&self) -> Result<Object> {

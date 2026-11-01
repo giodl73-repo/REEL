@@ -2,6 +2,7 @@
 use crate::tig_native_registration::{
     DefinitionFiles, Package, Prepared, filename, read_local, read_metadata,
 };
+use crate::tig_versioned_registration::version_slot;
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -95,10 +96,16 @@ pub fn prepare(profile: &Profile, source: &mut impl ByteSource) -> Result<Prepar
         if stream["group"] != "version" {
             continue;
         }
-        let version = stream["slot"]
-            .as_str()
-            .and_then(|s| s.strip_prefix("version/"))
-            .context("version slot missing")?;
+        let slot = stream["slot"].as_str().context("version slot missing")?;
+        let version = match stream["provenance"].get("source_version_id") {
+            Some(value) => value.as_str().context("source version identity differs")?,
+            None => slot
+                .strip_prefix("version/")
+                .context("version identity missing")?,
+        };
+        if version_slot(version)? != slot {
+            bail!("version stream identity differs from its source label");
+        }
         let pin: Object = serde_json::from_value(stream["object"].clone())?;
         let package: Package =
             serde_json::from_slice(&read_metadata(source, &pin, &mut remaining)?)?;
@@ -136,8 +143,15 @@ pub fn prepare(profile: &Profile, source: &mut impl ByteSource) -> Result<Prepar
             if version == current {
                 selected = Some(pin.clone());
             }
-            streams.push(json!({"slot":format!("version/{version}"),"group":"version","role":"source/asset-history","object":pin,
-                "provenance":{"source_package":package_pin,"source_asset":role,"version_lock_id":package.version_id}}));
+            let slot = version_slot(version)?;
+            let mut provenance = json!({"source_package":package_pin,"source_asset":role,"version_lock_id":package.version_id});
+            if !slot.starts_with("version/") {
+                provenance["source_version_id"] = json!(version);
+            }
+            streams.push(
+                json!({"slot":slot,"group":"version","role":"source/asset-history","object":pin,
+                "provenance":provenance}),
+            );
         }
         let selected = selected.context("current asset cannot be absent")?;
         let leaf_def = read_local(&entry.definition.definition)?;
