@@ -39,7 +39,9 @@ impl CurrentScene {
             && self.protection_recipe == *recipe.fingerprint()
             && self.binding == *recipe.binding()
             && self.admission == *recipe.admission()
-            && plan.native_request().scene_id == self.scene.id
+            && plan
+                .native_request()
+                .is_ok_and(|request| request.scene_id == self.scene.id)
             && recipe.nodes().contains_key(&self.scene)
     }
     pub fn selected(&self) -> &Object {
@@ -97,7 +99,7 @@ fn check_recipe(
     recipe: &tig_assets::graph::recipe::Plan,
     original: &ReplayedClaim<'_>,
 ) -> Result<CurrentScene> {
-    let request = current.native_request();
+    let request = current.native_request()?;
     let scene = source.record(&request.scene_id)?;
     let output = source.record(output_id)?;
     let native_scene: String = field(&scene, "scene_id")?;

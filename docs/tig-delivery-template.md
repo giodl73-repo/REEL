@@ -90,3 +90,16 @@ refuse. Publication acknowledgments remain distinct from independent custody or
 owner handoff. This native producer function does not reserve space or enroll a
 job: the caller must already admit/own source, runtime, scratch and output capacity
 through the existing runner. Managed worker/CLI integration remains required.
+
+`jobs::JobPlan::from_delivery_context` now admits the delivery recipe into the
+same runtime manifest, freeze/readback, owner-protection, render/publication and
+output-handoff protocol used by native scenes. Its private request variant keeps
+delivery interpretation explicit. Scene-only parent/reference APIs return an
+error for delivery jobs; no fabricated scene or speech request is constructed.
+The shared render method leaves a delivery's proposed preparation directory
+absent, since the controls stay in memory. Existing owner, revision, journal and
+post-handoff checks still run before and after producer execution.
+
+This provides the managed SDK ownership path. CLI/process containment and actual
+project capacity/source enrollment still need their existing runner integration;
+constructing a plan does not reserve disk space or establish independent custody.

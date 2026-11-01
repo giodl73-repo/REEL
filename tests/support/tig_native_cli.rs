@@ -680,13 +680,22 @@ fn exercise_mode(
     }
 }
 
-fn check_git_handoff(root: &Path, completed: &Value, base: &str, original: &[u8], cache: &Path) {
-    use tig_store::existing::{ByteSource, ReadCache};
+pub fn require_propose_tool() -> std::path::PathBuf {
     let tool = std::env::var_os("REEL_TEST_TIG_PROPOSE")
         .map(std::path::PathBuf::from)
         .expect(
             "explicit pinned REEL_TEST_TIG_PROPOSE executable required for native handoff fixture",
         );
+    assert!(
+        tool.is_absolute() && tool.is_file(),
+        "explicit proposal tool must be an existing absolute file"
+    );
+    tool
+}
+
+fn check_git_handoff(root: &Path, completed: &Value, base: &str, original: &[u8], cache: &Path) {
+    use tig_store::existing::{ByteSource, ReadCache};
+    let tool = require_propose_tool();
     let exported = &completed["record_candidates"]["git_proposal"];
     let mut requests = ReadCache::new(
         serde_json::from_value(

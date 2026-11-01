@@ -132,5 +132,67 @@ fn guarded_delivery_candidate_uses_existing_claim_and_publication_contracts() {
     #[cfg(feature = "tig-publication")]
     {
         let _ = candidate_publication::exercise(&candidate, &subject, f.root(), bind);
+        // The SAME ownership/handoff fixture must work for delivery templates;
+        // no new delivery journal, fencing or publication implementation.
+        use tig_store::{
+            Key,
+            metadata::{Limits, MetadataStore},
+            source_claims::SourceJournal,
+        };
+        let metadata = f.root().join("delivery-job-metadata");
+        let mut writer = MetadataStore::create(
+            &metadata,
+            Limits {
+                nodes: 8192,
+                bytes: 8 * 1024 * 1024,
+                database_bytes: 16 * 1024 * 1024,
+                min_free_bytes: 65536,
+            },
+        )
+        .unwrap();
+        let (_, managed_context) =
+            adapter::freeze_context(&mut source, &request, &mut writer, Default::default())
+                .unwrap();
+        let checkpoint = writer.finish().unwrap();
+        drop(writer);
+        let journal_root = f.root().join("job-owner");
+        let mut owners = SourceJournal::create(
+            &journal_root,
+            Key::parse("fixture").unwrap(),
+            Key::parse("epoch").unwrap(),
+        )
+        .unwrap();
+        let plan = tig_scene_production::jobs::JobPlan::from_delivery_context(
+            &mut source,
+            &request,
+            &managed_context,
+            &programs,
+        )
+        .unwrap();
+        let scene_only = tig_scene_production::jobs::reference::ReferencePlan::compile(
+            &mut source,
+            &plan,
+            "delivery/recording",
+            "types/output",
+            &f.root().join("must-not-create-scene-controls"),
+        )
+        .err()
+        .unwrap();
+        assert!(scene_only.to_string().contains("not a speech-scene job"));
+        assert!(!f.root().join("must-not-create-scene-controls").exists());
+        let claim = native_job::exercise(
+            &plan,
+            &mut source,
+            &mut owners,
+            &journal_root,
+            f.root(),
+            (&metadata, &checkpoint),
+            bind,
+        );
+        claim.check_plan(plan.recipe()).unwrap();
+        assert!(
+            !f.root().join("managed-native-job").exists(),
+            "delivery controls must remain in memory"
+        );
     }
 }

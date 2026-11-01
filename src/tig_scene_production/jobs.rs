@@ -33,12 +33,17 @@ pub struct Identity {
     pub owner: Key,
 }
 pub struct JobPlan<'a> {
-    request: &'a Request,
+    request: ProducerRequest<'a>,
     context: &'a ProductionContext,
     programs: &'a BoundPrograms,
     recipe: Plan,
     runtime: BTreeMap<LogicalPath, Object>,
     mode: RecipeMode,
+}
+#[derive(Clone, Copy)]
+enum ProducerRequest<'a> {
+    Scene(&'a Request),
+    Delivery(&'a crate::tig_delivery_template::Request),
 }
 pub struct Readback<'p, 'a> {
     plan: &'p JobPlan<'a>,
@@ -99,7 +104,13 @@ impl<'a> JobPlan<'a> {
     ) -> Result<Self> {
         let producer = object(programs.identity())?;
         let recipe = context_recipe(source, request, context, &producer)?;
-        Self::with_recipe(request, context, programs, recipe, RecipeMode::Declared)
+        Self::with_recipe(
+            ProducerRequest::Scene(request),
+            context,
+            programs,
+            recipe,
+            RecipeMode::Declared,
+        )
     }
     /// Explicit compiled-context planning; writes only new preparation scratch.
     /// Caller must still finish/read back and protect the resulting job resources.
@@ -113,10 +124,34 @@ impl<'a> JobPlan<'a> {
         let producer = object(programs.identity())?;
         let recipe =
             crate::tig_scene::render_recipe(source, request, context, &producer, preparation)?;
-        Self::with_recipe(request, context, programs, recipe, RecipeMode::Projected)
+        Self::with_recipe(
+            ProducerRequest::Scene(request),
+            context,
+            programs,
+            recipe,
+            RecipeMode::Projected,
+        )
+    }
+    /// Same job ownership/runtime/output protocol, with delivery-template
+    /// interpretation rather than a speech-scene compiler. No media IO/adoption.
+    pub fn from_delivery_context(
+        source: &mut Source,
+        request: &'a crate::tig_delivery_template::Request,
+        context: &'a ProductionContext,
+        programs: &'a BoundPrograms,
+    ) -> Result<Self> {
+        let producer = object(programs.identity())?;
+        let recipe = crate::tig_delivery_template::recipe(source, request, context, &producer)?;
+        Self::with_recipe(
+            ProducerRequest::Delivery(request),
+            context,
+            programs,
+            recipe,
+            RecipeMode::Declared,
+        )
     }
     fn with_recipe(
-        request: &'a Request,
+        request: ProducerRequest<'a>,
         context: &'a ProductionContext,
         programs: &'a BoundPrograms,
         recipe: Plan,
@@ -145,8 +180,11 @@ impl<'a> JobPlan<'a> {
     pub fn recipe(&self) -> &Plan {
         &self.recipe
     }
-    pub(crate) fn native_request(&self) -> &Request {
-        self.request
+    pub(crate) fn native_request(&self) -> Result<&Request> {
+        match self.request {
+            ProducerRequest::Scene(request) => Ok(request),
+            ProducerRequest::Delivery(_) => bail!("delivery job is not a speech-scene job"),
+        }
     }
     /// Recompile current metadata under this exact frozen native interpretation.
     /// This creates only a new bounded preparation directory, never media.
@@ -155,15 +193,16 @@ impl<'a> JobPlan<'a> {
         source: &mut Source,
         preparation: &Path,
     ) -> Result<()> {
+        let request = self.native_request()?;
         let recipe = match self.mode {
             RecipeMode::Declared => {
                 let recipe = context_recipe(
                     source,
-                    self.request,
+                    request,
                     self.context,
                     &self.recipe.operation().producer,
                 )?;
-                crate::tig_scene::compile(source, self.request, preparation)?;
+                crate::tig_scene::compile(source, request, preparation)?;
                 recipe
             }
             RecipeMode::Projected => self.recipe_for_producer(
@@ -183,22 +222,32 @@ impl<'a> JobPlan<'a> {
         producer: &Object,
         preparation: Option<&Path>,
     ) -> Result<Plan> {
-        let recipe = match self.mode {
-            RecipeMode::Declared => {
+        let recipe = match self.request {
+            ProducerRequest::Delivery(request) => {
                 if preparation.is_some() {
-                    bail!("declared producer replay takes no preparation directory");
+                    bail!("delivery recipe replay does not create preparation files");
                 }
-                context_recipe(source, self.request, self.context, producer)?
+                crate::tig_delivery_template::recipe(source, request, self.context, producer)?
             }
-            RecipeMode::Projected => crate::tig_scene::render_recipe(
-                source,
-                self.request,
-                self.context,
-                producer,
-                preparation.ok_or_else(|| {
-                    anyhow::anyhow!("projected producer replay requires new preparation scratch")
-                })?,
-            )?,
+            ProducerRequest::Scene(request) => match self.mode {
+                RecipeMode::Declared => {
+                    if preparation.is_some() {
+                        bail!("declared producer replay takes no preparation directory");
+                    }
+                    context_recipe(source, request, self.context, producer)?
+                }
+                RecipeMode::Projected => crate::tig_scene::render_recipe(
+                    source,
+                    request,
+                    self.context,
+                    producer,
+                    preparation.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "projected producer replay requires new preparation scratch"
+                        )
+                    })?,
+                )?,
+            },
         };
         if recipe.checkpoint() != self.recipe.checkpoint()
             || recipe.binding() != self.recipe.binding()
@@ -487,18 +536,36 @@ impl ProtectedJob<'_, '_> {
         output: &Path,
     ) -> Result<ManagedCandidate> {
         self.planned(journal)?;
-        let render = match self.plan.mode {
-            RecipeMode::Declared => super::render_with_programs,
-            RecipeMode::Projected => super::render_projected_with_programs,
+        let candidate = match self.plan.request {
+            ProducerRequest::Scene(request) => {
+                let render = match self.plan.mode {
+                    RecipeMode::Declared => super::render_with_programs,
+                    RecipeMode::Projected => super::render_projected_with_programs,
+                };
+                render(
+                    source,
+                    request,
+                    self.plan.context,
+                    self.plan.programs,
+                    job_directory,
+                    output,
+                )?
+            }
+            ProducerRequest::Delivery(request) => {
+                // The shared API supplies a proposed preparation path. Delivery
+                // controls stay in memory, so leave it absent, never overwrite it.
+                if job_directory.symlink_metadata().is_ok() {
+                    bail!("delivery preparation path must remain unused");
+                }
+                super::render_delivery_with_programs(
+                    source,
+                    request,
+                    self.plan.context,
+                    self.plan.programs,
+                    output,
+                )?
+            }
         };
-        let candidate = render(
-            source,
-            self.plan.request,
-            self.plan.context,
-            self.plan.programs,
-            job_directory,
-            output,
-        )?;
         let recipe = candidate.recipe();
         if recipe.fingerprint() != self.plan.recipe.fingerprint()
             || recipe.checkpoint() != self.plan.recipe.checkpoint()
