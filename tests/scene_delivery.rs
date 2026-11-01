@@ -1424,6 +1424,96 @@ fn wav(path: &Path, samples: u32, signal: i32) {
     }
     fs::write(path, b).unwrap();
 }
+fn audio_event_clock_fixture(root: &Path) -> Value {
+    let mut job = fixture(root);
+    wav(&root.join("a.wav"), 48001, 1_000_000);
+    wav(&root.join("b.wav"), 47999, -1_000_000);
+    let mut production: Value =
+        serde_json::from_slice(&fs::read(root.join("production.json")).unwrap()).unwrap();
+    production["narration_cues"] = json!([]);
+    for event in production["audio_events"].as_array_mut().unwrap() {
+        if event["id"] == "a" || event["id"] == "b" {
+            event["role"] = json!("music");
+        }
+    }
+    write_json(&root.join("production.json"), &production);
+    let mut contract: Value =
+        serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
+    contract["schema"] = json!(reel::cue_relative::AUDIO_EVENT_CONTRACT_SCHEMA);
+    write_json(&root.join("contract.json"), &contract);
+    for audio in job["audio"].as_array_mut().unwrap() {
+        if audio["bus"] == "D" {
+            audio["bus"] = json!("M");
+            audio.as_object_mut().unwrap().remove("cue_id");
+            let name = if audio["attachment_id"] == "d-a" {
+                "a.wav"
+            } else {
+                "b.wav"
+            };
+            audio["source"] = file(root, name);
+        }
+    }
+    job["buses"]["D"] =
+        json!({"state":"intentional-silence","reason":"No narration in recording-clock fixture"});
+    job["buses"]["M"] = json!({"state":"present","reason":"Two native recording segments"});
+    job["contract"] = file(root, "contract.json");
+    job["production_manifest_sha256"] = file(root, "production.json")["sha256"].clone();
+    write_json(&root.join("job.json"), &job);
+    job
+}
+
+#[test]
+fn recording_clock_plans_existing_delivery_without_narration() {
+    let temp = tempfile::tempdir().unwrap();
+    audio_event_clock_fixture(temp.path());
+    let (job, plan) = scene_delivery::plan(&temp.path().join("job.json"), temp.path()).unwrap();
+    assert_eq!(plan.duration_samples, 96000);
+    assert_eq!(plan.frame_count, 48);
+    assert_eq!(plan.pictures.len(), 2);
+    assert_eq!(job.audio.iter().filter(|a| a.bus == "M").count(), 2);
+    assert!(job.audio.iter().all(|a| a.bus != "D"));
+    let mut invalid = serde_json::to_value(&job).unwrap();
+    invalid["audio"][0]["cue_id"] = json!("a");
+    write_json(&temp.path().join("invalid.json"), &invalid);
+    assert!(
+        scene_delivery::plan(&temp.path().join("invalid.json"), temp.path())
+            .unwrap_err()
+            .to_string()
+            .contains("only D events declare cue_id")
+    );
+}
+
+#[test]
+#[ignore = "requires native FFmpeg; recording clocks through render and independent checks"]
+fn real_recording_clock_delivery_without_narration() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    audio_event_clock_fixture(root);
+    let path = root.join("job.json");
+    let output = root.join("delivery");
+    scene_delivery::render(&path, root, &output).unwrap();
+    scene_delivery::check(&path, root, &output).unwrap();
+    let (_, plan) = scene_delivery::plan(&path, root).unwrap();
+    assert_eq!(plan.duration_samples, 96000);
+    assert_eq!(plan.frame_count, 48);
+    assert!(output.join("M.wav").is_file());
+    let decoded = Command::new("ffmpeg")
+        .args(["-v", "error", "-nostdin", "-i"])
+        .arg(output.join("M.wav"))
+        .args(["-map", "0:a:0", "-f", "s24le", "-"])
+        .output()
+        .unwrap();
+    assert!(decoded.status.success());
+    // The synthetic inputs have a fixed 44-byte PCM header. The music stem
+    // preserves every nonzero signed sample across the native segment join.
+    let expected = [
+        &fs::read(root.join("a.wav")).unwrap()[44..],
+        &fs::read(root.join("b.wav")).unwrap()[44..],
+    ]
+    .concat();
+    assert_eq!(decoded.stdout, expected);
+}
+
 fn fixture(root: &Path) -> Value {
     fs::write(
         root.join("red.ppm"),

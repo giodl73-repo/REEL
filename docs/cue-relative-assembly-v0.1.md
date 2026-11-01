@@ -6,6 +6,10 @@ manifest or renderer. Targets bind existing narration cue, shot, beat marker,
 camera track, effect pass, and audio event IDs. Cel, caption, and editable title
 IDs remain adapter-owned IDs attached to those production objects.
 
+For a native music or recording clock, use the separately tagged
+[audio-event contract](audio-event-clocks-v0.1.md). The original narration schema
+keeps its existing namespace and compiled identity.
+
 Anchors may reference a cue start/end, an explicit rational progress point, or
 the start/end of a word or phrase marker, plus a signed sample offset. Spans can
 start and end in different cues. `start_boundary` and `end_boundary` name shared
