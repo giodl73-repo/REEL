@@ -20,3 +20,11 @@ is complete decoded equality, strict production checks and separate provenance,
 approval and adoption. The regression covers an exact H.264 transcode plus
 late-picture, audio and lossy-picture changes. Qualification and actual private
 reference acceptance are recorded separately from this design review.
+
+Local validation passes the stream-contract unit check, all six presentation
+integration fixtures and warnings-denied all-target/all-feature Clippy. An actual
+retained H.264 presentation also passes complete YUV/RGB/PCM comparison using the
+local candidate and native asset controls. Temporary layer/font staging stayed
+below 1.6 MiB, with no movie or cache copy. This technical observation authenticates
+no original producer and changes no selection or approval. Hosted qualification
+and runtime adoption remain separate.
