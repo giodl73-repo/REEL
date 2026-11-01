@@ -293,12 +293,23 @@ fn facts(path: &Path, files: &dyn InputFiles) -> Result<serde_json::Value> {
     Ok(serde_json::from_slice(&output.stdout)?)
 }
 
-fn check_media(path: &Path, template: &Template, files: &dyn InputFiles) -> Result<(u64, u64)> {
+#[derive(Clone, Copy)]
+enum MasterContract {
+    ProducedFfv1,
+    RetainedPrimaryReference,
+}
+
+fn check_media(
+    path: &Path,
+    template: &Template,
+    files: &dyn InputFiles,
+    contract: MasterContract,
+) -> Result<(u64, u64)> {
     let streams = facts(path, files)?["streams"]
         .as_array()
         .context("missing streams")?
         .clone();
-    let (frames, samples) = check_stream_contract(&streams, template)?;
+    let (frames, samples) = check_stream_contract(&streams, template, contract)?;
     crate::episode_delivery::verify_timestamps_with_inputs(
         path,
         template.sample_rate,
@@ -324,7 +335,11 @@ fn check_media(path: &Path, template: &Template, files: &dyn InputFiles) -> Resu
     Ok((frames, samples))
 }
 
-fn check_stream_contract(streams: &[serde_json::Value], template: &Template) -> Result<(u64, u64)> {
+fn check_stream_contract(
+    streams: &[serde_json::Value],
+    template: &Template,
+    contract: MasterContract,
+) -> Result<(u64, u64)> {
     let video = streams
         .iter()
         .find(|s| s["codec_type"] == "video")
@@ -335,8 +350,13 @@ fn check_stream_contract(streams: &[serde_json::Value], template: &Template) -> 
         .context("missing audio")?;
     let frames = template.frames();
     let samples = frames * template.sample_rate as u64 / template.frame_rate as u64;
+    // A codec label never proves reference equality. The retained-reference
+    // route must subsequently compare every decoded YUV/RGB frame and PCM sample.
+    let video_codec_allowed = video["codec_name"] == "ffv1"
+        || (matches!(contract, MasterContract::RetainedPrimaryReference)
+            && video["codec_name"] == "h264");
     if streams.len() != 2
-        || video["codec_name"] != "ffv1"
+        || !video_codec_allowed
         || video["pix_fmt"] != "yuv444p"
         || video["sample_aspect_ratio"] != "1:1"
         || video["width"] != template.width
@@ -525,7 +545,12 @@ fn build_manifest(
     cmd.arg(output_dir.join("master.mkv"));
     run(cmd)?;
     let (manifest, template, _, _, manifest_bytes, picture_frames) = loaded;
-    let (frames, samples) = check_media(&output_dir.join("master.mkv"), &template, inputs)?;
+    let (frames, samples) = check_media(
+        &output_dir.join("master.mkv"),
+        &template,
+        inputs,
+        MasterContract::ProducedFfv1,
+    )?;
     write_review(&output_dir, inputs)?;
     let master = output_dir.join("master.mkv");
     let review = output_dir.join("review.mp4");
@@ -828,7 +853,12 @@ pub fn compare_master_to_primaries(
     let staged_bytes = staging_bytes(&raw, max_staged_bytes)?;
     let loaded = load(&raw, controls, inputs)?;
     let master_path = outputs.verified_path(master)?;
-    check_media(&master_path, &loaded.1, inputs)?;
+    check_media(
+        &master_path,
+        &loaded.1,
+        inputs,
+        MasterContract::RetainedPrimaryReference,
+    )?;
     let stage = tempfile::Builder::new()
         .prefix(".presentation-primary-check-")
         .tempdir_in(stage_parent)?;
@@ -1073,7 +1103,7 @@ fn check_outputs(
     {
         bail!("retained font differs from selected font");
     }
-    let (frames, samples) = check_media(&master, &template, inputs)?;
+    let (frames, samples) = check_media(&master, &template, inputs, MasterContract::ProducedFfv1)?;
     if receipt.schema != "reel.presentation-still-sequence-receipt.v1"
         || receipt.episode_id != manifest.episode_id
         || receipt.language != manifest.language
@@ -1157,7 +1187,7 @@ mod timing_tests {
         let audio = serde_json::json!({"codec_type":"audio","codec_name":"pcm_s24le","sample_rate":"48000","channels":2});
         let streams = vec![video, audio];
         assert_eq!(
-            check_stream_contract(&streams, &template).unwrap(),
+            check_stream_contract(&streams, &template, MasterContract::ProducedFfv1).unwrap(),
             (48, 96000)
         );
         for (field, value) in [
@@ -1167,12 +1197,41 @@ mod timing_tests {
         ] {
             let mut changed = streams.clone();
             changed[0][field] = serde_json::json!(value);
-            assert!(check_stream_contract(&changed, &template).is_err());
+            assert!(
+                check_stream_contract(&changed, &template, MasterContract::ProducedFfv1).is_err()
+            );
         }
         let mut extra = streams.clone();
         extra.push(streams[1].clone());
-        assert!(check_stream_contract(&extra, &template).is_err());
-        assert!(check_stream_contract(&streams[..1], &template).is_err());
+        assert!(check_stream_contract(&extra, &template, MasterContract::ProducedFfv1).is_err());
+        assert!(
+            check_stream_contract(&streams[..1], &template, MasterContract::ProducedFfv1).is_err()
+        );
+        let mut h264 = streams.clone();
+        h264[0]["codec_name"] = serde_json::json!("h264");
+        assert!(check_stream_contract(&h264, &template, MasterContract::ProducedFfv1).is_err());
+        assert_eq!(
+            check_stream_contract(&h264, &template, MasterContract::RetainedPrimaryReference)
+                .unwrap(),
+            (48, 96000)
+        );
+        for (field, value) in [
+            ("pix_fmt", "yuv420p"),
+            ("nb_read_frames", "47"),
+            ("sample_aspect_ratio", "2:1"),
+            ("codec_name", "hevc"),
+        ] {
+            let mut changed = h264.clone();
+            changed[0][field] = serde_json::json!(value);
+            assert!(
+                check_stream_contract(
+                    &changed,
+                    &template,
+                    MasterContract::RetainedPrimaryReference
+                )
+                .is_err()
+            );
+        }
     }
 
     #[test]
