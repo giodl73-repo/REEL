@@ -4,6 +4,54 @@ Status: integration contract and implementation work package; not an implemented
 producer or permission to run a private composition. Entry source
 `52afd03b7558713a87cc470918f94c7ecd0608d2`.
 
+The BROWSER-01 candidate now implements `tig_browser::{lower, requirements,
+freeze_context, restore_context, recipe}`. These are metadata/source-planning
+ports only; BROWSER-02/03 rendering, native encoder parameters, guarded resource
+delivery and managed output correspondence are still open. A source recipe is
+not a completed output or permission to reuse it. The eventual producer must
+also bind actual rendering flags and encode parameters into output identity.
+
+An explicit metadata preview is available in the candidate CLI:
+
+```text
+reel-tig-scene --profile PRIVATE_SOURCE_PROFILE plan-browser PRIVATE_REQUEST
+```
+
+It prints bounded counts and opaque pins, opens no primary media, starts no
+browser and creates no output directory. Errors omit raw resource paths and IDs.
+The source profile uses the existing exact-commit/definition/byte-provider
+admission; it neither discovers nor initializes a cache.
+
+The request has schema `reel.tig-browser-source.experimental-1`, `root_id`,
+`root_definition`, `primary_definitions`, optional exact `private_review`, and
+`bounds` (`max_inputs`, `max_input_bytes`, `max_frames`, `max_canvas_pixels`).
+The admitted root's authored data has this shape:
+
+```json
+{
+  "document": {
+    "source": "opening.svg",
+    "audio": "audio/music.wav",
+    "inputs": {
+      "opening.svg": {"id": "assets/source-svg"},
+      "pictures/a.png": {"id": "assets/picture-a"},
+      "audio/music.wav": {"id": "assets/music"}
+    },
+    "width": 1280,
+    "height": 720,
+    "fps": 24,
+    "frame_count": 2880
+  }
+}
+```
+
+`audio` may be absent/null; optional `dynamic_regions` retains the existing
+pixel-region meaning. Inputs accept ID-only references: a second authored hash
+or pin refuses. Primary payloads follow the exact admitted selected/named-stream
+policy. Case aliases, prefix collisions, unsafe paths, unbuilt or unadmitted
+inputs and exceeded shared bounds refuse. Counts distinguish logical aliases
+from unique objects; no physical-copy or held-capacity claim follows.
+
 Reuse `browser_composition`'s existing persistent document, explicit frame clock,
 capture and lineage behavior. Tig owns exact metadata/byte resolution, while REEL
 owns SVG/browser/media semantics. Do not convert an existing SVG into a different
@@ -112,5 +160,7 @@ recovery review rejects duplicated frame spools, unadmitted profile growth and
 foreign cleanup. Rights/privacy review requires local guarded inputs, bounded
 diagnostics and no external resource egress. Editing review requires preserving
 the declared SVG timing and geometry, not an inferred reconstruction. These are
-producer-applied checklists, not independent or human approval. Implementation,
-qualification, private acceptance and runtime adoption remain open.
+producer-applied checklists, not independent or human approval. BROWSER-01 has
+[local implementation verification](reviews/2026-11-01-tig-browser-source-planning.md).
+Renderer implementation, hosted qualification, private acceptance and runtime
+adoption remain open.

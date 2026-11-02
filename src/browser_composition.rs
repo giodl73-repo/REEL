@@ -142,6 +142,12 @@ fn validate_hash(hash: &str) -> Result<()> {
 
 fn load_manifest(path: &Path) -> Result<BrowserCompositionManifest> {
     let manifest: BrowserCompositionManifest = serde_yaml::from_slice(&fs::read(path)?)?;
+    validate_manifest(manifest)
+}
+
+pub(crate) fn validate_manifest(
+    manifest: BrowserCompositionManifest,
+) -> Result<BrowserCompositionManifest> {
     if manifest.schema != MANIFEST_SCHEMA {
         bail!("unsupported browser composition schema");
     }
