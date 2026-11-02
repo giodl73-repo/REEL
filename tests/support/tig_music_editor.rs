@@ -1,6 +1,189 @@
 use super::*;
 use reel::tig_music_editor::Editor;
 
+fn underlay_fixture() -> Fixture {
+    let mut f = fixture();
+    let lyric = fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("manifests/fixtures/music-model-corrected/lyrics.txt"),
+    )
+    .unwrap();
+    f.add("music/lyric", &lyric);
+    let schema = Object::from_bytes(&fs::read(f.root().join("definitions/authored.json")).unwrap());
+    let text_definition = write(
+        f.root(),
+        "definitions/lyric.json",
+        &json!({
+        "schema":"tig.definition.design-1","id":"types/lyric","authored_schema":schema,
+        "authoring":{"properties":["language","lyric_kind"],"required":[],"defaults":{}},
+        "stream_rules":{},"semantic_rules":{"profile":"reel.music-lyric-source.v1"}}),
+    );
+    let mut lyric_record: Value =
+        serde_json::from_slice(&fs::read(f.root().join("records/music-lyric.tig")).unwrap())
+            .unwrap();
+    lyric_record["definition"] =
+        json!({"id":"types/lyric","sha256":text_definition.sha256,"bytes":text_definition.bytes});
+    lyric_record["authored"] = json!({"language":"und","lyric_kind":"canonical"});
+    write(f.root(), "records/music-lyric.tig", &lyric_record);
+    f.profile["admitted"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id":"types/lyric","object":text_definition,"payload":{"kind":"selected"}}));
+    let mut definition: Value =
+        serde_json::from_slice(&fs::read(f.root().join("definitions/music-model.json")).unwrap())
+            .unwrap();
+    definition["semantic_rules"]["binding_profile"] = json!("reel.music-model-input-bindings.v1");
+    definition["semantic_rules"]["underlay_profile"] = json!("reel.music-underlay-authoring.v1");
+    definition["authoring"]["properties"] = json!(["binding_ids"]);
+    let pin = write(f.root(), "definitions/music-model.json", &definition);
+    let mut record: Value =
+        serde_json::from_slice(&fs::read(f.root().join("records/music-model.tig")).unwrap())
+            .unwrap();
+    record["definition"] = json!({"id":"types/music-model","sha256":pin.sha256,"bytes":pin.bytes});
+    record["authored"] = json!({"binding_ids":{"lyric:canonical-synthetic":{"id":"music/lyric"}}});
+    write(f.root(), "records/music-model.tig", &record);
+    for admitted in f.profile["admitted"].as_array_mut().unwrap() {
+        if admitted["id"] == "types/music-model" {
+            admitted["object"] = json!(pin);
+        }
+    }
+    git(f.root(), &["add", "definitions"]);
+    f.commit();
+    f
+}
+
+#[test]
+fn tig_underlay_pairs_exact_text_with_model_and_preserves_all_source_subjects() {
+    let mut f = underlay_fixture();
+    let model_before = fs::read(f.root().join("records/music-model.tig")).unwrap();
+    let lyric_before = fs::read(f.root().join("records/music-lyric.tig")).unwrap();
+    let session = f.root().join("underlay-session");
+    assert_eq!(
+        editor(&f).export_underlay("music/model", &session).unwrap(),
+        4
+    );
+    let value: Value =
+        serde_json::from_slice(&fs::read(session.join("session.json")).unwrap()).unwrap();
+    let mut request = value["edit_request"].clone();
+    request["underlay"][0]["note_ids"] = json!(["note-1", "note-2"]);
+    request["underlay"][0]["text_end_byte"] = json!(5);
+    request["underlay"].as_array_mut().unwrap().remove(1);
+    request["rationale"] = json!("Source phrase across two retained notes");
+    let edit = f.root().join("underlay-edit.json");
+    fs::write(&edit, serde_json::to_vec(&request).unwrap()).unwrap();
+    f.add("music/unrelated", b"unrelated branch advance");
+    f.commit();
+    let output = f.root().join("underlay-proposal");
+    assert_eq!(
+        editor(&f)
+            .propose_underlay(&session.join("source-lock.json"), &edit, &output)
+            .unwrap(),
+        3
+    );
+    let candidate: Value =
+        serde_json::from_slice(&fs::read(output.join("record.tig")).unwrap()).unwrap();
+    let before: Value = serde_json::from_slice(&model_before).unwrap();
+    for field in ["id", "definition", "authored", "streams"] {
+        assert_eq!(candidate[field], before[field]);
+    }
+    assert_eq!(candidate["status"]["human_approval"], false);
+    assert_eq!(
+        candidate["metadata"]["reel_music_edit"]["verified_lyric"]["record"]["id"],
+        "music/lyric"
+    );
+    let after: reel_music::model::MusicModel =
+        serde_json::from_slice(&fs::read(output.join("model.json")).unwrap()).unwrap();
+    assert_eq!(after.review.status, "not-reviewed");
+    assert!(
+        after
+            .review
+            .required_roles
+            .iter()
+            .any(|r| r == "lyrics-vocal-adaptation-editor")
+    );
+    assert_eq!(
+        fs::read(f.root().join("records/music-model.tig")).unwrap(),
+        model_before
+    );
+    assert_eq!(
+        fs::read(f.root().join("records/music-lyric.tig")).unwrap(),
+        lyric_before
+    );
+    // A text record annotation change is stale even if bytes remain identical.
+    let mut lyric: Value = serde_json::from_slice(&lyric_before).unwrap();
+    lyric["metadata"]["annotation"] = json!("new branch decision");
+    write(f.root(), "records/music-lyric.tig", &lyric);
+    f.commit();
+    let refused = f.root().join("stale-underlay");
+    assert!(
+        editor(&f)
+            .propose_underlay(&session.join("source-lock.json"), &edit, &refused)
+            .is_err()
+    );
+    assert!(!refused.exists());
+}
+
+#[test]
+fn tig_underlay_refuses_missing_bindings_stale_text_and_wrong_language_before_output() {
+    for mutation in ["binding", "bytes", "language", "kind", "definition"] {
+        let mut f = underlay_fixture();
+        let path = f.root().join(if mutation == "binding" {
+            "records/music-model.tig"
+        } else {
+            "records/music-lyric.tig"
+        });
+        let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        match mutation {
+            "binding" => record["authored"]["binding_ids"] = json!({}),
+            "bytes" => {
+                let object = Object::from_bytes(b"changed text");
+                fs::write(
+                    f.root().join("cache/objects").join(object.sha256.as_str()),
+                    b"changed text",
+                )
+                .unwrap();
+                record["selected"] = json!(object);
+            }
+            "language" => record["authored"]["language"] = json!("other"),
+            "kind" => record["authored"]["lyric_kind"] = json!("as-sung"),
+            "definition" => record["definition"]["sha256"] = json!("0".repeat(64)),
+            _ => unreachable!(),
+        }
+        fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+        f.commit();
+        let output = f.root().join("refused-underlay");
+        let result = Editor::open(serde_json::from_value(f.profile.clone()).unwrap())
+            .and_then(|mut editor| editor.export_underlay("music/model", &output));
+        assert!(result.is_err(), "accepted {mutation}");
+        assert!(!output.exists());
+    }
+}
+
+#[test]
+fn tig_underlay_cli_exports_only_counts_and_never_lyric_text() {
+    let f = underlay_fixture();
+    let profile = f.root().join("profile.json");
+    fs::write(&profile, serde_json::to_vec(&f.profile).unwrap()).unwrap();
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_reel-tig-music-editor"))
+        .arg("--profile")
+        .arg(profile)
+        .arg("export-underlay")
+        .arg("music/model")
+        .arg(f.root().join("cli-underlay"))
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let summary: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(summary["underlay_spans"], 4);
+    assert_eq!(summary["media_resolved"], false);
+    assert_eq!(summary["human_approval"], false);
+    assert_eq!(summary.as_object().unwrap().len(), 7);
+}
+
 fn fixture() -> Fixture {
     fixture_with_permission(true)
 }

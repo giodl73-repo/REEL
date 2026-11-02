@@ -97,6 +97,8 @@ pub mod tig_inputs;
 pub mod tig_job_runner;
 #[cfg(feature = "tig")]
 pub mod tig_music_editor;
+#[cfg(feature = "tig")]
+mod tig_music_underlay;
 #[cfg(feature = "tig-publication")]
 pub mod tig_native_job_cli;
 #[cfg(feature = "tig")]

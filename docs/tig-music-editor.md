@@ -1,4 +1,4 @@
-# Native note authoring from Tig
+# Native music control authoring from Tig
 
 `reel-tig-music-editor` uses the existing explicit committed-source profile and
 byte providers. It does not initialize a cache, discover a project, start a
@@ -83,6 +83,38 @@ approval, delivery, backup custody or eviction authority.
 
 Source locks, editor sessions, candidate files and receipts contain private
 project metadata and stay in private workspaces/assets. Stdout reports only the
-operation, note count, and explicit non-approval/non-publication flags. Underlay,
-full music-production dependency binding and managed music-job adoption remain
-separate integrations; this entry's supported scope is native note authoring.
+operation, count, and explicit non-approval/non-publication flags. Full
+music-production dependency binding and managed music-job adoption remain
+separate integrations.
+
+## Exact-text lyric underlay
+
+```text
+reel-tig-music-editor --profile PRIVATE_SOURCE export-underlay MODEL_ASSET_ID NEW_EDITOR_DIR
+reel-tig-music-editor --profile PRIVATE_SOURCE propose-underlay SOURCE_LOCK EDIT_JSON NEW_PROPOSAL_DIR
+```
+
+These commands additionally consume one exact selected lyric text, at most
+128 KiB of UTF-8. The model definition must declare
+`semantic_rules.binding_profile: "reel.music-model-input-bindings.v1"` and
+`semantic_rules.underlay_profile: "reel.music-underlay-authoring.v1"`.
+Its `authored.binding_ids["lyric:<selected-layer-id>"].id` names an admitted Tig
+asset, whose definition declares `semantic_rules.profile:
+"reel.music-lyric-source.v1"`. The lyric record's authored `language` and
+`lyric_kind` must match that selected native layer, and its selected bytes must
+match the hash observed by the model. Missing, ambiguous, stale or incompatible
+bindings refuse before creating output. No relative lyric path is opened.
+
+The private lock captures both records, definitions and selected objects.
+An unrelated commit is allowed; a changed model, lyric annotation, definition,
+selection or binding requires a fresh session. Both byte-provider guards stay
+live throughout the operation. The original underlay editor's exact UTF-8 byte
+offset, source-order, note coverage and rationale checks apply. Proposals preserve
+all lyric bytes and notes, clear review/authority, and require the lyric/vocal
+adaptation editor role. The selected lyric's exact lock is retained in private
+lineage; no text is printed to stdout. Counts describe resulting spans.
+
+These checks are underlay-specific, not complete source/analysis/audio validation
+or listening approval. The local-file editor retains its original selected-path
+and same-directory output requirements. Tig output remains a separate unreviewed,
+unpublished candidate; the current project selection is unchanged.
