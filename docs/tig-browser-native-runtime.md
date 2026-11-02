@@ -47,6 +47,14 @@ CDP interception and content policy are not an OS network sandbox or a complete
 environment declaration. Platform DLLs, fonts and any additional interpretation
 dependencies need explicit enrollment where required by the consuming project.
 
+The protocol thread samples workspace usage after at least 250 ms since its
+previous completed scan, with forced scans at admission and before publication.
+It does not recursively scan the browser profile on every CDP message or poll.
+Source-authority checks still run on every guarded protocol check; child
+controllers retain their independent workspace checks. A failed usage observation
+stays failed even if the offending file disappears. These observations can detect
+an exceeded budget but cannot prevent transient allocation between samples.
+
 ## Checked handoff and failure
 
 Discovery and WebSocket handshake operate only on the owned profile's observed

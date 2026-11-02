@@ -55,6 +55,59 @@ pub(super) fn usage(root: &Path, budget: u64) -> Result<u64> {
     Ok(total)
 }
 
+/// Sample observational disk usage independently of protocol polling frequency.
+/// Child controllers keep their own checks; callers force a final full scan.
+/// This is never a filesystem quota or a substitute for authority checks.
+pub(super) struct UsageObserver {
+    root: PathBuf,
+    budget: u64,
+    last: Instant,
+    failed: Option<String>,
+    #[cfg(test)]
+    scans: usize,
+}
+impl UsageObserver {
+    pub fn new(root: &Path, budget: u64) -> Result<Self> {
+        let mut observer = Self {
+            root: root.to_owned(),
+            budget,
+            last: Instant::now(),
+            failed: None,
+            #[cfg(test)]
+            scans: 0,
+        };
+        observer.force()?;
+        Ok(observer)
+    }
+    pub fn check(&mut self) -> Result<()> {
+        self.check_at(Instant::now())
+    }
+    fn check_at(&mut self, now: Instant) -> Result<()> {
+        if let Some(error) = &self.failed {
+            bail!("{error}");
+        }
+        if now.saturating_duration_since(self.last) >= Duration::from_millis(250) {
+            self.force()?;
+        }
+        Ok(())
+    }
+    pub fn force(&mut self) -> Result<()> {
+        if let Some(error) = &self.failed {
+            bail!("{error}");
+        }
+        #[cfg(test)]
+        {
+            self.scans += 1;
+        }
+        if let Err(error) = usage(&self.root, self.budget) {
+            self.failed = Some(error.to_string());
+            return Err(error);
+        }
+        self.last = Instant::now();
+        Ok(())
+    }
+}
+
 pub(super) struct Task {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<Result<(), String>>>,
@@ -133,4 +186,36 @@ pub(super) fn native_path(path: &Path) -> Result<String> {
     let path: PathBuf = path.canonicalize()?;
     let value = path.to_str().context("browser native path is not UTF-8")?;
     Ok(value.strip_prefix(r"\\?\").unwrap_or(value).to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn protocol_polling_does_not_rescan_workspace_and_forced_exit_checks_new_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let mut observed = UsageObserver::new(root.path(), 4).unwrap();
+        let now = observed.last;
+        for _ in 0..1000 {
+            observed.check_at(now).unwrap();
+        }
+        assert_eq!(observed.scans, 1);
+        fs::write(root.path().join("new.bin"), b"over budget").unwrap();
+        assert!(observed.force().is_err());
+        fs::remove_file(root.path().join("new.bin")).unwrap();
+        assert!(
+            observed.check().is_err(),
+            "a failed admission must stay failed"
+        );
+        assert!(observed.force().is_err());
+    }
+    #[test]
+    fn expired_observation_samples_the_current_workspace() {
+        let root = tempfile::tempdir().unwrap();
+        let mut observed = UsageObserver::new(root.path(), 4).unwrap();
+        fs::write(root.path().join("new.bin"), b"over budget").unwrap();
+        observed.last = Instant::now() - Duration::from_secs(1);
+        assert!(observed.check().is_err());
+        assert_eq!(observed.scans, 2);
+    }
 }

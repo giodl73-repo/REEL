@@ -22,7 +22,7 @@ use std::{
 use tig_core::Object;
 mod browser;
 mod processes;
-use processes::{Task, native_path, pause, usage};
+use processes::{Task, UsageObserver, native_path, pause};
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -146,7 +146,15 @@ impl Frames for Encoder {
         while !png.is_empty() {
             self.task.check_running()?;
             if Instant::now() >= deadline {
-                bail!("encoder frame write deadline elapsed");
+                let kind = if Instant::now() >= self.deadline {
+                    "overall"
+                } else {
+                    "I/O"
+                };
+                bail!(
+                    "encoder {kind} frame write deadline elapsed at frame {index}/{}",
+                    self.expected
+                );
             }
             match self.stream.write(png) {
                 Ok(0) => bail!("encoder stream ended"),
@@ -447,7 +455,7 @@ pub fn native(
     let samples = audio.as_ref().map(|_| sample_count(plan)).transpose()?;
     let producer = producer(programs, browser, clean_picture)?;
     drop(capture::Guarded::new(plan, inputs, || Ok(()))?);
-    usage(workspace, limits.max_workspace_bytes)?;
+    let mut workspace_usage = UsageObserver::new(workspace, limits.max_workspace_bytes)?;
     let deadline = Instant::now() + Duration::from_millis(limits.capture.max_elapsed_ms);
     let candidate = tempfile::Builder::new()
         .prefix("browser-native-")
@@ -495,7 +503,7 @@ pub fn native(
     };
     let mut resources = capture::Guarded::new(plan, inputs, || {
         authority()?;
-        usage(workspace, limits.max_workspace_bytes)?;
+        workspace_usage.check()?;
         Ok(())
     })?;
     let captured = capture::capture(
@@ -521,7 +529,7 @@ pub fn native(
         .map(|n| pcm(programs, inputs, &candidate, workspace, limits, deadline, n))
         .transpose()?;
     authority()?;
-    usage(workspace, limits.max_workspace_bytes)?;
+    workspace_usage.force()?;
     let output_pin = Object {
         sha256: tig_core::Digest::parse(&crate::production::sha256_path(&candidate)?)?,
         bytes: fs::metadata(&candidate)?.len(),
