@@ -386,4 +386,5 @@ fn fresh_primary_reference(f: &Fixture, profile: &Value, master: &Object, differ
             .contains("source ownership changed")
     );
     assert_eq!(stage.read_dir().unwrap().count(), 0);
+    super::browser_owned::exercise(f, profile, master, &programs, &browser, &limits);
 }

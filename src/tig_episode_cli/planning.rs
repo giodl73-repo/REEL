@@ -1,6 +1,6 @@
 //! Metadata-only declared input closure. This cannot grant render eligibility.
 use super::*;
-use crate::{tig_presentation, tig_scene_production::jobs::reference::ReferencePlan};
+use crate::tig_scene_production::jobs::reference::ReferencePlan;
 use tig_assets::graph::recipe::Plan;
 
 pub(super) struct Root {
@@ -159,20 +159,10 @@ pub(super) fn freeze(
             store,
             TreeLimits::default(),
         )?;
-        let context = tig_presentation::freeze_context(
-            &mut child,
-            &spec.request,
-            store,
-            TreeLimits::default(),
-        )?;
-        let reference = tig_presentation::jobs::JobPlan::from_context(
-            &mut child,
-            &spec.request,
-            &context,
-            programs,
-            &spec.output_id,
-            &spec.output_definition,
-        )?;
+        let browser = spec.bind_browser()?;
+        let context = spec.freeze_context(&mut child, store)?;
+        let reference =
+            presentation::Plan::from_context(&mut child, spec, &context, programs, &browser)?;
         enroll(
             &mut evidence,
             &spec.id,

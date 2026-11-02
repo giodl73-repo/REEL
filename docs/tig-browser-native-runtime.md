@@ -99,3 +99,19 @@ reserve the reference render's full workspace/output peak through the scheduler.
 This operation does not create a cache, adopt a source, select/publish a master or
 authorize eviction. The managed presentation adapter must bind the result to its
 current source ownership and exact episode occurrence before assembly can use it.
+
+The candidate `tig_presentation::jobs::browser` adapter now supplies that ownership
+layer through the existing job-context and per-source fence protocol. Metadata
+freezing enrolls every declared primary/runtime dependency and the exact output
+record; the selected master is a composition dependency, never a primary input.
+Fresh comparison is required before the adapter creates the same sealed
+`VerifiedPresentation` consumed by episode assembly. Retained self-comparison
+reports and selection labels cannot construct that proof.
+
+Episode presentation requests select their interpreter by schema. Existing still
+requests keep their shape; a browser request uses the normal browser-source schema
+and a sibling `browser` admission with explicit `program`, `limits` and
+`clean_picture`. The output record must point to that source through
+`authored.presentation.id` and identify its language/episode occurrence. Browser
+reference workspace bounds must fit the episode's admitted reference-staging
+allowance. No native browser profile or source code is copied into an asset repo.
