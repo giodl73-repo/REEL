@@ -34,6 +34,9 @@ pub struct ReservationToken {
     generation: u64,
 }
 impl ReservationToken {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
     pub fn owner(&self) -> &str {
         &self.owner
     }
@@ -43,6 +46,34 @@ pub struct AllocationTicket {
     reservation: ReservationToken,
     event: String,
     limit: u64,
+}
+impl AllocationTicket {
+    pub fn reservation(&self) -> &ReservationToken {
+        &self.reservation
+    }
+}
+
+/// Immutable disposition retained by a caller after working-set retirement.
+/// This is historical accounting, never a new reservation or custody proof.
+#[derive(Clone, Debug)]
+pub struct RetiredReservation {
+    record: Reservation,
+}
+impl RetiredReservation {
+    pub fn allocation_status(&self, ticket: &AllocationTicket) -> Result<Option<u64>> {
+        if self.record.token != ticket.reservation {
+            return Err(CapacityError::Stale);
+        }
+        let event = self
+            .record
+            .events
+            .get(&ticket.event)
+            .ok_or(CapacityError::Stale)?;
+        if event.limit != ticket.limit {
+            return Err(CapacityError::Stale);
+        }
+        Ok(event.completed.map(|(charge, _)| charge))
+    }
 }
 #[derive(Clone, Debug)]
 pub struct ObservationTicket {
@@ -319,6 +350,9 @@ impl CapacityDomain {
         if r.closed {
             return Err(CapacityError::Closed);
         }
+        if actual > 0 && self.debits.len() >= MAX_EVENTS {
+            return Err(CapacityError::Budget);
+        }
         let remaining = r
             .remaining
             .checked_sub(actual)
@@ -359,6 +393,29 @@ impl CapacityDomain {
         r.closed = true;
         r.remaining = 0;
         Ok(())
+    }
+    pub fn is_closed(&self, token: &ReservationToken) -> Result<bool> {
+        Ok(self.record(token)?.closed)
+    }
+    /// Retire only finished working state, preserving unobserved debits and
+    /// monotonically increasing generations. Callers must retain an operation
+    /// replay fence and this returned history; a name may subsequently be reused
+    /// with a new generation. No bytes are freed and no IO is authorized.
+    pub fn retire_closed(&mut self, token: &ReservationToken) -> Result<RetiredReservation> {
+        let record = self.record(token)?;
+        if !record.closed
+            || record.remaining != 0
+            || record.events.values().any(|e| e.completed.is_none())
+        {
+            return Err(CapacityError::InFlight);
+        }
+        let count = self
+            .event_count
+            .checked_sub(record.events.len())
+            .ok_or(CapacityError::Overflow)?;
+        let record = self.records.remove(&token.id).ok_or(CapacityError::Stale)?;
+        self.event_count = count;
+        Ok(RetiredReservation { record })
     }
 }
 fn sum(mut values: impl Iterator<Item = u64>) -> Result<u64> {

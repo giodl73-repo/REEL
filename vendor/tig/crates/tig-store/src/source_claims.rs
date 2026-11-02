@@ -15,6 +15,7 @@ pub const MAX_SOURCES: usize = 1024;
 pub const MAX_PREDECESSORS: usize = 64;
 pub const MAX_COMMANDS: u64 = 16_384;
 pub const MAX_COMMAND_BYTES: u64 = 16 * 1024 * 1024;
+pub const MAX_OBSERVED_SOURCES: usize = 64;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
     Io,
@@ -50,6 +51,11 @@ impl From<crate::Error> for Error {
 }
 impl From<rusqlite::Error> for Error {
     fn from(e: rusqlite::Error) -> Self {
+        if matches!(&e, rusqlite::Error::SqliteFailure(c, _)
+            if c.extended_code == rusqlite::ffi::SQLITE_READONLY_ROLLBACK)
+        {
+            return Self::NeedsRecovery;
+        }
         if let rusqlite::Error::SqliteFailure(c, _) = &e
             && matches!(
                 c.code,
@@ -121,6 +127,12 @@ pub struct Source {
 pub struct Observation {
     pub checkpoint: Checkpoint,
     pub source: Option<Source>,
+}
+/// Explicit source selections from one replay, not complete claim coverage.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BatchObservation {
+    pub checkpoint: Checkpoint,
+    pub sources: BTreeMap<String, Option<Source>>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Role {
@@ -430,6 +442,30 @@ impl SourceJournal {
             source: journal.state.sources.get(source.as_str()).cloned(),
         })
     }
+    /// Read bounded distinct sources at one checkpoint without mutating authority.
+    pub fn observe_many(
+        root: &Path,
+        witness: &Checkpoint,
+        sources: &[Key],
+    ) -> Result<BatchObservation> {
+        if sources.is_empty() || sources.len() > MAX_OBSERVED_SOURCES {
+            return Err(Error::Budget);
+        }
+        let mut selected = BTreeMap::new();
+        for source in sources {
+            if selected.insert(source.as_str().to_owned(), None).is_some() {
+                return Err(Error::InvalidReference);
+            }
+        }
+        let journal = Self::open_mode(root, witness, true)?;
+        for (id, state) in &mut selected {
+            *state = journal.state.sources.get(id).cloned();
+        }
+        Ok(BatchObservation {
+            checkpoint: journal.state.head.clone(),
+            sources: selected,
+        })
+    }
     fn open_mode(root: &Path, witness: &Checkpoint, read_only: bool) -> Result<Self> {
         local::check_root_spelling(root)?;
         local::directory(root)?;
@@ -506,7 +542,11 @@ impl SourceJournal {
     fn mark_uncertain<T>(&mut self, result: &Result<T>) {
         if matches!(
             result,
-            Err(Error::Sql | Error::Corrupt | Error::Rollback | Error::Injected)
+            Err(Error::Sql
+                | Error::Corrupt
+                | Error::Rollback
+                | Error::Injected
+                | Error::NeedsRecovery)
         ) {
             self.poisoned = true;
         }

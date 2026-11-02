@@ -289,6 +289,31 @@ pub struct Repository {
     limits: Limits,
 }
 impl Repository {
+    /// One bounded ordinary document from an already captured listing; never HEAD
+    /// or a working-file read. Useful for committed profile/manifest adapters.
+    pub fn document(&self, snapshot: &Snapshot, path: &LogicalPath) -> Result<Vec<u8>> {
+        if snapshot.enrollment != self.enrollment {
+            return Err(Error::Invalid);
+        }
+        let entry = snapshot
+            .entries
+            .iter()
+            .find(|e| e.path == path.as_str())
+            .ok_or(Error::Incomplete)?;
+        if entry.stage != 0 || !matches!(entry.mode.as_str(), "100644" | "100755") {
+            return Err(Error::Incomplete);
+        }
+        self.read_blobs(
+            [entry.oid.clone()].into_iter().collect(),
+            65536,
+            65536,
+            true,
+        )?
+        .remove(&entry.oid)
+        .flatten()
+        .ok_or(Error::Incomplete)
+    }
+
     pub fn new(executable: PathBuf, root: PathBuf, limits: Limits) -> Result<Self> {
         limits.validate()?;
         if !root.is_absolute() || !executable.is_absolute() {

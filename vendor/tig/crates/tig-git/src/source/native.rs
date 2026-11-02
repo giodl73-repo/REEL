@@ -3,9 +3,15 @@ pub mod archive;
 pub mod assessment;
 pub mod context;
 pub mod job;
+#[cfg(feature = "schema")]
+pub mod lifecycle;
+#[cfg(feature = "schema")]
+pub mod metadata_reader;
 pub mod produced;
 #[cfg(feature = "schema")]
 pub mod schema;
+#[cfg(feature = "schema")]
+pub mod updates;
 pub mod variants;
 use super::{Error, Repository, Result, Scope, Snapshot, View};
 use std::{
@@ -61,6 +67,13 @@ pub struct AssetSnapshot {
     limits: Limits,
 }
 impl AssetSnapshot {
+    /// Only selected records in this explicitly captured namespace, in ID order.
+    pub fn selected_records(&self) -> impl Iterator<Item = &Resolved> {
+        self.selected
+            .values()
+            .filter_map(|r| self.records.get(r).map(|r| &r.resolved))
+    }
+
     pub fn checkpoint(&self) -> &Digest {
         &self.checkpoint
     }

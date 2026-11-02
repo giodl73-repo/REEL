@@ -16,6 +16,8 @@ use tig_store::{
 };
 
 const LIMIT: usize = 65_536;
+#[path = "tig-source/diagnostics.rs"]
+mod diagnostics;
 #[path = "tig-source/transition.rs"]
 mod transition;
 #[derive(Deserialize)]
@@ -25,6 +27,14 @@ struct Profile {
     journal_root: PathBuf,
     minimum: Checkpoint,
     source: Key,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BatchProfile {
+    schema: String,
+    journal_root: PathBuf,
+    minimum: Checkpoint,
+    sources: Vec<Key>,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -37,6 +47,7 @@ struct CommandProfile {
 }
 enum Action {
     Inspect(Key),
+    InspectMany(Vec<Key>),
     Acknowledge(Key, Command),
 }
 struct Temporary(PathBuf);
@@ -64,9 +75,9 @@ fn validate_output(root: &Path, output: &Path) -> Result<(), Box<dyn std::error:
     }
     Ok(())
 }
-fn run(input: &Path, output: &Path, acknowledge: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn run(input: &Path, output: &Path, mode: &str) -> Result<(), Box<dyn std::error::Error>> {
     let value = read_value(input)?;
-    let (root, minimum, action) = if acknowledge {
+    let (root, minimum, action) = if mode == "acknowledge" {
         let profile: CommandProfile = serde_json::from_value(value)?;
         if profile.schema != "tig.source-acknowledgment-profile.experimental-1" {
             return Err("invalid acknowledgment schema".into());
@@ -75,6 +86,16 @@ fn run(input: &Path, output: &Path, acknowledge: bool) -> Result<(), Box<dyn std
             profile.journal_root,
             profile.minimum,
             Action::Acknowledge(profile.operation, profile.command),
+        )
+    } else if mode == "inspect-many" {
+        let profile: BatchProfile = serde_json::from_value(value)?;
+        if profile.schema != "tig.source-batch-observation-profile.experimental-1" {
+            return Err("invalid batch observation schema".into());
+        }
+        (
+            profile.journal_root,
+            profile.minimum,
+            Action::InspectMany(profile.sources),
         )
     } else {
         let profile: Profile = serde_json::from_value(value)?;
@@ -89,6 +110,25 @@ fn run(input: &Path, output: &Path, acknowledge: bool) -> Result<(), Box<dyn std
     };
     validate_output(&root, output)?;
     let (summary, report) = match action {
+        Action::InspectMany(sources) => {
+            let observed = SourceJournal::observe_many(&root, &minimum, &sources)?;
+            let present: Vec<_> = observed.sources.values().flatten().collect();
+            let summary = json!({"schema":"tig.source-batch-observation-summary.experimental-1",
+                "requested_sources":observed.sources.len(),"present_sources":present.len(),
+                "journal_commands":observed.checkpoint.sequence(),
+                "current_roots":present.iter().filter(|source|source.current.is_some()).count(),
+                "pending_roots":present.iter().filter(|source|source.pending.is_some()).count(),
+                "predecessor_roots":present.iter().map(|source|source.predecessors.len()).sum::<usize>(),
+                "single_checkpoint":true,"process_liveness_verified":false,
+                "recovery_authorized":false,"complete_claim_coverage":false,"authorizes_eviction":false});
+            let report = serde_json::to_vec(
+                &json!({"schema":"tig.source-batch-observation.experimental-1",
+                "journal_root":root,"checkpoint":observed.checkpoint,"sources":observed.sources,
+                "single_checkpoint":true,"observation_only":true,"process_liveness_verified":false,
+                "recovery_authorized":false,"complete_claim_coverage":false,"authorizes_eviction":false}),
+            )?;
+            (summary, report)
+        }
         Action::Inspect(source) => {
             let observed = SourceJournal::observe(&root, &minimum, &source)?;
             let summary = json!({"schema":"tig.source-observation-summary.experimental-1",
@@ -153,11 +193,13 @@ fn publish(report: &[u8], output: &Path) -> Result<(), Box<dyn std::error::Error
 }
 fn main() -> ExitCode {
     let args: Vec<_> = env::args_os().skip(1).take(5).collect();
-    let result = if args.len() == 3 && (args[0] == "inspect" || args[0] == "acknowledge") {
+    let result = if args.len() == 3
+        && (args[0] == "inspect" || args[0] == "inspect-many" || args[0] == "acknowledge")
+    {
         run(
             Path::new(&args[1]),
             Path::new(&args[2]),
-            args[0] == "acknowledge",
+            args[0].to_str().unwrap_or(""),
         )
     } else if args.len() == 3 && args[0] == "plan" {
         transition::plan(Path::new(&args[1]), Path::new(&args[2]))
@@ -169,14 +211,16 @@ fn main() -> ExitCode {
         )
     } else {
         eprintln!(
-            "usage: tig-source inspect|acknowledge|plan PRIVATE_PROFILE NEW_PRIVATE_REPORT; or apply PRIVATE_PLAN NEW_PRIVATE_REQUEST NEW_PRIVATE_REPORT"
+            "usage: tig-source inspect|inspect-many|acknowledge|plan PRIVATE_PROFILE NEW_PRIVATE_REPORT; or apply PRIVATE_PLAN NEW_PRIVATE_REQUEST NEW_PRIVATE_REPORT"
         );
         return ExitCode::FAILURE;
     };
-    if result.is_err() {
+    if let Err(error) = result {
+        let (code, hint) = diagnostics::explain(error.as_ref());
         eprintln!(
             "source request refused; verify authority, trusted minimum, exact request, bounds and new output"
         );
+        eprintln!("code={code}; {hint}");
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
