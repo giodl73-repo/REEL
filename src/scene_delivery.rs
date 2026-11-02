@@ -1387,7 +1387,7 @@ pub(crate) fn ass_overlay_filter(font_bound: bool, name: &str) -> String {
 pub(crate) fn timed_overlay_filter(plan: &Plan, span: &Span) -> String {
     let count = span.end_frame - span.start_frame;
     format!(
-        "[1:v]setpts=N*{}/{}/TB,trim=start_frame=0:end_frame={count},setpts=PTS-STARTPTS+{}/{}/TB[effect];[0:v][effect]overlay=eof_action=repeat:repeatlast=1:shortest=0:format=auto:enable='gte(n,{})*lt(n,{})'[v]",
+        "[1:v]setpts=N*{}/{}/TB,trim=start_frame=0:end_frame={count},setpts=PTS-STARTPTS+{}/{}/TB[effect];[0:v][effect]overlay=eof_action=repeat:repeatlast=1:shortest=0:format=yuv444:enable='gte(n,{})*lt(n,{})'[v]",
         plan.fps_denominator,
         plan.fps_numerator,
         span.start_frame * plan.fps_denominator,
@@ -1410,7 +1410,7 @@ pub(crate) fn timed_overlay_filter_for_mode(
     }
     let count = span.end_frame - span.start_frame;
     format!(
-        "[0:v]settb=expr={}/{},setpts=N[base];[1:v]settb=expr={}/{},setpts=N,trim=start_frame=0:end_frame={count},setpts=PTS-STARTPTS+{}[effect];[base][effect]overlay=eof_action=repeat:repeatlast=1:shortest=0:format=auto:enable='gte(n,{})*lt(n,{})'[v]",
+        "[0:v]settb=expr={}/{},setpts=N[base];[1:v]settb=expr={}/{},setpts=N,trim=start_frame=0:end_frame={count},setpts=PTS-STARTPTS+{}[effect];[base][effect]overlay=eof_action=repeat:repeatlast=1:shortest=0:format=yuv444:enable='gte(n,{})*lt(n,{})'[v]",
         plan.fps_denominator,
         plan.fps_numerator,
         plan.fps_denominator,
@@ -3285,6 +3285,10 @@ mod timed_overlay_end_frame_tests {
     }
 
     fn frames(root: &Path, name: &str, count: usize) -> Result<Vec<u8>> {
+        frames_format(root, name, count, "yuv444p")
+    }
+
+    fn frames_format(root: &Path, name: &str, count: usize, pixel_format: &str) -> Result<Vec<u8>> {
         let output = Command::new("ffmpeg")
             .current_dir(root)
             .args([
@@ -3298,7 +3302,7 @@ mod timed_overlay_end_frame_tests {
                 "0:v:0",
                 "-an",
                 "-pix_fmt",
-                "yuv444p",
+                pixel_format,
                 "-fps_mode",
                 "passthrough",
                 "-f",
@@ -3322,6 +3326,104 @@ mod timed_overlay_end_frame_tests {
 
     fn frame(bytes: &[u8], n: usize) -> &[u8] {
         &bytes[n * FRAME_BYTES..(n + 1) * FRAME_BYTES]
+    }
+
+    #[test]
+    #[ignore = "requires native FFmpeg; lossless RGBA overlay must preserve every outside frame"]
+    fn rgba_still_overlay_preserves_all_outside_rgb_and_yuv_frames() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path();
+        let made = Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-v",
+                "error",
+                "-nostdin",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=16x16:rate=25",
+                "-frames:v",
+                "25",
+                "-an",
+                "-c:v",
+                "libx264",
+                "-crf",
+                "0",
+                "-preset",
+                "veryfast",
+                "-pix_fmt",
+                "yuv444p",
+            ])
+            .arg(root.join("base.mkv"))
+            .output()?;
+        anyhow::ensure!(
+            made.status.success(),
+            "fixture encode failed: {}",
+            String::from_utf8_lossy(&made.stderr)
+        );
+        image::RgbaImage::from_fn(16, 16, |x, y| {
+            image::Rgba([255 - (x * 12) as u8, (y * 12) as u8, 32, 128])
+        })
+        .save(root.join("layer.png"))?;
+        let plan = Plan {
+            schema: "synthetic-test-only".into(),
+            id: "rgba-overlay-test".into(),
+            job_sha256: "0".repeat(64),
+            contract_sha256: "0".repeat(64),
+            production_sha256: "0".repeat(64),
+            compiled_sha256: "0".repeat(64),
+            sample_rate: 48000,
+            fps_numerator: 25,
+            fps_denominator: 1,
+            duration_samples: 48000,
+            frame_count: 25,
+            pictures: vec![],
+            audio: vec![],
+            audio_anchor_spans: vec![],
+            external_layers: vec![],
+            external_layer_spans: vec![],
+            rendered_external_layers: vec![],
+            buses: BTreeMap::new(),
+            creative_authority: "synthetic-test-only".into(),
+        };
+        let span = Span {
+            attachment_id: "rgba".into(),
+            start_sample: 9600,
+            end_sample: 19200,
+            start_frame: 5,
+            end_frame: 10,
+        };
+        render_timed_video_overlay(
+            root,
+            root,
+            &plan,
+            &span,
+            "base.mkv",
+            "layer.png",
+            "after.mkv",
+            Some("h264-lossless"),
+            &ExternalLayerRenderMode::TimedStillOverlay,
+            &[],
+        )?;
+        for format in ["yuv444p", "rgb24"] {
+            let before = frames_format(root, "base.mkv", 25, format)?;
+            let after = frames_format(root, "after.mkv", 25, format)?;
+            let mut visible = false;
+            for n in 0..25 {
+                if (5..10).contains(&n) {
+                    visible |= frame(&before, n) != frame(&after, n);
+                } else {
+                    assert_eq!(
+                        frame(&before, n),
+                        frame(&after, n),
+                        "outside frame {n}, {format}"
+                    );
+                }
+            }
+            assert!(visible, "overlay must remain visible in {format}");
+        }
+        Ok(())
     }
 
     #[test]
