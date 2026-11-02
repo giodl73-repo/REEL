@@ -1,4 +1,6 @@
 #![cfg(feature = "tig")]
+#[path = "support/tig_browser_source.rs"]
+mod browser_source;
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_candidate_publication.rs"]
 mod candidate_publication;

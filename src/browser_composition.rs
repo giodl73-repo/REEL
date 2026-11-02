@@ -142,6 +142,12 @@ fn validate_hash(hash: &str) -> Result<()> {
 
 fn load_manifest(path: &Path) -> Result<BrowserCompositionManifest> {
     let manifest: BrowserCompositionManifest = serde_yaml::from_slice(&fs::read(path)?)?;
+    validate_manifest(manifest)
+}
+
+pub(crate) fn validate_manifest(
+    manifest: BrowserCompositionManifest,
+) -> Result<BrowserCompositionManifest> {
     if manifest.schema != MANIFEST_SCHEMA {
         bail!("unsupported browser composition schema");
     }
@@ -305,11 +311,27 @@ fn file_url(path: &Path) -> String {
     format!("file:///{}", display.replace('\\', "/").replace(' ', "%20"))
 }
 
-fn stable_background_hash(png: &[u8], regions: &[PixelRegion]) -> Result<Option<String>> {
+pub(crate) fn frame_clock(fps: u32) -> String {
+    format!(
+        r#"(()=>{{let f=0;const fps={fps};Object.defineProperty(window,'__REEL_FRAME__',{{get:()=>f}});window.__reelSetFrame=(n)=>{{f=n;document.documentElement.dataset.reelFrame=String(n);document.documentElement.dataset.reelTime=(n/fps).toFixed(9);window.dispatchEvent(new CustomEvent('reelframe',{{detail:{{frame:n,time:n/fps,fps}}}}));}};Date.now=()=>Math.round(f*1000/fps);window.requestAnimationFrame=(cb)=>{{cb(f*1000/fps);return f+1;}};window.cancelAnimationFrame=()=>{{}};}})()"#
+    )
+}
+
+pub(crate) fn stable_background_hash(
+    png: &[u8],
+    regions: &[PixelRegion],
+) -> Result<Option<String>> {
     if regions.is_empty() {
         return Ok(None);
     }
     let mut image = image::load_from_memory_with_format(png, image::ImageFormat::Png)?.to_rgba8();
+    Ok(Some(stable_background_pixels(&mut image, regions)))
+}
+
+pub(crate) fn stable_background_pixels(
+    image: &mut image::RgbaImage,
+    regions: &[PixelRegion],
+) -> String {
     for region in regions {
         for y in region.y..region.y + region.height {
             for x in region.x..region.x + region.width {
@@ -317,7 +339,7 @@ fn stable_background_hash(png: &[u8], regions: &[PixelRegion]) -> Result<Option<
             }
         }
     }
-    Ok(Some(production::sha256_bytes(image.as_raw())))
+    production::sha256_bytes(image.as_raw())
 }
 
 fn fraction(value: &str) -> Result<f64> {
@@ -437,10 +459,7 @@ pub fn render(options: &RenderOptions) -> Result<BrowserCompositionReport> {
         json!({"urls": ["http://*", "https://*", "ws://*", "wss://*"]}),
     )?;
     id += 1;
-    let clock = format!(
-        r#"(()=>{{let f=0;const fps={};Object.defineProperty(window,'__REEL_FRAME__',{{get:()=>f}});window.__reelSetFrame=(n)=>{{f=n;document.documentElement.dataset.reelFrame=String(n);document.documentElement.dataset.reelTime=(n/fps).toFixed(9);window.dispatchEvent(new CustomEvent('reelframe',{{detail:{{frame:n,time:n/fps,fps}}}}));}};Date.now=()=>Math.round(f*1000/fps);window.requestAnimationFrame=(cb)=>{{cb(f*1000/fps);return f+1;}};window.cancelAnimationFrame=()=>{{}};}})()"#,
-        manifest.fps
-    );
+    let clock = frame_clock(manifest.fps);
     cdp(
         &mut socket,
         id,

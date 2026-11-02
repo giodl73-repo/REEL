@@ -42,9 +42,139 @@ struct Handles {
     process: HANDLE,
     thread: HANDLE,
 }
+impl Handles {
+    fn stop(&mut self) -> Result<()> {
+        unsafe {
+            if self.job.is_null() {
+                return Ok(());
+            }
+            // A zero accounting count after TerminateJobObject is not a
+            // process-signaled barrier. Close child admission first: with a
+            // limit of one, no existing member can admit another process.
+            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            if QueryInformationJobObject(
+                self.job,
+                JobObjectExtendedLimitInformation,
+                (&mut limits as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                std::mem::size_of_val(&limits) as u32,
+                ptr::null_mut(),
+            ) == 0
+            {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+            limits.BasicLimitInformation.ActiveProcessLimit = 1;
+            if SetInformationJobObject(
+                self.job,
+                JobObjectExtendedLimitInformation,
+                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                std::mem::size_of_val(&limits) as u32,
+            ) == 0
+            {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            let members = job_members(self.job)?;
+            if TerminateJobObject(self.job, 1) == 0 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            for member in &members {
+                if WaitForSingleObject(member.0, INFINITE) != WAIT_OBJECT_0 {
+                    return Err(std::io::Error::last_os_error().into());
+                }
+            }
+            drop(members);
+            loop {
+                let mut accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+                if QueryInformationJobObject(
+                    self.job,
+                    JobObjectBasicAccountingInformation,
+                    (&mut accounting as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                    std::mem::size_of_val(&accounting) as u32,
+                    ptr::null_mut(),
+                ) == 0
+                {
+                    return Err(std::io::Error::last_os_error().into());
+                }
+                if accounting.ActiveProcesses == 0 {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            CloseHandle(self.job);
+            self.job = ptr::null_mut();
+        }
+        Ok(())
+    }
+}
+struct Member(HANDLE);
+impl Drop for Member {
+    fn drop(&mut self) {
+        unsafe {
+            CloseHandle(self.0);
+        }
+    }
+}
+fn job_members(job: HANDLE) -> Result<Vec<Member>> {
+    // usize storage keeps the variable-length ULONG_PTR list aligned. Once
+    // admission is closed the list cannot grow, but handle ERROR_MORE_DATA
+    // defensively for a creation already in flight during the limit change.
+    let mut capacity = 64usize;
+    loop {
+        let bytes = 8 + capacity * std::mem::size_of::<usize>();
+        let mut storage = vec![0usize; bytes.div_ceil(std::mem::size_of::<usize>())];
+        let list = storage
+            .as_mut_ptr()
+            .cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>();
+        unsafe {
+            if QueryInformationJobObject(
+                job,
+                JobObjectBasicProcessIdList,
+                list.cast(),
+                bytes as u32,
+                ptr::null_mut(),
+            ) == 0
+            {
+                let error = std::io::Error::last_os_error();
+                if error.raw_os_error() == Some(ERROR_MORE_DATA as i32) && capacity < 65536 {
+                    capacity *= 2;
+                    continue;
+                }
+                return Err(error.into());
+            }
+            let count = (*list).NumberOfProcessIdsInList as usize;
+            let ids = std::slice::from_raw_parts((*list).ProcessIdList.as_ptr(), count);
+            let mut members = Vec::with_capacity(count);
+            for &pid in ids {
+                let handle = OpenProcess(
+                    PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                    0,
+                    pid as u32,
+                );
+                if handle.is_null() {
+                    let error = std::io::Error::last_os_error();
+                    if error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) {
+                        continue;
+                    }
+                    return Err(error.into());
+                }
+                let member = Member(handle);
+                let mut belongs = 0;
+                if IsProcessInJob(handle, job, &mut belongs) == 0 {
+                    return Err(std::io::Error::last_os_error().into());
+                }
+                // A PID may have exited and been reused between query/open.
+                if belongs != 0 {
+                    members.push(member);
+                }
+            }
+            return Ok(members);
+        }
+    }
+}
 impl Drop for Handles {
     fn drop(&mut self) {
         // Closing the last job handle kills all descendants before admission ends.
+        let _ = self.stop();
         unsafe {
             if !self.job.is_null() {
                 CloseHandle(self.job);
@@ -78,6 +208,77 @@ pub fn run(
 ) -> Result<()> {
     let stdout = OpenOptions::new().write(true).create_new(true).open(log)?;
     let stdin = File::open("NUL")?;
+    execute(
+        program, args, workspace, &stdin, &stdout, timeout, None, check,
+    )
+    .map_err(|error| format!("{error}; inspect {}", log.display()).into())
+}
+
+/// OS-enforced aggregate committed-memory/process bounds for one owned child
+/// tree. This is not capacity admission, a disk quota or a network sandbox.
+#[derive(Clone, Copy)]
+pub struct QuietLimits {
+    pub memory_bytes: usize,
+    pub processes: u32,
+}
+impl QuietLimits {
+    fn validate(&self) -> Result<()> {
+        if !(16 * 1024 * 1024..=16_u64 * 1024 * 1024 * 1024).contains(&(self.memory_bytes as u64))
+            || !(1..=256).contains(&self.processes)
+        {
+            return Err("Invalid contained child limits".into());
+        }
+        Ok(())
+    }
+}
+/// Internal trusted execution primitive. Caller supplies held program/source
+/// guards, an admitted existing workspace and cancellation/authority checks.
+/// Atomically joins a kill-on-close job; suppresses stdout/stderr to NUL, without
+/// creating a potentially unbounded log. All owned descendants stop before return.
+/// No cache, workspace, reservation, source claim or publication is created here.
+pub fn run_quiet(
+    program: &Path,
+    args: &[String],
+    workspace: &Path,
+    timeout: Duration,
+    limits: QuietLimits,
+    check: impl Fn() -> Result<()>,
+) -> Result<()> {
+    limits.validate()?;
+    if !program.is_absolute()
+        || !workspace.is_absolute()
+        || !workspace.is_dir()
+        || timeout.is_zero()
+        || timeout > Duration::from_secs(MAX_STEP_TIMEOUT_SECONDS)
+    {
+        return Err("Invalid contained child paths or deadline".into());
+    }
+    check()?;
+    let stdin = File::open("NUL")?;
+    let stdout = OpenOptions::new().write(true).open("NUL")?;
+    execute(
+        program,
+        args,
+        workspace,
+        &stdin,
+        &stdout,
+        timeout,
+        Some(limits),
+        check,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute(
+    program: &Path,
+    args: &[String],
+    workspace: &Path,
+    stdin: &File,
+    stdout: &File,
+    timeout: Duration,
+    bounded: Option<QuietLimits>,
+    check: impl Fn() -> Result<()>,
+) -> Result<()> {
     let program = wide(program.as_os_str());
     let cwd = wide(workspace.as_os_str());
     let line = std::iter::once(quote(&String::from_utf16_lossy(
@@ -124,6 +325,12 @@ pub fn run(
         };
         let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if let Some(bounded) = bounded {
+            limits.BasicLimitInformation.LimitFlags |=
+                JOB_OBJECT_LIMIT_JOB_MEMORY | JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+            limits.JobMemoryLimit = bounded.memory_bytes;
+            limits.BasicLimitInformation.ActiveProcessLimit = bounded.processes;
+        }
         if SetInformationJobObject(
             job,
             JobObjectExtendedLimitInformation,
@@ -134,10 +341,10 @@ pub fn run(
             return Err(std::io::Error::last_os_error().into());
         }
         let mut size = 0;
-        InitializeProcThreadAttributeList(ptr::null_mut(), 1, 0, &mut size);
+        InitializeProcThreadAttributeList(ptr::null_mut(), 2, 0, &mut size);
         let mut buffer = vec![0usize; size.div_ceil(std::mem::size_of::<usize>())];
         let list = buffer.as_mut_ptr().cast();
-        if InitializeProcThreadAttributeList(list, 1, 0, &mut size) == 0 {
+        if InitializeProcThreadAttributeList(list, 2, 0, &mut size) == 0 {
             return Err(std::io::Error::last_os_error().into());
         }
         let _attributes = Attributes(list);
@@ -157,6 +364,19 @@ pub fn run(
             if SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) == 0 {
                 return Err(std::io::Error::last_os_error().into());
             }
+        }
+        let inherited = [stdout.as_raw_handle(), stdin.as_raw_handle()];
+        if UpdateProcThreadAttribute(
+            list,
+            0,
+            PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
+            inherited.as_ptr().cast(),
+            std::mem::size_of_val(&inherited),
+            ptr::null_mut(),
+            ptr::null(),
+        ) == 0
+        {
+            return Err(std::io::Error::last_os_error().into());
         }
         let mut startup = STARTUPINFOEXW::default();
         startup.StartupInfo.cb = std::mem::size_of_val(&startup) as u32;
@@ -200,8 +420,9 @@ pub fn run(
             return Err(std::io::Error::last_os_error().into());
         }
         if code != 0 {
-            return Err(format!("Job step exited {code}; inspect {}", log.display()).into());
+            return Err(format!("Job step exited {code}").into());
         }
+        handles.stop()?;
     }
     check()?;
     Ok(())

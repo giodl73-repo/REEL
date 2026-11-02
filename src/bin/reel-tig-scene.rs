@@ -19,6 +19,9 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Operation {
+    PlanBrowser {
+        request: PathBuf,
+    },
     PlanEpisode {
         request: PathBuf,
         output: PathBuf,
@@ -54,6 +57,18 @@ enum Operation {
 }
 fn run() -> Result<()> {
     let args = Args::parse();
+    if let Operation::PlanBrowser { request } = &args.command {
+        let plan = (|| -> Result<_> {
+            let request = reel::tig_browser::Request::read(request)?;
+            let mut source = Source::open(Profile::read(&args.profile)?)?;
+            Ok(reel::tig_browser::lower(&mut source, &request)?.summary())
+        })()
+        .map_err(|_| {
+            anyhow!("browser source plan refused; verify explicit metadata and admission")
+        })?;
+        println!("{plan}");
+        return Ok(());
+    }
     if let Operation::PlanEpisode { request, output } = &args.command {
         let mut source = Source::open(Profile::read(&args.profile)?)?;
         let result = reel::tig_episode::write_plan(
@@ -84,7 +99,9 @@ fn run() -> Result<()> {
         | Operation::Check { job, .. }
         | Operation::CheckAudio { job, .. }
         | Operation::Compare { job, .. } => job,
-        Operation::CompileNative { .. } | Operation::PlanEpisode { .. } => unreachable!(),
+        Operation::CompileNative { .. }
+        | Operation::PlanEpisode { .. }
+        | Operation::PlanBrowser { .. } => unreachable!(),
     };
     let job_path = job_path
         .canonicalize()
@@ -94,7 +111,9 @@ fn run() -> Result<()> {
     let inputs = source.prepare(&job)?;
     let comparison = matches!(&args.command, Operation::Compare { .. });
     let result = match args.command {
-        Operation::CompileNative { .. } | Operation::PlanEpisode { .. } => unreachable!(),
+        Operation::CompileNative { .. }
+        | Operation::PlanEpisode { .. }
+        | Operation::PlanBrowser { .. } => unreachable!(),
         Operation::Plan { .. } => {
             serde_json::to_value(scene_delivery::plan_with_inputs(&job_path, &inputs)?.1)?
         }

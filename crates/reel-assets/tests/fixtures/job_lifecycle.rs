@@ -45,6 +45,24 @@ fn main() {
             fs::write("child.pid", std::process::id().to_string()).unwrap();
             loop { thread::sleep(Duration::from_secs(1)); }
         }
+        "orphan-child" => {
+            fs::write("parent.pid", std::process::id().to_string()).unwrap();
+            let _child = Command::new(env::current_exe().unwrap()).arg("sleep").spawn().unwrap();
+            for _ in 0..200 {
+                if std::path::Path::new("child.pid").is_file() { return; }
+                thread::sleep(Duration::from_millis(5));
+            }
+            panic!("child did not start");
+        }
+        "allocate" => {
+            let mut bytes = Vec::new();
+            for n in 0..64 {
+                bytes.extend(vec![1u8; 1024 * 1024]);
+                std::hint::black_box(&bytes);
+                fs::write("allocation.progress",(n+1).to_string()).unwrap();
+            }
+            fs::write("allocation.complete",bytes.len().to_string()).unwrap();
+        }
         _ => panic!("unknown synthetic mode"),
     }
 }
