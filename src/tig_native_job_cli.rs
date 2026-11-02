@@ -33,7 +33,7 @@ mod browser;
 mod capture;
 mod comparison;
 pub(crate) mod metadata_wait;
-pub use comparison::{compare_retained, revalidate_retained};
+pub use comparison::{compare_browser_retained, compare_retained, revalidate_retained};
 pub(crate) mod handoff;
 mod planning;
 pub(crate) mod preparation;

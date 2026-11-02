@@ -63,6 +63,8 @@ enum Operation {
     PublishFile { profile: PathBuf, output: PathBuf },
     /// Recheck retained native outputs and compare their master with a baseline.
     CompareRetained { profile: PathBuf, output: PathBuf },
+    /// Replay a browser claim and compare retained native media with an admitted reference.
+    CompareBrowserRetained { profile: PathBuf, output: PathBuf },
     /// Recompile original controls and verify retained bytes; no production claim.
     RevalidateRetained { profile: PathBuf, output: PathBuf },
     /// Explicit one-time shared metadata/journal setup; never invoked by Run.
@@ -91,7 +93,9 @@ fn main() -> ExitCode {
     let operation = Args::parse().operation;
     let comparison = matches!(
         &operation,
-        Operation::CompareRetained { .. } | Operation::RevalidateRetained { .. }
+        Operation::CompareRetained { .. }
+            | Operation::CompareBrowserRetained { .. }
+            | Operation::RevalidateRetained { .. }
     );
     let episode_job = matches!(
         &operation,
@@ -145,6 +149,9 @@ fn main() -> ExitCode {
         }
         Operation::CompareRetained { profile, output } => {
             reel::tig_native_job_cli::compare_retained(&profile, &output)
+        }
+        Operation::CompareBrowserRetained { profile, output } => {
+            reel::tig_native_job_cli::compare_browser_retained(&profile, &output)
         }
         Operation::RevalidateRetained { profile, output } => {
             reel::tig_native_job_cli::revalidate_retained(&profile, &output)
