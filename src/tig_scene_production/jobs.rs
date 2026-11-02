@@ -44,6 +44,12 @@ pub struct JobPlan<'a> {
 enum ProducerRequest<'a> {
     Scene(&'a Request),
     Delivery(&'a crate::tig_delivery_template::Request),
+    #[cfg(windows)]
+    Browser(
+        &'a crate::tig_browser::Request,
+        &'a crate::media_runtime::BoundTool,
+        bool,
+    ),
 }
 pub struct Readback<'p, 'a> {
     plan: &'p JobPlan<'a>,
@@ -96,6 +102,34 @@ fn object(pin: &crate::media_runtime::ByteIdentity) -> Result<Object> {
     })
 }
 impl<'a> JobPlan<'a> {
+    #[cfg(windows)]
+    pub(crate) fn from_browser_context(
+        source: &mut Source,
+        request: &'a crate::tig_browser::Request,
+        context: &'a ProductionContext,
+        programs: &'a BoundPrograms,
+        browser: &'a crate::media_runtime::BoundTool,
+        clean: bool,
+    ) -> Result<Self> {
+        let producer = crate::tig_browser::render::producer(programs, browser, clean)?;
+        let recipe = crate::tig_browser::recipe(source, request, context, &producer)?;
+        let mut plan = Self::with_recipe(
+            ProducerRequest::Browser(request, browser, clean),
+            context,
+            programs,
+            recipe,
+            RecipeMode::Declared,
+        )?;
+        plan.runtime.insert(
+            LogicalPath::parse("browser/executable")?,
+            object(browser.identity())?,
+        );
+        plan.runtime.insert(
+            LogicalPath::parse("browser/media-runtime")?,
+            object(programs.identity())?,
+        );
+        Ok(plan)
+    }
     pub fn from_context(
         source: &mut Source,
         request: &'a Request,
@@ -184,6 +218,8 @@ impl<'a> JobPlan<'a> {
         match self.request {
             ProducerRequest::Scene(request) => Ok(request),
             ProducerRequest::Delivery(_) => bail!("delivery job is not a speech-scene job"),
+            #[cfg(windows)]
+            ProducerRequest::Browser(..) => bail!("browser job is not a speech-scene job"),
         }
     }
     /// Recompile current metadata under this exact frozen native interpretation.
@@ -223,6 +259,13 @@ impl<'a> JobPlan<'a> {
         preparation: Option<&Path>,
     ) -> Result<Plan> {
         let recipe = match self.request {
+            #[cfg(windows)]
+            ProducerRequest::Browser(request, _, _) => {
+                if preparation.is_some() {
+                    bail!("browser recipe takes no preparation directory");
+                }
+                crate::tig_browser::recipe(source, request, self.context, producer)?
+            }
             ProducerRequest::Delivery(request) => {
                 if preparation.is_some() {
                     bail!("delivery recipe replay does not create preparation files");
@@ -273,22 +316,40 @@ impl<'a> JobPlan<'a> {
         }
     }
     fn put_manifest(&self, store: &mut impl NodeStore) -> Result<()> {
-        if store.put(self.programs.manifest_bytes())? != self.recipe.operation().producer {
+        let document = self.producer_document()?;
+        if store.put(&document)? != self.recipe.operation().producer {
             bail!("native runtime manifest publication differs");
         }
+        store.put(self.programs.manifest_bytes())?;
         Ok(())
+    }
+    fn producer_document(&self) -> Result<Vec<u8>> {
+        #[cfg(windows)]
+        if let ProducerRequest::Browser(_, browser, clean) = self.request {
+            return crate::tig_browser::render::producer_document(self.programs, browser, clean);
+        }
+        Ok(self.programs.manifest_bytes().to_vec())
     }
     fn verify_manifest(&self, store: &impl NodeStore) -> Result<()> {
         let bytes = store
             .get(&self.recipe.operation().producer)?
             .ok_or_else(|| anyhow::anyhow!("native runtime manifest missing"))?;
-        if bytes != self.programs.manifest_bytes() {
+        if bytes != self.producer_document()?
+            || store.get(&object(self.programs.identity())?)?.as_deref()
+                != Some(self.programs.manifest_bytes())
+        {
             bail!("native runtime manifest differs");
         }
         Ok(())
     }
     fn review_evidence(&self) -> Result<Option<Vec<u8>>> {
         match self.request {
+            #[cfg(windows)]
+            ProducerRequest::Browser(request, _, _) => {
+                Ok(Some(identity::canonical_json(&serde_json::json!({
+                    "schema":"reel.tig-browser-job-admission.experimental-1", "request":request
+                }))?))
+            }
             ProducerRequest::Delivery(request) if request.private_review.is_some() => {
                 Ok(Some(identity::canonical_json(&serde_json::json!({
                     "schema":"reel.private-review-admission.experimental-1", "request":request
@@ -604,6 +665,10 @@ impl ProtectedJob<'_, '_> {
     ) -> Result<ManagedCandidate> {
         self.planned(journal)?;
         let candidate = match self.plan.request {
+            #[cfg(windows)]
+            ProducerRequest::Browser(..) => {
+                bail!("browser jobs execute through the contained native worker")
+            }
             ProducerRequest::Scene(request) => {
                 let render = match self.plan.mode {
                     RecipeMode::Declared => super::render_with_programs,

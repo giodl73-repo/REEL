@@ -66,6 +66,9 @@ fn scope(source: &mut Source, request: &Request) -> Result<Scope> {
         .as_object_mut()
         .unwrap()
         .remove("private_review");
+    // Execution admission is frozen separately in the native job's retained
+    // evidence. Capacity/authorization changes must not invalidate pixel meaning.
+    admitted_request.as_object_mut().unwrap().remove("bounds");
     let descriptor = identity::canonical_json(&json!({
         "schema":"reel.tig-browser-context.experimental-1","request":admitted_request,
         "adapter":Object::from_bytes(include_bytes!("../tig_browser.rs")),
@@ -205,6 +208,6 @@ pub fn recipe(
     source.projected_recipe_for_ids(&s.roots,&s.profiles,&consumption,&payloads,&graph::recipe::Operation {
         name:"reel.tig-browser.render.experimental-1".into(),
         semantics:Object::from_bytes(b"reel.tig-browser.v1:exact-primary-map;preserved-svg-clock;no-working-file-fallback").sha256,
-        producer:producer.clone(),parameters:Object::from_bytes(&s.prepared.manifest_bytes),
+        producer:producer.clone(),parameters:Object::from_bytes(context.descriptor()),
     },limits())
 }
