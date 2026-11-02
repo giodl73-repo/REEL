@@ -164,3 +164,39 @@ producer-applied checklists, not independent or human approval. BROWSER-01 has
 [local implementation verification](reviews/2026-11-01-tig-browser-source-planning.md).
 Renderer implementation, hosted qualification, private acceptance and runtime
 adoption remain open.
+
+## Streaming capture interface
+
+`tig_browser::capture` supplies a second candidate integration seam. It accepts
+an already admitted CDP transport, guarded exact resources, explicit limits and
+a synchronous frame consumer. It neither launches a browser/encoder nor creates
+an output, profile, cache or staging directory. The actual runtime and managed
+producer remain required; this seam is not BROWSER-02/03 completion.
+
+The resource adapter borrows the held input provider. Each request maps to one
+canonical URL under a virtual origin, with exact length/hash verification and
+authority checks around reading. Unknown origins/paths, query aliases, bodies,
+ranges and redirects refuse rather than falling back to network or working files.
+The CDP dispatcher services paused requests while awaiting other responses and
+checks every fulfillment acknowledgement, including reordered responses.
+
+Request counts, cumulative served bytes, individual resources, inbound/outbound
+messages, frame bytes, geometry and elapsed time have explicit bounds. The local
+WebSocket adapter uses bounded messages and nonblocking reads/writes with an
+absolute deadline; trickling a partial frame cannot restart that deadline. A
+document resource-policy violation, authentication request or detachment refuses.
+The resource policy is defense in depth, not a browser/OS network sandbox.
+
+The shared legacy frame clock is reused. Every screenshot is decoded under
+geometry/allocation limits before consumption; dynamic-region checks retain their
+existing meaning. There is one synchronous frame in flight and an incremental
+sequence digest, with no per-frame files or growing lineage list. Consumer drain
+and final source-authority checks must pass before a capture summary exists.
+The decoder allocation limit is a library limit, not an OS memory quota.
+
+The caller must still provide protected source/program lifetimes, admitted peak
+storage/process limits, bounded encoder writes, cancellation and process-tree
+reaping. Errors return no completed capture; they do not independently terminate
+an externally owned browser or consumer. There is no automatic output publication,
+reuse, approval, retention or eviction authority. Native output recipes must bind
+this implementation and all actual browser/encoder options before adoption.

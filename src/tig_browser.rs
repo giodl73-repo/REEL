@@ -16,6 +16,7 @@ use std::{
 use tig_assets::graph::Reference;
 use tig_core::{Digest, LogicalPath, Object};
 
+pub mod capture;
 mod context;
 pub use context::{freeze_context, recipe, requirements, restore_context};
 
