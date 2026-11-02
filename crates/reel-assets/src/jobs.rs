@@ -778,6 +778,8 @@ mod lifecycle_tests;
 
 #[cfg(windows)]
 mod process;
+#[cfg(windows)]
+pub use process::{QuietLimits, run_quiet};
 
 #[cfg(not(windows))]
 mod process {

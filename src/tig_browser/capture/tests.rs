@@ -586,3 +586,66 @@ fn a_previously_loaded_document_cannot_substitute_for_the_admitted_source() {
     assert_eq!(s.signals.written.get(), 0);
     assert!(!s.finished);
 }
+
+#[test]
+fn real_cdp_fractional_timestamps_are_wire_values_and_duplicates_still_refuse() {
+    let value=protocol::parse(r#"{"method":"Network.requestWillBeSent","params":{"timestamp":123.125,"values":[-0.0,1e-5,null,true]}}"#).unwrap();
+    assert_eq!(value["params"]["timestamp"].as_f64(), Some(123.125));
+    for raw in [
+        r#"{"id":1,"id":2}"#,
+        r#"{"params":{"timestamp":1,"timestamp":2}}"#,
+        r#"{"params":[{"x":1,"x":2}]}"#,
+        r#"{"timestamp":1e999}"#,
+    ] {
+        assert!(protocol::parse(raw).is_err());
+    }
+    assert!(tig_core::identity::parse_json(b"{\"timestamp\":123.125}").is_err());
+    let (mut w, mut r, mut s) = setup();
+    w.fetches.insert(
+        0,
+        serde_json::json!({"method":"Network.requestWillBeSent","params":{"timestamp":123.125}}),
+    );
+    assert!(run(&mut w, &mut r, &mut s).is_ok());
+}
+
+#[test]
+fn browser_tab_icon_is_denied_without_exempting_an_authored_image_or_serving_bytes() {
+    for kind in ["Other", "Image", "Document"] {
+        let (mut w, mut r, mut s) = setup();
+        let mut icon = fetch("https://reel.invalid/favicon.ico");
+        icon["params"]["resourceType"] = json!(kind);
+        w.fetches.push(icon);
+        let report = run(&mut w, &mut r, &mut s);
+        if kind == "Other" {
+            let report = report.unwrap();
+            assert_eq!(report.denied_auxiliary_requests, 1);
+            assert_eq!(report.served_bytes, 7);
+            assert!(w.sent.iter().any(|v| v["method"] == "Fetch.failRequest"
+                && v["params"]["errorReason"] == "BlockedByClient"));
+        } else {
+            assert!(report.is_err());
+            assert!(!s.finished);
+        }
+    }
+}
+
+#[test]
+fn browser_url_spellings_resolve_one_declared_utf8_path_without_decoding_traversal() {
+    let expected = resource_url("pictures/niño 1%+&.svg").unwrap();
+    for url in [
+        "https://reel.invalid/v1/pictures/ni%C3%B1o%201%+&.svg",
+        "https://reel.invalid/v1/pictures/ni%c3%b1o%201%25%2b%26.svg",
+    ] {
+        assert_eq!(canonical_resource_url(url).unwrap(), expected);
+    }
+    for url in [
+        "https://reel.invalid/v1/a%2fb.svg",
+        "https://reel.invalid/v1/a%5cb.svg",
+        "https://reel.invalid/v1/%2e%2e/secret.svg",
+        "https://reel.invalid/v1/a.svg?q=1",
+        "https://reel.invalid/v1/a.svg#fragment",
+        "https://other.invalid/v1/a.svg",
+    ] {
+        assert!(canonical_resource_url(url).is_err());
+    }
+}

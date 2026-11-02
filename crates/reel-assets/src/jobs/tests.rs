@@ -437,6 +437,161 @@ fn timeout_retires_workspace_after_descendants_die_and_preserves_pid_evidence() 
     no_scratch(&f);
 }
 
+fn quiet_fixture() -> (tempfile::TempDir, PathBuf) {
+    let root = tempfile::tempdir().unwrap();
+    let executable = root.path().join("fixture.exe");
+    fs::write(&executable, tool()).unwrap();
+    (root, executable)
+}
+fn quiet_limits() -> QuietLimits {
+    QuietLimits {
+        memory_bytes: 128 * 1024 * 1024,
+        processes: 4,
+    }
+}
+fn stopped(path: &Path) {
+    use windows_sys::Win32::{Foundation::*, System::Threading::*};
+    let pid = fs::read_to_string(path).unwrap().parse().unwrap();
+    unsafe {
+        let handle = OpenProcess(0x0010_0000, 0, pid);
+        if !handle.is_null() {
+            let status = WaitForSingleObject(handle, 0);
+            CloseHandle(handle);
+            assert_eq!(
+                status, WAIT_OBJECT_0,
+                "owned child was still alive when run returned"
+            );
+        }
+    }
+}
+#[test]
+fn quiet_child_tree_stops_after_success_and_cancellation_without_log_files() {
+    for cancel in [false, true] {
+        let (root, exe) = quiet_fixture();
+        let result = run_quiet(
+            &exe,
+            &[if cancel { "tree" } else { "orphan-child" }.into()],
+            root.path(),
+            Duration::from_secs(5),
+            quiet_limits(),
+            || {
+                if cancel && root.path().join("child.pid").is_file() {
+                    Err("injected child cancellation".into())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert_eq!(result.is_err(), cancel, "{result:?}");
+        for name in ["parent.pid", "child.pid"] {
+            stopped(&root.path().join(name));
+        }
+        assert!(!root.path().join("step-0.log").exists());
+    }
+}
+#[test]
+fn quiet_child_tree_timeout_stops_descendants_before_return() {
+    let (root, exe) = quiet_fixture();
+    let result = run_quiet(
+        &exe,
+        &["tree".into()],
+        root.path(),
+        Duration::from_secs(2),
+        quiet_limits(),
+        || Ok(()),
+    );
+    assert!(result.unwrap_err().to_string().contains("timed out"));
+    for name in ["parent.pid", "child.pid"] {
+        stopped(&root.path().join(name));
+    }
+}
+#[test]
+fn quiet_child_process_limit_prevents_the_second_process() {
+    let (root, exe) = quiet_fixture();
+    let mut limits = quiet_limits();
+    limits.processes = 1;
+    assert!(
+        run_quiet(
+            &exe,
+            &["tree".into()],
+            root.path(),
+            Duration::from_secs(15),
+            limits,
+            || Ok(())
+        )
+        .is_err()
+    );
+    assert!(root.path().join("parent.pid").exists());
+    assert!(!root.path().join("child.pid").exists());
+    stopped(&root.path().join("parent.pid"));
+}
+#[test]
+fn quiet_child_memory_limit_prevents_an_allocation_that_the_control_completes() {
+    let (control, exe) = quiet_fixture();
+    run_quiet(
+        &exe,
+        &["allocate".into()],
+        control.path(),
+        Duration::from_secs(15),
+        quiet_limits(),
+        || Ok(()),
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read_to_string(control.path().join("allocation.complete")).unwrap(),
+        (64 * 1024 * 1024).to_string()
+    );
+    let (root, exe) = quiet_fixture();
+    let mut limits = quiet_limits();
+    limits.memory_bytes = 24 * 1024 * 1024;
+    assert!(
+        run_quiet(
+            &exe,
+            &["allocate".into()],
+            root.path(),
+            Duration::from_secs(15),
+            limits,
+            || Ok(())
+        )
+        .is_err()
+    );
+    assert!(!root.path().join("allocation.complete").exists());
+    if let Ok(progress) = fs::read_to_string(root.path().join("allocation.progress")) {
+        assert!(progress.parse::<usize>().unwrap() < 64);
+    }
+}
+#[test]
+fn quiet_child_refuses_invalid_admission_and_failed_preflight_before_execution() {
+    let (root, exe) = quiet_fixture();
+    let invalid = QuietLimits {
+        memory_bytes: 0,
+        processes: 1,
+    };
+    assert!(
+        run_quiet(
+            &exe,
+            &["tree".into()],
+            root.path(),
+            Duration::from_secs(1),
+            invalid,
+            || Ok(())
+        )
+        .is_err()
+    );
+    assert!(
+        run_quiet(
+            &exe,
+            &["tree".into()],
+            root.path(),
+            Duration::from_secs(1),
+            quiet_limits(),
+            || Err("authority refused".into())
+        )
+        .is_err()
+    );
+    assert!(!root.path().join("parent.pid").exists());
+}
+
 fn checkpoint_fixture(f: &Fixture) -> (PathBuf, PathBuf, Value) {
     let (manifest, mut job) = prepare(f, "copy");
     // The skipped step would fail. Resumption must use the exact original

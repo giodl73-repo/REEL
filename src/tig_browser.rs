@@ -18,6 +18,8 @@ use tig_core::{Digest, LogicalPath, Object};
 
 pub mod capture;
 mod context;
+#[cfg(all(windows, feature = "tig-publication"))]
+pub mod render;
 pub use context::{freeze_context, recipe, requirements, restore_context};
 
 pub const SCHEMA: &str = "reel.tig-browser-source.experimental-1";

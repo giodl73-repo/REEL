@@ -16,6 +16,8 @@ use std::{
 };
 
 mod protocol;
+#[cfg(all(windows, feature = "tig-publication"))]
+pub(crate) use protocol::parse as wire_value;
 pub use protocol::{Transport, WebSocketTransport};
 
 /// The caller must hold source/program protection and enclosing job containment
@@ -48,7 +50,7 @@ pub struct Limits {
     pub max_io_wait_ms: u64,
 }
 impl Limits {
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         if !(1..=1_000_000).contains(&self.max_requests)
             || !(1..=64 * 1024 * 1024).contains(&self.max_resource_bytes)
             || self.max_served_bytes == 0
@@ -73,6 +75,7 @@ pub struct Captured {
     pub frame_sequence_sha256: String,
     pub requests: u64,
     pub served_bytes: u64,
+    pub denied_auxiliary_requests: u64,
 }
 
 pub fn resource_url(path: &str) -> Result<String> {
@@ -87,6 +90,43 @@ pub fn resource_url(path: &str) -> Result<String> {
         }
     }
     Ok(url)
+}
+
+fn canonical_resource_url(url: &str) -> Result<String> {
+    let path = url
+        .strip_prefix("https://reel.invalid/v1/")
+        .context("browser URL is outside declared virtual namespace")?;
+    if path.contains(['?', '#']) {
+        bail!("browser resource query or fragment is not declared");
+    }
+    let mut decoded = Vec::new();
+    let raw = path.as_bytes();
+    let mut index = 0;
+    let digit = |b: u8| -> Option<u8> {
+        match b {
+            b'0'..=b'9' => Some(b - b'0'),
+            b'a'..=b'f' => Some(b - b'a' + 10),
+            b'A'..=b'F' => Some(b - b'A' + 10),
+            _ => None,
+        }
+    };
+    while index < raw.len() {
+        if raw[index] == b'%'
+            && index + 2 < raw.len()
+            && let (Some(a), Some(b)) = (digit(raw[index + 1]), digit(raw[index + 2]))
+        {
+            let byte = a * 16 + b;
+            if matches!(byte, b'/' | b'\\') {
+                bail!("encoded browser path separators refuse");
+            }
+            decoded.push(byte);
+            index += 3;
+            continue;
+        }
+        decoded.push(raw[index]);
+        index += 1;
+    }
+    resource_url(std::str::from_utf8(&decoded)?)
 }
 
 fn mime(path: &str) -> Result<&'static str> {
@@ -147,9 +187,10 @@ impl Resources for Guarded<'_> {
     }
     fn get(&mut self, url: &str, max_bytes: u64) -> Result<(Vec<u8>, &'static str)> {
         self.check()?;
+        let canonical = canonical_resource_url(url)?;
         let (file, mime) = self
             .inputs
-            .get(url)
+            .get(&canonical)
             .context("browser URL is not declared")?;
         if file.bytes > max_bytes.min(64 * 1024 * 1024) {
             bail!("browser resource exceeds byte budget");
@@ -179,6 +220,7 @@ struct Session<'a> {
     served: u64,
     source_url: String,
     source_served: bool,
+    denied_auxiliary: u64,
 }
 impl Session<'_> {
     fn check(&mut self) -> Result<Duration> {
@@ -230,6 +272,16 @@ impl Session<'_> {
         let url = request["url"]
             .as_str()
             .context("browser request URL missing")?;
+        // Chromium may request a tab icon outside the authored /v1/ namespace.
+        // Deny that browser-owned decoration; never synthesize asset bytes or
+        // exempt an Image/Document request, even at the same URL.
+        if url == "https://reel.invalid/favicon.ico" && params["resourceType"] == "Other" {
+            self.denied_auxiliary += 1;
+            return self.send(
+                "Fetch.failRequest",
+                json!({"requestId":id,"errorReason":"BlockedByClient"}),
+            );
+        }
         let remaining = self
             .limits
             .max_served_bytes
@@ -279,7 +331,7 @@ impl Session<'_> {
                 bail!("browser message exceeds byte budget");
             }
             self.check()?;
-            let value = tig_core::identity::parse_json(raw.as_bytes())?;
+            let value = protocol::parse(&raw)?;
             if let Some(id) = value.get("id") {
                 let id = id.as_u64().context("invalid browser response identity")?;
                 if value.get("error").is_some_and(|e| !e.is_null()) {
@@ -352,6 +404,7 @@ pub fn capture(
         served: 0,
         source_url: url.clone(),
         source_served: false,
+        denied_auxiliary: 0,
     };
     s.call("Page.enable", json!({}))?;
     s.call("Runtime.enable", json!({}))?;
@@ -466,6 +519,7 @@ pub fn capture(
             .collect(),
         requests: s.requests,
         served_bytes: s.served,
+        denied_auxiliary_requests: s.denied_auxiliary,
     })
 }
 fn evaluation(response: Value) -> Result<Value> {

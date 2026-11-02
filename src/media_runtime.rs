@@ -199,6 +199,39 @@ pub struct BoundPrograms {
     identity: ByteIdentity,
     components: BTreeMap<String, ByteIdentity>,
 }
+
+/// One additionally enrolled native executable, for example a browser. It uses
+/// the same effective file/parent protection as media programs. This does not
+/// enroll neighboring DLLs, launch a process or claim complete environment.
+pub struct BoundTool {
+    path: PathBuf,
+    identity: ByteIdentity,
+    _held: HeldFile,
+}
+impl BoundTool {
+    pub fn bind(file: &FileRef) -> Result<Self> {
+        let identity = pin(file);
+        identity.validate()?;
+        if !cfg!(windows) || !program_path(&file.path) {
+            bail!("mandatory native tool path protection unavailable");
+        }
+        let (path, held) = hold(&file.path, &identity)?;
+        if !program_path(&path) {
+            bail!("native tool path is not an executable enrollment");
+        }
+        Ok(Self {
+            path,
+            identity,
+            _held: held,
+        })
+    }
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+    pub fn identity(&self) -> &ByteIdentity {
+        &self.identity
+    }
+}
 impl BoundPrograms {
     pub fn bind(bindings: &Bindings) -> Result<Self> {
         bindings.host.validate()?;

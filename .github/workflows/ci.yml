@@ -38,6 +38,16 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test --all-targets --all-features
+      - name: Verify bounded native SVG streaming and owned failure cleanup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $browserProgram = Join-Path ${env:ProgramFiles(x86)} 'Microsoft/Edge/Application/msedge.exe'
+          if (-not (Test-Path -LiteralPath $browserProgram -PathType Leaf)) { throw 'Explicit Edge fixture runtime unavailable' }
+          $env:REEL_TEST_BROWSER = $browserProgram
+          $env:REEL_TEST_FFMPEG = (Get-Command ffmpeg -ErrorAction Stop).Source
+          $env:REEL_TEST_FFPROBE = (Get-Command ffprobe -ErrorAction Stop).Source
+          cargo test --all-features --lib tig_browser::render::tests::real_native_browser_ --locked -- --ignored --test-threads=1
       - name: Check shared authoring and camera contracts
         run: cargo test -p reel-assembly --all-targets --locked
       - name: Check native music contracts and note proposal tooling

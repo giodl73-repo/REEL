@@ -6,6 +6,79 @@ use std::{
 };
 use tungstenite::{Message, WebSocket, protocol::WebSocketConfig, stream::MaybeTlsStream};
 
+/// CDP is a wire protocol, not Tig identity metadata: real events carry f64
+/// timestamps. Retain duplicate-key rejection without weakening the asset reader.
+pub(crate) fn parse(raw: &str) -> Result<serde_json::Value> {
+    use serde::Deserialize;
+    struct Wire(serde_json::Value);
+    impl<'de> Deserialize<'de> for Wire {
+        fn deserialize<D: serde::Deserializer<'de>>(
+            deserializer: D,
+        ) -> std::result::Result<Self, D::Error> {
+            struct Visitor;
+            impl<'de> serde::de::Visitor<'de> for Visitor {
+                type Value = Wire;
+                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    write!(f, "bounded duplicate-free CDP JSON")
+                }
+                fn visit_bool<E: serde::de::Error>(self, v: bool) -> std::result::Result<Wire, E> {
+                    Ok(Wire(v.into()))
+                }
+                fn visit_i64<E: serde::de::Error>(self, v: i64) -> std::result::Result<Wire, E> {
+                    Ok(Wire(v.into()))
+                }
+                fn visit_u64<E: serde::de::Error>(self, v: u64) -> std::result::Result<Wire, E> {
+                    Ok(Wire(v.into()))
+                }
+                fn visit_f64<E: serde::de::Error>(self, v: f64) -> std::result::Result<Wire, E> {
+                    Ok(Wire(serde_json::Value::Number(
+                        serde_json::Number::from_f64(v)
+                            .ok_or_else(|| E::custom("nonfinite CDP number"))?,
+                    )))
+                }
+                fn visit_str<E: serde::de::Error>(self, v: &str) -> std::result::Result<Wire, E> {
+                    Ok(Wire(v.into()))
+                }
+                fn visit_string<E: serde::de::Error>(
+                    self,
+                    v: String,
+                ) -> std::result::Result<Wire, E> {
+                    Ok(Wire(v.into()))
+                }
+                fn visit_unit<E: serde::de::Error>(self) -> std::result::Result<Wire, E> {
+                    Ok(Wire(serde_json::Value::Null))
+                }
+                fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                    self,
+                    mut seq: A,
+                ) -> std::result::Result<Wire, A::Error> {
+                    let mut values = Vec::new();
+                    while let Some(value) = seq.next_element::<Wire>()? {
+                        values.push(value.0);
+                    }
+                    Ok(Wire(values.into()))
+                }
+                fn visit_map<A: serde::de::MapAccess<'de>>(
+                    self,
+                    mut map: A,
+                ) -> std::result::Result<Wire, A::Error> {
+                    use serde::de::Error;
+                    let mut values = serde_json::Map::new();
+                    while let Some(key) = map.next_key::<String>()? {
+                        if values.contains_key(&key) {
+                            return Err(A::Error::custom("duplicate CDP key"));
+                        }
+                        values.insert(key, map.next_value::<Wire>()?.0);
+                    }
+                    Ok(Wire(values.into()))
+                }
+            }
+            deserializer.deserialize_any(Visitor)
+        }
+    }
+    Ok(serde_json::from_str::<Wire>(raw)?.0)
+}
+
 /// Trusted bounded transport. Implementations must enforce the supplied deadline
 /// and receive size while reading, before allocating an unbounded message.
 pub trait Transport {
