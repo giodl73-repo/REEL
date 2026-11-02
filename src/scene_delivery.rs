@@ -17,6 +17,7 @@ pub use master_proof::{
     recheck_master_proof_with_all_files, recheck_master_proof_with_output_files,
     recheck_master_proof_with_validator,
 };
+pub(crate) mod picture_control;
 pub(crate) mod png_sequence;
 pub use outputs::{OutputContract, output_contract};
 
@@ -2286,7 +2287,7 @@ fn render_planned(
         })
         .collect();
     let overlay = overlays.first().copied();
-    let mut inputs = picture_filter_command(&job, &plan, asset_root)?;
+    let (mut inputs, picture_control) = picture_control::prepare(&job, &plan, asset_root, root)?;
     inputs.extend(
         lossless_video_encoding(job.still_sequence_encoding.as_deref())
             .into_iter()
@@ -2304,6 +2305,7 @@ fn render_planned(
         })),
     ]);
     ffmpeg_with_inputs(asset_root, &inputs)?;
+    drop(picture_control);
     if overlays.len() > 1 {
         for (index, layer) in overlays.iter().enumerate() {
             let selected = indexed_layer_source_name(layer, index);

@@ -154,6 +154,8 @@ jobs:
       - name: Verify mixed scene and presentation episode CLI with original renders offline
         if: runner.os == 'Windows'
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::episode_cli::mixed_episode_cli_checks_opening_scenes_and_credits_with_complete_owned_handoff --locked -- --ignored --exact
+      - name: Verify bounded large picture controls preserve native frames and clocks
+        run: cargo test --all-features --lib scene_delivery::picture_control::tests::native_file_controls_preserve_frames_clocks_and_large_picture_jobs --locked -- --ignored --exact
       - name: Verify browser opening and still credits through owned episode assembly
         if: runner.os == 'Windows'
         shell: pwsh
