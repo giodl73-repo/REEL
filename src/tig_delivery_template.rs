@@ -73,13 +73,17 @@ fn is_selected(status: &Map<String, Value>) -> bool {
         Some("selected-private-production" | "principal-approved" | "release-cleared")
     )
 }
-struct Eligibility<'a> {
+pub(crate) struct Eligibility<'a> {
     review: Option<&'a PrivateReview>,
     used: BTreeSet<String>,
 }
 impl<'a> Eligibility<'a> {
-    fn new(source: &Source, request: &'a Request) -> Result<Self> {
-        if let Some(review) = &request.private_review {
+    pub(crate) fn new(source: &Source, request: &'a Request) -> Result<Self> {
+        Self::for_review(source, request.private_review.as_ref())
+    }
+    pub(crate) fn for_review(source: &Source, review: Option<&'a PrivateReview>) -> Result<Self> {
+        validate_private_review(review)?;
+        if let Some(review) = review {
             if &review.checkpoint != source.checkpoint() {
                 bail!("private review source checkpoint differs");
             }
@@ -90,11 +94,11 @@ impl<'a> Eligibility<'a> {
             }
         }
         Ok(Self {
-            review: request.private_review.as_ref(),
+            review,
             used: BTreeSet::new(),
         })
     }
-    fn check(&mut self, record: &tig_assets::resolve::Resolved) -> Result<()> {
+    pub(crate) fn check(&mut self, record: &tig_assets::resolve::Resolved) -> Result<()> {
         if is_selected(record.status()) {
             return Ok(());
         }
@@ -116,7 +120,7 @@ impl<'a> Eligibility<'a> {
             "consumed record is not selected for production or explicitly admitted for private review"
         )
     }
-    fn finish(self) -> Result<()> {
+    pub(crate) fn finish(self) -> Result<()> {
         if let Some(review) = self.review {
             if self.used.len() != review.records.len() {
                 bail!("private review admission includes unused or already selected records");
@@ -124,6 +128,20 @@ impl<'a> Eligibility<'a> {
         }
         Ok(())
     }
+}
+pub(crate) fn validate_private_review(review: Option<&PrivateReview>) -> Result<()> {
+    if let Some(review) = review
+        && (review.records.is_empty()
+            || review.records.len() > 4164
+            || review
+                .records
+                .iter()
+                .any(|(id, pin)| !token(id) || pin.bytes == 0 || pin.bytes > 65536)
+            || serde_json::to_vec(review)?.len() > 65536)
+    {
+        bail!("private review admission exceeds bounds");
+    }
+    Ok(())
 }
 fn bounded(value: &Value) -> Result<Vec<u8>> {
     let raw = serde_json::to_vec(value)?;
@@ -172,18 +190,7 @@ fn expand(
 impl Request {
     pub(crate) fn validate(&self) -> Result<()> {
         let request = self;
-        if let Some(review) = &request.private_review {
-            if review.records.is_empty()
-                || review.records.len() > 4164
-                || review
-                    .records
-                    .iter()
-                    .any(|(id, pin)| !token(id) || pin.bytes == 0 || pin.bytes > 65536)
-                || serde_json::to_vec(review)?.len() > 65536
-            {
-                bail!("private review admission exceeds bounds");
-            }
-        }
+        validate_private_review(request.private_review.as_ref())?;
         let all = request
             .primary_definitions
             .iter()
