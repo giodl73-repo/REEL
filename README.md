@@ -48,6 +48,11 @@ With `tig-publication`, [bounded native jobs](docs/tig-job-runner.md) use
 `reel-tig-job run` to restore a frozen scene, contain a pinned same-binary worker,
 retain checked outputs through Tig and retire only its owned scratch.
 
+**PITFALL doctrine:** [`.pitfall/PITFALL.md`](.pitfall/PITFALL.md) indexes the
+release-approval, provider-boundary, source-canon, private-state, and partial
+media failure patterns that must stay visible as REEL artifacts move toward
+production use.
+
 ---
 
 ## What REEL is for
