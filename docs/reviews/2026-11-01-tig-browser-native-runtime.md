@@ -49,3 +49,26 @@ Managed source/job enrollment, frozen-source production replay, native produced
 claims, CAS retention, record/Git handoff, complete per-packet clock and retained
 reference checks, private acceptance and lane entry/rollback remain open. Existing
 tools, historical routing, selections and active bindings are unchanged.
+
+## Workspace observation cost follow-up
+
+A full-duration private pilot reached its overall deadline; it did not produce
+a retained successful master. Inspection found recursive workspace accounting on
+every guarded CDP poll, in addition to the child controllers' periodic checks.
+The follow-up samples this protocol-thread observation every 250 ms and forces
+initial/final scans. Authority callbacks remain per check. Failed observations
+are sticky, including when an offending file disappears before the next check.
+
+Deterministic fixtures check 1,000 same-instant polls without another filesystem
+scan, a forced exit observation catching newly added bytes, and an expired
+observation detecting an over-budget workspace. Real browser success/failure and
+managed offline-source fixtures must pass on the changed producer. The private
+full-duration retry must still establish throughput; the suspected bottleneck
+is not yet a measured explanation of the failed pilot.
+
+Editor review: frame count, source timing, resource validation and encoding stay
+unchanged. Rights/Provenance review: original selected outputs and approval
+subjects stay unchanged; a new producer identity is required for the changed
+implementation. Storage review: sampling is observational, not a hard quota;
+the outer runner and independent child monitors remain in force. These are
+producer-applied checklist findings, not independent approval or lane acceptance.
