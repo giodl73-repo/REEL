@@ -82,3 +82,20 @@ Managed frozen-source replay, original/current retained-reference comparison,
 durable source/job handoff, output registration and normal lane entry/rollback
 remain required before CAMINOS/Melena production adoption. Historical evidence
 and its original runtime routing remain unchanged.
+
+## Fresh primary-reference comparison
+
+`tig_browser_reference::compare_master_to_primaries` explicitly renders the
+current prepared primaries into caller-admitted temporary space, then uses the
+existing full SDR picture/audio/clock comparison against a separately protected
+master. Incompatible declared stream shapes refuse before starting a browser.
+The expected movie is held and rehashed before comparison; success requires
+exact equality and checked cleanup of the temporary reference.
+
+The opaque result has no deserializer and cannot be created from a status or
+retained self-comparison report. It describes a fresh comparison only. Its caller
+must retain primary/output/runtime guards, supply source-authority checks and
+reserve the reference render's full workspace/output peak through the scheduler.
+This operation does not create a cache, adopt a source, select/publish a master or
+authorize eviction. The managed presentation adapter must bind the result to its
+current source ownership and exact episode occurrence before assembly can use it.

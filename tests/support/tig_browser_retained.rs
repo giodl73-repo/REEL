@@ -232,6 +232,7 @@ pub fn exercise(f: &Fixture, profile: &Value, completed: &Value, cache: &Path) {
     assert_eq!(summary["equal"], false);
     let report: Value = serde_json::from_slice(&fs::read(different).unwrap()).unwrap();
     assert_eq!(report["parity"]["picture_planes_equal"], false);
+    fresh_primary_reference(f, profile, &master, &unequal["reference"]);
     assert_eq!(
         MetadataReader::open(metadata_root, &minimum)
             .unwrap()
@@ -245,4 +246,144 @@ pub fn exercise(f: &Fixture, profile: &Value, completed: &Value, cache: &Path) {
             .to_string_lossy()
             .starts_with("native-prepare-")
     }));
+}
+
+fn fresh_primary_reference(f: &Fixture, profile: &Value, master: &Object, different: &Value) {
+    use reel::{
+        media_runtime::{Bindings, BoundPrograms, BoundTool, ByteIdentity},
+        scene_delivery::{FileRef, InputFiles},
+    };
+    use tig_store::existing::{ByteSource, ReadCache, VerifiedRead};
+    struct Held {
+        file: FileRef,
+        guard: VerifiedRead,
+    }
+    impl InputFiles for Held {
+        fn verified_path(&self, file: &FileRef) -> anyhow::Result<PathBuf> {
+            anyhow::ensure!(file == &self.file, "unexpected retained browser reference");
+            Ok(self.guard.with_path(Path::to_path_buf)?)
+        }
+    }
+    let mut metadata = MetadataReader::open(
+        Path::new(profile["worker"]["metadata_root"].as_str().unwrap()),
+        &serde_json::from_value(profile["worker"]["metadata_minimum"].clone()).unwrap(),
+    )
+    .unwrap();
+    let request = serde_json::from_value(profile["worker"]["request"].clone()).unwrap();
+    let (mut source, _context) = reel::tig_browser::restore_context(
+        serde_json::from_value(profile["worker"]["source"].clone()).unwrap(),
+        &request,
+        &serde_json::from_value(profile["worker"]["context"].clone()).unwrap(),
+        &mut metadata,
+        Default::default(),
+    )
+    .unwrap();
+    let plan = reel::tig_browser::lower(&mut source, &request).unwrap();
+    let inputs = source
+        .prepare_files(&plan.inputs.values().cloned().collect::<Vec<_>>())
+        .unwrap();
+    let mut bindings: Bindings =
+        serde_json::from_value(profile["worker"]["runtime"].clone()).unwrap();
+    bindings.host = ByteIdentity::observe_file(&std::env::current_exe().unwrap()).unwrap();
+    let programs = BoundPrograms::bind(&bindings).unwrap();
+    let browser = BoundTool::bind(
+        &serde_json::from_value(profile["worker"]["browser"]["program"].clone()).unwrap(),
+    )
+    .unwrap();
+    let limits = serde_json::from_value(profile["worker"]["browser"]["limits"].clone()).unwrap();
+    let mut cache = ReadCache::new(
+        serde_json::from_value(json!({
+            "places":[{"root":f.root().join("capture-capacity"),"layout":"reel-cas"}],
+            "required":"prevent-mutation"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let held = Held {
+        file: FileRef {
+            path: "selected-browser-master.mkv".into(),
+            sha256: master.sha256.as_str().into(),
+            bytes: master.bytes,
+        },
+        guard: cache.open_verified(master).unwrap(),
+    };
+    let stage = f.root().join("fresh-browser-reference-stage");
+    fs::create_dir(&stage).unwrap();
+    let mut checks = 0;
+    let compared = reel::tig_browser_reference::compare_master_to_primaries(
+        &plan,
+        &inputs,
+        &programs,
+        &browser,
+        &limits,
+        false,
+        &held.file,
+        &held,
+        &stage,
+        || {
+            checks += 1;
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert!(checks > 2);
+    assert_eq!(compared.master(), &held.file);
+    assert_eq!(
+        compared.manifest(),
+        &Object::from_bytes(&plan.manifest_bytes)
+    );
+    assert_eq!(compared.frames(), 6);
+    assert_eq!(compared.samples(), 12000);
+    assert_eq!(compared.audio_sha256().len(), 64);
+    assert_eq!(compared.picture_sha256().0.len(), 64);
+    assert_eq!(stage.read_dir().unwrap().count(), 0);
+    let wrong: Object = serde_json::from_value(different.clone()).unwrap();
+    let wrong = Held {
+        file: FileRef {
+            path: "wrong-browser-master.mkv".into(),
+            sha256: wrong.sha256.as_str().into(),
+            bytes: wrong.bytes,
+        },
+        guard: cache.open_verified(&wrong).unwrap(),
+    };
+    let refused = reel::tig_browser_reference::compare_master_to_primaries(
+        &plan,
+        &inputs,
+        &programs,
+        &browser,
+        &limits,
+        false,
+        &wrong.file,
+        &wrong,
+        &stage,
+        || Ok(()),
+    );
+    assert!(
+        refused
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("differs from fresh primary reference")
+    );
+    assert_eq!(stage.read_dir().unwrap().count(), 0);
+    let refused = reel::tig_browser_reference::compare_master_to_primaries(
+        &plan,
+        &inputs,
+        &programs,
+        &browser,
+        &limits,
+        false,
+        &held.file,
+        &held,
+        &stage,
+        || anyhow::bail!("source ownership changed"),
+    );
+    assert!(
+        refused
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("source ownership changed")
+    );
+    assert_eq!(stage.read_dir().unwrap().count(), 0);
 }
