@@ -487,6 +487,20 @@ fn managed_browser_cli_renders_retains_and_proposes_with_source_offline() {
     let binary = Path::new(env!("CARGO_BIN_EXE_reel-tig-job"))
         .canonicalize()
         .unwrap();
+    // Execute a distinct valid PE byte version as producer. The checker below
+    // uses the unmodified CLI and must never relabel this original producer.
+    let producer_binary = f.root().join("browser-original-producer.exe");
+    fs::copy(&binary, &producer_binary).unwrap();
+    {
+        use std::io::Write;
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&producer_binary)
+            .unwrap()
+            .write_all(b"\nsynthetic-browser-producer-byte-version\n")
+            .unwrap();
+    }
+    let binary = producer_binary;
     let host = ByteIdentity::observe_file(&binary).unwrap();
     let pin = |path: PathBuf| {
         let path = path.canonicalize().unwrap();
@@ -644,6 +658,8 @@ fn managed_browser_cli_renders_retains_and_proposes_with_source_offline() {
         "reel.tig-browser-job-admission.experimental-1"
     );
     assert_eq!(evidence["request"], serde_json::to_value(&request).unwrap());
+    drop(journal);
+    super::browser_retained::exercise(&f, &profile, &result, &cache);
     assert_eq!(
         fs::read(f.root().join("offline-records/native-output.tig")).unwrap(),
         original
