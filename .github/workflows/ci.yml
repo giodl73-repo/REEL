@@ -40,6 +40,8 @@ jobs:
       - run: cargo test --all-targets --all-features
       - name: Verify bounded large picture controls preserve native frames and clocks
         run: cargo test --all-features --lib scene_delivery::picture_control::tests::native_file_controls_preserve_frames_clocks_and_large_picture_jobs --locked -- --ignored --exact
+      - name: Verify RGBA overlays preserve all unselected RGB and YUV frames
+        run: cargo test --all-features --lib scene_delivery::timed_overlay_end_frame_tests::rgba_still_overlay_preserves_all_outside_rgb_and_yuv_frames --locked -- --ignored --exact
       - name: Verify bounded native SVG streaming and owned failure cleanup
         if: runner.os == 'Windows'
         shell: pwsh

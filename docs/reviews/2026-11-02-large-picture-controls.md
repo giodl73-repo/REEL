@@ -19,6 +19,13 @@ is supported, its unspecified color-space/range sink matches the ordinary CLI
 encoder; inheriting RGB range at a YUV sink changes pixels and is refused by the
 comparison fixture. No source schema or eligibility policy changes.
 
+The actual retry then reached the timed-overlay boundary check. Automatic overlay
+format negotiation converted the already encoded base through RGB, changing some
+unselected gradient frames even with lossless encoding. Timed composition now
+keeps the declared YUV444 working format. A native H264-lossless/RGBA regression
+checks every outside frame in both RGB and YUV and requires visible composition
+inside the span. Existing adjacent-overlay terminal-frame checks still pass.
+
 The same control lifetime is used by fresh primary-reference pipelines, which
 still write no reference movie. Native fixtures compare complete frame hashes
 and timestamps against inline rendering at 25, 24 and 30000/1001 fps, including
