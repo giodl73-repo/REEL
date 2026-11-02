@@ -22,6 +22,9 @@ mod fake_episode_lifecycle;
 mod generation;
 #[path = "support/tig_language_scope.rs"]
 mod language_scope;
+#[cfg(windows)]
+#[path = "support/tig_music_editor.rs"]
+mod music_editor;
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_native_cli.rs"]
 mod native_cli;

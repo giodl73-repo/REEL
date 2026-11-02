@@ -54,9 +54,15 @@ pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 pub(crate) fn intake(path: &Path) -> Result<(MusicModel, String)> {
     let raw = read(path)?;
-    let model: MusicModel = serde_yaml::from_slice(&raw)?;
+    intake_bytes(&raw)
+}
+pub(crate) fn intake_bytes(raw: &[u8]) -> Result<(MusicModel, String)> {
+    if raw.len() > LIMIT {
+        bail!("Editor input exceeds control budget");
+    }
+    let model: MusicModel = serde_yaml::from_slice(raw)?;
     layout(&model)?;
-    Ok((model, sha256_bytes(&raw)))
+    Ok((model, sha256_bytes(raw)))
 }
 pub(crate) fn identifier(value: &str) -> Result<()> {
     nonempty("editor identifier", value)?;
@@ -114,13 +120,19 @@ pub(crate) fn unreviewed(model: &mut MusicModel) {
     model.review.decision_refs.clear();
 }
 pub(crate) fn publish(source: &Path, hash: &str, output: &Path, model: &MusicModel) -> Result<()> {
-    check_destination(source, output)?;
     let bytes = encode(model)?;
+    publish_bytes(source, hash, output, &bytes)
+}
+pub(crate) fn publish_bytes(source: &Path, hash: &str, output: &Path, bytes: &[u8]) -> Result<()> {
+    check_destination(source, output)?;
+    if bytes.len() > LIMIT {
+        bail!("Editor output exceeds control budget");
+    }
     if sha256_bytes(&read(source)?) != hash {
         bail!("Source model changed during application");
     }
     let mut candidate = tempfile::NamedTempFile::new_in(parent(output)?)?;
-    candidate.write_all(&bytes)?;
+    candidate.write_all(bytes)?;
     candidate.persist_noclobber(output)?;
     Ok(())
 }
