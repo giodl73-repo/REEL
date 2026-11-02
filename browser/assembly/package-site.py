@@ -1,6 +1,7 @@
 """Stage a clean-source release candidate. Does not deploy."""
 import hashlib, html, json, os, pathlib, shutil, subprocess, zipfile
 from git_source import read_git_blobs
+from budget import RUNTIME_BUDGET_BYTES,SITE_BUDGET_BYTES,RUNTIME_FILES,runtime_bytes
 P=pathlib.Path(__file__).resolve().parent
 ROOT=P.parent.parent
 SITE=ROOT/'target/reel-release/REEL/assembly'
@@ -80,13 +81,15 @@ for package in packages:
         links.append('<p><a href="'+html.escape(path)+'">'+html.escape(path)+'</a></p>')
 (SITE/'licenses/index.html').write_text('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>REEL licenses</title><body>'+''.join(links)+'</body></html>',encoding='utf-8')
 copy(P/'BUILD.md',SITE/'BUILD.md')
-provenance={'schema':'reel-assembly-workbench-release-v1','commit':head,'foundation_source':'e4d22e0d2ee4e447dcee3f3b1ae21c7fac91462b','foundation_scope':'crates/reel-assembly','initial_production_integration':'0e34cc35f184dd7d68d47c328843c105f349bd97','repository':'https://github.com/giodl73-repo/REEL','exact_full_source':'https://github.com/giodl73-repo/REEL/archive/'+head+'.zip','rustc':run('rustc','+1.95.0','-vV').decode().strip(),'wasm_bindgen':'0.2.127','wasm_debug_name_section':'removed with wasm-bindgen --remove-name-section','source_zip_sha256':digest((SITE/'source.zip').read_bytes()),'wasm_sha256':digest((SITE/'pkg/reel_assembly_workbench_bg.wasm').read_bytes()),'legal_packages':len(packages),'rust_notice_files':len(rust_notices),'landing_index_sha256':digest(landing),'cross_directory_binary_identity':'Not established. Verify native/WASM response parity instead.','scope':'Existing REEL semantic dependency diagnostics. Local input-bearing reports are not privacy-safe release receipts; no media, cache bytes, rights, creative selection or production release is verified.'}
+provenance={'schema':'reel-assembly-workbench-release-v1','commit':head,'foundation_source':'e4d22e0d2ee4e447dcee3f3b1ae21c7fac91462b','foundation_scope':'crates/reel-assembly','initial_production_integration':'0e34cc35f184dd7d68d47c328843c105f349bd97','repository':'https://github.com/giodl73-repo/REEL','exact_full_source':'https://github.com/giodl73-repo/REEL/archive/'+head+'.zip','rustc':run('rustc','+1.95.0','-vV').decode().strip(),'wasm_bindgen':'0.2.127','wasm_debug_name_section':'removed with wasm-bindgen --remove-name-section','source_zip_sha256':digest((SITE/'source.zip').read_bytes()),'wasm_sha256':digest((SITE/'pkg/reel_assembly_workbench_bg.wasm').read_bytes()),'legal_packages':len(packages),'rust_notice_files':len(rust_notices),'landing_index_sha256':digest(landing),'cross_directory_binary_identity':'Not established. Verify native/WASM response parity instead.','budgets':{'runtime_bytes':RUNTIME_BUDGET_BYTES,'complete_site_bytes':SITE_BUDGET_BYTES},'scope':'Existing REEL semantic dependency diagnostics. Local input-bearing reports are not privacy-safe release receipts; no media, cache bytes, rights, creative selection or production release is verified.'}
 write_json(SITE/'provenance.json',provenance)
 files=[]
 for f in sorted(SITE.rglob('*')):
     if f.is_file(): files.append({'path':f.relative_to(SITE).as_posix(),'bytes':f.stat().st_size,'sha256':digest(f.read_bytes())})
-inventory={'commit':head,'files':files,'bytes_excluding_inventory':sum(f['bytes'] for f in files)}
+runtime_size=runtime_bytes(SITE)
+if runtime_size>RUNTIME_BUDGET_BYTES:raise SystemExit('Initial runtime exceeds 512 KiB budget')
+inventory={'commit':head,'files':files,'bytes_excluding_inventory':sum(f['bytes'] for f in files),'runtime_bytes':runtime_size,'runtime_files':list(RUNTIME_FILES),'runtime_includes_root_landing':True}
 inventory_bytes=(json.dumps(inventory,indent=2)+'\n').encode('utf-8')
-if inventory['bytes_excluding_inventory']+len(inventory_bytes)>5_000_000: raise SystemExit('Complete assembly site including inventory exceeds 5 MB budget')
+if inventory['bytes_excluding_inventory']+len(inventory_bytes)+(SITE.parent/'index.html').stat().st_size>SITE_BUDGET_BYTES:raise SystemExit('Complete source/legal site exceeds 8 MiB budget')
 (SITE/'inventory.json').write_bytes(inventory_bytes)
 print(json.dumps({'commit':head,'files':len(files)+1,'bytes_excluding_inventory':sum(f['bytes'] for f in files),'packages':len(packages),'rust_notices':len(rust_notices)}))

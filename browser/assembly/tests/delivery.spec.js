@@ -10,6 +10,7 @@ test('every packaged file matches inventory and exact source provenance',async({
  const provenance=await (await request.get('./provenance.json')).json();
  const expected=process.env.REEL_EXPECTED_COMMIT || execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
  expect(provenance.commit).toBe(expected);expect(inventory.commit).toBe(expected);
+ expect(inventory.runtime_bytes).toBeLessThanOrEqual(524288);expect(provenance.budgets).toEqual({runtime_bytes:524288,complete_site_bytes:8388608});
  const landing=await request.get('../index.html');expect(landing.ok()).toBe(true);expect(createHash('sha256').update(await landing.body()).digest('hex')).toBe(provenance.landing_index_sha256);
  for(const entry of inventory.files){
   const response=await request.get('./'+entry.path);expect(response.ok(),entry.path).toBe(true);

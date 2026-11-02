@@ -1,6 +1,7 @@
 """Verify the complete packaged tree against its source and artifact records."""
 import argparse,hashlib,json,pathlib,zipfile,subprocess
 from git_source import read_git_blobs
+from budget import RUNTIME_BUDGET_BYTES,SITE_BUDGET_BYTES,RUNTIME_FILES,runtime_bytes
 parser=argparse.ArgumentParser();parser.add_argument('site',type=pathlib.Path);parser.add_argument('--commit',required=True);args=parser.parse_args()
 site=args.site.resolve()
 def sha(data):return hashlib.sha256(data).hexdigest()
@@ -14,7 +15,10 @@ actual={p.relative_to(site).as_posix() for p in site.rglob('*') if p.is_file()}
 assert not any(p.is_symlink() or any(part.startswith('.') for part in p.relative_to(site).parts) for p in site.rglob('*'))
 records={r['path']:r for r in inv['files']};assert len(records)==len(inv['files'])
 assert actual==set(records)|{'inventory.json'},(actual^set(records))
-assert sum((site/n).stat().st_size for n in actual)<=5_000_000
+assert sum((site/n).stat().st_size for n in actual)+(site.parent/'index.html').stat().st_size<=SITE_BUDGET_BYTES
+assert proof['budgets']=={'runtime_bytes':RUNTIME_BUDGET_BYTES,'complete_site_bytes':SITE_BUDGET_BYTES}
+assert inv['runtime_bytes']==runtime_bytes(site)<=RUNTIME_BUDGET_BYTES
+assert inv['runtime_files']==list(RUNTIME_FILES) and inv['runtime_includes_root_landing'] is True
 for name,record in records.items():
  data=(site/name).read_bytes();assert len(data)==record['bytes'] and sha(data)==record['sha256'],name
 assert sha((site/'source.zip').read_bytes())==proof['source_zip_sha256']
