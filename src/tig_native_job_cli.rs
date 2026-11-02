@@ -28,6 +28,8 @@ use tig_store::{
 
 const PROFILE_SCHEMA: &str = "reel.tig-native-job-profile.experimental-1";
 const TICKET_SCHEMA: &str = "reel.tig-native-worker.experimental-1";
+#[cfg(windows)]
+mod browser;
 mod capture;
 mod comparison;
 pub(crate) mod metadata_wait;
@@ -47,11 +49,15 @@ use preparation::ContextMode;
 enum WorkerRequest {
     Scene(Request),
     Delivery(crate::tig_delivery_template::Request),
+    Browser(crate::tig_browser::Request),
 }
 impl<'de> Deserialize<'de> for WorkerRequest {
     fn deserialize<D: serde::Deserializer<'de>>(reader: D) -> std::result::Result<Self, D::Error> {
         let value = Value::deserialize(reader)?;
         match value.get("schema").and_then(Value::as_str) {
+            Some(crate::tig_browser::SCHEMA) => serde_json::from_value(value)
+                .map(Self::Browser)
+                .map_err(serde::de::Error::custom),
             Some(tig_scene::SCHEMA) => serde_json::from_value(value)
                 .map(Self::Scene)
                 .map_err(serde::de::Error::custom),
@@ -65,6 +71,12 @@ impl<'de> Deserialize<'de> for WorkerRequest {
     }
 }
 impl WorkerRequest {
+    fn browser(&self) -> Result<&crate::tig_browser::Request> {
+        match self {
+            Self::Browser(r) => Ok(r),
+            _ => bail!("browser context requires browser request"),
+        }
+    }
     fn scene(&self) -> Result<&Request> {
         match self {
             Self::Scene(r) => Ok(r),
@@ -79,6 +91,7 @@ impl WorkerRequest {
     }
     fn check_mode(&self, mode: ContextMode) -> Result<()> {
         match (self, mode) {
+            (Self::Browser(_), ContextMode::Browser) => Ok(()),
             (Self::Delivery(_), ContextMode::Delivery)
             | (Self::Scene(_), ContextMode::Declared | ContextMode::Compiled) => Ok(()),
             _ => bail!("native request and context mode differ"),
@@ -86,6 +99,9 @@ impl WorkerRequest {
     }
     fn definitions(&self) -> BTreeSet<&str> {
         match self {
+            Self::Browser(r) => std::iter::once(r.root_definition.as_str())
+                .chain(r.primary_definitions.iter().map(String::as_str))
+                .collect(),
             Self::Scene(r) => std::iter::once(r.scene_definition.as_str())
                 .chain(
                     r.primary_definitions
@@ -115,6 +131,12 @@ enum Mode {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Worker {
+    #[cfg(windows)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    browser: Option<browser::Execution>,
+    #[cfg(not(windows))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    browser: Option<Value>,
     #[serde(default, skip_serializing_if = "ContextMode::is_declared")]
     context_mode: ContextMode,
     metadata_root: PathBuf,
@@ -199,6 +221,15 @@ fn restore(
         bail!("existing absolute metadata root required");
     }
     let mut reader = MetadataReader::open(&worker.metadata_root, &worker.metadata_minimum)?;
+    if worker.context_mode == ContextMode::Browser {
+        return crate::tig_browser::restore_context(
+            profile,
+            worker.request.browser()?,
+            &worker.context,
+            &mut reader,
+            TreeLimits::default(),
+        );
+    }
     if worker.context_mode == ContextMode::Delivery {
         return crate::tig_delivery_template::restore_context(
             profile,
@@ -227,16 +258,37 @@ fn restore(
         TreeLimits::default(),
     )
 }
+#[allow(clippy::too_many_arguments)]
 fn job_plan<'a>(
     mode: ContextMode,
     request: &'a WorkerRequest,
     source: &mut crate::tig_inputs::Source,
     context: &'a tig_git::source::native::context::ProductionContext,
     programs: &'a BoundPrograms,
+    browser: Option<&'a crate::media_runtime::BoundTool>,
+    clean: bool,
     output: Option<&Path>,
 ) -> Result<JobPlan<'a>> {
     request.check_mode(mode)?;
     match mode {
+        ContextMode::Browser => {
+            #[cfg(windows)]
+            {
+                JobPlan::from_browser_context(
+                    source,
+                    request.browser()?,
+                    context,
+                    programs,
+                    browser.ok_or_else(|| anyhow::anyhow!("browser enrollment missing"))?,
+                    clean,
+                )
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = (browser, clean);
+                bail!("native browser jobs require Windows containment")
+            }
+        }
         ContextMode::Delivery => {
             JobPlan::from_delivery_context(source, request.delivery()?, context, programs)
         }
@@ -254,6 +306,22 @@ fn job_plan<'a>(
 }
 fn output_names(worker: &Worker) -> Result<BTreeSet<String>> {
     worker.request.check_mode(worker.context_mode)?;
+    if worker.context_mode != ContextMode::Browser && worker.browser.is_some() {
+        bail!("browser enrollment is exclusive to browser jobs");
+    }
+    if worker.context_mode == ContextMode::Browser {
+        #[cfg(windows)]
+        {
+            worker
+                .browser
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("browser enrollment missing"))?
+                .validate(worker)?;
+            return Ok(worker.outputs.keys().cloned().collect());
+        }
+        #[cfg(not(windows))]
+        bail!("native browser jobs require Windows containment");
+    }
     if let Some(budget) = &worker.output_budget {
         if !worker.outputs.is_empty() {
             bail!("native output map and budget policy are mutually exclusive");
@@ -290,6 +358,34 @@ fn output_names(worker: &Worker) -> Result<BTreeSet<String>> {
 pub fn run(path: &Path) -> Result<Value> {
     execute(path, false)
 }
+fn bind_browser(worker: &Worker) -> Result<Option<crate::media_runtime::BoundTool>> {
+    #[cfg(windows)]
+    {
+        worker
+            .browser
+            .as_ref()
+            .map(|b| crate::media_runtime::BoundTool::bind(&b.program))
+            .transpose()
+    }
+    #[cfg(not(windows))]
+    {
+        if worker.browser.is_some() {
+            bail!("native browser jobs require Windows containment");
+        }
+        Ok(None)
+    }
+}
+fn clean_picture(worker: &Worker) -> bool {
+    #[cfg(windows)]
+    {
+        worker.browser.as_ref().is_some_and(|b| b.clean_picture)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = worker;
+        false
+    }
+}
 /// A retained bounded planning job, not a read-only/dry-run command.
 pub fn plan_outputs(path: &Path) -> Result<Value> {
     execute(path, true)
@@ -318,6 +414,22 @@ fn execute(path: &Path, only_plan: bool) -> Result<Value> {
         bail!("unsupported native job profile");
     }
     output_names(&profile.worker)?;
+    #[cfg(windows)]
+    if let Some(browser) = &profile.worker.browser {
+        if browser
+            .limits
+            .max_workspace_bytes
+            .checked_add(1024 * 1024)
+            .is_none_or(|n| n > profile.budget_bytes)
+            || browser
+                .limits
+                .max_workspace_bytes
+                .saturating_sub(browser.limits.max_output_bytes)
+                > profile.scratch_bytes
+        {
+            bail!("browser workspace exceeds managed admission");
+        }
+    }
     let automatic = profile.worker.output_budget.is_some();
     if only_plan && !automatic {
         bail!("plan-outputs requires an output budget policy");
@@ -374,6 +486,7 @@ fn execute(path: &Path, only_plan: bool) -> Result<Value> {
         bail!("compiled workspace budget below scratch and metadata allowance");
     }
     let programs = BoundPrograms::bind(&profile.worker.runtime)?;
+    let browser = bind_browser(&profile.worker)?;
     let prepared = preparation::Preparation::open(&profile)?;
     let restored = prepared.as_ref().map(|p| p.path().join("source"));
     let planned = prepared.as_ref().map(|p| p.path().join("recipe"));
@@ -385,6 +498,8 @@ fn execute(path: &Path, only_plan: bool) -> Result<Value> {
         &mut source,
         &context,
         &programs,
+        browser.as_ref(),
+        clean_picture(&profile.worker),
         planned.as_deref(),
     )?;
     if let Some(prepared) = prepared {
@@ -613,6 +728,7 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
         bail!("render requires derived output contract");
     }
     let programs = BoundPrograms::bind(&ticket.admission.runtime)?;
+    let browser = bind_browser(&ticket.admission)?;
     if pin(&programs)? != ticket.producer {
         bail!("native worker runtime differs");
     }
@@ -624,6 +740,8 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
         &mut source,
         &context,
         &programs,
+        browser.as_ref(),
+        clean_picture(&ticket.admission),
         Some(Path::new("recipe-preparation")),
     )?;
     if plan.recipe().fingerprint() != &ticket.recipe {
@@ -633,6 +751,22 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
         return planning::produce(&ticket, &mut source, &context, &programs);
     }
     records::check_names(&ticket.admission, &expected)?;
+    if ticket.admission.context_mode == ContextMode::Browser {
+        #[cfg(windows)]
+        return browser::produce(
+            &ticket,
+            &mut source,
+            &context,
+            &plan,
+            &programs,
+            browser
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("browser enrollment missing"))?,
+            &record_templates,
+        );
+        #[cfg(not(windows))]
+        bail!("native browser jobs require Windows containment");
+    }
     let candidate = if ticket.admission.context_mode == ContextMode::Delivery {
         tig_scene_production::render_delivery_with_programs_and_outputs(
             &mut source,
@@ -649,6 +783,7 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
                 tig_scene_production::render_projected_with_programs_and_outputs
             }
             ContextMode::Delivery => unreachable!(),
+            ContextMode::Browser => unreachable!(),
         };
         render(
             &mut source,

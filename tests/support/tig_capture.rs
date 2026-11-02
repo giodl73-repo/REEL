@@ -2,10 +2,10 @@ use super::*;
 use tig_core::tree::TreeLimits;
 use tig_store::metadata::MetadataReader;
 
-pub(crate) fn profile(f: &Fixture, request: &reel::tig_scene::Request) -> Value {
+pub(crate) fn profile(f: &Fixture, request: &impl serde::Serialize) -> Value {
     setup(f.root(), &f.profile, request)
 }
-fn setup(root: &Path, source: &Value, request: &reel::tig_scene::Request) -> Value {
+fn setup(root: &Path, source: &Value, request: &impl serde::Serialize) -> Value {
     for name in ["capture-capacity", "capture-coordination", "capture-state"] {
         fs::create_dir(root.join(name)).unwrap();
     }

@@ -1,13 +1,15 @@
 # Native Tig browser compositions
 
-Status: integration contract and implementation work package; not an implemented
-producer or permission to run a private composition. Entry source
+Status: source planning and native streaming renderer implemented; managed job
+integration is a candidate undergoing synthetic acceptance. Private project
+acceptance and lane activation remain open. Entry source
 `52afd03b7558713a87cc470918f94c7ecd0608d2`.
 
 The BROWSER-01 candidate now implements `tig_browser::{lower, requirements,
 freeze_context, restore_context, recipe}`. These are metadata/source-planning
-ports only; BROWSER-02/03 rendering, native encoder parameters, guarded resource
-delivery and managed output correspondence are still open. A source recipe is
+ports only. The renderer now supplies guarded resource delivery, bounded native
+streaming and an explicit producer declaration. Managed output correspondence
+and actual project acceptance remain separate. A source recipe is
 not a completed output or permission to reuse it. The eventual producer must
 also bind actual rendering flags and encode parameters into output identity.
 
@@ -58,6 +60,36 @@ owns SVG/browser/media semantics. Do not convert an existing SVG into a differen
 still sequence merely to fit another producer, or treat an old movie as a primary.
 
 ## Authoritative authoring and lowering
+
+### Managed candidate entry point
+
+The existing `reel-tig-job capture-context PROFILE NEW_FRAGMENT` accepts
+`reel.tig-browser-capture-profile.experimental-1`. It freezes and reads back the
+browser context into explicitly configured existing stores, without a preparation
+cache, primary media reads, source adoption or rendering.
+
+Complete the fragment into the ordinary
+`reel.tig-native-job-profile.experimental-1` and invoke
+`reel-tig-job run PROFILE`. Set `worker.context_mode` to `browser`, retain the
+frozen source/context/request, and enroll `worker.runtime` normally. Add
+`worker.browser` containing `program` (absolute executable path/hash/size),
+`clean_picture`, and the native renderer's explicit `limits`. The output map is
+exactly `master.mkv` at `limits.max_output_bytes` and `receipt.json` at 65,536
+bytes. Browser jobs currently require these explicit bounds; scene output-budget
+inference does not apply. This native master is FFV1/PCM, not a delivery encode.
+
+The existing coordinator owns source claims, capacity, worker containment,
+retention and readback. Browser jobs add no cache namespace or global lock.
+Existing `record_outputs` and `git_handoff` produce retained, unapproved candidate
+records and an expected-base Git proposal; rendering does not change a branch
+or select the result. Previous streams stay in the candidate record and previous
+records stay in Git history. Windows containment is required. Neither legacy
+checkout is needed after context capture; executable and byte-store enrollments
+must remain available. See the explicitly run synthetic
+`managed_browser_cli_renders_retains_and_proposes_with_source_offline` fixture.
+The archived primary byte enrollment must require `prevent-mutation`;
+cooperative metadata planning alone is insufficient for execution and refuses
+before source adoption or a worker starts.
 
 One source instance declares geometry, frame clock, the logical SVG path, optional
 audio path and a bounded map from logical resource paths to primary Tig IDs. The
@@ -162,8 +194,8 @@ diagnostics and no external resource egress. Editing review requires preserving
 the declared SVG timing and geometry, not an inferred reconstruction. These are
 producer-applied checklists, not independent or human approval. BROWSER-01 has
 [local implementation verification](reviews/2026-11-01-tig-browser-source-planning.md).
-Renderer implementation, hosted qualification, private acceptance and runtime
-adoption remain open.
+Managed integration qualification, private acceptance and runtime adoption
+remain open; renderer implementation is present.
 
 ## Streaming capture interface
 
