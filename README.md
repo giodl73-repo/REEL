@@ -48,6 +48,11 @@ With `tig-publication`, [bounded native jobs](docs/tig-job-runner.md) use
 `reel-tig-job run` to restore a frozen scene, contain a pinned same-binary worker,
 retain checked outputs through Tig and retire only its owned scratch.
 
+**PITFALL doctrine:** [`.pitfall/PITFALL.md`](.pitfall/PITFALL.md) indexes the
+release-approval, provider-boundary, source-canon, private-state, and partial
+media failure patterns that must stay visible as REEL artifacts move toward
+production use.
+
 ---
 
 ## What REEL is for
@@ -887,3 +892,15 @@ non-software content is licensed CC BY-NC 4.0 (copyright Gio Della-Libera);
 commercial use of that content requires separate written permission.
 Third-party material remains under its own terms.
 See [LICENSE](./LICENSE) for the complete notice.
+
+## Browser semantic dependency workbench
+
+Use the [Rust/WASM assembly workbench](https://giodl73-repo.github.io/REEL/assembly/)
+to inspect your native semantic graph, node/presentation target and optional
+selected pointer. It exposes the existing Rust dependency closure, selected asset
+declarations, semantic events and computed/supplied lock observations without a
+native install or media cache. Source, compiled WASM, build commands and notices
+are separate downloads. [Scope and qualification](context/waves/2026-11-02-semantic-wasm/WAVE.md)
+retain current delivery status and role review. Native validation and matching
+metadata do not establish media availability, creative/rights approval or release
+readiness; local diagnostic exports contain user declarations and identities.

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>REEL - Semantic assembly workbench</title><link rel="stylesheet" href="./style.css"></head>
+<body><header><a class="brand" href="https://github.com/giodl73-repo/REEL">REEL / semantic assembly</a><span class="badge">Browser preview</span>
+<h1>See what your production depends on.</h1>
+<p class="lead">Inspect native dependency closures, selected asset declarations, semantic events and lock observations using REEL's existing Rust assembly core. Start with an authored example or open your own JSON.</p></header>
+<main><section class="workspace" aria-label="Graph workbench"><div class="editor panel">
+<div class="section-head"><h2>1. Supply a graph</h2><span id="bytes">0 UTF-8 bytes</span></div>
+<div class="toolbar"><button id="example">Load authored example</button><button id="open-file">Open JSON file</button><input id="file" type="file" accept=".json,application/json,text/plain" hidden></div>
+<p id="file-status" role="status">Files stay in this browser session. No input is uploaded.</p>
+<label for="input">Native assembly graph JSON</label><textarea id="input" spellcheck="false" aria-describedby="limits file-status"></textarea>
+<p id="limits" class="fine">128 KiB UTF-8; Up to 128 nodes; 256 slots, events and presentation targets each; 1024 total node references and retained revisions. Unknown fields reject the entire input.</p>
+<label for="kind">Target kind</label><select id="kind"><option value="node">Node closure</option><option value="presentation">Presentation closure</option></select>
+<label for="target">Node or presentation ID</label><input id="target" type="text" value="episode" aria-describedby="limits">
+<details><summary>Optional selected pointer JSON</summary><p>Paste the original selected-pointer JSON (8 KiB maximum), or leave this field exactly empty. Pointer matching checks the supplied graph lock; it does not verify cache bytes.</p><label for="pointer">Selected pointer</label><textarea id="pointer" spellcheck="false" rows="5"></textarea></details>
+<div class="toolbar"><button id="inspect" class="primary" disabled>Inspect graph</button><button id="restart">Restart engine</button><button id="lf-copy" disabled>Use an LF copy</button></div>
+<p id="status" role="status">Starting Rust engine...</p>
+<details><summary>How text and originals are kept</summary><p>Opened UTF-8 bytes, including BOM and CRLF, remain available as the original download. The editor displays line endings as LF. Inspection and current-text download keep the loaded text until you edit it. Editing uses the editor's LF text. An explicit LF copy removes a leading BOM and normalizes CRLF/CR; the original download stays intact.</p></details>
+<div class="downloads"><button id="original" disabled>Download opened original</button><button id="current">Download current text</button><button id="request">Download local run request</button></div>
+</div><div class="results panel"><div class="section-head"><h2>2. Read the native dependency result</h2><span id="result-state" class="badge">No report</span></div>
+<p class="boundary">Graph validity, declared lock matching, computed identity and available media are separate facts. Native closure omits unselected slots. This workbench does not render, read media, restore caches, grant rights or approve production release. Downloads contain your declared identities; they are local working diagnostics.</p>
+<div id="summary"><p class="empty">Load the example and choose Inspect graph to see the native query results.</p></div>
+<div class="downloads"><button id="download" disabled>Download local diagnostic JSON</button></div>
+<details><summary>Full local dependency report and admitted graph</summary><pre id="report" tabindex="0" aria-label="Inspection report">No report yet.</pre></details>
+</div></section>
+<section class="delivery panel"><h2>Source and delivery</h2><p>The unchanged reel-assembly crate owns graph contracts, validation, dependency closure, pointer matching and graph hashing. The browser runs that Rust core in a worker; cache URIs remain inert text. Source references are displayed as caller declarations and are never opened.</p>
+<nav aria-label="Source and downloads"><a href="https://github.com/giodl73-repo/REEL">Repository</a><a href="https://github.com/giodl73-repo/REEL/tree/main/crates/reel-assembly/src">Native Rust source</a><a href="./source.zip" download>Complete Rust source ZIP</a><a href="./pkg/reel_assembly_workbench_bg.wasm" download>Compiled WASM</a><a href="./BUILD.md">Build instructions</a><a href="./provenance.json">Build provenance</a><a href="./licenses/index.html">Licenses and notices</a></nav>
+<p class="fine">Source, build and license downloads work independently of the Rust engine. Build provenance identifies the exact source revision and scope.</p></section></main>
+<footer>REEL separates technical dependency facts from creative, rights and release decisions.</footer>
+<script type="module" src="./app.js"></script></body></html>

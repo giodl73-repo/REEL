@@ -1,0 +1,113 @@
+name: Qualify and deploy REEL assembly
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reel-pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target/cargo-assembly
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned compiler and bindings
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --component clippy --component rustfmt --component rust-docs --target wasm32-unknown-unknown
+          archive="wasm-bindgen-0.2.127-x86_64-unknown-linux-musl.tar.gz"
+          install_dir="${RUNNER_TEMP}/wasm-bindgen-0.2.127"
+          gh release download 0.2.127 --repo wasm-bindgen/wasm-bindgen --pattern "${archive}" --dir "${RUNNER_TEMP}"
+          echo "61d4a7dc85acfa0d2354ccc0b8361928c7e52a746d17f28ebaa795ed3dc1614a  ${RUNNER_TEMP}/${archive}" | sha256sum --check
+          mkdir -p "${install_dir}"
+          tar --extract --gzip --file "${RUNNER_TEMP}/${archive}" --directory "${install_dir}" --strip-components=1
+          echo "${install_dir}" >> "${GITHUB_PATH}"
+      - name: Protect foundation and qualify native/WASM
+        run: |
+          git diff --exit-code e4d22e0d2ee4e447dcee3f3b1ae21c7fac91462b HEAD -- crates/reel-assembly
+          python browser/assembly/verify-dependencies.py
+          cargo +1.95.0 fmt --all -- --check
+          cargo +1.95.0 fmt --manifest-path browser/assembly/Cargo.toml -- --check
+          cargo +1.95.0 clippy -p reel-assembly --locked --all-targets -- -D warnings
+          cargo +1.95.0 test -p reel-assembly --all-targets --locked
+          cargo +1.95.0 test --manifest-path browser/assembly/Cargo.toml --locked
+          cargo +1.95.0 clippy --manifest-path browser/assembly/Cargo.toml --locked --all-targets -- -D warnings
+          cargo +1.95.0 clippy --manifest-path browser/assembly/Cargo.toml --locked --target wasm32-unknown-unknown --lib -- -D warnings
+          cargo +1.95.0 build --manifest-path browser/assembly/Cargo.toml --locked --release --target wasm32-unknown-unknown --lib
+          cargo +1.95.0 build --manifest-path browser/assembly/Cargo.toml --locked --bin reel-assembly-workbench-cli
+      - name: Install browser QA
+        working-directory: browser/assembly
+        run: |
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
+      - name: Stage and verify clean-source release candidate
+        run: |
+          python -B browser/assembly/build-prototype.py --bindgen "$(command -v wasm-bindgen)"
+          python -B browser/assembly/package-site.py
+          python -B browser/assembly/verify-site.py target/reel-release/REEL/assembly --commit "$(git rev-parse HEAD)"
+      - name: Check complete staged site under project prefix
+        working-directory: browser/assembly
+        run: npm run test:pages
+      - name: Independently rebuild delivered source outside Git
+        run: python -B browser/assembly/verify-source.py --bindgen "$(command -v wasm-bindgen)"
+      - name: Preserve artifact and qualification receipts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reel-assembly-workbench-qualification
+          path: |
+            target/reel-release/REEL
+            browser/assembly/.cache
+          include-hidden-files: true
+          if-no-files-found: error
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: reel-assembly-workbench-qualification
+          path: .
+      - name: Verify exact downloaded source and complete artifact
+        run: python -B browser/assembly/verify-site.py target/reel-release/REEL/assembly --commit "${{ github.sha }}"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: target/reel-release/REEL
+      - name: Deploy only tested public tree
+        id: deployment
+        uses: actions/deploy-pages@v4
