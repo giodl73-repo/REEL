@@ -186,9 +186,21 @@ an imported translation is current or approved.
 for an explicit caller-declared absence. For example, an independently maintained
 Spanish text might map `v1` to `submitted-spanish` and `v2` to `corrected-spanish`.
 No fallback or filename/language inference occurs. Current must be present.
-Each available version becomes a leaf `version/<display-version>` stream with
-exact object, source package, source role and original lock version provenance.
+Each available version becomes a leaf `version/<display-version>` stream, or
+the shared `version-sha256/<digest>` slot when the full UTF-8 label exceeds the
+native slot bound. Hashed slots retain the complete `source_version_id` in
+provenance; decoding validates the slot against that label. Exact object,
+source package, source role and original lock version provenance are preserved.
 Original packages remain available even for a deliberately absent leaf version.
+
+Package object pins may carry optional placement observations: `path` (a
+nonempty string of at most 4,096 UTF-8 bytes without control characters) and
+`reused_active_object` (a boolean). Null/absent observations are unasserted.
+These fields stay in the exact pinned package; they do not choose a provider
+path, prove current availability or appear on projected asset records. Object
+identity still comes from the declared SHA-256, length and cache URI under the
+enrolled byte source. Other unknown pin fields continue to refuse. Registration
+does not open asset payloads to turn an observation into a current byte check.
 
 The parent is written at the candidate root and leaves under `inputs/`. There
 are at most 128 entries and 255 source versions. Profile/source/definition/schema

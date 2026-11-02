@@ -131,6 +131,100 @@ impl Fixture {
 }
 
 #[test]
+fn placement_observations_never_select_paths_or_prove_payload_availability() {
+    let mut f = Fixture::new();
+    let absent = f.root.path().join("unavailable-private-placement");
+    f.repackage(|package| {
+        for asset in package["assets"].as_object_mut().unwrap().values_mut() {
+            asset["path"] = json!(absent);
+            asset["reused_active_object"] = json!(true);
+        }
+    });
+    let output = f.run();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!absent.exists());
+    let summary: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["primary_media_opened"], 0);
+    let leaf = f.load("candidates/inputs/es.tig");
+    assert_eq!(
+        leaf["selected"],
+        json!(Object::from_bytes(b"Nueva palabra"))
+    );
+    let raw = serde_json::to_string(&leaf).unwrap();
+    assert!(!raw.contains("unavailable-private-placement"));
+    assert!(!raw.contains("reused_active_object"));
+    assert_eq!(leaf["status"]["production_state"], "unclassified");
+}
+
+#[test]
+fn invalid_placement_observations_and_unknown_pin_fields_refuse() {
+    for (field, value) in [
+        ("path", json!(123)),
+        ("path", json!("bad\npath")),
+        ("path", json!("x".repeat(4097))),
+        ("reused_active_object", json!("true")),
+        ("unadmitted_path", json!("private-place")),
+    ] {
+        let mut f = Fixture::new();
+        f.repackage(|package| package["assets"]["es-original"][field] = value);
+        assert!(!f.run().status.success());
+        assert!(!f.root.path().join("candidates").exists());
+    }
+}
+
+#[test]
+fn long_display_versions_preserve_package_and_leaf_history_without_truncation() {
+    let mut f = Fixture::new();
+    let pin: Object = serde_json::from_value(f.profile["source_record"].clone()).unwrap();
+    let mut record = f.load(&format!("objects/{}", pin.sha256.as_str()));
+    let old = "á".repeat(70);
+    let current = "current-".repeat(20);
+    record["versions"][0]["version_id"] = json!(old);
+    record["versions"][1]["version_id"] = json!(current);
+    record["current_version"] = json!(current);
+    f.profile["source_record"] = json!(put(f.root.path(), &serde_json::to_vec(&record).unwrap()));
+    for entry in f.profile["entries"].as_object_mut().unwrap().values_mut() {
+        let assets = entry["assets"].as_object_mut().unwrap();
+        let prior = assets.remove("v1").unwrap();
+        let latest = assets.remove("v2").unwrap();
+        assets.insert(old.clone(), prior);
+        assets.insert(current.clone(), latest);
+    }
+    let output = f.run();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parent = f.load("candidates/poem.tig");
+    assert_eq!(parent["authored"]["current_version"], current);
+    let leaf = f.load("candidates/inputs/es.tig");
+    assert_eq!(
+        leaf["selected"],
+        json!(Object::from_bytes(b"Nueva palabra"))
+    );
+    for version in [&old, &current] {
+        let slot = reel::tig_versioned_registration::version_slot(version).unwrap();
+        assert!(slot.starts_with("version-sha256/"));
+        for value in [&parent, &leaf] {
+            let matched = value["streams"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|s| s["slot"] == slot)
+                .collect::<Vec<_>>();
+            assert_eq!(matched.len(), 1);
+            assert_eq!(matched[0]["provenance"]["source_version_id"], *version);
+        }
+    }
+    assert_eq!(leaf["streams"].as_array().unwrap().len(), 2);
+}
+
+#[test]
 fn native_text_assets_preserve_versions_references_and_unknown_evidence_without_opening_payloads() {
     let f = Fixture::new();
     let result = f.run();
