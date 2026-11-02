@@ -201,3 +201,37 @@ fn real_cli_front_door_keeps_private_identity_out_of_its_summary() {
         json!({"changed_notes":1,"review":"not-reviewed","media_resolved":false,"native_validation":"not-run"})
     );
 }
+
+#[test]
+fn captured_note_api_preserves_dependencies_and_rejects_stale_bytes() {
+    let temp = tempfile::tempdir().unwrap();
+    let (path, mut edit) = setup(temp.path());
+    let raw = fs::read(&path).unwrap();
+    edit.rows[0].midi_note = 61;
+    edit.rows[0].rationale = "Private captured-model pitch proposal".into();
+    let request = serde_json::to_vec(&edit).unwrap();
+    let (candidate, changed) = note_editor::propose_bytes(&raw, &request).unwrap();
+    assert_eq!(changed, 1);
+    let original: model::MusicModel = serde_yaml::from_slice(&raw).unwrap();
+    let result: model::MusicModel = serde_json::from_slice(&candidate).unwrap();
+    assert_eq!(result.source, original.source);
+    assert_eq!(result.analyses, original.analyses);
+    assert_eq!(result.lyric_layers, original.lyric_layers);
+    assert_eq!(result.parts[0].notes[1..], original.parts[0].notes[1..]);
+    assert_eq!(result.review.status, "not-reviewed");
+    assert_eq!(result.authority.status, "not-reviewed");
+    assert!(result.review.decision_refs.is_empty());
+    let mut stale = raw.clone();
+    stale.push(b'\n');
+    assert!(note_editor::propose_bytes(&stale, &request).is_err());
+    assert!(note_editor::propose_bytes(&raw, &vec![b' '; 2 * 1024 * 1024 + 1]).is_err());
+    assert!(
+        note_editor::export_bytes(
+            &vec![b' '; 2 * 1024 * 1024 + 1],
+            &temp.path().join("oversized")
+        )
+        .is_err()
+    );
+    assert!(!temp.path().join("oversized").exists());
+    assert_eq!(fs::read(&path).unwrap(), raw);
+}

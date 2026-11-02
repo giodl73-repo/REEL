@@ -2,7 +2,8 @@
 use crate::{
     model::{MusicModel, ProvenanceState},
     model_editor::{
-        check_destination, encode, identifier, intake, layout, publish, read, unreviewed, write_new,
+        check_destination, encode, identifier, intake, intake_bytes, layout, publish_bytes, read,
+        unreviewed, write_new,
     },
     nonempty,
 };
@@ -61,7 +62,11 @@ fn edit_for(model: &MusicModel, hash: String) -> Result<Edit> {
 }
 /// Export declared note metadata only. Native project validation is not run.
 pub fn export(path: &Path, output: &Path) -> Result<usize> {
-    let (model, hash) = intake(path)?;
+    export_bytes(&read(path)?, output)
+}
+/// Export one captured model without resolving its relative dependencies.
+pub fn export_bytes(raw: &[u8], output: &Path) -> Result<usize> {
+    let (model, hash) = intake_bytes(raw)?;
     // Build from the same captured model, never reopen a mutable source for rows.
     let request = edit_for(&model, hash)?;
     let session = json!({"schema":"reel.music-note-session.v1", "model_id":model.model_id,
@@ -82,8 +87,20 @@ pub fn export(path: &Path, output: &Path) -> Result<usize> {
 }
 /// Write a new unreviewed native proposal beside its source; never resolve media.
 pub fn apply(path: &Path, request_path: &Path, output: &Path) -> Result<usize> {
-    let (mut model, hash) = intake(path)?;
-    let request: Edit = serde_json::from_slice(&read(request_path)?)?;
+    let raw = read(path)?;
+    check_destination(path, output)?;
+    let (candidate, changed) = propose_bytes(&raw, &read(request_path)?)?;
+    publish_bytes(path, &crate::hash::sha256_bytes(&raw), output, &candidate)?;
+    Ok(changed)
+}
+/// Produce an unreviewed model over captured bytes. Relative dependency names
+/// are preserved, not resolved or declared valid at a new physical location.
+pub fn propose_bytes(raw: &[u8], request: &[u8]) -> Result<(Vec<u8>, usize)> {
+    let (mut model, hash) = intake_bytes(raw)?;
+    if request.len() > 2 * 1024 * 1024 {
+        bail!("Editor request exceeds control budget");
+    }
+    let request: Edit = serde_json::from_slice(request)?;
     if request.schema != EDIT || request.expected_model_sha256 != hash {
         bail!("Stale or unsupported note edit");
     }
@@ -91,7 +108,6 @@ pub fn apply(path: &Path, request_path: &Path, output: &Path) -> Result<usize> {
     if request.candidate_model_id == model.model_id {
         bail!("Proposal needs a new model identity");
     }
-    check_destination(path, output)?;
     let mut seen = BTreeSet::new();
     let mut changed = 0;
     let count: usize = model.parts.iter().map(|part| part.notes.len()).sum();
@@ -130,6 +146,5 @@ pub fn apply(path: &Path, request_path: &Path, output: &Path) -> Result<usize> {
     layout(&model)?;
     model.model_id = request.candidate_model_id;
     unreviewed(&mut model);
-    publish(path, &hash, output, &model)?;
-    Ok(changed)
+    Ok((encode(&model)?, changed))
 }

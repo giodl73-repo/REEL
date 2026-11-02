@@ -22,6 +22,8 @@ mod fake_episode_lifecycle;
 mod generation;
 #[path = "support/tig_language_scope.rs"]
 mod language_scope;
+#[path = "support/tig_music_editor.rs"]
+mod music_editor;
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_native_cli.rs"]
 mod native_cli;
@@ -119,7 +121,6 @@ fn wav() -> Vec<u8> {
 struct Fixture {
     temp: tempfile::TempDir,
     profile: Value,
-    #[cfg(windows)]
     media: Object,
     alignment: Vec<u8>,
     job: Value,
@@ -204,7 +205,6 @@ impl Fixture {
         Self {
             temp,
             profile,
-            #[cfg(windows)]
             media: definitions[0].clone(),
             alignment,
             job,
@@ -226,7 +226,6 @@ impl Fixture {
             selection_state: "selected-private-production".into(),
         }
     }
-    #[cfg(windows)]
     fn add(&self, id: &str, bytes: &[u8]) -> Object {
         let object = Object::from_bytes(bytes);
         fs::write(
@@ -243,7 +242,6 @@ impl Fixture {
         );
         object
     }
-    #[cfg(windows)]
     fn commit(&mut self) {
         git(self.root(), &["add", "records"]);
         git(self.root(), &["commit", "-m", "synthetic revision"]);

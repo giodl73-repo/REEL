@@ -440,6 +440,56 @@ impl Source {
         }
         Ok(asset)
     }
+    /// Exact selected bytes for metadata authoring, without interpreting project
+    /// selection status as production authority. Named-stream admissions refuse.
+    pub(crate) fn authoring_file(&self, id: &str) -> Result<FileRef> {
+        let asset = self.record(id)?;
+        if !matches!(
+            self.admitted[&asset.definition().id].payload,
+            Payload::Selected {}
+        ) {
+            bail!("authoring requires an explicit selected-payload admission");
+        }
+        let object = asset.selected()?;
+        Ok(FileRef {
+            path: id.into(),
+            sha256: object.sha256.as_str().into(),
+            bytes: object.bytes,
+        })
+    }
+    pub(crate) fn record_documents(&mut self, id: &str) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+        let reference = self.record(id)?.reference().clone();
+        let lookup = graph::Source::lookup(&mut self.snapshot, &reference, 3 * 65_536);
+        if &lookup.checkpoint != self.checkpoint() {
+            bail!("record document checkpoint changed");
+        }
+        match lookup.data {
+            graph::Data::Record {
+                instance,
+                definition,
+                schema,
+            } => Ok((instance, definition, schema)),
+            _ => bail!("record documents unavailable within authoring budget"),
+        }
+    }
+    /// Capture bounded exact bytes without requiring a physical-path capability.
+    /// The provider's requested reader protection remains live for the caller.
+    pub(crate) fn authoring_snapshot(
+        &mut self,
+        file: &FileRef,
+        max: usize,
+    ) -> Result<(Vec<u8>, VerifiedRead)> {
+        let (_, object) = self.expected(file)?;
+        if max > JOB_BYTES_MAX || object.bytes > max as u64 {
+            bail!("authoring snapshot exceeds byte budget");
+        }
+        let mut held = self.cache.open_verified(&object)?;
+        let raw = read_held(&mut held, max)?;
+        if Object::from_bytes(&raw) != object {
+            bail!("authoring snapshot differs from its exact byte pin");
+        }
+        Ok((raw, held))
+    }
     /// Resolve current binding metadata in this captured view, without media IO.
     /// Selection status is project data, not a grant of production authority.
     pub fn resolve_asset(&self, id: &str) -> Result<AssetRef> {
