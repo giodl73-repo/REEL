@@ -20,7 +20,7 @@ for command in [
 site=ROOT/'target/reel-prototype/REEL/assembly';site.mkdir(parents=True,exist_ok=True)
 for name in ['index.html','style.css','app.js','worker.js']:shutil.copyfile(P/'web'/name,site/name)
 shutil.copyfile(P/'fixtures/graph.json',site/'graph.json')
-subprocess.run([args.bindgen,'--target','web','--out-dir',str(site/'pkg'),'--out-name','reel_assembly_workbench',str(target/'wasm32-unknown-unknown/release/reel_assembly_workbench.wasm')],check=True)
+subprocess.run([args.bindgen,'--target','web','--remove-name-section','--out-dir',str(site/'pkg'),'--out-name','reel_assembly_workbench',str(target/'wasm32-unknown-unknown/release/reel_assembly_workbench.wasm')],check=True)
 cache=P/'.cache';cache.mkdir(exist_ok=True)
 suffix='.exe' if os.name=='nt' else ''
 # Isolate executable bytes from the shared Cargo target before running controls.

@@ -29,3 +29,8 @@ no renderer runs. Graph validity, pointer declarations, computed graph identity,
 available media and human approval are distinct. Exported user reports contain
 identities and are not privacy-safe release receipts. Default-branch hosted
 qualification and fresh live verification remain separate from local checks.
+
+The standalone release profile optimizes for size and strips debug information;
+wasm-bindgen removes the optional debugging name section. Native contract fields,
+error messages and dependency results stay intact and require exact parity.
+Git source is read in one checked blob batch, without checkout/archive substitutions.

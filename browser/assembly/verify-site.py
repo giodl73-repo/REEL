@@ -1,5 +1,6 @@
 """Verify the complete packaged tree against its source and artifact records."""
 import argparse,hashlib,json,pathlib,zipfile,subprocess
+from git_source import read_git_blobs
 parser=argparse.ArgumentParser();parser.add_argument('site',type=pathlib.Path);parser.add_argument('--commit',required=True);args=parser.parse_args()
 site=args.site.resolve()
 def sha(data):return hashlib.sha256(data).hexdigest()
@@ -23,10 +24,11 @@ with zipfile.ZipFile(site/'source.zip') as archive:
  assert len(expected)==len(pins) and set(archive.namelist())==set(expected)
  git_paths=subprocess.check_output(['git','ls-tree','-r','--name-only',args.commit],cwd=pathlib.Path(__file__).resolve().parents[2]).decode().splitlines()
  assert set(git_paths)=={p['path'] for p in pins}
+ blobs=read_git_blobs(pathlib.Path(__file__).resolve().parents[2],args.commit,git_paths)
  for name,record in expected.items():
   assert not pathlib.PurePosixPath(name).is_absolute() and '..' not in pathlib.PurePosixPath(name).parts
   data=archive.read(name)
-  assert data==subprocess.check_output(['git','show',args.commit+':'+record['path']],cwd=pathlib.Path(__file__).resolve().parents[2])
+  assert data==blobs[record['path']]
   assert sha(data)==record['sha256'] and len(data)==record['bytes']
 packages=read('dependencies.json');assert len(packages)==proof['legal_packages']
 for package in packages:
