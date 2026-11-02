@@ -24,7 +24,9 @@ subprocess.run([args.bindgen,'--target','web','--remove-name-section','--out-dir
 cache=P/'.cache';cache.mkdir(exist_ok=True)
 suffix='.exe' if os.name=='nt' else ''
 # Isolate executable bytes from the shared Cargo target before running controls.
-for name in ['reel-assembly-workbench-cli','reel']:shutil.copyfile(target/'debug'/(name+suffix),cache/(name+suffix))
+for name in ['reel-assembly-workbench-cli','reel']:
+ shutil.copy2(target/'debug'/(name+suffix),cache/(name+suffix))
+ if os.name!='nt':assert os.access(cache/(name+suffix),os.X_OK),name
 cli=cache/('reel-assembly-workbench-cli'+suffix);original_cli=cache/('reel'+suffix)
 fixture=json.loads((P/'fixtures/graph.json').read_text(encoding='utf-8'))
 pointer=json.loads((P/'fixtures/pointer.json').read_text(encoding='utf-8'))
@@ -78,4 +80,9 @@ for number,request in enumerate([requests[1],requests[3],requests[23],requests[2
 (cache/'original-cli-controls.json').write_text(json.dumps(controls,indent=2)+'\n',encoding='utf-8')
 wasm=site/'pkg/reel_assembly_workbench_bg.wasm'
 receipt={'prototype_only':True,'native_cases':len(receipts),'original_cli_controls':len(controls),'wasm_bytes':wasm.stat().st_size,'wasm_sha256':hashlib.sha256(wasm.read_bytes()).hexdigest(),'original_cli_sha256':hashlib.sha256(original_cli.read_bytes()).hexdigest()}
-(cache/'prototype-build.json').write_text(json.dumps(receipt,indent=2)+'\n',encoding='utf-8');print(json.dumps(receipt))
+(cache/'prototype-build.json').write_text(json.dumps(receipt,indent=2)+'\n',encoding='utf-8')
+# QA artifacts retain hashes/controls, not extra native binaries with different notice closures.
+for executable in [cli,original_cli]:
+ assert executable.parent.resolve()==cache.resolve()
+ executable.unlink()
+print(json.dumps(receipt))

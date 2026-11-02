@@ -1,6 +1,6 @@
 # REEL semantic dependency workbench
 
-Status: entry review and portability qualification. No publication claim yet.
+Status: scoped diagnostic client. Dated pulses and build provenance retain qualification; native production acceptance remains separate.
 
 Reader task: open an owned reel.semantic-assembly.v1 graph, choose a node or
 presentation, optionally supply a selected pointer, and inspect the exact native
