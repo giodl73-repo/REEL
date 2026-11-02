@@ -1,0 +1,8 @@
+{
+  "schema": "reel.selected-pointer.v1",
+  "logical_id": "demo-current",
+  "selected_lock": {
+    "logical_id": "demo-lock",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}

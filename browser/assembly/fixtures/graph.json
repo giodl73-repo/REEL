@@ -1,0 +1,107 @@
+{
+  "schema": "reel.semantic-assembly.v1",
+  "lock": {
+    "logical_id": "demo-lock",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "slots": [
+    {
+      "slot_id": "scene.picture",
+      "beat_id": "demo-beat",
+      "lane": "picture",
+      "disposition": "selected",
+      "selected_revision_id": "r1",
+      "revisions": [
+        {
+          "revision_id": "r1",
+          "asset": {
+            "logical_id": "scene.picture-asset",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "cache_uri": "cache://sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      ]
+    },
+    {
+      "slot_id": "scene.vfx",
+      "beat_id": "demo-beat",
+      "lane": "vfx",
+      "disposition": "unselected",
+      "revisions": []
+    },
+    {
+      "slot_id": "scene.narration",
+      "beat_id": "demo-beat",
+      "lane": "narration",
+      "disposition": "selected",
+      "selected_revision_id": "r1",
+      "revisions": [
+        {
+          "revision_id": "r1",
+          "asset": {
+            "logical_id": "scene.narration-asset",
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "cache_uri": "cache://sha256/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        }
+      ]
+    },
+    {
+      "slot_id": "scene.score",
+      "beat_id": "demo-beat",
+      "lane": "score",
+      "disposition": "explicit-silence",
+      "revisions": []
+    }
+  ],
+  "events": [
+    {
+      "event_id": "demo-phrase",
+      "scene_id": "scene",
+      "language": "en",
+      "narration": {
+        "logical_id": "scene.narration-asset",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "picture": {
+        "logical_id": "scene.picture-asset",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "phrase_start_seconds": 0.0,
+      "phrase_end_seconds": 2.0
+    }
+  ],
+  "nodes": [
+    {
+      "id": "scene",
+      "inputs": [],
+      "slots": [
+        "scene.picture",
+        "scene.vfx",
+        "scene.narration",
+        "scene.score"
+      ],
+      "events": [
+        "demo-phrase"
+      ]
+    },
+    {
+      "id": "episode",
+      "inputs": [
+        "scene"
+      ],
+      "slots": [],
+      "events": []
+    }
+  ],
+  "presentation_targets": [
+    {
+      "target_id": "review",
+      "node": "episode",
+      "contract": {
+        "logical_id": "demo-review-contract",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      }
+    }
+  ]
+}

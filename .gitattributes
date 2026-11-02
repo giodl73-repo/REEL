@@ -11,3 +11,5 @@
 Cargo.lock text eol=lf
 manifests/fixtures/sprite-library/two-color.ppm text eol=lf
 manifests/fixtures/sprite-library/two-color-reversed.ppm text eol=lf
+
+browser/** text eol=lf

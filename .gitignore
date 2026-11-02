@@ -18,3 +18,7 @@ Thumbs.db
 /target
 __pycache__/
 *.pyc
+
+/browser/assembly/.cache/
+/browser/assembly/node_modules/
+/browser/assembly/test-results/
