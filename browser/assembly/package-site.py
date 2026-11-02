@@ -33,13 +33,13 @@ for name in ['reel_assembly_workbench.js','reel_assembly_workbench_bg.wasm']:
 copy(ROOT/'LICENSE',SITE/'LICENSE')
 paths=run('git','ls-files','-z').decode().split('\0')
 source_pins=[]
-with zipfile.ZipFile(SITE/'source.zip','w',zipfile.ZIP_DEFLATED) as archive:
+with zipfile.ZipFile(SITE/'source.zip','w',zipfile.ZIP_DEFLATED,compresslevel=9) as archive:
     for name in sorted(filter(None,paths)):
         data=run('git','show',head+':'+name)
         # The exact Git source is independent of checkout line-ending settings.
         archive.writestr('REEL-source/'+name,data)
         source_pins.append({'path':name,'sha256':digest(data),'bytes':len(data)})
-write_json(SITE/'source-files.json',source_pins)
+(SITE/'source-files.json').write_text(json.dumps(source_pins,separators=(',',':'))+'\n',encoding='utf-8')
 metadata=json.loads(run('cargo','+1.95.0','metadata','--manifest-path','browser/assembly/Cargo.toml','--locked','--format-version','1','--filter-platform','wasm32-unknown-unknown'))
 assert all(p.get('source') is None for p in metadata['packages'] if p['name'] in ['reel-assembly','reel-assembly-workbench'])
 packages=[]
@@ -70,7 +70,7 @@ for notice in sorted((rust_docs/'licenses').rglob('*')):
         copy(notice,destination)
         rust_notices.append({'path':destination.relative_to(SITE).as_posix(),'sha256':digest(notice.read_bytes())})
 write_json(SITE/'rust/provenance.json',{'rustc':run('rustc','+1.95.0','-vV').decode().strip(),'library_copyright_sha256':digest((SITE/'rust/COPYRIGHT-library.html').read_bytes()),'notices':rust_notices})
-links=['<h1>REEL software and dependency licenses</h1><p>Original REEL software and ordinary software documentation are MIT; original non-software content retains CC BY-NC 4.0. Vendor and dependency grants retain their own scope. Third-party terms and prior grants remain intact. RUNE licenses are from its exact pinned historical revision.</p><p><a href="../LICENSE">REEL complete license</a> | <a href="../dependencies.json">Dependency inventory</a> | <a href="../rust/COPYRIGHT-library.html">Rust library copyright</a> | <a href="../rust/provenance.json">Rust notices and provenance</a></p>']
+links=['<h1>REEL software and dependency licenses</h1><p>Original REEL software and ordinary software documentation are MIT; original non-software content retains CC BY-NC 4.0. Vendor and dependency grants retain their own scope. Third-party terms and prior grants remain intact.</p><p><a href="../LICENSE">REEL complete license</a> | <a href="../dependencies.json">Dependency inventory</a> | <a href="../rust/COPYRIGHT-library.html">Rust library copyright</a> | <a href="../rust/provenance.json">Rust notices and provenance</a></p>']
 for package in packages:
     links.append('<h2>'+html.escape(package['name']+' '+package['version'])+'</h2><p>'+html.escape(package['license'] or 'See original notices')+'</p>')
     for notice in package['notices']:
@@ -83,6 +83,8 @@ write_json(SITE/'provenance.json',provenance)
 files=[]
 for f in sorted(SITE.rglob('*')):
     if f.is_file(): files.append({'path':f.relative_to(SITE).as_posix(),'bytes':f.stat().st_size,'sha256':digest(f.read_bytes())})
-if sum(f['bytes'] for f in files)>5_000_000: raise SystemExit('Inspector exceeds 5 MB budget')
-write_json(SITE/'inventory.json',{'commit':head,'files':files,'bytes_excluding_inventory':sum(f['bytes'] for f in files)})
+inventory={'commit':head,'files':files,'bytes_excluding_inventory':sum(f['bytes'] for f in files)}
+inventory_bytes=(json.dumps(inventory,indent=2)+'\n').encode('utf-8')
+if inventory['bytes_excluding_inventory']+len(inventory_bytes)>5_000_000: raise SystemExit('Complete assembly site including inventory exceeds 5 MB budget')
+(SITE/'inventory.json').write_bytes(inventory_bytes)
 print(json.dumps({'commit':head,'files':len(files)+1,'bytes_excluding_inventory':sum(f['bytes'] for f in files),'packages':len(packages),'rust_notices':len(rust_notices)}))
