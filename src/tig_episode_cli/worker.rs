@@ -1,6 +1,6 @@
 //! Trusted worker: source-owned comparisons and native assembly inside containment.
 use super::*;
-use crate::{tig_presentation, tig_scene_production::jobs::reference::ReferencePlan};
+use crate::tig_scene_production::jobs::reference::ReferencePlan;
 
 fn check(t: &Ticket, journal: &mut SourceJournal) -> Result<()> {
     let state = journal
@@ -188,14 +188,13 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
         .presentations
         .iter()
         .zip(&mut presentation_sources)
-        .map(|(spec, source)| {
-            tig_presentation::freeze_context(
-                source,
-                &spec.request,
-                &mut store,
-                TreeLimits::default(),
-            )
-        })
+        .map(|(spec, source)| spec.freeze_context(source, &mut store))
+        .collect::<Result<Vec<_>>>()?;
+    let browser_programs = t
+        .inputs
+        .presentations
+        .iter()
+        .map(Presentation::bind_browser)
         .collect::<Result<Vec<_>>>()?;
     let presentation_plans = t
         .inputs
@@ -203,15 +202,9 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
         .iter()
         .zip(&presentation_contexts)
         .zip(&mut presentation_sources)
-        .map(|((spec, context), source)| {
-            tig_presentation::jobs::JobPlan::from_context(
-                source,
-                &spec.request,
-                context,
-                &programs,
-                &spec.output_id,
-                &spec.output_definition,
-            )
+        .zip(&browser_programs)
+        .map(|(((spec, context), source), browser)| {
+            presentation::Plan::from_context(source, spec, context, &programs, browser)
         })
         .collect::<Result<Vec<_>>>()?;
     let presentation_resources = presentation_plans

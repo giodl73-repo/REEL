@@ -20,6 +20,11 @@ fn mixed_episode_cli_checks_opening_scenes_and_credits_with_complete_owned_hando
     exercise(true);
 }
 #[test]
+#[ignore = "requires explicit Edge/FFmpeg and pinned Tig proposal executable"]
+fn browser_mixed_episode_cli_checks_fresh_opening_and_owned_assembly() {
+    exercise_variant(true, false, false, true);
+}
+#[test]
 #[ignore = "requires native FFmpeg to establish retained synthetic scene fixtures"]
 fn prepare_episode_freezes_child_resources_with_movie_and_source_journal_unavailable() {
     exercise_mode(false, true);
@@ -146,6 +151,9 @@ fn exercise_mode(mixed: bool, preparation_only: bool) {
     exercise_purpose(mixed, preparation_only, false);
 }
 fn exercise_purpose(mixed: bool, preparation_only: bool, verification_only: bool) {
+    exercise_variant(mixed, preparation_only, verification_only, false);
+}
+fn exercise_variant(mixed: bool, preparation_only: bool, verification_only: bool, browser: bool) {
     if !preparation_only && !verification_only {
         assert!(
             std::env::var_os("REEL_TEST_TIG_PROPOSE").is_some(),
@@ -159,7 +167,9 @@ fn exercise_purpose(mixed: bool, preparation_only: bool, verification_only: bool
     p.assemble(&scenes, "cli-v1");
     let mut request = add_episode_assembly(&mut p, "episode-cli-v1.json");
     let _parent_controls = parent_controls::exercise(&p, &request);
-    let mut presentations = if mixed {
+    let mut presentations = if browser {
+        mixed_components::configure_browser(&mut p, &mut request)
+    } else if mixed {
         mixed_components::configure(&mut p, &mut request)
     } else {
         Vec::new()
@@ -249,7 +259,7 @@ fn exercise_purpose(mixed: bool, preparation_only: bool, verification_only: bool
         inputs["record_outputs"] = json!([]);
         inputs["git_handoff"] = Value::Null;
     }
-    let profile = json!({"schema":"reel.tig-episode-job.experimental-1","inputs":inputs,"cache":config,
+    let mut profile = json!({"schema":"reel.tig-episode-job.experimental-1","inputs":inputs,"cache":config,
         "preparation_cache":p.hot(),"metadata_root":metadata,"metadata_minimum":minimum,
         "journal_root":p.data.path().join("owners"),"journal_minimum":p.owners.checkpoint(),
         "source_id":"bounded-episode-cli","owner":"fixture","expected_revision":0,"operation":"run-v1",
@@ -257,6 +267,12 @@ fn exercise_purpose(mixed: bool, preparation_only: bool, verification_only: bool
         "reference_staging_bytes":16*1024*1024,"reference_picture_processes":16,
         "max_objects":10000,"max_logical_bytes":1024*1024*1024,
         "outputs":{"master.mkv":16*1024*1024,"receipt.json":1024*1024}});
+    if browser {
+        profile["budget_bytes"] = json!(512 * 1024 * 1024);
+        profile["scratch_bytes"] = json!(256 * 1024 * 1024);
+        profile["reference_staging_bytes"] = json!(128 * 1024 * 1024);
+        profile["timeout_seconds"] = json!(480);
+    }
     let profile_path = p.data.path().join("bounded-episode-profile.json");
     write(p.data.path(), "bounded-episode-profile.json", &profile);
     for name in [".git", "records", "definitions"] {

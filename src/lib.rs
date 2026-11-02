@@ -75,6 +75,8 @@ pub mod sung_lyric_alignment;
 pub mod tig_binding_registration;
 #[cfg(feature = "tig")]
 pub mod tig_browser;
+#[cfg(all(windows, feature = "tig-publication"))]
+pub mod tig_browser_reference;
 #[cfg(feature = "tig")]
 pub mod tig_conform_registration;
 #[cfg(feature = "tig")]

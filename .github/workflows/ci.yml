@@ -154,6 +154,14 @@ jobs:
       - name: Verify mixed scene and presentation episode CLI with original renders offline
         if: runner.os == 'Windows'
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::episode_cli::mixed_episode_cli_checks_opening_scenes_and_credits_with_complete_owned_handoff --locked -- --ignored --exact
+      - name: Verify browser opening and still credits through owned episode assembly
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:REEL_TEST_BROWSER = Join-Path ${env:ProgramFiles(x86)} 'Microsoft/Edge/Application/msedge.exe'
+          $env:REEL_TEST_FFMPEG = (Get-Command ffmpeg -ErrorAction Stop).Source
+          $env:REEL_TEST_FFPROBE = (Get-Command ffprobe -ErrorAction Stop).Source
+          cargo test --all-features --test tig_inputs fake_episode_lifecycle::episode_cli::browser_mixed_episode_cli_checks_fresh_opening_and_owned_assembly --locked -- --ignored --exact
       - name: Verify explicit mono duplication preserves source level and rejects stereo
         run: cargo test --test scene_delivery duplicate_mono_preserves_source_level_and_rejects_stereo -- --ignored --exact
       - name: Verify independent native audio matches full-scene stems and rejects stale evidence
