@@ -472,6 +472,24 @@ impl Source {
             _ => bail!("record documents unavailable within authoring budget"),
         }
     }
+    /// Capture bounded exact bytes without requiring a physical-path capability.
+    /// The provider's requested reader protection remains live for the caller.
+    pub(crate) fn authoring_snapshot(
+        &mut self,
+        file: &FileRef,
+        max: usize,
+    ) -> Result<(Vec<u8>, VerifiedRead)> {
+        let (_, object) = self.expected(file)?;
+        if max > JOB_BYTES_MAX || object.bytes > max as u64 {
+            bail!("authoring snapshot exceeds byte budget");
+        }
+        let mut held = self.cache.open_verified(&object)?;
+        let raw = read_held(&mut held, max)?;
+        if Object::from_bytes(&raw) != object {
+            bail!("authoring snapshot differs from its exact byte pin");
+        }
+        Ok((raw, held))
+    }
     /// Resolve current binding metadata in this captured view, without media IO.
     /// Selection status is project data, not a grant of production authority.
     pub fn resolve_asset(&self, id: &str) -> Result<AssetRef> {
