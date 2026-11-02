@@ -31,6 +31,15 @@ interrupted retry and streamed large synthetic bytes. Strict all-target/all-feat
 Clippy, fmt, diff and all 87 source hashes pass. Full local/hosted regression
 qualification is recorded separately; candidate runtime installation remains open.
 
+Qualification findings: schema support introduced WASM packages not previously
+shared with the root lock. Align those new root entries to the browser's pinned
+versions; its 30 shared package identities/checksums now match, with no browser
+lock or assembly-foundation edits. The source-pin regression still expected the
+previous65-file intake; update its exact commit/count/byte snapshot to87 files /
+899,028 bytes and include the now-declared Git attributes file in the inventory.
+Keep all per-file hashes, length checks, path/symlink rejection and unlisted-file
+checks. These corrections require new final-head qualification.
+
 Disposition: pass with risk for isolated candidate testing. Do not upgrade another
 lane or call Melena migrated from these fixture results. T3 claim handoff and real
 asset/coverage/rollback acceptance remain required.

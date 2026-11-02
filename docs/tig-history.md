@@ -1,7 +1,8 @@
 # Existing-cache history command host
 
 Candidate input REEL49ede239fe66f6a86c608f1ad0dfdd86804d8e24, Tig
-3a1ce2441957023c08efbedeabf725ed5668c81b (upstream qualification pending).
+3a1ce2441957023c08efbedeabf725ed5668c81b, qualified upstream through Tig#76
+(main46cf99c88f7de08506074f29718105f2f391b3d8).
 Scope: exact vendor source intake and one optional thin host of Tig's history
 application service through REEL's existing CAS publisher. No cache engine,
 renderer, legacy script, live enrollment or tool binding change.

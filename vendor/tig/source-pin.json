@@ -3,7 +3,7 @@
   "repository": "https://github.com/giodl73-repo/tig",
   "commit": "3a1ce2441957023c08efbedeabf725ed5668c81b",
   "license": "MIT",
-  "scope": "Cargo manifests/lock and Rust src files; upstream bytes unchanged; external test suites and documentation omitted",
+  "scope": "Git attributes, Cargo manifests/lock/license and Rust src files; upstream bytes unchanged; external test suites and documentation omitted",
   "files": [
     {
       "path": ".gitattributes",
