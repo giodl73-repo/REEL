@@ -22,7 +22,9 @@ Existing owner worktree reel-worktrees/audio-repair is outside this work.
 
 ## Scope and gates
 
-- Preserve src/, crates/, vendor/, root Cargo.toml/lock and native workflows.
+- This wave preserves production src/, crates/, vendor/, root Cargo.toml/lock
+  and native workflows. Integrate owner updates without reverting them; freeze
+  only the portable assembly crate in the ongoing Pages guard.
 - Expose validate_graph, closure, selected_closure, presentation_closure and
   graph_lock. Preserve native ordering, error text and field meanings.
 - Native graph validation does not establish whole-graph acyclicity or cache

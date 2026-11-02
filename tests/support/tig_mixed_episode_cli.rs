@@ -1,6 +1,97 @@
 //! Native opening/credits in the same tiny captured episode as normal scenes.
 use super::*;
 
+pub(super) fn configure_browser(
+    p: &mut Project,
+    request: &mut reel::tig_episode::Request,
+) -> Vec<Value> {
+    let mut presentations = configure(p, request);
+    let schema =
+        Object::from_bytes(&fs::read(p.repo.path().join("definitions/authored.json")).unwrap());
+    let definition = write(
+        p.repo.path(),
+        "definitions/mixed-browser-source.json",
+        &json!({
+            "schema":"tig.definition.design-1","id":"types/mixed-browser-source","authored_schema":schema,
+            "authoring":{"properties":["document"],"required":["document"],"defaults":{}},"stream_rules":{},"semantic_rules":{}
+        }),
+    );
+    p.profile["admitted"].as_array_mut().unwrap().push(json!({
+        "id":"types/mixed-browser-source","object":definition,"payload":{"kind":"selected"}
+    }));
+    let media =
+        Object::from_bytes(&fs::read(p.repo.path().join("definitions/media.json")).unwrap());
+    let svg=p.publish("hot",br##"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect id="r" width="64" height="64" fill="red"/><script>addEventListener('reelframe',e=>document.getElementById('r').setAttribute('fill',e.detail.frame%2?'blue':'red'))</script></svg>"##);
+    write(
+        p.repo.path(),
+        "records/mixed-browser-svg.tig",
+        &json!({
+            "schema":"tig.instance.design-1","id":"mixed/browser-svg","definition":{"id":"types/media","sha256":media.sha256,"bytes":media.bytes},
+            "authored":{},"selected":svg,"streams":[],"status":{"selection_state":"selected-private-production"},"metadata":{}
+        }),
+    );
+    write(
+        p.repo.path(),
+        "records/mixed-opening-source.tig",
+        &json!({
+            "schema":"tig.instance.design-1","id":"mixed/opening/source",
+            "definition":{"id":"types/mixed-browser-source","sha256":definition.sha256,"bytes":definition.bytes},
+            "authored":{"document":{"source":"opening.svg","audio":"audio.wav","inputs":{"opening.svg":{"id":"mixed/browser-svg"},"audio.wav":{"id":"cue/main"}},
+                "width":64,"height":64,"fps":24,"frame_count":24}},
+            "selected":null,"streams":[],"status":{"selection_state":"selected-private-production"},"metadata":{}
+        }),
+    );
+    p.commit("declare browser opening primaries alongside still credits");
+    let request_value = json!({"schema":reel::tig_browser::SCHEMA,"root_id":"mixed/opening/source",
+        "root_definition":"types/mixed-browser-source","primary_definitions":["types/media"],
+        "bounds":{"max_inputs":8,"max_input_bytes":1048576,"max_frames":24,"max_canvas_pixels":4096}});
+    let browser_path =
+        PathBuf::from(std::env::var_os("REEL_TEST_BROWSER").expect("explicit browser required"));
+    let identity = reel::media_runtime::ByteIdentity::observe_file(&browser_path).unwrap();
+    let program = json!({"path":browser_path,"sha256":identity.sha256,"bytes":identity.bytes});
+    let browser =
+        reel::media_runtime::BoundTool::bind(&serde_json::from_value(program.clone()).unwrap())
+            .unwrap();
+    let execution = json!({"program":program,"clean_picture":false,"limits":{
+        "capture":{"max_requests":32,"max_resource_bytes":1048576,"max_served_bytes":4194304,"max_message_bytes":4194304,
+            "max_messages":4096,"max_png_bytes":1048576,"max_frames":24,"max_canvas_pixels":4096,"max_elapsed_ms":60000,"max_io_wait_ms":15000},
+        "max_workspace_bytes":134217728,"max_output_bytes":1048576,"browser_memory_bytes":2147483648_u64,"browser_processes":64,
+        "encoder_memory_bytes":268435456,"encoder_processes":4}});
+    let limits = serde_json::from_value(execution["limits"].clone()).unwrap();
+    let mut source = p.source();
+    let prepared = reel::tig_browser::lower(
+        &mut source,
+        &serde_json::from_value(request_value.clone()).unwrap(),
+    )
+    .unwrap();
+    let inputs = source
+        .prepare_files(&prepared.inputs.values().cloned().collect::<Vec<_>>())
+        .unwrap();
+    let workspace = p.data.path().join("original-browser-opening");
+    fs::create_dir(&workspace).unwrap();
+    let output = workspace.join("master.mkv");
+    reel::tig_browser::render::native(
+        &prepared,
+        &inputs,
+        &p.programs,
+        &browser,
+        &workspace,
+        &output,
+        &limits,
+        false,
+        || Ok(()),
+    )
+    .unwrap();
+    let selected = p.publish("hot", &fs::read(&output).unwrap());
+    let mut record = read(p.repo.path().join("records/output-opening.tig"));
+    record["selected"] = json!(selected);
+    write(p.repo.path(), "records/output-opening.tig", &record);
+    presentations[0]["request"] = request_value;
+    presentations[0]["browser"] = execution;
+    p.commit("select synthetic browser master for fresh-reference episode assembly");
+    presentations
+}
+
 pub(super) fn configure(p: &mut Project, request: &mut reel::tig_episode::Request) -> Vec<Value> {
     let authored =
         Object::from_bytes(&fs::read(p.repo.path().join("definitions/authored.json")).unwrap());

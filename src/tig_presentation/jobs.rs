@@ -16,6 +16,8 @@ use tig_store::{
     Key,
     source_claims::{Selection, SourceJournal},
 };
+#[cfg(windows)]
+pub mod browser;
 
 pub struct JobPlan<'a> {
     context: &'a ProductionContext,
@@ -50,7 +52,11 @@ pub struct VerifiedPresentation<'a> {
     source: Reference,
     output: Reference,
     recipe: Digest,
-    comparison: presentation_still_sequence::PrimaryComparison,
+    manifest: FileRef,
+    master: FileRef,
+    yuv: String,
+    rgb: String,
+    audio: String,
     frames: u64,
     samples: u64,
     resources: &'a job::JobContext,
@@ -73,19 +79,18 @@ impl VerifiedPresentation<'_> {
         self.production_definitions
     }
     pub(crate) fn declaration(&self) -> Result<Vec<u8>> {
-        let (yuv, rgb) = self.comparison.picture_sha256();
         Ok(identity::canonical_json(&json!({
             "schema":"reel.tig-presentation-verification.experimental-1",
             "checkpoint":self.checkpoint,"source":self.source,"output":self.output,
             "job":self.resources.selection(),"recipe":self.recipe,
-            "manifest":self.comparison.manifest(),"master":self.comparison.master(),
-            "yuv_sha256":yuv,"rgb_sha256":rgb,"pcm_sha256":self.comparison.audio_sha256(),
+            "manifest":self.manifest,"master":self.master,
+            "yuv_sha256":self.yuv,"rgb_sha256":self.rgb,"pcm_sha256":self.audio,
             "frames":self.frames,"samples":self.samples,"timestamps_verified":true,
             "approval":false,"original_producer_assertion":false,
         }))?)
     }
     pub fn selected(&self) -> &FileRef {
-        self.comparison.master()
+        &self.master
     }
     pub fn source(&self) -> &Reference {
         &self.source
@@ -496,7 +501,11 @@ impl ProtectedPresentation<'_, '_> {
             source: plan.compiled.root().clone(),
             output: plan.target.clone(),
             recipe: plan.recipe.fingerprint().clone(),
-            comparison,
+            manifest: comparison.manifest().clone(),
+            master: comparison.master().clone(),
+            yuv: comparison.picture_sha256().0.into(),
+            rgb: comparison.picture_sha256().1.into(),
+            audio: comparison.audio_sha256().into(),
             frames,
             samples,
             resources: &self.readback.resources,

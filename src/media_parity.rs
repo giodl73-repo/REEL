@@ -323,6 +323,17 @@ fn digest(program: &Path, path: &Path, shape: &Shape) -> Result<Digests> {
 /// mutation protection. No source/output role becomes a production dependency.
 /// The candidate provider selects validation tools for both files; its explicit
 /// refusal never falls back to PATH. This is separate from producer admission.
+/// Read-only shape admission before an expensive fresh primary render.
+pub fn admit_with_inputs(
+    file: &FileRef,
+    inputs: &(impl InputFiles + ?Sized),
+    shape: &Shape,
+) -> Result<()> {
+    video_bytes(shape)?;
+    facts(&inputs.verified_path(file)?, shape, inputs)?;
+    Ok(())
+}
+
 pub fn compare_with_inputs(
     reference: &FileRef,
     reference_inputs: &(impl InputFiles + ?Sized),

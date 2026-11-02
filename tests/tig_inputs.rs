@@ -1,5 +1,8 @@
 #![cfg(feature = "tig")]
 #[cfg(all(windows, feature = "tig-publication"))]
+#[path = "support/tig_browser_owned.rs"]
+mod browser_owned;
+#[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_browser_retained.rs"]
 mod browser_retained;
 #[path = "support/tig_browser_source.rs"]

@@ -33,6 +33,7 @@ use tig_store::{
 mod handoff;
 mod planning;
 mod preparation;
+mod presentation;
 mod records;
 mod worker;
 pub use handoff::finish_episode;
@@ -85,9 +86,12 @@ struct Scene {
 #[serde(deny_unknown_fields)]
 struct Presentation {
     id: String,
-    request: crate::tig_presentation::Request,
+    request: presentation::Request,
     output_id: String,
     output_definition: String,
+    #[cfg(windows)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    browser: Option<presentation::Execution>,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

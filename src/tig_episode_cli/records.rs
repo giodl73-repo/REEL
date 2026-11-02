@@ -40,15 +40,7 @@ pub(super) fn prepare(
         input_definitions.extend(scene.request.control_definitions.iter().map(String::as_str));
     }
     for p in &inputs.presentations {
-        let r = &p.request;
-        input_definitions.extend([
-            r.source_definition.as_str(),
-            r.template_definition.as_str(),
-            r.timing_definition.as_str(),
-            r.clock_definition.as_str(),
-            r.evidence_definition.as_str(),
-        ]);
-        input_definitions.extend(r.primary_definitions.iter().map(String::as_str));
+        input_definitions.extend(p.request.definitions());
     }
     shared::prepare_admission(shared::Admission {
         source: &inputs.source,
