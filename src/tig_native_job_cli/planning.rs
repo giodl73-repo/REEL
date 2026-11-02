@@ -137,6 +137,7 @@ pub(super) fn produce(
                 }
             }
             ContextMode::Delivery => unreachable!(),
+            ContextMode::Browser => bail!("browser jobs require explicit native output bounds"),
         }
         let path = Path::new("compiled/delivery/job.json").canonicalize()?;
         let job = crate::tig_inputs::read_job(&path)?;

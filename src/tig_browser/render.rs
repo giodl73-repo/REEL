@@ -48,7 +48,7 @@ impl Limits {
             processes: self.encoder_processes,
         }
     }
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         self.capture.validate()?;
         if self.max_output_bytes == 0
             || self.max_output_bytes >= self.max_workspace_bytes
@@ -83,18 +83,27 @@ pub fn producer(
     browser: &BoundTool,
     clean_picture: bool,
 ) -> Result<Object> {
-    Ok(Object::from_bytes(&tig_core::identity::canonical_json(
-        &json!({
-            "schema":"reel.tig-browser-native-producer.experimental-1",
-            "media_runtime":programs.identity(),"browser":browser.identity(),"clean_picture":clean_picture,
-            "profile":"ffv1-yuv444p-square-cfr;wav-to-padded-trimmed-pcm24-48000-stereo/v1",
-            "renderer":Object::from_bytes(include_bytes!("render.rs")),
-            "browser_adapter":Object::from_bytes(include_bytes!("render/browser.rs")),
-            "process_adapter":Object::from_bytes(include_bytes!("render/processes.rs")),
-            "capture_adapter":Object::from_bytes(include_bytes!("capture.rs")),
-            "capture_transport":Object::from_bytes(include_bytes!("capture/protocol.rs"))
-        }),
+    Ok(Object::from_bytes(&producer_document(
+        programs,
+        browser,
+        clean_picture,
     )?))
+}
+pub fn producer_document(
+    programs: &BoundPrograms,
+    browser: &BoundTool,
+    clean_picture: bool,
+) -> Result<Vec<u8>> {
+    Ok(tig_core::identity::canonical_json(&json!({
+        "schema":"reel.tig-browser-native-producer.experimental-1",
+        "media_runtime":programs.identity(),"browser":browser.identity(),"clean_picture":clean_picture,
+        "profile":"ffv1-yuv444p-square-cfr;wav-to-padded-trimmed-pcm24-48000-stereo/v1",
+        "renderer":Object::from_bytes(include_bytes!("render.rs")),
+        "browser_adapter":Object::from_bytes(include_bytes!("render/browser.rs")),
+        "process_adapter":Object::from_bytes(include_bytes!("render/processes.rs")),
+        "capture_adapter":Object::from_bytes(include_bytes!("capture.rs")),
+        "capture_transport":Object::from_bytes(include_bytes!("capture/protocol.rs"))
+    }))?)
 }
 
 fn listener() -> Result<TcpListener> {

@@ -9,6 +9,7 @@ pub(super) enum ContextMode {
     Declared,
     Compiled,
     Delivery,
+    Browser,
 }
 impl ContextMode {
     pub(super) fn is_declared(&self) -> bool {

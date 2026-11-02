@@ -48,6 +48,8 @@ jobs:
           $env:REEL_TEST_FFMPEG = (Get-Command ffmpeg -ErrorAction Stop).Source
           $env:REEL_TEST_FFPROBE = (Get-Command ffprobe -ErrorAction Stop).Source
           cargo test --all-features --lib tig_browser::render::tests::real_native_browser_ --locked -- --ignored --test-threads=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --all-features --test tig_inputs managed_browser_cli_renders_retains_and_proposes_with_source_offline --locked -- --ignored --test-threads=1
       - name: Check shared authoring and camera contracts
         run: cargo test -p reel-assembly --all-targets --locked
       - name: Check native music contracts and note proposal tooling
