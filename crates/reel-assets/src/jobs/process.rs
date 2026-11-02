@@ -48,9 +48,41 @@ impl Handles {
             if self.job.is_null() {
                 return Ok(());
             }
+            // A zero accounting count after TerminateJobObject is not a
+            // process-signaled barrier. Close child admission first: with a
+            // limit of one, no existing member can admit another process.
+            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            if QueryInformationJobObject(
+                self.job,
+                JobObjectExtendedLimitInformation,
+                (&mut limits as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                std::mem::size_of_val(&limits) as u32,
+                ptr::null_mut(),
+            ) == 0
+            {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+            limits.BasicLimitInformation.ActiveProcessLimit = 1;
+            if SetInformationJobObject(
+                self.job,
+                JobObjectExtendedLimitInformation,
+                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                std::mem::size_of_val(&limits) as u32,
+            ) == 0
+            {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            let members = job_members(self.job)?;
             if TerminateJobObject(self.job, 1) == 0 {
                 return Err(std::io::Error::last_os_error().into());
             }
+            for member in &members {
+                if WaitForSingleObject(member.0, INFINITE) != WAIT_OBJECT_0 {
+                    return Err(std::io::Error::last_os_error().into());
+                }
+            }
+            drop(members);
             loop {
                 let mut accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
                 if QueryInformationJobObject(
@@ -72,6 +104,71 @@ impl Handles {
             self.job = ptr::null_mut();
         }
         Ok(())
+    }
+}
+struct Member(HANDLE);
+impl Drop for Member {
+    fn drop(&mut self) {
+        unsafe {
+            CloseHandle(self.0);
+        }
+    }
+}
+fn job_members(job: HANDLE) -> Result<Vec<Member>> {
+    // usize storage keeps the variable-length ULONG_PTR list aligned. Once
+    // admission is closed the list cannot grow, but handle ERROR_MORE_DATA
+    // defensively for a creation already in flight during the limit change.
+    let mut capacity = 64usize;
+    loop {
+        let bytes = 8 + capacity * std::mem::size_of::<usize>();
+        let mut storage = vec![0usize; bytes.div_ceil(std::mem::size_of::<usize>())];
+        let list = storage
+            .as_mut_ptr()
+            .cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>();
+        unsafe {
+            if QueryInformationJobObject(
+                job,
+                JobObjectBasicProcessIdList,
+                list.cast(),
+                bytes as u32,
+                ptr::null_mut(),
+            ) == 0
+            {
+                let error = std::io::Error::last_os_error();
+                if error.raw_os_error() == Some(ERROR_MORE_DATA as i32) && capacity < 65536 {
+                    capacity *= 2;
+                    continue;
+                }
+                return Err(error.into());
+            }
+            let count = (*list).NumberOfProcessIdsInList as usize;
+            let ids = std::slice::from_raw_parts((*list).ProcessIdList.as_ptr(), count);
+            let mut members = Vec::with_capacity(count);
+            for &pid in ids {
+                let handle = OpenProcess(
+                    PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                    0,
+                    pid as u32,
+                );
+                if handle.is_null() {
+                    let error = std::io::Error::last_os_error();
+                    if error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) {
+                        continue;
+                    }
+                    return Err(error.into());
+                }
+                let member = Member(handle);
+                let mut belongs = 0;
+                if IsProcessInJob(handle, job, &mut belongs) == 0 {
+                    return Err(std::io::Error::last_os_error().into());
+                }
+                // A PID may have exited and been reused between query/open.
+                if belongs != 0 {
+                    members.push(member);
+                }
+            }
+            return Ok(members);
+        }
     }
 }
 impl Drop for Handles {
