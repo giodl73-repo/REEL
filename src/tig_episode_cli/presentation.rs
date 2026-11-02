@@ -87,13 +87,13 @@ impl Presentation {
             _ => bail!("episode presentation kind and browser admission differ"),
         }
         #[cfg(not(windows))]
-        Ok(())
+        Ok(BrowserProgram)
     }
 }
 #[cfg(windows)]
 pub(super) type BrowserProgram = Option<BoundTool>;
 #[cfg(not(windows))]
-pub(super) type BrowserProgram = ();
+pub(super) struct BrowserProgram;
 
 pub(super) enum Plan<'a> {
     Still(tig_presentation::jobs::JobPlan<'a>),
