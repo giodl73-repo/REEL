@@ -80,7 +80,8 @@ fn picture_pipeline(
     inputs: &dyn InputFiles,
     root: &Path,
 ) -> Result<(Vec<Command>, Vec<tempfile::NamedTempFile>)> {
-    let args = scene_delivery::picture_filter_command(job, plan, inputs)?;
+    let (args, picture_control) =
+        scene_delivery::picture_control::prepare(job, plan, inputs, root)?;
     let mut first = command(inputs, MediaProgram::Ffmpeg, root)?;
     for arg in args {
         if arg == "-i" {
@@ -95,7 +96,7 @@ fn picture_pipeline(
     ]);
     encode(&mut first, job);
     let mut commands = vec![first];
-    let mut sequence_controls = vec![];
+    let mut sequence_controls = picture_control.into_iter().collect::<Vec<_>>();
     for (index, layer) in job
         .external_layers
         .iter()
