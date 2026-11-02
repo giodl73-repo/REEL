@@ -21,20 +21,28 @@ pub const AUTHORING_PROFILE: &str = "reel.music-note-authoring.v1";
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Lock {
-    schema: String,
-    checkpoint: Digest,
-    record: Reference,
-    definition: Reference,
-    subject: Object,
+pub(crate) struct Lock {
+    pub(crate) schema: String,
+    pub(crate) checkpoint: Digest,
+    pub(crate) record: Reference,
+    pub(crate) definition: Reference,
+    pub(crate) subject: Object,
 }
-struct Captured {
-    lock: Lock,
-    raw: Vec<u8>,
+pub(crate) struct Captured {
+    pub(crate) lock: Lock,
+    pub(crate) raw: Vec<u8>,
     _held: VerifiedRead,
 }
+pub(crate) struct Proposal {
+    pub(crate) candidate: Vec<u8>,
+    pub(crate) edit: Vec<u8>,
+    pub(crate) lock: Vec<u8>,
+    pub(crate) count: usize,
+    pub(crate) underlay: bool,
+    pub(crate) dependency: Option<serde_json::Value>,
+}
 pub struct Editor {
-    source: Source,
+    pub(crate) source: Source,
     cache_roots: Vec<PathBuf>,
 }
 impl Editor {
@@ -50,13 +58,16 @@ impl Editor {
             cache_roots,
         })
     }
-    fn capture(&mut self, id: &str) -> Result<Captured> {
+    pub(crate) fn capture(&mut self, id: &str) -> Result<Captured> {
+        self.capture_bounded(id, MODEL_BYTES)
+    }
+    pub(crate) fn capture_bounded(&mut self, id: &str, limit: usize) -> Result<Captured> {
         let record = self.source.record(id)?;
         let file = self.source.authoring_file(id)?;
-        if file.bytes > MODEL_BYTES as u64 {
+        if file.bytes > limit as u64 {
             bail!("model exceeds authoring budget");
         }
-        let (raw, held) = self.source.authoring_snapshot(&file, MODEL_BYTES)?;
+        let (raw, held) = self.source.authoring_snapshot(&file, limit)?;
         let subject = Object::from_bytes(&raw);
         if subject.sha256.as_str() != file.sha256 || subject.bytes != file.bytes {
             bail!("captured model pin changed");
@@ -73,7 +84,7 @@ impl Editor {
             _held: held,
         })
     }
-    fn destination(&self, output: &Path) -> Result<()> {
+    pub(crate) fn destination(&self, output: &Path) -> Result<()> {
         if !output.is_absolute()
             || fs::symlink_metadata(output).is_ok()
             || output.components().any(|c| {
@@ -134,7 +145,7 @@ impl Editor {
         {
             bail!("stale music asset, definition or subject lock");
         }
-        let (original, definition, schema) = self.source.record_documents(&old.record.id)?;
+        let (_, definition, _) = self.source.record_documents(&old.record.id)?;
         if serde_json::from_slice::<serde_json::Value>(&definition)?["semantic_rules"]["profile"]
             != AUTHORING_PROFILE
         {
@@ -142,11 +153,47 @@ impl Editor {
         }
         let edit = read(edit_path, MODEL_BYTES)?;
         let (candidate, count) = reel_music::note_editor::propose_bytes(&captured.raw, &edit)?;
+        self.write_proposal(
+            &captured,
+            Proposal {
+                candidate,
+                edit,
+                lock: lock_raw,
+                count,
+                underlay: false,
+                dependency: None,
+            },
+            output,
+        )
+    }
+    pub(crate) fn write_proposal(
+        &mut self,
+        captured: &Captured,
+        proposal: Proposal,
+        output: &Path,
+    ) -> Result<usize> {
+        let Proposal {
+            candidate,
+            edit,
+            lock: lock_raw,
+            count,
+            underlay,
+            dependency,
+        } = proposal;
+        let old = &captured.lock;
+        let (original, definition, schema) = self.source.record_documents(&old.record.id)?;
+        let lineage = if underlay {
+            "reel.tig-music-underlay-edit.experimental-1"
+        } else {
+            LINEAGE
+        };
         let replacement = Object::from_bytes(&candidate);
         let bound = Instance::parse(&original)?.bind(&definition, &schema)?;
         let mut record = serde_json::to_value(bound.instance().value())?;
         if !record["metadata"]["reel_music_edit"].is_null()
             && record["metadata"]["reel_music_edit"]["schema"] != LINEAGE
+            && record["metadata"]["reel_music_edit"]["schema"]
+                != "reel.tig-music-underlay-edit.experimental-1"
         {
             bail!("reserved music lineage metadata conflicts");
         }
@@ -156,23 +203,30 @@ impl Editor {
         record["selected"]["media_type"] = json!("application/json");
         record["status"] = json!({"selection_state":"draft-unreviewed","human_approval":false,
             "production_state":"unclassified","subject":replacement});
-        record["metadata"]["reel_music_edit"] = json!({"schema":LINEAGE,
+        record["metadata"]["reel_music_edit"] = json!({"schema":lineage,
             "predecessor_record":old.record,"predecessor_selected":old.subject,
             "predecessor_status":previous_status,"source_lock":Object::from_bytes(&lock_raw),
             "edit_request":Object::from_bytes(&edit),"checkpoint":captured.lock.checkpoint,
             "production_claim":null,"native_validation":"not-run","dependency_names_preserved":true});
+        if let Some(dependency) = dependency {
+            record["metadata"]["reel_music_edit"]["verified_lyric"] = dependency;
+        }
         let record = serde_json::to_vec_pretty(&record)?;
         if record.len() > 65_536 {
             bail!("candidate record exceeds authoring budget");
         }
         Instance::parse(&record)?.bind(&definition, &schema)?;
-        let receipt = serde_json::to_vec(
-            &json!({"schema":"reel.tig-music-note-proposal.experimental-1",
+        let mut receipt = json!({"schema":if underlay {"reel.tig-music-underlay-proposal.experimental-1"} else {"reel.tig-music-note-proposal.experimental-1"},
             "expected_record":old.record,"replacement_record":Object::from_bytes(&record),
-            "replacement_model":replacement,"changed_notes":count,"native_validation":"not-run",
+            "replacement_model":replacement,"native_validation":"not-run",
             "dependency_resolution":"requires the original logical binding context; no standalone path validation",
-            "published":false,"git_changed":false,"human_approval":false,"authorizes_eviction":false}),
-        )?;
+            "published":false,"git_changed":false,"human_approval":false,"authorizes_eviction":false});
+        receipt[if underlay {
+            "underlay_spans"
+        } else {
+            "changed_notes"
+        }] = json!(count);
+        let receipt = serde_json::to_vec(&receipt)?;
         fs::create_dir(output)?;
         for (name, bytes) in [
             ("model.json", candidate.as_slice()),
@@ -189,7 +243,7 @@ impl Editor {
         Ok(count)
     }
 }
-fn read(path: &Path, limit: usize) -> Result<Vec<u8>> {
+pub(crate) fn read(path: &Path, limit: usize) -> Result<Vec<u8>> {
     let metadata = fs::symlink_metadata(path)?;
     #[cfg(windows)]
     let reparse = {
@@ -210,7 +264,7 @@ fn read(path: &Path, limit: usize) -> Result<Vec<u8>> {
     }
     Ok(raw)
 }
-fn write(path: &Path, raw: &[u8]) -> Result<()> {
+pub(crate) fn write(path: &Path, raw: &[u8]) -> Result<()> {
     use std::io::Write;
     fs::OpenOptions::new()
         .write(true)
