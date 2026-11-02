@@ -6,7 +6,12 @@ fn fixture() -> Fixture {
 }
 fn fixture_with_permission(editable: bool) -> Fixture {
     let mut f = Fixture::new();
-    f.profile["byte_source"]["required"] = json!("prevent-mutation");
+    f.profile["byte_source"]["required"] = serde_json::to_value(if cfg!(windows) {
+        tig_store::existing::RequiredProtection::PreventMutation
+    } else {
+        tig_store::existing::RequiredProtection::CooperativeImmutable
+    })
+    .unwrap();
     let raw = fs::read(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("manifests/fixtures/music-model-corrected/model.yaml"),

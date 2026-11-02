@@ -31,3 +31,11 @@ proposals for retained package-member definitions without explicit authoring
 permission; readonly export alone does not promote their semantic contract.
 Formatting and whitespace checks pass. Hosted integration and actual project
 exercise remain separate from these local results.
+
+The authoring adapter now consumes the existing verified byte reader directly.
+It rehashes the bounded captured bytes and retains requested reader protection
+through use, without asking for a renderer's physical-path capability. The same
+four cases compile on Linux and Windows; the latest Windows run and strict
+all-target/all-feature Clippy pass. Cooperative readers remain explicitly
+cooperative. Hosted Linux behavior and final integration remain separate checks.
+The earlier actual-project exercise retains its original source/runtime pins.

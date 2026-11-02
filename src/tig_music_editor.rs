@@ -1,9 +1,6 @@
 //! Private, bounded note authoring over an explicitly captured Tig namespace.
 //! No dependency discovery, musical validation, publication or Git mutation.
-use crate::{
-    scene_delivery::InputFiles,
-    tig_inputs::{Inputs, Profile, Source},
-};
+use crate::tig_inputs::{Profile, Source};
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -14,6 +11,7 @@ use std::{
 };
 use tig_assets::{graph::Reference, native::Instance};
 use tig_core::{Digest, Object};
+use tig_store::existing::VerifiedRead;
 
 const LOCK: &str = "reel.tig-music-editor-lock.experimental-1";
 const LINEAGE: &str = "reel.tig-music-note-edit.experimental-1";
@@ -33,7 +31,7 @@ struct Lock {
 struct Captured {
     lock: Lock,
     raw: Vec<u8>,
-    _held: Inputs,
+    _held: VerifiedRead,
 }
 pub struct Editor {
     source: Source,
@@ -58,8 +56,7 @@ impl Editor {
         if file.bytes > MODEL_BYTES as u64 {
             bail!("model exceeds authoring budget");
         }
-        let held = self.source.prepare_files(std::slice::from_ref(&file))?;
-        let raw = read(&held.verified_path(&file)?, MODEL_BYTES)?;
+        let (raw, held) = self.source.authoring_snapshot(&file, MODEL_BYTES)?;
         let subject = Object::from_bytes(&raw);
         if subject.sha256.as_str() != file.sha256 || subject.bytes != file.bytes {
             bail!("captured model pin changed");

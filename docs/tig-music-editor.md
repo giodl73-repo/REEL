@@ -27,11 +27,14 @@ definitions remain readable but cannot silently become editable model contracts.
 Project migration must admit an appropriate model definition separately; the
 editor does not promote an imported hold or change a definition itself.
 
-Windows `prevent-mutation` protection is mandatory for this path-based input
-adapter. The exact model is opened through Tig's verified reader, and its read
-guard remains live across the operation. A missing/corrupt object or unavailable
-protection refuses before creating an output directory. No audio, referenced
-analysis or other model dependency is opened.
+The model is captured through Tig's verified byte reader, with its requested
+protection kept live across the operation. Its complete bounded bytes are hashed
+again after reading, before any output is created. The editor receives captured
+bytes, never a cache path. `prevent-mutation` may be requested where supported;
+cooperative immutable readers remain explicitly cooperative, not a promise that
+another writer is excluded. A corrupt snapshot or unavailable requested protection
+refuses. Existing path-based render protections are unchanged. No audio,
+referenced analysis or other model dependency is opened.
 
 ## Edit and lock
 
