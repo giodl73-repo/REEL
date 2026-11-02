@@ -43,6 +43,11 @@ path = "src/bin/reel-tig-scene.rs"
 required-features = ["tig"]
 
 [[bin]]
+name = "reel-tig-music-editor"
+path = "src/bin/reel-tig-music-editor.rs"
+required-features = ["tig"]
+
+[[bin]]
 name = "reel-tig-register"
 path = "src/bin/reel-tig-register.rs"
 required-features = ["tig"]
