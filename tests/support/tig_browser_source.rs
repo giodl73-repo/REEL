@@ -222,7 +222,8 @@ fn browser_recipe_tracks_leaf_bytes_but_not_annotations_or_resource_limits() {
     let (_, bounded) =
         adapter::freeze_context(&mut current, &request, &mut nodes, Default::default()).unwrap();
     let bounded_recipe = adapter::recipe(&mut current, &request, &bounded, &producer).unwrap();
-    assert_ne!(annotated.descriptor(), bounded.descriptor());
+    // Resource admission belongs to the retained job evidence, not pixel identity.
+    assert_eq!(annotated.descriptor(), bounded.descriptor());
     assert_eq!(first.fingerprint(), bounded_recipe.fingerprint());
     edit(&f, "cel-a", |v| {
         v["selected"] =
@@ -375,4 +376,279 @@ fn browser_plan_cli_is_metadata_only_and_redacts_ids_paths_and_errors() {
         "browser source plan refused; verify explicit metadata and admission"
     );
     assert!(!f.root().join("exports").exists());
+}
+
+#[cfg(all(windows, feature = "tig-publication"))]
+#[test]
+fn browser_capture_cli_freezes_to_existing_stores_and_replays_with_source_offline() {
+    let (f, request) = fixture();
+    let mut profile = super::capture::profile(&f, &request);
+    profile["schema"] = json!("reel.tig-browser-capture-profile.experimental-1");
+    profile.as_object_mut().unwrap().remove("preparation_cache");
+    let output = super::capture::run(&f, &profile, "browser-captured.json");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["context_kind"], "browser");
+    assert_eq!(summary["readback_equal"], true);
+    assert_eq!(summary["primary"], 4);
+    assert_eq!(summary["media_rendered"], false);
+    assert_eq!(summary["job_adopted"], false);
+    let fragment: Value =
+        serde_json::from_slice(&fs::read(f.root().join("browser-captured.json")).unwrap()).unwrap();
+    assert_eq!(fragment["context_mode"], "browser");
+    for name in [".git", "records", "definitions"] {
+        let from = f.root().join(name);
+        let to = f.root().join(format!("offline-{name}"));
+        assert!(from.is_absolute() && from.starts_with(f.root()) && to.starts_with(f.root()));
+        fs::rename(from, to).unwrap();
+    }
+    let mut reader = tig_store::metadata::MetadataReader::open(
+        Path::new(fragment["metadata_root"].as_str().unwrap()),
+        &serde_json::from_value(fragment["metadata_minimum"].clone()).unwrap(),
+    )
+    .unwrap();
+    let (mut restored, context) = adapter::restore_context(
+        serde_json::from_value(fragment["source"].clone()).unwrap(),
+        &request,
+        &serde_json::from_value(fragment["context"].clone()).unwrap(),
+        &mut reader,
+        Default::default(),
+    )
+    .unwrap();
+    assert_eq!(context.requirements().primary().len(), 4);
+    assert_eq!(
+        adapter::recipe(
+            &mut restored,
+            &request,
+            &context,
+            &Object::from_bytes(b"fixture producer")
+        )
+        .unwrap()
+        .operation()
+        .parameters,
+        Object::from_bytes(context.descriptor()),
+    );
+    assert_eq!(
+        adapter::lower(&mut restored, &request)
+            .unwrap()
+            .inputs
+            .len(),
+        4
+    );
+    assert_eq!(restored.byte_requests(), 0);
+    assert!(!f.root().join("native").exists());
+}
+
+#[cfg(all(windows, feature = "tig-publication"))]
+#[test]
+#[ignore = "explicit enrolled browser/FFmpeg; synthetic managed render and retention"]
+fn managed_browser_cli_renders_retains_and_proposes_with_source_offline() {
+    use reel::media_runtime::ByteIdentity;
+    let (mut f, request) = fixture();
+    f.profile["byte_source"]["required"] = json!("prevent-mutation");
+    for (name, bytes) in [
+        ("svg", br##"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><image href="pictures/a.svg" width="8" height="8"/><rect id="r" width="8" height="8" fill="red"/><script>addEventListener('reelframe',e=>document.getElementById('r').setAttribute('fill',e.detail.frame%2?'blue':'red'))</script></svg>"##.as_slice()),
+        ("cel-a", br#"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="green"/></svg>"#.as_slice()),
+        ("cel-b", br#"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="blue"/></svg>"#.as_slice()),
+    ] {
+        let object = Object::from_bytes(bytes);
+        fs::write(f.root().join("cache/objects").join(object.sha256.as_str()), bytes).unwrap();
+        edit(&f, name, |v| v["selected"] = serde_json::to_value(&object).unwrap());
+    }
+    edit(&f, "browser", |v| {
+        let inputs = v["authored"]["document"]["inputs"].as_object_mut().unwrap();
+        for key in ["a", "b"] {
+            let old = inputs.remove(&format!("pictures/{key}.ppm")).unwrap();
+            inputs.insert(format!("pictures/{key}.svg"), old);
+        }
+        v["authored"]["document"]["frame_count"] = json!(6);
+    });
+    commit(&mut f);
+    super::native_cli::seed(&mut f);
+    let original = fs::read(f.root().join("records/native-output.tig")).unwrap();
+    let base = git(f.root(), &["rev-parse", "HEAD"]);
+    let mut capture = super::capture::profile(&f, &request);
+    capture["schema"] = json!("reel.tig-browser-capture-profile.experimental-1");
+    capture.as_object_mut().unwrap().remove("preparation_cache");
+    let captured = super::capture::run(&f, &capture, "managed-context.json");
+    assert!(
+        captured.status.success(),
+        "{}",
+        String::from_utf8_lossy(&captured.stderr)
+    );
+    let fragment: Value =
+        serde_json::from_slice(&fs::read(f.root().join("managed-context.json")).unwrap()).unwrap();
+    let stores: Value =
+        serde_json::from_slice(&fs::read(f.root().join("capture-stores.json")).unwrap()).unwrap();
+    let binary = Path::new(env!("CARGO_BIN_EXE_reel-tig-job"))
+        .canonicalize()
+        .unwrap();
+    let host = ByteIdentity::observe_file(&binary).unwrap();
+    let pin = |path: PathBuf| {
+        let path = path.canonicalize().unwrap();
+        let observed = ByteIdentity::observe_file(&path).unwrap();
+        json!({"path":path,"sha256":observed.sha256,"bytes":observed.bytes})
+    };
+    let explicit = |name| {
+        PathBuf::from(std::env::var_os(name).expect("explicit fixture tool enrollment required"))
+    };
+    let git_exe = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|p| p.join("git.exe"))
+        .find(|p| p.is_file())
+        .unwrap()
+        .canonicalize()
+        .unwrap();
+    let cache = f.root().join("capture-capacity");
+    fs::create_dir_all(cache.join("objects/sha256")).unwrap();
+    let profile = json!({"schema":"reel.tig-native-job-profile.experimental-1",
+        "worker":{"context_mode":"browser","metadata_root":fragment["metadata_root"],"metadata_minimum":fragment["metadata_minimum"],
+            "source":fragment["source"],"context":fragment["context"],"request":request,
+            "runtime":{"host":host,"ffmpeg":pin(explicit("REEL_TEST_FFMPEG")),"ffprobe":pin(explicit("REEL_TEST_FFPROBE")),"dependencies":{}},
+            "browser":{"program":pin(explicit("REEL_TEST_BROWSER")),"clean_picture":false,
+                "limits":{"capture":{"max_requests":32,"max_resource_bytes":1048576,"max_served_bytes":4194304,"max_message_bytes":4194304,
+                    "max_messages":4096,"max_png_bytes":1048576,"max_frames":6,"max_canvas_pixels":64,"max_elapsed_ms":60000,"max_io_wait_ms":15000},
+                    "max_workspace_bytes":134217728,"max_output_bytes":1048576,"browser_memory_bytes":2147483648_u64,"browser_processes":64,
+                    "encoder_memory_bytes":268435456,"encoder_processes":4}},
+            "outputs":{"master.mkv":1048576,"receipt.json":65536},
+            "record_outputs":[{"output":"master.mkv","template":{"id":"delivery/native-scene","object":Object::from_bytes(&original)},"selector":{"kind":"selected"}}],
+            "git_handoff":{"git_executable":git_exe,"repository":f.root(),"base":base,
+                "identity":{"name":"Fixture","email":"fixture@example.invalid","unix_seconds":1700000000},"message":"managed browser candidate",
+                "paths":{"delivery/native-scene":"records/native-output.tig"},"protection":"prevent-mutation"}},
+        "cache":capture["cache"],"journal_root":stores["journal_root"],"journal_minimum":stores["journal_minimum"],
+        "source_id":"browser-fixture","owner":"fixture-owner","expected_revision":0,"start_operation":"start","retain_operation":"retain",
+        "budget_bytes":268435456,"scratch_bytes":134217728,"timeout_seconds":180});
+    let profile_path = f.root().join("browser-job.json");
+    let mut invalid = profile.clone();
+    invalid["budget_bytes"] = json!(1);
+    fs::write(&profile_path, serde_json::to_vec(&invalid).unwrap()).unwrap();
+    let refused = Command::new(&binary)
+        .arg("run")
+        .arg(&profile_path)
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("workspace exceeds managed admission")
+    );
+    let journal = tig_store::source_claims::SourceJournal::open(
+        Path::new(stores["journal_root"].as_str().unwrap()),
+        &serde_json::from_value(stores["journal_minimum"].clone()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(journal.checkpoint()).unwrap(),
+        stores["journal_minimum"]
+    );
+    drop(journal);
+    fs::write(&profile_path, serde_json::to_vec(&profile).unwrap()).unwrap();
+    for name in [".git", "records", "definitions"] {
+        let from = f.root().join(name);
+        let to = f.root().join(format!("offline-{name}"));
+        assert!(from.is_absolute() && from.starts_with(f.root()) && to.starts_with(f.root()));
+        fs::rename(from, to).unwrap();
+    }
+    let result = Command::new(&binary)
+        .arg("run")
+        .arg(&profile_path)
+        .output()
+        .unwrap();
+    if !result.status.success() {
+        use std::io::Read;
+        let error = String::from_utf8_lossy(&result.stderr);
+        if let Some((_, suffix)) = error.split_once("cache://sha256/") {
+            let oid = &suffix[..64];
+            let file = fs::File::open(reel_assets::object(&cache, oid)).unwrap();
+            let mut evidence = String::new();
+            flate2::read::GzDecoder::new(file)
+                .take(262144)
+                .read_to_string(&mut evidence)
+                .unwrap();
+            let evidence: Value = serde_json::from_str(&evidence).unwrap();
+            panic!(
+                "{error}; retained synthetic diagnostic: {}",
+                evidence["diagnostics"]
+            );
+        }
+    }
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let result: Value = serde_json::from_slice(&result.stdout).unwrap();
+    let retained = &result["result"]["outputs"];
+    let receipt: Value = serde_json::from_slice(
+        &fs::read(retained["native/receipt.json"]["path"].as_str().unwrap()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(receipt["frames"], 6);
+    assert_eq!(receipt["samples_per_channel"], 12000);
+    assert_eq!(receipt["approved"], false);
+    assert_eq!(
+        receipt["outputs"]["master.mkv"]["sha256"],
+        retained["native/master.mkv"]["sha256"]
+    );
+    let candidate: Value = serde_json::from_slice(
+        &fs::read(
+            result["record_candidates"]["records"][0]["retained_path"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        candidate["selected"]["sha256"],
+        retained["native/master.mkv"]["sha256"]
+    );
+    assert_eq!(
+        candidate["streams"],
+        serde_json::from_slice::<Value>(&original).unwrap()["streams"]
+    );
+    assert_eq!(candidate["status"], json!({}));
+    assert!(result["record_candidates"]["git_proposal"]["object"].is_object());
+    // Operational limits and any exact review grants are retained even though
+    // they are deliberately excluded from semantic render recipe identity.
+    use tig_core::tree::{NodeStore, Tree};
+    let mut journal = tig_store::source_claims::SourceJournal::open(
+        Path::new(stores["journal_root"].as_str().unwrap()),
+        &serde_json::from_value(stores["journal_minimum"].clone()).unwrap(),
+    )
+    .unwrap();
+    let state = journal
+        .source(&tig_store::Key::parse("browser-fixture").unwrap())
+        .unwrap()
+        .unwrap();
+    let mut metadata = tig_store::metadata::MetadataReader::open(
+        Path::new(fragment["metadata_root"].as_str().unwrap()),
+        &serde_json::from_value(fragment["metadata_minimum"].clone()).unwrap(),
+    )
+    .unwrap();
+    let evidence = Tree::from_root(state.predecessors[0].selection.root.clone())
+        .get(
+            &tig_core::LogicalPath::parse("input-evidence/review/admission").unwrap(),
+            &mut metadata,
+            Default::default(),
+        )
+        .unwrap()
+        .0
+        .unwrap();
+    let evidence: Value =
+        serde_json::from_slice(&metadata.get(&evidence).unwrap().unwrap()).unwrap();
+    assert_eq!(
+        evidence["schema"],
+        "reel.tig-browser-job-admission.experimental-1"
+    );
+    assert_eq!(evidence["request"], serde_json::to_value(&request).unwrap());
+    assert_eq!(
+        fs::read(f.root().join("offline-records/native-output.tig")).unwrap(),
+        original
+    );
+    assert!(!f.root().join(".git").exists());
+    let staging = cache.join("staging/caminos");
+    assert!(!staging.exists() || fs::read_dir(staging).unwrap().next().is_none());
 }

@@ -7,6 +7,7 @@ use reel_assets::admission;
 const SCHEMA: &str = "reel.tig-native-capture-profile.experimental-1";
 const EPISODE_SCHEMA: &str = "reel.tig-episode-capture-profile.experimental-1";
 const DELIVERY_SCHEMA: &str = "reel.tig-delivery-capture-profile.experimental-1";
+const BROWSER_SCHEMA: &str = "reel.tig-browser-capture-profile.experimental-1";
 const MAX_OUTPUT: usize = 65_536;
 
 #[derive(Debug)]
@@ -37,10 +38,16 @@ enum Contract {
     Scene(Request),
     Episode(crate::tig_episode::Request),
     Delivery(crate::tig_delivery_template::Request),
+    Browser(crate::tig_browser::Request),
 }
 impl Contract {
     fn parse(schema: &str, value: Value) -> Result<Self> {
         match schema {
+            BROWSER_SCHEMA => {
+                let request: crate::tig_browser::Request = serde_json::from_value(value)?;
+                request.validate()?;
+                Ok(Self::Browser(request))
+            }
             DELIVERY_SCHEMA => {
                 let request: crate::tig_delivery_template::Request = serde_json::from_value(value)?;
                 request.validate()?;
@@ -84,7 +91,8 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("capture requires shared coordination"))?;
     let delivery = matches!(&contract, Contract::Delivery(_));
-    if delivery == capture.preparation_cache.is_some() {
+    let browser = matches!(&contract, Contract::Browser(_));
+    if (delivery || browser) == capture.preparation_cache.is_some() {
         bail!("only scene/episode capture requires a preparation cache");
     }
     for root in [
@@ -162,6 +170,13 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
     }
     let before = preparation.as_ref().map(|p| p.path().join("capture"));
     let context = match &contract {
+        Contract::Browser(request) => crate::tig_browser::freeze_context(
+            &mut source,
+            request,
+            &mut store,
+            TreeLimits::default(),
+        )
+        .map(|(_, context)| context),
         Contract::Scene(request) => tig_scene::freeze_render_context(
             &mut source,
             request,
@@ -206,6 +221,13 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
         &wait,
     );
     let (_, restored) = match &contract {
+        Contract::Browser(request) => crate::tig_browser::restore_context(
+            serde_json::from_value(archive.clone())?,
+            request,
+            context.selection(),
+            &mut reader,
+            TreeLimits::default(),
+        ),
         Contract::Scene(request) => tig_scene::restore_render_context(
             serde_json::from_value(archive.clone())?,
             request,
@@ -274,6 +296,9 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
     if delivery {
         fragment["context_mode"] = json!("delivery");
     }
+    if browser {
+        fragment["context_mode"] = json!("browser");
+    }
     let bytes = serde_json::to_vec(&fragment)?;
     if bytes.len() > MAX_OUTPUT {
         bail!("capture fragment exceeds budget");
@@ -292,7 +317,7 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
         .map_err(|_| anyhow::anyhow!("capture output publication refused"))?;
     Ok(
         json!({"schema":"reel.tig-native-capture-summary.experimental-1",
-        "context_kind":match contract {Contract::Scene(_)=>"scene",Contract::Episode(_)=>"episode",Contract::Delivery(_)=>"delivery"},
+        "context_kind":match contract {Contract::Scene(_)=>"scene",Contract::Episode(_)=>"episode",Contract::Delivery(_)=>"delivery",Contract::Browser(_)=>"browser"},
         "readback_equal":true, "fragment_bytes":bytes.len(),
         "roots":context.roots().len(), "primary":context.requirements().primary().len(),
         "controls":context.requirements().controls().len(), "media_rendered":false,
