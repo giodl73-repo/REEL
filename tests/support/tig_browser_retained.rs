@@ -53,7 +53,19 @@ pub fn exercise(f: &Fixture, profile: &Value, completed: &Value, cache: &Path) {
             .unwrap()
     };
     let output = f.root().join("browser-retained-report.json");
-    let checked = invoke(&comparison, &output);
+    let positive_input = f.root().join("browser-positive-profile.json");
+    fs::write(&positive_input, serde_json::to_vec(&comparison).unwrap()).unwrap();
+    let success_failure = f.root().join("browser-success-failure.json");
+    let checked = Command::new(&binary)
+        .arg("compare-browser-retained")
+        .arg(&positive_input)
+        .arg(&output)
+        .arg("--failure-report")
+        .arg(&success_failure)
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    assert!(!success_failure.exists());
     assert!(
         checked.status.success(),
         "{}",
@@ -88,6 +100,10 @@ pub fn exercise(f: &Fixture, profile: &Value, completed: &Value, cache: &Path) {
         "frames",
         "approval",
         "pcm",
+        "reader-object",
+        "reader-total",
+        "reader-requests",
+        "reader-live",
     ] {
         let mut bad = comparison.clone();
         match case {
@@ -96,6 +112,14 @@ pub fn exercise(f: &Fixture, profile: &Value, completed: &Value, cache: &Path) {
                 bad["context"]["context"] = json!(Object::from_bytes(b"foreign context").sha256)
             }
             "budget" => bad["max_verified_bytes"] = json!(1),
+            "reader-object" => {
+                bad["byte_source"]["limits"] = json!({"object_bytes":master.bytes-1})
+            }
+            "reader-total" => {
+                bad["byte_source"]["limits"] = json!({"total_bytes":master.bytes+4096})
+            }
+            "reader-requests" => bad["byte_source"]["limits"] = json!({"requests":3}),
+            "reader-live" => bad["byte_source"]["limits"] = json!({"live_readers":1}),
             "unprotected" => {
                 bad["source"]["byte_source"]["required"] = json!("cooperative-immutable")
             }
@@ -120,6 +144,44 @@ pub fn exercise(f: &Fixture, profile: &Value, completed: &Value, cache: &Path) {
         );
         assert!(!error.contains(f.root().to_str().unwrap()));
     }
+    let mut diagnostic_case = comparison.clone();
+    diagnostic_case["max_verified_bytes"] = json!(1);
+    let diagnostic_input = f.root().join("browser-diagnostic-profile.json");
+    fs::write(
+        &diagnostic_input,
+        serde_json::to_vec(&diagnostic_case).unwrap(),
+    )
+    .unwrap();
+    let refused_output = f.root().join("browser-diagnostic-comparison.json");
+    let private_failure = f.root().join("browser-private-failure.json");
+    let diagnostic = Command::new(&binary)
+        .arg("compare-browser-retained")
+        .arg(&diagnostic_input)
+        .arg(&refused_output)
+        .arg("--failure-report")
+        .arg(&private_failure)
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    assert!(!diagnostic.status.success());
+    assert!(!refused_output.exists());
+    let failure_bytes = fs::read(&private_failure).unwrap();
+    assert!(failure_bytes.len() <= 32 * 1024);
+    let failure: Value = serde_json::from_slice(&failure_bytes).unwrap();
+    assert_eq!(failure["private"], true);
+    assert_eq!(failure["stage"], "retained metadata");
+    assert!(!failure["detail"].as_str().unwrap().is_empty());
+    assert!(!String::from_utf8_lossy(&diagnostic.stderr).contains("byte allowance"));
+    let again = Command::new(&binary)
+        .arg("compare-browser-retained")
+        .arg(&diagnostic_input)
+        .arg(&refused_output)
+        .arg("--failure-report")
+        .arg(&private_failure)
+        .output()
+        .unwrap();
+    assert!(!again.status.success());
+    assert_eq!(fs::read(&private_failure).unwrap(), failure_bytes);
     // A valid same-clock native file with different pictures/audio must produce
     // an unequal report, not a successful claim or a profile-admission refusal.
     let changed = f.root().join("different-browser-reference.mkv");

@@ -102,6 +102,7 @@ fn compare(profile: &Path, output: &Path, stage: &mut &'static str) -> Result<Va
         bail!("comparison report volume differs");
     }
     *stage = "retained metadata";
+    let reader_limits = p.byte_source.limits;
     let mut cache = ReadCache::new(p.byte_source)?;
     let claim = Claim::parse(&p.claim, &bytes(&mut cache, &p.claim, META_BYTES)?)?;
     let receipt: Receipt = serde_json::from_value(identity::parse_json(&bytes(
@@ -152,6 +153,21 @@ fn compare(profile: &Path, output: &Path, stage: &mut &'static str) -> Result<Va
         })
     {
         bail!("browser output subjects or byte allowance differ");
+    }
+    *stage = "retained byte admission";
+    let reads = [&p.claim, &p.receipt, &p.reference, &master_pin];
+    let read_bytes = reads
+        .iter()
+        .try_fold(0u64, |sum, object| sum.checked_add(object.bytes))
+        .ok_or_else(|| anyhow::anyhow!("retained reader byte sum overflow"))?;
+    if reads
+        .iter()
+        .any(|object| object.bytes > reader_limits.object_bytes)
+        || read_bytes > reader_limits.total_bytes
+        || reader_limits.requests < 4
+        || reader_limits.live_readers < 2
+    {
+        bail!("retained byte reader limits do not cover the declared media reads");
     }
     *stage = "source replay";
     let mut metadata = MetadataReader::open(&p.metadata_root, &p.metadata_minimum)?;
@@ -207,8 +223,10 @@ fn compare(profile: &Path, output: &Path, stage: &mut &'static str) -> Result<Va
     let _inputs = source.prepare_files(&files)?;
     *stage = "runtime bindings";
     let programs = BoundPrograms::bind(&p.runtime)?;
+    *stage = "scratch admission";
     let prepared =
         preparation::Preparation::open_on(&p.cache, &p.metadata_root, &p.preparation_cache, 2)?;
+    *stage = "retained media";
     let reference = HeldReference {
         file: scene_delivery::FileRef {
             path: "reference.mkv".into(),
@@ -275,7 +293,56 @@ fn compare(profile: &Path, output: &Path, stage: &mut &'static str) -> Result<Va
     )
 }
 pub fn compare_browser_retained(profile: &Path, output: &Path) -> Result<Value> {
+    compare_browser_retained_with_failure_report(profile, output, None)
+}
+/// Optional bounded private diagnostics. Default stdout/stderr remain redacted.
+pub fn compare_browser_retained_with_failure_report(
+    profile: &Path,
+    output: &Path,
+    failure_report: Option<&Path>,
+) -> Result<Value> {
+    if let Some(path) = failure_report {
+        if path == output
+            || !path.is_absolute()
+            || path.file_name().is_none()
+            || path.symlink_metadata().is_ok()
+            || path
+                .parent()
+                .is_none_or(|parent| directory(parent).is_err())
+        {
+            bail!("retained browser comparison refused at failure report admission");
+        }
+    }
     let mut stage = "profile admission";
-    compare(profile, output, &mut stage)
-        .map_err(|_| anyhow::anyhow!("retained browser comparison refused at {stage}"))
+    match compare(profile, output, &mut stage) {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            if let Some(path) = failure_report {
+                let publish = || -> Result<()> {
+                    let detail = format!("{error:#}");
+                    let bounded = detail.chars().take(4096).collect::<String>();
+                    let raw = identity::canonical_json(&json!({
+                        "schema":"reel.tig-browser-comparison-failure.experimental-1",
+                        "private":true,"stage":stage,"detail":bounded,
+                        "truncated":bounded.len()!=detail.len(),"authorizes_eviction":false
+                    }))?;
+                    if raw.len() > 32 * 1024 {
+                        bail!("failure report exceeds budget");
+                    }
+                    let mut file = tempfile::NamedTempFile::new_in(path.parent().unwrap())?;
+                    file.write_all(&raw)?;
+                    file.as_file().sync_all()?;
+                    file.persist_noclobber(path)
+                        .map_err(|_| anyhow::anyhow!("failure report publication refused"))?;
+                    Ok(())
+                };
+                if publish().is_err() {
+                    bail!(
+                        "retained browser comparison refused at {stage}; private failure report unavailable"
+                    );
+                }
+            }
+            bail!("retained browser comparison refused at {stage}")
+        }
+    }
 }

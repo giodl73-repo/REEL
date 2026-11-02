@@ -64,7 +64,13 @@ enum Operation {
     /// Recheck retained native outputs and compare their master with a baseline.
     CompareRetained { profile: PathBuf, output: PathBuf },
     /// Replay a browser claim and compare retained native media with an admitted reference.
-    CompareBrowserRetained { profile: PathBuf, output: PathBuf },
+    CompareBrowserRetained {
+        profile: PathBuf,
+        output: PathBuf,
+        /// Write bounded private details on failure; never overwrite an existing file.
+        #[arg(long)]
+        failure_report: Option<PathBuf>,
+    },
     /// Recompile original controls and verify retained bytes; no production claim.
     RevalidateRetained { profile: PathBuf, output: PathBuf },
     /// Explicit one-time shared metadata/journal setup; never invoked by Run.
@@ -150,9 +156,15 @@ fn main() -> ExitCode {
         Operation::CompareRetained { profile, output } => {
             reel::tig_native_job_cli::compare_retained(&profile, &output)
         }
-        Operation::CompareBrowserRetained { profile, output } => {
-            reel::tig_native_job_cli::compare_browser_retained(&profile, &output)
-        }
+        Operation::CompareBrowserRetained {
+            profile,
+            output,
+            failure_report,
+        } => reel::tig_native_job_cli::compare_browser_retained_with_failure_report(
+            &profile,
+            &output,
+            failure_report.as_deref(),
+        ),
         Operation::RevalidateRetained { profile, output } => {
             reel::tig_native_job_cli::revalidate_retained(&profile, &output)
         }

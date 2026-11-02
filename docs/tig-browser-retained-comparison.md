@@ -18,6 +18,15 @@ reference and master). This is not a bound on repeated decoder I/O. Primary byte
 admission remains in the source profile and request. Both primary and
 retained byte providers must require `prevent-mutation`.
 
+Retained reader limits are independent of the primary-input reader limits.
+Admit each claim, receipt, reference and master under `byte_source.limits`, with
+four requests and two simultaneous media readers. Verification bytes count both
+opens even when reference and master are the same object; `max_verified_bytes`
+counts unique object sizes. A profile sized for small source pictures can therefore
+refuse a multi-gigabyte output. Insufficient declared read allowances fail before
+primary loading, runtime binding or decoding. Set the per-object verification time
+budget explicitly for the storage throughput; checks never bypass hashing.
+
 The original producer declaration must still be present at its exact metadata
 pin. It is never reconstructed from the current checker or relabeled as current
 production. Source replay checks the original context, admitted output definitions
@@ -37,6 +46,13 @@ paths or asset identities. An unequal completed comparison writes its report and
 returns a failing exit status; refusal writes no report. Source metadata and job
 ownership remain unchanged. The report grants neither current production currency
 nor creative approval.
+
+For diagnosis, explicitly add `--failure-report NEW_PRIVATE_FILE`. On refusal it
+writes at most 32 KiB of private stage/error details, with message truncation and
+no overwrite. Successful comparisons create no failure report. This opt-in file
+can contain private paths or identifiers; keep it in private evidence storage.
+Default stdout/stderr retain fixed stages only. Scratch admission and runtime
+binding have separate stage names.
 
 Producer-applied Editor review preserves every frame/sample/clock check rather
 than treating matching file size as content equivalence. Rights/Provenance review
