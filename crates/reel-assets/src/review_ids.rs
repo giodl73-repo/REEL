@@ -136,6 +136,7 @@ fn validate(registry: &Registry) -> Result<()> {
         }
     }
     let mut labels = BTreeSet::new();
+    let mut indices = BTreeSet::new();
     for (key, id) in &registry.by_source {
         let (kind, digest) = key.split_once(':').ok_or("Invalid source key")?;
         source_key(&Source {
@@ -144,12 +145,11 @@ fn validate(registry: &Registry) -> Result<()> {
         })?;
         let next = registry.next.get(kind).ok_or("Undeclared source kind")?;
         let number = id.strip_prefix(kind).ok_or("Wrong label kind")?;
-        if number.len() < 4 || number.len() > 12 || !number.bytes().all(|b| b.is_ascii_digit()) {
+        if number.is_empty() || number.len() > 12 || !number.bytes().all(|b| b.is_ascii_digit()) {
             return Err("Invalid label".into());
         }
         let index: u64 = number.parse()?;
-        if index == 0 || index >= *next || format!("{kind}{index:04}") != *id || !labels.insert(id)
-        {
+        if index == 0 || index >= *next || !labels.insert(id) || !indices.insert((kind, index)) {
             return Err("Duplicate label or regressed counter".into());
         }
     }

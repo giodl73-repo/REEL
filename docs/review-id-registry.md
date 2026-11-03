@@ -10,6 +10,9 @@ directory. Retain the snapshot unchanged as an immutable baseline. Preserve all
 source-kind/hash assignments and counters, and reject duplicate IDs, duplicate
 JSON keys, unknown fields, invalid hashes or counters behind assigned IDs. The
 legacy `caminos.private-review-short-ids.v1` schema is an explicit import adapter.
+Historical padding remains exact, including mixed widths. Two spellings of the
+same kind/numeric ID cannot identify different sources. New labels use at least
+four decimal digits; the existing spelling always wins for an existing source.
 New native snapshots use `reel.review-short-ids.v1` with the same declared fields.
 
 Each allocation rereads the baseline and append journal under a per-registry

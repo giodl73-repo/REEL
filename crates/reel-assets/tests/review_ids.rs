@@ -89,7 +89,7 @@ fn rejects_bad_imports_before_creating_state() {
             &format!("\"{key}\":\"C0001\",\"C:{}\":\"C0001\"", "b".repeat(64)),
         ),
         original.replace("C0001", "V0001"),
-        original.replace("C0001", "C01"),
+        original.replace("C0001", "C0000"),
         original.replace("private-review-short-ids.v1", "unknown.v1"),
     ];
     for (i, raw) in invalid.iter().enumerate() {
@@ -262,4 +262,55 @@ fn separate_cli_processes_recover_one_shared_registry() {
     assert_eq!(report.registry.by_source.len(), 10);
     assert_eq!(report.registry.next["C"], 10);
     assert_eq!(report.registry.next["V"], 2);
+}
+
+#[test]
+fn mixed_historical_padding_survives_but_numeric_aliases_refuse() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("mixed.json");
+    let raw = format!(
+        r#"{{"schema":"reel.review-short-ids.v1","by_source":{{"C:{}":"C001","C:{}":"C1000","P:{}":"P23"}},"next":{{"C":1001,"P":24}}}}"#,
+        "a".repeat(64),
+        "b".repeat(64),
+        "c".repeat(64)
+    );
+    fs::write(&source, &raw).unwrap();
+    let state = dir.path().join("mixed-state");
+    let recovered = review_ids::adopt(
+        &source,
+        &format!("{:x}", Sha256::digest(&raw)),
+        raw.len() as u64,
+        &state,
+    )
+    .unwrap();
+    assert_eq!(
+        recovered.registry.by_source[&format!("C:{}", "a".repeat(64))],
+        "C001"
+    );
+    assert_eq!(
+        recovered.registry.by_source[&format!("P:{}", "c".repeat(64))],
+        "P23"
+    );
+    let req = Request {
+        schema: "reel.review-id-request.v1".into(),
+        sources: vec![Source {
+            kind: "P".into(),
+            sha256: "d".repeat(64),
+        }],
+    };
+    assert_eq!(
+        review_ids::allocate(&state, &req).unwrap().assignments[0].id,
+        "P0024"
+    );
+    let alias = raw.replace("C1000", "C0001");
+    fs::write(&source, &alias).unwrap();
+    assert!(
+        review_ids::adopt(
+            &source,
+            &format!("{:x}", Sha256::digest(&alias)),
+            alias.len() as u64,
+            &dir.path().join("alias-state")
+        )
+        .is_err()
+    );
 }

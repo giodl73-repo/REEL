@@ -12,18 +12,25 @@ preserves its bytes/labels/counters, and records only new assignments in a
 durable chained append journal under a bounded per-registry lock. No global
 cache lock, daemon, timestamp selection or automatic counter reset is involved.
 
-The eight focused cases cover source-unavailable replay/idempotent retry, late
+The nine focused cases cover source-unavailable replay/idempotent retry, late
 invalid input and 513-source refusal before append, invalid/duplicate-key and
 regressed-counter imports, truncated/corrupt/repeated/blank journal refusal,
 twelve concurrent workers, baseline tampering and reimport refusal, actual CLI
-report preflight and privacy, and eight independent concurrent CLI processes.
+report preflight and privacy, eight independent concurrent CLI processes, and
+mixed historical padding with numeric-alias collision refusal.
 All pass on Windows. The first concurrency run found that Windows lock contention
 does not necessarily map to ErrorKind::WouldBlock; matching fs2's platform
 contention code fixes the bounded retry without changing lock scope or timeout.
 
-Full reel-assets package tests and strict all-target/all-feature workspace
-Clippy pass. Full workspace and hosted exact-head qualification remain pending
-until their results are recorded. This feature changes no media semantics.
+The real baseline probe refused historical mixed padding without creating a
+state directory. Admission now preserves those existing strings while rejecting
+numeric aliases; new allocations keep the declared minimum four-digit spelling.
+No old labels were rewritten. A synthetic regression captures this distinction.
+
+Full reel-assets package tests pass after that correction. The earlier full
+all-feature workspace run passed at `b05548b`; it does not qualify later changes.
+Final Clippy and hosted exact-head qualification must be recorded separately.
+This feature changes no media semantics.
 
 Producer-applied rights/provenance and editor checks: review labels identify
 source bytes and never confer selection, approval, spoken-text or release rights.
