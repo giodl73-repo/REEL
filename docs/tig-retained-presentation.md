@@ -84,3 +84,20 @@ selection, publication, custody and eviction. A project may require a separate
 upstream-currency gate. The frozen old version remains usable as an explicitly
 retained edition; metadata import alone does not establish that its producer is
 current.
+
+## Geometry and retained-result compatibility
+
+Browser primary comparisons use the captured parent conform's explicit
+`output_geometry.assume_square_for_unspecified_sar` policy. Omission remains
+strict. When enabled, only an absent/unknown pixel-aspect tag is admitted as
+square; a known non-square ratio still refuses. The comparison records the
+policy and any subject that needed that assumption. Picture, color, PCM and
+clock comparisons remain unchanged. Planning, frozen evidence and the worker
+carry the same policy; it is not inferred from the dimensions or filename.
+
+Retained-result handoff checks the actual typed component requests. A mixed
+programme must report current-reference verification and must not claim all
+primary references verified. Primary-only retained reports keep their earlier
+missing-current-flag compatibility, but an explicitly false flag refuses.
+Verification and failure cleanup preserve their original purpose and never
+become assembly, approval or eviction evidence.
