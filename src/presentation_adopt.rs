@@ -15,6 +15,14 @@ use std::{
 
 pub const SCHEMA: &str = "reel.presentation-adopt.v1";
 
+/// Explicit byte-preserving reuse of a complete selected source. Omission keeps
+/// the existing lossless conversion contract; this is not a codec preference.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum OutputMode {
+    RetainSource,
+}
+
 /// A frame-exact excerpt of a hash-bound source. Audio uses the same rational
 /// frame clock; callers cannot independently shift the spoken performance.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -82,6 +90,8 @@ pub struct Manifest {
     pub source_binding: String,
     pub source: scene_delivery::FileRef,
     #[serde(default)]
+    pub output_mode: Option<OutputMode>,
+    #[serde(default)]
     pub selection_evidence: Option<scene_delivery::FileRef>,
     #[serde(default)]
     pub evidence_hash_pointer: Option<String>,
@@ -127,6 +137,8 @@ pub struct Receipt {
     pub source_cache_uri: String,
     pub source_sha256: String,
     pub source_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_mode: Option<OutputMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_range: Option<SourceRange>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -576,6 +588,21 @@ fn source_digest(
     ))
 }
 
+fn master_facts(
+    path: &Path,
+    manifest: &Manifest,
+    inputs: &(impl scene_delivery::InputFiles + ?Sized),
+) -> Result<(u64, u64, String, u32)> {
+    if manifest.output_mode == Some(OutputMode::RetainSource) {
+        // Retention does not promise a lossless codec. Geometry, decoded
+        // content, exact bytes and continuous clocks are still checked.
+        source_facts(path, inputs)
+    } else {
+        let facts = episode_conform::probe_with_inputs(path, inputs)?;
+        Ok((facts.width, facts.height, facts.fps, facts.sample_rate))
+    }
+}
+
 fn source_facts(
     path: &Path,
     inputs: &(impl scene_delivery::InputFiles + ?Sized),
@@ -700,6 +727,14 @@ fn build_manifest(
         bail!("presentation output must be a new directory");
     }
     let manifest: Manifest = serde_json::from_slice(manifest_bytes)?;
+    if manifest.output_mode == Some(OutputMode::RetainSource)
+        && (manifest.source_range.is_some()
+            || manifest.evidence_range_pointer.is_some()
+            || manifest.audio_clock_repair.is_some()
+            || manifest.audio_range_origin.is_some())
+    {
+        bail!("retain-source cannot trim or repair the selected source");
+    }
     if manifest.schema != SCHEMA
         || manifest.role.is_empty()
         || !matches!(manifest.language.as_str(), "es" | "en")
@@ -889,7 +924,9 @@ fn build_manifest(
         .prefix(".presentation-adopt-")
         .tempdir_in(parent)?;
     let master = stage.path().join("master.mkv");
-    if manifest.source_range.is_none() && is_native_lossless(&source, asset_root)? {
+    if manifest.output_mode == Some(OutputMode::RetainSource)
+        || (manifest.source_range.is_none() && is_native_lossless(&source, asset_root)?)
+    {
         fs::copy(&source, &master)?;
     } else {
         let mut command =
@@ -948,18 +985,15 @@ fn build_manifest(
             bail!("presentation lossless conversion failed");
         }
     }
-    let facts = episode_conform::probe_with_inputs(&master, asset_root)?;
-    if (
-        facts.width,
-        facts.height,
-        facts.fps.as_str(),
-        facts.sample_rate,
-    ) != (
-        definition.width,
-        definition.height,
-        expected_fps.as_str(),
-        definition.sample_rate,
-    ) {
+    let (width, height, fps, sample_rate) = master_facts(&master, &manifest, asset_root)?;
+    if (width, height, fps.as_str(), sample_rate)
+        != (
+            definition.width,
+            definition.height,
+            expected_fps.as_str(),
+            definition.sample_rate,
+        )
+    {
         bail!("converted presentation media policy mismatch");
     }
     let (source_picture_sha, source_picture_bytes) = source_digest(
@@ -1022,6 +1056,13 @@ fn build_manifest(
         definition.fps_denominator,
         asset_root,
     )?;
+    let master_sha256 = episode_conform::file_sha(&master)?;
+    let master_bytes = fs::metadata(&master)?.len();
+    if manifest.output_mode == Some(OutputMode::RetainSource)
+        && (master_sha256 != manifest.source.sha256 || master_bytes != manifest.source.bytes)
+    {
+        bail!("retained presentation differs from exact selected source bytes");
+    }
     let receipt = Receipt {
         schema: "reel.presentation-master-receipt.v1".into(),
         role: manifest.role,
@@ -1036,6 +1077,7 @@ fn build_manifest(
         source_cache_uri: selected.cache_uri.clone(),
         source_sha256: selected.sha256.clone(),
         source_bytes: selected.bytes,
+        output_mode: manifest.output_mode,
         source_range: manifest.source_range,
         evidence_range_pointer: manifest.evidence_range_pointer,
         audio_clock_repair: manifest.audio_clock_repair,
@@ -1043,8 +1085,8 @@ fn build_manifest(
         audio_sample_window,
         selection_evidence_sha256,
         evidence_hash_pointer: manifest.evidence_hash_pointer,
-        master_sha256: episode_conform::file_sha(&master)?,
-        master_bytes: fs::metadata(&master)?.len(),
+        master_sha256,
+        master_bytes,
         decoded_picture_sha256: picture_sha,
         decoded_audio_sha256: audio_sha,
         frames,
@@ -1135,6 +1177,9 @@ fn check_manifest(
         || !selected.source_content_matches_lossless_master
         || selected.master_sha256 != episode_conform::file_sha(master_path)?
         || selected.master_bytes != fs::metadata(master_path)?.len()
+        || (selected.output_mode == Some(OutputMode::RetainSource)
+            && (selected.master_sha256 != selected.source_sha256
+                || selected.master_bytes != selected.source_bytes))
     {
         bail!("selected presentation adoption receipt or master is invalid");
     }
@@ -1168,22 +1213,19 @@ fn check_manifest(
         input_root,
         &manifest.template_definition,
     )?)?;
-    let facts = episode_conform::probe_with_inputs(master_path, asset_root)?;
-    if (
-        facts.width,
-        facts.height,
-        facts.fps.as_str(),
-        facts.sample_rate,
-    ) != (
-        definition.width,
-        definition.height,
-        format!(
-            "{}/{}",
-            definition.fps_numerator, definition.fps_denominator
+    let (width, height, fps, sample_rate) = master_facts(master_path, &manifest, asset_root)?;
+    if (width, height, fps.as_str(), sample_rate)
+        != (
+            definition.width,
+            definition.height,
+            format!(
+                "{}/{}",
+                definition.fps_numerator, definition.fps_denominator
+            )
+            .as_str(),
+            definition.sample_rate,
         )
-        .as_str(),
-        definition.sample_rate,
-    ) {
+    {
         bail!("selected presentation master differs from adopted media policy");
     }
     episode_delivery::verify_timestamps_with_inputs(
