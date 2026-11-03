@@ -14,6 +14,7 @@ mod object_index;
 mod output_retention;
 pub mod references;
 pub mod registry;
+pub mod review_ids;
 pub mod scenes;
 pub mod tier_review;
 pub mod tiering;
