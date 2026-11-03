@@ -93,6 +93,34 @@ pub fn compare_master_to_primaries(
     master: &FileRef,
     outputs: &dyn InputFiles,
     stage_parent: &Path,
+    authority: impl FnMut() -> Result<()>,
+) -> Result<PrimaryComparison> {
+    compare_master_to_primaries_with_geometry(
+        plan,
+        inputs,
+        programs,
+        browser,
+        limits,
+        clean_picture,
+        master,
+        outputs,
+        stage_parent,
+        media_parity::GeometryAdmission::default(),
+        authority,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+pub fn compare_master_to_primaries_with_geometry(
+    plan: &Prepared,
+    inputs: &dyn InputFiles,
+    programs: &BoundPrograms,
+    browser: &BoundTool,
+    limits: &tig_browser::render::Limits,
+    clean_picture: bool,
+    master: &FileRef,
+    outputs: &dyn InputFiles,
+    stage_parent: &Path,
+    geometry: media_parity::GeometryAdmission,
     mut authority: impl FnMut() -> Result<()>,
 ) -> Result<PrimaryComparison> {
     authority()?;
@@ -103,7 +131,7 @@ pub fn compare_master_to_primaries(
     }
     // Refuse incompatible historical stream declarations before starting a fresh
     // browser, rather than guessing pixel aspect or reducing audio precision.
-    media_parity::admit_with_inputs(master, &programs.with_inputs(outputs), &shape)?;
+    media_parity::admit_with_geometry(master, &programs.with_inputs(outputs), &shape, geometry)?;
     authority()?;
     let stage = tempfile::Builder::new()
         .prefix("browser-primary-reference-")
@@ -142,12 +170,13 @@ pub fn compare_master_to_primaries(
         path: path.clone(),
         _held: held,
     };
-    let compared = media_parity::compare_with_inputs(
+    let compared = media_parity::compare_with_geometry(
         &reference.file,
         &reference,
         master,
         &programs.with_inputs(outputs),
         &shape,
+        geometry,
     );
     authority()?;
     let parity = compared?;

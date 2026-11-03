@@ -133,9 +133,10 @@ impl<'a> Plan<'a> {
         context: &'a ProductionContext,
         programs: &'a BoundPrograms,
         browser: &'a BrowserProgram,
+        geometry: crate::media_parity::GeometryAdmission,
     ) -> Result<Self> {
         #[cfg(not(windows))]
-        let _ = browser;
+        let _ = (browser, geometry);
         match &spec.request {
             Request::Retained(request) => Ok(Self::Retained(Box::new(
                 tig_presentation::jobs::retained::JobPlan::from_context(
@@ -164,7 +165,7 @@ impl<'a> Plan<'a> {
                     .as_ref()
                     .context("browser execution admission missing")?;
                 Ok(Self::Browser(Box::new(
-                    tig_presentation::jobs::browser::JobPlan::from_context(
+                    tig_presentation::jobs::browser::JobPlan::from_context_with_geometry(
                         source,
                         request,
                         context,
@@ -174,6 +175,7 @@ impl<'a> Plan<'a> {
                             .context("protected browser program missing")?,
                         &execution.limits,
                         execution.clean_picture,
+                        geometry,
                         &spec.output_id,
                         &spec.output_definition,
                     )?,

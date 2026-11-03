@@ -298,6 +298,7 @@ impl ProtectedPresentation<'_, '_> {
             rgb: None,
             audio: receipt.decoded_audio_sha256,
             retained_source: Some(plan.prepared.source.clone()),
+            geometry_admission: None,
             frames: receipt.frames,
             samples: receipt.samples,
             resources: &self.readback.resources,

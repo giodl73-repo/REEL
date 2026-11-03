@@ -17,6 +17,7 @@ pub struct JobPlan<'a> {
     target: Reference,
     master: FileRef,
     definitions: BTreeSet<String>,
+    geometry: crate::media_parity::GeometryAdmission,
 }
 pub struct Readback<'p, 'a> {
     plan: &'p JobPlan<'a>,
@@ -77,6 +78,32 @@ impl<'a> JobPlan<'a> {
         output_id: &str,
         output_definition: &str,
     ) -> Result<Self> {
+        Self::from_context_with_geometry(
+            source,
+            request,
+            context,
+            programs,
+            browser,
+            limits,
+            clean,
+            crate::media_parity::GeometryAdmission::default(),
+            output_id,
+            output_definition,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_context_with_geometry(
+        source: &mut Source,
+        request: &tig_browser::Request,
+        context: &'a ProductionContext,
+        programs: &'a BoundPrograms,
+        browser: &'a BoundTool,
+        limits: &'a tig_browser::render::Limits,
+        clean: bool,
+        geometry: crate::media_parity::GeometryAdmission,
+        output_id: &str,
+        output_definition: &str,
+    ) -> Result<Self> {
         limits.validate()?;
         let (target, master) = target(source, request, output_id, output_definition)?;
         let producer = crate::tig_browser::render::producer_document(programs, browser, clean)?;
@@ -96,7 +123,7 @@ impl<'a> JobPlan<'a> {
         ]);
         let admission = identity::canonical_json(&json!({
             "schema":"reel.tig-browser-reference-admission.experimental-1",
-            "request":request,"limits":limits,"clean_picture":clean,"browser":browser.identity()
+            "request":request,"limits":limits,"clean_picture":clean,"browser":browser.identity(),"geometry_admission":geometry
         }))?;
         metadata.insert(Object::from_bytes(&admission), admission);
         let runtime = programs
@@ -133,6 +160,7 @@ impl<'a> JobPlan<'a> {
             },
         )]);
         Ok(Self {
+            geometry,
             context,
             programs,
             browser,
@@ -289,7 +317,7 @@ impl ProtectedPresentation<'_, '_> {
         let inputs =
             source.prepare_files(&plan.prepared.inputs.values().cloned().collect::<Vec<_>>())?;
         let outputs = source.prepare_files(std::slice::from_ref(&plan.master))?;
-        let compared = tig_browser_reference::compare_master_to_primaries(
+        let compared = tig_browser_reference::compare_master_to_primaries_with_geometry(
             &plan.prepared,
             &inputs,
             plan.programs,
@@ -299,6 +327,7 @@ impl ProtectedPresentation<'_, '_> {
             &plan.master,
             &outputs,
             stage_parent,
+            plan.geometry,
             || self.verify_current(source, journal),
         );
         self.verify_current(source, journal)?;
@@ -322,6 +351,10 @@ impl ProtectedPresentation<'_, '_> {
             yuv: yuv.into(),
             rgb: Some(rgb.into()),
             retained_source: None,
+            geometry_admission: plan
+                .geometry
+                .assume_square_for_unspecified_sar
+                .then_some(plan.geometry),
             audio: compared.audio_sha256().into(),
             frames: compared.frames(),
             samples: compared.samples(),

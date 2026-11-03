@@ -4,6 +4,17 @@ use super::*;
 use tig_core::tree::Tree;
 const HEADER: &str = "reel.tig-episode-retained-context.experimental-1";
 
+fn verified_reference_flags(report: &Value, all_primary: bool) -> bool {
+    report["component_primary_references_verified"] == json!(all_primary)
+        && if all_primary {
+            // Older primary-only workers predate the separate current flag.
+            report["component_current_references_verified"].is_null()
+                || report["component_current_references_verified"] == true
+        } else {
+            report["component_current_references_verified"] == true
+        }
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Temporary {
@@ -290,7 +301,12 @@ fn finish_after_prepare(
                 Purpose::VerifyComponents => {
                     report["schema"]
                         == "reel.tig-episode-component-verification-result.experimental-1"
-                        && report["component_primary_references_verified"] == true
+                        && verified_reference_flags(
+                            &report,
+                            !p.inputs.presentations.iter().any(|spec| {
+                                matches!(&spec.request, presentation::Request::Retained(_))
+                            }),
+                        )
                         && report["components_verified"]
                             == json!(p.inputs.scenes.len() + p.inputs.presentations.len())
                         && report["episode_assembled"] == false
@@ -606,6 +622,37 @@ mod recovery_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reference_flags_preserve_primary_meaning_and_require_checked_retention() {
+        assert!(verified_reference_flags(
+            &json!({"component_primary_references_verified":true}),
+            true
+        ));
+        assert!(verified_reference_flags(
+            &json!({"component_primary_references_verified":true,"component_current_references_verified":true}),
+            true
+        ));
+        assert!(verified_reference_flags(
+            &json!({"component_primary_references_verified":false,"component_current_references_verified":true}),
+            false
+        ));
+        for report in [
+            json!({}),
+            json!({"component_primary_references_verified":false}),
+            json!({"component_primary_references_verified":true,"component_current_references_verified":true}),
+            json!({"component_primary_references_verified":false,"component_current_references_verified":false}),
+        ] {
+            assert!(!verified_reference_flags(&report, false));
+        }
+        assert!(!verified_reference_flags(
+            &json!({"component_primary_references_verified":false,"component_current_references_verified":true}),
+            true
+        ));
+        assert!(!verified_reference_flags(
+            &json!({"component_primary_references_verified":true,"component_current_references_verified":false}),
+            true
+        ));
+    }
     #[test]
     fn retained_resource_accounting_deduplicates_and_preserves_state_on_refusal() {
         let budget = ProtectionBudget {

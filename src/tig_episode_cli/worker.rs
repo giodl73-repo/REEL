@@ -204,7 +204,14 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
         .zip(&mut presentation_sources)
         .zip(&browser_programs)
         .map(|(((spec, context), source), browser)| {
-            presentation::Plan::from_context(source, spec, context, &programs, browser)
+            presentation::Plan::from_context(
+                source,
+                spec,
+                context,
+                &programs,
+                browser,
+                root.reference_geometry,
+            )
         })
         .collect::<Result<Vec<_>>>()?;
     let presentation_resources = presentation_plans
