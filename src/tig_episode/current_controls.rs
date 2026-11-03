@@ -146,7 +146,7 @@ impl CurrentControls {
             let name = name.as_str();
             segment["master"] = serde_json::json!({"path":format!("current/{name}/master.mkv"),"sha256":component.selected.sha256,"bytes":component.selected.bytes});
             segment["source_receipt"] = serde_json::json!({"path":format!("current/{name}/reference.json"),"sha256":object.sha256,"bytes":object.bytes});
-            // A fresh primary-reference proof is not the historical adoption chain.
+            // A current sealed reference is not the historical adoption chain.
             let fields = segment.as_object_mut().context("invalid native segment")?;
             for key in [
                 "adoption_manifest",

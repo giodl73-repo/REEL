@@ -1,4 +1,4 @@
-//! Typed still/browser presentation dispatch; proofs share the sealed parent port.
+//! Typed primary-render and retained-output dispatch through the sealed parent port.
 use super::*;
 #[cfg(windows)]
 use crate::media_runtime::BoundTool;
@@ -8,6 +8,7 @@ use crate::tig_presentation;
 #[serde(untagged)]
 pub(super) enum Request {
     Still(tig_presentation::Request),
+    Retained(crate::tig_retained_presentation::Request),
     #[cfg(windows)]
     Browser(crate::tig_browser::Request),
 }
@@ -17,6 +18,9 @@ impl<'de> Deserialize<'de> for Request {
         match value.get("schema").and_then(Value::as_str) {
             Some(tig_presentation::SCHEMA) => serde_json::from_value(value)
                 .map(Self::Still)
+                .map_err(serde::de::Error::custom),
+            Some(crate::tig_retained_presentation::SCHEMA) => serde_json::from_value(value)
+                .map(Self::Retained)
                 .map_err(serde::de::Error::custom),
             #[cfg(windows)]
             Some(crate::tig_browser::SCHEMA) => serde_json::from_value(value)
@@ -31,6 +35,9 @@ impl<'de> Deserialize<'de> for Request {
 impl Request {
     pub(super) fn definitions(&self) -> std::collections::BTreeSet<&str> {
         match self {
+            Self::Retained(r) => std::iter::once(r.root_definition.as_str())
+                .chain(r.source_definitions.iter().map(String::as_str))
+                .collect(),
             Self::Still(r) => [
                 r.source_definition.as_str(),
                 r.template_definition.as_str(),
@@ -63,6 +70,12 @@ impl Presentation {
         store: &mut impl NodeStore,
     ) -> Result<ProductionContext> {
         match &self.request {
+            Request::Retained(request) => crate::tig_retained_presentation::freeze_context(
+                source,
+                request,
+                store,
+                TreeLimits::default(),
+            ),
             Request::Still(request) => {
                 tig_presentation::freeze_context(source, request, store, TreeLimits::default())
             }
@@ -79,7 +92,7 @@ impl Presentation {
     pub(super) fn bind_browser(&self) -> Result<BrowserProgram> {
         #[cfg(windows)]
         match (&self.request, &self.browser) {
-            (Request::Still(_), None) => Ok(None),
+            (Request::Still(_) | Request::Retained(_), None) => Ok(None),
             (Request::Browser(_), Some(execution)) => {
                 execution.limits.validate()?;
                 Ok(Some(BoundTool::bind(&execution.program)?))
@@ -96,16 +109,19 @@ pub(super) type BrowserProgram = Option<BoundTool>;
 pub(super) struct BrowserProgram;
 
 pub(super) enum Plan<'a> {
-    Still(tig_presentation::jobs::JobPlan<'a>),
+    Retained(Box<tig_presentation::jobs::retained::JobPlan<'a>>),
+    Still(Box<tig_presentation::jobs::JobPlan<'a>>),
     #[cfg(windows)]
-    Browser(tig_presentation::jobs::browser::JobPlan<'a>),
+    Browser(Box<tig_presentation::jobs::browser::JobPlan<'a>>),
 }
 pub(super) enum Readback<'p, 'a> {
+    Retained(tig_presentation::jobs::retained::Readback<'p, 'a>),
     Still(tig_presentation::jobs::Readback<'p, 'a>),
     #[cfg(windows)]
     Browser(tig_presentation::jobs::browser::Readback<'p, 'a>),
 }
 pub(super) enum Owner<'p, 'a> {
+    Retained(tig_presentation::jobs::retained::ProtectedPresentation<'p, 'a>),
     Still(tig_presentation::jobs::ProtectedPresentation<'p, 'a>),
     #[cfg(windows)]
     Browser(tig_presentation::jobs::browser::ProtectedPresentation<'p, 'a>),
@@ -121,23 +137,33 @@ impl<'a> Plan<'a> {
         #[cfg(not(windows))]
         let _ = browser;
         match &spec.request {
-            Request::Still(request) => {
-                Ok(Self::Still(tig_presentation::jobs::JobPlan::from_context(
+            Request::Retained(request) => Ok(Self::Retained(Box::new(
+                tig_presentation::jobs::retained::JobPlan::from_context(
                     source,
                     request,
                     context,
                     programs,
                     &spec.output_id,
                     &spec.output_definition,
-                )?))
-            }
+                )?,
+            ))),
+            Request::Still(request) => Ok(Self::Still(Box::new(
+                tig_presentation::jobs::JobPlan::from_context(
+                    source,
+                    request,
+                    context,
+                    programs,
+                    &spec.output_id,
+                    &spec.output_definition,
+                )?,
+            ))),
             #[cfg(windows)]
             Request::Browser(request) => {
                 let execution = spec
                     .browser
                     .as_ref()
                     .context("browser execution admission missing")?;
-                Ok(Self::Browser(
+                Ok(Self::Browser(Box::new(
                     tig_presentation::jobs::browser::JobPlan::from_context(
                         source,
                         request,
@@ -151,7 +177,7 @@ impl<'a> Plan<'a> {
                         &spec.output_id,
                         &spec.output_definition,
                     )?,
-                ))
+                )))
             }
         }
     }
@@ -161,6 +187,7 @@ impl<'a> Plan<'a> {
         limits: TreeLimits,
     ) -> Result<job::JobContext> {
         match self {
+            Self::Retained(plan) => plan.freeze(store, limits),
             Self::Still(plan) => plan.freeze(store, limits),
             #[cfg(windows)]
             Self::Browser(plan) => plan.freeze(store, limits),
@@ -173,6 +200,9 @@ impl<'a> Plan<'a> {
         limits: TreeLimits,
     ) -> Result<Readback<'p, 'a>> {
         match self {
+            Self::Retained(plan) => {
+                Ok(Readback::Retained(plan.readback(selection, store, limits)?))
+            }
             Self::Still(plan) => Ok(Readback::Still(plan.readback(selection, store, limits)?)),
             #[cfg(windows)]
             Self::Browser(plan) => Ok(Readback::Browser(plan.readback(selection, store, limits)?)),
@@ -192,6 +222,15 @@ impl<'p, 'a> Readback<'p, 'a> {
         budget: &ProtectionBudget,
     ) -> Result<Owner<'p, 'a>> {
         match self {
+            Self::Retained(readback) => Ok(Owner::Retained(readback.protect(
+                source,
+                journal,
+                coordination,
+                identity,
+                revision,
+                operation,
+                budget,
+            )?)),
             Self::Still(readback) => Ok(Owner::Still(readback.protect(
                 source,
                 journal,
@@ -223,6 +262,7 @@ impl Owner<'_, '_> {
         budget: u64,
     ) -> Result<tig_presentation::jobs::VerifiedPresentation<'p>> {
         match self {
+            Self::Retained(owner) => owner.verify_selected_master(source, journal, stage, budget),
             Self::Still(owner) => owner.verify_selected_master(source, journal, stage, budget),
             #[cfg(windows)]
             Self::Browser(owner) => owner.verify_selected_master(source, journal, stage, budget),
