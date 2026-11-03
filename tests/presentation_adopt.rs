@@ -37,6 +37,164 @@ fn selected_native_opening_preserves_exact_bytes_and_rechecks_timing() {
 }
 
 #[test]
+fn retain_source_preserves_compressed_bytes_and_rejects_edits_or_substitution() {
+    use reel::presentation_adopt;
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    assert!(
+        ffmpeg()
+            .args([
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=s=64x64:r=24:d=2"
+            ])
+            .args([
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=48000:duration=2"
+            ])
+            .args([
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-ac",
+                "2",
+                "-shortest"
+            ])
+            .arg(root.join("source.mp4"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    write(
+        &root.join("template.json"),
+        &json!({
+            "schema":"reel.selected-presentation-master-template.v1", "template_id":"film",
+            "kind":"series-opening", "width":64, "height":64, "fps_numerator":24,
+            "fps_denominator":1, "sample_rate":48000, "duration_frames":48
+        }),
+    );
+    write(
+        &root.join("catalog.json"),
+        &json!({
+            "schema":"reel.scene-template-catalog.v1", "templates":[{
+                "template_id":"film", "kind":"series-opening", "required_content_keys":[],
+                "definition_sha256":reference(root,"template.json")["sha256"]
+            }]
+        }),
+    );
+    let source = reference(root, "source.mp4");
+    write(
+        &root.join("season.json"),
+        &json!({
+            "schema":"reel.scene-asset-bindings.v1", "scope_id":"S1", "assets":{
+                "film":{"logical_id":"delivered-film", "sha256":source["sha256"],
+                    "bytes":source["bytes"], "cache_uri":format!("cache://sha256/{}",source["sha256"].as_str().unwrap()),
+                    "selection_state":"selected-private-production"}
+            }
+        }),
+    );
+    write(
+        &root.join("episode.json"),
+        &json!({
+            "schema":"reel.scene-asset-bindings.v1", "scope_id":"S1E01", "assets":{}
+        }),
+    );
+    let manifest = json!({
+        "schema":"reel.presentation-adopt.v1", "role":"series-opening", "language":"es",
+        "season_id":"S1", "episode_id":"S1E01", "template_id":"film",
+        "catalog":reference(root,"catalog.json"), "template_definition":reference(root,"template.json"),
+        "season_bindings":reference(root,"season.json"), "episode_bindings":reference(root,"episode.json"),
+        "source_binding":"film", "source":source, "output_mode":"retain-source"
+    });
+    let path = root.join("manifest.json");
+    write(&path, &manifest);
+    let output = root.join("retained");
+    let receipt = presentation_adopt::build(&path, root, root, &output).unwrap();
+    assert_eq!(receipt.master_sha256, receipt.source_sha256);
+    assert_eq!(receipt.master_bytes, receipt.source_bytes);
+    assert_eq!(receipt.frames, 48);
+    assert_eq!(receipt.publication, "not-authorized");
+    assert_eq!(
+        fs::read(output.join("master.mkv")).unwrap(),
+        fs::read(root.join("source.mp4")).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(&receipt).unwrap()["output_mode"],
+        "retain-source"
+    );
+    let verify = || {
+        presentation_adopt::check(
+            &path,
+            root,
+            root,
+            &output.join("master.mkv"),
+            &output.join("receipt.json"),
+            root,
+        )
+    };
+    verify().unwrap();
+    for (field, value) in [
+        ("source_range", json!({"start_frame":0,"frame_count":48})),
+        ("evidence_range_pointer", json!("/range")),
+        (
+            "audio_clock_repair",
+            json!({"policy":"decoded-sample-count","evidence_pointer":"/repair"}),
+        ),
+        (
+            "audio_range_origin",
+            json!({"policy":"selected-decoded-video-pts","evidence_pointer":"/origin"}),
+        ),
+        ("output_mode", json!("unknown")),
+    ] {
+        let mut changed = manifest.clone();
+        changed[field] = value;
+        write(&path, &changed);
+        let rejected = root.join("rejected");
+        assert!(presentation_adopt::build(&path, root, root, &rejected).is_err());
+        assert!(!rejected.exists());
+        assert!(verify().is_err());
+    }
+    let mut lossless = manifest.clone();
+    lossless.as_object_mut().unwrap().remove("output_mode");
+    write(&path, &lossless);
+    let converted = root.join("converted");
+    let converted_receipt = presentation_adopt::build(&path, root, root, &converted).unwrap();
+    assert_ne!(converted_receipt.master_sha256, receipt.master_sha256);
+    assert!(
+        serde_json::to_value(&converted_receipt)
+            .unwrap()
+            .get("output_mode")
+            .is_none()
+    );
+    // A decoded-equivalent transcode cannot masquerade as exact-byte retention,
+    // even with its own correct master hash and the new mode added to its receipt.
+    let mut forged = serde_json::to_value(converted_receipt).unwrap();
+    forged["output_mode"] = json!("retain-source");
+    write(&converted.join("receipt.json"), &forged);
+    write(&path, &manifest);
+    assert!(
+        presentation_adopt::check(
+            &path,
+            root,
+            root,
+            &converted.join("master.mkv"),
+            &converted.join("receipt.json"),
+            root
+        )
+        .is_err()
+    );
+    verify().unwrap();
+}
+
+#[test]
 fn source_excerpt_preserves_exact_selected_frames_and_samples() {
     opening_fixture("libx264", "yuv420p", true, false, false, false, false);
 }

@@ -50,6 +50,27 @@ adoption manifest. Conform reruns the adoption and compares selected source,
 template, evidence and decoded master content. A receipt without that manifest
 cannot claim this route's upstream verification.
 
+## Preserve the delivered source bytes
+
+Set `"output_mode": "retain-source"` to reuse a complete selected film without
+transcoding. The new `master.mkv` contains the exact source bytes, even when
+their container is MP4; consumers must inspect the media rather than infer its
+encoding from this conventional output name. The receipt records the mode and
+requires both master hash and size to equal the selected source. Omission keeps
+the existing lossless conversion behavior and receipt shape.
+
+Retention still checks scoped selection, optional evidence, geometry, duration,
+decoded picture/audio and timestamps. It cannot be combined with an excerpt,
+range-evidence pointer, audio-clock repair or audio-range-origin adjustment:
+those operations would change the retained bytes. Unknown modes are rejected.
+Rechecking rejects a decoded-equivalent transcode masquerading as retained
+bytes, even when its receipt has the correct hash for that transcode. Existing
+cache keys include the exact manifest, receipt, source, master and validator.
+
+This adoption mode does not classify a delivered film as a primary source,
+prove its original producer current, authorize publication or implement a Tig
+managed-composition adapter. Those contracts remain separate.
+
 ## Reuse a presentation excerpt from an existing film
 
 When a presentation exists only inside a selected film, add an optional
