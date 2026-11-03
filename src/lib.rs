@@ -91,6 +91,8 @@ pub mod tig_episode_cli;
 pub mod tig_frozen_job_cli;
 #[cfg(feature = "tig")]
 pub mod tig_generation;
+#[cfg(feature = "tig-history")]
+pub mod tig_history;
 #[cfg(feature = "tig")]
 pub mod tig_inputs;
 #[cfg(feature = "tig-publication")]

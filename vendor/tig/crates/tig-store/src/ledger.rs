@@ -14,7 +14,7 @@ use tig_core::{
     Digest,
     capacity::{
         self, AllocationTicket, CapacityDomain, CapacitySummary, ObservationTicket,
-        ReservationToken,
+        ReservationToken, RetiredReservation,
     },
     identity,
 };
@@ -102,6 +102,7 @@ pub struct JournalRef {
 }
 #[derive(Clone, Debug)]
 pub enum Response {
+    ReservationRetired,
     Reserved,
     AllocationStarted,
     AllocationCompleted(u64),
@@ -143,6 +144,9 @@ impl Receipt {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum Command {
+    RetireClosed {
+        reservation: Key,
+    },
     BeginHandoff {
         reservation: Key,
         owner: Key,
@@ -218,6 +222,7 @@ struct Request {
 }
 #[derive(Clone)]
 enum Output {
+    Retired(RetiredReservation),
     Handoff {
         ticket: AllocationTicket,
         binding: Digest,
@@ -248,6 +253,7 @@ enum Output {
 impl Output {
     fn response(&self) -> Response {
         match self {
+            Self::Retired(_) => Response::ReservationRetired,
             Self::Handoff { .. } => Response::HandoffStarted,
             Self::HandoffSettled(bytes) => Response::HandoffSettled(*bytes),
             Self::Retention { .. } => Response::RetentionStarted,
@@ -469,7 +475,7 @@ impl CapacityLedger {
         if binding != expected {
             return Err(LedgerError::Conflict);
         }
-        Ok(self.domain.allocation_status(ticket)?)
+        self.allocation_state(ticket)
     }
     pub(crate) fn settle_handoff(
         &mut self,
@@ -524,7 +530,7 @@ impl CapacityLedger {
         if binding != expected {
             return Err(LedgerError::Conflict);
         }
-        Ok(self.domain.allocation_status(ticket)?)
+        self.allocation_state(ticket)
     }
     pub(crate) fn settle_retention(
         &mut self,
@@ -563,7 +569,7 @@ impl CapacityLedger {
         if self.outputs.contains_key(cleanup_key(&key)?.as_str()) {
             return Err(LedgerError::Cancelled);
         }
-        Ok(self.domain.allocation_status(ticket)?)
+        self.allocation_state(ticket)
     }
     pub(crate) fn cleanup_status(
         &mut self,
@@ -583,12 +589,11 @@ impl CapacityLedger {
             return Err(LedgerError::Conflict);
         }
         match self.outputs.get(cleanup_key(&key)?.as_str()) {
-            Some(Output::Cleanup { reviewed }) => Ok(Some((
-                reviewed.clone(),
-                self.domain.allocation_status(ticket)?,
-            ))),
+            Some(Output::Cleanup { reviewed }) => {
+                Ok(Some((reviewed.clone(), self.allocation_state(ticket)?)))
+            }
             None => {
-                if self.domain.allocation_status(ticket)?.is_some() {
+                if self.allocation_state(ticket)?.is_some() {
                     return Err(LedgerError::Conflict);
                 }
                 Ok(None)
@@ -703,6 +708,52 @@ impl CapacityLedger {
     pub fn finish(&mut self, op: Key, reservation: &JournalRef) -> Result<Receipt> {
         let reservation = self.reference(reservation)?;
         self.apply(op, Command::Finish { reservation })
+    }
+    /// Metadata-only retirement with persistent old command outcomes. Exact
+    /// retries remain historical; no active reservation or payload is released.
+    pub fn retire_closed(&mut self, reservation: &JournalRef) -> Result<Receipt> {
+        let reservation = self.reference(reservation)?;
+        self.apply(
+            retirement_key(&reservation)?,
+            Command::RetireClosed { reservation },
+        )
+    }
+    /// Bounded native preview. Never infer closure from absent adapter files.
+    pub fn retirable_reservations(&mut self, limit: usize) -> Result<Vec<JournalRef>> {
+        if !(1..=256).contains(&limit) {
+            return Err(LedgerError::Budget);
+        }
+        self.sync()?;
+        let mut selected = Vec::new();
+        for (id, output) in &self.outputs {
+            let Output::Reservation(token) = output else {
+                continue;
+            };
+            let key = Key::parse(id)?;
+            match self.outputs.get(retirement_key(&key)?.as_str()) {
+                Some(Output::Retired(_)) => continue,
+                None => (),
+                _ => return Err(LedgerError::Conflict),
+            }
+            if self.domain.is_closed(token)? {
+                selected.push(JournalRef {
+                    genesis: self.checkpoint.genesis.clone(),
+                    operation: key,
+                });
+                if selected.len() == limit {
+                    break;
+                }
+            }
+        }
+        Ok(selected)
+    }
+    fn allocation_state(&self, ticket: &AllocationTicket) -> Result<Option<u64>> {
+        let key = Key::parse(ticket.reservation().id())?;
+        match self.outputs.get(retirement_key(&key)?.as_str()) {
+            Some(Output::Retired(history)) => Ok(history.allocation_status(ticket)?),
+            None => Ok(self.domain.allocation_status(ticket)?),
+            _ => Err(LedgerError::Corrupt),
+        }
     }
     pub fn invalidate(&mut self, op: Key) -> Result<Receipt> {
         self.apply(op, Command::Invalidate)
@@ -903,7 +954,9 @@ impl CapacityLedger {
             Command::Observe { probe, .. } => {
                 self.fresh = self.probes.remove(probe.as_str());
             }
-            Command::Reserve { .. } | Command::Invalidate => self.fresh = None,
+            Command::Reserve { .. } | Command::Invalidate | Command::RetireClosed { .. } => {
+                self.fresh = None
+            }
             _ => (),
         }
         self.checkpoint.sequence = sequence;
@@ -955,6 +1008,12 @@ fn execute(
         _ => Err(LedgerError::InvalidReference),
     };
     Ok(match &request.command {
+        Command::RetireClosed { reservation: id } => {
+            if request.operation != retirement_key(id)? {
+                return Err(LedgerError::InvalidReference);
+            }
+            Output::Retired(domain.retire_closed(reservation(id)?)?)
+        }
         Command::BeginHandoff {
             reservation: id,
             owner,
@@ -1187,7 +1246,10 @@ fn catch_up(
             return Err(LedgerError::Corrupt);
         }
         let output = execute(domain, outputs, &request)?;
-        if matches!(request.command, Command::Invalidate) {
+        if matches!(
+            request.command,
+            Command::Invalidate | Command::RetireClosed { .. }
+        ) {
             *fresh = None;
         }
         outputs.insert(request.operation.as_str().into(), output);
@@ -1207,6 +1269,12 @@ fn cleanup_key(allocation: &Key) -> Result<Key> {
     Ok(Key::parse(&format!(
         "cancel-{}",
         Digest::blob(allocation.as_str().as_bytes()).as_str()
+    ))?)
+}
+fn retirement_key(reservation: &Key) -> Result<Key> {
+    Ok(Key::parse(&format!(
+        "retire-{}",
+        Digest::blob(reservation.as_str().as_bytes()).as_str()
     ))?)
 }
 fn event_hash(sequence: u64, previous: &Digest, request: &Request) -> Result<Digest> {

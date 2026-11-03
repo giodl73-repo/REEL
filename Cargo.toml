@@ -36,6 +36,7 @@ tig-store = { path = "vendor/tig/crates/tig-store", optional = true }
 test-fixtures = []
 tig = ["dep:tig-core", "dep:tig-assets", "dep:tig-git", "dep:tig-store"]
 tig-publication = ["tig", "dep:reel-assets", "dep:flate2"]
+tig-history = ["tig-publication", "tig-git/schema"]
 
 [[bin]]
 name = "reel-tig-scene"
@@ -56,6 +57,11 @@ required-features = ["tig"]
 name = "reel-tig-job"
 path = "src/bin/reel-tig-job.rs"
 required-features = ["tig-publication"]
+
+[[bin]]
+name = "reel-tig-history"
+path = "src/bin/reel-tig-history.rs"
+required-features = ["tig-history"]
 
 [[bin]]
 name = "fake_c2patool"

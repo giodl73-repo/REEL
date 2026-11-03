@@ -13,6 +13,8 @@ use tig_core::{LogicalPath, identity::parse_json};
 use tig_git::source::{GitId, Limits as GitLimits, Repository, Scope, native::Limits};
 use tig_store::existing::{ByteSource, Profile as ByteProfile, ReadCache};
 
+#[cfg(feature = "schema")]
+use tig_git::source::native::metadata_reader::CacheMetadataReader;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Profile {
@@ -45,12 +47,30 @@ fn run() -> Result<(), String> {
         })
         .collect::<Result<Vec<_>, _>>()?;
     let verify = args.first().is_some_and(|s| s == "--verify");
-    if verify {
+    let history = args.first().is_some_and(|s| s == "--history");
+    if verify || history {
         args.remove(0);
     }
-    if !matches!(args.len(), 2 | 3) {
-        return Err("usage: tig-resolve [--verify] PROFILE ID [STREAM_SLOT]".into());
+    if (history && args.len() != 3) || (!history && !matches!(args.len(), 2 | 3)) {
+        return Err(
+            "usage: tig-resolve [--verify] PROFILE ID [STREAM_SLOT] | --history PROFILE ID DIALECT"
+                .into(),
+        );
     }
+    #[cfg(not(feature = "schema"))]
+    if history {
+        return Err("history mode requires schema feature".into());
+    }
+    #[cfg(feature = "schema")]
+    let dialect = if history {
+        Some(
+            args[2]
+                .parse::<tig_assets::schema::Dialect>()
+                .map_err(|_| "invalid schema dialect")?,
+        )
+    } else {
+        None
+    };
     let mut bytes = Vec::new();
     File::open(&args[0])
         .map_err(|_| "cannot open explicit profile")?
@@ -80,6 +100,28 @@ fn run() -> Result<(), String> {
             profile.limits,
         )
         .map_err(|e| e.to_string())?;
+    #[cfg(feature = "schema")]
+    if let Some(dialect) = dialect {
+        let mut reader = CacheMetadataReader::new(profile.byte_source)
+            .map_err(|e| format!("history byte profile: {e}"))?;
+        let inspection = assets
+            .inspect_history(
+                &args[1],
+                dialect,
+                tig_assets::revisions::Limits::default(),
+                &mut reader,
+            )
+            .map_err(|e| {
+                reader
+                    .take_failure()
+                    .unwrap_or_else(|| format!("history validation: {e}"))
+            })?;
+        let output = serde_json::to_string(inspection.summary())
+            .map_err(|_| "cannot encode history result")?;
+        writeln!(std::io::stdout().lock(), "{output}")
+            .map_err(|_| "cannot write history result")?;
+        return Ok(());
+    }
     let asset = assets.resolve_id(&args[1]).map_err(|e| e.to_string())?;
     let object = if let Some(slot) = args.get(2) {
         asset.stream(slot)

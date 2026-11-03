@@ -40,6 +40,285 @@ fn reserved(l: &mut CapacityLedger, id: &str, peak: u64) -> Receipt {
 }
 
 #[test]
+fn closed_retirement_reopens_with_original_receipts_and_accounting() {
+    let f = Fixture::new(0);
+    let mut l = f.open();
+    let r = reserved(&mut l, "job", 100);
+    let a = l
+        .begin_allocation(key("write"), r.reference(), key("event"), 100)
+        .unwrap();
+    let c = l
+        .complete_allocation(key("done"), a.reference(), 30)
+        .unwrap();
+    let finished = l.finish(key("finish"), r.reference()).unwrap();
+    let before = l.accounting().unwrap();
+    let retired = l.retire_closed(r.reference()).unwrap();
+    assert!(!retired.was_replayed());
+    assert!(matches!(retired.response(), Response::ReservationRetired));
+    assert_eq!(l.accounting().unwrap(), before);
+    assert!(l.retirable_reservations(10).unwrap().is_empty());
+    let witness = l.checkpoint();
+    drop(l);
+    let mut l = CapacityLedger::open(&f.root, &witness).unwrap();
+    assert_eq!(l.accounting().unwrap(), before);
+    assert!(l.retire_closed(r.reference()).unwrap().was_replayed());
+    assert_eq!(
+        l.reserve(key("job"), key("owner"), 100)
+            .unwrap()
+            .checkpoint(),
+        r.checkpoint()
+    );
+    assert_eq!(
+        l.complete_allocation(key("done"), a.reference(), 30)
+            .unwrap()
+            .checkpoint(),
+        c.checkpoint()
+    );
+    assert_eq!(
+        l.finish(key("finish"), r.reference()).unwrap().checkpoint(),
+        finished.checkpoint()
+    );
+    assert!(matches!(
+        l.reserve(key("job"), key("other"), 100),
+        Err(LedgerError::Conflict)
+    ));
+    assert!(matches!(
+        l.begin_allocation(key("late"), r.reference(), key("late"), 1),
+        Err(LedgerError::Capacity(capacity::CapacityError::Stale))
+    ));
+    assert!(matches!(
+        l.reserve(key("new"), key("owner"), 1),
+        Err(LedgerError::NeedsProbe)
+    ));
+    let new = reserved(&mut l, "new", 1);
+    assert_ne!(new.reference(), r.reference());
+}
+
+#[test]
+fn retirement_refuses_live_foreign_and_conflicting_keys_without_mutation() {
+    let f = Fixture::new(0);
+    let mut l = f.open();
+    let r = reserved(&mut l, "job", 100);
+    assert!(matches!(
+        l.retire_closed(r.reference()),
+        Err(LedgerError::Capacity(capacity::CapacityError::InFlight))
+    ));
+    assert!(l.retirable_reservations(10).unwrap().is_empty());
+    let other = Fixture::new(0);
+    let mut other_l = other.open();
+    let foreign = reserved(&mut other_l, "foreign", 1);
+    assert!(matches!(
+        l.retire_closed(foreign.reference()),
+        Err(LedgerError::InvalidReference)
+    ));
+    l.finish(key("finish"), r.reference()).unwrap();
+    let collision = retirement_key(&key("job")).unwrap();
+    probe(&mut l, "collision", 1000);
+    l.reserve(collision, key("owner"), 1).unwrap();
+    let before = l.checkpoint();
+    assert!(matches!(
+        l.retire_closed(r.reference()),
+        Err(LedgerError::Conflict)
+    ));
+    assert!(matches!(
+        l.retirable_reservations(10),
+        Err(LedgerError::Conflict)
+    ));
+    assert_eq!(l.checkpoint(), before);
+    assert!(
+        l.domain
+            .is_closed(match l.outputs.get("job").unwrap() {
+                Output::Reservation(t) => t,
+                _ => panic!(),
+            })
+            .unwrap()
+    );
+}
+
+#[test]
+fn retirement_rolls_back_precommit_and_recovers_committed_unknown_reply() {
+    for fault in [Stage::Validated, Stage::Written, Stage::Committed] {
+        let f = Fixture::new(0);
+        let mut l = f.open();
+        let r = reserved(&mut l, "job", 1);
+        l.finish(key("finish"), r.reference()).unwrap();
+        let before = l.checkpoint();
+        let result = l.apply_hook(
+            retirement_key(&key("job")).unwrap(),
+            Command::RetireClosed {
+                reservation: key("job"),
+            },
+            |at| {
+                if at == fault {
+                    Err(LedgerError::Injected)
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert!(matches!(result, Err(LedgerError::Injected)));
+        assert!(matches!(l.accounting(), Err(LedgerError::NeedsRecovery)));
+        drop(l);
+        let mut l = CapacityLedger::open(&f.root, &before).unwrap();
+        assert_eq!(
+            l.retirable_reservations(1).unwrap().len(),
+            usize::from(fault != Stage::Committed)
+        );
+        assert_eq!(
+            l.retire_closed(r.reference()).unwrap().was_replayed(),
+            fault == Stage::Committed
+        );
+    }
+}
+
+#[test]
+fn retirement_preserves_publication_retention_handoff_and_cleanup_dispositions() {
+    let f = Fixture::new(0);
+    let mut l = f.open();
+    let binding = Digest::blob(b"binding");
+    let mut saved = Vec::new();
+    for kind in ["publication", "retention", "handoff", "cleanup"] {
+        let r = reserved(&mut l, kind, 100);
+        let a = match kind {
+            "publication" | "cleanup" => l
+                .begin_publication(
+                    key(&format!("{kind}-write")),
+                    r.reference(),
+                    key("owner"),
+                    binding.clone(),
+                    100,
+                )
+                .unwrap(),
+            "retention" => l
+                .begin_retention(
+                    key("retention-write"),
+                    r.reference(),
+                    key("owner"),
+                    binding.clone(),
+                    100,
+                )
+                .unwrap(),
+            _ => l
+                .begin_handoff(
+                    key("handoff-write"),
+                    r.reference(),
+                    key("owner"),
+                    binding.clone(),
+                    100,
+                )
+                .unwrap(),
+        };
+        match kind {
+            "publication" => {
+                l.settle_footprint(key("publication-done"), a.reference(), binding.clone(), 20)
+                    .unwrap();
+            }
+            "retention" => {
+                l.settle_retention(key("retention-done"), a.reference(), binding.clone(), 20)
+                    .unwrap();
+            }
+            "handoff" => {
+                l.settle_handoff(key("handoff-done"), a.reference(), binding.clone(), 20)
+                    .unwrap();
+            }
+            _ => {
+                let reviewed = Digest::blob(b"reviewed");
+                l.begin_cleanup(a.reference(), binding.clone(), reviewed.clone())
+                    .unwrap();
+                l.complete_cleanup(a.reference(), binding.clone(), reviewed, 20)
+                    .unwrap();
+            }
+        }
+        l.finish(key(&format!("{kind}-finish")), r.reference())
+            .unwrap();
+        l.retire_closed(r.reference()).unwrap();
+        saved.push((kind, a.reference().clone()));
+    }
+    let witness = l.checkpoint();
+    drop(l);
+    let mut l = CapacityLedger::open(&f.root, &witness).unwrap();
+    for (kind, reference) in saved {
+        match kind {
+            "publication" => assert_eq!(
+                l.publication_status(&reference, &binding).unwrap(),
+                Some(20)
+            ),
+            "retention" => assert_eq!(l.retention_status(&reference, &binding).unwrap(), Some(20)),
+            "handoff" => assert_eq!(l.handoff_status(&reference, &binding).unwrap(), Some(20)),
+            _ => {
+                assert_eq!(
+                    l.cleanup_status(&reference, &binding).unwrap(),
+                    Some((Digest::blob(b"reviewed"), Some(20)))
+                );
+                assert!(matches!(
+                    l.publication_status(&reference, &binding),
+                    Err(LedgerError::Cancelled)
+                ));
+            }
+        }
+    }
+}
+
+#[test]
+fn full_reservation_window_retires_with_peer_replay_and_admits_more_work() {
+    let f = Fixture::new(0);
+    let mut l = f.open();
+    for i in 0..capacity::MAX_RESERVATIONS {
+        let r = reserved(&mut l, &format!("job-{i}"), 1);
+        l.finish(key(&format!("finish-{i}")), r.reference())
+            .unwrap();
+    }
+    probe(&mut l, "full", 1000);
+    assert!(matches!(
+        l.reserve(key("extra"), key("owner"), 1),
+        Err(LedgerError::Capacity(capacity::CapacityError::Budget))
+    ));
+    let mut peer = f.open();
+    let selected = l.retirable_reservations(16).unwrap();
+    assert_eq!(selected.len(), 16);
+    let before = l.accounting().unwrap();
+    let prefix: Vec<_> = l
+        .conn
+        .prepare("SELECT sequence,operation,body,previous,hash FROM events ORDER BY sequence")
+        .unwrap()
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Vec<u8>>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+            ))
+        })
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    for reference in &selected {
+        l.retire_closed(reference).unwrap();
+    }
+    assert_eq!(l.accounting().unwrap(), before);
+    assert_eq!(peer.accounting().unwrap(), before);
+    let after: Vec<_> = l.conn.prepare("SELECT sequence,operation,body,previous,hash FROM events WHERE sequence<=?1 ORDER BY sequence").unwrap()
+        .query_map([prefix.len() as i64], |r| Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,Vec<u8>>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?))).unwrap()
+        .map(|r| r.unwrap()).collect();
+    assert_eq!(after, prefix);
+    let r = reserved(&mut peer, "extra", 1);
+    peer.finish(key("extra-finish"), r.reference()).unwrap();
+    let witness = peer.checkpoint();
+    drop(l);
+    drop(peer);
+    let mut l = CapacityLedger::open(&f.root, &witness).unwrap();
+    for reference in selected {
+        assert!(l.retire_closed(&reference).unwrap().was_replayed());
+    }
+    assert!(
+        l.reserve(key("job-0"), key("owner"), 1)
+            .unwrap()
+            .was_replayed()
+    );
+}
+
+#[test]
 fn reservations_survive_reopen_but_old_free_space_does_not_authorize_new_work() {
     let f = Fixture::new(100);
     let mut l = f.open();
@@ -420,6 +699,33 @@ fn ledger_child() {
         serde_json::from_str(&std::env::var("TIG_LEDGER_TEST_WITNESS").unwrap()).unwrap();
     let mode = std::env::var("TIG_LEDGER_TEST_MODE").unwrap();
     let mut l = CapacityLedger::open(Path::new(&root), &witness).unwrap();
+    if mode.starts_with("retire-") {
+        let r = reserved(&mut l, "retired-job", 100);
+        let a = l
+            .begin_allocation(key("retired-write"), r.reference(), key("event"), 100)
+            .unwrap();
+        l.complete_allocation(key("retired-done"), a.reference(), 30)
+            .unwrap();
+        l.finish(key("retired-finish"), r.reference()).unwrap();
+        let cut = if mode == "retire-before" {
+            Stage::Written
+        } else {
+            Stage::Committed
+        };
+        let _ = l.apply_hook(
+            retirement_key(&key("retired-job")).unwrap(),
+            Command::RetireClosed {
+                reservation: key("retired-job"),
+            },
+            |stage| {
+                if stage == cut {
+                    std::process::exit(77);
+                }
+                Ok(())
+            },
+        );
+        panic!("did not hit retirement crash point");
+    }
     if mode == "hold" {
         l.conn.execute_batch("BEGIN IMMEDIATE").unwrap();
         println!("READY");
@@ -454,6 +760,47 @@ fn ledger_child() {
         },
     );
     panic!("did not hit crash point");
+}
+#[test]
+fn actual_retirement_process_death_preserves_accounting_and_history() {
+    for mode in ["retire-before", "retire-after"] {
+        let f = Fixture::new(0);
+        let mut child = spawn_child(&f, mode);
+        assert_eq!(child.0.wait().unwrap().code(), Some(77));
+        let mut l = f.open();
+        assert_eq!(l.accounting().unwrap().reserved_remaining, 0);
+        assert_eq!(l.accounting().unwrap().allocated_after_watermark, 30);
+        let r = l.reserve(key("retired-job"), key("owner"), 100).unwrap();
+        assert!(r.was_replayed());
+        assert_eq!(
+            l.retirable_reservations(1).unwrap().len(),
+            usize::from(mode == "retire-before")
+        );
+        assert_eq!(
+            l.retire_closed(r.reference()).unwrap().was_replayed(),
+            mode == "retire-after"
+        );
+    }
+}
+
+#[test]
+fn retirement_preview_is_bounded_and_does_not_grant_or_change_admission() {
+    let f = Fixture::new(0);
+    let mut l = f.open();
+    let r = reserved(&mut l, "job", 1);
+    l.finish(key("finish"), r.reference()).unwrap();
+    let before = l.checkpoint();
+    for limit in [0, 257] {
+        assert!(matches!(
+            l.retirable_reservations(limit),
+            Err(LedgerError::Budget)
+        ));
+    }
+    assert_eq!(
+        l.retirable_reservations(1).unwrap(),
+        vec![r.reference().clone()]
+    );
+    assert_eq!(l.checkpoint(), before);
 }
 #[test]
 fn actual_process_death_preserves_committed_reservations_and_rolls_back_uncommitted_ones() {

@@ -6,6 +6,11 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[[bin]]
+name = "tig-publication"
+path = "src/bin/tig-publication.rs"
+required-features = ["schema"]
+
 [features]
 schema = ["dep:jsonschema"]
 

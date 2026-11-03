@@ -41,3 +41,18 @@ required-features = ["assets"]
 name = "tig-graph"
 path = "src/bin/tig-graph.rs"
 required-features = ["assets"]
+
+[[bin]]
+name = "tig-restore"
+path = "src/bin/tig-restore.rs"
+required-features = ["assets"]
+
+[[bin]]
+name = "tig-project"
+path = "src/bin/tig-project.rs"
+required-features = ["assets"]
+
+[[bin]]
+name = "tig-history"
+path = "src/bin/tig-history.rs"
+required-features = ["schema"]
