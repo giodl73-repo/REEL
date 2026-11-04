@@ -64,6 +64,23 @@ struct Mapping {
     backslash_separator: bool,
     #[serde(default)]
     opaque_locator: bool,
+    #[serde(default)]
+    correspondence: Option<Correspondence>,
+    #[serde(skip)]
+    exact_targets: Option<BTreeMap<String, Digest>>,
+}
+/// A pinned external receipt supplies exact path-to-target associations. It
+/// supplies no publication authority; the ordinary receipt checker still runs.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Correspondence {
+    table: LocalFile,
+    rows_pointer: String,
+    observed_path_pointer: String,
+    receipt_target_pointer: String,
+    observed_path_prefix: String,
+    #[serde(default)]
+    backslash_separator: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -89,7 +106,125 @@ struct Binding {
     report: Value,
 }
 
+fn target_identity(mapping: &Mapping, path: &str) -> Result<Digest> {
+    let value = if mapping.opaque_locator {
+        if path.trim().is_empty() || path.len() > 4096 || path.chars().any(char::is_control) {
+            bail!("invalid opaque target");
+        }
+        json!({"schema":"tig.declared-publication-locator.experimental-1", "provider":mapping.provider,"scope":mapping.scope,"locator":path})
+    } else {
+        LogicalPath::parse(path)?;
+        json!({"schema":"tig.declared-publication-target.experimental-1", "provider":mapping.provider,"scope":mapping.scope,"path":path})
+    };
+    Ok(Object::from_bytes(&identity::canonical_json(&value)?).sha256)
+}
+fn pointer_valid(value: &str) -> bool {
+    if value.len() > 1024 || (!value.is_empty() && !value.starts_with('/')) {
+        return false;
+    }
+    let mut chars = value.chars();
+    while let Some(c) = chars.next() {
+        if c.is_control() || (c == '~' && !matches!(chars.next(), Some('0' | '1'))) {
+            return false;
+        }
+    }
+    true
+}
+fn bound_table(value: &Value, depth: usize, nodes: &mut usize) -> Result<()> {
+    *nodes += 1;
+    if depth > 32 || *nodes > 262_144 {
+        bail!("correspondence structural budget");
+    }
+    match value {
+        Value::Array(items) => {
+            for value in items {
+                bound_table(value, depth + 1, nodes)?;
+            }
+        }
+        Value::Object(items) => {
+            for value in items.values() {
+                bound_table(value, depth + 1, nodes)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+fn prepare_correspondence(
+    mapping: &mut Mapping,
+    remaining_bytes: &mut u64,
+    remaining_rows: &mut usize,
+) -> Result<()> {
+    let Some(c) = &mapping.correspondence else {
+        return Ok(());
+    };
+    if !mapping.observation_prefix.is_empty()
+        || !mapping.receipt_prefix.is_empty()
+        || mapping.backslash_separator
+        || c.observed_path_prefix.len() > 4096
+        || c.observed_path_prefix.chars().any(char::is_control)
+        || [
+            &c.rows_pointer,
+            &c.observed_path_pointer,
+            &c.receipt_target_pointer,
+        ]
+        .iter()
+        .any(|p| !pointer_valid(p))
+        || c.table.bytes > *remaining_bytes
+    {
+        bail!("invalid correspondence mapping");
+    }
+    let raw = c.table.read(4 * 1024 * 1024)?;
+    *remaining_bytes -= raw.len() as u64;
+    crate::approval_attestation::ensure_no_duplicate_keys(&raw)
+        .map_err(|_| anyhow::anyhow!("ambiguous correspondence JSON"))?;
+    let value: Value = serde_json::from_slice(&raw)?;
+    bound_table(&value, 0, &mut 0)?;
+    let rows = value
+        .pointer(&c.rows_pointer)
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("correspondence rows must be an array"))?;
+    if rows.is_empty() || rows.len() > *remaining_rows {
+        bail!("correspondence row budget");
+    }
+    *remaining_rows -= rows.len();
+    let mut targets = BTreeMap::new();
+    let mut identities = BTreeSet::new();
+    for row in rows {
+        let path = row
+            .pointer(&c.observed_path_pointer)
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("correspondence path missing"))?;
+        let path = path
+            .strip_prefix(&c.observed_path_prefix)
+            .ok_or_else(|| anyhow::anyhow!("correspondence path outside declared prefix"))?;
+        let path = if c.backslash_separator {
+            path.replace('\\', "/")
+        } else {
+            path.to_owned()
+        };
+        LogicalPath::parse(&path)?;
+        let locator = row
+            .pointer(&c.receipt_target_pointer)
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("correspondence target missing"))?;
+        let digest = target_identity(mapping, locator)?;
+        if targets.insert(path, digest.clone()).is_some() || !identities.insert(digest) {
+            bail!("duplicate correspondence path or target");
+        }
+    }
+    mapping.exact_targets = Some(targets);
+    Ok(())
+}
 fn target(mapping: &Mapping, observed: &str) -> Result<Option<Digest>> {
+    if mapping.correspondence.is_some() {
+        return Ok(mapping
+            .exact_targets
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("correspondence not prepared"))?
+            .get(observed)
+            .cloned());
+    }
     let Some(suffix) = observed.strip_prefix(&mapping.observation_prefix) else {
         return Ok(None);
     };
@@ -99,15 +234,7 @@ fn target(mapping: &Mapping, observed: &str) -> Result<Option<Digest>> {
         suffix.to_owned()
     };
     let path = format!("{}{suffix}", mapping.receipt_prefix);
-    let value = if mapping.opaque_locator {
-        json!({"schema":"tig.declared-publication-locator.experimental-1", "provider":mapping.provider,"scope":mapping.scope,"locator":path})
-    } else {
-        LogicalPath::parse(&path)?;
-        json!({"schema":"tig.declared-publication-target.experimental-1", "provider":mapping.provider,"scope":mapping.scope,"path":path})
-    };
-    Ok(Some(
-        Object::from_bytes(&identity::canonical_json(&value)?).sha256,
-    ))
+    Ok(Some(target_identity(mapping, &path)?))
 }
 fn reconcile(
     observed: &[Observed],
@@ -169,7 +296,7 @@ pub fn run(profile_path: &Path, output: &Path) -> Result<Value> {
     if raw.len() > 65_536 {
         bail!("profile budget");
     }
-    let p: Profile = serde_json::from_value(identity::parse_json(&raw)?)?;
+    let mut p: Profile = serde_json::from_value(identity::parse_json(&raw)?)?;
     if p.schema != "reel.tig-delivery-observation.experimental-1"
         || p.mappings.is_empty()
         || p.mappings.len() > 128
@@ -181,6 +308,11 @@ pub fn run(profile_path: &Path, output: &Path) -> Result<Value> {
         || p.client_metadata_basenames.len() > 32
     {
         bail!("unsupported reconciliation profile");
+    }
+    let mut remaining_bytes = MAX_INPUT as u64;
+    let mut remaining_rows = MAX_ROWS;
+    for mapping in &mut p.mappings {
+        prepare_correspondence(mapping, &mut remaining_bytes, &mut remaining_rows)?;
     }
     let excluded: BTreeSet<_> = p.client_metadata_basenames.iter().cloned().collect();
     if excluded.len() != p.client_metadata_basenames.len()
@@ -407,6 +539,8 @@ mod tests {
             receipt_prefix: "".into(),
             backslash_separator: false,
             opaque_locator: false,
+            correspondence: None,
+            exact_targets: None,
         }
     }
     fn binding(id: &str, mapping: &Mapping, path: &str, bytes: u64) -> Binding {
@@ -419,6 +553,48 @@ mod tests {
             },
             report: json!({}),
         }
+    }
+    #[test]
+    fn correspondence_preserves_opaque_ids_exact_paths_and_shared_budgets() {
+        let temp = tempfile::tempdir().unwrap();
+        let raw = br#"{"rows":[{"path":"Root/display.png","id":"opaque-provider-id"}]}"#;
+        let path = temp.path().join("receipt.json");
+        fs::write(&path, raw).unwrap();
+        let pin = Object::from_bytes(raw);
+        let mut m = mapping();
+        m.observation_prefix.clear();
+        m.opaque_locator = true;
+        m.correspondence = Some(Correspondence {
+            table: LocalFile {
+                path,
+                sha256: pin.sha256,
+                bytes: pin.bytes,
+            },
+            rows_pointer: "/rows".into(),
+            observed_path_pointer: "/path".into(),
+            receipt_target_pointer: "/id".into(),
+            observed_path_prefix: "Root/".into(),
+            backslash_separator: false,
+        });
+        assert!(target(&m, "display.png").is_err());
+        assert!(prepare_correspondence(&mut m, &mut (pin.bytes - 1), &mut 1).is_err());
+        let mut available_bytes = pin.bytes;
+        assert!(prepare_correspondence(&mut m, &mut available_bytes, &mut 0).is_err());
+        let mut bytes = pin.bytes;
+        let mut rows = 1;
+        prepare_correspondence(&mut m, &mut bytes, &mut rows).unwrap();
+        assert_eq!((bytes, rows), (0, 0));
+        let expected = Object::from_bytes(
+            &identity::canonical_json(&json!({
+                "schema":"tig.declared-publication-locator.experimental-1",
+                "provider":"files","scope":"review","locator":"opaque-provider-id"
+            }))
+            .unwrap(),
+        )
+        .sha256;
+        assert_eq!(target(&m, "display.png").unwrap(), Some(expected));
+        assert!(target(&m, "other/display.png").unwrap().is_none());
+        assert!(target(&m, "Display.png").unwrap().is_none());
     }
     #[test]
     fn exact_target_not_basename_or_length_establishes_match() {

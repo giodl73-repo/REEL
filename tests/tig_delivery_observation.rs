@@ -99,6 +99,97 @@ fn committed_receipts_reconcile_without_payloads_and_never_imply_remote_verifica
     let saved = fs::read(&output).unwrap();
     assert!(reel::tig_delivery_observation::run(&root.join("profile.json"), &output).is_err());
     assert_eq!(fs::read(&output).unwrap(), saved);
+
+    // One pinned external table can carry many exact associations without
+    // expanding the bounded profile or inferring identity from filenames.
+    let prefix_profile = profile.clone();
+    let mut table_rows =
+        vec![json!({"observed":"C:\\Local\\Shelf\\film.mp4","target":"Shelf/film.mp4"})];
+    for i in 0..146 {
+        table_rows.push(json!({"observed":format!("C:\\Local\\Shelf\\extra-{i}.mp4"),"target":format!("Shelf/extra-{i}.mp4")}));
+    }
+    let table = json!({"rows":table_rows,"uninterpreted":"x".repeat(70_000)});
+    let table_pin = write(root, "correspondence.json", &table);
+    assert!(table_pin.bytes > 65_536);
+    profile["mappings"][0]["correspondence"] = json!({
+        "table":local(root,"correspondence.json",&table_pin),
+        "rows_pointer":"/rows","observed_path_pointer":"/observed",
+        "receipt_target_pointer":"/target","observed_path_prefix":"C:\\Local\\",
+        "backslash_separator":true
+    });
+    write(root, "profile.json", &profile);
+    let mapped = reel::tig_delivery_observation::run(
+        &root.join("profile.json"),
+        &root.join("table-report.json"),
+    )
+    .unwrap();
+    assert_eq!(mapped["verified_retained_bindings"], 1);
+    assert_eq!(mapped["counts"]["retained-target-length-matches"], 1);
+    assert_eq!(mapped["counts"]["unmatched"], 1);
+    assert_eq!(mapped["payload_verified"], false);
+    assert!(
+        !root
+            .join("cache/objects")
+            .join(payload.sha256.as_str())
+            .exists()
+    );
+
+    let refuse = |profile: &Value, name: &str| {
+        write(root, "profile.json", profile);
+        let report = root.join(name);
+        assert!(reel::tig_delivery_observation::run(&root.join("profile.json"), &report).is_err());
+        assert!(!report.exists());
+    };
+    let mut wrong_pin = profile.clone();
+    wrong_pin["mappings"][0]["correspondence"]["table"]["sha256"] =
+        json!(Object::from_bytes(b"wrong").sha256);
+    refuse(&wrong_pin, "wrong-table-pin.json");
+    let mut conflicting = profile.clone();
+    conflicting["mappings"][0]["receipt_prefix"] = json!("not-ignored/");
+    refuse(&conflicting, "conflicting-table-mode.json");
+    let mut bad_pointer = profile.clone();
+    bad_pointer["mappings"][0]["correspondence"]["rows_pointer"] = json!("/rows~2");
+    refuse(&bad_pointer, "invalid-table-pointer.json");
+    for (case, mut changed) in [
+        ("duplicate-observation", table.clone()),
+        ("duplicate-target", table.clone()),
+        ("outside-prefix", table.clone()),
+        ("traversal", table.clone()),
+        ("missing-target", table.clone()),
+    ] {
+        match case {
+            "duplicate-observation" => {
+                changed["rows"][1]["observed"] = changed["rows"][0]["observed"].clone()
+            }
+            "duplicate-target" => {
+                changed["rows"][1]["target"] = changed["rows"][0]["target"].clone()
+            }
+            "outside-prefix" => {
+                changed["rows"][0]["observed"] = json!("D:\\Local\\Shelf\\film.mp4")
+            }
+            "traversal" => changed["rows"][0]["observed"] = json!("C:\\Local\\../film.mp4"),
+            "missing-target" => {
+                changed["rows"][0].as_object_mut().unwrap().remove("target");
+            }
+            _ => unreachable!(),
+        }
+        let pin = write(root, "changed-table.json", &changed);
+        let mut candidate = profile.clone();
+        candidate["mappings"][0]["correspondence"]["table"] =
+            local(root, "changed-table.json", &pin);
+        refuse(&candidate, &format!("refused-{case}.json"));
+    }
+    let duplicate_keys = br#"{"rows":[],"rows":[]}"#;
+    fs::write(root.join("duplicate-keys.json"), duplicate_keys).unwrap();
+    let mut candidate = profile.clone();
+    candidate["mappings"][0]["correspondence"]["table"] = local(
+        root,
+        "duplicate-keys.json",
+        &Object::from_bytes(duplicate_keys),
+    );
+    refuse(&candidate, "refused-duplicate-keys.json");
+    profile = prefix_profile;
+    write(root, "profile.json", &profile);
     fs::write(
         root.join("cache/objects").join(receipt.sha256.as_str()),
         b"corrupt receipt",
