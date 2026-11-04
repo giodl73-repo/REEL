@@ -40,6 +40,8 @@ The [conform component registrar](docs/tig-conform-components.md) gives retained
 scene/presentation masters independent Tig records without copying media.
 The [delivery observation reconciler](docs/tig-delivery-observation.md) matches
 pinned file metadata to retained publication evidence without reading media.
+The [retained table registrar](docs/tig-delivery-table-registration.md) proposes
+independent file anchors from an exact table using project definitions and policies.
 The [episode composition planner](docs/tig-episode-planning.md) resolves their
 logical IDs and native order while keeping producer freshness unclassified.
 The [native scene compiler](docs/tig-native-scene.md) resolves current leaf IDs

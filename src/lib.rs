@@ -84,6 +84,8 @@ pub mod tig_conform_registration;
 pub mod tig_control_edit;
 #[cfg(feature = "tig-history")]
 pub mod tig_delivery_observation;
+#[cfg(feature = "tig-history")]
+pub mod tig_delivery_table_registration;
 #[cfg(feature = "tig")]
 pub mod tig_delivery_template;
 #[cfg(feature = "tig")]
