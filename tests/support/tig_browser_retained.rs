@@ -358,12 +358,12 @@ fn fresh_primary_reference(f: &Fixture, profile: &Value, master: &Object, differ
         &stage,
         || Ok(()),
     );
+    let refused = refused
+        .err()
+        .expect("different browser master was accepted");
     assert!(
-        refused
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("differs from fresh primary reference")
+        format!("{refused:#}").contains("differs from fresh primary reference"),
+        "unexpected different-master refusal: {refused:#}"
     );
     assert_eq!(stage.read_dir().unwrap().count(), 0);
     let refused = reel::tig_browser_reference::compare_master_to_primaries(
