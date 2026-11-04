@@ -41,6 +41,8 @@ Structural controls are checked before opening larger audio. Input bytes and
 prior renders are never changed.
 
 All input, note, track, mix-work and output-sample allocations are bounded.
+The serialized note receipt is limited to 3 MiB before output creation; repeated
+long part identifiers cannot bypass a caller's reserved metadata allowance.
 The bank is at most 128 MiB, each metadata/MIDI input 1 MiB, the score 16,384
 notes across at most 64 parts, and output 32 Mi interleaved samples. This admits
 full four-minute stereo material at 44.1 kHz; it does not relax a managed job's

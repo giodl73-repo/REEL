@@ -13,6 +13,7 @@ use std::{
 
 const MAX_AUDIO: usize = 128 * 1024 * 1024;
 const MAX_SAMPLES: usize = 32 * 1024 * 1024;
+const MAX_RECEIPT: usize = 3 * 1024 * 1024;
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -420,8 +421,12 @@ fn render_request(raw: &[u8], r: Request, output: &Path, count: usize) -> Result
         "vocal_retimed":false,"vocal_regenerated":false,"vocal_pitched":false,
         "stem_sum_policy":"master is exact sum of quantized PCM24 stems",
         "human_approval":false,"published":false});
+    let receipt = serde_json::to_vec(&receipt)?;
+    if receipt.len() > MAX_RECEIPT {
+        bail!("sample receipt byte budget");
+    }
     fs::create_dir(output)?;
-    files.push(("receipt.json", serde_json::to_vec(&receipt)?));
+    files.push(("receipt.json", receipt));
     for (name, bytes) in files {
         let mut file = fs::OpenOptions::new()
             .write(true)
@@ -826,6 +831,41 @@ mod tests {
         assert_eq!(fs::read(&r.bank_audio.path).unwrap(), before);
         assert!(run(root, &r, "render").is_err());
         assert_eq!(fs::read(root.join("render/instrumental.wav")).unwrap(), raw);
+    }
+    #[test]
+    fn repeated_long_part_ids_cannot_expand_receipts_beyond_output_metadata_budget() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let mut r = request(root);
+        let marker = format!("REEL_PART:[\"{}\",\"Piano\"]", "p".repeat(4000));
+        let len = marker.len();
+        let mut part = vec![0, 0xff, 3, ((len >> 7) as u8) | 0x80, (len & 127) as u8];
+        part.extend(marker.bytes());
+        for _ in 0..900 {
+            part.extend([0, 0x90, 60, 64, 1, 0x80, 60, 0]);
+        }
+        part.extend([0, 0xff, 0x2f, 0]);
+        let conductor = [
+            0, 0xff, 0x51, 3, 0x0f, 0x42, 0x40, 0x87, 0x04, 0xff, 0x2f, 0,
+        ];
+        let mut raw = b"MThd".to_vec();
+        raw.extend(6u32.to_be_bytes());
+        raw.extend(1u16.to_be_bytes());
+        raw.extend(2u16.to_be_bytes());
+        raw.extend(100u16.to_be_bytes());
+        for track in [&conductor[..], &part] {
+            raw.extend(b"MTrk");
+            raw.extend((track.len() as u32).to_be_bytes());
+            raw.extend(track);
+        }
+        r.native_score_midi = input(root, "long-parts.mid", &raw);
+        r.frames = 72_400;
+        let error = run(root, &r, "too-much-evidence").unwrap_err();
+        assert!(
+            error.to_string().contains("receipt byte budget"),
+            "{error:#}"
+        );
+        assert!(!root.join("too-much-evidence").exists());
     }
     #[test]
     fn overlapping_unisons_keep_both_voices_and_attenuate_without_clipping() {
