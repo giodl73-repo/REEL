@@ -213,6 +213,125 @@ pub fn render(request_path: &Path, output: &Path) -> Result<Value> {
     render_bytes(&read_bounded(request_path, 65_536)?, output)
 }
 
+fn ordinary(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_attributes() & 0x400 == 0
+    }
+    #[cfg(not(windows))]
+    {
+        !metadata.file_type().is_symlink()
+    }
+}
+
+fn workspace_member(root: &Path, name: &Path, existing_file: bool) -> Result<PathBuf> {
+    let text = name
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("non-Unicode workspace member"))?;
+    if text.is_empty() || text.len() > 200 || text.contains(['\\', ':']) {
+        bail!("bounded relative workspace member required");
+    }
+    let parts: Vec<_> = text.split('/').collect();
+    for part in &parts {
+        let device = part.split('.').next().unwrap().to_ascii_uppercase();
+        if part.is_empty()
+            || matches!(*part, "." | "..")
+            || part.eq_ignore_ascii_case(".git")
+            || part.ends_with(['.', ' '])
+            || part.chars().any(char::is_control)
+            || [
+                "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
+                "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8",
+                "LPT9",
+            ]
+            .contains(&device.as_str())
+        {
+            bail!("unsafe workspace member");
+        }
+    }
+    let mut current = root.to_path_buf();
+    for (index, part) in parts.iter().enumerate() {
+        current.push(part);
+        let last = index + 1 == parts.len();
+        if last && !existing_file {
+            if fs::symlink_metadata(&current).is_ok() {
+                bail!("workspace output already exists");
+            }
+        } else {
+            let metadata = fs::symlink_metadata(&current)?;
+            if !ordinary(&metadata)
+                || if last {
+                    !metadata.is_file()
+                } else {
+                    !metadata.is_dir()
+                }
+            {
+                bail!("workspace member is not an ordinary file or directory");
+            }
+        }
+    }
+    Ok(current)
+}
+
+/// File producer within a caller-owned workspace. Admission/ownership are supplied
+/// by the caller (for example the existing frozen Tig runner), never inferred here.
+pub fn render_workspace(
+    workspace: &Path,
+    request: &Path,
+    output: &Path,
+    max_output_bytes: u64,
+) -> Result<Value> {
+    let metadata = fs::symlink_metadata(workspace)?;
+    if !metadata.is_dir() || !ordinary(&metadata) {
+        bail!("ordinary existing workspace required");
+    }
+    let root = workspace.canonicalize()?;
+    let request = workspace_member(&root, request, true)?;
+    let output = workspace_member(&root, output, false)?;
+    let logical = read_bounded(&request, 65_536)?;
+    if output_byte_bound(&logical)? > max_output_bytes || max_output_bytes > 512 * 1024 * 1024 {
+        bail!("workspace output budget insufficient or unbounded");
+    }
+    let mut r = parse_request(&logical)?;
+    let mut files = vec![
+        &mut r.bank_audio,
+        &mut r.calibration,
+        &mut r.native_score_midi,
+    ];
+    if let Some(vocal) = &mut r.vocal {
+        files.push(&mut vocal.source);
+    }
+    for input in files {
+        input.path = workspace_member(&root, &input.path, true)?;
+    }
+    let resolved = serde_json::to_vec(&r)?;
+    let result = render_bytes(&resolved, &output)?;
+    let write = |name: &str, raw: &[u8]| -> Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(output.join(name))?;
+        file.write_all(raw)?;
+        file.sync_all()?;
+        Ok(())
+    };
+    write("workspace-request.json", &logical)?;
+    write("render-request.json", &resolved)?;
+    let checked = check(&output.join("render-request.json"), &output)?;
+    write(
+        "workspace-source.json",
+        &serde_json::to_vec(&json!({
+        "schema":"reel.music-sample-clock-workspace.v1",
+        "logical_request_sha256":hash(&logical),"resolved_request_sha256":hash(&resolved),
+        "render_receipt_sha256":hash(&fs::read(output.join("receipt.json"))?),
+        "check":checked,"job_admission":null,"production_claim":null,
+        "human_approval":false,"published":false,"complete_semantic_coverage":false}))?,
+    )?;
+    Ok(json!({"render":result,"checked":true,"job_admission":null,
+        "production_claim":null,"human_approval":false,"published":false,"git_changed":false}))
+}
+
 pub(crate) fn render_bytes(raw: &[u8], output: &Path) -> Result<Value> {
     if !output.is_absolute() || output.exists() {
         bail!("output must be a new absolute directory");
@@ -264,7 +383,6 @@ fn parse_request(raw: &[u8]) -> Result<Request> {
 }
 
 /// Validate controls and estimate bounded PCM outputs before provider media IO.
-#[cfg(feature = "tig")]
 pub(crate) fn output_byte_bound(raw: &[u8]) -> Result<u64> {
     let r = parse_request(raw)?;
     // Three metadata packets plus the maximum bounded note receipt.
@@ -477,8 +595,31 @@ fn signed24(raw: &[u8]) -> i32 {
 /// Read-only packet checking. No rerender, source mutation or approval inference.
 pub fn check(request_path: &Path, output: &Path) -> Result<Value> {
     let raw = read_bounded(request_path, 65_536)?;
-    crate::approval_attestation::ensure_no_duplicate_keys(&raw)?;
-    let r: Request = serde_json::from_slice(&raw)?;
+    let receipt_raw = read_bounded(&output.join("receipt.json"), 16 * 1024 * 1024)?;
+    let output = output.canonicalize()?;
+    check_packet(&raw, &receipt_raw, &output, |path, sha256, bytes, max| {
+        Input {
+            path: path.to_owned(),
+            sha256: sha256.to_owned(),
+            bytes,
+        }
+        .read(max)
+    })
+}
+
+/// Check original immutable metadata using pinned bytes, independently of their
+/// historical locations. The reader must enforce its own custody/read budgets.
+pub(crate) fn check_packet(
+    raw: &[u8],
+    receipt_raw: &[u8],
+    output: &Path,
+    mut read: impl FnMut(&Path, &str, u64, usize) -> Result<Vec<u8>>,
+) -> Result<Value> {
+    if raw.len() > 65_536 || receipt_raw.len() > 16 * 1024 * 1024 {
+        bail!("check metadata budget");
+    }
+    crate::approval_attestation::ensure_no_duplicate_keys(raw)?;
+    let r: Request = serde_json::from_slice(raw)?;
     if r.schema != "reel.music-sample-clock-render.v1"
         || !(8000..=192000).contains(&r.sample_rate)
         || !matches!(r.channels, 1 | 2)
@@ -499,11 +640,10 @@ pub fn check(request_path: &Path, output: &Path) -> Result<Value> {
         .checked_mul(r.channels as usize)
         .filter(|n| *n <= MAX_SAMPLES)
         .ok_or_else(|| anyhow::anyhow!("check sample budget"))?;
-    let receipt_raw = read_bounded(&output.join("receipt.json"), 16 * 1024 * 1024)?;
-    crate::approval_attestation::ensure_no_duplicate_keys(&receipt_raw)?;
-    let receipt: Value = serde_json::from_slice(&receipt_raw)?;
+    crate::approval_attestation::ensure_no_duplicate_keys(receipt_raw)?;
+    let receipt: Value = serde_json::from_slice(receipt_raw)?;
     if receipt["schema"] != "reel.music-sample-clock-receipt.v1"
-        || receipt["request_sha256"] != hash(&raw)
+        || receipt["request_sha256"] != hash(raw)
         || receipt["frames"] != r.frames
         || receipt["channels"] != r.channels
         || receipt["sample_rate"] != r.sample_rate
@@ -520,10 +660,15 @@ pub fn check(request_path: &Path, output: &Path) -> Result<Value> {
         if receipt[name] != serde_json::to_value(input)? {
             bail!("receipt input binding differs");
         }
-        input.read(max)?;
+        read(&input.path, &input.sha256, input.bytes, max)?;
     }
     let notes = crate::music_score::native_note_clock(
-        &r.native_score_midi.read(1024 * 1024)?,
+        &read(
+            &r.native_score_midi.path,
+            &r.native_score_midi.sha256,
+            r.native_score_midi.bytes,
+            1024 * 1024,
+        )?,
         r.sample_rate,
     )?;
     if receipt["notes"] != notes.len()
@@ -560,13 +705,19 @@ pub fn check(request_path: &Path, output: &Path) -> Result<Value> {
     }
     let mut outputs = BTreeMap::new();
     for name in names {
-        let bytes = read_bounded(&output.join(name), MAX_SAMPLES * 3 + 44)?;
-        pcm_geometry(&bytes, &r, count)?;
         let pin = if name == "instrumental.wav" && receipt["outputs"].is_null() {
             &receipt["output"]
         } else {
             &receipt["outputs"][name]
         };
+        let sha256 = pin["sha256"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing output digest"))?;
+        let size = pin["bytes"]
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("missing output size"))?;
+        let bytes = read(&output.join(name), sha256, size, MAX_SAMPLES * 3 + 44)?;
+        pcm_geometry(&bytes, &r, count)?;
         if pin["sha256"] != hash(&bytes) || pin["bytes"] != bytes.len() {
             bail!("output identity differs");
         }
@@ -582,7 +733,7 @@ pub fn check(request_path: &Path, output: &Path) -> Result<Value> {
         {
             bail!("vocal source context differs");
         }
-        let source_raw = v.source.read(MAX_AUDIO)?;
+        let source_raw = read(&v.source.path, &v.source.sha256, v.source.bytes, MAX_AUDIO)?;
         let source = decode_wave(&source_raw, r.sample_rate, r.channels)?;
         if source.len() != count {
             bail!("vocal source frame count differs");
@@ -688,6 +839,103 @@ mod tests {
         let p = 44 + (frame * 2 + channel) * 3;
         let value = raw[p] as i32 | (raw[p + 1] as i32) << 8 | (raw[p + 2] as i32) << 16;
         (value << 8) >> 8
+    }
+    #[cfg(feature = "tig-publication")]
+    #[test]
+    fn retained_cache_check_survives_retirement_and_refuses_missing_corrupt_stale_or_overbudget_bytes()
+     {
+        use tig_core::Object;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let workspace = root.join("original-workspace");
+        let cache = root.join("existing-cache");
+        fs::create_dir(&workspace).unwrap();
+        fs::create_dir_all(cache.join("objects")).unwrap();
+        let mut r = request(&workspace);
+        r.vocal = Some(Vocal {
+            source: input(&workspace, "vocal.wav", &wave()),
+            gain: 0.5,
+        });
+        run(&workspace, &r, "output").unwrap();
+        let retain = |raw: &[u8]| {
+            let object = Object::from_bytes(raw);
+            fs::write(cache.join("objects").join(object.sha256.as_str()), raw).unwrap();
+            object
+        };
+        for input in [
+            &r.bank_audio,
+            &r.calibration,
+            &r.native_score_midi,
+            &r.vocal.as_ref().unwrap().source,
+        ] {
+            retain(&fs::read(&input.path).unwrap());
+        }
+        for name in ["instrumental.wav", "vocal-stem.wav", "with-vocals.wav"] {
+            retain(&fs::read(workspace.join("output").join(name)).unwrap());
+        }
+        let request_raw = fs::read(workspace.join("request.json")).unwrap();
+        let receipt_raw = fs::read(workspace.join("output/receipt.json")).unwrap();
+        let request_pin = retain(&request_raw);
+        let receipt_pin = retain(&receipt_raw);
+        let profile_path = root.join("check.json");
+        let profile = json!({"schema":"reel.music-sample-clock-cache-check.v1",
+            "byte_source":{"places":[{"root":cache,"layout":"flat"}],
+                "required":if cfg!(windows) {"prevent-mutation"} else {"cooperative-immutable"},
+                "limits":{"object_bytes":134217728,"total_bytes":536870912,"requests":16,"live_readers":16,"verify_millis":60000}},
+            "request":request_pin,"receipt":receipt_pin});
+        let check = |p: &Value| {
+            fs::write(&profile_path, serde_json::to_vec(p).unwrap()).unwrap();
+            crate::tig_sample_clock::check_cached(&profile_path)
+        };
+        // Retire only the fixture-owned directory; keep the original metadata pins.
+        fs::remove_dir_all(&workspace).unwrap();
+        let report = check(&profile).unwrap();
+        assert_eq!(report["outputs_verified"], 3);
+        assert_eq!(report["vocal_pcm_verified"], true);
+        assert_eq!(report["exact_stem_sum_verified"], true);
+        assert_eq!(report["historical_paths_used"], false);
+        assert_eq!(report["human_approval"], false);
+        assert!(!workspace.exists());
+        assert_eq!(
+            fs::read(cache.join("objects").join(request_pin.sha256.as_str())).unwrap(),
+            request_raw
+        );
+
+        let midi_path = cache.join("objects").join(&r.native_score_midi.sha256);
+        let midi_raw = fs::read(&midi_path).unwrap();
+        fs::remove_file(&midi_path).unwrap();
+        assert!(check(&profile).is_err());
+        fs::write(&midi_path, &midi_raw).unwrap();
+        let receipt: Value = serde_json::from_slice(&receipt_raw).unwrap();
+        let master_path = cache.join("objects").join(
+            receipt["outputs"]["with-vocals.wav"]["sha256"]
+                .as_str()
+                .unwrap(),
+        );
+        let master = fs::read(&master_path).unwrap();
+        let mut corrupt = master.clone();
+        *corrupt.last_mut().unwrap() ^= 1;
+        fs::write(&master_path, corrupt).unwrap();
+        assert!(check(&profile).is_err());
+        fs::write(&master_path, master).unwrap();
+        let mut stale: Value = serde_json::from_slice(&request_raw).unwrap();
+        stale["vocal"]["gain"] = json!(0.75);
+        let mut wrong = profile.clone();
+        wrong["request"] =
+            serde_json::to_value(retain(&serde_json::to_vec(&stale).unwrap())).unwrap();
+        assert!(check(&wrong).is_err());
+        for (field, value) in [
+            ("requests", 2),
+            ("total_bytes", 1),
+            ("object_bytes", 1),
+            ("live_readers", 2),
+        ] {
+            let mut bounded = profile.clone();
+            bounded["byte_source"]["limits"][field] = json!(value);
+            assert!(check(&bounded).is_err(), "{field}");
+        }
+        assert!(check(&profile).is_ok());
+        assert!(!workspace.exists());
     }
     #[cfg(all(windows, feature = "tig"))]
     #[test]
@@ -807,6 +1055,97 @@ mod tests {
         fs::write(&request_path, serde_json::to_vec(&logical).unwrap()).unwrap();
         assert!(render(&profile, &root.join("stale"), 5 * 1024 * 1024).is_err());
         assert!(!root.join("stale").exists());
+    }
+    #[test]
+    fn workspace_files_preserve_stems_and_refuse_escape_stale_pins_and_overwrite() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let mut r = request(root);
+        r.vocal = Some(Vocal {
+            source: input(root, "vocals.wav", &wave()),
+            gain: 0.5,
+        });
+        run(root, &r, "absolute-baseline").unwrap();
+        for file in [
+            &mut r.bank_audio,
+            &mut r.calibration,
+            &mut r.native_score_midi,
+            &mut r.vocal.as_mut().unwrap().source,
+        ] {
+            file.path = PathBuf::from(file.path.file_name().unwrap());
+        }
+        let request_path = root.join("relative-request.json");
+        fs::write(&request_path, serde_json::to_vec(&r).unwrap()).unwrap();
+        let relative = Path::new("relative-request.json");
+        let out = Path::new("workspace-render");
+        let render = |request: &Path, output: &Path| {
+            render_workspace(root, request, output, 5 * 1024 * 1024)
+        };
+        assert_eq!(render(relative, out).unwrap()["checked"], true);
+        for name in ["instrumental.wav", "vocal-stem.wav", "with-vocals.wav"] {
+            assert_eq!(
+                fs::read(root.join("workspace-render").join(name)).unwrap(),
+                fs::read(root.join("absolute-baseline").join(name)).unwrap()
+            );
+        }
+        let packet: Value = serde_json::from_slice(
+            &fs::read(root.join("workspace-render/workspace-source.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(packet["check"]["exact_stem_sum_verified"], true);
+        assert_eq!(packet["human_approval"], false);
+        assert!(packet["job_admission"].is_null());
+        assert!(render(relative, out).is_err());
+        assert!(render_workspace(root, relative, Path::new("too-small"), 1).is_err());
+        assert!(!root.join("too-small").exists());
+        for bad in [
+            "../escape",
+            "C:escape",
+            ".git/config",
+            "render/../escape",
+            "NUL",
+            "trailing.",
+        ] {
+            assert!(render(relative, Path::new(bad)).is_err());
+        }
+        assert!(
+            render(
+                Path::new("../relative-request.json"),
+                Path::new("bad-request")
+            )
+            .is_err()
+        );
+        let original = r.bank_audio.path.clone();
+        for bad in [
+            "../bank.wav",
+            "C:bank.wav",
+            ".git/bank.wav",
+            "inputs\\bank.wav",
+        ] {
+            r.bank_audio.path = bad.into();
+            fs::write(&request_path, serde_json::to_vec(&r).unwrap()).unwrap();
+            assert!(render(relative, Path::new("bad-input")).is_err());
+            assert!(!root.join("bad-input").exists());
+        }
+        r.bank_audio.path = original;
+        r.bank_audio.sha256 = "0".repeat(64);
+        fs::write(&request_path, serde_json::to_vec(&r).unwrap()).unwrap();
+        assert!(render(relative, Path::new("stale-input")).is_err());
+        assert!(!root.join("stale-input").exists());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join("bank.wav"), root.join("alias.wav")).unwrap();
+            r.bank_audio.path = "alias.wav".into();
+            r.bank_audio.sha256 = hash(&fs::read(root.join("bank.wav")).unwrap());
+            fs::write(&request_path, serde_json::to_vec(&r).unwrap()).unwrap();
+            assert!(
+                render(relative, Path::new("linked-input"))
+                    .unwrap_err()
+                    .to_string()
+                    .contains("ordinary")
+            );
+            assert!(!root.join("linked-input").exists());
+        }
     }
     #[test]
     fn native_clock_preserves_stereo_onsets_release_and_source_bytes() {

@@ -1481,6 +1481,11 @@ fn run_cli() -> Result<()> {
             let report = reel::arrangement_candidate::validate(&candidate)?;
             print_report(&report, output)?;
         }
+        #[cfg(feature = "tig-publication")]
+        Command::MusicSampleClockCheckCached { profile, output } => {
+            let report = reel::tig_sample_clock::check_cached(&profile)?;
+            print_report(&report, output)?;
+        }
         Command::MusicSampleClockCheck {
             request,
             output_dir,
@@ -1492,9 +1497,21 @@ fn run_cli() -> Result<()> {
         Command::MusicSampleClockRender {
             request,
             output_dir,
+            workspace,
+            max_output_bytes,
             output,
         } => {
-            let report = reel::music_sample_clock::render(&request, &output_dir)?;
+            let report = match workspace {
+                Some(root) => reel::music_sample_clock::render_workspace(
+                    &root,
+                    &request,
+                    &output_dir,
+                    max_output_bytes.ok_or_else(|| {
+                        anyhow::anyhow!("workspace mode requires a declared output bound")
+                    })?,
+                )?,
+                None => reel::music_sample_clock::render(&request, &output_dir)?,
+            };
             print_report(&report, output)?;
         }
         Command::MusicScoreExportPlan {
@@ -3539,6 +3556,13 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
+    /// Read-only cache verification without historical physical input/output paths.
+    #[cfg(feature = "tig-publication")]
+    MusicSampleClockCheckCached {
+        profile: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
+        output: OutputFormat,
+    },
     /// Check sample-clock output pins, clocks, vocal PCM and exact stem sum.
     MusicSampleClockCheck {
         request: PathBuf,
@@ -3551,6 +3575,11 @@ enum Command {
         request: PathBuf,
         #[arg(long)]
         output_dir: PathBuf,
+        /// Explicit file workspace; request, inputs and output must be relative members.
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+        #[arg(long, requires = "workspace")]
+        max_output_bytes: Option<u64>,
         #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
         output: OutputFormat,
     },

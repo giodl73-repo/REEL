@@ -57,3 +57,9 @@ The synthetic Windows fixture proves Tig resolution preserves PCM, final source
 correspondence, no-clobber output and refusal of stale pins, insufficient output
 budget and a destination inside the cache. Existing sampler tests retain native
 clock, vocal and exact stem-sum coverage.
+
+For admitted cache staging, use the existing frozen job runner with the
+[file workspace producer](music-sample-clock.md#file-workspaces-and-admitted-jobs).
+The parent owns Tig resolution/admission and the file child consumes its exact
+staged pins. The private Tig draft entry above keeps its outside-provider-root
+guard; a directory or `job.json` alone never supplies source authority.

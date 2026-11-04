@@ -86,6 +86,11 @@ path = "src/bin/reel-tig-register-deliveries.rs"
 required-features = ["tig-history"]
 
 [[bin]]
+name = "reel-tig-associate-index"
+path = "src/bin/reel-tig-associate-index.rs"
+required-features = ["tig"]
+
+[[bin]]
 name = "fake_c2patool"
 path = "src/bin/fake_c2patool.rs"
 required-features = ["test-fixtures"]
