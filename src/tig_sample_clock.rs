@@ -14,6 +14,83 @@ use std::{
 };
 use tig_core::Object;
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckProfile {
+    schema: String,
+    byte_source: tig_store::existing::Profile,
+    request: Object,
+    receipt: Object,
+}
+
+/// Read-only verification of retained packets after their original workspace
+/// has gone away. Original request/receipt bytes are never rewritten.
+pub fn check_cached(profile_path: &Path) -> Result<Value> {
+    use tig_store::existing::{ByteSource, ReadCache};
+    let mut raw = Vec::new();
+    fs::File::open(profile_path)?
+        .take(65_537)
+        .read_to_end(&mut raw)?;
+    if raw.len() > 65_536 {
+        bail!("cached check profile budget");
+    }
+    crate::approval_attestation::ensure_no_duplicate_keys(&raw)?;
+    let profile: CheckProfile = serde_json::from_slice(&raw)?;
+    let limits = profile.byte_source.limits;
+    if profile.schema != "reel.music-sample-clock-cache-check.v1"
+        || limits.object_bytes > 128 * 1024 * 1024
+        || limits.total_bytes > 512 * 1024 * 1024
+        || limits.requests > 16
+        || limits.live_readers > 16
+        || limits.verify_millis > 60_000
+    {
+        bail!("cached check profile or budget");
+    }
+    let mut cache = ReadCache::new(profile.byte_source)?;
+    let mut guards = Vec::new();
+    let mut read = |object: &Object, max: usize| -> Result<Vec<u8>> {
+        if object.bytes > max as u64 {
+            bail!("cached check object budget");
+        }
+        let mut reader = cache.open_verified(object)?;
+        let mut bytes = Vec::new();
+        reader
+            .by_ref()
+            .take(object.bytes + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() as u64 != object.bytes
+            || reel_music::hash::sha256_bytes(&bytes) != object.sha256.as_str()
+        {
+            bail!("cached check object changed");
+        }
+        guards.push(reader);
+        Ok(bytes)
+    };
+    let request = read(&profile.request, 65_536)?;
+    let receipt = read(&profile.receipt, 3 * 1024 * 1024)?;
+    let mut report = music_sample_clock::check_packet(
+        &request,
+        &receipt,
+        Path::new("retained-output"),
+        |_, digest, bytes, max| {
+            let object =
+                serde_json::from_value(serde_json::json!({"sha256":digest,"bytes":bytes}))?;
+            read(&object, max)
+        },
+    )?;
+    report["historical_paths_used"] = json!(false);
+    report["request_metadata_rewritten"] = json!(false);
+    report["cache_changed"] = json!(false);
+    report["rendered"] = json!(false);
+    report["current_source_eligibility_claim"] = json!(false);
+    report["request_object"] = json!(profile.request);
+    report["receipt_object"] = json!(profile.receipt);
+    report["verified_requests"] = json!(cache.requests());
+    report["verified_bytes"] = json!(cache.verification_bytes());
+    drop(guards);
+    Ok(report)
+}
+
 fn write_new(path: &Path, raw: &[u8]) -> Result<()> {
     let mut file = fs::OpenOptions::new()
         .write(true)

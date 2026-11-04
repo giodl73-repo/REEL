@@ -595,8 +595,31 @@ fn signed24(raw: &[u8]) -> i32 {
 /// Read-only packet checking. No rerender, source mutation or approval inference.
 pub fn check(request_path: &Path, output: &Path) -> Result<Value> {
     let raw = read_bounded(request_path, 65_536)?;
-    crate::approval_attestation::ensure_no_duplicate_keys(&raw)?;
-    let r: Request = serde_json::from_slice(&raw)?;
+    let receipt_raw = read_bounded(&output.join("receipt.json"), 16 * 1024 * 1024)?;
+    let output = output.canonicalize()?;
+    check_packet(&raw, &receipt_raw, &output, |path, sha256, bytes, max| {
+        Input {
+            path: path.to_owned(),
+            sha256: sha256.to_owned(),
+            bytes,
+        }
+        .read(max)
+    })
+}
+
+/// Check original immutable metadata using pinned bytes, independently of their
+/// historical locations. The reader must enforce its own custody/read budgets.
+pub(crate) fn check_packet(
+    raw: &[u8],
+    receipt_raw: &[u8],
+    output: &Path,
+    mut read: impl FnMut(&Path, &str, u64, usize) -> Result<Vec<u8>>,
+) -> Result<Value> {
+    if raw.len() > 65_536 || receipt_raw.len() > 16 * 1024 * 1024 {
+        bail!("check metadata budget");
+    }
+    crate::approval_attestation::ensure_no_duplicate_keys(raw)?;
+    let r: Request = serde_json::from_slice(raw)?;
     if r.schema != "reel.music-sample-clock-render.v1"
         || !(8000..=192000).contains(&r.sample_rate)
         || !matches!(r.channels, 1 | 2)
@@ -617,11 +640,10 @@ pub fn check(request_path: &Path, output: &Path) -> Result<Value> {
         .checked_mul(r.channels as usize)
         .filter(|n| *n <= MAX_SAMPLES)
         .ok_or_else(|| anyhow::anyhow!("check sample budget"))?;
-    let receipt_raw = read_bounded(&output.join("receipt.json"), 16 * 1024 * 1024)?;
-    crate::approval_attestation::ensure_no_duplicate_keys(&receipt_raw)?;
-    let receipt: Value = serde_json::from_slice(&receipt_raw)?;
+    crate::approval_attestation::ensure_no_duplicate_keys(receipt_raw)?;
+    let receipt: Value = serde_json::from_slice(receipt_raw)?;
     if receipt["schema"] != "reel.music-sample-clock-receipt.v1"
-        || receipt["request_sha256"] != hash(&raw)
+        || receipt["request_sha256"] != hash(raw)
         || receipt["frames"] != r.frames
         || receipt["channels"] != r.channels
         || receipt["sample_rate"] != r.sample_rate
@@ -638,10 +660,15 @@ pub fn check(request_path: &Path, output: &Path) -> Result<Value> {
         if receipt[name] != serde_json::to_value(input)? {
             bail!("receipt input binding differs");
         }
-        input.read(max)?;
+        read(&input.path, &input.sha256, input.bytes, max)?;
     }
     let notes = crate::music_score::native_note_clock(
-        &r.native_score_midi.read(1024 * 1024)?,
+        &read(
+            &r.native_score_midi.path,
+            &r.native_score_midi.sha256,
+            r.native_score_midi.bytes,
+            1024 * 1024,
+        )?,
         r.sample_rate,
     )?;
     if receipt["notes"] != notes.len()
@@ -678,13 +705,19 @@ pub fn check(request_path: &Path, output: &Path) -> Result<Value> {
     }
     let mut outputs = BTreeMap::new();
     for name in names {
-        let bytes = read_bounded(&output.join(name), MAX_SAMPLES * 3 + 44)?;
-        pcm_geometry(&bytes, &r, count)?;
         let pin = if name == "instrumental.wav" && receipt["outputs"].is_null() {
             &receipt["output"]
         } else {
             &receipt["outputs"][name]
         };
+        let sha256 = pin["sha256"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing output digest"))?;
+        let size = pin["bytes"]
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("missing output size"))?;
+        let bytes = read(&output.join(name), sha256, size, MAX_SAMPLES * 3 + 44)?;
+        pcm_geometry(&bytes, &r, count)?;
         if pin["sha256"] != hash(&bytes) || pin["bytes"] != bytes.len() {
             bail!("output identity differs");
         }
@@ -700,7 +733,7 @@ pub fn check(request_path: &Path, output: &Path) -> Result<Value> {
         {
             bail!("vocal source context differs");
         }
-        let source_raw = v.source.read(MAX_AUDIO)?;
+        let source_raw = read(&v.source.path, &v.source.sha256, v.source.bytes, MAX_AUDIO)?;
         let source = decode_wave(&source_raw, r.sample_rate, r.channels)?;
         if source.len() != count {
             bail!("vocal source frame count differs");
@@ -806,6 +839,103 @@ mod tests {
         let p = 44 + (frame * 2 + channel) * 3;
         let value = raw[p] as i32 | (raw[p + 1] as i32) << 8 | (raw[p + 2] as i32) << 16;
         (value << 8) >> 8
+    }
+    #[cfg(feature = "tig-publication")]
+    #[test]
+    fn retained_cache_check_survives_retirement_and_refuses_missing_corrupt_stale_or_overbudget_bytes()
+     {
+        use tig_core::Object;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let workspace = root.join("original-workspace");
+        let cache = root.join("existing-cache");
+        fs::create_dir(&workspace).unwrap();
+        fs::create_dir_all(cache.join("objects")).unwrap();
+        let mut r = request(&workspace);
+        r.vocal = Some(Vocal {
+            source: input(&workspace, "vocal.wav", &wave()),
+            gain: 0.5,
+        });
+        run(&workspace, &r, "output").unwrap();
+        let retain = |raw: &[u8]| {
+            let object = Object::from_bytes(raw);
+            fs::write(cache.join("objects").join(object.sha256.as_str()), raw).unwrap();
+            object
+        };
+        for input in [
+            &r.bank_audio,
+            &r.calibration,
+            &r.native_score_midi,
+            &r.vocal.as_ref().unwrap().source,
+        ] {
+            retain(&fs::read(&input.path).unwrap());
+        }
+        for name in ["instrumental.wav", "vocal-stem.wav", "with-vocals.wav"] {
+            retain(&fs::read(workspace.join("output").join(name)).unwrap());
+        }
+        let request_raw = fs::read(workspace.join("request.json")).unwrap();
+        let receipt_raw = fs::read(workspace.join("output/receipt.json")).unwrap();
+        let request_pin = retain(&request_raw);
+        let receipt_pin = retain(&receipt_raw);
+        let profile_path = root.join("check.json");
+        let profile = json!({"schema":"reel.music-sample-clock-cache-check.v1",
+            "byte_source":{"places":[{"root":cache,"layout":"flat"}],
+                "required":if cfg!(windows) {"prevent-mutation"} else {"cooperative-immutable"},
+                "limits":{"object_bytes":134217728,"total_bytes":536870912,"requests":16,"live_readers":16,"verify_millis":60000}},
+            "request":request_pin,"receipt":receipt_pin});
+        let check = |p: &Value| {
+            fs::write(&profile_path, serde_json::to_vec(p).unwrap()).unwrap();
+            crate::tig_sample_clock::check_cached(&profile_path)
+        };
+        // Retire only the fixture-owned directory; keep the original metadata pins.
+        fs::remove_dir_all(&workspace).unwrap();
+        let report = check(&profile).unwrap();
+        assert_eq!(report["outputs_verified"], 3);
+        assert_eq!(report["vocal_pcm_verified"], true);
+        assert_eq!(report["exact_stem_sum_verified"], true);
+        assert_eq!(report["historical_paths_used"], false);
+        assert_eq!(report["human_approval"], false);
+        assert!(!workspace.exists());
+        assert_eq!(
+            fs::read(cache.join("objects").join(request_pin.sha256.as_str())).unwrap(),
+            request_raw
+        );
+
+        let midi_path = cache.join("objects").join(&r.native_score_midi.sha256);
+        let midi_raw = fs::read(&midi_path).unwrap();
+        fs::remove_file(&midi_path).unwrap();
+        assert!(check(&profile).is_err());
+        fs::write(&midi_path, &midi_raw).unwrap();
+        let receipt: Value = serde_json::from_slice(&receipt_raw).unwrap();
+        let master_path = cache.join("objects").join(
+            receipt["outputs"]["with-vocals.wav"]["sha256"]
+                .as_str()
+                .unwrap(),
+        );
+        let master = fs::read(&master_path).unwrap();
+        let mut corrupt = master.clone();
+        *corrupt.last_mut().unwrap() ^= 1;
+        fs::write(&master_path, corrupt).unwrap();
+        assert!(check(&profile).is_err());
+        fs::write(&master_path, master).unwrap();
+        let mut stale: Value = serde_json::from_slice(&request_raw).unwrap();
+        stale["vocal"]["gain"] = json!(0.75);
+        let mut wrong = profile.clone();
+        wrong["request"] =
+            serde_json::to_value(retain(&serde_json::to_vec(&stale).unwrap())).unwrap();
+        assert!(check(&wrong).is_err());
+        for (field, value) in [
+            ("requests", 2),
+            ("total_bytes", 1),
+            ("object_bytes", 1),
+            ("live_readers", 2),
+        ] {
+            let mut bounded = profile.clone();
+            bounded["byte_source"]["limits"][field] = json!(value);
+            assert!(check(&bounded).is_err(), "{field}");
+        }
+        assert!(check(&profile).is_ok());
+        assert!(!workspace.exists());
     }
     #[cfg(all(windows, feature = "tig"))]
     #[test]
