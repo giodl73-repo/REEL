@@ -43,6 +43,7 @@ pub mod motioncraft_comparison;
 pub mod motioncraft_layers;
 pub mod motioncraft_review;
 pub mod music_render;
+pub mod music_sample_clock;
 pub mod music_score;
 pub mod otio_export;
 pub mod presentation_adopt;
@@ -124,6 +125,8 @@ pub mod tig_presentation_registration;
 pub mod tig_publication;
 #[cfg(feature = "tig")]
 pub mod tig_retained_presentation;
+#[cfg(feature = "tig")]
+pub mod tig_sample_clock;
 #[cfg(feature = "tig")]
 pub mod tig_scene;
 #[cfg(feature = "tig")]
