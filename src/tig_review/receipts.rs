@@ -30,7 +30,7 @@ pub(super) fn directory(path: &Path) -> Result<()> {
     );
     Ok(())
 }
-fn read(path: &Path, max: usize) -> Result<Vec<u8>> {
+pub(super) fn read(path: &Path, max: usize) -> Result<Vec<u8>> {
     let meta = fs::symlink_metadata(path)?;
     ensure!(
         meta.is_file() && !reparse(&meta),
@@ -47,7 +47,7 @@ fn parse(path: &Path, max: usize) -> Result<(Value, Object)> {
     let bytes = read(path, max)?;
     Ok((parse_json(&bytes)?, Object::from_bytes(&bytes)))
 }
-fn exclusive(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(super) fn exclusive(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| anyhow!("receipt parent absent"))?;

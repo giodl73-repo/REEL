@@ -8,6 +8,20 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Operation {
+    ReinspectInspect {
+        profile: PathBuf,
+    },
+    ReinspectReserve {
+        profile: PathBuf,
+        #[arg(long)]
+        owner: String,
+    },
+    ReinspectResume {
+        profile: PathBuf,
+    },
+    ReinspectSubmit {
+        profile: PathBuf,
+    },
     Aggregate {
         profile: PathBuf,
         output: PathBuf,
@@ -30,6 +44,12 @@ enum Operation {
 fn main() -> ExitCode {
     use reel::tig_review::admission;
     let result = match Args::parse().operation {
+        Operation::ReinspectInspect { profile } => admission::reinspection::inspect(&profile),
+        Operation::ReinspectReserve { profile, owner } => {
+            admission::reinspection::reserve(&profile, &owner)
+        }
+        Operation::ReinspectResume { profile } => admission::reinspection::resume(&profile),
+        Operation::ReinspectSubmit { profile } => admission::reinspection::submit(&profile),
         Operation::Aggregate { profile, output } => admission::aggregate(&profile, &output),
         Operation::Inspect { profile } => admission::inspect(&profile),
         Operation::Reserve { profile, owner } => admission::reserve(&profile, &owner),

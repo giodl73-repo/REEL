@@ -129,7 +129,7 @@ impl Fixture {
     fn run(&self, operation: &str) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_reel-tig-review"));
         command.arg(operation).arg(&self.profile_path);
-        if operation == "reserve" {
+        if operation == "reserve" || operation == "reinspect-reserve" {
             command.args(["--owner", "synthetic-worker"]);
         }
         command.output().unwrap()
@@ -143,6 +143,179 @@ impl Fixture {
         );
         serde_json::from_slice(&output.stdout).unwrap()
     }
+
+    fn prepare_reinspection(&mut self) -> (PathBuf, Vec<u8>, Value) {
+        let prerequisite = document(&self.cache, &json!({"required":"synthetic source context"}));
+        let task_pin: Object = serde_json::from_value(self.profile["task"].clone()).unwrap();
+        let mut task: Value =
+            serde_json::from_slice(&fs::read(cas(&self.cache, &task_pin)).unwrap()).unwrap();
+        let feature_pin: Object =
+            serde_json::from_value(task["raw_feature_source"].clone()).unwrap();
+        let mut features: Value =
+            serde_json::from_slice(&fs::read(cas(&self.cache, &feature_pin)).unwrap()).unwrap();
+        features["review_context"] = json!(prerequisite);
+        task["raw_feature_source"] = json!(document(&self.cache, &features));
+        self.profile["task"] = json!(document(&self.cache, &task));
+        self.save();
+        let reserved = self.ok("reserve");
+        self.profile["receipt"] = reserved["receipt"].clone();
+        self.profile["evidence"] = json!(document(&self.cache, &self.evidence));
+        self.save();
+        let submitted = self.ok("submit");
+        let old_path = PathBuf::from(submitted["report_path"].as_str().unwrap());
+        let old_bytes = fs::read(&old_path).unwrap();
+        assert_eq!(json!(put(&self.cache, &old_bytes)), submitted["report"]);
+        let mut counted = self.profile.clone();
+        counted["state"] = json!({"kind":"counted","report":submitted["report"]});
+        counted["receipt"] = Value::Null;
+        counted["evidence"] = Value::Null;
+        self.profile = json!({"schema":"reel.review-reinspection-profile.experimental-1",
+            "scope":counted,"reason":"Verify the held scope after checking its context",
+            "prerequisites":{"source-context":{"origin":"feature-notes",
+                "pointer":"/review_context","object":prerequisite}}});
+        self.save();
+        (old_path, old_bytes, counted)
+    }
+}
+
+#[test]
+fn cli_reinspection_keeps_prior_false_report_and_adds_no_planned_clocks() {
+    let mut f = Fixture::new(false, false);
+    let (old_path, old_bytes, counted) = f.prepare_reinspection();
+    let checked = f.ok("reinspect-inspect");
+    assert_eq!(checked["new_planned_clocks"], 0);
+    assert!(!f.control.join("reinspections").exists());
+    let reserved = f.ok("reinspect-reserve");
+    assert_eq!(reserved["review_purpose"], "reinspection");
+    assert_eq!(reserved["new_planned_clocks"], 0);
+    assert!(!f.run("reinspect-reserve").status.success());
+    f.profile["scope"]["receipt"] = reserved["receipt"].clone();
+    f.save();
+    assert_eq!(f.ok("reinspect-resume")["automatic_view_permission"], false);
+    let mut fresh = f.evidence.clone();
+    fresh["reinspection_context"] = reserved["context"].clone();
+    fresh["finite_scope_qualified_with_holds"] = json!(true);
+    fresh["observations"][0]["legible"] = json!(true);
+    f.profile["scope"]["evidence"] = json!(document(&f.cache, &fresh));
+    f.save();
+    let submitted = f.ok("reinspect-submit");
+    assert_eq!(submitted["new_planned_clocks"], 0);
+    assert_eq!(submitted["finite_scope_qualified_with_holds"], true);
+    let path = PathBuf::from(submitted["report_path"].as_str().unwrap());
+    let report: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        report["reinspection"]["prior_report"],
+        counted["state"]["report"]
+    );
+    assert_eq!(
+        report["reinspection"]["prior_finite_scope_qualified_with_holds"],
+        false
+    );
+    assert_eq!(
+        report["reinspection"]["prior_holds_preserved"],
+        f.evidence["holds_preserved"]
+    );
+    assert_eq!(report["human_approval"], false);
+    assert_eq!(fs::read(&old_path).unwrap(), old_bytes);
+    f.profile["scope"]["evidence"] = json!(Object::from_bytes(b"not present"));
+    f.save();
+    assert_eq!(f.ok("reinspect-submit")["new_image_views"], 0);
+    fs::remove_file(path.parent().unwrap().join("complete.json")).unwrap();
+    assert_eq!(f.ok("reinspect-resume")["new_image_views"], 0);
+    f.profile = counted;
+    f.save();
+    assert_eq!(f.ok("reserve")["state"], "completed-validated-skip");
+    assert_eq!(fs::read(old_path).unwrap(), old_bytes);
+}
+
+#[test]
+fn cli_reinspection_requires_prerequisites_and_immutable_context_before_claim() {
+    let mut f = Fixture::new(false, false);
+    let (_, _, _) = f.prepare_reinspection();
+    let valid = f.profile.clone();
+    f.profile["prerequisites"]["source-context"]["object"] = json!(Object::from_bytes(b"missing"));
+    f.save();
+    assert!(!f.run("reinspect-reserve").status.success());
+    assert!(!f.control.join("reinspections").exists());
+    f.profile = valid.clone();
+    f.save();
+    let reserved = f.ok("reinspect-reserve");
+    f.profile["reason"] = json!("Changed explanation must not create another claim");
+    f.save();
+    assert!(!f.run("reinspect-reserve").status.success());
+    f.profile["scope"]["receipt"] = reserved["receipt"].clone();
+    f.save();
+    assert!(!f.run("reinspect-resume").status.success());
+    f.profile = valid;
+    f.profile["scope"]["receipt"] = reserved["receipt"].clone();
+    let mut fresh = f.evidence.clone();
+    fresh["reinspection_context"] = json!(Object::from_bytes(b"wrong context"));
+    f.profile["scope"]["evidence"] = json!(document(&f.cache, &fresh));
+    f.save();
+    assert!(!f.run("reinspect-submit").status.success());
+    let directory = PathBuf::from(reserved["directory"].as_str().unwrap());
+    assert!(!directory.join("report.json").exists());
+    assert_eq!(f.ok("reinspect-resume")["automatic_view_permission"], false);
+}
+
+#[test]
+fn cli_reinspection_refuses_qualified_and_unseen_prior_scopes() {
+    let mut f = Fixture::new(false, false);
+    f.evidence["finite_scope_qualified_with_holds"] = json!(true);
+    f.evidence["observations"][0]["legible"] = json!(true);
+    let _ = f.prepare_reinspection();
+    assert!(!f.run("reinspect-reserve").status.success());
+    assert!(!f.control.join("reinspections").exists());
+    f.profile["scope"]["state"] = json!({"kind":"unseen"});
+    f.save();
+    assert!(!f.run("reinspect-inspect").status.success());
+}
+
+#[test]
+fn concurrent_reinspections_have_one_claim_and_preserve_the_original() {
+    use std::process::Stdio;
+    let mut f = Fixture::new(false, false);
+    let (old_path, old_bytes, _) = f.prepare_reinspection();
+    let spawn = || {
+        Command::new(env!("CARGO_BIN_EXE_reel-tig-review"))
+            .arg("reinspect-reserve")
+            .arg(&f.profile_path)
+            .args(["--owner", "synthetic-worker"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap()
+    };
+    let a = spawn();
+    let b = spawn();
+    let results = [a.wait_with_output().unwrap(), b.wait_with_output().unwrap()];
+    assert_eq!(results.iter().filter(|r| r.status.success()).count(), 1);
+    assert_eq!(fs::read(old_path).unwrap(), old_bytes);
+}
+
+#[test]
+fn reinspection_recovery_refuses_changed_lineage_and_keeps_nullable_facts() {
+    let mut f = Fixture::new(true, false);
+    let (old_path, old_bytes, _) = f.prepare_reinspection();
+    let reserved = f.ok("reinspect-reserve");
+    f.profile["scope"]["receipt"] = reserved["receipt"].clone();
+    let mut fresh = f.evidence.clone();
+    fresh["reinspection_context"] = reserved["context"].clone();
+    f.profile["scope"]["evidence"] = json!(document(&f.cache, &fresh));
+    f.save();
+    let submitted = f.ok("reinspect-submit");
+    let path = PathBuf::from(submitted["report_path"].as_str().unwrap());
+    let mut report: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(report["finite_scope_qualified_with_holds"], false);
+    assert_eq!(
+        report["observations"][0]["corrected"][0]["per_role"]["large"]["visible"],
+        false
+    );
+    assert!(report["observations"][0]["corrected"][0]["per_role"]["small"]["visible"].is_null());
+    report["reinspection"]["new_planned_clocks"] = json!(1);
+    fs::write(&path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+    assert!(!f.run("reinspect-resume").status.success());
+    assert_eq!(fs::read(old_path).unwrap(), old_bytes);
 }
 
 #[test]
