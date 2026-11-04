@@ -4,7 +4,8 @@ use crate::tig_scene_production::jobs::reference::ReferencePlan;
 
 fn check(t: &Ticket, journal: &mut SourceJournal) -> Result<()> {
     let state = journal
-        .source(&key(&t.source_id)?)?
+        .source(&key(&t.source_id)?)
+        .context("episode worker source journal read")?
         .context("episode root source missing")?;
     if state.owner != key(&t.owner)?
         || state.revision != t.root_revision
@@ -65,15 +66,18 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
     }
     let wait = MetadataWait::default();
     let programs = BoundPrograms::bind(&t.inputs.runtime)?;
-    let (mut source, context) = restore(&t.inputs, &t.metadata_root, &t.metadata_minimum, &wait)?;
+    let (mut source, context) = restore(&t.inputs, &t.metadata_root, &t.metadata_minimum, &wait)
+        .context("episode worker restore archived source")?;
     let templates = records::prepare(
         &t.inputs,
         &t.metadata_root,
         &t.metadata_minimum,
         &context,
         &t.output_roots,
-    )?;
-    let mut journal = SourceJournal::open(&t.journal_root, &t.journal_minimum)?;
+    )
+    .context("episode worker prepare output record admission")?;
+    let mut journal = SourceJournal::open(&t.journal_root, &t.journal_minimum)
+        .context("episode worker open source journal")?;
     check(&t, &mut journal)?;
     let coordination = Coordination {
         root: t.coordination_root.clone(),
@@ -82,7 +86,8 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
     let preparation = Path::new("episode-prepare");
     fs::create_dir(preparation)?;
     let mut store = Waiting::new(
-        wait.run(|| MetadataStore::open(&t.metadata_root, &t.metadata_minimum))?,
+        wait.run(|| MetadataStore::open(&t.metadata_root, &t.metadata_minimum))
+            .context("episode worker open metadata writer")?,
         &wait,
     );
     let root = planning::freeze(
@@ -92,7 +97,8 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
         &programs,
         &mut store,
         preparation,
-    )?;
+    )
+    .context("episode worker freeze admitted input closure")?;
     if root.recipe.fingerprint() != &t.recipe || root.resources.selection() != &t.resources {
         bail!("episode worker input closure differs from admission");
     }
@@ -108,7 +114,8 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
                 TreeLimits::default(),
             )
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>>>()
+        .context("episode worker restore scene source views")?;
     let scene_contexts = t
         .inputs
         .scenes
@@ -128,7 +135,8 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
                 tig_scene::freeze_context(source, &spec.request, &mut store, TreeLimits::default())
             }
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>>>()
+        .context("episode worker freeze scene source contexts")?;
     let native = t
         .inputs
         .scenes
@@ -218,10 +226,13 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
         .iter()
         .map(|plan| plan.freeze(&mut store, TreeLimits::default()))
         .collect::<Result<Vec<_>>>()?;
-    let checkpoint = wait.run(|| store.inner.finish())?;
+    let checkpoint = wait
+        .run(|| store.inner.finish())
+        .context("episode worker commit component metadata")?;
     drop(store);
     let mut reader = Waiting::new(
-        wait.run(|| MetadataReader::open(&t.metadata_root, &checkpoint))?,
+        wait.run(|| MetadataReader::open(&t.metadata_root, &checkpoint))
+            .context("episode worker reopen component metadata")?,
         &wait,
     );
     let scene_owners = references
@@ -245,7 +256,8 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
                     &budget,
                 )
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>>>()
+        .context("episode worker protect scene sources")?;
     let presentation_owners = presentation_plans
         .iter()
         .zip(&presentation_resources)
@@ -266,7 +278,8 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
                     &budget,
                 )
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>>>()
+        .context("episode worker protect presentation sources")?;
     drop(reader);
     let reference_budget = crate::scene_primary_reference::Budget {
         max_staged_bytes: t.reference_staging_bytes,
