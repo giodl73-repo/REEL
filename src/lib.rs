@@ -42,6 +42,7 @@ pub mod motioncraft_cadence;
 pub mod motioncraft_comparison;
 pub mod motioncraft_layers;
 pub mod motioncraft_review;
+pub mod music_album;
 pub mod music_render;
 pub mod music_sample_clock;
 pub mod music_score;
