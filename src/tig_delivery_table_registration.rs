@@ -18,6 +18,21 @@ use tig_assets::{
 use tig_core::{LogicalPath, Object, identity};
 use tig_store::existing::{ByteSource, Profile as ByteProfile, ReadCache};
 
+#[derive(Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RowLayout {
+    #[default]
+    Array,
+    Object,
+}
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TargetKind {
+    #[default]
+    LogicalPath,
+    OpaqueLocator,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Profile {
@@ -25,8 +40,15 @@ pub struct Profile {
     pub byte_source: ByteProfile,
     pub receipt: Object,
     pub rows_pointer: String,
+    #[serde(default)]
+    pub row_layout: RowLayout,
     pub asset_pointer: String,
     pub path_pointer: String,
+    /// Object member names can themselves be the declared target paths.
+    #[serde(default)]
+    pub target_from_member_key: bool,
+    #[serde(default)]
+    pub target_kind: TargetKind,
     pub provider: String,
     pub scope: String,
     pub id_prefix: String,
@@ -69,6 +91,7 @@ pub fn prepare(p: &Profile, source: &mut impl ByteSource) -> Result<Prepared> {
         || !pointer(&p.path_pointer)
         || p.authored.contains_key("target")
         || p.provenance.len() > 16
+        || (p.target_from_member_key && p.row_layout != RowLayout::Object)
     {
         bail!("invalid delivery table profile");
     }
@@ -88,11 +111,21 @@ pub fn prepare(p: &Profile, source: &mut impl ByteSource) -> Result<Prepared> {
     crate::approval_attestation::ensure_no_duplicate_keys(&raw)
         .map_err(|_| anyhow::anyhow!("ambiguous delivery table JSON"))?;
     let receipt: Value = serde_json::from_slice(&raw)?;
-    let rows = receipt
+    let table = receipt
         .pointer(&p.rows_pointer)
-        .and_then(Value::as_array)
         .ok_or_else(|| anyhow::anyhow!("declared delivery table missing"))?;
-    if rows.is_empty() || rows.len() > p.max_rows {
+    let rows: Vec<(String, &Value)> = match (&p.row_layout, table) {
+        (RowLayout::Array, Value::Array(rows)) if rows.len() <= p.max_rows => rows
+            .iter()
+            .enumerate()
+            .map(|(i, row)| (i.to_string(), row))
+            .collect(),
+        (RowLayout::Object, Value::Object(rows)) if rows.len() <= p.max_rows => {
+            rows.iter().map(|(key, row)| (key.clone(), row)).collect()
+        }
+        _ => bail!("declared row layout or budget differs"),
+    };
+    if rows.is_empty() {
         bail!("delivery row budget");
     }
     let mut records = BTreeMap::new();
@@ -100,12 +133,27 @@ pub fn prepare(p: &Profile, source: &mut impl ByteSource) -> Result<Prepared> {
     let mut object_lengths = BTreeMap::new();
     let mut total = 0u64;
     let mut parsed_receipt = None;
-    for (index, row) in rows.iter().enumerate() {
-        let path = row
-            .pointer(&p.path_pointer)
-            .and_then(Value::as_str)
-            .ok_or_else(|| anyhow::anyhow!("declared target path missing"))?;
-        LogicalPath::parse(path)?;
+    for (member, row) in &rows {
+        let path = if p.target_from_member_key {
+            member.as_str()
+        } else {
+            row.pointer(&p.path_pointer)
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("declared target path missing"))?
+        };
+        let identity = match p.target_kind {
+            TargetKind::LogicalPath => {
+                LogicalPath::parse(path)?;
+                json!({"schema":"tig.declared-publication-target.experimental-1","provider":p.provider,"scope":p.scope,"path":path})
+            }
+            TargetKind::OpaqueLocator => {
+                if path.trim().is_empty() || path.len() > 4096 || path.chars().any(char::is_control)
+                {
+                    bail!("invalid opaque target locator");
+                }
+                json!({"schema":"tig.declared-publication-locator.experimental-1","provider":p.provider,"scope":p.scope,"locator":path})
+            }
+        };
         if !targets.insert(path) {
             bail!("duplicate delivery target path");
         }
@@ -125,7 +173,6 @@ pub fn prepare(p: &Profile, source: &mut impl ByteSource) -> Result<Prepared> {
         {
             bail!("source cache URI differs from subject");
         }
-        let identity = json!({"schema":"tig.declared-publication-target.experimental-1","provider":p.provider,"scope":p.scope,"path":path});
         let target = Object::from_bytes(&identity::canonical_json(&identity)?).sha256;
         // Identity follows the declared target, never row number or media bytes.
         let id = format!("{}/{}", p.id_prefix, target.as_str());
@@ -133,7 +180,8 @@ pub fn prepare(p: &Profile, source: &mut impl ByteSource) -> Result<Prepared> {
             bail!("generated ID budget");
         }
         let mut authored = p.authored.clone();
-        authored.insert("target".into(),json!({"provider":p.provider,"scope":p.scope,"receipt_slot":"delivery-receipt","receipt_selector":format!("{}/{index}",p.rows_pointer)}));
+        let selector_member = member.replace('~', "~0").replace('/', "~1");
+        authored.insert("target".into(),json!({"provider":p.provider,"scope":p.scope,"receipt_slot":"delivery-receipt","receipt_selector":format!("{}/{selector_member}",p.rows_pointer)}));
         let mut streams = vec![
             json!({"slot":"retained-readback","role":"delivery/file","group":"retained","object":asset}),
             json!({"slot":"delivery-receipt","role":"evidence/delivery-receipt","group":"source","object":p.receipt}),
