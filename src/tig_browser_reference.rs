@@ -126,16 +126,22 @@ pub fn compare_master_to_primaries_with_geometry(
     authority()?;
     limits.validate()?;
     let shape = shape(plan)?;
-    if !stage_parent.is_absolute() || !fs::symlink_metadata(stage_parent)?.is_dir() {
+    if !stage_parent.is_absolute()
+        || !fs::symlink_metadata(stage_parent)
+            .context("inspect fresh browser comparison scratch parent")?
+            .is_dir()
+    {
         bail!("fresh browser comparison requires existing absolute admitted scratch");
     }
     // Refuse incompatible historical stream declarations before starting a fresh
     // browser, rather than guessing pixel aspect or reducing audio precision.
-    media_parity::admit_with_geometry(master, &programs.with_inputs(outputs), &shape, geometry)?;
+    media_parity::admit_with_geometry(master, &programs.with_inputs(outputs), &shape, geometry)
+        .context("admit selected master for fresh browser comparison")?;
     authority()?;
     let stage = tempfile::Builder::new()
         .prefix("browser-primary-reference-")
-        .tempdir_in(stage_parent)?;
+        .tempdir_in(stage_parent)
+        .context("create fresh browser comparison scratch")?;
     let path = stage.path().join("reference.mkv");
     let rendered = tig_browser::render::native(
         plan,
@@ -149,15 +155,25 @@ pub fn compare_master_to_primaries_with_geometry(
         &mut authority,
     );
     authority()?;
-    let rendered = rendered?;
+    let rendered = rendered.context("render fresh browser primary reference")?;
     use std::os::windows::fs::OpenOptionsExt;
     let held = fs::OpenOptions::new()
         .read(true)
         .share_mode(1)
-        .open(&path)?;
-    if held.metadata()?.len() != rendered.output.bytes
-        || crate::sha256_file(&path)? != rendered.output.sha256.as_str()
-        || held.metadata()?.len() != rendered.output.bytes
+        .open(&path)
+        .context("hold fresh browser primary reference against mutation")?;
+    if held
+        .metadata()
+        .context("inspect fresh browser primary reference before hash")?
+        .len()
+        != rendered.output.bytes
+        || crate::sha256_file(&path).context("hash fresh browser primary reference")?
+            != rendered.output.sha256.as_str()
+        || held
+            .metadata()
+            .context("inspect fresh browser primary reference after hash")?
+            .len()
+            != rendered.output.bytes
     {
         bail!("fresh browser reference changed before comparison");
     }
@@ -179,7 +195,8 @@ pub fn compare_master_to_primaries_with_geometry(
         geometry,
     );
     authority()?;
-    let parity = compared?;
+    let parity =
+        compared.context("compare fresh browser primary reference with selected master")?;
     if !parity.equal {
         bail!(
             "selected browser master differs from fresh primary reference: picture_planes_equal={}, displayed_rgb_equal={}, color_metadata_equal={}, pcm_equal={}, native_clock_checked={}",
@@ -191,7 +208,9 @@ pub fn compare_master_to_primaries_with_geometry(
         );
     }
     drop(reference);
-    stage.close()?;
+    stage
+        .close()
+        .context("retire fresh browser comparison scratch after releasing reference")?;
     Ok(PrimaryComparison {
         manifest: Object::from_bytes(&plan.manifest_bytes),
         master: master.clone(),
