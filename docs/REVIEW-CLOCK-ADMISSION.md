@@ -72,6 +72,40 @@ dropping a target or substituting raw sources refuses before reservation.
 All CLI summaries keep human approval false. A saved local report or aggregate
 remains publication-pending until the existing asset publisher retains it.
 
+## Explicit reinspection of a held scope
+
+A counted scope still skips in the ordinary commands. A separate
+`reel.review-reinspection-profile.experimental-1` profile can request additional
+observations of the exact unchanged task when its retained prior subreport is
+finite-false. It contains `scope` (the ordinary counted profile), a bounded
+`reason`, and a nonempty `prerequisites` map. Each prerequisite has `origin`
+(`task` or `feature-notes`), a JSON `pointer` to its original object descriptor,
+and the matching `object` pin. Undeclared/substituted or corrupt objects refuse.
+Producers choose the required context; byte verification does not establish its
+meaning, complete historical protocol parity or actual human reading.
+
+Use `reinspect-inspect`, `reinspect-reserve --owner OWNER`, `reinspect-resume`
+and `reinspect-submit` with that explicit profile. All original task, native
+proof and image-header checks and all prerequisite reads precede reservation.
+Only reservation creates metadata under the existing control root's
+`reinspections/PRIOR_REPORT_SHA256` namespace. The immutable context binds the
+original task/report, policy/method, reason, prerequisite declarations and prior
+holds. Changing these cannot create another claim for that report. Qualified,
+unseen or already-reinspected prior reports refuse.
+
+The returned `context` pin must appear as `reinspection_context` in the newly
+retained fresh evidence. The new report preserves the complete context and prior
+holds under `reinspection`; the original report is never overwritten. Every
+reinspection summary says `new_planned_clocks: 0`. Actual additional view counts
+remain in the new report. Reinspection adds no previously unseen planned clocks,
+clears no old finding automatically, and grants no global or human approval.
+Pending receipts still grant no repeat-view permission. Completion recovery and
+submission retries validate the saved report without new views.
+
+This path requires its own complete hosted qualification before real image
+observations or production adoption. The earlier ordinary-admission binary and
+bindings are not upgraded by a source merge.
+
 ## Remaining qualification before adoption
 
 - Demonstrate full predicate parity on real frozen corrected/retained target

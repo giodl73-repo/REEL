@@ -8,6 +8,8 @@ use std::{
 };
 use tig_store::existing::{ByteSource, Profile as ByteProfile, ReadCache};
 
+pub mod reinspection;
+
 const META_MAX: usize = 4 * 1024 * 1024;
 const PROFILE_MAX: usize = 65_536;
 
