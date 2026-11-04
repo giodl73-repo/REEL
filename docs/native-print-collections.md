@@ -57,6 +57,15 @@ checks and producer visual inspection remain separate from human musical,
 engraving, selection or delivery approval. CLI success emits only counts;
 expanded paths, texts and hashes stay in private packet files.
 
+PDF serialization canonicalizes the reachable object graph in sorted dictionary
+key and array order. The SVG library writes auxiliary font objects through a
+randomized map; two-font documents otherwise acquire different object IDs across
+processes even when their page appearance is identical. Canonical numbering
+prevents these incidental byte revisions without changing font or drawing streams.
+Fixtures compare independently numbered retained PDFs and run separate CLI
+processes with two captured font families. Deterministic bytes support content
+addressed storage; they do not imply musical or visual approval.
+
 The fixtures cover accents, bilingual layout, long-poem continuation, nine
 systems across three notation pages, ledger lines, page order, inherited PDF
 resources, decoded stream preservation, deterministic rebuild, output tamper,

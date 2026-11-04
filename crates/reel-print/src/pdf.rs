@@ -142,6 +142,71 @@ pub fn merge(parts: Vec<Arc<Document>>) -> Result<Vec<u8>> {
     output.max_id = next + 1;
     output.trailer.set("Root", catalog);
     let mut bytes = Vec::new();
-    output.save_to(&mut bytes)?;
+    canonical(output)?.save_to(&mut bytes)?;
     Ok(bytes)
+}
+
+/// Font writers may allocate auxiliary objects by randomized map order. Walk
+/// the reachable PDF graph in dictionary-key/array order before assigning IDs.
+/// Encoded drawing streams and font bytes are never rewritten.
+fn canonical(input: Document) -> Result<Document> {
+    use std::collections::VecDeque;
+    fn rewrite(
+        value: Object,
+        ids: &mut BTreeMap<ObjectId, ObjectId>,
+        queue: &mut VecDeque<ObjectId>,
+        depth: usize,
+    ) -> Result<Object> {
+        ensure!(
+            depth <= 64,
+            "PDF object nesting exceeds canonicalization bound"
+        );
+        Ok(match value {
+            Object::Reference(old) => {
+                let next = (u32::try_from(ids.len() + 1)?, 0);
+                let id = *ids.entry(old).or_insert_with(|| {
+                    queue.push_back(old);
+                    next
+                });
+                Object::Reference(id)
+            }
+            Object::Array(values) => Object::Array(
+                values
+                    .into_iter()
+                    .map(|v| rewrite(v, ids, queue, depth + 1))
+                    .collect::<Result<_>>()?,
+            ),
+            Object::Dictionary(dict) => {
+                let sorted: BTreeMap<_, _> =
+                    dict.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                let mut out = lopdf::Dictionary::new();
+                for (key, value) in sorted {
+                    out.set(key, rewrite(value, ids, queue, depth + 1)?);
+                }
+                Object::Dictionary(out)
+            }
+            Object::Stream(mut stream) => {
+                stream.dict = rewrite(Object::Dictionary(stream.dict), ids, queue, depth + 1)?
+                    .as_dict()?
+                    .clone();
+                Object::Stream(stream)
+            }
+            value => value,
+        })
+    }
+    let mut ids = BTreeMap::new();
+    let mut queue = VecDeque::new();
+    let root = rewrite(input.trailer.get(b"Root")?.clone(), &mut ids, &mut queue, 0)?;
+    let mut output = Document::with_version("1.7");
+    output.trailer.set("Root", root);
+    while let Some(old) = queue.pop_front() {
+        ensure!(
+            ids.len() <= 200_000,
+            "PDF object count exceeds canonicalization bound"
+        );
+        let value = rewrite(input.get_object(old)?.clone(), &mut ids, &mut queue, 0)?;
+        output.objects.insert(ids[&old], value);
+    }
+    output.max_id = u32::try_from(ids.len())?;
+    Ok(output)
 }

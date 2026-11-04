@@ -26,8 +26,39 @@ fn real_print_cli_keeps_private_paths_titles_ids_hashes_and_text_out_of_stdout()
     .expect("explicit fixture font required");
     let source = root.path().join("private-source.txt");
     fs::write(&source, "Private source phrase with canción").unwrap();
+    let (second, second_family) = [
+        ("C:/Windows/Fonts/times.ttf", "Times New Roman"),
+        (
+            "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+            "DejaVu Serif",
+        ),
+        (
+            "/usr/share/fonts/truetype/liberation2/LiberationSerif-Regular.ttf",
+            "Liberation Serif",
+        ),
+    ]
+    .into_iter()
+    .find(|(path, _)| Path::new(path).is_file())
+    .expect("second explicit fixture font required");
+    let score = root.path().join("two-fonts.svg");
+    let mut svg =
+        String::from("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1100\" height=\"230\">");
+    for y in [80, 90, 100, 110, 120] {
+        svg += &format!(
+            "<line class=\"staff\" x1=\"80\" x2=\"1060\" y1=\"{y}\" y2=\"{y}\" stroke=\"black\"/>"
+        );
+    }
+    svg += &format!(
+        "<text x=\"200\" y=\"110\" font-family=\"{second_family}\">Second explicit font</text><text x=\"200\" y=\"140\">Primary explicit font</text></svg>"
+    );
+    fs::write(&score, svg).unwrap();
     let request = json!({"schema":"reel.print-collection.v1","title":"Private collection title","author":"Private source creator","notice":"Private technical fixture","private_only":true,"fonts":[pin(Path::new(font))],"body_font":family,"entries":[{"kind":"text","id":"private-record-id","title":"Private chapter title","source":pin(&source)}],"limits":{"input_bytes":16777216,"output_bytes":16777216,"pages":8}});
     let mut request = request;
+    request["fonts"]
+        .as_array_mut()
+        .unwrap()
+        .push(pin(Path::new(second)));
+    request["entries"].as_array_mut().unwrap().push(json!({"kind":"native-score","id":"private-two-font-score","title":"Two explicitly captured font families","source":pin(&score),"systems_per_page":4}));
     request["entries"][0]["source"]["path"] = json!("private-source.txt");
     let path = root.path().join("request.json");
     fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
@@ -47,7 +78,7 @@ fn real_print_cli_keeps_private_paths_titles_ids_hashes_and_text_out_of_stdout()
             String::from_utf8_lossy(&result.stderr)
         );
         let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
-        assert_eq!(value["pages"], 2);
+        assert_eq!(value["pages"], 3);
         if operation == "plan" {
             assert!(!output.exists());
         } else {

@@ -418,7 +418,7 @@ pub fn check(request: &Path, output: &Path) -> Result<Receipt> {
     for (name, raw) in &packet.files {
         ensure!(
             read(&output.join(name), raw.len() as u64)? == *raw,
-            "print output differs from rebuilt packet"
+            "print output differs from rebuilt packet file {name}"
         );
     }
     Ok(packet.receipt)

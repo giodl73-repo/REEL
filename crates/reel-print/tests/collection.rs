@@ -300,6 +300,24 @@ fn retained_pdf_pages_keep_order_decoded_commands_and_inherited_resources() {
     assert_eq!(receipt.pages[1].width, 300.0);
     assert_eq!(receipt.pages[1].height, 200.0);
     assert_eq!(fs::read(root.join("source.pdf")).unwrap(), bytes);
+    let mut reordered = old.clone();
+    reordered.renumber_objects_with(100);
+    let mut bytes = vec![];
+    reordered.save_to(&mut bytes).unwrap();
+    let different_ids = write(root, "renumbered.pdf", bytes);
+    change(&path, |q| {
+        q.entries[0] = Entry::RetainedPdf {
+            id: "retained".into(),
+            source: different_ids,
+        }
+    });
+    let second = root.join("renumbered-packet");
+    render(&path, &second).unwrap();
+    assert_eq!(
+        fs::read(out.join("collection.pdf")).unwrap(),
+        fs::read(second.join("collection.pdf")).unwrap(),
+        "object numbering must not create a new print byte version"
+    );
 }
 
 #[cfg(unix)]
