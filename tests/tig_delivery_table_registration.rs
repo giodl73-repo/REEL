@@ -123,4 +123,46 @@ fn targets_stay_independent_and_stable_across_row_order_and_byte_revisions() {
     profile["receipt"] = serde_json::to_value(table(root, &json!([row_a, conflicting]))).unwrap();
     assert!(run(root, &profile, "conflicting-lengths").is_err());
     assert!(!root.join("conflicting-lengths").exists());
+
+    // Historical receipts use named variant rows and literal Windows locators.
+    profile["row_layout"] = json!("object");
+    profile["target_kind"] = json!("opaque-locator");
+    let opaque_rows = json!({"with/voice~1":{"relative_path":"G:\\Shared\\with.mp3","asset":a},"without":{"relative_path":"G:\\Shared\\without.mp3","asset":a}});
+    profile["receipt"] = serde_json::to_value(table(root, &opaque_rows)).unwrap();
+    profile["receipt_policy"] = local(
+        root,
+        "opaque-policy.json",
+        &json!({"schema":"tig.publication-evidence-policy.experimental-1","target_pointer":"/target","subject_selection":"declared-stream","subject_slot":"retained-readback","subject_role":"delivery/file","receipt_role":"evidence/delivery-receipt","limits":{"bytes":1048576,"nodes":8192,"depth":32},"rules":[{"kind":"object-rows","root":"/copies","fields":{"sha256":"/asset/sha256","bytes":"/asset/bytes","target":{"kind":"opaque-locator","pointer":"/relative_path"}}}]}),
+    );
+    assert_eq!(run(root, &profile, "opaque-objects").unwrap()["records"], 2);
+    let opaque = records(root, "opaque-objects");
+    assert!(
+        opaque
+            .values()
+            .any(|r| r["authored"]["target"]["receipt_selector"] == "/copies/with~1voice~01")
+    );
+    profile["target_kind"] = json!("logical-path");
+    assert!(run(root, &profile, "opaque-as-path").is_err());
+    assert!(!root.join("opaque-as-path").exists());
+
+    // Keyed tables preserve paths containing pointer metacharacters verbatim.
+    profile["target_from_member_key"] = json!(true);
+    profile["asset_pointer"] = json!("");
+    profile["path_pointer"] = json!("");
+    profile["receipt"] =
+        serde_json::to_value(table(root, &json!({"Spanish/a~b.wav":a,"English/b.wav":a}))).unwrap();
+    profile["receipt_policy"] = local(
+        root,
+        "keyed-policy.json",
+        &json!({"schema":"tig.publication-evidence-policy.experimental-1","target_pointer":"/target","subject_selection":"declared-stream","subject_slot":"retained-readback","subject_role":"delivery/file","receipt_role":"evidence/delivery-receipt","limits":{"bytes":1048576,"nodes":8192,"depth":32},"rules":[{"kind":"object-rows","root":"/copies","fields":{"sha256":"/sha256","bytes":"/bytes","target":{"kind":"member-key"}}}]}),
+    );
+    assert_eq!(run(root, &profile, "keyed-objects").unwrap()["records"], 2);
+    assert!(
+        records(root, "keyed-objects")
+            .values()
+            .any(|r| r["authored"]["target"]["receipt_selector"] == "/copies/Spanish~1a~0b.wav")
+    );
+    profile["row_layout"] = json!("array");
+    assert!(run(root, &profile, "member-key-on-array").is_err());
+    assert!(!root.join("member-key-on-array").exists());
 }
