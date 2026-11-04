@@ -761,6 +761,39 @@ mod tests {
         }
     }
     #[test]
+    fn checker_accepts_prior_instrumental_packet_without_optional_voice_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let r = request(root);
+        run(root, &r, "old").unwrap();
+        let mut request: Value =
+            serde_json::from_slice(&fs::read(root.join("request.json")).unwrap()).unwrap();
+        request.as_object_mut().unwrap().remove("vocal");
+        let request_raw = serde_json::to_vec(&request).unwrap();
+        fs::write(root.join("request.json"), &request_raw).unwrap();
+        let mut receipt: Value =
+            serde_json::from_slice(&fs::read(root.join("old/receipt.json")).unwrap()).unwrap();
+        for name in [
+            "outputs",
+            "vocal",
+            "vocal_retimed",
+            "vocal_regenerated",
+            "vocal_pitched",
+            "stem_sum_policy",
+        ] {
+            receipt.as_object_mut().unwrap().remove(name);
+        }
+        receipt["request_sha256"] = json!(hash(&request_raw));
+        fs::write(
+            root.join("old/receipt.json"),
+            serde_json::to_vec(&receipt).unwrap(),
+        )
+        .unwrap();
+        let report = check(&root.join("request.json"), &root.join("old")).unwrap();
+        assert_eq!(report["outputs_verified"], 1);
+        assert_eq!(report["vocal_pcm_verified"], false);
+    }
+    #[test]
     fn wrong_vocal_clock_or_gain_refuses_before_output() {
         for case in ["rate", "frames", "gain"] {
             let tmp = tempfile::tempdir().unwrap();

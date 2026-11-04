@@ -12,10 +12,11 @@ their sum, including quantization rounding. Large bank buffers are released
 before loading the vocal. Invalid voice controls and clocks refuse before any
 output directory is created.
 
-Five unit tests cover the existing sample-clock behavior plus complete stereo
+Six unit tests cover the existing sample-clock behavior plus complete stereo
 stem sums, unchanged source-clock boundaries, attenuation and voice refusals.
 The read-only checker also rejects self-consistent replacement hashes when the
 master sum is wrong or when both the vocal and master are changed together.
+The prior instrumental-only packet format also remains readable.
 
 The actual private 120-second fixture produces three 31,752,044-byte WAV files.
 All output pins and clocks pass; every vocal sample matches the unchanged
