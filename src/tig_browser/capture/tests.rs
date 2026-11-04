@@ -31,6 +31,7 @@ fn manifest() -> BrowserCompositionManifest {
         dynamic_regions: vec![],
         audio: None,
         source_clock: None,
+        audio_window: None,
     }
 }
 fn png(color: [u8; 4]) -> Vec<u8> {
@@ -119,6 +120,8 @@ impl Transport for Wire {
                 };
                 if expression.contains("document.readyState") {
                     result = json!({"result":{"value":json!({"url":url,"state":"complete"}).to_string()}});
+                } else if expression.contains("document.fonts.ready") {
+                    result = json!({"result":{"value":json!({"fontsReady":true}).to_string()}});
                 } else if expression.contains("__reelSetFrame") {
                     let frame = self.signals.captures.get() + u64::from(self.bad_clock);
                     result =

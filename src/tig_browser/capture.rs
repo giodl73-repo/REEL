@@ -457,6 +457,13 @@ pub fn capture(
     if !s.source_served {
         bail!("browser source was not served from the admitted resource view");
     }
+    let fonts = evaluation(s.call("Runtime.evaluate", json!({
+        "expression":"document.fonts.ready.then(()=>JSON.stringify({fontsReady:Array.from(document.fonts).every(f=>f.status==='loaded')}))",
+        "returnByValue":true,"awaitPromise":true
+    }))?)?;
+    if fonts["fontsReady"] != true {
+        bail!("browser declared fonts are not ready");
+    }
     if clean_picture {
         let response = s.call("Runtime.evaluate", json!({"expression":"document.documentElement.dataset.reelCleanPicture='true';const ns=document.documentElement.namespaceURI;const s=ns==='http://www.w3.org/2000/svg'?document.createElementNS(ns,'style'):document.createElement('style');s.textContent='[data-reel-disclosure],.reel-disclosure{display:none!important}';(document.head||document.documentElement).appendChild(s)"}))?;
         if response.get("exceptionDetails").is_some() {

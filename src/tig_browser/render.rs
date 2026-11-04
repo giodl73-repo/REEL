@@ -20,6 +20,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tig_core::Object;
+mod audio;
 mod browser;
 mod processes;
 use processes::{Task, UsageObserver, native_path, pause};
@@ -97,7 +98,7 @@ pub fn producer_document(
     Ok(tig_core::identity::canonical_json(&json!({
         "schema":"reel.tig-browser-native-producer.experimental-1",
         "media_runtime":programs.identity(),"browser":browser.identity(),"clean_picture":clean_picture,
-        "profile":"ffv1-yuv444p-square-cfr;wav-to-padded-trimmed-pcm24-48000-stereo/v1",
+        "profile":"ffv1-yuv444p-square-cfr;pcm24-48000-stereo:default-wav-pad-trim-or-explicit-integer-window/v2",
         "renderer":Object::from_bytes(include_bytes!("render.rs")),
         "browser_adapter":Object::from_bytes(include_bytes!("render/browser.rs")),
         "process_adapter":Object::from_bytes(include_bytes!("render/processes.rs")),
@@ -105,6 +106,8 @@ pub fn producer_document(
         "source_clock_adapter":Object::from_bytes(include_bytes!("../browser_composition/clock.rs")),
         "source_clock_schema":Object::from_bytes(include_bytes!("../presentation_clock.rs")),
         "frame_clock_adapter":Object::from_bytes(include_bytes!("../browser_composition.rs")),
+        "audio_window_adapter":Object::from_bytes(include_bytes!("render/audio.rs")),
+        "pcm_window_adapter":Object::from_bytes(include_bytes!("../browser_composition/pcm_window.rs")),
         "capture_transport":Object::from_bytes(include_bytes!("capture/protocol.rs"))
     }))?)
 }
@@ -209,11 +212,39 @@ fn arguments(
     .to_vec();
     args.extend([manifest.fps.to_string(), "-i".into(), endpoint.into()]);
     if let Some(audio) = audio {
-        let samples = sample_count(plan)?;
-        args.extend(["-f".into(),"wav".into(),"-i".into(),native_path(audio)?,"-filter_complex".into(),
-            format!("[1:a:0]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=end_sample={samples},asetpts=PTS-STARTPTS[a]"),
-            "-map".into(),"0:v:0".into(),"-map".into(),"[a]".into(),"-c:a".into(),"pcm_s24le".into(),
-            "-ar".into(),"48000".into(),"-ac".into(),"2".into()]);
+        let filter = if manifest.audio_window.is_some() {
+            args.extend([
+                "-f".into(),
+                "s24le".into(),
+                "-ar".into(),
+                "48000".into(),
+                "-ac".into(),
+                "2".into(),
+            ]);
+            "[1:a:0]asetpts=PTS-STARTPTS[a]".into()
+        } else {
+            args.extend(["-f".into(), "wav".into()]);
+            format!(
+                "[1:a:0]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=end_sample={},asetpts=PTS-STARTPTS[a]",
+                sample_count(plan)?
+            )
+        };
+        args.extend([
+            "-i".into(),
+            native_path(audio)?,
+            "-filter_complex".into(),
+            filter,
+            "-map".into(),
+            "0:v:0".into(),
+            "-map".into(),
+            "[a]".into(),
+            "-c:a".into(),
+            "pcm_s24le".into(),
+            "-ar".into(),
+            "48000".into(),
+            "-ac".into(),
+            "2".into(),
+        ]);
     } else {
         args.push("-an".into());
     }
@@ -465,6 +496,27 @@ pub fn native(
         .suffix(".mkv")
         .tempfile_in(workspace)?
         .into_temp_path();
+    let exact_audio = plan
+        .manifest
+        .audio_window
+        .as_ref()
+        .map(|window| {
+            audio::prepare(
+                programs,
+                inputs,
+                audio.as_deref().context("PCM window audio missing")?,
+                window,
+                workspace,
+                limits,
+                deadline,
+                &mut authority,
+            )
+        })
+        .transpose()?;
+    let encode_audio = exact_audio
+        .as_ref()
+        .map(|v| v.path.as_ref())
+        .or(audio.as_deref());
     let mut runtime = browser::Browser::start(
         browser,
         workspace,
@@ -485,7 +537,7 @@ pub fn native(
             plan,
             &endpoint,
             &candidate,
-            audio.as_deref(),
+            encode_audio,
             limits.max_output_bytes,
         )?,
         workspace,
@@ -531,6 +583,11 @@ pub fn native(
     let pcm_sha256 = samples
         .map(|n| pcm(programs, inputs, &candidate, workspace, limits, deadline, n))
         .transpose()?;
+    if let Some(exact) = &exact_audio
+        && pcm_sha256.as_ref() != Some(&exact.sha256)
+    {
+        bail!("browser native mux changed exact enveloped PCM");
+    }
     authority()?;
     workspace_usage.force()?;
     let output_pin = Object {

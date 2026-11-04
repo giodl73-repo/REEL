@@ -34,6 +34,28 @@ adds `sourceClock` with `sourceSha256`, `sampleRate`, `totalSamples`, `anchorIds
 listener without rewriting its source or inserting per-artifact renderer code.
 Evidence hashing establishes its subject, not human alignment or approval.
 
+An optional `audio_window` supplies `source_samples`, `start_sample`,
+`end_sample`, `fade_in_samples` and `fade_out_samples`. This exact profile
+requires a single original stereo PCM stream at 48 kHz and the matching full
+source clock. The selected length must equal the picture duration exactly;
+fades cannot overlap. Anchors must lie in the selected window, and their frame
+positions subtract its start before rounding. Other manifest behavior stays
+unchanged when the window is absent.
+
+The bounded native renderer normalizes the held full original to PCM24, checks
+the full sample count, then applies the sample window and integer linear fades.
+Each signed sample is multiplied by the integer numerator and divided toward
+zero. The first/last faded samples are zero; this is deliberately distinct from
+FFmpeg `afade`. It checks the encoded output against the enveloped PCM hash.
+Normalization and envelope files are owned transient intermediates under the
+existing workspace/time/process limits, never new primary assets. The legacy
+unbounded renderer refuses this option rather than silently omitting it.
+
+Capture waits for the declared fonts before the first frame. Comparison failures
+report separate picture, displayed RGB, color metadata, PCM and clock booleans
+without exposing private source paths or subjects. The producer contract pins
+the envelope implementation as well as clock and capture code.
+
 The generated composition manifest declares the clock as an exact asset and
 points `source_clock` at that asset. Its evidence must also be declared, with
 matching hash and length. Clock JSON is bounded to 64 KiB and evidence to 1 MiB;

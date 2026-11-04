@@ -58,6 +58,14 @@ pub(crate) fn source_clock_event(
         bail!("browser clock evidence bytes differ");
     }
     let mut ids = BTreeSet::new();
+    let (start, end) = if let Some(window) = &manifest.audio_window {
+        if clock.sample_rate != 48_000 || clock.total_samples != window.source_samples {
+            bail!("exact PCM window differs from original measured source clock");
+        }
+        (window.start_sample, window.end_sample)
+    } else {
+        (0, clock.total_samples)
+    };
     let mut previous = None;
     let mut frames = Vec::new();
     for anchor in &clock.anchors {
@@ -65,7 +73,8 @@ pub(crate) fn source_clock_event(
             || anchor.id.len() > 256
             || anchor.id.chars().any(char::is_control)
             || !ids.insert(&anchor.id)
-            || anchor.sample > clock.total_samples
+            || anchor.sample < start
+            || anchor.sample > end
             || previous.is_some_and(|n| anchor.sample < n)
         {
             bail!("invalid browser source clock anchor");
@@ -73,7 +82,8 @@ pub(crate) fn source_clock_event(
         previous = Some(anchor.sample);
         // Same single rounding of shared boundaries as still-sequence clocks.
         frames.push(
-            ((anchor.sample as u128 * manifest.fps as u128 + clock.sample_rate as u128 / 2)
+            (((anchor.sample - start) as u128 * manifest.fps as u128
+                + clock.sample_rate as u128 / 2)
                 / clock.sample_rate as u128) as u64,
         );
     }
@@ -126,6 +136,7 @@ mod tests {
                 sha256: "a".repeat(64),
             }),
             source_clock: Some(clock_ref),
+            audio_window: None,
         };
         (
             manifest,
@@ -174,6 +185,33 @@ mod tests {
                 .contains_key("source_clock")
         );
         assert!(!super::super::frame_clock_with_source(24, None).contains("sourceClock"));
+    }
+
+    #[test]
+    fn exact_audio_window_binds_full_source_and_offsets_anchor_frames() {
+        let (mut manifest, files) = fixture(|v| {
+            for anchor in v["anchors"].as_array_mut().unwrap() {
+                let sample = anchor["sample"].as_u64().unwrap();
+                anchor["sample"] = json!(sample + 48_000);
+            }
+        });
+        manifest.audio_window = Some(super::super::PcmWindow {
+            source_samples: 4_320_000,
+            start_sample: 48_000,
+            end_sample: 720_000,
+            fade_in_samples: 2400,
+            fade_out_samples: 24_000,
+        });
+        assert_eq!(
+            compile(&manifest, &files).unwrap().unwrap()["anchorFrames"],
+            json!([0, 1, 116, 237, 336])
+        );
+        manifest.audio_window.as_mut().unwrap().source_samples += 1;
+        assert!(compile(&manifest, &files).is_err());
+        manifest.audio_window.as_mut().unwrap().source_samples -= 1;
+        manifest.audio_window.as_mut().unwrap().start_sample += 1;
+        manifest.audio_window.as_mut().unwrap().end_sample += 1;
+        assert!(compile(&manifest, &files).is_err());
     }
 
     #[test]

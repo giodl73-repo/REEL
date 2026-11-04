@@ -149,6 +149,7 @@ fn fixture_with_clock(root: &Path, audio: bool, corrupt: bool, clock: bool) -> (
             path: "clock.json".into(),
             sha256: inputs["clock.json"].sha256.clone(),
         }),
+        audio_window: None,
     };
     let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
     (
@@ -189,6 +190,55 @@ fn limits() -> Limits {
         encoder_memory_bytes: 256 * 1024 * 1024,
         encoder_processes: 4,
     }
+}
+
+#[test]
+#[ignore = "requires explicit enrolled local browser/FFmpeg; synthetic media only"]
+fn real_native_browser_exact_pcm_window_uses_integer_envelope_and_retires_scratch() {
+    let root = tempfile::tempdir().unwrap();
+    let (programs, browser) = runtime();
+    let (mut plan, inputs) = fixture_with_clock(root.path(), true, false, true);
+    let window = crate::browser_composition::PcmWindow {
+        source_samples: 12000,
+        start_sample: 0,
+        end_sample: 12000,
+        fade_in_samples: 250,
+        fade_out_samples: 1000,
+    };
+    let (_, expected) = crate::browser_composition::pcm_window::transform(
+        &wave()[44..],
+        std::io::sink(),
+        &window,
+        || Ok(()),
+    )
+    .unwrap();
+    plan.manifest.audio_window = Some(window);
+    plan.manifest_bytes = serde_json::to_vec(&plan.manifest).unwrap();
+    let entries = fs::read_dir(root.path()).unwrap().count();
+    let output = root.path().join("master.mkv");
+    let result = native(
+        &plan,
+        &inputs,
+        programs,
+        browser,
+        root.path(),
+        &output,
+        &limits(),
+        true,
+        || Ok(()),
+    )
+    .unwrap();
+    assert_eq!(result.samples_per_channel, Some(12000));
+    assert_eq!(result.pcm_sha256, Some(expected));
+    assert_ne!(
+        result.pcm_sha256,
+        Some(crate::production::sha256_bytes(&wave()[44..]))
+    );
+    assert_eq!(
+        fs::read_dir(root.path()).unwrap().count(),
+        entries + 1,
+        "exact audio preparation left scratch files"
+    );
 }
 
 #[test]

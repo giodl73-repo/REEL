@@ -22,6 +22,8 @@ pub const MANIFEST_SCHEMA: &str = "reel.browser-composition.v0.1";
 pub const ARTIFACT_SCHEMA: &str = "reel.browser-composition-artifacts.v0.1";
 mod clock;
 pub(crate) use clock::source_clock_event;
+pub(crate) mod pcm_window;
+pub use pcm_window::PcmWindow;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -42,6 +44,10 @@ pub struct BrowserCompositionManifest {
     /// Explicit measured clock, also present in assets with its exact hash.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_clock: Option<HashedAsset>,
+    /// Exact 48kHz stereo PCM excerpt with integer linear fades. Optional;
+    /// ordinary WAV padding/trimming remains unchanged when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_window: Option<PcmWindow>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -194,6 +200,12 @@ pub(crate) fn validate_manifest(
                 .any(|a| a.path == clock.path && a.sha256 == clock.sha256))
     {
         bail!("browser source clock must name a declared asset and audio");
+    }
+    if let Some(window) = &manifest.audio_window {
+        window.validate(manifest.frame_count, manifest.fps)?;
+        if manifest.audio.is_none() || manifest.source_clock.is_none() {
+            bail!("exact PCM window needs original audio and an explicit source clock");
+        }
     }
     Ok(manifest)
 }
@@ -397,6 +409,9 @@ fn verify_video_probe(probe: &Value, manifest: &BrowserCompositionManifest) -> R
 pub fn render(options: &RenderOptions) -> Result<BrowserCompositionReport> {
     let manifest_path = options.manifest.canonicalize()?;
     let manifest = load_manifest(&manifest_path)?;
+    if manifest.audio_window.is_some() {
+        bail!("exact PCM windows require the bounded native browser renderer");
+    }
     let root = options.asset_root.canonicalize()?;
     let stage = TempDir::new()?;
     let mut inputs = vec![InputLineage {
@@ -834,6 +849,7 @@ mod tests {
             }],
             audio: None,
             source_clock: None,
+            audio_window: None,
         };
         let manifest_path = dir.path().join("composition.yaml");
         fs::write(&manifest_path, serde_yaml::to_string(&manifest).unwrap()).unwrap();

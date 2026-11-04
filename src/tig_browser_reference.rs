@@ -181,7 +181,14 @@ pub fn compare_master_to_primaries_with_geometry(
     authority()?;
     let parity = compared?;
     if !parity.equal {
-        bail!("selected browser master differs from fresh primary reference");
+        bail!(
+            "selected browser master differs from fresh primary reference: picture_planes_equal={}, displayed_rgb_equal={}, color_metadata_equal={}, pcm_equal={}, native_clock_checked={}",
+            parity.picture_planes_equal,
+            parity.displayed_rgb_equal,
+            parity.color_metadata_equal,
+            parity.pcm_equal,
+            parity.native_clock_checked
+        );
     }
     drop(reference);
     stage.close()?;
