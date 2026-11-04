@@ -119,10 +119,6 @@ pub(crate) fn unreviewed(model: &mut MusicModel) {
     model.review.status = "not-reviewed".into();
     model.review.decision_refs.clear();
 }
-pub(crate) fn publish(source: &Path, hash: &str, output: &Path, model: &MusicModel) -> Result<()> {
-    let bytes = encode(model)?;
-    publish_bytes(source, hash, output, &bytes)
-}
 pub(crate) fn publish_bytes(source: &Path, hash: &str, output: &Path, bytes: &[u8]) -> Result<()> {
     check_destination(source, output)?;
     if bytes.len() > LIMIT {
