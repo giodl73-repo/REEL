@@ -21,11 +21,34 @@ enum Operation {
         edit: PathBuf,
         output: PathBuf,
     },
+    ExportUnderlay {
+        asset_id: String,
+        output: PathBuf,
+    },
+    ProposeUnderlay {
+        source_lock: PathBuf,
+        edit: PathBuf,
+        output: PathBuf,
+    },
 }
 fn main() -> Result<()> {
     let args = Args::parse();
     let mut editor = Editor::open(Profile::read(&args.profile)?)?;
     let (operation, key, count) = match args.operation {
+        Operation::ExportUnderlay { asset_id, output } => (
+            "export-underlay",
+            "underlay_spans",
+            editor.export_underlay(&asset_id, &output)?,
+        ),
+        Operation::ProposeUnderlay {
+            source_lock,
+            edit,
+            output,
+        } => (
+            "propose-underlay",
+            "underlay_spans",
+            editor.propose_underlay(&source_lock, &edit, &output)?,
+        ),
         Operation::Export { asset_id, output } => {
             ("export", "notes", editor.export(&asset_id, &output)?)
         }

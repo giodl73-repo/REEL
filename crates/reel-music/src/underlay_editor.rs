@@ -45,7 +45,23 @@ fn bound(rows: &[LyricUnderlay]) -> Result<()> {
     Ok(())
 }
 fn capture(path: &Path, lyric: &Path) -> Result<Captured> {
-    let (model, model_sha) = io::intake(path)?;
+    let snapshot = capture_bytes(&io::read(path)?, &io::read_bounded(lyric, LYRIC_LIMIT)?)?;
+    let layer = snapshot
+        .model
+        .lyric_layers
+        .iter()
+        .find(|layer| layer.id == snapshot.layer_id)
+        .unwrap();
+    if source::resolve(path, &layer.path).canonicalize()? != lyric.canonicalize()? {
+        bail!("Explicit lyric file must match the native selected layer path");
+    }
+    Ok(snapshot)
+}
+fn capture_bytes(raw: &[u8], lyric: &[u8]) -> Result<Captured> {
+    let (model, model_sha) = io::intake_bytes(raw)?;
+    if lyric.len() > LYRIC_LIMIT {
+        bail!("Lyric text exceeds authoring budget");
+    }
     let sheet = model
         .lead_sheet
         .as_ref()
@@ -74,15 +90,11 @@ fn capture(path: &Path, lyric: &Path) -> Result<Captured> {
     if layers.next().is_some() {
         bail!("Ambiguous native lyric layer");
     }
-    if source::resolve(path, &layer.path).canonicalize()? != lyric.canonicalize()? {
-        bail!("Explicit lyric file must match the native selected layer path");
-    }
-    let raw = io::read_bounded(lyric, LYRIC_LIMIT)?;
-    let lyric_sha = sha256_bytes(&raw);
+    let lyric_sha = sha256_bytes(lyric);
     if !lyric_sha.eq_ignore_ascii_case(&layer.sha256) {
         bail!("Selected lyric byte hash does not match");
     }
-    let text = String::from_utf8(raw)?;
+    let text = String::from_utf8(lyric.to_vec())?;
     bound(&sheet.underlay)?;
     Ok(Captured {
         model,
@@ -108,6 +120,13 @@ pub fn template(path: &Path, lyric: &Path) -> Result<Edit> {
 }
 pub fn export(path: &Path, lyric: &Path, output: &Path) -> Result<usize> {
     let snapshot = capture(path, lyric)?;
+    export_snapshot(snapshot, output)
+}
+/// Export exact captured model and lyric bytes without filesystem dependency lookup.
+pub fn export_bytes(raw: &[u8], lyric: &[u8], output: &Path) -> Result<usize> {
+    export_snapshot(capture_bytes(raw, lyric)?, output)
+}
+fn export_snapshot(snapshot: Captured, output: &Path) -> Result<usize> {
     let request = edit_for(&snapshot);
     let sheet = snapshot.model.lead_sheet.as_ref().unwrap();
     let part = snapshot
@@ -140,8 +159,26 @@ pub fn export(path: &Path, lyric: &Path, output: &Path) -> Result<usize> {
     Ok(request.underlay.len())
 }
 pub fn apply(path: &Path, lyric: &Path, request: &Path, output: &Path) -> Result<usize> {
-    let mut snapshot = capture(path, lyric)?;
-    let request: Edit = serde_json::from_slice(&io::read(request)?)?;
+    let snapshot = capture(path, lyric)?;
+    io::check_destination(path, output)?;
+    let model_sha = snapshot.model_sha.clone();
+    let lyric_sha = snapshot.lyric_sha.clone();
+    let (candidate, count) = propose_snapshot(snapshot, &io::read(request)?)?;
+    if sha256_bytes(&io::read_bounded(lyric, LYRIC_LIMIT)?) != lyric_sha {
+        bail!("Lyric bytes changed during application");
+    }
+    io::publish_bytes(path, &model_sha, output, &candidate)?;
+    Ok(count)
+}
+/// Return an unreviewed model; dependency names are preserved, not relocated.
+pub fn propose_bytes(raw: &[u8], lyric: &[u8], request: &[u8]) -> Result<(Vec<u8>, usize)> {
+    propose_snapshot(capture_bytes(raw, lyric)?, request)
+}
+fn propose_snapshot(mut snapshot: Captured, request: &[u8]) -> Result<(Vec<u8>, usize)> {
+    if request.len() > 2 * 1024 * 1024 {
+        bail!("Underlay request exceeds authoring budget");
+    }
+    let request: Edit = serde_json::from_slice(request)?;
     if request.schema != EDIT
         || request.expected_model_sha256 != snapshot.model_sha
         || request.expected_lyric_sha256 != snapshot.lyric_sha
@@ -153,7 +190,6 @@ pub fn apply(path: &Path, lyric: &Path, request: &Path, output: &Path) -> Result
     if request.candidate_model_id == snapshot.model.model_id {
         bail!("Proposal needs a new model identity");
     }
-    io::check_destination(path, output)?;
     bound(&request.underlay)?;
     if request.rationale.len() > 4096 {
         bail!("Underlay rationale exceeds budget");
@@ -177,9 +213,5 @@ pub fn apply(path: &Path, lyric: &Path, request: &Path, output: &Path) -> Result
     {
         snapshot.model.review.required_roles.push(role.into());
     }
-    if sha256_bytes(&io::read_bounded(lyric, LYRIC_LIMIT)?) != snapshot.lyric_sha {
-        bail!("Lyric bytes changed during application");
-    }
-    io::publish(path, &snapshot.model_sha, output, &snapshot.model)?;
-    Ok(count)
+    Ok((io::encode(&snapshot.model)?, count))
 }

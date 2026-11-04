@@ -29,6 +29,20 @@ The private profile uses schema `reel.tig-delivery-observation.experimental-1`:
   maps observed paths to the retained receipt namespace. Optional `opaque_locator`
   selects Tig's opaque-locator identity; `backslash_separator` explicitly converts
   suffix separators for old Windows locator strings. Defaults are false.
+- A mapping may instead provide `correspondence`: a pinned external `table`
+  (`path`, `sha256`, `bytes`), `rows_pointer` to an array,
+  `observed_path_pointer`, `receipt_target_pointer`, `observed_path_prefix`, and
+  optional `backslash_separator`. Each row's observed path must start with the
+  exact declared prefix; removing it and optionally converting backslashes gives
+  the complete inventory-relative path. Its target is interpreted using the
+  mapping's existing provider/scope and `opaque_locator` setting. Provider IDs
+  therefore remain stable even when the observed display filename changes.
+  The ordinary prefix fields must be empty and their separator flag false in
+  this mode. No fallback to prefix substitution or basename matching occurs.
+  Duplicate paths or target identities, invalid pointers, traversal, missing
+  fields and pin mismatches refuse before writing a report. Tables are bounded
+  to 4 MiB each, 16 MiB and 65,536 rows collectively, with depth/node limits.
+  The profile's existing 64-KiB and 128-mapping bounds remain unchanged.
 - `client_metadata_basenames`: exact exclusions such as `desktop.ini`. Authored
   README, navigation and support files have no implicit exclusion.
 - `max_report_bytes`: explicit bounded allowance, at most 64 MiB.
@@ -40,6 +54,9 @@ adapter; this command does not claim it found every possible target convention.
 Missing admitted policy is not evidence that the asset lacks a delivery anchor.
 Retained opaque provider IDs cannot be matched to a mounted path without an
 explicit verified identity mapping; file lengths do not supply that mapping.
+Correspondence only supplies that declared association. It does not replace the
+independent subject/target receipt check or prove that the observed bytes are
+current. Original external metadata and its hash stay unchanged.
 
 Every observed row is classified as client metadata, unmatched, ambiguous,
 different length, or retained target with matching length. A same-length match
@@ -61,3 +78,7 @@ approval remain unchanged. Fixtures cover an actual committed source with a
 dirty checkout, verified receipts with no payload objects, corruption, pin
 tampering, duplicate observations, no-clobber reports, exact path matching,
 length differences, competing anchors and explicit client metadata.
+The external correspondence fixture uses 147 rows and a table larger than
+64 KiB, with no payload objects. It also checks stale pins, duplicate JSON keys,
+duplicate paths/targets, missing targets, invalid pointers, prefix escapes,
+traversal and conflicting modes before output creation.

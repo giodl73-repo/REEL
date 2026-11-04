@@ -10,8 +10,18 @@ The private profile schema is
 
 - `byte_source`: explicit existing receipt metadata reader; no store is created.
 - `receipt`: exact SHA-256 and length of the original table.
-- `rows_pointer`: JSON Pointer to its array; `asset_pointer` and `path_pointer`
-  select each row's immutable subject and project-relative target path.
+- `rows_pointer`: JSON Pointer to its table; `row_layout` is `array` (default)
+  or `object`. `asset_pointer` and `path_pointer` select each row's immutable
+  subject and target. Object member names are escaped as JSON Pointer tokens,
+  preserving `/` and `~` without guessing a selector.
+- `target_kind`: `logical-path` (default) validates a project-relative path;
+  explicit `opaque-locator` preserves a bounded literal legacy locator such as
+  a Windows destination or provider ID. Locators are never opened as paths.
+  The admitted receipt policy must assert the same target kind and exact identity.
+- `target_from_member_key`: for object tables only, use each exact member name
+  as its target. With `asset_pointer: ""`, this supports path-keyed subject objects
+  containing exact `sha256` and `bytes`. Bare hash strings cannot supply a length
+  and are not inferred into complete subjects.
 - `provider`, `scope`, `id_prefix`: explicit target namespace and stable logical
   ID prefix. Each ID and physical filename derives from the scoped target hash,
   independent of payload bytes and row order. Equal bytes never collapse targets.

@@ -1,0 +1,21 @@
+[package]
+name = "reel-print"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+description = "Bounded private print collections from pinned text, native score SVG and retained PDF pages"
+
+[dependencies]
+anyhow = "1.0.100"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+sha2 = "0.11.0"
+roxmltree = "=0.20.0"
+svg2pdf = { version = "=0.13.0", default-features = false, features = ["text"] }
+resvg = { version = "=0.45.1", default-features = false, features = ["text"] }
+ttf-parser = "=0.25.1"
+lopdf = { version = "=0.42.0", default-features = false }
+
+[dev-dependencies]
+tempfile = "3.24.0"

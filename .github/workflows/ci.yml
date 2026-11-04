@@ -60,6 +60,10 @@ jobs:
         run: |
           cargo clippy -p reel-music --all-targets --locked -- -D warnings
           cargo test -p reel-music --all-targets --locked
+      - name: Check native print collections and immutable page preservation
+        run: |
+          cargo clippy -p reel-print --all-targets --locked -- -D warnings
+          cargo test -p reel-print --all-targets --locked
       - name: Check shared asset custody and accounting on synthetic caches
         run: |
           cargo clippy -p reel-assets --all-targets --locked -- -D warnings
