@@ -46,6 +46,11 @@ path = "src/bin/reel-tig-scene.rs"
 required-features = ["tig"]
 
 [[bin]]
+name = "reel-tig-sample-clock"
+path = "src/bin/reel-tig-sample-clock.rs"
+required-features = ["tig"]
+
+[[bin]]
 name = "reel-tig-music-editor"
 path = "src/bin/reel-tig-music-editor.rs"
 required-features = ["tig"]
