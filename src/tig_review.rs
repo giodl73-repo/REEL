@@ -2,14 +2,14 @@
 //!
 //! Policy names describe fields in retained task/observation metadata. They are
 //! caller-admitted data, not evidence that a historical protocol has been ported.
-//! There is deliberately no admission CLI until receipt and retained-proof checks
-//! can guard the complete operation.
+//! The admission entry reopens existing protected bytes before any reservation.
 use anyhow::{Result, anyhow, bail, ensure};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use tig_core::Object;
 
+pub mod admission;
 mod reports;
 pub use reports::{ReviewPart, aggregate_parts, build_subreport, validate_subreport};
 pub mod receipts;
@@ -17,6 +17,40 @@ mod retained;
 pub use retained::{
     RetainedSnapshot, SnapshotView, validate_png_header, validate_retired_snapshot,
 };
+
+/// External review evidence contains fractional clocks. Its identity is the hash
+/// of original bytes, not Tig's integer-only canonical JSON representation.
+fn parse_json(bytes: &[u8]) -> Result<Value> {
+    ensure!(
+        bytes.len() <= 8 * 1024 * 1024,
+        "review JSON exceeds byte bound"
+    );
+    crate::approval_attestation::ensure_no_duplicate_keys(bytes)?;
+    let value: Value = serde_json::from_slice(bytes)?;
+    fn bounded(value: &Value, depth: usize, nodes: &mut usize) -> Result<()> {
+        *nodes += 1;
+        ensure!(
+            depth <= 64 && *nodes <= 200_000,
+            "review JSON exceeds structural bound"
+        );
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    bounded(item, depth + 1, nodes)?
+                }
+            }
+            Value::Object(items) => {
+                for item in items.values() {
+                    bounded(item, depth + 1, nodes)?
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    bounded(&value, 0, &mut 0)?;
+    Ok(value)
+}
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -35,6 +69,11 @@ pub struct ObservationPolicy {
 #[serde(deny_unknown_fields)]
 pub struct TargetPolicy {
     pub task_field: String,
+    /// Source feature-note collection from which this task selection was derived.
+    pub source_field: String,
+    /// Exact-field fallback JSON pointers when the source stores text indirectly.
+    #[serde(default)]
+    pub source_exact_fields: BTreeMap<String, String>,
     pub observation_field: String,
     pub span_field: String,
     pub picture_fields: Vec<String>,
@@ -55,6 +94,9 @@ fn at<'a>(value: &'a Value, key: &str) -> Result<&'a Value> {
     value
         .get(key)
         .ok_or_else(|| anyhow!("missing review field: {key}"))
+}
+fn optional<'a>(value: &'a Value, key: &str) -> &'a Value {
+    value.get(key).unwrap_or(&Value::Null)
 }
 fn array<'a>(value: &'a Value, key: &str) -> Result<&'a Vec<Value>> {
     at(value, key)?
@@ -373,6 +415,14 @@ pub fn validate_observations(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn external_json_preserves_fractional_clocks_but_rejects_duplicate_fields() {
+        assert_eq!(
+            parse_json(br#"{"seconds":0.125,"nested":{"time":2.5}}"#).unwrap()["seconds"],
+            json!(0.125)
+        );
+        assert!(parse_json(br#"{"nested":{"time":1,"time":2}}"#).is_err());
+    }
     pub(super) fn fixture() -> (Value, Value, ObservationPolicy) {
         let image = json!({"sha256":"a".repeat(64),"bytes":8});
         let task = json!({"scope":"fixture","roles":["large","small"],"clock_count":1,"image_occurrences":2,"clocks":[{"sample":{"sample_id":"one","frame":12,"reasons":["boundary"],"footer":[{"code":"example"}]},"views":{"large":image,"small":image}}],"corrections":[]});
@@ -493,6 +543,8 @@ mod tests {
         task["corrections"] = json!([{"code":"target","span":[12,13],"picture":picture,"fix_lines":["Exact original language"]}]);
         policy.targets.push(TargetPolicy {
             task_field: "corrections".into(),
+            source_field: "corrections".into(),
+            source_exact_fields: BTreeMap::new(),
             observation_field: "corrected".into(),
             span_field: "span".into(),
             picture_fields: vec!["picture".into()],

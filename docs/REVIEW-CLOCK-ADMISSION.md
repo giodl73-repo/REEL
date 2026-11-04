@@ -2,7 +2,7 @@
 
 `tig_review` supplies metadata predicates for a frozen, asset-backed image review.
 It does not render, capture, probe, view images, approve creative work, publish
-assets or grant deletion authority. It is not yet an admitted production entry.
+assets or grant deletion authority. Production qualification remains separate.
 
 The observation policy keeps project scope, footer field names and target checks
 in declarative data. Target rules name the source span, exact fix text, original
@@ -20,6 +20,11 @@ validate the declared dimensions and RGB8 native-role format after byte checking
 Retained proof checks bound gzip expansion and compare the exact request bytes,
 result, output tables, caps, sample/frame mappings and requested view pins. They
 never execute the retained request or read historical checkout/workspace paths.
+The proof verifier accounts for the exact native retirement transition: the gzip
+contains the pre-retirement result, while the returned result may add that gzip's
+identity and change only `workspace_retained` to false. Other differences refuse.
+External review JSON supports fractional timestamps with duplicate-key rejection;
+original byte hashes remain authoritative. Tig canonical identity JSON is unchanged.
 
 Subreports can be reconstructed and revalidated as completed skips. Aggregation
 requires disjoint exact task clocks from one original group and restores source
@@ -34,17 +39,47 @@ read-back writes; an interrupted completion can validate the saved report withou
 new views. Existing outcomes cannot be overwritten. Receipt files are metadata
 coordination only, not asset publication or independent custody proof.
 
-## Remaining integration before adoption
+## Explicit existing-byte CLI
 
-- Add the bounded existing-byte profile/CLI which reopens task, method, policy,
-  original group and all retained native proofs before reservation.
-- Bind its policy to the exact historical method and demonstrate full predicate
-  parity, including corrected/retained target scopes and already counted reports.
-- Wire protected PNG/reference reads into both new observations and validated
-  skips. Do not trust paths or verification booleans in retained task metadata.
-- Exercise interrupted saves and corrupt proofs through the real CLI, preserve
-  prior partial reports, and qualify Linux/Windows hosted checks.
+`reel-tig-review` requires `tig-publication`. Every operation takes an absolute
+local profile, exact retained task/method/policy pins and an existing control
+root. Its byte provider uses the declared existing places and protected read
+budgets; no cache setup, discovery, copy or deletion follows entry.
+
+- `inspect PROFILE`: verify source feature notes, group selection, source pins,
+  native request/result/root/gzip proofs and all PNG headers; reserve nothing.
+- `reserve PROFILE --owner OWNER`: perform those checks before creating one
+  immutable receipt. A counted profile validates and skips without a new receipt.
+- `resume PROFILE`: require the exact receipt and its method/policy binding.
+  Pending claims do not automatically permit more views. Saved reports validate
+  and skip; an orphan report can complete without repeated observations.
+- `submit PROFILE`: require a retained evidence object and the receipt. Validate
+  all observations and save once. A completed retry validates and skips before
+  processing new evidence. Use the existing publisher to retain the saved report.
+- `aggregate PROFILE OUTPUT`: reopen exact retained parts with one shared read
+  budget, revalidate their native proofs and observations, enforce disjoint frozen
+  group coverage and preserve source order. OUTPUT must be an explicit file in
+  the existing control root. A changed aggregate cannot overwrite an old one.
+
+Scope profiles explicitly declare `state.kind` as `unseen` or `counted`. A counted
+state names the exact retained report and never schedules a view. Recovery and
+submission also bind the exact receipt; submission names the exact retained
+evidence. Policy data declares schema names, method identity, role dimensions,
+native media input mappings and target rules. Target lists are rederived from
+the pinned feature notes, including configured exact-text fallback pointers;
+dropping a target or substituting raw sources refuses before reservation.
+
+All CLI summaries keep human approval false. A saved local report or aggregate
+remains publication-pending until the existing asset publisher retains it.
+
+## Remaining qualification before adoption
+
+- Demonstrate full predicate parity on real frozen corrected/retained target
+  scopes and previously counted reports. Preserve every original negative/null
+  outcome and hold. Never trust retained verification booleans or old paths.
+- Qualify the complete CLI, interrupted saves and corrupt proofs through hosted
+  Linux/Windows checks; the earlier library-only checkpoint is insufficient.
 - Only then admit a real remaining scope. Never substitute these library tests
   for fresh private observations or promote old false/null/hold outcomes.
 
-No production CLI or runtime pin changes with this development checkpoint.
+No active production runtime pin changes with this development checkpoint.

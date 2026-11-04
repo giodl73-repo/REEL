@@ -22,7 +22,7 @@ fn reparse(meta: &fs::Metadata) -> bool {
         meta.file_type().is_symlink()
     }
 }
-fn directory(path: &Path) -> Result<()> {
+pub(super) fn directory(path: &Path) -> Result<()> {
     let meta = fs::symlink_metadata(path)?;
     ensure!(
         path.is_absolute() && meta.is_dir() && !reparse(&meta),
@@ -45,10 +45,7 @@ fn read(path: &Path, max: usize) -> Result<Vec<u8>> {
 }
 fn parse(path: &Path, max: usize) -> Result<(Value, Object)> {
     let bytes = read(path, max)?;
-    Ok((
-        tig_core::identity::parse_json(&bytes)?,
-        Object::from_bytes(&bytes),
-    ))
+    Ok((parse_json(&bytes)?, Object::from_bytes(&bytes)))
 }
 fn exclusive(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path
@@ -125,6 +122,23 @@ fn checked_receipt(root: &Path, task: &Object, expected: &Object) -> Result<Path
         "invalid reservation state"
     );
     Ok(dir)
+}
+
+/// Bind recovery/submission to the exact method and policy in the reservation.
+pub fn verify_binding(
+    root: &Path,
+    task: &Object,
+    method: &Object,
+    policy: &Object,
+    receipt: &Object,
+) -> Result<()> {
+    let dir = checked_receipt(root, task, receipt)?;
+    let (value, _) = parse(&dir.join("receipt.json"), META_MAX)?;
+    ensure!(
+        pin(at(&value, "method")?)? == *method && pin(at(&value, "policy")?)? == *policy,
+        "receipt method/policy differs"
+    );
+    Ok(())
 }
 
 #[derive(Debug, PartialEq, Eq)]

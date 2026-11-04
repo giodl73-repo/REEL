@@ -31,7 +31,7 @@ fn parse(bytes: &[u8], expected: &Object) -> Result<Value> {
         bytes.len() <= METADATA_LIMIT && Object::from_bytes(bytes) == *expected,
         "retained metadata pin differs or exceeds bound"
     );
-    Ok(tig_core::identity::parse_json(bytes)?)
+    parse_json(bytes)
 }
 
 /// Compare the exact request/result with the gzip snapshot and all requested
@@ -53,7 +53,7 @@ pub fn validate_retired_snapshot(input: RetainedSnapshot<'_>) -> Result<()> {
         decoded.len() <= SNAPSHOT_LIMIT,
         "retirement snapshot exceeds decoded bound"
     );
-    let snapshot = tig_core::identity::parse_json(&decoded)?;
+    let snapshot = parse_json(&decoded)?;
     ensure!(
         text(&snapshot, "schema")? == "reel.job-retirement-evidence.v1",
         "unsupported retained snapshot"
@@ -62,10 +62,31 @@ pub fn validate_retired_snapshot(input: RetainedSnapshot<'_>) -> Result<()> {
         text(&snapshot, "request_utf8")?.as_bytes() == input.request_bytes,
         "retirement request differs"
     );
+    let before = at(&snapshot, "result")?;
     ensure!(
-        at(&snapshot, "result")? == &result,
-        "retirement result differs"
+        boolean(before, "workspace_retained")?,
+        "snapshot must describe the pre-retirement workspace"
     );
+    if before != &result {
+        // jobs.rs publishes the snapshot first, then changes exactly these two
+        // fields in the returned terminal result. A gzip cannot contain its own
+        // final hash. No other execution/output differences are permitted.
+        ensure!(
+            !boolean(&result, "workspace_retained")?
+                && pin(at(&result, "retirement_evidence")?)? == *input.compressed,
+            "invalid post-retirement transition"
+        );
+        let mut expected = result.clone();
+        expected
+            .as_object_mut()
+            .ok_or_else(|| anyhow!("invalid terminal result"))?
+            .remove("retirement_evidence");
+        expected["workspace_retained"] = json!(true);
+        ensure!(
+            &expected == before,
+            "retirement result differs outside terminal transition"
+        );
+    }
     ensure!(
         text(&result, "manifest_sha256")? == input.request.sha256.as_str(),
         "result request identity differs"
@@ -249,6 +270,38 @@ mod tests {
             })
         };
         check(&root, &views, &compressed).unwrap();
+        let mut terminal: Value = serde_json::from_slice(&result).unwrap();
+        terminal["workspace_retained"] = json!(false);
+        terminal["retirement_evidence"] = json!(compressed_pin);
+        let terminal_bytes = serde_json::to_vec(&terminal).unwrap();
+        let terminal_pin = Object::from_bytes(&terminal_bytes);
+        validate_retired_snapshot(RetainedSnapshot {
+            request: &request_pin,
+            request_bytes: &request,
+            result: &terminal_pin,
+            result_bytes: &terminal_bytes,
+            compressed: &compressed_pin,
+            compressed_bytes: &compressed,
+            root: &root,
+            required_views: &views,
+        })
+        .unwrap();
+        terminal["retirement_evidence"] = json!(Object::from_bytes(b"wrong snapshot"));
+        let bad_bytes = serde_json::to_vec(&terminal).unwrap();
+        let bad_pin = Object::from_bytes(&bad_bytes);
+        assert!(
+            validate_retired_snapshot(RetainedSnapshot {
+                request: &request_pin,
+                request_bytes: &request,
+                result: &bad_pin,
+                result_bytes: &bad_bytes,
+                compressed: &compressed_pin,
+                compressed_bytes: &compressed,
+                root: &root,
+                required_views: &views
+            })
+            .is_err()
+        );
         let mut bad_root = root.clone();
         bad_root["frames"][0] = json!(13);
         assert!(check(&bad_root, &views, &compressed).is_err());

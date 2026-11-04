@@ -64,6 +64,11 @@ path = "src/bin/reel-tig-history.rs"
 required-features = ["tig-history"]
 
 [[bin]]
+name = "reel-tig-review"
+path = "src/bin/reel-tig-review.rs"
+required-features = ["tig-publication"]
+
+[[bin]]
 name = "fake_c2patool"
 path = "src/bin/fake_c2patool.rs"
 required-features = ["test-fixtures"]

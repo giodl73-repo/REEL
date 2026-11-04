@@ -133,18 +133,23 @@ pub fn aggregate_parts(
             unique_strings(array(part.task, "roles")?)? == roles,
             "part roles differ"
         );
-        for field in [
-            "episode",
-            "language",
-            "actual_programme",
-            "actual_Review",
-            "current_ASS",
-        ] {
+        for field in ["episode", "language", "actual_programme"] {
             ensure!(
                 part.task.get(field) == group.get(field),
                 "part group context differs: {field}"
             );
         }
+        ensure!(
+            optional(part.task, "actual_Review") == optional(group, "actual_Review"),
+            "part optional Review differs"
+        );
+        let expected_ass = group
+            .get("current_ASS")
+            .unwrap_or_else(|| optional(parts[0].task, "current_ASS"));
+        ensure!(
+            optional(part.task, "current_ASS") == expected_ass,
+            "part ASS source differs"
+        );
         for clock in array(part.task, "clocks")? {
             ensure!(
                 expected
