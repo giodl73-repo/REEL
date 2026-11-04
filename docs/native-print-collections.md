@@ -40,7 +40,11 @@ Entry kinds:
 Captured fonts are the only available font database. Missing glyphs, unavailable
 families and embedding/subsetting restrictions refuse. Native SVG may not use
 external/active content, images, imports or transformed staff grids. Encrypted or
-active PDFs refuse. No machine check grants font distribution or musical rights.
+active PDFs refuse, including nested actions, annotations and attachments. Pages
+with document-level optional layers, output intents or signature/permission
+catalogues also refuse rather than silently losing those dependencies. This is
+static page assembly, not a general interactive PDF merger. No machine check
+grants font distribution or musical rights.
 
 The packet contains `collection.pdf`, source page SVG/PNG previews and a private
 `receipt.json` with request/input/output pins, page dimensions and source bands.

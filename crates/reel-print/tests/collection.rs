@@ -320,6 +320,52 @@ fn retained_pdf_pages_keep_order_decoded_commands_and_inherited_resources() {
     );
 }
 
+#[test]
+fn retained_pdf_cannot_silently_lose_global_appearance_or_carry_nested_actions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    for (index, key) in [b"OCProperties".as_slice(), b"OutputIntents", b"Annots"]
+        .iter()
+        .enumerate()
+    {
+        let mut doc = Document::load_mem(&inherited_pdf()).unwrap();
+        let id = doc.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        doc.get_object_mut(id)
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set(*key, Object::Array(vec![]));
+        let mut bytes = vec![];
+        doc.save_to(&mut bytes).unwrap();
+        let source = write(root, &format!("dependent-{index}.pdf"), bytes);
+        let path = request(
+            root,
+            vec![Entry::RetainedPdf {
+                id: "retained".into(),
+                source,
+            }],
+        );
+        let output = root.join(format!("refused-{index}"));
+        assert!(render(&path, &output).is_err());
+        assert!(!output.exists());
+    }
+    let mut doc = Document::load_mem(&inherited_pdf()).unwrap();
+    doc.add_object(dictionary!{"Nested"=>Object::Array(vec![dictionary!{"S"=>"URI","URI"=>"https://example.invalid"}.into()])});
+    let mut bytes = vec![];
+    doc.save_to(&mut bytes).unwrap();
+    let source = write(root, "nested-action.pdf", bytes);
+    let path = request(
+        root,
+        vec![Entry::RetainedPdf {
+            id: "retained".into(),
+            source,
+        }],
+    );
+    let output = root.join("nested-refused");
+    assert!(render(&path, &output).is_err());
+    assert!(!output.exists());
+}
+
 #[cfg(unix)]
 #[test]
 fn relative_sources_cannot_escape_through_a_directory_link() {

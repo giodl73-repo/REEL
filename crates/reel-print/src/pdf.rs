@@ -46,36 +46,8 @@ pub fn retained(id: &str, raw: &[u8]) -> Result<Vec<Sheet>> {
         doc.get_pages().len() <= 1024,
         "retained PDF page budget exceeded"
     );
-    // Static printing only. Do not carry actions, forms, attachments or scripts.
     for object in doc.objects.values() {
-        if let Ok(dict) = object.as_dict() {
-            if let Ok(kind) = dict.get(b"S").and_then(Object::as_name) {
-                ensure!(
-                    ![
-                        b"URI".as_slice(),
-                        b"Launch",
-                        b"GoToR",
-                        b"SubmitForm",
-                        b"ImportData",
-                        b"JavaScript",
-                        b"Rendition"
-                    ]
-                    .contains(&kind),
-                    "external PDF action refused"
-                );
-            }
-            for name in [
-                b"OpenAction".as_slice(),
-                b"AA",
-                b"JS",
-                b"JavaScript",
-                b"AcroForm",
-                b"EmbeddedFiles",
-                b"XFA",
-            ] {
-                ensure!(dict.get(name).is_err(), "active PDF content refused");
-            }
-        }
+        passive(object, 0)?;
     }
     doc.get_pages()
         .values()
@@ -93,6 +65,77 @@ pub fn retained(id: &str, raw: &[u8]) -> Result<Vec<Sheet>> {
             })
         })
         .collect()
+}
+
+fn passive(value: &Object, depth: usize) -> Result<()> {
+    ensure!(depth <= 64, "retained PDF nesting exceeds bound");
+    let dict = match value {
+        Object::Dictionary(dict) => Some(dict),
+        Object::Stream(stream) => Some(&stream.dict),
+        Object::Array(values) => {
+            for value in values {
+                passive(value, depth + 1)?;
+            }
+            None
+        }
+        _ => None,
+    };
+    if let Some(dict) = dict {
+        // Never silently drop catalogue-dependent appearance or carry active
+        // material into the new catalogue. Static, self-contained pages only.
+        for name in [
+            b"OpenAction".as_slice(),
+            b"AA",
+            b"JS",
+            b"JavaScript",
+            b"AcroForm",
+            b"EmbeddedFiles",
+            b"XFA",
+            b"Annots",
+            b"OCProperties",
+            b"OutputIntents",
+            b"Perms",
+            b"DSS",
+        ] {
+            ensure!(
+                dict.get(name).is_err(),
+                "interactive or catalogue-dependent PDF refused"
+            );
+        }
+        if let Ok(kind) = dict.get(b"Type").and_then(Object::as_name) {
+            ensure!(
+                ![b"Action".as_slice(), b"Filespec", b"EmbeddedFile"].contains(&kind),
+                "active PDF object refused"
+            );
+        }
+        if let Ok(kind) = dict.get(b"S").and_then(Object::as_name) {
+            ensure!(
+                ![
+                    b"URI".as_slice(),
+                    b"Launch",
+                    b"GoToR",
+                    b"SubmitForm",
+                    b"ImportData",
+                    b"JavaScript",
+                    b"Rendition",
+                    b"Named",
+                    b"SetOCGState",
+                    b"GoToE",
+                    b"Hide",
+                    b"ResetForm",
+                    b"Thread",
+                    b"Sound",
+                    b"Movie"
+                ]
+                .contains(&kind),
+                "PDF action refused"
+            );
+        }
+        for (_, value) in dict.iter() {
+            passive(value, depth + 1)?;
+        }
+    }
+    Ok(())
 }
 pub fn merge(parts: Vec<Arc<Document>>) -> Result<Vec<u8>> {
     let mut output = Document::with_version("1.7");
