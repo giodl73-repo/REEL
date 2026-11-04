@@ -82,3 +82,42 @@ primary-reference waveform reconstruction of every instrumental note, current
 Tig selection eligibility, or complete semantic coverage. The existing b4
 instrumental-only packet format remains readable through its original output
 pin. Source-aware managed adoption remains a separate operation.
+
+## File workspaces and admitted jobs
+
+```text
+reel music-sample-clock-render request.json --workspace . \
+  --output-dir render --max-output-bytes 100663296
+```
+
+With `--workspace`, the request file, every input `path` and the new output
+directory must be bounded relative members of that explicitly supplied existing
+directory. Parent traversal, drive prefixes, backslash aliases, Git internals,
+device names, links/reparse members and existing output refuse. Source SHA-256,
+length and sample-clock checks remain in force. The declared output bound includes
+PCM files plus a conservative 4-MiB metadata allowance and is checked before media
+reads; the serialized native receipt itself remains capped at 3 MiB.
+
+The output also retains the exact `workspace-request.json`, resolved private
+`render-request.json` and final `workspace-source.json` check packet. Provider or
+job paths belong in private evidence. The file producer grants no job admission,
+production claim, creative approval or publication. Its caller owns a stable
+workspace; it is not a sandbox for hostile ancestor replacement.
+
+An already enrolled [frozen Tig job](tig-frozen-job.md) supplies the source context,
+owner/revision fence, input/tool guards, capacity, process containment and retained
+result. Its manifest stages the declared request and primary bytes as ordinary
+inputs, pins the installed REEL executable and invokes the command above with
+`--workspace .`. Set `prepare_output_parents: false` and declare all seven files:
+three WAVs, native receipt and the three workspace/check packets. The existing
+runner accounts for input staging, scratch and atomic publication, verifies the
+retained outputs and retires only its owned workspace. It may use hard links or
+budgeted copies according to the source and destination volumes.
+
+The sampler integration fixture freezes five Tig input records, adopts the exact
+job selection, takes the Git checkout offline, refuses owner/revision, capacity
+and corrupted-input changes, then runs this contained child. All three retained
+WAVs match a direct native baseline; seven outputs reopen and scratch retires.
+Generic result authority remains `production_claim: null` and
+`creative_approval: false`. An actual project still needs its own enrollment,
+operation/rollback evidence and qualified runtime binding.
