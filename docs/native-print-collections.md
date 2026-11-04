@@ -7,6 +7,9 @@ No Python, browser, system font search, provider, upload, Git mutation or cache
 initialization occurs. A Tig project view or managed job supplies named files;
 the renderer consumes their exact immutable pins rather than discovering assets.
 
+`reel-print plan REQUEST` computes the exact packet in memory and reports total
+bytes/files, including the receipt, before any output directory exists.
+
 The JSON request is `reel.print-collection.v1`: title, author, notice, explicit
 `private_only:true`, captured font file pins, `body_font`, ordered entries and
 `limits:{input_bytes,output_bytes,pages}`. Every source/font pin has `path`,
@@ -14,7 +17,8 @@ The JSON request is `reel.print-collection.v1`: title, author, notice, explicit
 absolute inputs are supported. Each file is captured and verified once before
 parsing. Rendering uses snapshots, so subsequent source writes cannot change
 the consumed bytes. Inputs are limited to 32 MiB each, 256 MiB total; requests
-stay within 64 KiB and collections within 100 entries and 256 pages.
+stay within 64 KiB and collections within 256 entries and 1,024 pages. A 52-song
+book can therefore keep separate text/notation sections within an explicit budget.
 
 Entry kinds:
 

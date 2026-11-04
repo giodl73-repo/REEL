@@ -43,7 +43,7 @@ pub fn retained(id: &str, raw: &[u8]) -> Result<Vec<Sheet>> {
     let doc = Arc::new(Document::load_mem(raw)?);
     ensure!(!doc.is_encrypted(), "encrypted PDF refused");
     ensure!(
-        doc.get_pages().len() <= 256,
+        doc.get_pages().len() <= 1024,
         "retained PDF page budget exceeded"
     );
     // Static printing only. Do not carry actions, forms, attachments or scripts.
@@ -121,7 +121,7 @@ pub fn merge(parts: Vec<Arc<Document>>) -> Result<Vec<u8>> {
         objects.extend(doc.objects);
     }
     ensure!(
-        !pages.is_empty() && pages.len() <= 256,
+        !pages.is_empty() && pages.len() <= 1024,
         "invalid final PDF page count"
     );
     let parent = (next, 0);

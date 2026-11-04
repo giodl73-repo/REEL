@@ -301,3 +301,29 @@ fn retained_pdf_pages_keep_order_decoded_commands_and_inherited_resources() {
     assert_eq!(receipt.pages[1].height, 200.0);
     assert_eq!(fs::read(root.join("source.pdf")).unwrap(), bytes);
 }
+
+#[cfg(unix)]
+#[test]
+fn relative_sources_cannot_escape_through_a_directory_link() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let source = write(
+        outside.path(),
+        "source.txt",
+        "Exact bytes do not authorize following a directory link",
+    );
+    std::os::unix::fs::symlink(outside.path(), root.path().join("linked")).unwrap();
+    let mut aliased = source;
+    aliased.path = "linked/source.txt".into();
+    let request = request(
+        root.path(),
+        vec![Entry::Text {
+            id: "source".into(),
+            title: "Fixture".into(),
+            source: aliased,
+        }],
+    );
+    let output = root.path().join("refused");
+    assert!(render(&request, &output).is_err());
+    assert!(!output.exists());
+}

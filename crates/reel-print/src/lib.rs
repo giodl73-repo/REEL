@@ -206,11 +206,11 @@ fn prepare(path: &Path) -> Result<Packet> {
         "invalid collection heading"
     );
     ensure!(
-        (1..=100).contains(&request.entries.len()) && (1..=8).contains(&request.fonts.len()),
+        (1..=256).contains(&request.entries.len()) && (1..=8).contains(&request.fonts.len()),
         "bounded entries and explicit fonts required"
     );
     ensure!(
-        (1..=256).contains(&request.limits.pages)
+        (1..=1024).contains(&request.limits.pages)
             && request.limits.input_bytes <= 256 * 1024 * 1024
             && request.limits.output_bytes <= 256 * 1024 * 1024,
         "invalid print limits"
@@ -222,7 +222,11 @@ fn prepare(path: &Path) -> Result<Packet> {
             "duplicate or invalid entry id"
         );
     }
-    let base = path.parent().unwrap_or(Path::new("."));
+    let base = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+        .canonicalize()?;
     let pins: Vec<_> = request
         .fonts
         .iter()
@@ -238,7 +242,7 @@ fn prepare(path: &Path) -> Result<Packet> {
     // Read each declared source once. Rendering never reopens a mutable path.
     let captured: Vec<_> = pins
         .iter()
-        .map(|p| capture(p, base))
+        .map(|p| capture(p, &base))
         .collect::<Result<_>>()?;
     let mut fonts = pages::Fonts::new(&request.body_font, &captured[..request.fonts.len()])?;
     let mut produced = pages::text(
@@ -418,4 +422,9 @@ pub fn check(request: &Path, output: &Path) -> Result<Receipt> {
         );
     }
     Ok(packet.receipt)
+}
+
+/// Exact packet sizing without reserving an output directory or writing files.
+pub fn plan(request: &Path) -> Result<Receipt> {
+    Ok(prepare(request)?.receipt)
 }
