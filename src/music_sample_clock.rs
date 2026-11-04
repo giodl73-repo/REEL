@@ -209,18 +209,27 @@ fn sum_pcm24(left: &[u8], right: &[u8]) -> Result<Vec<u8>> {
 
 /// Writes one new private result directory after validating and capturing every input.
 pub fn render(request_path: &Path, output: &Path) -> Result<Value> {
+    render_bytes(&read_bounded(request_path, 65_536)?, output)
+}
+
+pub(crate) fn render_bytes(raw: &[u8], output: &Path) -> Result<Value> {
     if !output.is_absolute() || output.exists() {
         bail!("output must be a new absolute directory");
     }
-    let mut raw = Vec::new();
-    fs::File::open(request_path)?
-        .take(65_537)
-        .read_to_end(&mut raw)?;
+    let r = parse_request(raw)?;
+    let count = usize::try_from(r.frames)?
+        .checked_mul(r.channels as usize)
+        .filter(|n| *n <= MAX_SAMPLES)
+        .ok_or_else(|| anyhow::anyhow!("output sample budget"))?;
+    render_request(raw, r, output, count)
+}
+
+fn parse_request(raw: &[u8]) -> Result<Request> {
     if raw.len() > 65_536 {
         bail!("request budget");
     }
-    crate::approval_attestation::ensure_no_duplicate_keys(&raw)?;
-    let r: Request = serde_json::from_slice(&raw)?;
+    crate::approval_attestation::ensure_no_duplicate_keys(raw)?;
+    let r: Request = serde_json::from_slice(raw)?;
     if r.schema != "reel.music-sample-clock-render.v1"
         || !(8000..=192000).contains(&r.sample_rate)
         || !matches!(r.channels, 1 | 2)
@@ -237,10 +246,34 @@ pub fn render(request_path: &Path, output: &Path) -> Result<Value> {
     {
         bail!("sample-clock request contract");
     }
-    let count = usize::try_from(r.frames)?
+    usize::try_from(r.frames)?
         .checked_mul(r.channels as usize)
         .filter(|n| *n <= MAX_SAMPLES)
         .ok_or_else(|| anyhow::anyhow!("output sample budget"))?;
+    if r.bank_audio.bytes > MAX_AUDIO as u64
+        || r.calibration.bytes > 1024 * 1024
+        || r.native_score_midi.bytes > 1024 * 1024
+        || r.vocal
+            .as_ref()
+            .is_some_and(|v| v.source.bytes > MAX_AUDIO as u64)
+    {
+        bail!("input byte budget");
+    }
+    Ok(r)
+}
+
+/// Validate controls and estimate bounded PCM outputs before provider media IO.
+#[cfg(feature = "tig")]
+pub(crate) fn output_byte_bound(raw: &[u8]) -> Result<u64> {
+    let r = parse_request(raw)?;
+    // Three metadata packets plus the maximum bounded note receipt.
+    Ok(
+        (44 + r.frames * r.channels as u64 * 3) * if r.vocal.is_some() { 3 } else { 1 }
+            + 4 * 1024 * 1024,
+    )
+}
+
+fn render_request(raw: &[u8], r: Request, output: &Path, count: usize) -> Result<Value> {
     let calibration_raw = r.calibration.read(1024 * 1024)?;
     let windows = calibration(&calibration_raw)?;
     let midi = r.native_score_midi.read(1024 * 1024)?;
@@ -376,7 +409,7 @@ pub fn render(request_path: &Path, output: &Path) -> Result<Value> {
         .iter()
         .map(|(name, bytes)| (*name, json!({"sha256":hash(bytes),"bytes":bytes.len()})))
         .collect();
-    let receipt = json!({"schema":"reel.music-sample-clock-receipt.v1","request_sha256":hash(&raw),
+    let receipt = json!({"schema":"reel.music-sample-clock-receipt.v1","request_sha256":hash(raw),
         "bank_audio":r.bank_audio,"calibration":r.calibration,"native_score_midi":r.native_score_midi,
         "sample_rate":r.sample_rate,"channels":r.channels,"frames":r.frames,"notes":notes.len(),
         "release_frames":r.release_frames,"gain":r.gain,"attenuation":scale,"output_peak":peak*scale,
@@ -650,6 +683,125 @@ mod tests {
         let p = 44 + (frame * 2 + channel) * 3;
         let value = raw[p] as i32 | (raw[p + 1] as i32) << 8 | (raw[p + 2] as i32) << 16;
         (value << 8) >> 8
+    }
+    #[cfg(all(windows, feature = "tig"))]
+    #[test]
+    fn tig_source_render_preserves_pcm_and_refuses_stale_pins_and_unsafe_outputs() {
+        use std::process::Command;
+        use tig_core::Object;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let r = request(root);
+        run(root, &r, "baseline").unwrap();
+        let repo = root.join("repo");
+        let cache = root.join("cache");
+        fs::create_dir_all(repo.join("records")).unwrap();
+        fs::create_dir_all(repo.join("definitions")).unwrap();
+        let schema = br#"{"type":"object"}"#;
+        fs::write(repo.join("definitions/input.authored.json"), schema).unwrap();
+        let definition = serde_json::to_vec(&json!({"schema":"tig.definition.design-1",
+            "id":"types/input","authored_schema":Object::from_bytes(schema),
+            "authoring":{"properties":[],"required":[],"defaults":{}},
+            "stream_rules":{},"semantic_rules":{}}))
+        .unwrap();
+        fs::write(repo.join("definitions/input.json"), &definition).unwrap();
+        let definition_pin = Object::from_bytes(&definition);
+        let mut logical = serde_json::to_value(&r).unwrap();
+        for field in ["bank_audio", "calibration", "native_score_midi"] {
+            let input = &mut logical[field];
+            let bytes = fs::read(input["path"].as_str().unwrap()).unwrap();
+            let hash = input["sha256"].as_str().unwrap();
+            let target = cache.join("objects/sha256").join(&hash[..2]).join(hash);
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            fs::write(target, bytes).unwrap();
+            let id = format!("inputs/{field}");
+            let record = json!({"schema":"tig.instance.design-1","id":id,
+                "definition":{"id":"types/input","sha256":definition_pin.sha256,"bytes":definition_pin.bytes},
+                "authored":{},"selected":{"sha256":input["sha256"],"bytes":input["bytes"]},
+                "streams":[],"status":{},"metadata":{}});
+            tig_assets::native::Instance::parse(&serde_json::to_vec(&record).unwrap()).unwrap();
+            fs::write(
+                repo.join("records").join(format!("{field}.tig")),
+                serde_json::to_vec(&record).unwrap(),
+            )
+            .unwrap();
+            input["path"] = json!(id);
+        }
+        let git_executable = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+            .map(|p| p.join("git.exe"))
+            .find(|p| p.is_file())
+            .unwrap()
+            .canonicalize()
+            .unwrap();
+        let git = |args: &[&str]| {
+            let result = Command::new(&git_executable)
+                .current_dir(&repo)
+                .args([
+                    "-c",
+                    "user.name=Synthetic fixture",
+                    "-c",
+                    "user.email=fixture@example.invalid",
+                    "-c",
+                    "core.hooksPath=NUL",
+                ])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            String::from_utf8(result.stdout).unwrap().trim().to_string()
+        };
+        git(&["init", "--quiet"]);
+        git(&["add", "records", "definitions"]);
+        git(&["commit", "--quiet", "-m", "Synthetic sample inputs"]);
+        let profile = json!({"schema":"reel.tig-input-profile.experimental-1",
+            "repository":repo,"git_executable":git_executable,"commit":git(&["rev-parse","HEAD"]),
+            "records":["records"],"definitions":["definitions"],
+            "admitted":[{"id":"types/input","object":definition_pin,"payload":{"kind":"selected"}}],
+            "byte_source":{"places":[{"root":cache,"layout":"reel-cas"}],"required":"prevent-mutation",
+                "limits":{"object_bytes":131072,"total_bytes":1048576,"requests":8,"live_readers":4,"verify_millis":60000}}});
+        let request_path = root.join("logical.json");
+        fs::write(&request_path, serde_json::to_vec(&logical).unwrap()).unwrap();
+        let render = |value: &Value, path: &Path, budget| {
+            crate::tig_sample_clock::render(
+                serde_json::from_value(value.clone()).unwrap(),
+                &request_path,
+                path,
+                budget,
+            )
+        };
+        let output = root.join("tig-render");
+        render(&profile, &output, 5 * 1024 * 1024).unwrap();
+        assert_eq!(
+            fs::read(output.join("instrumental.wav")).unwrap(),
+            fs::read(root.join("baseline/instrumental.wav")).unwrap()
+        );
+        let receipt: Value =
+            serde_json::from_slice(&fs::read(output.join("tig-source.json")).unwrap()).unwrap();
+        assert_eq!(receipt["inputs"].as_array().unwrap().len(), 3);
+        assert_eq!(receipt["check"]["source_pins_verified"], true);
+        assert_eq!(receipt["human_approval"], false);
+        assert!(receipt["production_claim"].is_null());
+        assert!(render(&profile, &output, 5 * 1024 * 1024).is_err());
+        for (name, budget, within_cache) in [
+            ("budget", 1, false),
+            ("cache-output", 5 * 1024 * 1024, true),
+        ] {
+            let path = if within_cache {
+                cache.join(name)
+            } else {
+                root.join(name)
+            };
+            assert!(render(&profile, &path, budget).is_err());
+            assert!(!path.exists());
+        }
+        logical["bank_audio"]["sha256"] = json!("0".repeat(64));
+        fs::write(&request_path, serde_json::to_vec(&logical).unwrap()).unwrap();
+        assert!(render(&profile, &root.join("stale"), 5 * 1024 * 1024).is_err());
+        assert!(!root.join("stale").exists());
     }
     #[test]
     fn native_clock_preserves_stereo_onsets_release_and_source_bytes() {

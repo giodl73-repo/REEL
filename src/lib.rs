@@ -126,6 +126,8 @@ pub mod tig_publication;
 #[cfg(feature = "tig")]
 pub mod tig_retained_presentation;
 #[cfg(feature = "tig")]
+pub mod tig_sample_clock;
+#[cfg(feature = "tig")]
 pub mod tig_scene;
 #[cfg(feature = "tig")]
 pub mod tig_scene_outputs;
