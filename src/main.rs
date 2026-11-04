@@ -1481,6 +1481,14 @@ fn run_cli() -> Result<()> {
             let report = reel::arrangement_candidate::validate(&candidate)?;
             print_report(&report, output)?;
         }
+        Command::MusicSampleClockRender {
+            request,
+            output_dir,
+            output,
+        } => {
+            let report = reel::music_sample_clock::render(&request, &output_dir)?;
+            print_report(&report, output)?;
+        }
         Command::MusicScoreExportPlan {
             model,
             output_path,
@@ -3521,6 +3529,14 @@ enum Command {
     MusicArrangementCandidateCheck {
         candidate: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Render calibrated float32 samples on an exact native score MIDI clock.
+    MusicSampleClockRender {
+        request: PathBuf,
+        #[arg(long)]
+        output_dir: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
         output: OutputFormat,
     },
     /// Write a deterministic MIDI/MusicXML/rehearsal-guide export plan.

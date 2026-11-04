@@ -155,6 +155,73 @@ struct NoteSnapshot {
     velocity: u8,
 }
 
+pub(crate) struct NativeNoteClock {
+    pub part_id: String,
+    pub voice: u8,
+    pub pitch: u8,
+    pub velocity: u8,
+    pub start: u64,
+    pub release: u64,
+}
+
+/// Native REEL score MIDI only, not an external sound-renderer round trip.
+pub(crate) fn native_note_clock(bytes: &[u8], rate: u32) -> Result<Vec<NativeNoteClock>> {
+    if bytes.len() > 1024 * 1024
+        || bytes.get(8..10) != Some(&[0, 1])
+        || !(8000..=192000).contains(&rate)
+    {
+        bail!("native score MIDI format or byte budget");
+    }
+    let s = parse_midi_limited(bytes, 16_384, 4096)?;
+    if s.ppq == 0
+        || s.ppq >= 32768
+        || s.notes.is_empty()
+        || s.notes.len() > 16_384
+        || s.tempos.first().map(|t| t.0) != Some(0)
+        || s.tempos.iter().any(|t| t.1 == 0)
+        || s.tempos.windows(2).any(|t| t[0].0 >= t[1].0)
+    {
+        bail!("native score MIDI clock contract");
+    }
+    let frame = |tick: u64| -> Result<u64> {
+        let mut weighted = 0u128;
+        for (i, &(start, tempo)) in s.tempos.iter().enumerate() {
+            if tick <= start {
+                break;
+            }
+            let end = s.tempos.get(i + 1).map(|t| t.0).unwrap_or(tick).min(tick);
+            weighted = weighted
+                .checked_add((end - start) as u128 * tempo as u128)
+                .ok_or_else(|| anyhow!("native clock overflow"))?;
+        }
+        let numerator = weighted
+            .checked_mul(rate as u128)
+            .ok_or_else(|| anyhow!("native clock overflow"))?;
+        let denominator = s.ppq as u128 * 1_000_000;
+        Ok(((numerator + denominator / 2) / denominator).try_into()?)
+    };
+    s.notes
+        .iter()
+        .map(|n| {
+            if n.pitch > 127 || n.velocity == 0 || n.velocity > 127 || n.duration == 0 {
+                bail!("invalid native score note");
+            }
+            Ok(NativeNoteClock {
+                part_id: n.part_id.clone(),
+                voice: n.voice,
+                pitch: n.pitch,
+                velocity: n.velocity,
+                start: frame(n.start)?,
+                release: frame(
+                    n.start
+                        .checked_add(n.duration)
+                        .ok_or_else(|| anyhow!("note overflow"))?,
+                )?,
+            })
+        })
+        .collect()
+}
+
 pub fn render(plan_path: &Path, model_path: &Path, output_dir: &Path) -> Result<ExportReport> {
     if output_dir.exists() {
         bail!(
@@ -833,6 +900,10 @@ fn vlq(mut value: u64, out: &mut Vec<u8>) -> Result<()> {
 }
 
 fn parse_midi(bytes: &[u8]) -> Result<Snapshot> {
+    parse_midi_limited(bytes, usize::MAX, usize::MAX)
+}
+
+fn parse_midi_limited(bytes: &[u8], max_notes: usize, max_marker_bytes: usize) -> Result<Snapshot> {
     if bytes.len() < 14
         || &bytes[..4] != b"MThd"
         || u32::from_be_bytes(bytes[4..8].try_into()?) != 6
@@ -840,6 +911,9 @@ fn parse_midi(bytes: &[u8]) -> Result<Snapshot> {
         bail!("invalid MIDI header");
     }
     let track_count = u16::from_be_bytes(bytes[10..12].try_into()?) as usize;
+    if max_notes != usize::MAX && track_count > 65 {
+        bail!("native track budget");
+    }
     let ppq = u16::from_be_bytes(bytes[12..14].try_into()?) as u32;
     let mut offset: usize = 14;
     let mut tempos = Vec::new();
@@ -867,8 +941,16 @@ fn parse_midi(bytes: &[u8]) -> Result<Snapshot> {
             .get(offset..track_end)
             .ok_or_else(|| anyhow!("truncated MIDI track"))?;
         offset = track_end;
-        let parsed = parse_midi_track(track, track_index)?;
+        let parsed = parse_midi_track(
+            track,
+            track_index,
+            max_notes.saturating_sub(notes.len()),
+            max_marker_bytes,
+        )?;
         if track_index == 0 {
+            if max_notes != usize::MAX && !parsed.notes.is_empty() {
+                bail!("native conductor contains notes");
+            }
             tempos = parsed.tempos;
             meters = parsed.meters;
             form = parsed.form;
@@ -905,7 +987,12 @@ struct ParsedTrack {
     notes: Vec<NoteSnapshot>,
 }
 
-fn parse_midi_track(bytes: &[u8], track_index: usize) -> Result<ParsedTrack> {
+fn parse_midi_track(
+    bytes: &[u8],
+    track_index: usize,
+    max_notes: usize,
+    max_marker_bytes: usize,
+) -> Result<ParsedTrack> {
     let mut pos = 0;
     let mut tick = 0u64;
     let mut part_id = None;
@@ -937,6 +1024,9 @@ fn parse_midi_track(bytes: &[u8], track_index: usize) -> Result<ParsedTrack> {
                 .ok_or_else(|| anyhow!("truncated MIDI meta payload"))?;
             pos += length;
             match kind {
+                0x51 if track_index > 0 && max_notes != usize::MAX => {
+                    bail!("external part-track tempo is not native score MIDI");
+                }
                 0x2f => {
                     if length != 0 {
                         bail!("invalid MIDI end-of-track");
@@ -970,6 +1060,12 @@ fn parse_midi_track(bytes: &[u8], track_index: usize) -> Result<ParsedTrack> {
                     parsed.lyrics.push(serde_json::from_str(payload)?);
                 }
                 0x03 if track_index > 0 => {
+                    if max_notes != usize::MAX && part_id.is_some() {
+                        bail!("duplicate native part marker");
+                    }
+                    if data.len() > max_marker_bytes {
+                        bail!("native part marker budget");
+                    }
                     let text = std::str::from_utf8(data)?;
                     let payload = text
                         .strip_prefix("REEL_PART:")
@@ -996,6 +1092,9 @@ fn parse_midi_track(bytes: &[u8], track_index: usize) -> Result<ParsedTrack> {
                 let (start, start_velocity) = active
                     .remove(&key)
                     .ok_or_else(|| anyhow!("MIDI note-off has no note-on"))?;
+                if parsed.notes.len() >= max_notes {
+                    bail!("native score note budget");
+                }
                 parsed.notes.push(NoteSnapshot {
                     part_id: part_id
                         .clone()
@@ -1011,7 +1110,8 @@ fn parse_midi_track(bytes: &[u8], track_index: usize) -> Result<ParsedTrack> {
             bail!("unsupported MIDI event status {status:#x}");
         }
     }
-    if parsed.duration == 0 || !active.is_empty() {
+    if parsed.duration == 0 || !active.is_empty() || (max_notes != usize::MAX && pos != bytes.len())
+    {
         bail!("incomplete MIDI track");
     }
     Ok(parsed)
