@@ -26,6 +26,7 @@ same-file = "1.0.6"
 reel-music = { path = "crates/reel-music" }
 reel-assembly = { path = "crates/reel-assembly" }
 reel-assets = { path = "crates/reel-assets", optional = true }
+reel-print = { path = "crates/reel-print", optional = true }
 flate2 = { version = "1", optional = true }
 tig-core = { path = "vendor/tig/crates/tig-core", optional = true }
 tig-assets = { path = "vendor/tig/crates/tig-assets", optional = true }
@@ -33,6 +34,7 @@ tig-git = { path = "vendor/tig/crates/tig-git", features = ["assets"], optional 
 tig-store = { path = "vendor/tig/crates/tig-store", optional = true }
 
 [features]
+print = ["dep:reel-print"]
 test-fixtures = []
 tig = ["dep:tig-core", "dep:tig-assets", "dep:tig-git", "dep:tig-store"]
 tig-publication = ["tig", "dep:reel-assets", "dep:flate2"]
@@ -78,8 +80,13 @@ name = "fake_c2patool"
 path = "src/bin/fake_c2patool.rs"
 required-features = ["test-fixtures"]
 
+[[bin]]
+name = "reel-print"
+path = "src/bin/reel-print.rs"
+required-features = ["print"]
+
 [workspace]
-members = ["crates/reel-music", "crates/reel-assembly", "crates/reel-assets"]
+members = ["crates/reel-music", "crates/reel-assembly", "crates/reel-assets", "crates/reel-print"]
 exclude = ["vendor/tig"]
 resolver = "3"
 
