@@ -43,6 +43,8 @@ mod recording_clock;
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_retained_comparison.rs"]
 mod retained_comparison;
+#[path = "support/tig_retained_presentation.rs"]
+mod retained_presentation;
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_store_setup.rs"]
 mod store_setup;

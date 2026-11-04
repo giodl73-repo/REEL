@@ -1,6 +1,7 @@
 //! Explicit bounded episode jobs over one frozen source and existing stores.
 //! Coordinator planning grants no scene eligibility; the contained worker must
-//! obtain fresh owned primary-reference proofs before assembling any movie.
+//! obtain fresh owned primary or explicit retained-output references before
+//! assembling any movie; retained reuse does not assert upstream production.
 use crate::tig_native_job_cli::metadata_wait::{MetadataWait, Waiting};
 use crate::{
     media_runtime::{Bindings, BoundPrograms},

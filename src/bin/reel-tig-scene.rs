@@ -19,6 +19,9 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Operation {
+    PlanRetained {
+        request: PathBuf,
+    },
     PlanBrowser {
         request: PathBuf,
     },
@@ -57,6 +60,13 @@ enum Operation {
 }
 fn run() -> Result<()> {
     let args = Args::parse();
+    if let Operation::PlanRetained { request } = &args.command {
+        let request = reel::tig_retained_presentation::Request::read(request)?;
+        let mut source = Source::open(Profile::read(&args.profile)?)?;
+        let plan = reel::tig_retained_presentation::lower(&mut source, &request)?;
+        println!("{}", plan.summary());
+        return Ok(());
+    }
     if let Operation::PlanBrowser { request } = &args.command {
         let plan = (|| -> Result<_> {
             let request = reel::tig_browser::Request::read(request)?;
@@ -101,6 +111,7 @@ fn run() -> Result<()> {
         | Operation::Compare { job, .. } => job,
         Operation::CompileNative { .. }
         | Operation::PlanEpisode { .. }
+        | Operation::PlanRetained { .. }
         | Operation::PlanBrowser { .. } => unreachable!(),
     };
     let job_path = job_path
@@ -113,6 +124,7 @@ fn run() -> Result<()> {
     let result = match args.command {
         Operation::CompileNative { .. }
         | Operation::PlanEpisode { .. }
+        | Operation::PlanRetained { .. }
         | Operation::PlanBrowser { .. } => unreachable!(),
         Operation::Plan { .. } => {
             serde_json::to_value(scene_delivery::plan_with_inputs(&job_path, &inputs)?.1)?

@@ -4,6 +4,7 @@ use crate::tig_scene_production::jobs::reference::ReferencePlan;
 use tig_assets::graph::recipe::Plan;
 
 pub(super) struct Root {
+    pub reference_geometry: crate::media_parity::GeometryAdmission,
     pub resources: job::JobContext,
     pub recipe: Plan,
     pub outputs: std::collections::BTreeSet<String>,
@@ -104,6 +105,12 @@ pub(super) fn freeze(
     }
     let manifest: crate::episode_conform::Manifest =
         serde_json::from_slice(&source.read_metadata(&plan.conform, 4 * 1024 * 1024)?)?;
+    let reference_geometry = crate::media_parity::GeometryAdmission {
+        assume_square_for_unspecified_sar: manifest
+            .output_geometry
+            .as_ref()
+            .is_some_and(|g| g.assume_square_for_unspecified_sar),
+    };
     let mut outputs = std::collections::BTreeSet::from(["receipt.json".to_owned()]);
     if manifest
         .compact_delivery
@@ -161,8 +168,14 @@ pub(super) fn freeze(
         )?;
         let browser = spec.bind_browser()?;
         let context = spec.freeze_context(&mut child, store)?;
-        let reference =
-            presentation::Plan::from_context(&mut child, spec, &context, programs, &browser)?;
+        let reference = presentation::Plan::from_context(
+            &mut child,
+            spec,
+            &context,
+            programs,
+            &browser,
+            reference_geometry,
+        )?;
         enroll(
             &mut evidence,
             &spec.id,
@@ -198,6 +211,7 @@ pub(super) fn freeze(
         TreeLimits::default(),
     )?;
     Ok(Root {
+        reference_geometry,
         outputs,
         resources,
         recipe,

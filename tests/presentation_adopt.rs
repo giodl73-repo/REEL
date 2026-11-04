@@ -192,6 +192,85 @@ fn retain_source_preserves_compressed_bytes_and_rejects_edits_or_substitution() 
         .is_err()
     );
     verify().unwrap();
+    retained_source_conform_fixture(root, &manifest);
+}
+
+fn retained_source_conform_fixture(root: &Path, adoption: &Value) {
+    write(
+        &root.join("retained-order.json"),
+        &json!({
+            "schema":"reel.episode-master-template.v2","template_id":"episode-master",
+            "ordered_units":[{"kind":"episode-presentation","id":"series-opening"}]
+        }),
+    );
+    write(
+        &root.join("retained-catalog.json"),
+        &json!({
+            "schema":"reel.scene-template-catalog.v1","templates":[
+                {"template_id":"episode-master","kind":"episode-master","required_content_keys":[],
+                    "definition_sha256":reference(root,"retained-order.json")["sha256"]},
+                {"template_id":"film","kind":"series-opening","required_content_keys":[],
+                    "definition_sha256":reference(root,"template.json")["sha256"]}
+            ]
+        }),
+    );
+    let master = reference(root, "retained/master.mkv");
+    write(
+        &root.join("retained-bindings.json"),
+        &json!({
+            "schema":"reel.scene-asset-bindings.v1","scope_id":"S1E01","assets":{
+                "opening-master":{"logical_id":"retained-opening","sha256":master["sha256"],"bytes":master["bytes"],
+                    "cache_uri":format!("cache://sha256/{}",master["sha256"].as_str().unwrap()),
+                    "selection_state":"selected-private-production"}
+            }
+        }),
+    );
+    write(
+        &root.join("retained-episode.json"),
+        &json!({
+            "schema":"reel.episode-authoring.v1","episode_id":"S1E01","season_id":"S1",
+            "authoring_state":"ready-for-private-build","master_template_id":"episode-master",
+            "scene_policy_id":"narrative","scene_ids":[],"score_palette":[],
+            "presentation":[{"role":"series-opening","template_id":"film","content":{},"asset_binding":"opening-master"}]
+        }),
+    );
+    let manifest = json!({
+        "schema":"reel.episode-conform.v1","episode_id":"S1E01","language":"es","output_sample_rate":48000,
+        "catalog":reference(root,"retained-catalog.json"),"master_template_definition":reference(root,"retained-order.json"),
+        "episode":reference(root,"retained-episode.json"),"season_bindings":reference(root,"season.json"),
+        "episode_bindings":reference(root,"retained-bindings.json"),
+        "compact_delivery":{"crf":27,"audio_bitrate_kbps":128,"retain_lossless_master":true,"intermediate_video_encoding":"h264-lossless"},
+        "segments":[{"kind":"episode-presentation","id":"series-opening","master":master,
+            "source_receipt":reference(root,"retained/receipt.json"),"adoption_manifest":reference(root,"manifest.json")}]
+    });
+    write(&root.join("retained-conform.json"), &manifest);
+    let output = root.join("retained-programme");
+    let receipt =
+        reel::episode_conform::build(&root.join("retained-conform.json"), root, root, &output)
+            .unwrap();
+    assert!(receipt.decoded_master_matches_ordered_segments);
+    assert!(receipt.timestamps_verified);
+    assert_eq!(
+        reference(root, "source.mp4")["sha256"],
+        adoption["source"]["sha256"]
+    );
+    assert_eq!(reference(root, "retained/master.mkv"), master);
+    assert!(output.join("master.mkv").is_file());
+    assert!(output.join("episode.mp4").is_file());
+    // Without its checked adoption route the same compressed bytes remain
+    // ineligible as an ordinary episode segment.
+    let mut unverified = manifest;
+    unverified["segments"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("adoption_manifest");
+    write(&root.join("unverified-conform.json"), &unverified);
+    let rejected = root.join("unverified-programme");
+    assert!(
+        reel::episode_conform::build(&root.join("unverified-conform.json"), root, root, &rejected)
+            .is_err()
+    );
+    assert!(!rejected.exists());
 }
 
 #[test]

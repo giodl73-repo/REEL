@@ -65,6 +65,93 @@ fn explicit_validation_program_refusal_precedes_payload_access_without_fallback(
     assert_eq!(source.0.get(), 0);
 }
 #[test]
+fn unspecified_aspect_needs_explicit_square_policy_and_never_allows_known_stretch() {
+    use reel::media_parity::{GeometryAdmission, compare_with_geometry};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    ffmpeg(
+        root,
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=32x32:r=24:d=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000:duration=1",
+            "-vf",
+            "setsar=1",
+            "-c:v",
+            "ffv1",
+            "-pix_fmt",
+            "yuv444p",
+            "-c:a",
+            "pcm_s24le",
+            "-ac",
+            "2",
+            "square.mkv",
+        ],
+    );
+    for (file, ratio) in [
+        ("unspecified.mkv", "setsar=0"),
+        ("stretched.mkv", "setsar=4/3"),
+    ] {
+        ffmpeg(
+            root,
+            &[
+                "-i",
+                "square.mkv",
+                "-vf",
+                ratio,
+                "-c:v",
+                "ffv1",
+                "-pix_fmt",
+                "yuv444p",
+                "-c:a",
+                "copy",
+                file,
+            ],
+        );
+    }
+    let shape = Shape {
+        width: 32,
+        height: 32,
+        fps_numerator: 24,
+        fps_denominator: 1,
+        frames: 24,
+        sample_rate: 48000,
+        samples: 48000,
+    };
+    let square = reference(root, "square.mkv");
+    let unknown = reference(root, "unspecified.mkv");
+    assert!(compare_with_inputs(&square, root, &unknown, root, &shape).is_err());
+    let geometry = GeometryAdmission {
+        assume_square_for_unspecified_sar: true,
+    };
+    let report = compare_with_geometry(&square, root, &unknown, root, &shape, geometry).unwrap();
+    assert!(
+        report.equal
+            && report.displayed_rgb_equal
+            && report.pcm_equal
+            && report.native_clock_checked
+    );
+    assert_eq!(report.assumed_square_pixel_subjects, vec!["candidate"]);
+    assert_eq!(report.geometry_admission, Some(geometry));
+    assert!(
+        compare_with_geometry(
+            &square,
+            root,
+            &reference(root, "stretched.mkv"),
+            root,
+            &shape,
+            geometry
+        )
+        .is_err()
+    );
+    assert_eq!(reference(root, "unspecified.mkv").sha256, unknown.sha256);
+}
+#[test]
 #[ignore = "requires native FFmpeg; strict decoded picture/PCM and frame-clock comparison"]
 fn native_media_parity_detects_content_color_clock_and_length_changes() {
     let temp = tempfile::tempdir().unwrap();

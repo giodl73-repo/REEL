@@ -22,6 +22,21 @@ pub struct Shape {
     pub sample_rate: u32,
     pub samples: u64,
 }
+/// Explicit geometry policy from the consuming contract. Never reinterprets a
+/// declared non-square ratio; omission preserves strict historical admission.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeometryAdmission {
+    #[serde(default)]
+    pub assume_square_for_unspecified_sar: bool,
+}
+impl GeometryAdmission {
+    fn accepts_sar(&self, sar: Option<&str>) -> bool {
+        sar == Some("1:1")
+            || (self.assume_square_for_unspecified_sar
+                && matches!(sar, None | Some("unknown" | "N/A" | "0:1")))
+    }
+}
 #[derive(Debug, Serialize)]
 pub struct Digests {
     pub yuv444p_frame_sequence_sha256: String,
@@ -41,6 +56,10 @@ pub struct Report {
     pub native_clock_checked: bool,
     pub equal: bool,
     pub approval_transferred: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub geometry_admission: Option<GeometryAdmission>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub assumed_square_pixel_subjects: Vec<&'static str>,
 }
 fn ratio(value: &str) -> Result<(u64, u64)> {
     let (n, d) = value.split_once('/').context("missing native rational")?;
@@ -75,7 +94,12 @@ fn video_bytes(shape: &Shape) -> Result<u64> {
         .and_then(|v| v.checked_mul(3))
         .context("frame size overflow")
 }
-fn facts(path: &Path, shape: &Shape, tools: &(impl InputFiles + ?Sized)) -> Result<Value> {
+fn facts(
+    path: &Path,
+    shape: &Shape,
+    tools: &(impl InputFiles + ?Sized),
+    geometry: GeometryAdmission,
+) -> Result<Value> {
     let probe = scene_delivery::probe_with_inputs(tools, path)?;
     let streams = probe["streams"]
         .as_array()
@@ -102,7 +126,7 @@ fn facts(path: &Path, shape: &Shape, tools: &(impl InputFiles + ?Sized)) -> Resu
         || a["sample_rate"].as_str() != Some(&shape.sample_rate.to_string())
         || v["start_pts"].as_i64() != Some(0)
         || a["start_pts"].as_i64() != Some(0)
-        || v["sample_aspect_ratio"] != "1:1"
+        || !geometry.accepts_sar(v["sample_aspect_ratio"].as_str())
     {
         bail!("comparison media differs from native stream/clock shape");
     }
@@ -329,8 +353,16 @@ pub fn admit_with_inputs(
     inputs: &(impl InputFiles + ?Sized),
     shape: &Shape,
 ) -> Result<()> {
+    admit_with_geometry(file, inputs, shape, GeometryAdmission::default())
+}
+pub fn admit_with_geometry(
+    file: &FileRef,
+    inputs: &(impl InputFiles + ?Sized),
+    shape: &Shape,
+    geometry: GeometryAdmission,
+) -> Result<()> {
     video_bytes(shape)?;
-    facts(&inputs.verified_path(file)?, shape, inputs)?;
+    facts(&inputs.verified_path(file)?, shape, inputs, geometry)?;
     Ok(())
 }
 
@@ -341,13 +373,39 @@ pub fn compare_with_inputs(
     candidate_inputs: &(impl InputFiles + ?Sized),
     shape: &Shape,
 ) -> Result<Report> {
+    compare_with_geometry(
+        reference,
+        reference_inputs,
+        candidate,
+        candidate_inputs,
+        shape,
+        GeometryAdmission::default(),
+    )
+}
+pub fn compare_with_geometry(
+    reference: &FileRef,
+    reference_inputs: &(impl InputFiles + ?Sized),
+    candidate: &FileRef,
+    candidate_inputs: &(impl InputFiles + ?Sized),
+    shape: &Shape,
+    geometry: GeometryAdmission,
+) -> Result<Report> {
     video_bytes(shape)?;
     let program = candidate_inputs.media_program(MediaProgram::Ffmpeg)?;
     let reference_path = reference_inputs.verified_path(reference)?;
     let candidate_path = candidate_inputs.verified_path(candidate)?;
     // Both stream shapes are checked before expensive decoding.
-    let reference_facts = facts(&reference_path, shape, candidate_inputs)?;
-    let candidate_facts = facts(&candidate_path, shape, candidate_inputs)?;
+    let reference_facts = facts(&reference_path, shape, candidate_inputs, geometry)?;
+    let candidate_facts = facts(&candidate_path, shape, candidate_inputs, geometry)?;
+    let mut assumed_square_pixel_subjects = Vec::new();
+    for (name, facts) in [
+        ("reference", &reference_facts),
+        ("candidate", &candidate_facts),
+    ] {
+        if facts["sample_aspect_ratio"] != "1:1" {
+            assumed_square_pixel_subjects.push(name);
+        }
+    }
     let color_metadata_equal = [
         "color_range",
         "color_space",
@@ -376,5 +434,9 @@ pub fn compare_with_inputs(
         native_clock_checked: true,
         equal: picture_planes_equal && displayed_rgb_equal && pcm_equal,
         approval_transferred: false,
+        geometry_admission: geometry
+            .assume_square_for_unspecified_sar
+            .then_some(geometry),
+        assumed_square_pixel_subjects,
     })
 }

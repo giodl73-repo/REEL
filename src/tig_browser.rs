@@ -51,6 +51,10 @@ pub struct Bounds {
 struct Document {
     source: String,
     audio: Option<String>,
+    #[serde(default)]
+    source_clock: Option<String>,
+    #[serde(default)]
+    audio_window: Option<browser_composition::PcmWindow>,
     inputs: BTreeMap<String, IdRef>,
     width: u32,
     height: u32,
@@ -236,6 +240,8 @@ pub fn lower(source: &mut Source, request: &Request) -> Result<Prepared> {
             .map(|path| asset(path))
             .collect::<Result<_>>()?,
         audio: document.audio.as_deref().map(asset).transpose()?,
+        source_clock: document.source_clock.as_deref().map(asset).transpose()?,
+        audio_window: document.audio_window,
         width: document.width,
         height: document.height,
         fps: document.fps,

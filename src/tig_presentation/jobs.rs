@@ -18,6 +18,7 @@ use tig_store::{
 };
 #[cfg(windows)]
 pub mod browser;
+pub mod retained;
 
 pub struct JobPlan<'a> {
     context: &'a ProductionContext,
@@ -41,7 +42,8 @@ pub struct ProtectedPresentation<'p, 'a> {
 }
 
 /// Holds primary and output byte guards, the source fence and bound runtime
-/// through use. Constructed only after fresh primary comparison.
+/// through use. Constructed only after fresh primary comparison or an explicit
+/// exact-byte retained-output composition check; declarations distinguish them.
 /// A technical match never substitutes for an original producer or approval.
 pub struct VerifiedPresentation<'a> {
     owner: &'a ScopedSource,
@@ -55,7 +57,9 @@ pub struct VerifiedPresentation<'a> {
     manifest: FileRef,
     master: FileRef,
     yuv: String,
-    rgb: String,
+    rgb: Option<String>,
+    retained_source: Option<Reference>,
+    geometry_admission: Option<crate::media_parity::GeometryAdmission>,
     audio: String,
     frames: u64,
     samples: u64,
@@ -85,12 +89,18 @@ impl VerifiedPresentation<'_> {
             "job":self.resources.selection(),"recipe":self.recipe,
             "manifest":self.manifest,"master":self.master,
             "yuv_sha256":self.yuv,"rgb_sha256":self.rgb,"pcm_sha256":self.audio,
+            "retained_source":self.retained_source,
+            "geometry_admission":self.geometry_admission,
+            "primary_reference_verified":self.primary_reference_verified(),
             "frames":self.frames,"samples":self.samples,"timestamps_verified":true,
             "approval":false,"original_producer_assertion":false,
         }))?)
     }
     pub fn selected(&self) -> &FileRef {
         &self.master
+    }
+    pub fn primary_reference_verified(&self) -> bool {
+        self.retained_source.is_none()
     }
     pub fn source(&self) -> &Reference {
         &self.source
@@ -504,7 +514,9 @@ impl ProtectedPresentation<'_, '_> {
             manifest: comparison.manifest().clone(),
             master: comparison.master().clone(),
             yuv: comparison.picture_sha256().0.into(),
-            rgb: comparison.picture_sha256().1.into(),
+            rgb: Some(comparison.picture_sha256().1.into()),
+            retained_source: None,
+            geometry_admission: None,
             audio: comparison.audio_sha256().into(),
             frames,
             samples,

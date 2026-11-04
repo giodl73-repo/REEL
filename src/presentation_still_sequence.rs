@@ -77,24 +77,9 @@ struct PictureSpan {
     end_anchor: String,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SourceClock {
-    schema: String,
-    source_sha256: String,
-    sample_rate: u32,
-    total_samples: u64,
-    /// Evidence is retained and hashed, not interpreted as human approval.
-    evidence: FileRef,
-    anchors: Vec<ClockAnchor>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ClockAnchor {
-    id: String,
-    sample: u64,
-}
+#[cfg(test)]
+use crate::presentation_clock::ClockAnchor;
+type SourceClock = crate::presentation_clock::SourceClock<FileRef>;
 
 impl Template {
     fn frames(&self) -> u64 {

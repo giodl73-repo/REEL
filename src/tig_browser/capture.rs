@@ -142,6 +142,7 @@ fn mime(path: &str) -> Result<&'static str> {
             "html" | "htm" => "text/html; charset=utf-8",
             "css" => "text/css; charset=utf-8",
             "js" => "text/javascript; charset=utf-8",
+            "json" => "application/json",
             "png" => "image/png",
             "jpg" | "jpeg" => "image/jpeg",
             "webp" => "image/webp",
@@ -153,6 +154,15 @@ fn mime(path: &str) -> Result<&'static str> {
             _ => bail!("unsupported browser resource type"),
         },
     )
+}
+
+/// Metadata-only execution preflight, before a parent verifies other units.
+pub fn validate_resources(plan: &Prepared) -> Result<()> {
+    for path in plan.inputs.keys() {
+        resource_url(path)?;
+        mime(path)?;
+    }
+    Ok(())
 }
 
 /// Borrow the already-held native input provider. No directory view, primary
@@ -392,6 +402,14 @@ pub fn capture(
     {
         bail!("browser geometry exceeds capture admission");
     }
+    let source_clock = crate::browser_composition::source_clock_event(manifest, |asset, limit| {
+        resources
+            .get(
+                &resource_url(&asset.path)?,
+                limit.min(limits.max_resource_bytes),
+            )
+            .map(|(bytes, _)| bytes)
+    })?;
     let url = resource_url(&manifest.source.path)?;
     let mut s = Session {
         transport,
@@ -422,7 +440,7 @@ pub fn capture(
     s.call("Network.setBypassServiceWorker", json!({"bypass":true}))?;
     s.call(
         "Page.addScriptToEvaluateOnNewDocument",
-        json!({"source":crate::browser_composition::frame_clock(manifest.fps)}),
+        json!({"source":crate::browser_composition::frame_clock_with_source(manifest.fps,source_clock.as_ref())}),
     )?;
     s.call("Emulation.setDeviceMetricsOverride", json!({"width":manifest.width,"height":manifest.height,"deviceScaleFactor":1,"mobile":false}))?;
     let nav = s.call("Page.navigate", json!({"url":url}))?;
@@ -438,6 +456,13 @@ pub fn capture(
     }
     if !s.source_served {
         bail!("browser source was not served from the admitted resource view");
+    }
+    let fonts = evaluation(s.call("Runtime.evaluate", json!({
+        "expression":"document.fonts.ready.then(()=>JSON.stringify({fontsReady:Array.from(document.fonts).every(f=>f.status==='loaded')}))",
+        "returnByValue":true,"awaitPromise":true
+    }))?)?;
+    if fonts["fontsReady"] != true {
+        bail!("browser declared fonts are not ready");
     }
     if clean_picture {
         let response = s.call("Runtime.evaluate", json!({"expression":"document.documentElement.dataset.reelCleanPicture='true';const ns=document.documentElement.namespaceURI;const s=ns==='http://www.w3.org/2000/svg'?document.createElementNS(ns,'style'):document.createElement('style');s.textContent='[data-reel-disclosure],.reel-disclosure{display:none!important}';(document.head||document.documentElement).appendChild(s)"}))?;

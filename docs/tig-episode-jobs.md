@@ -20,13 +20,20 @@ verification request declares only `worker.json` as its output.
 
 This is an actual managed job: component availability checks, capacity admission,
 process containment and source ownership still apply. The worker obtains the
-same fresh scene/presentation primary-reference proofs as assembly and verifies
+same fresh scene/presentation references as assembly and verifies
 the protected parent and children again before reporting. It skips the parent
 assembly call entirely. The result states the component count and verified
-primary references, with `episode_assembled: false`,
+primary references (or explicit retained-output references), with `episode_assembled: false`,
 `final_episode_output_verified: false`, no production claim and no approval.
 Reference checking may use bounded temporary decoded/staged data; it does not
 produce a new episode movie or promote any selected asset.
+
+[Retained delivered outputs](tig-retained-presentation.md) use a third typed
+presentation request alongside still and browser sources. These are composition
+dependencies. The worker reports `component_current_references_verified: true`
+after their checks, while `component_primary_references_verified` is false when
+any presentation uses retained-output reuse. It does not assert that a retained
+movie's original upstream producer is current.
 
 The verification purpose is pinned into the frozen resource tree. Retention and
 recovery validate that pin and the distinct worker report schema. A successful

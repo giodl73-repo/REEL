@@ -588,6 +588,16 @@ pub(crate) fn probe_with_inputs(
     path: &Path,
     inputs: &(impl scene_delivery::InputFiles + ?Sized),
 ) -> Result<MediaFacts> {
+    probe_segment(path, inputs, false)
+}
+
+// Only a freshly rechecked retain-source adoption or sealed retained-output
+// proof may enable compressed inputs. Ordinary segment probes remain strict.
+fn probe_segment(
+    path: &Path,
+    inputs: &(impl scene_delivery::InputFiles + ?Sized),
+    retained: bool,
+) -> Result<MediaFacts> {
     let output = command_with_inputs(inputs, scene_delivery::MediaProgram::Ffprobe)?
         .args(["-v", "error", "-show_streams", "-of", "json"])
         .arg(path)
@@ -611,10 +621,11 @@ pub(crate) fn probe_with_inputs(
         bail!("episode segment must have one picture and one audio stream");
     }
     let (v, a) = (video[0], audio[0]);
-    if !matches!(v["codec_name"].as_str(), Some("ffv1" | "h264"))
-        || v["pix_fmt"] != "yuv444p"
-        || a["codec_name"] != "pcm_s24le"
-        || a["channels"] != 2
+    if a["channels"] != 2
+        || (!retained
+            && (!matches!(v["codec_name"].as_str(), Some("ffv1" | "h264"))
+                || v["pix_fmt"] != "yuv444p"
+                || a["codec_name"] != "pcm_s24le"))
     {
         bail!("episode segment must be FFV1 or H264/yuv444p and stereo PCM24");
     }
@@ -2075,6 +2086,7 @@ fn build_impl(
     let mut sources = Vec::new();
     let mut upstream_verified = Vec::new();
     let mut presentation_verified = Vec::new();
+    let mut retained_sources = Vec::new();
     let mut presentation_counts = Vec::new();
     let mut presentation_cache_hits = 0;
     let mut presentation_cache_misses = 0;
@@ -2508,6 +2520,15 @@ fn build_impl(
                 }
             }
         }
+        retained_sources.push(
+            segment.kind == SegmentKind::EpisodePresentation
+                && presentation_rechecked
+                && (if native.is_some() {
+                    receipt["retained_source"].is_object()
+                } else {
+                    receipt["output_mode"] == "retain-source"
+                }),
+        );
         sources.push(master);
         upstream_verified.push(rechecked);
         presentation_verified.push(presentation_rechecked);
@@ -2551,7 +2572,8 @@ fn build_impl(
     let mut frame_cursor = 0u64;
     let mut sample_cursor = 0u64;
     for (index, (segment, source)) in manifest.segments.iter().zip(&sources).enumerate() {
-        let facts = probe_with_inputs(source, programs)?;
+        let retained = retained_sources[index];
+        let facts = probe_segment(source, programs, retained)?;
         let mut output_facts = facts.clone();
         let assumed_color_range = if let Some(range) = manifest
             .output_geometry
@@ -2687,7 +2709,8 @@ fn build_impl(
         } else {
             "ffv1"
         };
-        let needs_video_normalization = scale_filter.is_some()
+        let needs_video_normalization = retained
+            || scale_filter.is_some()
             || facts.video_codec != target_codec
             || (target_codec == "h264" && facts.reordered_video_frames != 0);
         let needs_normalization =
@@ -2727,7 +2750,7 @@ fn build_impl(
             } else {
                 encoder.args(["-c:v", "ffv1", "-pix_fmt", "yuv444p"]);
             }
-            if facts.sample_rate == manifest.output_sample_rate {
+            if !retained && facts.sample_rate == manifest.output_sample_rate {
                 encoder.args(["-c:a", "copy"]);
             } else {
                 encoder

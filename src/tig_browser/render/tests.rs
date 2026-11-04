@@ -73,14 +73,27 @@ fn wave() -> Vec<u8> {
     wav
 }
 fn fixture(root: &Path, audio: bool, corrupt: bool) -> (Prepared, Files) {
+    fixture_with_clock(root, audio, corrupt, false)
+}
+fn fixture_with_clock(root: &Path, audio: bool, corrupt: bool, clock: bool) -> (Prepared, Files) {
     use std::os::windows::fs::OpenOptionsExt;
-    let svg=r##"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><image href="pictures/niño 1%+&amp;.svg" width="8" height="8"/><rect id="r" width="8" height="8" fill="red"/><script>addEventListener('reelframe',e=>document.getElementById('r').setAttribute('fill',e.detail.frame%2?'blue':'red'))</script></svg>"##.as_bytes();
+    let svg = if clock {
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><image href="pictures/niño 1%+&amp;.svg" width="8" height="8"/><rect id="r" width="8" height="8" fill="red"/><script>addEventListener('reelframe',e=>document.getElementById('r').setAttribute('fill',e.detail.frame>=e.detail.sourceClock.anchorFrames[1]?'blue':'red'))</script></svg>"##
+    } else {
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><image href="pictures/niño 1%+&amp;.svg" width="8" height="8"/><rect id="r" width="8" height="8" fill="red"/><script>addEventListener('reelframe',e=>document.getElementById('r').setAttribute('fill',e.detail.frame%2?'blue':'red'))</script></svg>"##
+    }.as_bytes();
+    let evidence = b"synthetic measured source timing".to_vec();
+    let clock_raw = serde_json::to_vec(&json!({"schema":"reel.presentation-source-clock.v1",
+        "source_sha256":crate::production::sha256_bytes(&wave()),"sample_rate":48000,"total_samples":12000,
+        "evidence":{"path":"evidence.json","sha256":crate::production::sha256_bytes(&evidence),"bytes":evidence.len()},
+        "anchors":[{"id":"start","sample":0},{"id":"change","sample":3000},{"id":"end","sample":12000}]})).unwrap();
     let mut inputs = BTreeMap::new();
     let mut paths = BTreeMap::new();
     let mut total = 0;
     for (name, id, bytes) in std::iter::once(("opening.svg", "svg/main", svg.to_vec()))
         .chain(std::iter::once(("pictures/niño 1%+&.svg","image/complex",br#"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8"/></svg>"#.to_vec())))
         .chain(audio.then(|| ("audio.wav", "audio/main", wave())))
+        .chain(clock.then_some([("clock.json", "clock/main", clock_raw), ("evidence.json", "clock/evidence", evidence)]).into_iter().flatten())
     {
         let path = root.join(name);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -115,10 +128,14 @@ fn fixture(root: &Path, audio: bool, corrupt: bool) -> (Prepared, Files) {
     let manifest = BrowserCompositionManifest {
         schema: crate::browser_composition::MANIFEST_SCHEMA.into(),
         source,
-        assets: vec![HashedAsset {
-            path: "pictures/niño 1%+&.svg".into(),
-            sha256: inputs["pictures/niño 1%+&.svg"].sha256.clone(),
-        }],
+        assets: inputs
+            .iter()
+            .filter(|(path, _)| path.as_str() != "opening.svg" && path.as_str() != "audio.wav")
+            .map(|(path, file)| HashedAsset {
+                path: path.clone(),
+                sha256: file.sha256.clone(),
+            })
+            .collect(),
         width: 8,
         height: 8,
         fps: 24,
@@ -128,6 +145,11 @@ fn fixture(root: &Path, audio: bool, corrupt: bool) -> (Prepared, Files) {
             path: "audio.wav".into(),
             sha256: inputs["audio.wav"].sha256.clone(),
         }),
+        source_clock: clock.then(|| HashedAsset {
+            path: "clock.json".into(),
+            sha256: inputs["clock.json"].sha256.clone(),
+        }),
+        audio_window: None,
     };
     let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
     (
@@ -168,6 +190,122 @@ fn limits() -> Limits {
         encoder_memory_bytes: 256 * 1024 * 1024,
         encoder_processes: 4,
     }
+}
+
+#[test]
+#[ignore = "requires explicit enrolled local browser/FFmpeg; synthetic media only"]
+fn real_native_browser_exact_pcm_window_uses_integer_envelope_and_retires_scratch() {
+    let root = tempfile::tempdir().unwrap();
+    let (programs, browser) = runtime();
+    let (mut plan, inputs) = fixture_with_clock(root.path(), true, false, true);
+    let window = crate::browser_composition::PcmWindow {
+        source_samples: 12000,
+        start_sample: 0,
+        end_sample: 12000,
+        fade_in_samples: 250,
+        fade_out_samples: 1000,
+    };
+    let (_, expected) = crate::browser_composition::pcm_window::transform(
+        &wave()[44..],
+        std::io::sink(),
+        &window,
+        || Ok(()),
+    )
+    .unwrap();
+    plan.manifest.audio_window = Some(window);
+    plan.manifest_bytes = serde_json::to_vec(&plan.manifest).unwrap();
+    let entries = fs::read_dir(root.path()).unwrap().count();
+    let output = root.path().join("master.mkv");
+    let result = native(
+        &plan,
+        &inputs,
+        programs,
+        browser,
+        root.path(),
+        &output,
+        &limits(),
+        true,
+        || Ok(()),
+    )
+    .unwrap();
+    assert_eq!(result.samples_per_channel, Some(12000));
+    assert_eq!(result.pcm_sha256, Some(expected));
+    assert_ne!(
+        result.pcm_sha256,
+        Some(crate::production::sha256_bytes(&wave()[44..]))
+    );
+    assert_eq!(
+        fs::read_dir(root.path()).unwrap().count(),
+        entries + 1,
+        "exact audio preparation left scratch files"
+    );
+}
+
+#[test]
+#[ignore = "requires explicit enrolled local browser/FFmpeg; synthetic media only"]
+fn real_native_browser_uses_bound_source_clock_without_changing_audio() {
+    let root = tempfile::tempdir().unwrap();
+    let (programs, browser) = runtime();
+    let (plan, inputs) = fixture_with_clock(root.path(), true, false, true);
+    capture::validate_resources(&plan).unwrap();
+    let output = root.path().join("master.mkv");
+    let result = native(
+        &plan,
+        &inputs,
+        programs,
+        browser,
+        root.path(),
+        &output,
+        &limits(),
+        false,
+        || Ok(()),
+    )
+    .unwrap();
+    assert_eq!(result.frames, 6);
+    assert_eq!(result.samples_per_channel, Some(12000));
+    assert_eq!(
+        result.pcm_sha256,
+        Some(crate::production::sha256_bytes(&wave()[44..]))
+    );
+    let digest = root.path().join("frames.md5");
+    let args = vec![
+        "-v".into(),
+        "error".into(),
+        "-nostdin".into(),
+        "-i".into(),
+        native_path(&output).unwrap(),
+        "-map".into(),
+        "0:v:0".into(),
+        "-f".into(),
+        "framemd5".into(),
+        native_path(root.path()).unwrap() + "/frames.md5",
+    ];
+    let mut child = Task::start(
+        &programs
+            .with_inputs(&inputs)
+            .media_program(MediaProgram::Ffmpeg)
+            .unwrap(),
+        args,
+        root.path(),
+        128 * 1024 * 1024,
+        Duration::from_secs(10),
+        limits().encoder(),
+    )
+    .unwrap();
+    child
+        .wait(Instant::now() + Duration::from_secs(10))
+        .unwrap();
+    let raw = fs::read_to_string(&digest).unwrap();
+    assert!(raw.len() < 4096);
+    let rows = raw
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .map(|line| line.rsplit(',').next().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), 6);
+    assert_eq!(rows[0], rows[1]);
+    assert_ne!(rows[1], rows[2], "measured anchor did not change the SVG");
+    assert_eq!(rows[2], rows[3]);
 }
 #[test]
 #[ignore = "requires explicit enrolled local browser/FFmpeg; synthetic media only"]

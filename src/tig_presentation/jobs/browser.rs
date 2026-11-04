@@ -17,6 +17,7 @@ pub struct JobPlan<'a> {
     target: Reference,
     master: FileRef,
     definitions: BTreeSet<String>,
+    geometry: crate::media_parity::GeometryAdmission,
 }
 pub struct Readback<'p, 'a> {
     plan: &'p JobPlan<'a>,
@@ -77,12 +78,53 @@ impl<'a> JobPlan<'a> {
         output_id: &str,
         output_definition: &str,
     ) -> Result<Self> {
+        Self::from_context_with_geometry(
+            source,
+            request,
+            context,
+            programs,
+            browser,
+            limits,
+            clean,
+            crate::media_parity::GeometryAdmission::default(),
+            output_id,
+            output_definition,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_context_with_geometry(
+        source: &mut Source,
+        request: &tig_browser::Request,
+        context: &'a ProductionContext,
+        programs: &'a BoundPrograms,
+        browser: &'a BoundTool,
+        limits: &'a tig_browser::render::Limits,
+        clean: bool,
+        geometry: crate::media_parity::GeometryAdmission,
+        output_id: &str,
+        output_definition: &str,
+    ) -> Result<Self> {
         limits.validate()?;
         let (target, master) = target(source, request, output_id, output_definition)?;
         let producer = crate::tig_browser::render::producer_document(programs, browser, clean)?;
         let producer_pin = Object::from_bytes(&producer);
         let recipe = tig_browser::recipe(source, request, context, &producer_pin)?;
         let prepared = tig_browser::lower(source, request)?;
+        tig_browser::capture::validate_resources(&prepared)?;
+        let source_clock =
+            crate::browser_composition::source_clock_event(&prepared.manifest, |asset, limit| {
+                let file = prepared
+                    .inputs
+                    .get(&asset.path)
+                    .context("clock metadata not declared")?;
+                source.read_metadata(
+                    &Object {
+                        sha256: tig_core::Digest::parse(&file.sha256)?,
+                        bytes: file.bytes,
+                    },
+                    limit as usize,
+                )
+            })?;
         let mut metadata = BTreeMap::from([
             (producer_pin, producer),
             (
@@ -96,7 +138,8 @@ impl<'a> JobPlan<'a> {
         ]);
         let admission = identity::canonical_json(&json!({
             "schema":"reel.tig-browser-reference-admission.experimental-1",
-            "request":request,"limits":limits,"clean_picture":clean,"browser":browser.identity()
+            "request":request,"limits":limits,"clean_picture":clean,"browser":browser.identity(),"geometry_admission":geometry,
+            "source_clock":source_clock
         }))?;
         metadata.insert(Object::from_bytes(&admission), admission);
         let runtime = programs
@@ -133,6 +176,7 @@ impl<'a> JobPlan<'a> {
             },
         )]);
         Ok(Self {
+            geometry,
             context,
             programs,
             browser,
@@ -289,7 +333,7 @@ impl ProtectedPresentation<'_, '_> {
         let inputs =
             source.prepare_files(&plan.prepared.inputs.values().cloned().collect::<Vec<_>>())?;
         let outputs = source.prepare_files(std::slice::from_ref(&plan.master))?;
-        let compared = tig_browser_reference::compare_master_to_primaries(
+        let compared = tig_browser_reference::compare_master_to_primaries_with_geometry(
             &plan.prepared,
             &inputs,
             plan.programs,
@@ -299,6 +343,7 @@ impl ProtectedPresentation<'_, '_> {
             &plan.master,
             &outputs,
             stage_parent,
+            plan.geometry,
             || self.verify_current(source, journal),
         );
         self.verify_current(source, journal)?;
@@ -320,7 +365,12 @@ impl ProtectedPresentation<'_, '_> {
             },
             master: compared.master().clone(),
             yuv: yuv.into(),
-            rgb: rgb.into(),
+            rgb: Some(rgb.into()),
+            retained_source: None,
+            geometry_admission: plan
+                .geometry
+                .assume_square_for_unspecified_sar
+                .then_some(plan.geometry),
             audio: compared.audio_sha256().into(),
             frames: compared.frames(),
             samples: compared.samples(),

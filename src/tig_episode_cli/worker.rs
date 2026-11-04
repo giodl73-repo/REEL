@@ -204,7 +204,14 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
         .zip(&mut presentation_sources)
         .zip(&browser_programs)
         .map(|(((spec, context), source), browser)| {
-            presentation::Plan::from_context(source, spec, context, &programs, browser)
+            presentation::Plan::from_context(
+                source,
+                spec,
+                context,
+                &programs,
+                browser,
+                root.reference_geometry,
+            )
         })
         .collect::<Result<Vec<_>>>()?;
     let presentation_resources = presentation_plans
@@ -349,7 +356,8 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
             "recipe":t.recipe,"resources":frozen.selection(),"metadata_checkpoint":checkpoint,
             "journal_checkpoint":journal.checkpoint(),"temporary_sources":temporary_sources(&t)?,
             "temporary_owner_cleanup_required":true,"components_verified":scenes.len()+presentations.len(),
-            "component_primary_references_verified":true,"episode_assembled":false,
+            "component_primary_references_verified":presentations.values().all(|p|p.primary_reference_verified()),
+            "component_current_references_verified":true,"episode_assembled":false,
             "final_episode_output_verified":false,"record_contract":null,"production_claim":null,"approval":false});
         write_report(Path::new("worker.json"), &result)?;
         return Ok(result);
