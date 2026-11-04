@@ -49,6 +49,13 @@ struct Request {
     release_frames: u32,
     gain: f32,
     peak_ceiling: f32,
+    vocal: Option<Vocal>,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Vocal {
+    source: Input,
+    gain: f32,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -184,6 +191,22 @@ fn encode_pcm24(samples: &[f32], rate: u32, channels: u16, scale: f32) -> Result
     Ok(out)
 }
 
+fn sum_pcm24(left: &[u8], right: &[u8]) -> Result<Vec<u8>> {
+    if left.len() != right.len() || left.len() < 44 || left[..44] != right[..44] {
+        bail!("stem PCM24 geometry differs");
+    }
+    let decode = |b: &[u8]| ((b[0] as i32 | (b[1] as i32) << 8 | (b[2] as i32) << 16) << 8) >> 8;
+    let mut out = left[..44].to_vec();
+    for (a, b) in left[44..].chunks_exact(3).zip(right[44..].chunks_exact(3)) {
+        let q = decode(a) + decode(b);
+        if !(-8_388_608..=8_388_607).contains(&q) {
+            bail!("stem sum overload");
+        }
+        out.extend(&q.to_le_bytes()[..3]);
+    }
+    Ok(out)
+}
+
 /// Writes one new private result directory after validating and capturing every input.
 pub fn render(request_path: &Path, output: &Path) -> Result<Value> {
     if !output.is_absolute() || output.exists() {
@@ -208,6 +231,9 @@ pub fn render(request_path: &Path, output: &Path) -> Result<Value> {
         || !r.peak_ceiling.is_finite()
         || !(0.0..1.0).contains(&r.peak_ceiling)
         || r.peak_ceiling == 0.0
+        || r.vocal
+            .as_ref()
+            .is_some_and(|v| !v.gain.is_finite() || !(0.0..=16.0).contains(&v.gain))
     {
         bail!("sample-clock request contract");
     }
@@ -286,17 +312,70 @@ pub fn render(request_path: &Path, output: &Path) -> Result<Value> {
             }
         }
     }
-    let peak = pcm.iter().try_fold(0f32, |peak, s| {
+    drop(bank);
+    drop(source);
+    let vocal_pcm = if let Some(v) = &r.vocal {
+        let raw = v.source.read(MAX_AUDIO)?;
+        let mut decoded = decode_wave(&raw, r.sample_rate, r.channels)?;
+        if decoded.len() != count {
+            bail!("vocal frame count differs; no implicit trim, padding or resampling");
+        }
+        for s in &mut decoded {
+            *s *= v.gain;
+        }
+        Some(decoded)
+    } else {
+        None
+    };
+    let mut peak = pcm.iter().try_fold(0f32, |peak, s| {
         if !s.is_finite() {
             bail!("non-finite mix");
         }
         Ok(peak.max(s.abs()))
     })?;
+    if let Some(vocal) = &vocal_pcm {
+        for (&p, &v) in pcm.iter().zip(vocal) {
+            if !v.is_finite() || !(p + v).is_finite() {
+                bail!("non-finite vocal mix");
+            }
+            peak = peak.max(v.abs()).max((p + v).abs());
+        }
+    }
     if peak <= 0.0 {
         bail!("silent sample-clock result");
     }
-    let scale = (r.peak_ceiling / peak).min(1.0);
+    // Leave rounding headroom when independently quantizing two stems.
+    let ceiling = r.peak_ceiling
+        - if r.vocal.is_some() {
+            3.0 / 8_388_608.0
+        } else {
+            0.0
+        };
+    if ceiling <= 0.0 {
+        bail!("peak ceiling below PCM24 stem-sum headroom");
+    }
+    let scale = (ceiling / peak).min(1.0);
     let wav = encode_pcm24(&pcm, r.sample_rate, r.channels, scale)?;
+    let mut files = vec![("instrumental.wav", wav)];
+    if let Some(vocal) = &vocal_pcm {
+        files.push((
+            "vocal-stem.wav",
+            encode_pcm24(vocal, r.sample_rate, r.channels, scale)?,
+        ));
+    }
+    drop(pcm);
+    drop(vocal_pcm);
+    if r.vocal.is_some() {
+        let master = sum_pcm24(&files[0].1, &files[1].1)?;
+        files.push(("with-vocals.wav", master));
+    }
+    if files.last().unwrap().1[44..].iter().all(|b| *b == 0) {
+        bail!("quantized sample-clock result is silent");
+    }
+    let outputs: BTreeMap<_, _> = files
+        .iter()
+        .map(|(name, bytes)| (*name, json!({"sha256":hash(bytes),"bytes":bytes.len()})))
+        .collect();
     let receipt = json!({"schema":"reel.music-sample-clock-receipt.v1","request_sha256":hash(&raw),
         "bank_audio":r.bank_audio,"calibration":r.calibration,"native_score_midi":r.native_score_midi,
         "sample_rate":r.sample_rate,"channels":r.channels,"frames":r.frames,"notes":notes.len(),
@@ -304,12 +383,13 @@ pub fn render(request_path: &Path, output: &Path) -> Result<Value> {
         "velocity_policy":"(velocity/64)^1.5","clock_policy":"native ticks; nearest frame, half upward",
         "schedule":notes.iter().map(|n| json!({"part_id":n.part_id,"voice":n.voice,"pitch":n.pitch,"velocity":n.velocity,
             "start_frame":n.start,"key_release_frame":n.release,"release_tail_frames":(r.frames-n.release).min(r.release_frames as u64)})).collect::<Vec<_>>(),
-        "output":{"sha256":hash(&wav),"bytes":wav.len()},"human_approval":false,"published":false});
+        "output":outputs["instrumental.wav"],"outputs":outputs,"vocal":r.vocal,
+        "vocal_retimed":false,"vocal_regenerated":false,"vocal_pitched":false,
+        "stem_sum_policy":"master is exact sum of quantized PCM24 stems",
+        "human_approval":false,"published":false});
     fs::create_dir(output)?;
-    for (name, bytes) in [
-        ("instrumental.wav", wav),
-        ("receipt.json", serde_json::to_vec(&receipt)?),
-    ] {
+    files.push(("receipt.json", serde_json::to_vec(&receipt)?));
+    for (name, bytes) in files {
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -319,7 +399,178 @@ pub fn render(request_path: &Path, output: &Path) -> Result<Value> {
     }
     Ok(
         json!({"notes":notes.len(),"frames":r.frames,"channels":r.channels,
-        "sample_rate":r.sample_rate,"human_approval":false,"published":false,"git_changed":false}),
+        "sample_rate":r.sample_rate,"vocal_mixed":r.vocal.is_some(),"human_approval":false,"published":false,"git_changed":false}),
+    )
+}
+
+fn read_bounded(path: &Path, max: usize) -> Result<Vec<u8>> {
+    let mut raw = Vec::new();
+    fs::File::open(path)?
+        .take(max as u64 + 1)
+        .read_to_end(&mut raw)?;
+    if raw.len() > max {
+        bail!("check input byte budget");
+    }
+    Ok(raw)
+}
+fn pcm_geometry(raw: &[u8], r: &Request, count: usize) -> Result<()> {
+    if raw.len() != 44 + count * 3
+        || &raw[..4] != b"RIFF"
+        || &raw[8..16] != b"WAVEfmt "
+        || u32::from_le_bytes(raw[4..8].try_into()?) as usize + 8 != raw.len()
+        || u32::from_le_bytes(raw[16..20].try_into()?) != 16
+        || u16::from_le_bytes(raw[20..22].try_into()?) != 1
+        || u16::from_le_bytes(raw[22..24].try_into()?) != r.channels
+        || u32::from_le_bytes(raw[24..28].try_into()?) != r.sample_rate
+        || u32::from_le_bytes(raw[28..32].try_into()?) != r.sample_rate * r.channels as u32 * 3
+        || u16::from_le_bytes(raw[32..34].try_into()?) != r.channels * 3
+        || u16::from_le_bytes(raw[34..36].try_into()?) != 24
+        || &raw[36..40] != b"data"
+        || u32::from_le_bytes(raw[40..44].try_into()?) as usize != count * 3
+    {
+        bail!("rendered PCM24 clock or geometry differs");
+    }
+    Ok(())
+}
+fn signed24(raw: &[u8]) -> i32 {
+    ((raw[0] as i32 | (raw[1] as i32) << 8 | (raw[2] as i32) << 16) << 8) >> 8
+}
+
+/// Read-only packet checking. No rerender, source mutation or approval inference.
+pub fn check(request_path: &Path, output: &Path) -> Result<Value> {
+    let raw = read_bounded(request_path, 65_536)?;
+    crate::approval_attestation::ensure_no_duplicate_keys(&raw)?;
+    let r: Request = serde_json::from_slice(&raw)?;
+    if r.schema != "reel.music-sample-clock-render.v1"
+        || !(8000..=192000).contains(&r.sample_rate)
+        || !matches!(r.channels, 1 | 2)
+        || r.frames == 0
+        || r.release_frames > r.sample_rate
+        || !r.gain.is_finite()
+        || !(0.0..=16.0).contains(&r.gain)
+        || !r.peak_ceiling.is_finite()
+        || !(0.0..1.0).contains(&r.peak_ceiling)
+        || r.peak_ceiling == 0.0
+        || r.vocal
+            .as_ref()
+            .is_some_and(|v| !v.gain.is_finite() || !(0.0..=16.0).contains(&v.gain))
+    {
+        bail!("invalid check request");
+    }
+    let count = usize::try_from(r.frames)?
+        .checked_mul(r.channels as usize)
+        .filter(|n| *n <= MAX_SAMPLES)
+        .ok_or_else(|| anyhow::anyhow!("check sample budget"))?;
+    let receipt_raw = read_bounded(&output.join("receipt.json"), 16 * 1024 * 1024)?;
+    crate::approval_attestation::ensure_no_duplicate_keys(&receipt_raw)?;
+    let receipt: Value = serde_json::from_slice(&receipt_raw)?;
+    if receipt["schema"] != "reel.music-sample-clock-receipt.v1"
+        || receipt["request_sha256"] != hash(&raw)
+        || receipt["frames"] != r.frames
+        || receipt["channels"] != r.channels
+        || receipt["sample_rate"] != r.sample_rate
+        || receipt["human_approval"] != false
+        || receipt["published"] != false
+    {
+        bail!("receipt context differs");
+    }
+    for (name, input, max) in [
+        ("bank_audio", &r.bank_audio, MAX_AUDIO),
+        ("calibration", &r.calibration, 1024 * 1024),
+        ("native_score_midi", &r.native_score_midi, 1024 * 1024),
+    ] {
+        if receipt[name] != serde_json::to_value(input)? {
+            bail!("receipt input binding differs");
+        }
+        input.read(max)?;
+    }
+    let notes = crate::music_score::native_note_clock(
+        &r.native_score_midi.read(1024 * 1024)?,
+        r.sample_rate,
+    )?;
+    if receipt["notes"] != notes.len()
+        || receipt["gain"] != r.gain
+        || receipt["release_frames"] != r.release_frames
+    {
+        bail!("receipt note count differs");
+    }
+    let schedule = receipt["schedule"]
+        .as_array()
+        .filter(|rows| rows.len() == notes.len())
+        .ok_or_else(|| anyhow::anyhow!("receipt schedule missing"))?;
+    for (n, s) in notes.iter().zip(schedule) {
+        if n.start >= n.release
+            || n.release > r.frames
+            || s["part_id"] != n.part_id
+            || s["voice"] != n.voice
+            || s["pitch"] != n.pitch
+            || s["velocity"] != n.velocity
+            || s["start_frame"] != n.start
+            || s["key_release_frame"] != n.release
+            || s["release_tail_frames"] != (r.frames - n.release).min(r.release_frames as u64)
+        {
+            bail!("receipt schedule differs from native source clock");
+        }
+    }
+    let scale = receipt["attenuation"]
+        .as_f64()
+        .filter(|s| s.is_finite() && *s > 0.0 && *s <= 1.0)
+        .ok_or_else(|| anyhow::anyhow!("invalid attenuation"))? as f32;
+    let mut names = vec!["instrumental.wav"];
+    if r.vocal.is_some() {
+        names.extend(["vocal-stem.wav", "with-vocals.wav"]);
+    }
+    let mut outputs = BTreeMap::new();
+    for name in names {
+        let bytes = read_bounded(&output.join(name), MAX_SAMPLES * 3 + 44)?;
+        pcm_geometry(&bytes, &r, count)?;
+        let pin = if name == "instrumental.wav" && receipt["outputs"].is_null() {
+            &receipt["output"]
+        } else {
+            &receipt["outputs"][name]
+        };
+        if pin["sha256"] != hash(&bytes) || pin["bytes"] != bytes.len() {
+            bail!("output identity differs");
+        }
+        outputs.insert(name, bytes);
+    }
+    if let Some(v) = &r.vocal {
+        if !v.gain.is_finite()
+            || !(0.0..=16.0).contains(&v.gain)
+            || receipt["vocal"] != serde_json::to_value(v)?
+            || receipt["vocal_retimed"] != false
+            || receipt["vocal_regenerated"] != false
+            || receipt["vocal_pitched"] != false
+        {
+            bail!("vocal source context differs");
+        }
+        let source_raw = v.source.read(MAX_AUDIO)?;
+        let source = decode_wave(&source_raw, r.sample_rate, r.channels)?;
+        if source.len() != count {
+            bail!("vocal source frame count differs");
+        }
+        let p = &outputs["instrumental.wav"][44..];
+        let s = &outputs["vocal-stem.wav"][44..];
+        let m = &outputs["with-vocals.wav"][44..];
+        for (i, ((p, s), m)) in p
+            .chunks_exact(3)
+            .zip(s.chunks_exact(3))
+            .zip(m.chunks_exact(3))
+            .enumerate()
+        {
+            if signed24(p) + signed24(s) != signed24(m) {
+                bail!("master is not the exact PCM24 stem sum");
+            }
+            let expected = ((source[i] * v.gain) as f64 * scale as f64 * 8_388_608.0).round();
+            if expected != signed24(s) as f64 {
+                bail!("vocal PCM differs from the unchanged source and declared gain");
+            }
+        }
+    }
+    Ok(
+        json!({"outputs_verified":outputs.len(),"frames":r.frames,"source_pins_verified":true,
+        "vocal_pcm_verified":r.vocal.is_some(),"exact_stem_sum_verified":r.vocal.is_some(),
+        "complete_semantic_coverage":false,"human_approval":false,"published":false,"git_changed":false}),
     )
 }
 
@@ -389,7 +640,7 @@ mod tests {
             bank_audio:input(root,"bank.wav",&wave()),
             calibration:input(root,"bank.json",&serde_json::to_vec(&json!({"schema":"reel.music-sample-bank.v1","bank":[{"pitch":60,"audio_attack_frame":0,"held_sample_frames":3000}]})).unwrap()),
             native_score_midi:input(root,"score.mid",&midi(60,false,false)),
-            sample_rate:8000,channels:2,frames:3200,release_frames:400,gain:1.0,peak_ceiling:0.89}
+            sample_rate:8000,channels:2,frames:3200,release_frames:400,gain:1.0,peak_ceiling:0.89,vocal:None}
     }
     fn run(root: &Path, r: &Request, name: &str) -> Result<Value> {
         fs::write(root.join("request.json"), serde_json::to_vec(r)?).unwrap();
@@ -437,6 +688,102 @@ mod tests {
         assert_eq!(receipt["attenuation"], 0.5);
         let raw = fs::read(root.join("double/instrumental.wav")).unwrap();
         assert_eq!(pcm(&raw, 400, 0), 2_097_152);
+    }
+    #[test]
+    fn vocal_mix_preserves_clock_and_exact_quantized_stem_sum() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let mut r = request(root);
+        r.vocal = Some(Vocal {
+            source: input(root, "vocals.wav", &wave()),
+            gain: 0.5,
+        });
+        r.peak_ceiling = 0.25;
+        let summary = run(root, &r, "mix").unwrap();
+        assert_eq!(summary["vocal_mixed"], true);
+        let p = fs::read(root.join("mix/instrumental.wav")).unwrap();
+        let v = fs::read(root.join("mix/vocal-stem.wav")).unwrap();
+        let m = fs::read(root.join("mix/with-vocals.wav")).unwrap();
+        assert_eq!(m.len(), 44 + 3200 * 2 * 3);
+        for frame in 0..3200 {
+            for channel in 0..2 {
+                assert!(pcm(&m, frame, channel).abs() <= 2_097_152);
+                assert_eq!(
+                    pcm(&m, frame, channel),
+                    pcm(&p, frame, channel) + pcm(&v, frame, channel)
+                );
+            }
+        }
+        assert_eq!(pcm(&p, 399, 0), 0);
+        assert!(pcm(&v, 399, 0) > 0);
+        assert_eq!(pcm(&p, 2400, 0), 0);
+        assert!(pcm(&m, 2400, 0) > 0);
+        let receipt: Value =
+            serde_json::from_slice(&fs::read(root.join("mix/receipt.json")).unwrap()).unwrap();
+        assert_eq!(receipt["vocal_retimed"], false);
+        assert_eq!(receipt["vocal_regenerated"], false);
+        assert!(receipt["attenuation"].as_f64().unwrap() < 1.0);
+        let checked = check(&root.join("request.json"), &root.join("mix")).unwrap();
+        assert_eq!(checked["exact_stem_sum_verified"], true);
+        assert_eq!(checked["vocal_pcm_verified"], true);
+        // Even self-consistent replacement hashes cannot hide a bad sum or
+        // an altered vocal sample with the master changed to match it.
+        for altered_vocal in [false, true] {
+            let mut master = m.clone();
+            let mut vocal = v.clone();
+            let offset = 44 + 100 * 2 * 3;
+            master[offset..offset + 3].copy_from_slice(&(pcm(&m, 100, 0) + 1).to_le_bytes()[..3]);
+            if altered_vocal {
+                vocal[offset..offset + 3]
+                    .copy_from_slice(&(pcm(&v, 100, 0) + 1).to_le_bytes()[..3]);
+            }
+            fs::write(root.join("mix/with-vocals.wav"), &master).unwrap();
+            fs::write(root.join("mix/vocal-stem.wav"), &vocal).unwrap();
+            let mut changed = receipt.clone();
+            changed["outputs"]["with-vocals.wav"]["sha256"] = json!(hash(&master));
+            changed["outputs"]["vocal-stem.wav"]["sha256"] = json!(hash(&vocal));
+            fs::write(
+                root.join("mix/receipt.json"),
+                serde_json::to_vec(&changed).unwrap(),
+            )
+            .unwrap();
+            let error = check(&root.join("request.json"), &root.join("mix"))
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains(if altered_vocal {
+                    "vocal PCM differs"
+                } else {
+                    "exact PCM24 stem sum"
+                }),
+                "{error}"
+            );
+        }
+    }
+    #[test]
+    fn wrong_vocal_clock_or_gain_refuses_before_output() {
+        for case in ["rate", "frames", "gain"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path();
+            let mut r = request(root);
+            let mut raw = wave();
+            if case == "rate" {
+                raw[24..28].copy_from_slice(&16000u32.to_le_bytes());
+            }
+            if case == "frames" {
+                raw.extend([0; 8]);
+                let size = raw.len() as u32 - 8;
+                raw[4..8].copy_from_slice(&size.to_le_bytes());
+                let size = raw.len() as u32 - 44;
+                raw[40..44].copy_from_slice(&size.to_le_bytes());
+            }
+            r.vocal = Some(Vocal {
+                source: input(root, "vocal.wav", &raw),
+                gain: if case == "gain" { -1.0 } else { 1.0 },
+            });
+            assert!(run(root, &r, "refused-vocal").is_err());
+            assert!(!root.join("refused-vocal").exists());
+        }
     }
     #[test]
     fn mismatched_missing_short_external_or_invalid_sources_refuse_before_output() {

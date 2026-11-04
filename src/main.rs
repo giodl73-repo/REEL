@@ -1481,6 +1481,14 @@ fn run_cli() -> Result<()> {
             let report = reel::arrangement_candidate::validate(&candidate)?;
             print_report(&report, output)?;
         }
+        Command::MusicSampleClockCheck {
+            request,
+            output_dir,
+            output,
+        } => {
+            let report = reel::music_sample_clock::check(&request, &output_dir)?;
+            print_report(&report, output)?;
+        }
         Command::MusicSampleClockRender {
             request,
             output_dir,
@@ -3529,6 +3537,13 @@ enum Command {
     MusicArrangementCandidateCheck {
         candidate: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
+    },
+    /// Check sample-clock output pins, clocks, vocal PCM and exact stem sum.
+    MusicSampleClockCheck {
+        request: PathBuf,
+        output_dir: PathBuf,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
         output: OutputFormat,
     },
     /// Render calibrated float32 samples on an exact native score MIDI clock.

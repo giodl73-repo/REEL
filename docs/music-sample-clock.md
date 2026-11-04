@@ -18,6 +18,11 @@ The request schema is `reel.music-sample-clock-render.v1`. Required fields:
 - `gain`: explicit finite gain, 0–16. Velocity scales a fixed-64 calibration by
   `(velocity/64)^1.5`. `peak_ceiling` is strictly between zero and one; a final
   attenuation-only scale enforces it, with no automatic boost.
+- Optional `vocal`: `{source: {path,sha256,bytes}, gain}`. The existing float32
+  recording must match the declared rate, channels and frame count exactly.
+  Gain is explicit; no implicit trim, padding, channel conversion, resampling,
+  pitch processing or vocal regeneration occurs. One common attenuation keeps
+  each stem and their mix below the ceiling, with PCM24 rounding headroom.
 
 The calibration schema `reel.music-sample-bank.v1` contains a `bank` array:
 `pitch`, `audio_attack_frame`, `held_sample_frames`, and optional provenance
@@ -48,11 +53,30 @@ receipt and the normal managed retention workflow are required before adoption.
 The output contains `instrumental.wav` and a private `receipt.json` with exact
 input pins, request/output hashes, native part/voice/note clocks, velocity and
 release policy, gain and attenuation. Stdout contains counts and explicit
-non-approval/non-publication flags. Retain the receipt and output through the
+non-approval/non-publication flags. With `vocal`, it also writes `vocal-stem.wav`
+and `with-vocals.wav`. The master is the exact integer sum of the separately
+quantized PCM24 stems, preserving stem-sum equality without clipping. Silent
+quantized results and invalid vocal controls refuse before output creation.
+Retain the receipt and output through the
 project's normal admitted asset workflow; this command supplies no custody,
 selection, public-release or eviction authority.
 
-This implements sample playback, not harmony estimation, sound-bank capture,
-vocal mixing, notation approval or complete managed arrangement production.
+This implements sample playback and declared stem mixing, not harmony estimation,
+sound-bank capture, notation approval or complete managed arrangement production.
 The calibrated bank's pitch/timbre attribution and rights require their own
 source evidence. Musical listening and selection remain human decisions.
+
+## Read-only checking
+
+`reel music-sample-clock-check REQUEST DIRECTORY` captures the same pinned
+request and primary identities, checks the receipt against the native score
+schedule, and verifies each output hash and PCM24 clock. With a vocal source it
+also checks every quantized vocal sample against the original source and declared
+gain/attenuation, and checks exact integer stem-sum equality. It does not rerender,
+write files, infer clean separation, or grant musical approval.
+
+The check reports its explicit coverage. It does not claim an independent
+primary-reference waveform reconstruction of every instrumental note, current
+Tig selection eligibility, or complete semantic coverage. The existing b4
+instrumental-only packet format remains readable through its original output
+pin. Source-aware managed adoption remains a separate operation.
