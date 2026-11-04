@@ -46,6 +46,7 @@ pub mod music_render;
 pub mod music_score;
 pub mod otio_export;
 pub mod presentation_adopt;
+mod presentation_clock;
 pub mod presentation_still_sequence;
 mod process_stream;
 pub mod production;

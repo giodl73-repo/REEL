@@ -110,6 +110,21 @@ impl<'a> JobPlan<'a> {
         let producer_pin = Object::from_bytes(&producer);
         let recipe = tig_browser::recipe(source, request, context, &producer_pin)?;
         let prepared = tig_browser::lower(source, request)?;
+        tig_browser::capture::validate_resources(&prepared)?;
+        let source_clock =
+            crate::browser_composition::source_clock_event(&prepared.manifest, |asset, limit| {
+                let file = prepared
+                    .inputs
+                    .get(&asset.path)
+                    .context("clock metadata not declared")?;
+                source.read_metadata(
+                    &Object {
+                        sha256: tig_core::Digest::parse(&file.sha256)?,
+                        bytes: file.bytes,
+                    },
+                    limit as usize,
+                )
+            })?;
         let mut metadata = BTreeMap::from([
             (producer_pin, producer),
             (
@@ -123,7 +138,8 @@ impl<'a> JobPlan<'a> {
         ]);
         let admission = identity::canonical_json(&json!({
             "schema":"reel.tig-browser-reference-admission.experimental-1",
-            "request":request,"limits":limits,"clean_picture":clean,"browser":browser.identity(),"geometry_admission":geometry
+            "request":request,"limits":limits,"clean_picture":clean,"browser":browser.identity(),"geometry_admission":geometry,
+            "source_clock":source_clock
         }))?;
         metadata.insert(Object::from_bytes(&admission), admission);
         let runtime = programs

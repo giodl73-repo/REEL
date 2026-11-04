@@ -102,6 +102,9 @@ pub fn producer_document(
         "browser_adapter":Object::from_bytes(include_bytes!("render/browser.rs")),
         "process_adapter":Object::from_bytes(include_bytes!("render/processes.rs")),
         "capture_adapter":Object::from_bytes(include_bytes!("capture.rs")),
+        "source_clock_adapter":Object::from_bytes(include_bytes!("../browser_composition/clock.rs")),
+        "source_clock_schema":Object::from_bytes(include_bytes!("../presentation_clock.rs")),
+        "frame_clock_adapter":Object::from_bytes(include_bytes!("../browser_composition.rs")),
         "capture_transport":Object::from_bytes(include_bytes!("capture/protocol.rs"))
     }))?)
 }

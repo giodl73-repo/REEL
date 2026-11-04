@@ -30,6 +30,7 @@ fn manifest() -> BrowserCompositionManifest {
         frame_count: 3,
         dynamic_regions: vec![],
         audio: None,
+        source_clock: None,
     }
 }
 fn png(color: [u8; 4]) -> Vec<u8> {

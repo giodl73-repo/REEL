@@ -20,6 +20,8 @@ use crate::{adapters::ffmpeg::FfmpegAdapter, production};
 
 pub const MANIFEST_SCHEMA: &str = "reel.browser-composition.v0.1";
 pub const ARTIFACT_SCHEMA: &str = "reel.browser-composition-artifacts.v0.1";
+mod clock;
+pub(crate) use clock::source_clock_event;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -37,6 +39,9 @@ pub struct BrowserCompositionManifest {
     pub dynamic_regions: Vec<PixelRegion>,
     #[serde(default)]
     pub audio: Option<HashedAsset>,
+    /// Explicit measured clock, also present in assets with its exact hash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_clock: Option<HashedAsset>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -181,6 +186,15 @@ pub(crate) fn validate_manifest(
             bail!("browser composition contains a duplicate asset path");
         }
     }
+    if let Some(clock) = &manifest.source_clock
+        && (manifest.audio.is_none()
+            || !manifest
+                .assets
+                .iter()
+                .any(|a| a.path == clock.path && a.sha256 == clock.sha256))
+    {
+        bail!("browser source clock must name a declared asset and audio");
+    }
     Ok(manifest)
 }
 
@@ -311,9 +325,12 @@ fn file_url(path: &Path) -> String {
     format!("file:///{}", display.replace('\\', "/").replace(' ', "%20"))
 }
 
-pub(crate) fn frame_clock(fps: u32) -> String {
+pub(crate) fn frame_clock_with_source(fps: u32, source_clock: Option<&Value>) -> String {
+    let source = source_clock
+        .map(|value| format!(",sourceClock:{value}"))
+        .unwrap_or_default();
     format!(
-        r#"(()=>{{let f=0;const fps={fps};Object.defineProperty(window,'__REEL_FRAME__',{{get:()=>f}});window.__reelSetFrame=(n)=>{{f=n;document.documentElement.dataset.reelFrame=String(n);document.documentElement.dataset.reelTime=(n/fps).toFixed(9);window.dispatchEvent(new CustomEvent('reelframe',{{detail:{{frame:n,time:n/fps,fps}}}}));}};Date.now=()=>Math.round(f*1000/fps);window.requestAnimationFrame=(cb)=>{{cb(f*1000/fps);return f+1;}};window.cancelAnimationFrame=()=>{{}};}})()"#
+        r#"(()=>{{let f=0;const fps={fps};Object.defineProperty(window,'__REEL_FRAME__',{{get:()=>f}});window.__reelSetFrame=(n)=>{{f=n;document.documentElement.dataset.reelFrame=String(n);document.documentElement.dataset.reelTime=(n/fps).toFixed(9);window.dispatchEvent(new CustomEvent('reelframe',{{detail:{{frame:n,time:n/fps,fps{source}}}}}));}};Date.now=()=>Math.round(f*1000/fps);window.requestAnimationFrame=(cb)=>{{cb(f*1000/fps);return f+1;}};window.cancelAnimationFrame=()=>{{}};}})()"#
     )
 }
 
@@ -459,7 +476,17 @@ pub fn render(options: &RenderOptions) -> Result<BrowserCompositionReport> {
         json!({"urls": ["http://*", "https://*", "ws://*", "wss://*"]}),
     )?;
     id += 1;
-    let clock = frame_clock(manifest.fps);
+    let source_clock = source_clock_event(&manifest, |asset, limit| {
+        let mut raw = Vec::new();
+        fs::File::open(stage.path().join(relative_path(&asset.path)?))?
+            .take(limit + 1)
+            .read_to_end(&mut raw)?;
+        if raw.len() as u64 > limit {
+            bail!("browser clock metadata exceeds bound");
+        }
+        Ok(raw)
+    })?;
+    let clock = frame_clock_with_source(manifest.fps, source_clock.as_ref());
     cdp(
         &mut socket,
         id,
@@ -806,6 +833,7 @@ mod tests {
                 height: 30,
             }],
             audio: None,
+            source_clock: None,
         };
         let manifest_path = dir.path().join("composition.yaml");
         fs::write(&manifest_path, serde_yaml::to_string(&manifest).unwrap()).unwrap();
