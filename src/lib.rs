@@ -117,10 +117,10 @@ pub mod tig_presentation_registration;
 #[cfg(feature = "tig-publication")]
 pub mod tig_publication;
 
-#[cfg(feature = "tig-publication")]
-pub mod tig_review;
 #[cfg(feature = "tig")]
 pub mod tig_retained_presentation;
+#[cfg(feature = "tig-publication")]
+pub mod tig_review;
 #[cfg(feature = "tig")]
 pub mod tig_scene;
 #[cfg(feature = "tig")]
