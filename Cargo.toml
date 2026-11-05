@@ -17,9 +17,14 @@ path = "src/bin/reel-album.rs"
 name = "reel-album-video"
 path = "src/bin/reel-album-video.rs"
 
+[[bin]]
+name = "reel-song-edition"
+path = "src/bin/reel-song-edition.rs"
+
 [dependencies]
 anyhow = "1.0.100"
 ttf-parser = "=0.25.1"
+unicode-normalization = "=0.1.26"
 base64 = "0.22.1"
 clap = { version = "4.5.53", features = ["derive"] }
 ed25519-dalek = { version = "2.2.0", default-features = false, features = ["std", "zeroize"] }
@@ -36,7 +41,7 @@ reel-music = { path = "crates/reel-music" }
 reel-assembly = { path = "crates/reel-assembly" }
 reel-assets = { path = "crates/reel-assets", optional = true }
 reel-print = { path = "crates/reel-print", optional = true }
-flate2 = { version = "1", optional = true }
+flate2 = "1"
 tig-core = { path = "vendor/tig/crates/tig-core", optional = true }
 tig-assets = { path = "vendor/tig/crates/tig-assets", optional = true }
 tig-git = { path = "vendor/tig/crates/tig-git", features = ["assets"], optional = true }
@@ -46,7 +51,7 @@ tig-store = { path = "vendor/tig/crates/tig-store", optional = true }
 print = ["dep:reel-print"]
 test-fixtures = []
 tig = ["dep:tig-core", "dep:tig-assets", "dep:tig-git", "dep:tig-store"]
-tig-publication = ["tig", "dep:reel-assets", "dep:flate2"]
+tig-publication = ["tig", "dep:reel-assets"]
 tig-history = ["tig-publication", "tig-git/schema"]
 
 [[bin]]

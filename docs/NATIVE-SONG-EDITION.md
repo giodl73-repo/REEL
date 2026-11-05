@@ -1,66 +1,88 @@
-# Native short-edition migration
+# Native short editions
 
-`reel::song_edition` is the shared Rust in-memory edit core. This is one component
-of the native replacement for the archived `tools/local_song_edit.py` workflow;
-it is not yet a Melena production command or a replacement for the complete
-recording, recognition and selection process. No Python is executed by this core.
+`reel-song-edition` implements retained `reel.song-short-edit.v1` requests in
+Rust. It makes a deterministic edition from an existing recording and its exact
+request, generation evidence, canonical text and independent recognition passes.
+It runs no Python, model, recognition service, download or publication operation.
 
-`plan(recipe, sample_rate, source_frames)` accepts 1–64 ordered nonoverlapping
-source windows, a 0–1 second crossfade, 0–5 second entrance/exit fades and a hard
-duration ceiling of at most 600 seconds. Source intake is mono/stereo at
-8–96 kHz, at most 600 seconds. Seconds become integer sample frames using
-round-to-nearest, ties-to-even, matching the retained recipe contract. Every
-segment must retain a nonempty unchanged core after its fades. The validated
-plan cannot be constructed or changed through public fields or deserialization.
+```
+reel-song-edition plan INPUT/edit.json
+reel-song-edition render INPUT/edit.json NEW_DIRECTORY
+reel-song-edition check INPUT/edit.json DIRECTORY
+```
 
-`render(plan, decoded_float32_pcm, channels)` creates the ordered edition without
-resampling or modifying unchanged cores. Crossfades and edge ramps operate only
-in declared changed regions. `verify_cores` checks dimensions, finite samples and
-every unchanged sample's exact float32 bits. Container decoding/encoding,
-source/output hashes, signal acceptance, memory/workspace admission and retained
-publication belong to the caller's next adapter. Bitwise equality also preserves
-negative zero; changed regions are not represented as unchanged evidence.
+The explicit input view contains `source.wav`, `source-request.json`,
+`source-generation.json`, `source-analysis.json`, `source.txt` and, for older
+recognition evidence, `source-transcripts.zip`. Every input is hash/length-bound
+by the request or the retained original request. The view must not escape through
+symlinks. The adapter preserves the original private permissions, caption,
+canonical lyrics, generation duration and source lock. An empty legacy lock is
+retained as unknown; it is not evidence of a named immutable source version.
 
-`remap_passes(plan, original_passes)` retains a word only if its entire finite,
-ordered timestamp span lies inside one unchanged core. It shifts that span to
-the edition clock and preserves the token's other metadata. Null/malformed spans,
-cut words, partial words and fade/crossfade words provide no evidence. Passes and
-tokens are bounded; duplicate pass names and explicitly prompt-conditioned passes
-refuse. Original pass metadata is retained separately. Missing prompt provenance
-is **not** converted into an `unprompted` assertion. An admitting adapter must
-validate the exact original recognition source and its unprompted conditions.
-Derived passes state no new recognition, performance or human approval.
+The supported original request is the existing Spanish
+`reel.local-song-request.v1` text2music/cover contract, not a new universal
+song-generation schema. Runtime version-manifest locks in retained source
+packages remain distinct from the runtime payload hash. Neither establishes
+current availability by itself.
 
-## Remaining adapter requirements
+## Edition contract
 
-Before Melena can adopt a complete native short-edition entry:
+A recipe declares 1–64 ordered, nonoverlapping source windows, a 0–1 second
+crossfade, 0–5 second entrance/exit fades and a duration ceiling of at most
+600 seconds. Integer sample positions use round-to-nearest, ties-to-even.
+Every window must keep a nonempty unchanged core. There is no resampling.
 
-1. Bind exact source recording, generation request, generation proof, analysis,
-   canonical text and source-version lock, preserving candidate IDs and history.
-   Require matching permissions, caption, original generation duration and lyrics.
-2. Decode supported source WAVE to float32 under explicit byte/memory limits;
-   encode a FLOAT WAVE and re-open it before checking every unchanged core.
-3. Recompute the retained repeat-aware near-contiguous line-presence gate from
-   filtered original independent passes, without combining passes to fill a line
-   or reusing observations for separate source occurrences. Preserve continuous
-   source-order diagnostics separately. No prompt text supplies recognition.
-4. Produce hash-bound analysis and edit receipts through an explicit bounded CLI,
-   retain all outputs using the existing managed job and Tig admission path,
-   and exercise current/prior restoration and owned-binding rollback.
-5. Qualify the actual image on supported platforms before adopting an optional
-   Melena binding. Acoustic continuity, listening, selection and delivery remain
-   distinct from deterministic correspondence and lyric screening.
+Supported WAVE sources are mono/stereo, 8–96 kHz, ordinary or supported extensible
+PCM16/24/32 and float32, at most 600 seconds and 512 MiB. Metadata, archive,
+word-count, match-search and output bounds are checked before accepting a packet.
+`plan` reports the sample geometry, output bound, memory estimate and lyric gate.
+This estimate is admission information, not a filesystem quota.
 
-The core tests cover a hand-computed crossfade/edge envelope, exact stereo cores,
-ties-to-even rounding, one-sample fades, unchanged identity including negative
-zero, invalid source shapes/bounds, word-span exclusion, pass metadata retention,
-prompt-conditioned rejection and evidence budgets. Run
-`cargo test --lib song_edition::tests --locked`; no models, media downloads,
-providers or services are needed.
+`render` writes exactly `recording.wav` (float32), `analysis.json` and
+`edit-receipt.json` into a new directory, syncs files, reopens the packet and
+checks it. Existing destinations refuse. Failure preserves partial files and
+never removes the original source. `check` re-derives expected samples and exact
+analysis/receipt bytes from the pinned inputs. A forged receipt cannot authorize
+a modified recording. All unchanged sample bits, including negative zero, must
+match the original. Output signal checks preserve the retained peak/RMS bounds.
 
-Producer-applied role review: music reconstruction checks the sample clock and
-immutable cores; sound design/editor checks identify joins and fades as changed
-regions requiring listening; lyric adaptation preserves original words and
-excludes changed spans; rights/provenance forbids inferred prompt provenance or
-new authority. These are checklists, not independent review or human approval.
-The outstanding adapter requirements above prevent production-adoption claims.
+## Recognition and acceptance
+
+A word survives only if its entire finite timestamp span is inside one unchanged
+core. Cut words and fade/crossfade words supply no evidence. Original pass/token
+metadata is preserved. Remapped evidence is not a new recognition or performance.
+
+Unprompted conditions must be explicit in original analysis settings or in the
+pinned original transcript archive. For the latter, each named raw pass must
+state `canonical_prompt:false`; its words and timestamp pairs must match the
+original analysis. ZIP32 stored/deflate streams, lengths and CRCs are checked in
+memory under entry/decoded-byte bounds. There is no filesystem extraction.
+Missing provenance and contradictory prompt flags refuse; nothing is inferred.
+
+The repeat-aware near-contiguous line gate allows at most one missing word and
+two insertions, under the retained phrase-duration limit. Observed tokens cannot
+be reused for separate canonical occurrences within a pass. Passes are never
+combined to complete a line. Continuous-order diagnostics remain separate.
+Optional `max_one_word_gap_lines` can make edition acceptance stricter without
+rewriting the original line diagnostic. A technically verified packet may still
+fail this quality gate and remains an unselected candidate.
+
+No command asserts acoustic continuity, calls an edge instrumental without
+supporting evidence, grants listening approval, selects a master or publishes it.
+Use the existing managed job/retained-output workflow for production retention.
+Platform qualification and an explicit owned binding are required before shared
+lane adoption; a local passing test is not an installed-tool claim.
+
+## Verification and review
+
+`cargo test --locked --lib song_edition::` exercises hand-computed DSP, stereo
+core identity, frame rounding, signed zero, WAVE formats, exact lineage,
+permissions, whole-word projection, repeated lyrics, independent pass provenance,
+ZIP integrity, failed candidates, strict word-gap caps and packet tampering.
+The retained-package parser also tests separate runtime-manifest locks.
+
+Producer-applied roles: music reconstruction checks clocks and immutable cores;
+sound design/editing requires listening at changed regions; lyric adaptation
+checks actual canonical words and independent evidence; rights/provenance keeps
+private permissions and prohibits inferred authority. These are review checklists,
+not independent review or creative approval.

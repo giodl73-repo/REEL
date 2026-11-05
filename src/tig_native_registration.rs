@@ -21,6 +21,24 @@ mod identities;
 mod scopes;
 mod variants;
 
+#[cfg(test)]
+mod retained_package_tests {
+    use super::*;
+    #[test]
+    fn separate_runtime_manifest_lock_preserves_payload_identity_and_refuses_bad_labels() {
+        let mut value = json!({"sha256":"a".repeat(64),"bytes":7,
+            "cache_uri":format!("cache://sha256/{}", "a".repeat(64)),
+            "version_lock":{"logical_id":"tooling/runtime","version_id":"v1","manifest_sha256":"b".repeat(64)}});
+        let p: PackagePin = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(p.object().unwrap().sha256.as_str(), "a".repeat(64));
+        value["version_lock"]["version_id"] = json!("");
+        assert!(serde_json::from_value::<PackagePin>(value.clone()).is_err());
+        value["version_lock"]["version_id"] = json!("v1");
+        value["version_lock"]["manifest_sha256"] = json!("invalid");
+        assert!(serde_json::from_value::<PackagePin>(value).is_err());
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BindingSource {
@@ -115,6 +133,28 @@ pub(crate) struct PackagePin {
     _placement_path: Option<String>,
     #[serde(default, rename = "reused_active_object")]
     _placement_reused: Option<bool>,
+    // Retained runtime packages can carry a separate version-manifest lock.
+    // It is provenance, never a replacement for this payload's checked pin.
+    #[serde(default, rename = "version_lock")]
+    _version_lock: Option<RetainedVersionLock>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetainedVersionLock {
+    #[serde(rename = "logical_id", deserialize_with = "lock_label")]
+    _logical_id: String,
+    #[serde(rename = "version_id", deserialize_with = "lock_label")]
+    _version_id: String,
+    #[serde(rename = "manifest_sha256")]
+    _manifest_sha256: Digest,
+}
+fn lock_label<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<String, D::Error> {
+    let value = String::deserialize(d)?;
+    if value.is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
+        return Err(de::Error::custom("invalid retained version-lock label"));
+    }
+    Ok(value)
 }
 
 fn placement_observation<'de, D: Deserializer<'de>>(

@@ -1396,6 +1396,7 @@ dependencies = [
  "tig-store",
  "ttf-parser",
  "tungstenite",
+ "unicode-normalization",
  "zeroize",
 ]
 

@@ -3,6 +3,10 @@
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+mod lyrics;
+pub mod packet;
+mod transcripts;
+mod wave;
 
 const MAX_FRAMES: u64 = 600 * 96_000;
 const MAX_PASSES: usize = 16;
@@ -221,7 +225,6 @@ pub fn remap_passes(plan: &Plan, passes: &[Value]) -> Result<Vec<Value>> {
     let rate = f64::from(plan.sample_rate);
     let mut names = std::collections::BTreeSet::new();
     let mut result = Vec::new();
-    let mut total = 0usize;
     for pass in passes {
         let name = pass
             .get("name")
@@ -235,8 +238,7 @@ pub fn remap_passes(plan: &Plan, passes: &[Value]) -> Result<Vec<Value>> {
             .get("tokens")
             .and_then(Value::as_array)
             .ok_or_else(|| anyhow::anyhow!("source tokens missing"))?;
-        total += tokens.len();
-        if total > MAX_TOKENS {
+        if tokens.len() > MAX_TOKENS {
             bail!("edition token budget");
         }
         let mut retained = Vec::new();
