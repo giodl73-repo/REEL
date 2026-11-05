@@ -23,6 +23,9 @@ edit rhythm, sound, and platform fit before renderer work starts.
 The shared Rust [asset custody and cache accounting tools](docs/asset-project-v1.md)
 use a versioned project profile while keeping private media, catalogues and
 reports in their producing asset repository/cache.
+The [original-song source inspector](docs/mapped-original-song-source.md) checks
+an explicitly audited interpretation of retained package, request, generation,
+text and recording evidence without rewriting the original or executing a provider.
 The [asset-manager workflow](docs/asset-manager-workflow-v1.md) includes generic
 project templates, explicit inventory refresh, an offline block-review UI and
 the separate dry-run/application steps.
