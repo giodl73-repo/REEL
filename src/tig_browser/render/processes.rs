@@ -13,50 +13,61 @@ use std::{
 };
 
 pub(super) fn usage(root: &Path, budget: u64) -> Result<u64> {
-    fn walk(
-        root: &Path,
-        depth: usize,
-        files: &mut usize,
-        total: &mut u64,
-        budget: u64,
-    ) -> Result<()> {
-        use std::os::windows::fs::MetadataExt;
-        if depth > 32 {
-            bail!("browser workspace depth exceeded");
-        }
-        for entry in fs::read_dir(root)? {
-            let entry = entry?;
-            // Windows directory enumeration already supplies attributes and size.
-            // Reopening each path for metadata races Chromium's exclusive handles
-            // (and delete-pending files) and can fail with AccessDenied mid-frame.
-            // DirEntry metadata does not follow reparse points; keep rejecting them.
-            let meta = match entry.metadata() {
-                Ok(meta) => meta,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(e) => return Err(e.into()),
-            };
-            *files += 1;
-            if *files > 16384 || meta.file_attributes() & 0x400 != 0 {
-                bail!("browser workspace entry bound or type exceeded");
-            }
-            if meta.is_dir() {
-                walk(&entry.path(), depth + 1, files, total, budget)?;
-            } else if meta.is_file() {
-                *total = total
-                    .checked_add(meta.len())
-                    .context("browser workspace size overflow")?;
-                if *total > budget {
-                    bail!("browser workspace byte budget exceeded");
-                }
-            } else {
-                bail!("browser workspace contains unsupported entries");
-            }
-        }
-        Ok(())
-    }
     let mut total = 0;
-    walk(root, 0, &mut 0, &mut total, budget)?;
+    walk_usage(root, 0, &mut 0, &mut total, budget)?;
     Ok(total)
+}
+
+fn walk_usage(
+    root: &Path,
+    depth: usize,
+    files: &mut usize,
+    total: &mut u64,
+    budget: u64,
+) -> Result<()> {
+    use std::os::windows::fs::MetadataExt;
+    if depth > 32 {
+        bail!("browser workspace depth exceeded");
+    }
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        // Chromium can remove an observed child directory between its
+        // parent enumeration and this descent. Its bytes are now gone.
+        // A missing owned root, access error or other failure still refuses.
+        Err(error) if depth > 0 && error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        // Windows directory enumeration already supplies attributes and size.
+        // Reopening each path for metadata races Chromium's exclusive handles
+        // (and delete-pending files) and can fail with AccessDenied mid-frame.
+        // DirEntry metadata does not follow reparse points; keep rejecting them.
+        let meta = match entry.metadata() {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e.into()),
+        };
+        *files += 1;
+        if *files > 16384 || meta.file_attributes() & 0x400 != 0 {
+            bail!("browser workspace entry bound or type exceeded");
+        }
+        if meta.is_dir() {
+            walk_usage(&entry.path(), depth + 1, files, total, budget)?;
+        } else if meta.is_file() {
+            *total = total
+                .checked_add(meta.len())
+                .context("browser workspace size overflow")?;
+            if *total > budget {
+                bail!("browser workspace byte budget exceeded");
+            }
+        } else {
+            bail!("browser workspace contains unsupported entries");
+        }
+    }
+    Ok(())
 }
 
 /// Sample observational disk usage independently of protocol polling frequency.
@@ -195,6 +206,24 @@ pub(super) fn native_path(path: &Path) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn removed_observed_child_does_not_cancel_the_owned_workspace() {
+        let root = tempfile::tempdir().unwrap();
+        let child = root.path().join("transient-browser-cache");
+        fs::create_dir(&child).unwrap();
+        // Reproduce the exact gap after the parent observed a directory and
+        // before recursive enumeration, without relying on thread scheduling.
+        assert!(fs::metadata(&child).unwrap().is_dir());
+        fs::remove_dir(&child).unwrap();
+        let mut files = 1;
+        let mut total = 7;
+        walk_usage(&child, 1, &mut files, &mut total, 7).unwrap();
+        assert_eq!((files, total), (1, 7));
+        assert!(walk_usage(&child, 0, &mut files, &mut total, 7).is_err());
+        fs::write(root.path().join("retained.bin"), b"still-counted").unwrap();
+        assert_eq!(usage(root.path(), 13).unwrap(), 13);
+        assert!(usage(root.path(), 12).is_err());
+    }
     #[test]
     fn exclusive_child_files_are_counted_without_reopening_or_ignoring_them() {
         use std::{io::Write, os::windows::fs::OpenOptionsExt};
