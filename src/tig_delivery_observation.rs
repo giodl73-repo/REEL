@@ -93,6 +93,19 @@ struct Profile {
     /// Exact basenames only; project support files are not implicitly excluded.
     client_metadata_basenames: Vec<String>,
     max_report_bytes: usize,
+    /// Explicit project interpretation of a hash-bound predecessor declaration.
+    #[serde(default)]
+    succession: Option<SuccessionRule>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SuccessionRule {
+    pointer: String,
+    relationship: String,
+}
+struct Predecessor {
+    id: String,
+    subject: Object,
 }
 #[derive(Deserialize)]
 struct Observed {
@@ -104,6 +117,74 @@ struct Binding {
     target: Digest,
     subject: Object,
     report: Value,
+    predecessor: Option<Predecessor>,
+}
+
+fn predecessor(rule: Option<&SuccessionRule>, raw: &[u8]) -> Result<Option<Predecessor>> {
+    let Some(rule) = rule else { return Ok(None) };
+    if rule.pointer.is_empty()
+        || !pointer_valid(&rule.pointer)
+        || rule.relationship.is_empty()
+        || rule.relationship.len() > 512
+        || rule.relationship.chars().any(char::is_control)
+    {
+        bail!("invalid publication succession rule");
+    }
+    let value = identity::parse_json(raw)?;
+    let Some(declaration) = value.pointer(&rule.pointer) else {
+        return Ok(None);
+    };
+    if declaration.get("relationship").and_then(Value::as_str) != Some(rule.relationship.as_str()) {
+        bail!("unadmitted publication succession relationship");
+    }
+    let id = declaration
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty() && id.len() <= 4096 && !id.chars().any(char::is_control))
+        .ok_or_else(|| anyhow::anyhow!("invalid publication predecessor ID"))?;
+    let subject = serde_json::from_value(
+        declaration
+            .get("subject")
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("publication predecessor subject missing"))?,
+    )?;
+    Ok(Some(Predecessor {
+        id: id.to_owned(),
+        subject,
+    }))
+}
+
+fn validate_successions(bindings: &[Binding]) -> Result<()> {
+    let by_id: BTreeMap<_, _> = bindings.iter().map(|b| (b.id.as_str(), b)).collect();
+    if by_id.len() != bindings.len() {
+        bail!("duplicate publication binding IDs");
+    }
+    for binding in bindings {
+        if let Some(predecessor) = &binding.predecessor {
+            let old = by_id.get(predecessor.id.as_str()).ok_or_else(|| {
+                anyhow::anyhow!("publication predecessor is not independently verified")
+            })?;
+            if old.subject != predecessor.subject || old.id == binding.id {
+                bail!("publication predecessor subject differs or refers to itself");
+            }
+        }
+    }
+    let mut done = BTreeSet::new();
+    for binding in bindings {
+        let mut current = binding;
+        let mut trail = BTreeSet::new();
+        while !done.contains(current.id.as_str()) {
+            if !trail.insert(current.id.as_str()) {
+                bail!("publication succession cycle");
+            }
+            let Some(old) = &current.predecessor else {
+                break;
+            };
+            current = by_id[old.id.as_str()];
+        }
+        done.extend(trail);
+    }
+    Ok(())
 }
 
 fn target_identity(mapping: &Mapping, path: &str) -> Result<Digest> {
@@ -242,6 +323,7 @@ fn reconcile(
     bindings: &[Binding],
     excluded: &BTreeSet<String>,
 ) -> Result<Value> {
+    validate_successions(bindings)?;
     let mut by_target: BTreeMap<&Digest, Vec<&Binding>> = BTreeMap::new();
     for binding in bindings {
         by_target.entry(&binding.target).or_default().push(binding);
@@ -261,13 +343,26 @@ fn reconcile(
                 }
             }
         }
+        // An explicit predecessor becomes historical only where both independently
+        // checked receipts map to this exact observed path. Across-scope aliases
+        // therefore cannot demote a different path or win by size/timestamp.
+        let historical: BTreeSet<_> = matches
+            .values()
+            .filter_map(|b| b.predecessor.as_ref())
+            .filter(|old| matches.contains_key(&old.id))
+            .map(|old| old.id.as_str())
+            .collect();
+        let current: Vec<_> = matches
+            .iter()
+            .filter(|(id, _)| !historical.contains(id.as_str()))
+            .collect();
         let state = if excluded.contains(basename) {
             "client-metadata"
         } else if matches.is_empty() {
             "unmatched"
-        } else if matches.len() > 1 {
+        } else if current.len() != 1 {
             "ambiguous"
-        } else if matches.values().next().unwrap().subject.bytes != row.bytes {
+        } else if current[0].1.subject.bytes != row.bytes {
             "length-differs"
         } else {
             "retained-target-length-matches"
@@ -275,7 +370,9 @@ fn reconcile(
         *counts.entry(state).or_default() += 1;
         let ids: Vec<_> = matches.keys().copied().collect();
         matched_ids.extend(ids.iter().map(|id| (*id).clone()));
-        rows.push(json!({"relative_path":row.relative_path,"observed_bytes":row.bytes,"classification":state,"candidate_ids":ids}));
+        rows.push(json!({"relative_path":row.relative_path,"observed_bytes":row.bytes,"classification":state,"candidate_ids":ids,
+            "current_candidate_ids":current.iter().map(|(id,_)|id).collect::<Vec<_>>(),
+            "historical_candidate_ids":historical}));
     }
     let absent: Vec<_> = bindings
         .iter()
@@ -508,6 +605,7 @@ pub fn run(profile_path: &Path, output: &Path) -> Result<Value> {
             target,
             subject: report.subject.clone(),
             report: serde_json::to_value(report)?,
+            predecessor: predecessor(p.succession.as_ref(), &instance)?,
         });
     }
     let result = reconcile(&observations, &p.mappings, &bindings, &excluded)?;
@@ -552,6 +650,7 @@ mod tests {
                 bytes,
             },
             report: json!({}),
+            predecessor: None,
         }
     }
     #[test]
@@ -632,6 +731,139 @@ mod tests {
             reconcile(&rows, &[m], &bindings, &BTreeSet::new()).unwrap()["counts"]["ambiguous"],
             1
         );
+    }
+
+    #[test]
+    fn declared_successor_resolves_cross_scope_history_without_choosing_by_size() {
+        let old_mapping = mapping();
+        let mut new_mapping = mapping();
+        new_mapping.scope = "family-owned-review".into();
+        let old = binding("intake", &old_mapping, "Shelf/film.mp4", 9);
+        let mut new = binding("family", &new_mapping, "Shelf/film.mp4", 10);
+        new.predecessor = Some(Predecessor {
+            id: old.id.clone(),
+            subject: old.subject.clone(),
+        });
+        let bindings = [old, new];
+        let mut rows = [Observed {
+            relative_path: "Shelf/film.mp4".into(),
+            bytes: 10,
+        }];
+        let mappings = [old_mapping, new_mapping];
+        let result = reconcile(&rows, &mappings, &bindings, &BTreeSet::new()).unwrap();
+        assert_eq!(result["counts"]["retained-target-length-matches"], 1);
+        assert_eq!(
+            result["rows"][0]["current_candidate_ids"],
+            json!(["family"])
+        );
+        assert_eq!(
+            result["rows"][0]["historical_candidate_ids"],
+            json!(["intake"])
+        );
+        assert_eq!(
+            result["rows"][0]["candidate_ids"],
+            json!(["family", "intake"])
+        );
+        rows[0].bytes = 9;
+        let stale = reconcile(&rows, &mappings, &bindings, &BTreeSet::new()).unwrap();
+        assert_eq!(stale["counts"]["length-differs"], 1);
+        assert_eq!(stale["rows"][0]["current_candidate_ids"], json!(["family"]));
+    }
+
+    #[test]
+    fn forks_remain_ambiguous_and_other_paths_are_not_demoted() {
+        let m = mapping();
+        let old = binding("old", &m, "Shelf/film.mp4", 9);
+        let mut first = binding("first", &m, "Shelf/film.mp4", 10);
+        first.predecessor = Some(Predecessor {
+            id: old.id.clone(),
+            subject: old.subject.clone(),
+        });
+        let mut second = binding("second", &m, "Shelf/film.mp4", 10);
+        second.predecessor = Some(Predecessor {
+            id: old.id.clone(),
+            subject: old.subject.clone(),
+        });
+        let rows = [Observed {
+            relative_path: "Shelf/film.mp4".into(),
+            bytes: 10,
+        }];
+        assert_eq!(
+            reconcile(
+                &rows,
+                std::slice::from_ref(&m),
+                &[old, first, second],
+                &BTreeSet::new()
+            )
+            .unwrap()["counts"]["ambiguous"],
+            1
+        );
+        let old = binding("old", &m, "Shelf/old.mp4", 9);
+        let mut new = binding("new", &m, "Shelf/new.mp4", 10);
+        new.predecessor = Some(Predecessor {
+            id: old.id.clone(),
+            subject: old.subject.clone(),
+        });
+        let rows = [
+            Observed {
+                relative_path: "Shelf/old.mp4".into(),
+                bytes: 9,
+            },
+            Observed {
+                relative_path: "Shelf/new.mp4".into(),
+                bytes: 10,
+            },
+        ];
+        let r = reconcile(&rows, &[m], &[old, new], &BTreeSet::new()).unwrap();
+        assert_eq!(r["counts"]["retained-target-length-matches"], 2);
+        assert_eq!(r["rows"][0]["historical_candidate_ids"], json!([]));
+    }
+
+    #[test]
+    fn missing_or_forged_predecessors_self_references_and_cycles_refuse() {
+        let m = mapping();
+        let mut old = binding("old", &m, "Shelf/film.mp4", 9);
+        let mut new = binding("new", &m, "Shelf/film.mp4", 10);
+        new.predecessor = Some(Predecessor {
+            id: "missing".into(),
+            subject: old.subject.clone(),
+        });
+        assert!(validate_successions(std::slice::from_ref(&new)).is_err());
+        new.predecessor.as_mut().unwrap().id = "old".into();
+        new.predecessor.as_mut().unwrap().subject.bytes += 1;
+        assert!(validate_successions(&[old, new]).is_err());
+        old = binding("old", &m, "Shelf/film.mp4", 9);
+        new = binding("new", &m, "Shelf/film.mp4", 10);
+        old.predecessor = Some(Predecessor {
+            id: "old".into(),
+            subject: old.subject.clone(),
+        });
+        assert!(validate_successions(std::slice::from_ref(&old)).is_err());
+        old.predecessor.as_mut().unwrap().id = "new".into();
+        old.predecessor.as_mut().unwrap().subject = new.subject.clone();
+        new.predecessor = Some(Predecessor {
+            id: "old".into(),
+            subject: old.subject.clone(),
+        });
+        assert!(validate_successions(&[old, new]).is_err());
+    }
+
+    #[test]
+    fn succession_requires_explicit_pointer_and_relationship_admission() {
+        let raw = identity::canonical_json(&json!({"metadata":{"prior":{
+            "relationship":"same delivered target; explicit successor",
+            "id":"old","subject":Object::from_bytes(b"old")}}}))
+        .unwrap();
+        assert!(predecessor(None, &raw).unwrap().is_none());
+        let mut rule = SuccessionRule {
+            pointer: "/metadata/prior".into(),
+            relationship: "same delivered target; explicit successor".into(),
+        };
+        assert_eq!(predecessor(Some(&rule), &raw).unwrap().unwrap().id, "old");
+        rule.relationship = "different".into();
+        assert!(predecessor(Some(&rule), &raw).is_err());
+        rule.pointer = "bad-pointer".into();
+        assert!(predecessor(Some(&rule), &raw).is_err());
     }
     #[test]
     fn only_explicit_client_metadata_is_excluded_and_case_is_preserved() {
