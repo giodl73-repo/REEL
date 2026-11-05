@@ -13,6 +13,8 @@ use std::{
 
 const META: u64 = 65536;
 const AUDIO: u64 = 512 * 1024 * 1024;
+#[cfg(feature = "song-provider")]
+pub mod provider;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Recipe {
@@ -151,7 +153,9 @@ pub fn plan(admission: &Path, recipe: &Path) -> Result<Value> {
     Ok(summary(&load(admission, recipe)?))
 }
 fn build(loaded: &Loaded, candidates_path: &Path) -> Result<(Vec<u8>, Value)> {
-    let candidates_raw = read_metadata(candidates_path)?;
+    let candidates_path = candidates_path.canonicalize()?;
+    let candidate_view = candidates_path.parent().context("candidate view missing")?;
+    let candidates_raw = read_metadata(&candidates_path)?;
     let candidates: Candidates = serde_json::from_value(packet::parse(&candidates_raw)?)?;
     if candidates.schema != "reel.original-song-repair-candidates.v1"
         || candidates.recipe != loaded.recipe_pin
@@ -179,7 +183,7 @@ fn build(loaded: &Loaded, candidates_path: &Path) -> Result<(Vec<u8>, Value)> {
         .zip(&loaded.geometry)
         .zip(candidates.patches)
     {
-        let candidate = source::held(input, AUDIO)?;
+        let candidate = source::held(candidate_input(candidate_view, input)?, AUDIO)?;
         let audio = wave::decode(&candidate.bytes)?;
         let context_start = geometry["context_start_frame"].as_u64().unwrap();
         let context_end = geometry["context_end_frame"].as_u64().unwrap();
@@ -268,6 +272,27 @@ fn build(loaded: &Loaded, candidates_path: &Path) -> Result<(Vec<u8>, Value)> {
         "human_listening":"pending","mapping_authority_verified":false,
         "human_approval":false,"selected":false,"shareable":false});
     Ok((bytes, receipt))
+}
+fn candidate_input(view: &Path, mut input: source::Input) -> Result<source::Input> {
+    if !input.path.is_absolute() {
+        if !input
+            .path
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+        {
+            bail!("relative candidate path must stay inside its declared view");
+        }
+        let path = view.join(input.path);
+        let parent = path
+            .parent()
+            .context("candidate parent missing")?
+            .canonicalize()?;
+        if !parent.starts_with(view) {
+            bail!("relative candidate escapes its declared view");
+        }
+        input.path = parent.join(path.file_name().context("candidate leaf missing")?);
+    }
+    Ok(input)
 }
 fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
