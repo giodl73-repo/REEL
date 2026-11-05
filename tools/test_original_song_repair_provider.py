@@ -92,7 +92,8 @@ class OriginalProviderControls(unittest.TestCase):
             rows = [json.loads(line) for line in path.read_text().splitlines()]
             self.assertEqual([r['stage'] for r in rows],['model-init-start','python-exception'])
             self.assertNotIn('private error',path.read_text())
-            failure = json.loads((Path(folder)/'provider-failure.json').read_text())
+            failure = json.loads((Path(folder)/'provider-outcome.json').read_text())
+            self.assertTrue(failure['failed'])
             self.assertEqual(failure['exception_type'],'RuntimeError')
             self.assertEqual(failure['message'],'private error')
             self.assertFalse(failure['shareable'])
@@ -104,7 +105,7 @@ class OriginalProviderControls(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'\u00e9'):
                 with provider.OriginalRepairProgress(root/'first.jsonl'):
                     raise RuntimeError(message)
-            failure_path = root/'provider-failure.json'
+            failure_path = root/'provider-outcome.json'
             raw = failure_path.read_bytes()
             failure = json.loads(raw)
             self.assertLessEqual(len(failure['message'].encode('utf-8')),4096)
@@ -114,6 +115,17 @@ class OriginalProviderControls(unittest.TestCase):
                 with provider.OriginalRepairProgress(root/'second.jsonl'):
                     raise ValueError('second failure')
             self.assertEqual(failure_path.read_bytes(),raw)
+
+    def test_success_emits_declared_private_outcome_without_failure_claim(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            with provider.OriginalRepairProgress(root/'phases.jsonl'):
+                pass
+            outcome = json.loads((root/'provider-outcome.json').read_text())
+            self.assertFalse(outcome['failed'])
+            self.assertIsNone(outcome['exception_type'])
+            self.assertIsNone(outcome['message'])
+            self.assertFalse(outcome['human_approval'])
 
     def test_runtime_only_mode_returns_before_any_generation_constructor_or_call(self):
         request, context = fixture()

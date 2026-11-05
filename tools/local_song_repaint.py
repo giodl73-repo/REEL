@@ -84,7 +84,7 @@ class OriginalRepairProgress:
 
     def __init__(self, path='provider-progress.jsonl'):
         self.stream = Path(path).open('x', encoding='utf-8', newline='\n')
-        self.failure_path = Path(path).with_name('provider-failure.json')
+        self.failure_path = Path(path).with_name('provider-outcome.json')
         self.count, self.bytes = 0, 0
 
     def __enter__(self):
@@ -108,24 +108,25 @@ class OriginalRepairProgress:
 
     def __exit__(self, kind, value, traceback):
         try:
+            # Emit on success too: managed jobs require every declared output.
+            # Never replace existing evidence or hide the original exception.
+            try:
+                message = str(value).encode('utf-8', errors='replace') if kind is not None else b''
+                outcome = dict(schema='reel.original-song-provider-outcome.v1',
+                    failed=kind is not None,
+                    exception_type=kind.__name__[:128] if kind is not None else None,
+                    message=message[:4096].decode('utf-8', errors='ignore') if kind is not None else None,
+                    message_truncated=len(message)>4096,
+                    private_only=True,shareable=False,human_approval=False)
+                raw = json.dumps(outcome, ensure_ascii=False).encode('utf-8')
+                if len(raw) <= 32768:
+                    with self.failure_path.open('xb') as stream:
+                        stream.write(raw)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+            except Exception:
+                pass
             if kind is not None:
-                # Private bounded evidence is separate from text-free phase markers.
-                # Never replace existing evidence or hide the original exception.
-                try:
-                    message = str(value).encode('utf-8', errors='replace')
-                    failure = dict(schema='reel.original-song-provider-failure.v1',
-                        exception_type=kind.__name__[:128],
-                        message=message[:4096].decode('utf-8', errors='ignore'),
-                        message_truncated=len(message)>4096,
-                        private_only=True,shareable=False,human_approval=False)
-                    raw = json.dumps(failure, ensure_ascii=False).encode('utf-8')
-                    if len(raw) <= 32768:
-                        with self.failure_path.open('xb') as stream:
-                            stream.write(raw)
-                            stream.flush()
-                            os.fsync(stream.fileno())
-                except Exception:
-                    pass
                 try:
                     self.emit('python-exception')
                 except (ValueError, OSError):

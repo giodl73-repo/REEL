@@ -108,10 +108,11 @@ and include the Job Object's peak committed-memory usage and configured limit,
 or explicitly report unavailable statistics. These numbers do not measure GPU
 memory and cannot alone establish a crash cause.
 
-Python exceptions also attempt to retain `provider-failure.json` as separate,
-private evidence: exception type, at most 4096 UTF-8 message bytes, truncation and
-privacy flags, within a 32-KiB file bound. Declare it as a managed output for
-failed-result retention. It may contain private error details and is not a phase
+Completed Python routes also attempt to retain `provider-outcome.json` as separate,
+private evidence: a failure flag, exception type, at most 4096 UTF-8 message bytes,
+truncation and privacy flags, within a 32-KiB file bound. Success uses a false
+failure flag and null exception/message fields so the same declared managed
+output works for successful and failed retention. It may contain private error details and is not a phase
 log or shareable report. Existing evidence is never replaced; retention failure
 does not replace the original exception. Native process death cannot create this
 Python exception artifact.
