@@ -51,10 +51,20 @@ successful encode/verification; cache bytes and source media are never removed.
 
 Checks include output hashes, independently reconstructed layout data, codec,
 canvas/fps, chapter titles/clocks, identical audio-packet counts and ordered payload
-hashes, identical complete decoded PCM including codec padding, full decode and
+hashes, identical complete decoded PCM on the exact album sample clock, full decode and
 the total output budget. Metadata/text changes invalidate the old packet. This
 does not claim an independent pixel-by-pixel source comparison for arbitrary
 outputs, musical acceptance, human picture review, selection or delivery.
+
+The audio stream must declare exactly the album's sample count at 48 kHz and
+start at zero. Source and movie must preserve the same initial encoder skip.
+The checker derives final discard padding from the unchanged MPEG-1 Layer III
+packet count, initial skip and exact source PCM length; it must be less than one
+1,152-sample packet. Some older MOV demuxers expose those final padding samples
+despite a correct edit-list duration. The decoded movie may expose either none
+or exactly that proven padding, while every album sample must still match.
+Both the source padding and decoder-exposed count are reported. No arbitrary
+tail tolerance, audio re-encoding or shortening of the declared album is allowed.
 
 The real synthetic fixture covers editorial and performed pages, explicit fonts,
 Unicode, two distinct columns/four wrapped rows, visible phrase entrances and

@@ -316,15 +316,55 @@ fn packets(q: &Request, path: &Path, deadline: Instant) -> Result<Vec<u8>> {
     let (raw, _) = capture(&mut c, 1024, deadline)?;
     Ok(raw)
 }
-fn pcm(q: &Request, path: &Path, frames: u64, deadline: Instant) -> Result<Object> {
+fn leading_skip(q: &Request, path: &Path, deadline: Instant) -> Result<u64> {
+    let mut c = Command::new(&q.ffprobe.path);
+    c.args([
+        "-v",
+        "error",
+        "-protocol_whitelist",
+        "file,pipe",
+        "-format_whitelist",
+        "mp3,mov",
+        "-select_streams",
+        "a:0",
+        "-read_intervals",
+        "%+#1",
+        "-show_packets",
+        "-of",
+        "json",
+    ])
+    .arg(path);
+    let (raw, _) = capture(&mut c, MAX_JSON as usize, deadline)?;
+    let v: Value = serde_json::from_slice(&raw)?;
+    let packets = v["packets"]
+        .as_array()
+        .context("first audio packet absent")?;
+    if packets.len() != 1 {
+        bail!("first audio packet observation differs");
+    }
+    Ok(packets[0]["side_data_list"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|s| s["side_data_type"] == "Skip Samples")
+        .and_then(|s| s["skip_samples"].as_u64())
+        .unwrap_or(0))
+}
+fn pcm(q: &Request, path: &Path, frames: u64, deadline: Instant) -> Result<(Object, u64)> {
     let mut c = cmd(q);
     c.args(["-v", "error"]);
     media_input(&mut c, path);
     c.args([
         "-map", "0:a:0", "-ar", "48000", "-ac", "2", "-f", "f32le", "-",
     ]);
-    let (value, _) = super::process::run(&mut c, deadline, move |stdout| {
-        identity(stdout, (frames + RATE / 20) * 8)
+    let (value, _) = super::process::run(&mut c, deadline, move |mut stdout| {
+        let canonical = identity(
+            std::io::Read::by_ref(&mut stdout).take(frames * 8),
+            frames * 8,
+        )?;
+        let tail = identity(stdout, RATE / 20 * 8)?;
+        let bytes = canonical.bytes + tail.bytes;
+        Ok((canonical, bytes))
     })?;
     Ok(value)
 }
@@ -370,8 +410,12 @@ fn verify(
     {
         bail!("album video codec/frame/audio packet contract differs");
     }
-    if videos[0]["start_pts"].as_i64() != Some(0) || sounds[0]["start_pts"].as_i64() != Some(0) {
-        bail!("album video timeline must start at frame zero");
+    if videos[0]["start_pts"].as_i64() != Some(0)
+        || sounds[0]["start_pts"].as_i64() != Some(0)
+        || sounds[0]["time_base"] != "1/48000"
+        || sounds[0]["duration_ts"].as_u64() != Some(a.frames)
+    {
+        bail!("album video timeline must match the exact zero-based album sample clock");
     }
     let chapters = movie["chapters"]
         .as_array()
@@ -402,12 +446,34 @@ fn verify(
     if packets(q, &q.audio.path, deadline)? != packets(q, &output.join("master.mp4"), deadline)? {
         bail!("video altered encoded audio packets/order");
     }
-    let source_pcm = pcm(q, &q.audio.path, a.frames, deadline)?;
-    if source_pcm.bytes % 8 != 0
-        || (source_pcm.bytes / 8).abs_diff(a.frames) > RATE / 20
-        || pcm(q, &output.join("master.mp4"), a.frames, deadline)? != source_pcm
+    // MPEG-1 Layer III at 48 kHz has exactly 1,152 samples per packet.
+    // Older MOV demuxers expose the final discard padding despite a correct
+    // sample-exact edit-list duration. Prove that bound from unchanged packets
+    // and identical leading skip, then compare every sample on the album clock.
+    let count: u64 = text(sounds[0], "nb_read_packets")?.parse()?;
+    let source_skip = leading_skip(q, &q.audio.path, deadline)?;
+    if leading_skip(q, &output.join("master.mp4"), deadline)? != source_skip {
+        bail!("video changed encoder priming");
+    }
+    let padding = count
+        .checked_mul(1152)
+        .and_then(|n| n.checked_sub(source_skip))
+        .and_then(|n| n.checked_sub(a.frames))
+        .filter(|n| *n < 1152)
+        .context("source codec padding is not bounded")?;
+    let (source_pcm, source_bytes) = pcm(q, &q.audio.path, a.frames, deadline)?;
+    let (movie_pcm, movie_bytes) = pcm(q, &output.join("master.mp4"), a.frames, deadline)?;
+    if source_pcm.bytes != a.frames * 8
+        || source_bytes != source_pcm.bytes
+        || movie_pcm != source_pcm
+        || ![a.frames * 8, (a.frames + padding) * 8].contains(&movie_bytes)
     {
-        bail!("video changed decoded audio or codec padding");
+        bail!(
+            "video changed decoded audio or codec padding: source {} frames, movie {} frames, PCM hashes equal {}",
+            source_bytes / 8,
+            movie_bytes / 8,
+            movie_pcm.sha256 == source_pcm.sha256
+        );
     }
     let mut c = cmd(q);
     c.args(["-v", "error"]);
@@ -416,6 +482,7 @@ fn verify(
     capture(&mut c, 0, deadline)?;
     Ok(
         json!({"audio_packets":sounds[0]["nb_read_packets"],"audio_packet_payloads_exact":true,"decoded_pcm":source_pcm,
+        "source_discard_padding_frames":padding,"decoder_exposed_padding_frames":movie_bytes/8-a.frames,
         "complete_decode":true,"audio_reencoded":false,"picture_source_correspondence":false,"human_approval":false,"published":false}),
     )
 }
@@ -537,6 +604,8 @@ pub fn render(request: &Path, output: &Path) -> Result<Value> {
             "-movflags",
             "+faststart",
             "-video_track_timescale",
+            "48000",
+            "-movie_timescale",
             "48000",
             "-fs",
         ])
