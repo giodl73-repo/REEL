@@ -28,6 +28,44 @@ def fixture():
 
 
 class OriginalProviderControls(unittest.TestCase):
+    def test_explicit_float16_uses_native_cuda_selection_and_asserts_actual_dtype(self):
+        fp32, fp16 = object(), object()
+        torch = types.ModuleType('torch')
+        torch.float32, torch.float16 = fp32, fp16
+        torch.set_num_threads = mock.Mock()
+        original_probe = mock.Mock(return_value=True)
+        torch.cuda = types.SimpleNamespace(is_bf16_supported=original_probe)
+        gpu = types.ModuleType('acestep.gpu_config')
+        original_platform = lambda: False
+        gpu.is_rocm_available = original_platform
+        package = types.ModuleType('acestep')
+        package.__path__ = []
+        package.gpu_config = gpu
+        handler = types.ModuleType('acestep.handler')
+        def initialize(**kwargs):
+            self.assertFalse(torch.cuda.is_bf16_supported())
+            return 'synthetic initialized', True
+        initialized = mock.Mock(side_effect=initialize)
+        handler.AceStepHandler = lambda: types.SimpleNamespace(dtype=fp16,initialize_service=initialized)
+        inference = types.ModuleType('acestep.inference')
+        inference.GenerationConfig, inference.GenerationParams = object(), object()
+        inference.generate_music = mock.Mock(side_effect=AssertionError('initialization must not generate'))
+        old_path = list(sys.path)
+        try:
+            with mock.patch.dict(sys.modules,{'torch':torch,'acestep':package,'acestep.gpu_config':gpu,'acestep.handler':handler,'acestep.inference':inference}), mock.patch.dict(os.environ,{}):
+                provider.initialize_ace({'ace_root':'synthetic'},model_precision='float16')
+                self.assertIs(gpu.is_rocm_available,original_platform)
+                self.assertEqual(os.environ['ACESTEP_ROCM_DTYPE'],'float16')
+                self.assertIs(torch.cuda.is_bf16_supported,original_probe)
+                inference.generate_music.assert_not_called()
+                self.assertEqual(initialized.call_args.kwargs['quantization'],'w8a8_dynamic')
+                handler.AceStepHandler = lambda: types.SimpleNamespace(dtype=fp32,initialize_service=initialized)
+                with self.assertRaisesRegex(RuntimeError,'dtype differs'):
+                    provider.initialize_ace({'ace_root':'synthetic'},model_precision='float16')
+                self.assertIs(torch.cuda.is_bf16_supported,original_probe)
+        finally:
+            sys.path[:] = old_path
+
     def test_progress_is_bounded_synced_and_never_overwrites_or_logs_source(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder)/'phases.jsonl'
@@ -64,7 +102,8 @@ class OriginalProviderControls(unittest.TestCase):
         inputs = {'provider-request.json':request,'source-context.json':context,'runtime.json':runtime}
         info = types.SimpleNamespace(subtype='FLOAT',samplerate=8000,frames=8000,channels=2)
         forbidden = mock.Mock(side_effect=AssertionError('runtime-only must not generate'))
-        def initialized(_, progress):
+        def initialized(_, progress, model_precision):
+            self.assertEqual(model_precision,'float32')
             for stage in ['torch-import-start','torch-import-complete','ace-import-start','ace-import-complete','model-init-start','model-init-complete']:
                 progress.emit(stage)
             return object(), forbidden, forbidden, forbidden
@@ -118,7 +157,7 @@ class OriginalProviderControls(unittest.TestCase):
             validate_original_repair(request,context,16000,8000,2)
 
     def test_one_explicit_attempt_and_finite_conditioning_controls(self):
-        for field,value in [('attempts_per_patch',2),('attempts_per_patch',True),('semantic_planner',True),('seed',True),('repaint_strength',float('nan')),('repaint_mode','unknown')]:
+        for field,value in [('attempts_per_patch',2),('attempts_per_patch',True),('semantic_planner',True),('seed',True),('repaint_strength',float('nan')),('repaint_mode','unknown'),('model_precision','bfloat16'),('model_precision',True)]:
             request, context = fixture()
             request[field] = value
             with self.assertRaises(ValueError):

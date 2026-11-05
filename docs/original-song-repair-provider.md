@@ -22,6 +22,8 @@ The `reel.original-song-repair-execution.v1` file declares:
 
 - `runtime`, `backend`, `backend_helper`: explicit `path` and exact `object` pins;
 - an explicit private `caption`, `seed`, `repaint_mode` and `repaint_strength`;
+- optional `model_precision`: `float32` or `float16`; omission preserves the
+  legacy float32 path and the shape of older provider requests;
 - the exact original `permissions`: `private_only:true`, `external_upload:false`,
   `identifiable_imitation:false`, `public_release:false`;
 - `timeout_seconds` (1–3600), `memory_bytes` (64 MiB–16 GiB) and `processes` (1–32).
@@ -88,8 +90,14 @@ read set, process/commit-memory limits and timeout. It prepares and validates th
 same source/conditioning inputs, then selects the backend's separate
 `--original-repair-runtime-check` route. That route returns after initialization,
 before constructing generation parameters or invoking the patch generator.
-No candidate normalization or full-recording materialization runs. Existing
-model/dtype parameters and all cache policies remain unchanged.
+No candidate normalization or full-recording materialization runs. The explicit
+execution precision is honored and checked against the initialized model dtype;
+all resource and cache policy limits remain unchanged. Explicit float16 disables
+automatic bfloat16 selection only during initialization, restores that precision
+probe afterward, and refuses a different actual dtype. It preserves the CUDA device/platform identity and does not enable the legacy
+float32 platform override. A new
+precision choice is a separately pinned candidate control and does not change
+the source audio's float32 format, clock, canonical words or protected samples.
 
 Original-source backend calls now create `provider-progress.jsonl` without
 replacement. At most 32 fixed phase markers / 16 KiB are flushed and synced before

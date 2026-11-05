@@ -160,12 +160,15 @@ pub fn check_generation(
             AUDIO,
         )?);
     }
-    let request = json!({"schema":"reel.original-song-repair-provider-request.v1",
+    let mut request = json!({"schema":"reel.original-song-repair-provider-request.v1",
         "recipe":loaded.recipe_pin,"source":loaded.recipe.recording,"source_context":pin(&context_raw),
         "runtime":e.runtime.object,"backend":e.backend.object,"backend_helper":e.backend_helper.object,
         "sample_rate":loaded.audio.rate,"channels":loaded.audio.channels,"source_frames":loaded.recipe.source_frames,
         "patches":geometry,"caption":e.caption,"seed":e.seed,"repaint_mode":e.repaint_mode,
         "repaint_strength":e.repaint_strength,"permissions":e.permissions,"attempts_per_patch":1,"semantic_planner":false});
+    if let Some(precision) = &e.model_precision {
+        request["model_precision"] = json!(precision);
+    }
     let request_raw = serde_json::to_vec_pretty(&request)?;
     held.push(held_bytes(
         &root,

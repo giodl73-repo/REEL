@@ -117,25 +117,39 @@ class OriginalRepairProgress:
         return False
 
 
-def initialize_ace(runtime, progress=None):
+def initialize_ace(runtime, progress=None, model_precision='float32'):
     note = progress.emit if progress is not None else lambda stage: None
-    os.environ['ACESTEP_ROCM_DTYPE'] = 'float32'
+    if model_precision not in ('float32','float16'):
+        raise ValueError('Unsupported explicit model precision')
+    os.environ['ACESTEP_ROCM_DTYPE'] = model_precision
     sys.path.insert(0, runtime['ace_root'])
     note('torch-import-start')
     import torch
     note('torch-import-complete')
     note('ace-import-start')
     import acestep.gpu_config as gpu_config
-    gpu_config.is_rocm_available = lambda: True
+    if model_precision == 'float32':
+        gpu_config.is_rocm_available = lambda: True
     from acestep.handler import AceStepHandler
     from acestep.inference import GenerationConfig, GenerationParams, generate_music
     note('ace-import-complete')
     torch.set_num_threads(4)
     handler = AceStepHandler()
     note('model-init-start')
-    status, ok = handler.initialize_service(project_root=runtime['ace_root'],config_path='acestep-v15-turbo',device='cuda',use_flash_attention=False,compile_model=False,offload_to_cpu=True,offload_dit_to_cpu=False,quantization='w8a8_dynamic',use_mlx_dit=False)
-    if not ok or handler.dtype is not torch.float32:
+    original_bfloat16_probe = torch.cuda.is_bf16_supported
+    try:
+        # An explicit float16 request must not select emulated/default bfloat16.
+        # This changes precision policy only inside this initialization call.
+        if model_precision == 'float16':
+            torch.cuda.is_bf16_supported = lambda *args, **kwargs: False
+        status, ok = handler.initialize_service(project_root=runtime['ace_root'],config_path='acestep-v15-turbo',device='cuda',use_flash_attention=False,compile_model=False,offload_to_cpu=True,offload_dit_to_cpu=False,quantization='w8a8_dynamic',use_mlx_dit=False)
+    finally:
+        torch.cuda.is_bf16_supported = original_bfloat16_probe
+    expected_dtype = torch.float32 if model_precision == 'float32' else torch.float16
+    if not ok:
         raise RuntimeError(str(status))
+    if handler.dtype is not expected_dtype:
+        raise RuntimeError('Initialized model dtype differs from explicitly requested precision')
     note('model-init-complete')
     return handler, GenerationParams, GenerationConfig, generate_music
 
@@ -166,6 +180,8 @@ def validate_original_repair(request, context, rate, frames, channels):
     strength = request.get('repaint_strength')
     if type(strength) not in (int,float) or not 0 <= strength <= 1 or request.get('repaint_mode') not in ['conservative','balanced','aggressive']:
         raise ValueError('Explicit repaint controls required')
+    if request.get('model_precision','float32') not in ('float32','float16'):
+        raise ValueError('Unsupported explicit model precision')
     if not isinstance(request.get('caption'),str) or not request['caption'].strip() or len(request['caption'].encode('utf-8')) > 4096:
         raise ValueError('Bounded private provider caption required')
     patches = request.get('patches')
@@ -231,11 +247,14 @@ def _original_repair_main(progress, runtime_check_only):
     if subprocess.check_output(['git','-C',runtime['ace_root'],'rev-parse','HEAD'],text=True).strip() != runtime['ace_commit']:
         raise ValueError('Original repair provider source changed')
     progress.emit('runtime-verified')
-    handler, Params, Config, generate = initialize_ace(runtime, progress)
+    handler, Params, Config, generate = initialize_ace(runtime, progress, request.get('model_precision','float32'))
     if runtime_check_only:
-        write('provider-runtime-check.json',dict(schema='reel.original-song-provider-runtime-check.v1',
+        receipt = dict(schema='reel.original-song-provider-runtime-check.v1',
             request=descriptor('provider-request.json'),runtime=descriptor('runtime.json'),source_context=descriptor('source-context.json'),
-            model_initialized=True,provider_generation_called=False,human_approval=False,selected=False))
+            model_initialized=True,provider_generation_called=False,human_approval=False,selected=False)
+        if 'model_precision' in request:
+            receipt['model_precision'] = request['model_precision']
+        write('provider-runtime-check.json',receipt)
         progress.emit('runtime-check-complete')
         return
     attempts = []

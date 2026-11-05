@@ -29,3 +29,12 @@ exercises both modes with synthetic audio and attempted input writes; the Job
 Object fixture checks the original exit code, numeric memory accounting, process
 cleanup and existing resource bounds. No actual runtime success or repaired-song
 delivery is inferred from these synthetic cases.
+
+The actual initialization-only trace reached `model-init-start` and then the
+child failed at 17,190,125,568 peak committed bytes against its unchanged
+17,179,869,184-byte limit. No patch-generation call was reachable. This supplies
+a concrete basis for a separately pinned float16 initialization diagnostic on
+the existing CUDA installation, rather than increasing resource limits. The new
+optional precision field preserves legacy omission/float32 behavior, asserts the
+actual initialized dtype and remains bound into request/retained replay. Model
+weights, clocks, masks, words and all quality/approval gates stay separate.

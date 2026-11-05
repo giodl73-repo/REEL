@@ -18,6 +18,9 @@ fn initialization_only_callback_checks_receipt_phases_and_refuses_generation() {
         let f = fixture();
         let (admission, recipe, _, _) = inputs(&f);
         let execution = execution(&f);
+        let mut e = packet::parse(&fs::read(&execution).unwrap()).unwrap();
+        e["model_precision"] = json!("float16");
+        save(&execution, &e);
         let output = f.dir.path().join("diagnostic");
         let calls = Cell::new(0);
         let result = diagnose_with(&admission, &recipe, &execution, &output, |inv| {
@@ -27,6 +30,7 @@ fn initialization_only_callback_checks_receipt_phases_and_refuses_generation() {
                 "request":descriptor(&inv.output.join("provider-request.json")),
                 "runtime":request["runtime"],"source_context":request["source_context"],
                 "model_initialized":true,"provider_generation_called":false,"human_approval":false,"selected":false});
+            receipt["model_precision"] = request["model_precision"].clone();
             if mutation == 1 {
                 receipt["provider_generation_called"] = json!(true);
             }
@@ -65,6 +69,32 @@ fn initialization_only_callback_checks_receipt_phases_and_refuses_generation() {
             assert_eq!(report["provider_process_executed"], false);
             assert_eq!(report["human_approval"], false);
         }
+    }
+}
+
+#[test]
+fn explicit_model_precision_is_pinned_while_legacy_requests_keep_their_shape() {
+    for explicit in [false, true] {
+        let f = fixture();
+        let (admission, recipe, _, _) = inputs(&f);
+        let execution = execution(&f);
+        let mut e = packet::parse(&fs::read(&execution).unwrap()).unwrap();
+        if explicit {
+            e["model_precision"] = json!("float16");
+            save(&execution, &e);
+        }
+        let output = f.dir.path().join("generated");
+        generate_with(&admission, &recipe, &execution, &output, |inv| fake(inv, 0)).unwrap();
+        let request =
+            packet::parse(&fs::read(output.join("provider-request.json")).unwrap()).unwrap();
+        assert_eq!(request.get("model_precision").is_some(), explicit);
+        if explicit {
+            assert_eq!(request["model_precision"], "float16");
+        }
+        check_generation(&admission, &recipe, &execution, &output).unwrap();
+        e["model_precision"] = json!(if explicit { "float32" } else { "float16" });
+        save(&execution, &e);
+        assert!(check_generation(&admission, &recipe, &execution, &output).is_err());
     }
 }
 
@@ -220,7 +250,7 @@ fn synthetic_raw_pass_materializes_and_preserves_original_without_inventing_requ
 }
 #[test]
 fn invalid_execution_or_missing_installed_bytes_refuse_before_callback_or_output() {
-    for mutation in 0..8 {
+    for mutation in 0..10 {
         let f = fixture();
         let (admission, recipe, _, _) = inputs(&f);
         let execution = execution(&f);
@@ -235,13 +265,15 @@ fn invalid_execution_or_missing_installed_bytes_refuse_before_callback_or_output
                 fs::write(f.dir.path().join("model.bin"), b"changed model").unwrap();
             }
             6 => e["backend"]["path"] = json!("../local_song_repaint.py"),
-            _ => {
+            7 => {
                 let path = f.dir.path().join("runtime-input.json");
                 let mut runtime = packet::parse(&fs::read(&path).unwrap()).unwrap();
                 runtime["generation_files"] = json!([]);
                 save(&path, &runtime);
                 e["runtime"]["object"] = descriptor(&path);
             }
+            8 => e["model_precision"] = json!("bfloat16"),
+            _ => e["model_precision"] = json!(true),
         }
         save(&execution, &e);
         let output = f.dir.path().join("refused");

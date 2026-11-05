@@ -22,6 +22,8 @@ struct Execution {
     seed: u32,
     repaint_mode: String,
     repaint_strength: f64,
+    #[serde(default)]
+    model_precision: Option<String>,
     permissions: Value,
     timeout_seconds: u64,
     memory_bytes: usize,
@@ -168,6 +170,9 @@ fn validate_execution(loaded: &Loaded, e: &Execution) -> Result<()> {
         )
         || !e.repaint_strength.is_finite()
         || !(0.0..=1.0).contains(&e.repaint_strength)
+        || e.model_precision
+            .as_deref()
+            .is_some_and(|p| !matches!(p, "float32" | "float16"))
         || e.permissions != loaded.original.context()["private_scope"]
         || !(1..=3600).contains(&e.timeout_seconds)
         || !(64 * 1024 * 1024..=16u64 * 1024 * 1024 * 1024).contains(&(e.memory_bytes as u64))
@@ -404,13 +409,16 @@ fn write_inputs(p: &Prepared, output: &Path) -> Result<ProviderInputs> {
             AUDIO,
         )?);
     }
-    let request = json!({"schema":"reel.original-song-repair-provider-request.v1",
+    let mut request = json!({"schema":"reel.original-song-repair-provider-request.v1",
         "recipe":p.loaded.recipe_pin,"source":p.loaded.recipe.recording,"source_context":pin(&context_raw),
         "runtime":p.runtime.pin,"backend":p.backend.pin,"backend_helper":p.helper.pin,
         "sample_rate":p.loaded.audio.rate,"channels":p.loaded.audio.channels,"source_frames":p.loaded.recipe.source_frames,
         "patches":geometry,"caption":p.execution.caption,"seed":p.execution.seed,
         "repaint_mode":p.execution.repaint_mode,"repaint_strength":p.execution.repaint_strength,
         "permissions":p.execution.permissions,"attempts_per_patch":1,"semantic_planner":false});
+    if let Some(precision) = &p.execution.model_precision {
+        request["model_precision"] = json!(precision);
+    }
     let request_raw = serde_json::to_vec_pretty(&request)?;
     write_new(&output.join("provider-request.json"), &request_raw)?;
     for (name, object) in [
@@ -595,9 +603,12 @@ fn diagnose_with(
         META,
     )?;
     let receipt = packet::parse(&raw)?;
-    let expected = json!({"schema":"reel.original-song-provider-runtime-check.v1",
+    let mut expected = json!({"schema":"reel.original-song-provider-runtime-check.v1",
         "request":pin(&inputs.request_raw),"runtime":p.runtime.pin,"source_context":inputs.request["source_context"],
         "model_initialized":true,"provider_generation_called":false,"human_approval":false,"selected":false});
+    if let Some(precision) = &p.execution.model_precision {
+        expected["model_precision"] = json!(precision);
+    }
     if receipt != expected {
         bail!("initialization-only runtime receipt differs");
     }
@@ -630,12 +641,15 @@ fn diagnose_with(
         },
         16384,
     )?;
-    let report = json!({"schema":"reel.original-song-runtime-diagnostic.v1","execution":p.execution_pin,
+    let mut report = json!({"schema":"reel.original-song-runtime-diagnostic.v1","execution":p.execution_pin,
         "recipe":p.loaded.recipe_pin,"runtime":p.runtime.pin,"backend":p.backend.pin,"backend_helper":p.helper.pin,
         "provider_request":pin(&inputs.request_raw),"provider_receipt":pin(&raw),"progress":pin(&progress_raw),
         "installed_guarded_files":p._installed.len(),"installed_bytes":p.installed_bytes,
         "provider_process_executed":executed,"model_initialization_reported":true,"provider_generation_called":false,
         "candidate_materialized":false,"human_approval":false,"selected":false,"shareable":false});
+    if let Some(precision) = &p.execution.model_precision {
+        report["model_precision"] = json!(precision);
+    }
     write_new(
         &output.join("runtime-check-receipt.json"),
         &serde_json::to_vec_pretty(&report)?,
