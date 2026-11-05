@@ -129,7 +129,7 @@ fn unchanged_projection_retains_word_metadata_but_excludes_every_changed_edge() 
         {"word":"next","span":[3.25,3.5],"speaker":"original"},
         {"word":"tail","span":[4.9,5.0]},
         {"word":"unknown","span":[null,null]}]});
-    let mapped = remap_passes(&plan, &[pass.clone()]).unwrap();
+    let mapped = remap_passes(&plan, std::slice::from_ref(&pass)).unwrap();
     assert_eq!(mapped[0]["text"], "kept next");
     assert_eq!(mapped[0]["tokens"][0]["confidence"], 0.81);
     assert_eq!(mapped[0]["tokens"][1]["span"], json!([2.0, 2.25]));
