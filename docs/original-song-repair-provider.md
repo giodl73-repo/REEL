@@ -80,6 +80,28 @@ listening, source-interpretation authority, rights and release remain separate.
 Partial outputs are preserved on failure. Existing output directories refuse;
 there is no hidden retry or overwrite path.
 
+`reel-song-repair check-generation ADMISSION RECIPE EXECUTION OUTPUT` replays a
+retained generation without executing a provider or opening installed runtime
+files. The caller must independently admit those controls and the retained job
+result; a directory of self-asserted receipts is not historical execution proof.
+The checker re-inspects the original, rebuilds exact conditioning windows and
+the provider request, checks raw attempt correspondence and signal/clock bounds,
+reconstructs disclosed tail normalization, requires exact normalized candidate
+bytes, and independently checks final protected samples and both receipts.
+It retains no new files and works after the output view moves. Runtime paths in
+the retained descriptor are historical metadata during this check. Original
+source files and exact admission/recipe/execution controls must remain available.
+
+Retain `source-context.json`, `source.wav`, `runtime.json`, `provider-request.json`,
+`provider-receipt.json`, `candidates.json`, `generation-receipt.json`, each declared
+`patch-source-I.wav`, `raw-patch-I.wav` and `candidate-patch-I.wav`, plus
+`materialized/recording.wav` and `materialized/repair-receipt.json`. Keep the
+original controls and their independently verified immutable pins as inputs.
+The replay report distinguishes the recorded process-execution flag from
+`provider_executed_now:false` and
+`historical_process_execution_independently_verified:false`. It grants no lyric,
+listening, runtime-custody, selection or human-approval authority.
+
 Producer-applied review: reconstruction checks clocks, raw provenance and locked
 samples; editing/sound checks changed boundaries by listening; lyric review keeps
 supplied and performed words separate; provenance keeps the original request,

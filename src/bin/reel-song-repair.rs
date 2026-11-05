@@ -10,6 +10,13 @@ struct Cli {
 #[derive(Subcommand)]
 enum Operation {
     #[cfg(feature = "song-provider")]
+    CheckGeneration {
+        admission: PathBuf,
+        recipe: PathBuf,
+        execution: PathBuf,
+        output: PathBuf,
+    },
+    #[cfg(feature = "song-provider")]
     PlanGeneration {
         admission: PathBuf,
         recipe: PathBuf,
@@ -42,6 +49,13 @@ enum Operation {
 fn main() -> Result<()> {
     use reel::song_edition::repair;
     let report = match Cli::parse().command {
+        #[cfg(feature = "song-provider")]
+        Operation::CheckGeneration {
+            admission,
+            recipe,
+            execution,
+            output,
+        } => repair::provider::check_generation(&admission, &recipe, &execution, &output)?,
         #[cfg(feature = "song-provider")]
         Operation::PlanGeneration {
             admission,

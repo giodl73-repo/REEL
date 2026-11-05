@@ -8,6 +8,8 @@ use std::{
     fs::File,
     path::{Component, PathBuf},
 };
+mod replay;
+pub use replay::check_generation;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -131,13 +133,7 @@ fn hold_installed(input: &Installed) -> Result<InstalledGuard> {
     }
     Ok(InstalledGuard { _file: file })
 }
-fn prepare(admission: &Path, recipe: &Path, execution: &Path) -> Result<Prepared> {
-    let loaded = load(admission, recipe)?;
-    let execution_path = execution.canonicalize()?;
-    let root = execution_path.parent().context("execution view missing")?;
-    let execution_raw = read_metadata(&execution_path)?;
-    let execution_pin = pin(&execution_raw);
-    let e: Execution = serde_json::from_value(packet::parse(&execution_raw)?)?;
+fn validate_execution(loaded: &Loaded, e: &Execution) -> Result<()> {
     if e.schema != "reel.original-song-repair-execution.v1"
         || e.caption.trim().is_empty()
         || e.caption.len() > 4096
@@ -158,6 +154,16 @@ fn prepare(admission: &Path, recipe: &Path, execution: &Path) -> Result<Prepared
     {
         bail!("provider execution parameters or original private restrictions differ");
     }
+    Ok(())
+}
+fn prepare(admission: &Path, recipe: &Path, execution: &Path) -> Result<Prepared> {
+    let loaded = load(admission, recipe)?;
+    let execution_path = execution.canonicalize()?;
+    let root = execution_path.parent().context("execution view missing")?;
+    let execution_raw = read_metadata(&execution_path)?;
+    let execution_pin = pin(&execution_raw);
+    let e: Execution = serde_json::from_value(packet::parse(&execution_raw)?)?;
+    validate_execution(&loaded, &e)?;
     let control = source::held(
         source::Input {
             path: execution_path.clone(),

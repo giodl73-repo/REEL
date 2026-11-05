@@ -49,6 +49,8 @@ fn fake(inv: &Invocation<'_>, mutation: usize) -> Result<bool> {
         let end = geometry["context_end_frame"].as_u64().unwrap();
         let frames = if mutation == 2 {
             end - start + 1000
+        } else if mutation == 6 {
+            end - start - 100
         } else {
             end - start + 100
         };
@@ -181,6 +183,190 @@ fn bad_attempt_receipt_raw_clock_or_signal_does_not_retry_or_materialize() {
 }
 
 #[test]
+fn retained_generation_replays_after_move_without_installed_runtime_or_writes() {
+    let f = fixture();
+    let (admission, recipe, _, _) = inputs(&f);
+    let execution = execution(&f);
+    let output = f.dir.path().join("generated");
+    generate_with(&admission, &recipe, &execution, &output, |inv| fake(inv, 0)).unwrap();
+    for name in [
+        "model.bin",
+        "python.exe",
+        "runtime-input.json",
+        "local_song_repaint.py",
+        "local_song_backend.py",
+    ] {
+        fs::remove_file(f.dir.path().join(name)).unwrap();
+    }
+    let moved = f.dir.path().join("retained-view");
+    fs::rename(&output, &moved).unwrap();
+    let mut read_only = Vec::new();
+    for name in [
+        "source-context.json",
+        "source.wav",
+        "runtime.json",
+        "patch-source-0.wav",
+        "provider-request.json",
+        "provider-receipt.json",
+        "raw-patch-0.wav",
+        "candidate-patch-0.wav",
+        "candidates.json",
+        "generation-receipt.json",
+        "materialized/recording.wav",
+        "materialized/repair-receipt.json",
+    ] {
+        let path = moved.join(name);
+        read_only.push(
+            source::held(
+                source::Input {
+                    object: pin(&fs::read(&path).unwrap()),
+                    path,
+                },
+                AUDIO,
+            )
+            .unwrap(),
+        );
+    }
+    let before = fs::read(moved.join("generation-receipt.json")).unwrap();
+    let report = check_generation(&admission, &recipe, &execution, &moved).unwrap();
+    assert_eq!(report["raw_to_normalized_sample_bits_exact"], true);
+    assert_eq!(report["recorded_provider_process_executed"], false);
+    assert_eq!(report["provider_executed_now"], false);
+    assert_eq!(report["installed_runtime_reopened"], false);
+    assert_eq!(
+        report["historical_process_execution_independently_verified"],
+        false
+    );
+    assert_eq!(report["human_approval"], false);
+    assert_eq!(
+        fs::read(moved.join("generation-receipt.json")).unwrap(),
+        before
+    );
+    assert!(!output.exists());
+    assert!(!f.dir.path().join("model.bin").exists());
+}
+
+#[test]
+fn retained_replay_rejects_changed_raw_conditioning_controls_and_receipt_claims() {
+    for mutation in 0..12 {
+        let f = fixture();
+        let (admission, recipe, _, _) = inputs(&f);
+        let execution = execution(&f);
+        let output = f.dir.path().join("generated");
+        generate_with(&admission, &recipe, &execution, &output, |inv| fake(inv, 0)).unwrap();
+        match mutation {
+            0..=3 => {
+                let name = [
+                    "raw-patch-0.wav",
+                    "patch-source-0.wav",
+                    "source-context.json",
+                    "source.wav",
+                ][mutation];
+                fs::write(output.join(name), b"changed retained bytes").unwrap();
+            }
+            4 => {
+                let p = output.join("provider-request.json");
+                let mut v = packet::parse(&fs::read(&p).unwrap()).unwrap();
+                v["seed"] = json!(19);
+                save(&p, &v);
+            }
+            5 => {
+                let mut v = packet::parse(&fs::read(&execution).unwrap()).unwrap();
+                v["permissions"]["public_release"] = json!(true);
+                save(&execution, &v);
+            }
+            6..=8 => {
+                let p = output.join("provider-receipt.json");
+                let mut v = packet::parse(&fs::read(&p).unwrap()).unwrap();
+                match mutation {
+                    6 => v["patches"][0]["attempt"] = json!(2),
+                    7 => {
+                        v["patches"][0]["context_audio"] =
+                            json!({"sha256":"0".repeat(64),"bytes":12})
+                    }
+                    _ => v["external_upload"] = json!(true),
+                }
+                save(&p, &v);
+            }
+            _ => {
+                let p = output.join("generation-receipt.json");
+                let mut v = packet::parse(&fs::read(&p).unwrap()).unwrap();
+                match mutation {
+                    9 => v["raw_candidate_normalization"][0]["truncated_tail_frames"] = json!(0),
+                    10 => v["human_approval"] = json!(true),
+                    _ => v["installed_guarded_files"] = json!(999),
+                }
+                save(&p, &v);
+            }
+        }
+        assert!(
+            check_generation(&admission, &recipe, &execution, &output).is_err(),
+            "mutation {mutation}"
+        );
+    }
+}
+
+#[test]
+fn core_valid_forged_normalized_patch_cannot_bypass_raw_provider_replay() {
+    let f = fixture();
+    let (admission, recipe, _, _) = inputs(&f);
+    let execution = execution(&f);
+    let output = f.dir.path().join("generated");
+    generate_with(&admission, &recipe, &execution, &output, |inv| fake(inv, 0)).unwrap();
+    let candidate = output.join("candidate-patch-0.wav");
+    let audio = wave::decode(&fs::read(&candidate).unwrap()).unwrap();
+    let replacement = wave::encode(
+        &vec![0.125; audio.samples.len()],
+        audio.rate,
+        audio.channels,
+    )
+    .unwrap();
+    fs::write(&candidate, replacement).unwrap();
+    let roster = output.join("candidates.json");
+    let mut v = packet::parse(&fs::read(&roster).unwrap()).unwrap();
+    v["patches"][0]["object"] = descriptor(&candidate);
+    save(&roster, &v);
+    let forged = output.join("forged-materialized");
+    let summary = materialize(&admission, &recipe, &roster, &forged).unwrap();
+    fs::rename(
+        output.join("materialized"),
+        output.join("original-materialized"),
+    )
+    .unwrap();
+    fs::rename(&forged, output.join("materialized")).unwrap();
+    let generation = output.join("generation-receipt.json");
+    let mut v = packet::parse(&fs::read(&generation).unwrap()).unwrap();
+    v["materialization"] = summary;
+    save(&generation, &v);
+    // The core checks protected original bits, not provider provenance.
+    check(&admission, &recipe, &roster, &output.join("materialized")).unwrap();
+    assert!(check_generation(&admission, &recipe, &execution, &output).is_err());
+}
+
+#[test]
+fn retained_short_tail_replays_original_fill_only_beyond_the_mask() {
+    let f = fixture();
+    let (admission, recipe, _, _) = inputs(&f);
+    let execution = execution(&f);
+    let output = f.dir.path().join("generated-short-tail");
+    generate_with(&admission, &recipe, &execution, &output, |inv| fake(inv, 6)).unwrap();
+    let path = output.join("generation-receipt.json");
+    let mut receipt = packet::parse(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        receipt["raw_candidate_normalization"][0]["appended_original_tail_frames"],
+        100
+    );
+    assert_eq!(
+        receipt["raw_candidate_normalization"][0]["truncated_tail_frames"],
+        0
+    );
+    check_generation(&admission, &recipe, &execution, &output).unwrap();
+    receipt["raw_candidate_normalization"][0]["patch_fully_from_raw_provider"] = json!(false);
+    save(&path, &receipt);
+    assert!(check_generation(&admission, &recipe, &execution, &output).is_err());
+}
+
+#[test]
 #[cfg(windows)]
 #[ignore = "requires explicit installed REEL_TEST_PYTHON; synthetic audio only, no ACE"]
 fn explicit_python_child_obeys_native_input_guards_and_materializes_synthetic_audio() {
@@ -249,4 +435,11 @@ with open('provider-receipt.json','x',encoding='utf-8') as stream:
         &restored.join("materialized"),
     )
     .unwrap();
+    let replay = check_generation(&admission, &recipe, &execution, &restored).unwrap();
+    assert_eq!(replay["recorded_provider_process_executed"], true);
+    assert_eq!(replay["provider_executed_now"], false);
+    assert_eq!(
+        replay["historical_process_execution_independently_verified"],
+        false
+    );
 }
