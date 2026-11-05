@@ -38,6 +38,15 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test --all-targets --all-features
+      - name: Verify contained original-song repair with synthetic audio
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $pythonProgram = (Get-Command python -ErrorAction Stop).Source
+          $env:REEL_TEST_PYTHON = & $pythonProgram -B -c "import sys; print(sys.executable)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --all-features --lib song_edition::repair::provider::tests::explicit_python_child_obeys_native_input_guards_and_materializes_synthetic_audio --locked -- --ignored --exact --test-threads=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify native full-recording album joins and retained packet checks
         shell: pwsh
         run: |
