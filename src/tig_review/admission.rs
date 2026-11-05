@@ -8,6 +8,7 @@ use std::{
 };
 use tig_store::existing::{ByteSource, Profile as ByteProfile, ReadCache};
 
+mod indexed;
 pub mod reinspection;
 
 const META_MAX: usize = 4 * 1024 * 1024;
@@ -44,6 +45,10 @@ pub struct Policy {
     pub role_dimensions: BTreeMap<String, [u32; 2]>,
     /// Retained request input name -> immutable task source field.
     pub media_inputs: BTreeMap<String, String>,
+    /// Optional immutable index for the bounded existing-capture task contract.
+    /// Original task bytes remain the receipt/report identity.
+    #[serde(default)]
+    pub indexed_task_index: Option<Object>,
 }
 
 fn file(path: &Path, max: usize) -> Result<Vec<u8>> {
@@ -104,8 +109,8 @@ impl Session {
             Some(cache) => cache,
             None => ReadCache::new(profile.byte_source.clone())?,
         };
-        let task = metadata(&mut cache, &profile.task)?;
-        bytes(&mut cache, &profile.method, 256 * 1024)?;
+        let mut task = metadata(&mut cache, &profile.task)?;
+        let method_bytes = bytes(&mut cache, &profile.method, 256 * 1024)?;
         let policy: Policy = serde_json::from_value(metadata(&mut cache, &profile.policy)?)?;
         ensure!(
             policy.schema == "reel.review-observation-policy.experimental-1"
@@ -113,6 +118,22 @@ impl Session {
             "policy method differs"
         );
         policy.observations.validate()?;
+        let indexed_binding = if let Some(index) = &policy.indexed_task_index {
+            Some(indexed::bind(
+                &task,
+                &profile.task,
+                &profile.method,
+                &method_bytes,
+                &policy,
+                index,
+                &mut cache,
+            )?)
+        } else {
+            None
+        };
+        if let Some(binding) = &indexed_binding {
+            task = binding.task.clone();
+        }
         ensure!(
             pin(at(&task, "protocol_method")?)? == profile.method,
             "task method differs"
@@ -195,7 +216,10 @@ impl Session {
             );
             previous = Some(index);
         }
-        let features = metadata(&mut cache, &pin(at(&task, "raw_feature_source")?)?)?;
+        let features = match &indexed_binding {
+            Some(binding) => binding.features.clone(),
+            None => metadata(&mut cache, &pin(at(&task, "raw_feature_source")?)?)?,
+        };
         let expected_ass = group
             .get("current_ASS")
             .or_else(|| features.get("current_ASS"))
