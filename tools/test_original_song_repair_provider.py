@@ -92,6 +92,28 @@ class OriginalProviderControls(unittest.TestCase):
             rows = [json.loads(line) for line in path.read_text().splitlines()]
             self.assertEqual([r['stage'] for r in rows],['model-init-start','python-exception'])
             self.assertNotIn('private error',path.read_text())
+            failure = json.loads((Path(folder)/'provider-failure.json').read_text())
+            self.assertEqual(failure['exception_type'],'RuntimeError')
+            self.assertEqual(failure['message'],'private error')
+            self.assertFalse(failure['shareable'])
+
+    def test_failure_evidence_is_bounded_and_never_overwrites_or_masks_exception(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            message = '\u00e9'*10000
+            with self.assertRaisesRegex(RuntimeError,'\u00e9'):
+                with provider.OriginalRepairProgress(root/'first.jsonl'):
+                    raise RuntimeError(message)
+            failure_path = root/'provider-failure.json'
+            raw = failure_path.read_bytes()
+            failure = json.loads(raw)
+            self.assertLessEqual(len(failure['message'].encode('utf-8')),4096)
+            self.assertTrue(failure['message_truncated'])
+            self.assertLessEqual(len(raw),32768)
+            with self.assertRaisesRegex(ValueError,'second failure'):
+                with provider.OriginalRepairProgress(root/'second.jsonl'):
+                    raise ValueError('second failure')
+            self.assertEqual(failure_path.read_bytes(),raw)
 
     def test_runtime_only_mode_returns_before_any_generation_constructor_or_call(self):
         request, context = fixture()
