@@ -6,6 +6,9 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import re
+
+sys.dont_write_bytecode = True
 
 from local_song_backend import checked, descriptor, offline, read, runtime_files, write
 
@@ -69,6 +72,123 @@ def splice(original, generated, rate, start, end, fade_seconds=.12):
     return result
 
 
+def initialize_ace(runtime):
+    os.environ['ACESTEP_ROCM_DTYPE'] = 'float32'
+    sys.path.insert(0, runtime['ace_root'])
+    import torch
+    import acestep.gpu_config as gpu_config
+    gpu_config.is_rocm_available = lambda: True
+    from acestep.handler import AceStepHandler
+    from acestep.inference import GenerationConfig, GenerationParams, generate_music
+    torch.set_num_threads(4)
+    handler = AceStepHandler()
+    status, ok = handler.initialize_service(project_root=runtime['ace_root'],config_path='acestep-v15-turbo',device='cuda',use_flash_attention=False,compile_model=False,offload_to_cpu=True,offload_dit_to_cpu=False,quantization='w8a8_dynamic',use_mlx_dit=False)
+    if not ok or handler.dtype is not torch.float32:
+        raise RuntimeError(str(status))
+    return handler, GenerationParams, GenerationConfig, generate_music
+
+
+def validate_original_repair(request, context, rate, frames, channels):
+    """Separate native-context route; never accepts an older modern guide request."""
+    scope = dict(private_only=True, external_upload=False, identifiable_imitation=False, public_release=False)
+    if not 8000 <= rate <= 96000 or channels not in (1,2) or not 0 < frames <= rate*600:
+        raise ValueError('Unsupported original native clock')
+    if request.get('schema') != 'reel.original-song-repair-provider-request.v1' or context.get('schema') != 'reel.song-repair-source-context.v1':
+        raise ValueError('Unsupported original-source repair context')
+    for flags in [request.get('permissions'), context.get('private_scope')]:
+        if not isinstance(flags, dict) or set(flags) != set(scope) or any(type(flags[k]) is not bool or flags[k] != v for k,v in scope.items()):
+            raise ValueError('Original-source private restrictions differ')
+    for field in ['original_request_rewritten','provider_executed','human_approval','shareable','mapping_authority_verified']:
+        if context.get(field) is not False:
+            raise ValueError('Original-source context exceeds its authority')
+    if request.get('attempts_per_patch') != 1 or type(request.get('attempts_per_patch')) is not int or request.get('semantic_planner') is not False:
+        raise ValueError('Only one nonsemantic provider attempt per patch is admitted')
+    if request.get('source') != context.get('recording'):
+        raise ValueError('Original recording context differs')
+    for key, actual in [('sample_rate',rate),('source_frames',frames),('channels',channels)]:
+        if type(request.get(key)) is not int or request[key] != actual or context.get(key) != actual:
+            raise ValueError('Original native clock differs')
+    seed = request.get('seed')
+    if type(seed) is not int or not 0 <= seed <= 2**32-4:
+        raise ValueError('Explicit bounded seed required')
+    strength = request.get('repaint_strength')
+    if type(strength) not in (int,float) or not 0 <= strength <= 1 or request.get('repaint_mode') not in ['conservative','balanced','aggressive']:
+        raise ValueError('Explicit repaint controls required')
+    if not isinstance(request.get('caption'),str) or not request['caption'].strip() or len(request['caption'].encode('utf-8')) > 4096:
+        raise ValueError('Bounded private provider caption required')
+    patches = request.get('patches')
+    if not isinstance(patches,list) or not 1 <= len(patches) <= 3:
+        raise ValueError('Bounded original mask roster required')
+    text = context.get('canonical_lyrics')
+    if not isinstance(text,str):
+        raise ValueError('Original canonical source missing')
+    lines = [line for line in re.split('[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]',text) if line.strip()]
+    previous = 0
+    for patch in patches:
+        for key in ['start_frame','end_frame','fade_frames','context_start_frame','context_end_frame']:
+            if type(patch.get(key)) is not int:
+                raise ValueError('Integer native mask geometry required')
+        start,end = patch['start_frame'],patch['end_frame']
+        if not previous <= start < end <= frames or end-start > 30*rate or not 0 <= patch['fade_frames'] <= min(rate,(end-start-1)//2):
+            raise ValueError('Original mask or fades differ')
+        if patch['context_start_frame'] != max(0,start-5*rate) or patch['context_end_frame'] != min(frames,end+5*rate):
+            raise ValueError('Original neighboring music context differs')
+        selected = patch.get('source_lines')
+        if not isinstance(selected,list) or len(selected) != 2 or any(type(n) is not int for n in selected):
+            raise ValueError('Canonical line range required')
+        first,last = selected
+        if not 1 <= first <= last <= len(lines) or patch.get('supplied_lyrics') != '\n'.join(lines[first-1:last]):
+            raise ValueError('Supplied words differ from exact canonical lines')
+        previous = end
+
+
+def original_repair_main():
+    """Raw candidates only. Rust owns original correspondence and materialization."""
+    offline()
+    request, context, runtime = read('provider-request.json'), read('source-context.json'), read('runtime.json')
+    checked('source-context.json',request['source_context'])
+    checked('runtime.json',request['runtime'])
+    checked('source.wav',request['source'])
+    checked(Path(__file__),request['backend'])
+    checked(Path(__file__).with_name('local_song_backend.py'),request['backend_helper'])
+    import soundfile as sf
+    info = sf.info('source.wav')
+    if info.subtype != 'FLOAT':
+        raise ValueError('Original repair requires a float32 source')
+    validate_original_repair(request,context,info.samplerate,info.frames,info.channels)
+    for index, patch in enumerate(request['patches']):
+        path = f'patch-source-{index}.wav'
+        checked(path,patch['context_audio'])
+        window = sf.info(path)
+        if window.samplerate != info.samplerate or window.channels != info.channels or window.frames != patch['context_end_frame']-patch['context_start_frame'] or window.subtype != 'FLOAT':
+            raise ValueError('Native prepared conditioning window differs')
+    runtime_files(runtime,'generation_files')
+    checked(runtime['python']['path'],runtime['python'])
+    if subprocess.check_output(['git','-C',runtime['ace_root'],'rev-parse','HEAD'],text=True).strip() != runtime['ace_commit']:
+        raise ValueError('Original repair provider source changed')
+    handler, Params, Config, generate = initialize_ace(runtime)
+    attempts = []
+    for index, patch in enumerate(request['patches']):
+        start = patch['context_start_frame']
+        params = Params(task_type='repaint',src_audio=f'patch-source-{index}.wav',
+            repainting_start=(patch['start_frame']-start)/info.samplerate,
+            repainting_end=(patch['end_frame']-start)/info.samplerate,
+            chunk_mask_mode='explicit',repaint_mode=request['repaint_mode'],repaint_strength=request['repaint_strength'],repaint_wav_crossfade_sec=0,
+            caption=request['caption'],lyrics=patch['supplied_lyrics'],instrumental=False,vocal_language='es',
+            duration=(patch['context_end_frame']-start)/info.samplerate,inference_steps=8,guidance_scale=7.5,
+            seed=request['seed']+index,thinking=False,use_cot_metas=False,use_cot_caption=False,use_cot_language=False,use_cot_lyrics=False)
+        result = generate(handler,None,params,Config(batch_size=1,use_random_seed=False,seeds=[params.seed],audio_format='wav'),save_dir=f'generated-{index}')
+        if not result.success or len(result.audios) != 1:
+            raise RuntimeError(str(result.error))
+        destination = f'raw-patch-{index}.wav'
+        os.link(result.audios[0]['path'],destination)
+        attempts.append(dict(index=index,attempt=1,seed=params.seed,context_start_frame=start,
+            context_end_frame=patch['context_end_frame'],context_audio=patch['context_audio'],raw_audio=descriptor(destination)))
+    write('provider-receipt.json',dict(schema='reel.original-song-repair-provider-receipt.v1',
+        request=descriptor('provider-request.json'),runtime=descriptor('runtime.json'),source_context=descriptor('source-context.json'),
+        patches=attempts,external_upload=False,human_approval=False,selected=False,performed_words_verified=False))
+
+
 def main():
     offline()
     plan, runtime, request = read('repaint.json'), read('runtime.json'), read('source-request.json')
@@ -95,18 +215,7 @@ def main():
         at, count = round(insertion['at']*rate), round(insertion['seconds']*rate)
         working = np.concatenate([working[:at],np.zeros((count,working.shape[1]),dtype=np.float32),working[at:]])
     baseline = working.copy()
-    os.environ['ACESTEP_ROCM_DTYPE']='float32'
-    sys.path.insert(0,runtime['ace_root'])
-    import torch
-    import acestep.gpu_config as gpu_config
-    gpu_config.is_rocm_available=lambda: True
-    from acestep.handler import AceStepHandler
-    from acestep.inference import GenerationConfig, GenerationParams, generate_music
-    torch.set_num_threads(4)
-    handler=AceStepHandler()
-    status,ok=handler.initialize_service(project_root=runtime['ace_root'],config_path='acestep-v15-turbo',device='cuda',use_flash_attention=False,compile_model=False,offload_to_cpu=True,offload_dit_to_cpu=False,quantization='w8a8_dynamic',use_mlx_dit=False)
-    if not ok or handler.dtype is not torch.float32:
-        raise RuntimeError(str(status))
+    handler, GenerationParams, GenerationConfig, generate_music = initialize_ace(runtime)
     results=[]
     for i,patch in enumerate(plan['patches']):
         source=f'patch-source-{i}.wav'
@@ -160,4 +269,10 @@ def main():
         write('listening-check.json',dict(recording=descriptor('recording.wav'),listening=descriptor('preview.mp3'),full_decode=True,duration_seconds=len(decoded)/16000,unmasked_lossless_samples_exact=True,lossless_write_read_exact=True,protected_frames=int(mask.sum()),changed_mask_frames=int((~mask).sum()),preview_encoding='256kbps MP3, no EQ or pitch filter; lossy preview is re-encoded',human_listening='pending',selected=False))
 
 
-if __name__=='__main__':main()
+if __name__=='__main__':
+    if sys.argv[1:] == ['--original-repair']:
+        original_repair_main()
+    elif not sys.argv[1:]:
+        main()
+    else:
+        raise ValueError('Unsupported repaint invocation')

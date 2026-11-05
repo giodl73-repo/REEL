@@ -56,6 +56,7 @@ tig-git = { path = "vendor/tig/crates/tig-git", features = ["assets"], optional 
 tig-store = { path = "vendor/tig/crates/tig-store", optional = true }
 
 [features]
+song-provider = ["dep:reel-assets"]
 print = ["dep:reel-print"]
 test-fixtures = []
 tig = ["dep:tig-core", "dep:tig-assets", "dep:tig-git", "dep:tig-store"]

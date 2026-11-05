@@ -1,9 +1,11 @@
 # Original-song masked materialization
 
-`reel-song-repair` supplies the deterministic materialization and recheck portion
+The `plan`, `materialize` and `check` commands of `reel-song-repair` supply the deterministic materialization and recheck portion
 of same-source lyric repair. It accepts already retained raw patch candidates;
 it never executes a provider, installs a runtime, retries, selects or publishes.
 It does not finish the managed provider operation or qualify a repaired verse.
+The separate [original-source provider entry](original-song-repair-provider.md)
+adds explicit bounded execution without changing these pure commands.
 
 ```text
 reel-song-repair plan ADMISSION RECIPE
@@ -29,7 +31,10 @@ second per edge and leave a nonempty core. No insertion or resampling is admitte
 
 The `reel.original-song-repair-candidates.v1` roster hash/length-binds the recipe
 and contains exactly one `patches` entry per recipe patch in the same order.
-Each entry is an absolute regular file `path` and exact `object` pin. These are
+Each entry is a regular file `path` and exact `object` pin. Absolute named files
+remain supported; ordinary relative paths resolve inside the roster's view.
+Traversal, relative escapes and reparse leaves refuse. Relative rosters reopen
+after a retained view moves without relying on a retired staging directory. These are
 raw audio candidates for the mask plus five seconds of context on either side,
 clipped to the original source. Candidates must have that exact native length,
 rate and channels, finite samples and an absolute peak at most 1.001. Total raw

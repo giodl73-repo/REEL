@@ -5,7 +5,7 @@ use std::path::PathBuf;
 fn save(path: &Path, value: &Value) {
     fs::write(path, serde_json::to_vec(value).unwrap()).unwrap();
 }
-fn inputs(f: &Fixture) -> (PathBuf, PathBuf, PathBuf, Value) {
+pub(super) fn inputs(f: &Fixture) -> (PathBuf, PathBuf, PathBuf, Value) {
     let root = f.dir.path();
     let admission = root.join("repair-admission.json");
     save(&admission, &f.admission);
@@ -257,5 +257,47 @@ fn integer_original_is_not_silently_converted_to_float() {
     assert!(err.contains("original float32 WAVE"), "{err}");
     let output = f.dir.path().join("refused");
     assert!(materialize(&admission, &recipe, &candidates, &output).is_err());
+    assert!(!output.exists());
+}
+
+#[test]
+fn relative_candidate_view_reopens_after_original_output_directory_is_moved() {
+    let f = fixture();
+    let (admission, recipe, candidates_path, _) = inputs(&f);
+    let mut candidates: Value = packet::parse(&fs::read(&candidates_path).unwrap()).unwrap();
+    let view = f.dir.path().join("input-view");
+    fs::create_dir(&view).unwrap();
+    fs::rename(f.dir.path().join("raw.wav"), view.join("raw.wav")).unwrap();
+    candidates["patches"][0]["path"] = json!("raw.wav");
+    save(&view.join("candidates.json"), &candidates);
+    materialize(
+        &admission,
+        &recipe,
+        &view.join("candidates.json"),
+        &view.join("output"),
+    )
+    .unwrap();
+    let restored = f.dir.path().join("restored-view");
+    fs::rename(&view, &restored).unwrap();
+    check(
+        &admission,
+        &recipe,
+        &restored.join("candidates.json"),
+        &restored.join("output"),
+    )
+    .unwrap();
+    assert!(!view.exists());
+}
+#[test]
+fn relative_candidate_traversal_refuses_even_when_outside_bytes_match() {
+    let f = fixture();
+    let (admission, recipe, candidates_path, _) = inputs(&f);
+    let mut candidates: Value = packet::parse(&fs::read(&candidates_path).unwrap()).unwrap();
+    let view = f.dir.path().join("input-view");
+    fs::create_dir(&view).unwrap();
+    candidates["patches"][0]["path"] = json!("../raw.wav");
+    save(&view.join("candidates.json"), &candidates);
+    let output = f.dir.path().join("refused");
+    assert!(materialize(&admission, &recipe, &view.join("candidates.json"), &output).is_err());
     assert!(!output.exists());
 }
