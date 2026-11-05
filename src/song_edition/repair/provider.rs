@@ -24,6 +24,8 @@ struct Execution {
     repaint_strength: f64,
     #[serde(default)]
     model_precision: Option<String>,
+    #[serde(default)]
+    offload_dit_to_cpu: Option<bool>,
     permissions: Value,
     timeout_seconds: u64,
     memory_bytes: usize,
@@ -419,6 +421,9 @@ fn write_inputs(p: &Prepared, output: &Path) -> Result<ProviderInputs> {
     if let Some(precision) = &p.execution.model_precision {
         request["model_precision"] = json!(precision);
     }
+    if let Some(offload) = p.execution.offload_dit_to_cpu {
+        request["offload_dit_to_cpu"] = json!(offload);
+    }
     let request_raw = serde_json::to_vec_pretty(&request)?;
     write_new(&output.join("provider-request.json"), &request_raw)?;
     for (name, object) in [
@@ -609,6 +614,9 @@ fn diagnose_with(
     if let Some(precision) = &p.execution.model_precision {
         expected["model_precision"] = json!(precision);
     }
+    if let Some(offload) = p.execution.offload_dit_to_cpu {
+        expected["offload_dit_to_cpu"] = json!(offload);
+    }
     if receipt != expected {
         bail!("initialization-only runtime receipt differs");
     }
@@ -649,6 +657,9 @@ fn diagnose_with(
         "candidate_materialized":false,"human_approval":false,"selected":false,"shareable":false});
     if let Some(precision) = &p.execution.model_precision {
         report["model_precision"] = json!(precision);
+    }
+    if let Some(offload) = p.execution.offload_dit_to_cpu {
+        report["offload_dit_to_cpu"] = json!(offload);
     }
     write_new(
         &output.join("runtime-check-receipt.json"),

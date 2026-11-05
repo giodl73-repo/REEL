@@ -169,6 +169,9 @@ pub fn check_generation(
     if let Some(precision) = &e.model_precision {
         request["model_precision"] = json!(precision);
     }
+    if let Some(offload) = e.offload_dit_to_cpu {
+        request["offload_dit_to_cpu"] = json!(offload);
+    }
     let request_raw = serde_json::to_vec_pretty(&request)?;
     held.push(held_bytes(
         &root,

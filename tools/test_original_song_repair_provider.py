@@ -62,6 +62,13 @@ class OriginalProviderControls(unittest.TestCase):
                     self.assertIs(torch.cuda.is_bf16_supported,original_probe)
                     inference.generate_music.assert_not_called()
                     self.assertEqual(initialized.call_args.kwargs['quantization'],'w8a8_dynamic')
+                    self.assertFalse(initialized.call_args.kwargs['offload_dit_to_cpu'])
+                    handler.AceStepHandler = lambda: types.SimpleNamespace(dtype=dtype,offload_dit_to_cpu=True,initialize_service=initialized)
+                    provider.initialize_ace({'ace_root':'synthetic'},model_precision=precision,offload_dit_to_cpu=True)
+                    self.assertTrue(initialized.call_args.kwargs['offload_dit_to_cpu'])
+                    handler.AceStepHandler = lambda: types.SimpleNamespace(dtype=dtype,offload_dit_to_cpu=False,initialize_service=initialized)
+                    with self.assertRaisesRegex(RuntimeError,'did not enable'):
+                        provider.initialize_ace({'ace_root':'synthetic'},model_precision=precision,offload_dit_to_cpu=True)
                     handler.AceStepHandler = lambda: types.SimpleNamespace(dtype=fp32,initialize_service=initialized)
                     with self.assertRaisesRegex(RuntimeError,'dtype differs'):
                         provider.initialize_ace({'ace_root':'synthetic'},model_precision=precision)
@@ -135,12 +142,14 @@ class OriginalProviderControls(unittest.TestCase):
         for field in ['runtime','source_context','backend','backend_helper']:
             request[field] = dict(sha256='b'*64,bytes=10)
         request['patches'][0]['context_audio'] = dict(sha256='c'*64,bytes=100)
+        request['offload_dit_to_cpu'] = True
         runtime = dict(python=dict(path='synthetic'),ace_root='synthetic',ace_commit='a'*40)
         inputs = {'provider-request.json':request,'source-context.json':context,'runtime.json':runtime}
         info = types.SimpleNamespace(subtype='FLOAT',samplerate=8000,frames=8000,channels=2)
         forbidden = mock.Mock(side_effect=AssertionError('runtime-only must not generate'))
-        def initialized(_, progress, model_precision):
+        def initialized(_, progress, model_precision, offload_dit_to_cpu):
             self.assertEqual(model_precision,'float32')
+            self.assertTrue(offload_dit_to_cpu)
             for stage in ['torch-import-start','torch-import-complete','ace-import-start','ace-import-complete','model-init-start','model-init-complete']:
                 progress.emit(stage)
             return object(), forbidden, forbidden, forbidden
@@ -159,6 +168,7 @@ class OriginalProviderControls(unittest.TestCase):
                 receipt = json.loads(Path('provider-runtime-check.json').read_text())
                 self.assertFalse(receipt['provider_generation_called'])
                 self.assertFalse(receipt['human_approval'])
+                self.assertTrue(receipt['offload_dit_to_cpu'])
                 rows = [json.loads(line) for line in Path('provider-progress.jsonl').read_text().splitlines()]
                 self.assertEqual(rows[-1]['stage'],'runtime-check-complete')
                 self.assertFalse(any(Path('.').glob('raw-patch-*')))
@@ -194,7 +204,7 @@ class OriginalProviderControls(unittest.TestCase):
             validate_original_repair(request,context,16000,8000,2)
 
     def test_one_explicit_attempt_and_finite_conditioning_controls(self):
-        for field,value in [('attempts_per_patch',2),('attempts_per_patch',True),('semantic_planner',True),('seed',True),('repaint_strength',float('nan')),('repaint_mode','unknown'),('model_precision','float64'),('model_precision',True)]:
+        for field,value in [('attempts_per_patch',2),('attempts_per_patch',True),('semantic_planner',True),('seed',True),('repaint_strength',float('nan')),('repaint_mode','unknown'),('model_precision','float64'),('model_precision',True),('offload_dit_to_cpu',1),('offload_dit_to_cpu','true')]:
             request, context = fixture()
             request[field] = value
             with self.assertRaises(ValueError):

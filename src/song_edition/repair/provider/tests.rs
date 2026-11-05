@@ -14,12 +14,13 @@ fn descriptor(path: &Path) -> Value {
 
 #[test]
 fn initialization_only_callback_checks_receipt_phases_and_refuses_generation() {
-    for mutation in 0..6 {
+    for mutation in 0..7 {
         let f = fixture();
         let (admission, recipe, _, _) = inputs(&f);
         let execution = execution(&f);
         let mut e = packet::parse(&fs::read(&execution).unwrap()).unwrap();
         e["model_precision"] = json!("float16");
+        e["offload_dit_to_cpu"] = json!(true);
         save(&execution, &e);
         let output = f.dir.path().join("diagnostic");
         let calls = Cell::new(0);
@@ -31,6 +32,10 @@ fn initialization_only_callback_checks_receipt_phases_and_refuses_generation() {
                 "runtime":request["runtime"],"source_context":request["source_context"],
                 "model_initialized":true,"provider_generation_called":false,"human_approval":false,"selected":false});
             receipt["model_precision"] = request["model_precision"].clone();
+            receipt["offload_dit_to_cpu"] = request["offload_dit_to_cpu"].clone();
+            if mutation == 6 {
+                receipt["offload_dit_to_cpu"] = json!(false);
+            }
             if mutation == 1 {
                 receipt["provider_generation_called"] = json!(true);
             }
@@ -68,6 +73,7 @@ fn initialization_only_callback_checks_receipt_phases_and_refuses_generation() {
             assert_eq!(report["provider_generation_called"], false);
             assert_eq!(report["provider_process_executed"], false);
             assert_eq!(report["human_approval"], false);
+            assert_eq!(report["offload_dit_to_cpu"], true);
         }
     }
 }
@@ -100,6 +106,35 @@ fn explicit_model_precision_is_pinned_while_legacy_requests_keep_their_shape() {
         } else {
             "float16"
         });
+        save(&execution, &e);
+        assert!(check_generation(&admission, &recipe, &execution, &output).is_err());
+    }
+}
+
+#[test]
+fn explicit_diffusion_offload_is_pinned_while_legacy_requests_keep_their_shape() {
+    for offload in [None, Some(false), Some(true)] {
+        let f = fixture();
+        let (admission, recipe, _, _) = inputs(&f);
+        let execution = execution(&f);
+        let mut e = packet::parse(&fs::read(&execution).unwrap()).unwrap();
+        if let Some(offload) = offload {
+            e["offload_dit_to_cpu"] = json!(offload);
+            save(&execution, &e);
+        }
+        let output = f.dir.path().join("generated");
+        generate_with(&admission, &recipe, &execution, &output, |inv| fake(inv, 0)).unwrap();
+        let request =
+            packet::parse(&fs::read(output.join("provider-request.json")).unwrap()).unwrap();
+        assert_eq!(
+            request.get("offload_dit_to_cpu").is_some(),
+            offload.is_some()
+        );
+        if let Some(offload) = offload {
+            assert_eq!(request["offload_dit_to_cpu"], offload);
+        }
+        check_generation(&admission, &recipe, &execution, &output).unwrap();
+        e["offload_dit_to_cpu"] = json!(!offload.unwrap_or(false));
         save(&execution, &e);
         assert!(check_generation(&admission, &recipe, &execution, &output).is_err());
     }
@@ -257,7 +292,7 @@ fn synthetic_raw_pass_materializes_and_preserves_original_without_inventing_requ
 }
 #[test]
 fn invalid_execution_or_missing_installed_bytes_refuse_before_callback_or_output() {
-    for mutation in 0..10 {
+    for mutation in 0..11 {
         let f = fixture();
         let (admission, recipe, _, _) = inputs(&f);
         let execution = execution(&f);
@@ -280,7 +315,8 @@ fn invalid_execution_or_missing_installed_bytes_refuse_before_callback_or_output
                 e["runtime"]["object"] = descriptor(&path);
             }
             8 => e["model_precision"] = json!("float64"),
-            _ => e["model_precision"] = json!(true),
+            9 => e["model_precision"] = json!(true),
+            _ => e["offload_dit_to_cpu"] = json!("true"),
         }
         save(&execution, &e);
         let output = f.dir.path().join("refused");

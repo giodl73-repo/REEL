@@ -22,6 +22,12 @@ The `reel.original-song-repair-execution.v1` file declares:
 
 - `runtime`, `backend`, `backend_helper`: explicit `path` and exact `object` pins;
 - an explicit private `caption`, `seed`, `repaint_mode` and `repaint_strength`;
+- optional `offload_dit_to_cpu`: a boolean; omission preserves the existing false
+  value and request shape. Explicit choices are pinned into requests, runtime
+  receipts and retained replay. A true request must be enabled on the initialized
+  handler. This uses the installed model's CPU offload option without changing
+  weights, resource limits or other model settings; it does not prove lower peak
+  memory or generation compatibility. Check initialization separately first;
 - optional `model_precision`: `float32`, `float16` or `bfloat16`; omission preserves the
   legacy float32 path and the shape of older provider requests;
 - the exact original `permissions`: `private_only:true`, `external_upload:false`,
