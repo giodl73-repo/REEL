@@ -9,6 +9,10 @@ repository = "https://github.com/giodl73-repo/REEL"
 readme = "README.md"
 default-run = "reel"
 
+[[bin]]
+name = "reel-album"
+path = "src/bin/reel-album.rs"
+
 [dependencies]
 anyhow = "1.0.100"
 base64 = "0.22.1"
