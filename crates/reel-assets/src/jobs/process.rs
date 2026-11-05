@@ -420,7 +420,26 @@ fn execute(
             return Err(std::io::Error::last_os_error().into());
         }
         if code != 0 {
-            return Err(format!("Job step exited {code}").into());
+            let mut message = format!("Job step exited {code}");
+            if let Some(bounded) = bounded {
+                let mut usage = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+                if QueryInformationJobObject(
+                    job,
+                    JobObjectExtendedLimitInformation,
+                    (&mut usage as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                    std::mem::size_of_val(&usage) as u32,
+                    ptr::null_mut(),
+                ) != 0
+                {
+                    message.push_str(&format!(
+                        "; job_peak_memory_bytes={}; job_memory_limit_bytes={}",
+                        usage.PeakJobMemoryUsed, bounded.memory_bytes
+                    ));
+                } else {
+                    message.push_str("; job_memory_statistics_unavailable");
+                }
+            }
+            return Err(message.into());
         }
         handles.stop()?;
     }

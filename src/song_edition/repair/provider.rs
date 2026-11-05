@@ -8,6 +8,8 @@ use std::{
     fs::File,
     path::{Component, PathBuf},
 };
+mod replay;
+pub use replay::check_generation;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -20,6 +22,8 @@ struct Execution {
     seed: u32,
     repaint_mode: String,
     repaint_strength: f64,
+    #[serde(default)]
+    model_precision: Option<String>,
     permissions: Value,
     timeout_seconds: u64,
     memory_bytes: usize,
@@ -35,6 +39,24 @@ struct Installed {
 struct InstalledGuard {
     _file: File,
 }
+const MAX_INSTALLED_FILE_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+const RUNTIME_CHECK_PHASES: [&str; 15] = [
+    "entered",
+    "controls-validated",
+    "soundfile-import-start",
+    "soundfile-import-complete",
+    "source-info-start",
+    "source-validated",
+    "runtime-verify-start",
+    "runtime-verified",
+    "torch-import-start",
+    "torch-import-complete",
+    "ace-import-start",
+    "ace-import-complete",
+    "model-init-start",
+    "model-init-complete",
+    "runtime-check-complete",
+];
 struct Prepared {
     loaded: Loaded,
     execution: Execution,
@@ -76,10 +98,9 @@ fn named(root: &Path, mut input: source::Input) -> Result<source::Input> {
     );
     Ok(input)
 }
-fn hold_installed(input: &Installed) -> Result<InstalledGuard> {
+fn validate_installed_pin(input: &Installed) -> Result<()> {
     if !input.path.is_absolute()
-        || input.bytes == 0
-        || input.bytes > 4 * 1024 * 1024 * 1024
+        || input.bytes > MAX_INSTALLED_FILE_BYTES
         || input.sha256.len() != 64
         || !input
             .sha256
@@ -88,6 +109,10 @@ fn hold_installed(input: &Installed) -> Result<InstalledGuard> {
     {
         bail!("provider installed-file pin or bound differs");
     }
+    Ok(())
+}
+fn hold_installed(input: &Installed) -> Result<InstalledGuard> {
+    validate_installed_pin(input)?;
     let metadata = fs::symlink_metadata(&input.path)?;
     #[cfg(windows)]
     let reparse = {
@@ -131,13 +156,7 @@ fn hold_installed(input: &Installed) -> Result<InstalledGuard> {
     }
     Ok(InstalledGuard { _file: file })
 }
-fn prepare(admission: &Path, recipe: &Path, execution: &Path) -> Result<Prepared> {
-    let loaded = load(admission, recipe)?;
-    let execution_path = execution.canonicalize()?;
-    let root = execution_path.parent().context("execution view missing")?;
-    let execution_raw = read_metadata(&execution_path)?;
-    let execution_pin = pin(&execution_raw);
-    let e: Execution = serde_json::from_value(packet::parse(&execution_raw)?)?;
+fn validate_execution(loaded: &Loaded, e: &Execution) -> Result<()> {
     if e.schema != "reel.original-song-repair-execution.v1"
         || e.caption.trim().is_empty()
         || e.caption.len() > 4096
@@ -151,6 +170,9 @@ fn prepare(admission: &Path, recipe: &Path, execution: &Path) -> Result<Prepared
         )
         || !e.repaint_strength.is_finite()
         || !(0.0..=1.0).contains(&e.repaint_strength)
+        || e.model_precision
+            .as_deref()
+            .is_some_and(|p| !matches!(p, "float32" | "float16"))
         || e.permissions != loaded.original.context()["private_scope"]
         || !(1..=3600).contains(&e.timeout_seconds)
         || !(64 * 1024 * 1024..=16u64 * 1024 * 1024 * 1024).contains(&(e.memory_bytes as u64))
@@ -158,6 +180,16 @@ fn prepare(admission: &Path, recipe: &Path, execution: &Path) -> Result<Prepared
     {
         bail!("provider execution parameters or original private restrictions differ");
     }
+    Ok(())
+}
+fn prepare(admission: &Path, recipe: &Path, execution: &Path) -> Result<Prepared> {
+    let loaded = load(admission, recipe)?;
+    let execution_path = execution.canonicalize()?;
+    let root = execution_path.parent().context("execution view missing")?;
+    let execution_raw = read_metadata(&execution_path)?;
+    let execution_pin = pin(&execution_raw);
+    let e: Execution = serde_json::from_value(packet::parse(&execution_raw)?)?;
+    validate_execution(&loaded, &e)?;
     let control = source::held(
         source::Input {
             path: execution_path.clone(),
@@ -302,6 +334,9 @@ struct Invocation<'a> {
     output: &'a Path,
 }
 fn run_provider(invocation: &Invocation<'_>) -> Result<bool> {
+    run_mode(invocation, false)
+}
+fn run_mode(invocation: &Invocation<'_>, runtime_check_only: bool) -> Result<bool> {
     #[cfg(windows)]
     {
         let p = invocation.prepared;
@@ -310,7 +345,11 @@ fn run_provider(invocation: &Invocation<'_>) -> Result<bool> {
             &[
                 "-B".into(),
                 p.backend_path.to_string_lossy().into_owned(),
-                "--original-repair".into(),
+                if runtime_check_only {
+                    "--original-repair-runtime-check".into()
+                } else {
+                    "--original-repair".into()
+                },
             ],
             invocation.output,
             std::time::Duration::from_secs(p.execution.timeout_seconds),
@@ -326,6 +365,7 @@ fn run_provider(invocation: &Invocation<'_>) -> Result<bool> {
     #[cfg(not(windows))]
     {
         let _ = (
+            runtime_check_only,
             &invocation.prepared.backend_path,
             &invocation.prepared.python.path,
             invocation.output,
@@ -333,17 +373,12 @@ fn run_provider(invocation: &Invocation<'_>) -> Result<bool> {
         bail!("original-song provider currently requires qualified Windows Job Objects")
     }
 }
-fn generate_with(
-    admission: &Path,
-    recipe: &Path,
-    execution: &Path,
-    output: &Path,
-    runner: impl FnOnce(&Invocation<'_>) -> Result<bool>,
-) -> Result<Value> {
-    if !output.is_absolute() || output.exists() {
-        bail!("provider output must be new and absolute")
-    };
-    let p = prepare(admission, recipe, execution)?;
+struct ProviderInputs {
+    request: Value,
+    request_raw: Vec<u8>,
+    _guards: Vec<source::Held>,
+}
+fn write_inputs(p: &Prepared, output: &Path) -> Result<ProviderInputs> {
     fs::create_dir(output)?;
     let context_raw = serde_json::to_vec_pretty(p.loaded.original.context())?;
     write_new(&output.join("source-context.json"), &context_raw)?;
@@ -374,13 +409,16 @@ fn generate_with(
             AUDIO,
         )?);
     }
-    let request = json!({"schema":"reel.original-song-repair-provider-request.v1",
+    let mut request = json!({"schema":"reel.original-song-repair-provider-request.v1",
         "recipe":p.loaded.recipe_pin,"source":p.loaded.recipe.recording,"source_context":pin(&context_raw),
         "runtime":p.runtime.pin,"backend":p.backend.pin,"backend_helper":p.helper.pin,
         "sample_rate":p.loaded.audio.rate,"channels":p.loaded.audio.channels,"source_frames":p.loaded.recipe.source_frames,
         "patches":geometry,"caption":p.execution.caption,"seed":p.execution.seed,
         "repaint_mode":p.execution.repaint_mode,"repaint_strength":p.execution.repaint_strength,
         "permissions":p.execution.permissions,"attempts_per_patch":1,"semantic_planner":false});
+    if let Some(precision) = &p.execution.model_precision {
+        request["model_precision"] = json!(precision);
+    }
     let request_raw = serde_json::to_vec_pretty(&request)?;
     write_new(&output.join("provider-request.json"), &request_raw)?;
     for (name, object) in [
@@ -397,6 +435,26 @@ fn generate_with(
             AUDIO,
         )?);
     }
+    Ok(ProviderInputs {
+        request,
+        request_raw,
+        _guards: input_guards,
+    })
+}
+fn generate_with(
+    admission: &Path,
+    recipe: &Path,
+    execution: &Path,
+    output: &Path,
+    runner: impl FnOnce(&Invocation<'_>) -> Result<bool>,
+) -> Result<Value> {
+    if !output.is_absolute() || output.exists() {
+        bail!("provider output must be new and absolute")
+    };
+    let p = prepare(admission, recipe, execution)?;
+    let inputs = write_inputs(&p, output)?;
+    let request = &inputs.request;
+    let request_raw = &inputs.request_raw;
     let executed = runner(&Invocation {
         prepared: &p,
         output,
@@ -404,7 +462,7 @@ fn generate_with(
     let receipt_raw = read_metadata(&output.join("provider-receipt.json"))?;
     let receipt = packet::parse(&receipt_raw)?;
     if receipt["schema"] != "reel.original-song-repair-provider-receipt.v1"
-        || receipt["request"] != serde_json::to_value(pin(&request_raw))?
+        || receipt["request"] != serde_json::to_value(pin(request_raw))?
         || receipt["runtime"] != request["runtime"]
         || receipt["source_context"] != request["source_context"]
         || receipt["external_upload"] != false
@@ -475,7 +533,7 @@ fn generate_with(
     let final_path = output.join("materialized");
     let checked = materialize(admission, recipe, &candidates_path, &final_path)?;
     let result = json!({"schema":"reel.original-song-repair-generation-receipt.v1","execution":p.execution_pin,
-        "recipe":p.loaded.recipe_pin,"provider_request":pin(&request_raw),"provider_receipt":pin(&receipt_raw),
+        "recipe":p.loaded.recipe_pin,"provider_request":pin(request_raw),"provider_receipt":pin(&receipt_raw),
         "runtime":p.runtime.pin,"backend":p.backend.pin,"backend_helper":p.helper.pin,
         "installed_guarded_files":p._installed.len(),"installed_bytes":p.installed_bytes,"provider_process_executed":executed,
         "declared_attempts_per_patch":1,"raw_candidate_normalization":normalization,"materialization":checked,
@@ -494,6 +552,109 @@ fn generate_with(
 }
 pub fn generate(admission: &Path, recipe: &Path, execution: &Path, output: &Path) -> Result<Value> {
     generate_with(admission, recipe, execution, output, run_provider)
+}
+
+/// Explicit initialization-only diagnosis under the same held inputs and bounds.
+/// No patch invocation, candidate normalization or final materialization occurs.
+pub fn diagnose_runtime(
+    admission: &Path,
+    recipe: &Path,
+    execution: &Path,
+    output: &Path,
+) -> Result<Value> {
+    diagnose_with(admission, recipe, execution, output, |inv| {
+        run_mode(inv, true)
+    })
+}
+fn diagnose_with(
+    admission: &Path,
+    recipe: &Path,
+    execution: &Path,
+    output: &Path,
+    runner: impl FnOnce(&Invocation<'_>) -> Result<bool>,
+) -> Result<Value> {
+    if !output.is_absolute() || output.exists() {
+        bail!("runtime diagnostic output must be new and absolute");
+    }
+    let p = prepare(admission, recipe, execution)?;
+    let inputs = write_inputs(&p, output)?;
+    let executed = runner(&Invocation {
+        prepared: &p,
+        output,
+    })?;
+    for name in [
+        "provider-receipt.json",
+        "candidates.json",
+        "materialized",
+        "raw-patch-0.wav",
+        "raw-patch-1.wav",
+        "raw-patch-2.wav",
+    ] {
+        if output.join(name).exists() {
+            bail!("initialization-only diagnosis produced generation outputs");
+        }
+    }
+    let raw = read_metadata(&output.join("provider-runtime-check.json"))?;
+    let _receipt = source::held(
+        source::Input {
+            path: output.join("provider-runtime-check.json"),
+            object: pin(&raw),
+        },
+        META,
+    )?;
+    let receipt = packet::parse(&raw)?;
+    let mut expected = json!({"schema":"reel.original-song-provider-runtime-check.v1",
+        "request":pin(&inputs.request_raw),"runtime":p.runtime.pin,"source_context":inputs.request["source_context"],
+        "model_initialized":true,"provider_generation_called":false,"human_approval":false,"selected":false});
+    if let Some(precision) = &p.execution.model_precision {
+        expected["model_precision"] = json!(precision);
+    }
+    if receipt != expected {
+        bail!("initialization-only runtime receipt differs");
+    }
+    let progress_raw = read_metadata(&output.join("provider-progress.jsonl"))?;
+    if progress_raw.len() > 16384 {
+        bail!("runtime progress exceeds bound");
+    }
+    let mut phases = Vec::new();
+    for line in std::str::from_utf8(&progress_raw)?.lines() {
+        let value = packet::parse(line.as_bytes())?;
+        if value["schema"] != "reel.original-song-provider-progress.v1"
+            || value["stage"].as_str().is_none()
+            || phases.len() >= 32
+        {
+            bail!("runtime progress record differs");
+        }
+        phases.push(value);
+    }
+    let expected_phases: Vec<_> = RUNTIME_CHECK_PHASES
+        .iter()
+        .map(|stage| json!({"schema":"reel.original-song-provider-progress.v1","stage":stage}))
+        .collect();
+    if phases != expected_phases {
+        bail!("runtime initialization phase sequence differs");
+    }
+    let _progress = source::held(
+        source::Input {
+            path: output.join("provider-progress.jsonl"),
+            object: pin(&progress_raw),
+        },
+        16384,
+    )?;
+    let mut report = json!({"schema":"reel.original-song-runtime-diagnostic.v1","execution":p.execution_pin,
+        "recipe":p.loaded.recipe_pin,"runtime":p.runtime.pin,"backend":p.backend.pin,"backend_helper":p.helper.pin,
+        "provider_request":pin(&inputs.request_raw),"provider_receipt":pin(&raw),"progress":pin(&progress_raw),
+        "installed_guarded_files":p._installed.len(),"installed_bytes":p.installed_bytes,
+        "provider_process_executed":executed,"model_initialization_reported":true,"provider_generation_called":false,
+        "candidate_materialized":false,"human_approval":false,"selected":false,"shareable":false});
+    if let Some(precision) = &p.execution.model_precision {
+        report["model_precision"] = json!(precision);
+    }
+    write_new(
+        &output.join("runtime-check-receipt.json"),
+        &serde_json::to_vec_pretty(&report)?,
+    )?;
+    Ok(report)
 }
 
 #[cfg(test)]
