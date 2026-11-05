@@ -122,7 +122,7 @@ fn real_bilingual_video_preserves_audio_chapters_and_phrase_pages() {
         "outputs":{"master.mp3":pin(&audio),"chapters.ffmetadata":pin(&chapters)}});
     let album_receipt = save(&t.path().join("album.json"), &ledger);
     let reading = json!({"schema":"reel.album-bilingual-reading.v1","mode":"editorial-reading-pages","source_album_check":pin(&album_receipt),"palette":palette(),
-        "tracks":[{"song_id":"one","mode":"sung","pages":[{"start_frame":0,"end_frame":144000,"lines":[{"es":"Un recuerdo delicado de una mañana junto al mar de Cuba","en":"A delicate memory of the quiet and beautiful Cuban countryside"},{"es":"La palma canta","en":"The palm sings"}]}]},
+        "tracks":[{"song_id":"one","mode":"sung","pages":[{"start_frame":0,"end_frame":144000,"lines":[{"es":"Un recuerdo delicado de una mañana junto al mar de Cuba","en":"A delicate memory of the quiet and beautiful Cuban countryside","display_lines":{"es":["Un recuerdo delicado","de una mañana junto","al mar de Cuba"],"en":["A delicate memory of","the quiet and beautiful","Cuban countryside"]}},{"es":"La palma canta","en":"The palm sings"}]}]},
         {"song_id":"two","mode":"instrumental","pages":[]}]});
     let reading_pin = save(&t.path().join("reading.json"), &reading);
     let mut q = Request {
