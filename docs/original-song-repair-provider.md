@@ -32,7 +32,13 @@ The `reel.original-song-repair-execution.v1` file declares:
   legacy float32 path and the shape of older provider requests;
 - the exact original `permissions`: `private_only:true`, `external_upload:false`,
   `identifiable_imitation:false`, `public_release:false`;
-- `timeout_seconds` (1–3600), `memory_bytes` (64 MiB–16 GiB) and `processes` (1–32).
+- `timeout_seconds` (1–3600), `memory_bytes` (64 MiB–24 GiB) and `processes` (1–32).
+
+The process allowance is explicit per execution; widening its accepted ceiling
+does not alter any retained 16-GiB execution or its replay pins. A larger actual
+job needs a new admitted execution, sufficient measured host headroom, and its
+own native limit/result evidence. Installed-file read budgets, asset/cache
+capacity and Git limits are separate and unchanged. No job is unbounded.
 
 Relative file inputs resolve inside the execution file's directory. Traversal
 and relative escapes refuse. The helper must be the pinned adjacent

@@ -141,6 +141,32 @@ fn explicit_diffusion_offload_is_pinned_while_legacy_requests_keep_their_shape()
 }
 
 #[test]
+fn explicit_child_memory_allowance_is_bounded_and_retained_replay_pins_it() {
+    for memory in [
+        64 * 1024 * 1024u64,
+        16 * 1024 * 1024 * 1024,
+        24 * 1024 * 1024 * 1024,
+    ] {
+        let f = fixture();
+        let (admission, recipe, _, _) = inputs(&f);
+        let execution = execution(&f);
+        let mut e = packet::parse(&fs::read(&execution).unwrap()).unwrap();
+        e["memory_bytes"] = json!(memory);
+        save(&execution, &e);
+        let output = f.dir.path().join("generated");
+        generate_with(&admission, &recipe, &execution, &output, |inv| {
+            assert_eq!(inv.prepared.execution.memory_bytes as u64, memory);
+            fake(inv, 0)
+        })
+        .unwrap();
+        check_generation(&admission, &recipe, &execution, &output).unwrap();
+        e["memory_bytes"] = json!(memory + 1);
+        save(&execution, &e);
+        assert!(check_generation(&admission, &recipe, &execution, &output).is_err());
+    }
+}
+
+#[test]
 fn installed_file_pins_allow_exact_empty_files_and_models_through_eight_gib() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("empty-init.py");
@@ -292,7 +318,7 @@ fn synthetic_raw_pass_materializes_and_preserves_original_without_inventing_requ
 }
 #[test]
 fn invalid_execution_or_missing_installed_bytes_refuse_before_callback_or_output() {
-    for mutation in 0..11 {
+    for mutation in 0..12 {
         let f = fixture();
         let (admission, recipe, _, _) = inputs(&f);
         let execution = execution(&f);
@@ -316,7 +342,8 @@ fn invalid_execution_or_missing_installed_bytes_refuse_before_callback_or_output
             }
             8 => e["model_precision"] = json!("float64"),
             9 => e["model_precision"] = json!(true),
-            _ => e["offload_dit_to_cpu"] = json!("true"),
+            10 => e["offload_dit_to_cpu"] = json!("true"),
+            _ => e["memory_bytes"] = json!(24u64 * 1024 * 1024 * 1024 + 1),
         }
         save(&execution, &e);
         let output = f.dir.path().join("refused");
