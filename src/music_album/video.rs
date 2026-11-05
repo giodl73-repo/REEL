@@ -601,6 +601,13 @@ pub fn render(request: &Path, output: &Path) -> Result<Value> {
             "yuv420p",
             "-c:a",
             "copy",
+            "-bsf:a",
+        ])
+        .arg(format!(
+            "setts=time_base=1/48000:prescale=1:duration='max(0,min(DURATION,{}-PTS))'",
+            a.frames
+        ))
+        .args([
             "-movflags",
             "+faststart",
             "-video_track_timescale",

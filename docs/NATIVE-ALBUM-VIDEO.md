@@ -58,6 +58,9 @@ outputs, musical acceptance, human picture review, selection or delivery.
 
 The audio stream must declare exactly the album's sample count at 48 kHz and
 start at zero. Source and movie must preserve the same initial encoder skip.
+The mux uses a 48-kHz movie timebase and explicit sample-duration packet metadata;
+the final packet remains present with its payload unchanged. This preserves
+sub-millisecond endpoints even when the final five-fps picture extends longer.
 The checker derives final discard padding from the unchanged MPEG-1 Layer III
 packet count, initial skip and exact source PCM length; it must be less than one
 1,152-sample packet. Some older MOV demuxers expose those final padding samples

@@ -106,7 +106,7 @@ fn real_bilingual_video_preserves_audio_chapters_and_phrase_pages() {
             "-i",
             "sine=frequency=330:sample_rate=48000:duration=6.01",
             "-af",
-            "atrim=end_sample=288001",
+            "atrim=end_sample=288049",
             "-ac",
             "2",
             "-c:a",
@@ -116,11 +116,11 @@ fn real_bilingual_video_preserves_audio_chapters_and_phrase_pages() {
         ])
         .arg(t.path().join("album.mp3"));
     capture(&mut command, 0, Instant::now() + Duration::from_secs(30)).unwrap();
-    fs::write(t.path().join("chapters.ffmetadata"),";FFMETADATA1\ntitle=Álbum del sueño\n[CHAPTER]\nTIMEBASE=1/48000\nSTART=0\nEND=144000\ntitle=Primero\n[CHAPTER]\nTIMEBASE=1/48000\nSTART=144000\nEND=288001\ntitle=Después\n").unwrap();
+    fs::write(t.path().join("chapters.ffmetadata"),";FFMETADATA1\ntitle=Álbum del sueño\n[CHAPTER]\nTIMEBASE=1/48000\nSTART=0\nEND=144000\ntitle=Primero\n[CHAPTER]\nTIMEBASE=1/48000\nSTART=144000\nEND=288049\ntitle=Después\n").unwrap();
     let audio = input(&t.path().join("album.mp3"));
     let chapters = input(&t.path().join("chapters.ffmetadata"));
-    let ledger = json!({"schema":"reel.local-song-album-master-check.v1","title":"Álbum del sueño","frames":288001,"sample_rate":48000,"channels":2,
-        "tracks":[{"song_id":"one","title":"Primero","start_frame":0,"frames":144000},{"song_id":"two","title":"Después","start_frame":144000,"frames":144001}],
+    let ledger = json!({"schema":"reel.local-song-album-master-check.v1","title":"Álbum del sueño","frames":288049,"sample_rate":48000,"channels":2,
+        "tracks":[{"song_id":"one","title":"Primero","start_frame":0,"frames":144000},{"song_id":"two","title":"Después","start_frame":144000,"frames":144049}],
         "outputs":{"master.mp3":pin(&audio),"chapters.ffmetadata":pin(&chapters)}});
     let album_receipt = save(&t.path().join("album.json"), &ledger);
     let reading = json!({"schema":"reel.album-bilingual-reading.v1","mode":"editorial-reading-pages","source_album_check":pin(&album_receipt),"palette":palette(),
@@ -159,11 +159,11 @@ fn real_bilingual_video_preserves_audio_chapters_and_phrase_pages() {
     plan(&request).unwrap();
     let first = render(&request, Path::new("first")).unwrap();
     assert_eq!(first["observation"]["audio_packet_payloads_exact"], true);
-    assert_eq!(first["observation"]["decoded_pcm"]["bytes"], 288001 * 8);
-    assert_eq!(first["observation"]["source_discard_padding_frames"], 46);
+    assert_eq!(first["observation"]["decoded_pcm"]["bytes"], 288049 * 8);
+    assert_eq!(first["observation"]["source_discard_padding_frames"], 1150);
     assert!(matches!(
         first["observation"]["decoder_exposed_padding_frames"].as_u64(),
-        Some(0 | 46)
+        Some(0 | 1150)
     ));
     check(&request, Path::new("first")).unwrap();
     let pixels = frame(&q, &t.path().join("first/master.mp4"), "1");
