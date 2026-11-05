@@ -13,6 +13,62 @@ fn descriptor(path: &Path) -> Value {
 }
 
 #[test]
+fn initialization_only_callback_checks_receipt_phases_and_refuses_generation() {
+    for mutation in 0..6 {
+        let f = fixture();
+        let (admission, recipe, _, _) = inputs(&f);
+        let execution = execution(&f);
+        let output = f.dir.path().join("diagnostic");
+        let calls = Cell::new(0);
+        let result = diagnose_with(&admission, &recipe, &execution, &output, |inv| {
+            calls.set(calls.get() + 1);
+            let request = packet::parse(&fs::read(inv.output.join("provider-request.json"))?)?;
+            let mut receipt = json!({"schema":"reel.original-song-provider-runtime-check.v1",
+                "request":descriptor(&inv.output.join("provider-request.json")),
+                "runtime":request["runtime"],"source_context":request["source_context"],
+                "model_initialized":true,"provider_generation_called":false,"human_approval":false,"selected":false});
+            if mutation == 1 {
+                receipt["provider_generation_called"] = json!(true);
+            }
+            if mutation == 4 {
+                receipt["model_initialized"] = json!(false);
+            }
+            save(&inv.output.join("provider-runtime-check.json"), &receipt);
+            let mut phases: Vec<_> = RUNTIME_CHECK_PHASES.iter().map(|stage|
+                json!({"schema":"reel.original-song-provider-progress.v1","stage":stage})).collect();
+            if mutation == 2 {
+                fs::write(inv.output.join("raw-patch-0.wav"), b"not permitted")?;
+            }
+            if mutation == 3 {
+                phases.push(json!({"schema":"reel.original-song-provider-progress.v1","stage":"patch-start","patch":0}));
+            }
+            if mutation == 5 {
+                phases.pop();
+            }
+            let raw = phases
+                .into_iter()
+                .map(|p| serde_json::to_string(&p).unwrap() + "\n")
+                .collect::<String>();
+            fs::write(inv.output.join("provider-progress.jsonl"), raw)?;
+            Ok(false)
+        });
+        assert_eq!(calls.get(), 1);
+        assert_eq!(
+            result.is_ok(),
+            mutation == 0,
+            "mutation {mutation}: {result:?}"
+        );
+        assert!(!output.join("materialized").exists());
+        assert!(!output.join("candidates.json").exists());
+        if let Ok(report) = result {
+            assert_eq!(report["provider_generation_called"], false);
+            assert_eq!(report["provider_process_executed"], false);
+            assert_eq!(report["human_approval"], false);
+        }
+    }
+}
+
+#[test]
 fn installed_file_pins_allow_exact_empty_files_and_models_through_eight_gib() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("empty-init.py");
@@ -419,7 +475,7 @@ fn explicit_python_child_obeys_native_input_guards_and_materializes_synthetic_au
     let f = fixture();
     let (admission, recipe, _, _) = inputs(&f);
     let execution = execution(&f);
-    let script = r#"import hashlib,json,struct
+    let script = r#"import hashlib,json,struct,sys
 from pathlib import Path
 def load(name): return json.loads(Path(name).read_text(encoding='utf-8'))
 def pin(name):
@@ -432,6 +488,14 @@ for name in ['patch-source-0.wav','source-context.json',runtime['generation_file
         with open(name,'r+b'): pass
     except PermissionError: pass
     else: raise RuntimeError('native input write guard did not exclude the child')
+if sys.argv[1:]==['--original-repair-runtime-check']:
+    phases=['entered','controls-validated','soundfile-import-start','soundfile-import-complete','source-info-start','source-validated','runtime-verify-start','runtime-verified','torch-import-start','torch-import-complete','ace-import-start','ace-import-complete','model-init-start','model-init-complete','runtime-check-complete']
+    with open('provider-progress.jsonl','x',encoding='utf-8') as stream:
+        for stage in phases: stream.write(json.dumps(dict(schema='reel.original-song-provider-progress.v1',stage=stage))+'\n')
+    with open('provider-runtime-check.json','x',encoding='utf-8') as stream:
+        json.dump(dict(schema='reel.original-song-provider-runtime-check.v1',request=pin('provider-request.json'),runtime=pin('runtime.json'),source_context=pin('source-context.json'),model_initialized=True,provider_generation_called=False,human_approval=False,selected=False),stream)
+    sys.exit(0)
+assert sys.argv[1:]==['--original-repair']
 attempts=[]
 for index,p in enumerate(request['patches']):
     frames=p['context_end_frame']-p['context_start_frame']
@@ -484,4 +548,10 @@ with open('provider-receipt.json','x',encoding='utf-8') as stream:
         replay["historical_process_execution_independently_verified"],
         false
     );
+    let diagnostic = f.dir.path().join("contained-runtime-diagnostic");
+    let report = diagnose_runtime(&admission, &recipe, &execution, &diagnostic).unwrap();
+    assert_eq!(report["provider_process_executed"], true);
+    assert_eq!(report["provider_generation_called"], false);
+    assert_eq!(report["candidate_materialized"], false);
+    assert!(!diagnostic.join("raw-patch-0.wav").exists());
 }

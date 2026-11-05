@@ -82,6 +82,32 @@ listening, source-interpretation authority, rights and release remain separate.
 Partial outputs are preserved on failure. Existing output directories refuse;
 there is no hidden retry or overwrite path.
 
+`reel-song-repair diagnose-runtime ADMISSION RECIPE EXECUTION OUTPUT` performs an
+explicit initialization-only check under the same original-input guards, runtime
+read set, process/commit-memory limits and timeout. It prepares and validates the
+same source/conditioning inputs, then selects the backend's separate
+`--original-repair-runtime-check` route. That route returns after initialization,
+before constructing generation parameters or invoking the patch generator.
+No candidate normalization or full-recording materialization runs. Existing
+model/dtype parameters and all cache policies remain unchanged.
+
+Original-source backend calls now create `provider-progress.jsonl` without
+replacement. At most 32 fixed phase markers / 16 KiB are flushed and synced before
+native imports, initialization and patch calls; no source text, paths or process
+log goes into these markers. Declare this file as an outer managed output so it
+survives a native crash. Bounded Windows child failures preserve their exit code
+and include the Job Object's peak committed-memory usage and configured limit,
+or explicitly report unavailable statistics. These numbers do not measure GPU
+memory and cannot alone establish a crash cause.
+
+A successful runtime-only check requires the exact ordered initialization phases
+and a matching `provider-runtime-check.json` with generation false. The controller
+refuses generation outputs and writes `runtime-check-receipt.json`. Retain those
+three diagnostic files plus the prepared original/context/runtime/request and
+conditioning files and the outer step log. Failure preserves the completed phase
+prefix. Model initialization is neither a successful musical repair nor evidence
+of listening, selection, human approval or shared-lane adoption.
+
 `reel-song-repair check-generation ADMISSION RECIPE EXECUTION OUTPUT` replays a
 retained generation without executing a provider or opening installed runtime
 files. The caller must independently admit those controls and the retained job

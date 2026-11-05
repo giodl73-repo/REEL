@@ -38,6 +38,23 @@ struct InstalledGuard {
     _file: File,
 }
 const MAX_INSTALLED_FILE_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+const RUNTIME_CHECK_PHASES: [&str; 15] = [
+    "entered",
+    "controls-validated",
+    "soundfile-import-start",
+    "soundfile-import-complete",
+    "source-info-start",
+    "source-validated",
+    "runtime-verify-start",
+    "runtime-verified",
+    "torch-import-start",
+    "torch-import-complete",
+    "ace-import-start",
+    "ace-import-complete",
+    "model-init-start",
+    "model-init-complete",
+    "runtime-check-complete",
+];
 struct Prepared {
     loaded: Loaded,
     execution: Execution,
@@ -312,6 +329,9 @@ struct Invocation<'a> {
     output: &'a Path,
 }
 fn run_provider(invocation: &Invocation<'_>) -> Result<bool> {
+    run_mode(invocation, false)
+}
+fn run_mode(invocation: &Invocation<'_>, runtime_check_only: bool) -> Result<bool> {
     #[cfg(windows)]
     {
         let p = invocation.prepared;
@@ -320,7 +340,11 @@ fn run_provider(invocation: &Invocation<'_>) -> Result<bool> {
             &[
                 "-B".into(),
                 p.backend_path.to_string_lossy().into_owned(),
-                "--original-repair".into(),
+                if runtime_check_only {
+                    "--original-repair-runtime-check".into()
+                } else {
+                    "--original-repair".into()
+                },
             ],
             invocation.output,
             std::time::Duration::from_secs(p.execution.timeout_seconds),
@@ -336,6 +360,7 @@ fn run_provider(invocation: &Invocation<'_>) -> Result<bool> {
     #[cfg(not(windows))]
     {
         let _ = (
+            runtime_check_only,
             &invocation.prepared.backend_path,
             &invocation.prepared.python.path,
             invocation.output,
@@ -343,17 +368,12 @@ fn run_provider(invocation: &Invocation<'_>) -> Result<bool> {
         bail!("original-song provider currently requires qualified Windows Job Objects")
     }
 }
-fn generate_with(
-    admission: &Path,
-    recipe: &Path,
-    execution: &Path,
-    output: &Path,
-    runner: impl FnOnce(&Invocation<'_>) -> Result<bool>,
-) -> Result<Value> {
-    if !output.is_absolute() || output.exists() {
-        bail!("provider output must be new and absolute")
-    };
-    let p = prepare(admission, recipe, execution)?;
+struct ProviderInputs {
+    request: Value,
+    request_raw: Vec<u8>,
+    _guards: Vec<source::Held>,
+}
+fn write_inputs(p: &Prepared, output: &Path) -> Result<ProviderInputs> {
     fs::create_dir(output)?;
     let context_raw = serde_json::to_vec_pretty(p.loaded.original.context())?;
     write_new(&output.join("source-context.json"), &context_raw)?;
@@ -407,6 +427,26 @@ fn generate_with(
             AUDIO,
         )?);
     }
+    Ok(ProviderInputs {
+        request,
+        request_raw,
+        _guards: input_guards,
+    })
+}
+fn generate_with(
+    admission: &Path,
+    recipe: &Path,
+    execution: &Path,
+    output: &Path,
+    runner: impl FnOnce(&Invocation<'_>) -> Result<bool>,
+) -> Result<Value> {
+    if !output.is_absolute() || output.exists() {
+        bail!("provider output must be new and absolute")
+    };
+    let p = prepare(admission, recipe, execution)?;
+    let inputs = write_inputs(&p, output)?;
+    let request = &inputs.request;
+    let request_raw = &inputs.request_raw;
     let executed = runner(&Invocation {
         prepared: &p,
         output,
@@ -414,7 +454,7 @@ fn generate_with(
     let receipt_raw = read_metadata(&output.join("provider-receipt.json"))?;
     let receipt = packet::parse(&receipt_raw)?;
     if receipt["schema"] != "reel.original-song-repair-provider-receipt.v1"
-        || receipt["request"] != serde_json::to_value(pin(&request_raw))?
+        || receipt["request"] != serde_json::to_value(pin(request_raw))?
         || receipt["runtime"] != request["runtime"]
         || receipt["source_context"] != request["source_context"]
         || receipt["external_upload"] != false
@@ -485,7 +525,7 @@ fn generate_with(
     let final_path = output.join("materialized");
     let checked = materialize(admission, recipe, &candidates_path, &final_path)?;
     let result = json!({"schema":"reel.original-song-repair-generation-receipt.v1","execution":p.execution_pin,
-        "recipe":p.loaded.recipe_pin,"provider_request":pin(&request_raw),"provider_receipt":pin(&receipt_raw),
+        "recipe":p.loaded.recipe_pin,"provider_request":pin(request_raw),"provider_receipt":pin(&receipt_raw),
         "runtime":p.runtime.pin,"backend":p.backend.pin,"backend_helper":p.helper.pin,
         "installed_guarded_files":p._installed.len(),"installed_bytes":p.installed_bytes,"provider_process_executed":executed,
         "declared_attempts_per_patch":1,"raw_candidate_normalization":normalization,"materialization":checked,
@@ -504,6 +544,103 @@ fn generate_with(
 }
 pub fn generate(admission: &Path, recipe: &Path, execution: &Path, output: &Path) -> Result<Value> {
     generate_with(admission, recipe, execution, output, run_provider)
+}
+
+/// Explicit initialization-only diagnosis under the same held inputs and bounds.
+/// No patch invocation, candidate normalization or final materialization occurs.
+pub fn diagnose_runtime(
+    admission: &Path,
+    recipe: &Path,
+    execution: &Path,
+    output: &Path,
+) -> Result<Value> {
+    diagnose_with(admission, recipe, execution, output, |inv| {
+        run_mode(inv, true)
+    })
+}
+fn diagnose_with(
+    admission: &Path,
+    recipe: &Path,
+    execution: &Path,
+    output: &Path,
+    runner: impl FnOnce(&Invocation<'_>) -> Result<bool>,
+) -> Result<Value> {
+    if !output.is_absolute() || output.exists() {
+        bail!("runtime diagnostic output must be new and absolute");
+    }
+    let p = prepare(admission, recipe, execution)?;
+    let inputs = write_inputs(&p, output)?;
+    let executed = runner(&Invocation {
+        prepared: &p,
+        output,
+    })?;
+    for name in [
+        "provider-receipt.json",
+        "candidates.json",
+        "materialized",
+        "raw-patch-0.wav",
+        "raw-patch-1.wav",
+        "raw-patch-2.wav",
+    ] {
+        if output.join(name).exists() {
+            bail!("initialization-only diagnosis produced generation outputs");
+        }
+    }
+    let raw = read_metadata(&output.join("provider-runtime-check.json"))?;
+    let _receipt = source::held(
+        source::Input {
+            path: output.join("provider-runtime-check.json"),
+            object: pin(&raw),
+        },
+        META,
+    )?;
+    let receipt = packet::parse(&raw)?;
+    let expected = json!({"schema":"reel.original-song-provider-runtime-check.v1",
+        "request":pin(&inputs.request_raw),"runtime":p.runtime.pin,"source_context":inputs.request["source_context"],
+        "model_initialized":true,"provider_generation_called":false,"human_approval":false,"selected":false});
+    if receipt != expected {
+        bail!("initialization-only runtime receipt differs");
+    }
+    let progress_raw = read_metadata(&output.join("provider-progress.jsonl"))?;
+    if progress_raw.len() > 16384 {
+        bail!("runtime progress exceeds bound");
+    }
+    let mut phases = Vec::new();
+    for line in std::str::from_utf8(&progress_raw)?.lines() {
+        let value = packet::parse(line.as_bytes())?;
+        if value["schema"] != "reel.original-song-provider-progress.v1"
+            || value["stage"].as_str().is_none()
+            || phases.len() >= 32
+        {
+            bail!("runtime progress record differs");
+        }
+        phases.push(value);
+    }
+    let expected_phases: Vec<_> = RUNTIME_CHECK_PHASES
+        .iter()
+        .map(|stage| json!({"schema":"reel.original-song-provider-progress.v1","stage":stage}))
+        .collect();
+    if phases != expected_phases {
+        bail!("runtime initialization phase sequence differs");
+    }
+    let _progress = source::held(
+        source::Input {
+            path: output.join("provider-progress.jsonl"),
+            object: pin(&progress_raw),
+        },
+        16384,
+    )?;
+    let report = json!({"schema":"reel.original-song-runtime-diagnostic.v1","execution":p.execution_pin,
+        "recipe":p.loaded.recipe_pin,"runtime":p.runtime.pin,"backend":p.backend.pin,"backend_helper":p.helper.pin,
+        "provider_request":pin(&inputs.request_raw),"provider_receipt":pin(&raw),"progress":pin(&progress_raw),
+        "installed_guarded_files":p._installed.len(),"installed_bytes":p.installed_bytes,
+        "provider_process_executed":executed,"model_initialization_reported":true,"provider_generation_called":false,
+        "candidate_materialized":false,"human_approval":false,"selected":false,"shareable":false});
+    write_new(
+        &output.join("runtime-check-receipt.json"),
+        &serde_json::to_vec_pretty(&report)?,
+    )?;
+    Ok(report)
 }
 
 #[cfg(test)]

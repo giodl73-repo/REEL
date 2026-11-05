@@ -1,6 +1,14 @@
 """Synthetic control checks; no model import, generation, setup or private data."""
 import copy
 import unittest
+import json
+import os
+import sys
+import tempfile
+import types
+from pathlib import Path
+from unittest import mock
+import local_song_repaint as provider
 from local_song_repaint import validate_original_repair
 from local_song_backend import validate_request
 
@@ -20,6 +28,68 @@ def fixture():
 
 
 class OriginalProviderControls(unittest.TestCase):
+    def test_progress_is_bounded_synced_and_never_overwrites_or_logs_source(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)/'phases.jsonl'
+            with provider.OriginalRepairProgress(path) as progress:
+                with self.assertRaises(ValueError):
+                    progress.emit('private source words')
+                for _ in range(32):
+                    progress.emit('entered')
+                with self.assertRaises(ValueError):
+                    progress.emit('entered')
+                self.assertEqual(len(path.read_text().splitlines()),32)
+            self.assertLess(path.stat().st_size,16384)
+            with self.assertRaises(FileExistsError):
+                provider.OriginalRepairProgress(path)
+            self.assertNotIn('private source words',path.read_text())
+
+    def test_progress_keeps_last_phase_and_propagates_python_failure(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)/'phases.jsonl'
+            with self.assertRaisesRegex(RuntimeError,'private error'):
+                with provider.OriginalRepairProgress(path) as progress:
+                    progress.emit('model-init-start')
+                    raise RuntimeError('private error')
+            rows = [json.loads(line) for line in path.read_text().splitlines()]
+            self.assertEqual([r['stage'] for r in rows],['model-init-start','python-exception'])
+            self.assertNotIn('private error',path.read_text())
+
+    def test_runtime_only_mode_returns_before_any_generation_constructor_or_call(self):
+        request, context = fixture()
+        for field in ['runtime','source_context','backend','backend_helper']:
+            request[field] = dict(sha256='b'*64,bytes=10)
+        request['patches'][0]['context_audio'] = dict(sha256='c'*64,bytes=100)
+        runtime = dict(python=dict(path='synthetic'),ace_root='synthetic',ace_commit='a'*40)
+        inputs = {'provider-request.json':request,'source-context.json':context,'runtime.json':runtime}
+        info = types.SimpleNamespace(subtype='FLOAT',samplerate=8000,frames=8000,channels=2)
+        forbidden = mock.Mock(side_effect=AssertionError('runtime-only must not generate'))
+        def initialized(_, progress):
+            for stage in ['torch-import-start','torch-import-complete','ace-import-start','ace-import-complete','model-init-start','model-init-complete']:
+                progress.emit(stage)
+            return object(), forbidden, forbidden, forbidden
+        original = Path.cwd()
+        with tempfile.TemporaryDirectory() as folder:
+            try:
+                os.chdir(folder)
+                with mock.patch.object(provider,'read',side_effect=lambda name:inputs[name]), \
+                     mock.patch.object(provider,'checked'), mock.patch.object(provider,'runtime_files'), \
+                     mock.patch.object(provider,'descriptor',return_value=dict(sha256='b'*64,bytes=10)), \
+                     mock.patch.object(provider.subprocess,'check_output',return_value='a'*40), \
+                     mock.patch.object(provider,'initialize_ace',side_effect=initialized), \
+                     mock.patch.dict(sys.modules,{'soundfile':types.SimpleNamespace(info=lambda _:info)}):
+                    provider.original_repair_main(runtime_check_only=True)
+                forbidden.assert_not_called()
+                receipt = json.loads(Path('provider-runtime-check.json').read_text())
+                self.assertFalse(receipt['provider_generation_called'])
+                self.assertFalse(receipt['human_approval'])
+                rows = [json.loads(line) for line in Path('provider-progress.jsonl').read_text().splitlines()]
+                self.assertEqual(rows[-1]['stage'],'runtime-check-complete')
+                self.assertFalse(any(Path('.').glob('raw-patch-*')))
+                self.assertFalse(Path('provider-receipt.json').exists())
+            finally:
+                os.chdir(original)
+
     def test_exact_original_context_and_canonical_words(self):
         request, context = fixture()
         validate_original_repair(request,context,8000,8000,2)

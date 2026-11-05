@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import re
+import json
 
 sys.dont_write_bytecode = True
 
@@ -72,19 +73,70 @@ def splice(original, generated, rate, start, end, fade_seconds=.12):
     return result
 
 
-def initialize_ace(runtime):
+class OriginalRepairProgress:
+    """Bounded, synced phase markers only; no source text or process log."""
+    stages = frozenset(('entered','controls-validated','soundfile-import-start',
+        'soundfile-import-complete','source-info-start','source-validated',
+        'runtime-verify-start','runtime-verified','torch-import-start',
+        'torch-import-complete','ace-import-start','ace-import-complete',
+        'model-init-start','model-init-complete','runtime-check-complete',
+        'patch-start','patch-complete','generation-complete','python-exception'))
+
+    def __init__(self, path='provider-progress.jsonl'):
+        self.stream = Path(path).open('x', encoding='utf-8', newline='\n')
+        self.count, self.bytes = 0, 0
+
+    def __enter__(self):
+        return self
+
+    def emit(self, stage, patch=None):
+        if stage not in self.stages or (patch is not None and (type(patch) is not int or not 0 <= patch <= 2)):
+            raise ValueError('Unsupported provider progress marker')
+        value = dict(schema='reel.original-song-provider-progress.v1',stage=stage)
+        if patch is not None:
+            value['patch'] = patch
+        line = json.dumps(value, separators=(',',':'))+'\n'
+        length = len(line.encode('utf-8'))
+        if self.count >= 32 or self.bytes+length > 16384:
+            raise ValueError('Provider progress exceeds bound')
+        self.stream.write(line)
+        self.stream.flush()
+        os.fsync(self.stream.fileno())
+        self.count += 1
+        self.bytes += length
+
+    def __exit__(self, kind, value, traceback):
+        try:
+            if kind is not None:
+                try:
+                    self.emit('python-exception')
+                except (ValueError, OSError):
+                    pass
+        finally:
+            self.stream.close()
+        return False
+
+
+def initialize_ace(runtime, progress=None):
+    note = progress.emit if progress is not None else lambda stage: None
     os.environ['ACESTEP_ROCM_DTYPE'] = 'float32'
     sys.path.insert(0, runtime['ace_root'])
+    note('torch-import-start')
     import torch
+    note('torch-import-complete')
+    note('ace-import-start')
     import acestep.gpu_config as gpu_config
     gpu_config.is_rocm_available = lambda: True
     from acestep.handler import AceStepHandler
     from acestep.inference import GenerationConfig, GenerationParams, generate_music
+    note('ace-import-complete')
     torch.set_num_threads(4)
     handler = AceStepHandler()
+    note('model-init-start')
     status, ok = handler.initialize_service(project_root=runtime['ace_root'],config_path='acestep-v15-turbo',device='cuda',use_flash_attention=False,compile_model=False,offload_to_cpu=True,offload_dit_to_cpu=False,quantization='w8a8_dynamic',use_mlx_dit=False)
     if not ok or handler.dtype is not torch.float32:
         raise RuntimeError(str(status))
+    note('model-init-complete')
     return handler, GenerationParams, GenerationConfig, generate_music
 
 
@@ -142,8 +194,14 @@ def validate_original_repair(request, context, rate, frames, channels):
         previous = end
 
 
-def original_repair_main():
+def original_repair_main(runtime_check_only=False):
     """Raw candidates only. Rust owns original correspondence and materialization."""
+    with OriginalRepairProgress() as progress:
+        progress.emit('entered')
+        return _original_repair_main(progress, runtime_check_only)
+
+
+def _original_repair_main(progress, runtime_check_only):
     offline()
     request, context, runtime = read('provider-request.json'), read('source-context.json'), read('runtime.json')
     checked('source-context.json',request['source_context'])
@@ -151,7 +209,11 @@ def original_repair_main():
     checked('source.wav',request['source'])
     checked(Path(__file__),request['backend'])
     checked(Path(__file__).with_name('local_song_backend.py'),request['backend_helper'])
+    progress.emit('controls-validated')
+    progress.emit('soundfile-import-start')
     import soundfile as sf
+    progress.emit('soundfile-import-complete')
+    progress.emit('source-info-start')
     info = sf.info('source.wav')
     if info.subtype != 'FLOAT':
         raise ValueError('Original repair requires a float32 source')
@@ -162,11 +224,20 @@ def original_repair_main():
         window = sf.info(path)
         if window.samplerate != info.samplerate or window.channels != info.channels or window.frames != patch['context_end_frame']-patch['context_start_frame'] or window.subtype != 'FLOAT':
             raise ValueError('Native prepared conditioning window differs')
+    progress.emit('source-validated')
+    progress.emit('runtime-verify-start')
     runtime_files(runtime,'generation_files')
     checked(runtime['python']['path'],runtime['python'])
     if subprocess.check_output(['git','-C',runtime['ace_root'],'rev-parse','HEAD'],text=True).strip() != runtime['ace_commit']:
         raise ValueError('Original repair provider source changed')
-    handler, Params, Config, generate = initialize_ace(runtime)
+    progress.emit('runtime-verified')
+    handler, Params, Config, generate = initialize_ace(runtime, progress)
+    if runtime_check_only:
+        write('provider-runtime-check.json',dict(schema='reel.original-song-provider-runtime-check.v1',
+            request=descriptor('provider-request.json'),runtime=descriptor('runtime.json'),source_context=descriptor('source-context.json'),
+            model_initialized=True,provider_generation_called=False,human_approval=False,selected=False))
+        progress.emit('runtime-check-complete')
+        return
     attempts = []
     for index, patch in enumerate(request['patches']):
         start = patch['context_start_frame']
@@ -177,6 +248,7 @@ def original_repair_main():
             caption=request['caption'],lyrics=patch['supplied_lyrics'],instrumental=False,vocal_language='es',
             duration=(patch['context_end_frame']-start)/info.samplerate,inference_steps=8,guidance_scale=7.5,
             seed=request['seed']+index,thinking=False,use_cot_metas=False,use_cot_caption=False,use_cot_language=False,use_cot_lyrics=False)
+        progress.emit('patch-start',index)
         result = generate(handler,None,params,Config(batch_size=1,use_random_seed=False,seeds=[params.seed],audio_format='wav'),save_dir=f'generated-{index}')
         if not result.success or len(result.audios) != 1:
             raise RuntimeError(str(result.error))
@@ -184,9 +256,11 @@ def original_repair_main():
         os.link(result.audios[0]['path'],destination)
         attempts.append(dict(index=index,attempt=1,seed=params.seed,context_start_frame=start,
             context_end_frame=patch['context_end_frame'],context_audio=patch['context_audio'],raw_audio=descriptor(destination)))
+        progress.emit('patch-complete',index)
     write('provider-receipt.json',dict(schema='reel.original-song-repair-provider-receipt.v1',
         request=descriptor('provider-request.json'),runtime=descriptor('runtime.json'),source_context=descriptor('source-context.json'),
         patches=attempts,external_upload=False,human_approval=False,selected=False,performed_words_verified=False))
+    progress.emit('generation-complete')
 
 
 def main():
@@ -272,6 +346,8 @@ def main():
 if __name__=='__main__':
     if sys.argv[1:] == ['--original-repair']:
         original_repair_main()
+    elif sys.argv[1:] == ['--original-repair-runtime-check']:
+        original_repair_main(runtime_check_only=True)
     elif not sys.argv[1:]:
         main()
     else:
