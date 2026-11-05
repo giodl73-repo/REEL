@@ -253,7 +253,9 @@ impl Session<'_> {
         if raw.len() > self.limits.max_message_bytes {
             bail!("browser command exceeds byte budget");
         }
-        self.transport.send(&raw, remaining)?;
+        self.transport
+            .send(&raw, remaining)
+            .with_context(|| format!("send browser control command {method} id {id}"))?;
         self.check()?;
         Ok(id)
     }
@@ -336,7 +338,10 @@ impl Session<'_> {
             }
             let raw = self
                 .transport
-                .receive(self.limits.max_message_bytes, remaining)?;
+                .receive(self.limits.max_message_bytes, remaining)
+                .with_context(|| {
+                    format!("receive browser control response for {method} id {wanted}")
+                })?;
             if raw.len() > self.limits.max_message_bytes {
                 bail!("browser message exceeds byte budget");
             }
@@ -476,17 +481,22 @@ pub fn capture(
         let expression = format!(
             "window.__reelSetFrame({frame});JSON.stringify({{url:location.href,frame:window.__REEL_FRAME__}})"
         );
-        let state = evaluation(s.call(
-            "Runtime.evaluate",
-            json!({"expression":expression,"returnByValue":true,"awaitPromise":true}),
-        )?)?;
+        let state = evaluation(
+            s.call(
+                "Runtime.evaluate",
+                json!({"expression":expression,"returnByValue":true,"awaitPromise":true}),
+            )
+            .with_context(|| format!("set browser capture frame {frame}"))?,
+        )?;
         if state["url"] != url || state["frame"].as_u64() != Some(frame) {
             bail!("browser navigation or frame clock differs");
         }
-        let shot = s.call(
-            "Page.captureScreenshot",
-            json!({"format":"png","fromSurface":true,"captureBeyondViewport":false}),
-        )?;
+        let shot = s
+            .call(
+                "Page.captureScreenshot",
+                json!({"format":"png","fromSurface":true,"captureBeyondViewport":false}),
+            )
+            .with_context(|| format!("capture browser picture frame {frame}"))?;
         let encoded = shot["data"]
             .as_str()
             .context("browser screenshot missing")?;
@@ -528,12 +538,16 @@ pub fn capture(
             bail!("browser background changed outside dynamic regions");
         }
         s.check()?;
-        consumer.write(frame, &png)?;
+        consumer
+            .write(frame, &png)
+            .with_context(|| format!("write captured browser frame {frame} to consumer"))?;
         s.check()?;
         sequence.update(frame.to_be_bytes());
         sequence.update(production::sha256_bytes(&png).as_bytes());
     }
-    consumer.finish()?;
+    consumer
+        .finish()
+        .context("finish captured browser frame consumer")?;
     s.check()?;
     Ok(Captured {
         frames: manifest.frame_count,
