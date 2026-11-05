@@ -19,7 +19,12 @@ pub fn build_subreport(
         "observations":checked.observations,"major_obstruction_found":checked.major_obstruction_found,"finite_scope_qualified_with_holds":checked.finite_scope_qualified_with_holds,
         "holds_preserved":at(evidence,"holds_preserved")?,"all_scope_qualification_pending":true,"human_approval":false
     });
-    for field in ["actual_Review", "current_ASS"] {
+    for field in [
+        "actual_Review",
+        "current_ASS",
+        "indexed_source_context",
+        "required_original_holds",
+    ] {
         if let Some(value) = task.get(field) {
             report[field] = value.clone();
         }
