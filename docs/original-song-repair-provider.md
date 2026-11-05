@@ -22,6 +22,12 @@ The `reel.original-song-repair-execution.v1` file declares:
 
 - `runtime`, `backend`, `backend_helper`: explicit `path` and exact `object` pins;
 - an explicit private `caption`, `seed`, `repaint_mode` and `repaint_strength`;
+- optional `compute_device`: `cuda` or `cpu`; omission preserves CUDA and its
+  request shape. CPU requires float32, explicit `quantization: "none"`, and no
+  diffusion CPU offload. The actual initialized device must match; no fallback;
+- optional `quantization`: `w8a8_dynamic` or `none`; omission preserves the
+  existing quantized route. Explicit `none` passes the installed API's null
+  quantization option and requires the initialized handler to confirm it;
 - optional `offload_dit_to_cpu`: a boolean; omission preserves the existing false
   value and request shape. Explicit choices are pinned into requests, runtime
   receipts and retained replay. A true request must be enabled on the initialized

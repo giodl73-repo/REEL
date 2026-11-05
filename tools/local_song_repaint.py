@@ -136,12 +136,18 @@ class OriginalRepairProgress:
         return False
 
 
-def initialize_ace(runtime, progress=None, model_precision='float32', offload_dit_to_cpu=False):
+def validate_runtime_controls(model_precision, offload_dit_to_cpu, quantization, compute_device):
+    if model_precision not in ('float32','float16','bfloat16') or type(offload_dit_to_cpu) is not bool:
+        raise ValueError('Invalid explicit precision or diffusion CPU offload')
+    if quantization not in ('none','w8a8_dynamic') or compute_device not in ('cpu','cuda'):
+        raise ValueError('Unsupported explicit quantization or compute device')
+    if compute_device == 'cpu' and (model_precision != 'float32' or quantization != 'none' or offload_dit_to_cpu):
+        raise ValueError('CPU route requires float32, no quantization and no diffusion offload')
+
+
+def initialize_ace(runtime, progress=None, model_precision='float32', offload_dit_to_cpu=False, quantization='w8a8_dynamic', compute_device='cuda'):
     note = progress.emit if progress is not None else lambda stage: None
-    if model_precision not in ('float32','float16','bfloat16'):
-        raise ValueError('Unsupported explicit model precision')
-    if type(offload_dit_to_cpu) is not bool:
-        raise ValueError('Explicit diffusion CPU offload must be boolean')
+    validate_runtime_controls(model_precision,offload_dit_to_cpu,quantization,compute_device)
     os.environ['ACESTEP_ROCM_DTYPE'] = model_precision
     sys.path.insert(0, runtime['ace_root'])
     note('torch-import-start')
@@ -149,7 +155,7 @@ def initialize_ace(runtime, progress=None, model_precision='float32', offload_di
     note('torch-import-complete')
     note('ace-import-start')
     import acestep.gpu_config as gpu_config
-    if model_precision == 'float32':
+    if model_precision == 'float32' and compute_device == 'cuda':
         gpu_config.is_rocm_available = lambda: True
     from acestep.handler import AceStepHandler
     from acestep.inference import GenerationConfig, GenerationParams, generate_music
@@ -163,7 +169,7 @@ def initialize_ace(runtime, progress=None, model_precision='float32', offload_di
         # This changes precision policy only inside this initialization call.
         if model_precision == 'float16':
             torch.cuda.is_bf16_supported = lambda *args, **kwargs: False
-        status, ok = handler.initialize_service(project_root=runtime['ace_root'],config_path='acestep-v15-turbo',device='cuda',use_flash_attention=False,compile_model=False,offload_to_cpu=True,offload_dit_to_cpu=offload_dit_to_cpu,quantization='w8a8_dynamic',use_mlx_dit=False)
+        status, ok = handler.initialize_service(project_root=runtime['ace_root'],config_path='acestep-v15-turbo',device=compute_device,use_flash_attention=False,compile_model=False,offload_to_cpu=True,offload_dit_to_cpu=offload_dit_to_cpu,quantization=None if quantization == 'none' else quantization,use_mlx_dit=False)
     finally:
         torch.cuda.is_bf16_supported = original_bfloat16_probe
     expected_dtype = getattr(torch,model_precision)
@@ -173,6 +179,10 @@ def initialize_ace(runtime, progress=None, model_precision='float32', offload_di
         raise RuntimeError('Initialized model dtype differs from explicitly requested precision')
     if offload_dit_to_cpu and getattr(handler,'offload_dit_to_cpu',False) is not True:
         raise RuntimeError('Initialized model did not enable requested diffusion CPU offload')
+    if quantization == 'none' and getattr(handler,'quantization','missing') is not None:
+        raise RuntimeError('Initialized model did not disable requested quantization')
+    if str(getattr(handler,'device','missing')) != compute_device:
+        raise RuntimeError('Initialized model device differs from explicitly requested compute device')
     note('model-init-complete')
     return handler, GenerationParams, GenerationConfig, generate_music
 
@@ -203,10 +213,7 @@ def validate_original_repair(request, context, rate, frames, channels):
     strength = request.get('repaint_strength')
     if type(strength) not in (int,float) or not 0 <= strength <= 1 or request.get('repaint_mode') not in ['conservative','balanced','aggressive']:
         raise ValueError('Explicit repaint controls required')
-    if request.get('model_precision','float32') not in ('float32','float16','bfloat16'):
-        raise ValueError('Unsupported explicit model precision')
-    if type(request.get('offload_dit_to_cpu',False)) is not bool:
-        raise ValueError('Explicit diffusion CPU offload must be boolean')
+    validate_runtime_controls(request.get('model_precision','float32'),request.get('offload_dit_to_cpu',False),request.get('quantization','w8a8_dynamic'),request.get('compute_device','cuda'))
     if not isinstance(request.get('caption'),str) or not request['caption'].strip() or len(request['caption'].encode('utf-8')) > 4096:
         raise ValueError('Bounded private provider caption required')
     patches = request.get('patches')
@@ -272,15 +279,14 @@ def _original_repair_main(progress, runtime_check_only):
     if subprocess.check_output(['git','-C',runtime['ace_root'],'rev-parse','HEAD'],text=True).strip() != runtime['ace_commit']:
         raise ValueError('Original repair provider source changed')
     progress.emit('runtime-verified')
-    handler, Params, Config, generate = initialize_ace(runtime, progress, request.get('model_precision','float32'),request.get('offload_dit_to_cpu',False))
+    handler, Params, Config, generate = initialize_ace(runtime, progress, request.get('model_precision','float32'),request.get('offload_dit_to_cpu',False),request.get('quantization','w8a8_dynamic'),request.get('compute_device','cuda'))
     if runtime_check_only:
         receipt = dict(schema='reel.original-song-provider-runtime-check.v1',
             request=descriptor('provider-request.json'),runtime=descriptor('runtime.json'),source_context=descriptor('source-context.json'),
             model_initialized=True,provider_generation_called=False,human_approval=False,selected=False)
-        if 'model_precision' in request:
-            receipt['model_precision'] = request['model_precision']
-        if 'offload_dit_to_cpu' in request:
-            receipt['offload_dit_to_cpu'] = request['offload_dit_to_cpu']
+        for key in ('model_precision','offload_dit_to_cpu','quantization','compute_device'):
+            if key in request:
+                receipt[key] = request[key]
         write('provider-runtime-check.json',receipt)
         progress.emit('runtime-check-complete')
         return

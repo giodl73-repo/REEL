@@ -14,13 +14,15 @@ fn descriptor(path: &Path) -> Value {
 
 #[test]
 fn initialization_only_callback_checks_receipt_phases_and_refuses_generation() {
-    for mutation in 0..7 {
+    for mutation in 0..9 {
         let f = fixture();
         let (admission, recipe, _, _) = inputs(&f);
         let execution = execution(&f);
         let mut e = packet::parse(&fs::read(&execution).unwrap()).unwrap();
-        e["model_precision"] = json!("float16");
-        e["offload_dit_to_cpu"] = json!(true);
+        e["model_precision"] = json!("float32");
+        e["offload_dit_to_cpu"] = json!(false);
+        e["compute_device"] = json!("cpu");
+        e["quantization"] = json!("none");
         save(&execution, &e);
         let output = f.dir.path().join("diagnostic");
         let calls = Cell::new(0);
@@ -33,8 +35,16 @@ fn initialization_only_callback_checks_receipt_phases_and_refuses_generation() {
                 "model_initialized":true,"provider_generation_called":false,"human_approval":false,"selected":false});
             receipt["model_precision"] = request["model_precision"].clone();
             receipt["offload_dit_to_cpu"] = request["offload_dit_to_cpu"].clone();
+            receipt["compute_device"] = request["compute_device"].clone();
+            receipt["quantization"] = request["quantization"].clone();
             if mutation == 6 {
-                receipt["offload_dit_to_cpu"] = json!(false);
+                receipt["offload_dit_to_cpu"] = json!(true);
+            }
+            if mutation == 7 {
+                receipt["compute_device"] = json!("cuda");
+            }
+            if mutation == 8 {
+                receipt["quantization"] = json!("w8a8_dynamic");
             }
             if mutation == 1 {
                 receipt["provider_generation_called"] = json!(true);
@@ -73,7 +83,9 @@ fn initialization_only_callback_checks_receipt_phases_and_refuses_generation() {
             assert_eq!(report["provider_generation_called"], false);
             assert_eq!(report["provider_process_executed"], false);
             assert_eq!(report["human_approval"], false);
-            assert_eq!(report["offload_dit_to_cpu"], true);
+            assert_eq!(report["offload_dit_to_cpu"], false);
+            assert_eq!(report["compute_device"], "cpu");
+            assert_eq!(report["quantization"], "none");
         }
     }
 }
@@ -161,6 +173,31 @@ fn explicit_child_memory_allowance_is_bounded_and_retained_replay_pins_it() {
         .unwrap();
         check_generation(&admission, &recipe, &execution, &output).unwrap();
         e["memory_bytes"] = json!(memory + 1);
+        save(&execution, &e);
+        assert!(check_generation(&admission, &recipe, &execution, &output).is_err());
+    }
+}
+
+#[test]
+fn explicit_unquantized_device_choices_are_pinned_without_changing_legacy_shape() {
+    for device in [None, Some("cpu")] {
+        let f = fixture();
+        let (admission, recipe, _, _) = inputs(&f);
+        let execution = execution(&f);
+        let mut e = packet::parse(&fs::read(&execution).unwrap()).unwrap();
+        e["quantization"] = json!("none");
+        if let Some(device) = device {
+            e["compute_device"] = json!(device);
+        }
+        save(&execution, &e);
+        let output = f.dir.path().join("generated");
+        generate_with(&admission, &recipe, &execution, &output, |inv| fake(inv, 0)).unwrap();
+        let request =
+            packet::parse(&fs::read(output.join("provider-request.json")).unwrap()).unwrap();
+        assert_eq!(request["quantization"], "none");
+        assert_eq!(request.get("compute_device").is_some(), device.is_some());
+        check_generation(&admission, &recipe, &execution, &output).unwrap();
+        e["compute_device"] = json!(if device == Some("cpu") { "cuda" } else { "cpu" });
         save(&execution, &e);
         assert!(check_generation(&admission, &recipe, &execution, &output).is_err());
     }
@@ -318,7 +355,7 @@ fn synthetic_raw_pass_materializes_and_preserves_original_without_inventing_requ
 }
 #[test]
 fn invalid_execution_or_missing_installed_bytes_refuse_before_callback_or_output() {
-    for mutation in 0..12 {
+    for mutation in 0..19 {
         let f = fixture();
         let (admission, recipe, _, _) = inputs(&f);
         let execution = execution(&f);
@@ -343,7 +380,22 @@ fn invalid_execution_or_missing_installed_bytes_refuse_before_callback_or_output
             8 => e["model_precision"] = json!("float64"),
             9 => e["model_precision"] = json!(true),
             10 => e["offload_dit_to_cpu"] = json!("true"),
-            _ => e["memory_bytes"] = json!(24u64 * 1024 * 1024 * 1024 + 1),
+            11 => e["memory_bytes"] = json!(24u64 * 1024 * 1024 * 1024 + 1),
+            12 => e["quantization"] = json!("unsupported"),
+            13 => e["compute_device"] = json!("mps"),
+            14 => e["compute_device"] = json!("cpu"),
+            15 => {
+                e["compute_device"] = json!("cpu");
+                e["quantization"] = json!("none");
+                e["model_precision"] = json!("float16");
+            }
+            16 => {
+                e["compute_device"] = json!("cpu");
+                e["quantization"] = json!("none");
+                e["offload_dit_to_cpu"] = json!(true);
+            }
+            17 => e["compute_device"] = json!(false),
+            _ => e["quantization"] = json!(true),
         }
         save(&execution, &e);
         let output = f.dir.path().join("refused");

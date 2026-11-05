@@ -47,7 +47,7 @@ class OriginalProviderControls(unittest.TestCase):
             self.assertEqual(torch.cuda.is_bf16_supported(),precision == 'bfloat16')
             return 'synthetic initialized', True
         initialized = mock.Mock(side_effect=initialize)
-        handler.AceStepHandler = lambda: types.SimpleNamespace(dtype=fp16,initialize_service=initialized)
+        handler.AceStepHandler = lambda: types.SimpleNamespace(dtype=fp16,device='cuda',initialize_service=initialized)
         inference = types.ModuleType('acestep.inference')
         inference.GenerationConfig, inference.GenerationParams = object(), object()
         inference.generate_music = mock.Mock(side_effect=AssertionError('initialization must not generate'))
@@ -55,7 +55,7 @@ class OriginalProviderControls(unittest.TestCase):
         try:
             with mock.patch.dict(sys.modules,{'torch':torch,'acestep':package,'acestep.gpu_config':gpu,'acestep.handler':handler,'acestep.inference':inference}), mock.patch.dict(os.environ,{}):
                 for precision,dtype in [('float16',fp16),('bfloat16',bf16)]:
-                    handler.AceStepHandler = lambda: types.SimpleNamespace(dtype=dtype,initialize_service=initialized)
+                    handler.AceStepHandler = lambda: types.SimpleNamespace(dtype=dtype,device='cuda',initialize_service=initialized)
                     provider.initialize_ace({'ace_root':'synthetic'},model_precision=precision)
                     self.assertIs(gpu.is_rocm_available,original_platform)
                     self.assertEqual(os.environ['ACESTEP_ROCM_DTYPE'],precision)
@@ -63,16 +63,50 @@ class OriginalProviderControls(unittest.TestCase):
                     inference.generate_music.assert_not_called()
                     self.assertEqual(initialized.call_args.kwargs['quantization'],'w8a8_dynamic')
                     self.assertFalse(initialized.call_args.kwargs['offload_dit_to_cpu'])
-                    handler.AceStepHandler = lambda: types.SimpleNamespace(dtype=dtype,offload_dit_to_cpu=True,initialize_service=initialized)
+                    handler.AceStepHandler = lambda: types.SimpleNamespace(dtype=dtype,device='cuda',offload_dit_to_cpu=True,initialize_service=initialized)
                     provider.initialize_ace({'ace_root':'synthetic'},model_precision=precision,offload_dit_to_cpu=True)
                     self.assertTrue(initialized.call_args.kwargs['offload_dit_to_cpu'])
-                    handler.AceStepHandler = lambda: types.SimpleNamespace(dtype=dtype,offload_dit_to_cpu=False,initialize_service=initialized)
+                    handler.AceStepHandler = lambda: types.SimpleNamespace(dtype=dtype,device='cuda',offload_dit_to_cpu=False,initialize_service=initialized)
                     with self.assertRaisesRegex(RuntimeError,'did not enable'):
                         provider.initialize_ace({'ace_root':'synthetic'},model_precision=precision,offload_dit_to_cpu=True)
-                    handler.AceStepHandler = lambda: types.SimpleNamespace(dtype=fp32,initialize_service=initialized)
+                    handler.AceStepHandler = lambda: types.SimpleNamespace(dtype=fp32,device='cuda',initialize_service=initialized)
                     with self.assertRaisesRegex(RuntimeError,'dtype differs'):
                         provider.initialize_ace({'ace_root':'synthetic'},model_precision=precision)
                     self.assertIs(torch.cuda.is_bf16_supported,original_probe)
+        finally:
+            sys.path[:] = old_path
+
+    def test_explicit_unquantized_cpu_route_checks_actual_device_and_quantization(self):
+        torch = types.ModuleType('torch')
+        torch.float32 = object()
+        torch.set_num_threads = mock.Mock()
+        torch.cuda = types.SimpleNamespace(is_bf16_supported=mock.Mock(return_value=False))
+        gpu = types.ModuleType('acestep.gpu_config')
+        original_platform = lambda: False
+        gpu.is_rocm_available = original_platform
+        package = types.ModuleType('acestep')
+        package.__path__, package.gpu_config = [], gpu
+        handler = types.ModuleType('acestep.handler')
+        initialized = mock.Mock(return_value=('synthetic initialized',True))
+        instance = types.SimpleNamespace(dtype=torch.float32,device='cpu',quantization=None,initialize_service=initialized)
+        handler.AceStepHandler = lambda: instance
+        inference = types.ModuleType('acestep.inference')
+        inference.GenerationConfig, inference.GenerationParams = object(), object()
+        inference.generate_music = mock.Mock(side_effect=AssertionError('initialization must not generate'))
+        old_path = list(sys.path)
+        try:
+            with mock.patch.dict(sys.modules,{'torch':torch,'acestep':package,'acestep.gpu_config':gpu,'acestep.handler':handler,'acestep.inference':inference}), mock.patch.dict(os.environ,{}):
+                provider.initialize_ace({'ace_root':'synthetic'},quantization='none',compute_device='cpu')
+                self.assertIs(gpu.is_rocm_available,original_platform)
+                self.assertEqual(initialized.call_args.kwargs['device'],'cpu')
+                self.assertIsNone(initialized.call_args.kwargs['quantization'])
+                inference.generate_music.assert_not_called()
+                instance.device = 'cuda'
+                with self.assertRaisesRegex(RuntimeError,'device differs'):
+                    provider.initialize_ace({'ace_root':'synthetic'},quantization='none',compute_device='cpu')
+                instance.device, instance.quantization = 'cpu', 'w8a8_dynamic'
+                with self.assertRaisesRegex(RuntimeError,'disable requested quantization'):
+                    provider.initialize_ace({'ace_root':'synthetic'},quantization='none',compute_device='cpu')
         finally:
             sys.path[:] = old_path
 
@@ -142,14 +176,15 @@ class OriginalProviderControls(unittest.TestCase):
         for field in ['runtime','source_context','backend','backend_helper']:
             request[field] = dict(sha256='b'*64,bytes=10)
         request['patches'][0]['context_audio'] = dict(sha256='c'*64,bytes=100)
-        request['offload_dit_to_cpu'] = True
+        request.update(offload_dit_to_cpu=False,compute_device='cpu',quantization='none',model_precision='float32')
         runtime = dict(python=dict(path='synthetic'),ace_root='synthetic',ace_commit='a'*40)
         inputs = {'provider-request.json':request,'source-context.json':context,'runtime.json':runtime}
         info = types.SimpleNamespace(subtype='FLOAT',samplerate=8000,frames=8000,channels=2)
         forbidden = mock.Mock(side_effect=AssertionError('runtime-only must not generate'))
-        def initialized(_, progress, model_precision, offload_dit_to_cpu):
+        def initialized(_, progress, model_precision, offload_dit_to_cpu, quantization, compute_device):
             self.assertEqual(model_precision,'float32')
-            self.assertTrue(offload_dit_to_cpu)
+            self.assertFalse(offload_dit_to_cpu)
+            self.assertEqual((quantization,compute_device),('none','cpu'))
             for stage in ['torch-import-start','torch-import-complete','ace-import-start','ace-import-complete','model-init-start','model-init-complete']:
                 progress.emit(stage)
             return object(), forbidden, forbidden, forbidden
@@ -168,7 +203,8 @@ class OriginalProviderControls(unittest.TestCase):
                 receipt = json.loads(Path('provider-runtime-check.json').read_text())
                 self.assertFalse(receipt['provider_generation_called'])
                 self.assertFalse(receipt['human_approval'])
-                self.assertTrue(receipt['offload_dit_to_cpu'])
+                self.assertFalse(receipt['offload_dit_to_cpu'])
+                self.assertEqual((receipt['quantization'],receipt['compute_device']),('none','cpu'))
                 rows = [json.loads(line) for line in Path('provider-progress.jsonl').read_text().splitlines()]
                 self.assertEqual(rows[-1]['stage'],'runtime-check-complete')
                 self.assertFalse(any(Path('.').glob('raw-patch-*')))
@@ -180,6 +216,16 @@ class OriginalProviderControls(unittest.TestCase):
         request, context = fixture()
         validate_original_repair(request,context,8000,8000,2)
         self.assertEqual(context['canonical_lyrics'],'Álpha beta\nDelta echo')
+
+    def test_cpu_route_rejects_incompatible_controls_before_model_work(self):
+        request, context = fixture()
+        request.update(compute_device='cpu',quantization='none',model_precision='float32',offload_dit_to_cpu=False)
+        validate_original_repair(request,context,8000,8000,2)
+        for field,value in [('model_precision','float16'),('offload_dit_to_cpu',True),('quantization','w8a8_dynamic'),('compute_device','mps'),('quantization',None)]:
+            changed = copy.deepcopy(request)
+            changed[field] = value
+            with self.assertRaises(ValueError):
+                validate_original_repair(changed,context,8000,8000,2)
 
     def test_private_flags_remain_boolean_and_restrictive(self):
         for field,value in [('private_only',False),('external_upload',True),('identifiable_imitation',True),('public_release',True),('private_only',1)]:

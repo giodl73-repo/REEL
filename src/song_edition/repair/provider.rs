@@ -26,10 +26,42 @@ struct Execution {
     model_precision: Option<String>,
     #[serde(default)]
     offload_dit_to_cpu: Option<bool>,
+    #[serde(default)]
+    quantization: Option<String>,
+    #[serde(default)]
+    compute_device: Option<String>,
     permissions: Value,
     timeout_seconds: u64,
     memory_bytes: usize,
     processes: u32,
+}
+impl Execution {
+    fn valid_runtime_controls(&self) -> bool {
+        let precision = self.model_precision.as_deref().unwrap_or("float32");
+        let quantization = self.quantization.as_deref().unwrap_or("w8a8_dynamic");
+        let device = self.compute_device.as_deref().unwrap_or("cuda");
+        matches!(precision, "float32" | "float16" | "bfloat16")
+            && matches!(quantization, "none" | "w8a8_dynamic")
+            && matches!(device, "cuda" | "cpu")
+            && (device != "cpu"
+                || (precision == "float32"
+                    && quantization == "none"
+                    && !self.offload_dit_to_cpu.unwrap_or(false)))
+    }
+    fn bind_runtime_controls(&self, target: &mut Value) {
+        if let Some(value) = &self.model_precision {
+            target["model_precision"] = json!(value);
+        }
+        if let Some(value) = self.offload_dit_to_cpu {
+            target["offload_dit_to_cpu"] = json!(value);
+        }
+        if let Some(value) = &self.quantization {
+            target["quantization"] = json!(value);
+        }
+        if let Some(value) = &self.compute_device {
+            target["compute_device"] = json!(value);
+        }
+    }
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -172,9 +204,7 @@ fn validate_execution(loaded: &Loaded, e: &Execution) -> Result<()> {
         )
         || !e.repaint_strength.is_finite()
         || !(0.0..=1.0).contains(&e.repaint_strength)
-        || e.model_precision
-            .as_deref()
-            .is_some_and(|p| !matches!(p, "float32" | "float16" | "bfloat16"))
+        || !e.valid_runtime_controls()
         || e.permissions != loaded.original.context()["private_scope"]
         || !(1..=3600).contains(&e.timeout_seconds)
         || !(64 * 1024 * 1024..=reel_assets::jobs::MAX_QUIET_CHILD_MEMORY_BYTES)
@@ -419,12 +449,7 @@ fn write_inputs(p: &Prepared, output: &Path) -> Result<ProviderInputs> {
         "patches":geometry,"caption":p.execution.caption,"seed":p.execution.seed,
         "repaint_mode":p.execution.repaint_mode,"repaint_strength":p.execution.repaint_strength,
         "permissions":p.execution.permissions,"attempts_per_patch":1,"semantic_planner":false});
-    if let Some(precision) = &p.execution.model_precision {
-        request["model_precision"] = json!(precision);
-    }
-    if let Some(offload) = p.execution.offload_dit_to_cpu {
-        request["offload_dit_to_cpu"] = json!(offload);
-    }
+    p.execution.bind_runtime_controls(&mut request);
     let request_raw = serde_json::to_vec_pretty(&request)?;
     write_new(&output.join("provider-request.json"), &request_raw)?;
     for (name, object) in [
@@ -612,12 +637,7 @@ fn diagnose_with(
     let mut expected = json!({"schema":"reel.original-song-provider-runtime-check.v1",
         "request":pin(&inputs.request_raw),"runtime":p.runtime.pin,"source_context":inputs.request["source_context"],
         "model_initialized":true,"provider_generation_called":false,"human_approval":false,"selected":false});
-    if let Some(precision) = &p.execution.model_precision {
-        expected["model_precision"] = json!(precision);
-    }
-    if let Some(offload) = p.execution.offload_dit_to_cpu {
-        expected["offload_dit_to_cpu"] = json!(offload);
-    }
+    p.execution.bind_runtime_controls(&mut expected);
     if receipt != expected {
         bail!("initialization-only runtime receipt differs");
     }
@@ -656,12 +676,7 @@ fn diagnose_with(
         "installed_guarded_files":p._installed.len(),"installed_bytes":p.installed_bytes,
         "provider_process_executed":executed,"model_initialization_reported":true,"provider_generation_called":false,
         "candidate_materialized":false,"human_approval":false,"selected":false,"shareable":false});
-    if let Some(precision) = &p.execution.model_precision {
-        report["model_precision"] = json!(precision);
-    }
-    if let Some(offload) = p.execution.offload_dit_to_cpu {
-        report["offload_dit_to_cpu"] = json!(offload);
-    }
+    p.execution.bind_runtime_controls(&mut report);
     write_new(
         &output.join("runtime-check-receipt.json"),
         &serde_json::to_vec_pretty(&report)?,
