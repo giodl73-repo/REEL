@@ -37,7 +37,9 @@ The existing `reel.local-song-runtime.v1` descriptor must name the absolute ACE
 root, its exact source commit, the installed Python pin and a nonempty
 `generation_files` roster. No installation path is discovered or guessed.
 At most 4096 generation entries and 16 GiB of unique installed files are admitted.
-Each installed file is limited to 4 GiB.
+Each installed file is limited to 8 GiB, within the existing object allowance.
+Zero-length package files remain exact hash-verified, read-held inputs; they
+cannot be dropped from the declared runtime just because their payload is empty.
 Each named file is stream-hashed and kept open; on Windows the read handles deny
 writes and deletion through provider execution and final materialization.
 Corruption, absence or conflicting pins refuse before creating the output or

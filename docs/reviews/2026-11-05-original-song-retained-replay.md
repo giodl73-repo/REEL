@@ -30,7 +30,15 @@ The explicitly enrolled Windows synthetic child also replays its moved output;
 its recorded execution flag stays distinct from independently proven history.
 No actual song, musical approval or production-lane adoption is claimed.
 
-Local validation passes 383 all-feature library tests (16 explicit ignores),
+Local validation passes 384 all-feature library tests (16 explicit ignores),
 the explicitly enrolled Windows synthetic child, all-target/all-feature clippy,
 formatting and diff checks. The checker opens no installed model during replay;
 the real family recording has not been regenerated or selected by this change.
+
+The real installed-runtime preflight exposed seven legitimate empty package
+files and a model larger than the initial 4-GiB per-file bound. Accept exact
+empty-file pins and models through the existing 8-GiB object allowance, retaining
+the 16-GiB aggregate limit and every hash/read-lock check. The regression tests
+empty-file hashing and Windows write protection, 4-to-8-GiB descriptor admission,
+actual-file mismatch rejection and refusal above 8 GiB. No runtime bytes or cache
+policy limits change to accommodate this installation.

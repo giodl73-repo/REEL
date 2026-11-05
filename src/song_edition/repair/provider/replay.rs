@@ -118,17 +118,7 @@ pub fn check_generation(
     let mut seen = BTreeMap::new();
     let mut total = 0u64;
     for entry in entries {
-        if !entry.path.is_absolute()
-            || entry.bytes == 0
-            || entry.bytes > 4 * 1024 * 1024 * 1024
-            || entry.sha256.len() != 64
-            || !entry
-                .sha256
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        {
-            bail!("retained provider installed descriptor differs");
-        }
+        validate_installed_pin(&entry)?;
         let key = entry.path.to_string_lossy().replace('\\', "/");
         let key = if cfg!(windows) {
             key.to_lowercase()

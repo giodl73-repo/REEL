@@ -37,6 +37,7 @@ struct Installed {
 struct InstalledGuard {
     _file: File,
 }
+const MAX_INSTALLED_FILE_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 struct Prepared {
     loaded: Loaded,
     execution: Execution,
@@ -78,10 +79,9 @@ fn named(root: &Path, mut input: source::Input) -> Result<source::Input> {
     );
     Ok(input)
 }
-fn hold_installed(input: &Installed) -> Result<InstalledGuard> {
+fn validate_installed_pin(input: &Installed) -> Result<()> {
     if !input.path.is_absolute()
-        || input.bytes == 0
-        || input.bytes > 4 * 1024 * 1024 * 1024
+        || input.bytes > MAX_INSTALLED_FILE_BYTES
         || input.sha256.len() != 64
         || !input
             .sha256
@@ -90,6 +90,10 @@ fn hold_installed(input: &Installed) -> Result<InstalledGuard> {
     {
         bail!("provider installed-file pin or bound differs");
     }
+    Ok(())
+}
+fn hold_installed(input: &Installed) -> Result<InstalledGuard> {
+    validate_installed_pin(input)?;
     let metadata = fs::symlink_metadata(&input.path)?;
     #[cfg(windows)]
     let reparse = {

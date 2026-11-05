@@ -11,6 +11,48 @@ fn save(path: &Path, value: &Value) {
 fn descriptor(path: &Path) -> Value {
     serde_json::to_value(pin(&fs::read(path).unwrap())).unwrap()
 }
+
+#[test]
+fn installed_file_pins_allow_exact_empty_files_and_models_through_eight_gib() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("empty-init.py");
+    fs::write(&path, b"").unwrap();
+    let empty = Installed {
+        path: path.clone(),
+        sha256: pin(b"").sha256,
+        bytes: 0,
+    };
+    let guard = hold_installed(&empty).unwrap();
+    #[cfg(windows)]
+    assert!(fs::write(&path, b"changed").is_err());
+    drop(guard);
+    for bytes in [4 * 1024 * 1024 * 1024 + 1, MAX_INSTALLED_FILE_BYTES] {
+        let large = Installed {
+            path: path.clone(),
+            sha256: "a".repeat(64),
+            bytes,
+        };
+        validate_installed_pin(&large).unwrap();
+        // Valid descriptor size never exempts a missing/mismatched actual file.
+        assert!(hold_installed(&large).is_err());
+    }
+    assert!(
+        validate_installed_pin(&Installed {
+            path: path.clone(),
+            sha256: "a".repeat(64),
+            bytes: MAX_INSTALLED_FILE_BYTES + 1
+        })
+        .is_err()
+    );
+    assert!(
+        hold_installed(&Installed {
+            path,
+            sha256: "0".repeat(64),
+            bytes: 0
+        })
+        .is_err()
+    );
+}
 fn execution(f: &Fixture) -> PathBuf {
     let root = f.dir.path();
     for (name, bytes) in [
