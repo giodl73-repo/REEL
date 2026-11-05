@@ -140,10 +140,7 @@ fn load(path: &Path) -> Result<(Request, Vec<u8>)> {
     crate::approval_attestation::ensure_no_duplicate_keys(&raw)?;
     let mut q: Request = serde_json::from_slice(&raw)?;
     validate(&q)?;
-    let base = path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .canonicalize()?;
+    let base = request_directory(path)?;
     for track in &mut q.tracks {
         if !track.source.path.is_absolute() {
             if track.source.path.as_os_str().is_empty()
@@ -163,6 +160,39 @@ fn load(path: &Path) -> Result<(Request, Vec<u8>)> {
         }
     }
     Ok((q, raw))
+}
+fn request_directory(request: &Path) -> Result<PathBuf> {
+    Ok(request
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+        .canonicalize()?)
+}
+fn packet_path(request: &Path, output: &Path, existing: bool) -> Result<PathBuf> {
+    if output.is_absolute() {
+        return Ok(output.to_path_buf());
+    }
+    if output.as_os_str().is_empty()
+        || !output
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+    {
+        bail!("relative album output must remain beneath the request workspace");
+    }
+    let base = request_directory(request)?;
+    let resolved = base.join(output);
+    let checked = if existing {
+        resolved.canonicalize()?
+    } else {
+        resolved
+            .parent()
+            .context("album output parent missing")?
+            .canonicalize()?
+    };
+    if !checked.starts_with(&base) {
+        bail!("relative album output escaped its workspace");
+    }
+    Ok(resolved)
 }
 fn validate(q: &Request) -> Result<()> {
     let input_bytes = q
@@ -506,6 +536,8 @@ fn metadata_packets(q: &Request, tracks: &[Segment]) -> Vec<(&'static str, Strin
     ]
 }
 pub fn render(request: &Path, output: &Path) -> Result<Value> {
+    let output = packet_path(request, output, false)?;
+    let output = output.as_path();
     let (q, raw) = load(request)?;
     let _held = guards(&q)?;
     if !output.is_absolute() {
@@ -660,6 +692,8 @@ fn verify_audio(q: &Request, r: &Receipt, output: &Path, deadline: Instant) -> R
     Ok(())
 }
 pub fn check(request: &Path, output: &Path) -> Result<Value> {
+    let output = packet_path(request, output, true)?;
+    let output = output.as_path();
     let (q, raw) = load(request)?;
     let _held = guards(&q)?;
     check_inner(

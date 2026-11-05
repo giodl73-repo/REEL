@@ -1,6 +1,6 @@
 # Native continuous album mastering
 
-`reel-album plan REQUEST`, `render REQUEST NEW_ABSOLUTE_DIRECTORY`, and
+`reel-album plan REQUEST`, `render REQUEST NEW_DIRECTORY`, and
 `check REQUEST DIRECTORY` implement private, complete-recording album packets in
 Rust. This is a file-level producer usable by a declared managed job; it performs
 no Tig discovery, publication, selection or provider operation. Materialize exact
@@ -14,7 +14,10 @@ FFmpeg executable path/hash/length, private-only permissions, ordered tracks
 path beneath the request's directory, supporting managed materialized inputs.
 Parent traversal and relative symlink escapes refuse. The executable must be
 an absolute pinned path. Sources are restricted to WAV, FLAC and MP3; playlist and network
-protocols are excluded. Tool and source handles remain open through the operation;
+protocols are excluded. A relative packet directory is also bound beneath the
+request directory, with traversal and symlink-escape refusal. This supports the
+ordinary managed job's `render request.json render` invocation. Absolute packet
+paths remain explicit caller choices. Tool and source handles remain open through the operation;
 Windows handles deny write/delete sharing. This does not claim a complete DLL or
 host environment; managed callers retain their normal runtime/source protections.
 

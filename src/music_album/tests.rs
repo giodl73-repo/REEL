@@ -87,6 +87,28 @@ fn duplicate_keys_and_stale_input_refuse_before_output() {
     assert!(render(&p, &output).is_err());
     assert!(!output.exists());
 }
+#[test]
+fn managed_relative_paths_bind_to_request_workspace() {
+    let t = tempfile::tempdir().unwrap();
+    let request = t.path().join("request.json");
+    assert_eq!(
+        packet_path(&request, Path::new("packet"), false).unwrap(),
+        t.path().canonicalize().unwrap().join("packet")
+    );
+    assert!(packet_path(&request, Path::new("../outside"), false).is_err());
+    assert!(packet_path(&request, Path::new(""), false).is_err());
+    assert_eq!(
+        request_directory(Path::new("request.json")).unwrap(),
+        std::env::current_dir().unwrap().canonicalize().unwrap()
+    );
+    #[cfg(unix)]
+    {
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), t.path().join("escape")).unwrap();
+        assert!(packet_path(&request, Path::new("escape/packet"), false).is_err());
+        assert!(packet_path(&request, Path::new("escape"), true).is_err());
+    }
+}
 fn wave(path: &Path, hz: f64) {
     let rate = 44100u32;
     let frames = rate * 5;
@@ -148,7 +170,7 @@ fn real_ffmpeg_complete_tail_gap_recheck_tamper_and_timeout() {
     fs::write(&p, serde_json::to_vec(&q).unwrap()).unwrap();
     let output = t.path().join("packet");
     plan(&p).unwrap();
-    let report = render(&p, &output).unwrap();
+    let report = render(&p, Path::new("packet")).unwrap();
     assert_eq!(report["frames"], 12 * RATE);
     assert!(!output.join("master.pcm").exists());
     let receipt: Receipt =
@@ -160,7 +182,7 @@ fn real_ffmpeg_complete_tail_gap_recheck_tamper_and_timeout() {
         receipt.tracks[0].mastered_pcm24_sha256,
         receipt.tracks[1].mastered_pcm24_sha256
     );
-    check(&p, &output).unwrap();
+    check(&p, Path::new("packet")).unwrap();
     assert!(render(&p, &output).is_err());
     let original = fs::read(output.join("receipt.json")).unwrap();
     let mut forged: Value = serde_json::from_slice(&original).unwrap();
