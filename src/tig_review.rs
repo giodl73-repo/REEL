@@ -266,6 +266,12 @@ pub fn validate_observations(
         truthy(at(evidence, "holds_preserved")?),
         "holds must be preserved"
     );
+    if let Some(holds) = task.get("required_original_holds") {
+        ensure!(
+            at(at(evidence, "holds_preserved")?, "original_source_holds")? == holds,
+            "original indexed source holds differ"
+        );
+    }
     let raw = array(evidence, "raw_source_observations")?;
     ensure!(
         raw.len() <= 128
@@ -283,6 +289,15 @@ pub fn validate_observations(
         let object = pin(asset)?;
         verify(asset)?;
         raw_seen.insert((object.sha256.as_str().to_owned(), object.bytes));
+    }
+    if let Some(expected) = task.get("raw_references") {
+        let expected = expected
+            .as_array()
+            .ok_or_else(|| anyhow!("invalid raw reference collection"))?
+            .iter()
+            .map(|value| pin(value).map(|o| (o.sha256.as_str().to_owned(), o.bytes)))
+            .collect::<Result<BTreeSet<_>>>()?;
+        ensure!(raw_seen == expected, "observed raw reference set differs");
     }
     let supplied = array(evidence, "observations")?;
     ensure!(supplied.len() == clocks.len(), "observation count differs");
@@ -344,6 +359,25 @@ pub fn validate_observations(
         for target_policy in &policy.targets {
             let targets = array(task, &target_policy.task_field)?;
             ensure!(targets.len() <= 128, "target budget exceeded");
+            let mut active_codes = BTreeSet::new();
+            for target in targets {
+                let span = array(target, &target_policy.span_field)?;
+                ensure!(span.len() == 2, "invalid target span");
+                if span[0].as_u64().is_some_and(|start| start <= frame)
+                    && span[1].as_u64().is_some_and(|end| frame < end)
+                {
+                    active_codes.insert(text(target, "code")?);
+                }
+            }
+            ensure!(
+                array(&observation, &target_policy.observation_field)?
+                    .iter()
+                    .all(|o| o
+                        .get("code")
+                        .and_then(Value::as_str)
+                        .is_some_and(|code| active_codes.contains(code))),
+                "target observation is outside the original active span"
+            );
             for target in targets {
                 let span = array(target, &target_policy.span_field)?;
                 ensure!(span.len() == 2, "invalid target span");
@@ -557,6 +591,43 @@ mod tests {
         evidence["raw_reference_view_occurrences"] = json!(1);
         assert!(validate(&task, &evidence, &policy).is_ok());
         evidence["observations"][0]["corrected"][0]["fix_lines"] = json!(["Paraphrased"]);
+        assert!(validate(&task, &evidence, &policy).is_err());
+    }
+
+    #[test]
+    fn requires_every_declared_raw_context_and_exact_original_holds() {
+        let (mut task, mut evidence, policy) = fixture();
+        let raw = json!({"sha256":"b".repeat(64),"bytes":9});
+        task["raw_references"] = json!([raw]);
+        task["required_original_holds"] = json!({"phone":true,"human_approval":false});
+        evidence["holds_preserved"] =
+            json!({"original_source_holds":task["required_original_holds"]});
+        assert!(validate(&task, &evidence, &policy).is_err());
+        evidence["raw_source_observations"] = json!([{"asset":raw,"privately_viewed_detail_original":true,"fresh_hash_bytes_verified":true,"detail":"Synthetic identity-only raw context"}]);
+        evidence["raw_reference_view_occurrences"] = json!(1);
+        assert!(validate(&task, &evidence, &policy).is_ok());
+        evidence["holds_preserved"]["original_source_holds"]["phone"] = json!(false);
+        assert!(validate(&task, &evidence, &policy).is_err());
+    }
+
+    #[test]
+    fn rejects_target_facts_outside_the_original_source_span() {
+        let (mut task, mut evidence, mut policy) = fixture();
+        let picture = json!({"sha256":"b".repeat(64),"bytes":9});
+        task["corrections"] = json!([{"code":"later","span":[20,21],"picture":picture}]);
+        policy.targets.push(TargetPolicy {
+            task_field: "corrections".into(),
+            source_field: "corrections".into(),
+            source_exact_fields: BTreeMap::new(),
+            observation_field: "corrected".into(),
+            span_field: "span".into(),
+            picture_fields: vec!["picture".into()],
+            exact_fields: vec![],
+            appearance_fields: vec!["visible".into()],
+        });
+        evidence["observations"][0]["corrected"] = json!([]);
+        assert!(validate(&task, &evidence, &policy).is_ok());
+        evidence["observations"][0]["corrected"] = json!([{"code":"later"}]);
         assert!(validate(&task, &evidence, &policy).is_err());
     }
 }

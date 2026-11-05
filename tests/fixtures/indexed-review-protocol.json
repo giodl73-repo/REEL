@@ -1,0 +1,19 @@
+{
+  "maximum_clocks_per_assignment": 3,
+  "role_names": ["programme_native", "programme_true390", "Review_native", "Review_true390"],
+  "verify_all_frozen_descriptors_before_any_view": true,
+  "verify_each_exact_original_file_SHA_bytes_RGB8_header_and_dimensions": true,
+  "view_each_role_at_original_detail": true,
+  "no_montage_resize_crop_composite_or_reencoding": true,
+  "all_four_actual_role_views_required": true,
+  "assess_own_ASS_and_current_footer_codes_against_exact_active_events": true,
+  "record_all_active_corrected_occurrences_and_no_out_of_span_targets": true,
+  "compare_original_and_selected_raw_references_before_requested_feature_judgments": true,
+  "preserve_original_per_role_false_null_missing_readability_fine_colour_source_and_opaque_motion_holds": true,
+  "retain_exact_task_group_source_programme_Review_and_view_descriptors": true,
+  "no_cross_episode_or_language_visual_outcomes": true,
+  "no_global_human_continuous_motion_or_audio_acceptance": true,
+  "only_metadata_may_return_to_root": true,
+  "no_registry_Drive_or_card_edits": true,
+  "no_dispatch_authorized_by_preparation": true
+}

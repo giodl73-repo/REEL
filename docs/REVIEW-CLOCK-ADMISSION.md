@@ -106,6 +106,32 @@ This path requires its own complete hosted qualification before real image
 observations or production adoption. The earlier ordinary-admission binary and
 bindings are not upgraded by a source merge.
 
+## Indexed bounded existing-capture tasks
+
+An observation policy may explicitly pin `indexed_task_index`. This selects a
+read-only binder for the indexed bounded task format. The original task bytes
+and pin remain the receipt and report identity; no replacement task is written.
+The binder verifies unique task/group index membership, protocol, retained
+controls and parent metadata, exact three-clock group slices, episode/language,
+programme/Review/ASS correspondence and original source holds before admission.
+Historical paths are descriptive only; all objects use the declared byte source.
+
+Exact original correction occurrences are rederived from the source notes and
+matched against each sample's active occurrence list. All original Spanish fix
+lines and original/selected pictures stay required. Identity-only producer
+references are verified as bounded metadata and
+retained in source context; their visual outcomes are never inherited.
+Submission requires exact raw-reference coverage and original holds,
+rejects out-of-span target observations, and retains the indexed source context
+in reports. Footer observations include readability, footer placement and exact
+agreement with the declared Review events in both Review sizes. Existing native
+proof, RGB8 header, receipt, recovery and aggregation checks still apply.
+
+Preparation's no-dispatch and pending flags remain intact. A metadata inspection
+reserves nothing and performs no private image observations. This extension is
+not production-adopted until its complete CLI and source bindings have passed
+the separate qualification gates below.
+
 ## Remaining qualification before adoption
 
 - Demonstrate full predicate parity on real frozen corrected/retained target
