@@ -23,9 +23,9 @@ pub struct Pin {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Input {
-    path: PathBuf,
-    object: Pin,
+pub(super) struct Input {
+    pub(super) path: PathBuf,
+    pub(super) object: Pin,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -66,10 +66,10 @@ struct Interpretation {
     #[serde(default)]
     allow_single_terminal_lf_difference: bool,
 }
-struct Held {
+pub(super) struct Held {
     _file: File,
-    bytes: Vec<u8>,
-    pin: Pin,
+    pub(super) bytes: Vec<u8>,
+    pub(super) pin: Pin,
 }
 fn valid_pin(pin: &Pin, max: u64) -> bool {
     pin.bytes > 0
@@ -80,7 +80,7 @@ fn valid_pin(pin: &Pin, max: u64) -> bool {
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
-fn held(input: Input, max: u64) -> Result<Held> {
+pub(super) fn held(input: Input, max: u64) -> Result<Held> {
     if !input.path.is_absolute() || !valid_pin(&input.object, max) {
         bail!("original input needs an absolute named file and bounded exact pin");
     }
@@ -165,6 +165,12 @@ pub struct VerifiedOriginal {
     _inputs: Vec<Held>,
 }
 impl VerifiedOriginal {
+    pub(super) fn context(&self) -> &Value {
+        &self.context
+    }
+    pub(super) fn recording_bytes(&self) -> &[u8] {
+        &self._inputs[4].bytes
+    }
     pub fn summary(&self) -> Value {
         json!({"schema":"reel.song-source-inspection-summary.v1",
             "request_receipt_link_checked":true,"recording_receipt_link_checked":true,
@@ -301,4 +307,4 @@ pub fn inspect(path: &Path) -> Result<VerifiedOriginal> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

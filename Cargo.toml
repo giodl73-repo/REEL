@@ -25,6 +25,10 @@ path = "src/bin/reel-song-edition.rs"
 name = "reel-song-source"
 path = "src/bin/reel-song-source.rs"
 
+[[bin]]
+name = "reel-song-repair"
+path = "src/bin/reel-song-repair.rs"
+
 [dependencies]
 anyhow = "1.0.100"
 ttf-parser = "=0.25.1"
