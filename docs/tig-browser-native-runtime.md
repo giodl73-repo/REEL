@@ -115,3 +115,10 @@ and a sibling `browser` admission with explicit `program`, `limits` and
 `authored.presentation.id` and identify its language/episode occurrence. Browser
 reference workspace bounds must fit the episode's admitted reference-staging
 allowance. No native browser profile or source code is copied into an asset repo.
+
+Capture failures retain their original error chain and identify the control
+command and send/receive direction, picture/frame-clock index, or consumer
+write/finalization stage. Native encoder failures distinguish socket writes,
+input half-close and child exit. Context includes no command parameters, source
+bytes or picture payloads. A connection reset still fails the operation without
+retry; stage context does not establish why the browser or encoder disconnected.
