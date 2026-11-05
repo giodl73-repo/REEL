@@ -26,6 +26,8 @@ reports in their producing asset repository/cache.
 The [original-song source inspector](docs/mapped-original-song-source.md) checks
 an explicitly audited interpretation of retained package, request, generation,
 text and recording evidence without rewriting the original or executing a provider.
+The [masked song-repair core](docs/original-song-masked-repair.md) materializes
+explicit raw patch candidates and independently rechecks protected sample bits.
 The [asset-manager workflow](docs/asset-manager-workflow-v1.md) includes generic
 project templates, explicit inventory refresh, an offline block-review UI and
 the separate dry-run/application steps.
