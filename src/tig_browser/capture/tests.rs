@@ -363,9 +363,88 @@ fn consumer_failure_and_final_drain_failure_produce_no_completed_result() {
         if !final_drain {
             s.fail_at = Some(1);
         }
-        assert!(run(&mut w, &mut r, &mut s).is_err());
+        let error = run(&mut w, &mut r, &mut s).err().unwrap();
+        let message = format!("{error:#}");
+        assert!(message.contains(if final_drain {
+            "finish captured browser frame consumer"
+        } else {
+            "write captured browser frame 1 to consumer"
+        }));
         assert!(!s.finished);
         assert_eq!(w.signals.captures.get(), if final_drain { 3 } else { 2 });
+    }
+}
+
+#[test]
+fn control_resets_identify_direction_command_and_frame_without_retry_or_payload() {
+    struct Reset {
+        wire: Wire,
+        method: &'static str,
+        receive_failure: bool,
+        armed: bool,
+        attempts: u32,
+    }
+    impl Transport for Reset {
+        fn send(&mut self, text: &str, remaining: Duration) -> Result<()> {
+            let value: Value = serde_json::from_str(text)?;
+            if value["method"] == self.method {
+                self.attempts += 1;
+                self.armed = true;
+                if !self.receive_failure {
+                    return Err(std::io::Error::from(std::io::ErrorKind::ConnectionReset).into());
+                }
+            }
+            self.wire.send(text, remaining)
+        }
+        fn receive(&mut self, max: usize, remaining: Duration) -> Result<String> {
+            if self.armed && self.receive_failure {
+                return Err(std::io::Error::from(std::io::ErrorKind::ConnectionReset).into());
+            }
+            self.wire.receive(max, remaining)
+        }
+    }
+    for method in ["Page.enable", "Page.captureScreenshot"] {
+        for receive_failure in [false, true] {
+            let (wire, mut resources, mut sink) = setup();
+            let mut transport = Reset {
+                wire,
+                method,
+                receive_failure,
+                armed: false,
+                attempts: 0,
+            };
+            let error = capture(
+                &mut transport,
+                &mut resources,
+                &manifest(),
+                false,
+                &limits(),
+                &mut sink,
+            )
+            .err()
+            .unwrap();
+            assert_eq!(
+                error.downcast_ref::<std::io::Error>().unwrap().kind(),
+                std::io::ErrorKind::ConnectionReset
+            );
+            let message = format!("{error:#}");
+            assert!(message.contains(if receive_failure {
+                "receive browser control response for"
+            } else {
+                "send browser control command"
+            }));
+            assert!(message.contains(method));
+            assert_eq!(
+                message.contains("capture browser picture frame 0"),
+                method == "Page.captureScreenshot"
+            );
+            assert!(!message.contains("params"));
+            assert!(!message.contains("https://"));
+            assert!(!message.contains("fromSurface"));
+            assert_eq!(transport.attempts, 1);
+            assert_eq!(sink.signals.written.get(), 0);
+            assert!(!sink.finished);
+        }
     }
 }
 #[test]

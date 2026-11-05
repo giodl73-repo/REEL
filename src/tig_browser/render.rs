@@ -150,7 +150,9 @@ impl Frames for Encoder {
         }
         let deadline = (Instant::now() + self.io_wait).min(self.deadline);
         while !png.is_empty() {
-            self.task.check_running()?;
+            self.task
+                .check_running()
+                .with_context(|| format!("check native encoder while writing frame {index}"))?;
             if Instant::now() >= deadline {
                 let kind = if Instant::now() >= self.deadline {
                     "overall"
@@ -166,7 +168,10 @@ impl Frames for Encoder {
                 Ok(0) => bail!("encoder stream ended"),
                 Ok(n) => png = &png[n..],
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => pause(deadline)?,
-                Err(e) => return Err(e.into()),
+                Err(e) => {
+                    return Err(e)
+                        .with_context(|| format!("write native encoder socket frame {index}"));
+                }
             }
         }
         self.next += 1;
@@ -176,8 +181,12 @@ impl Frames for Encoder {
         if self.next != self.expected {
             bail!("encoder did not receive every frame");
         }
-        self.stream.shutdown(Shutdown::Write)?;
-        self.task.wait(self.deadline)
+        self.stream
+            .shutdown(Shutdown::Write)
+            .context("half-close native encoder input after every frame")?;
+        self.task
+            .wait(self.deadline)
+            .context("wait for native encoder after every frame")
     }
 }
 
