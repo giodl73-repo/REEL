@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 mod lyrics;
 pub mod packet;
+pub mod source;
 mod transcripts;
 mod wave;
 
