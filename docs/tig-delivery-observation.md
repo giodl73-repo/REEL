@@ -46,6 +46,14 @@ The private profile uses schema `reel.tig-delivery-observation.experimental-1`:
 - `client_metadata_basenames`: exact exclusions such as `desktop.ini`. Authored
   README, navigation and support files have no implicit exclusion.
 - `max_report_bytes`: explicit bounded allowance, at most 64 MiB.
+- Optional `succession`: `{ "pointer": "/metadata/predecessor",
+  "relationship": "same delivered target; explicit successor" }`. This is an
+  explicit project interpretation of an existing committed declaration, not an
+  implicit status or timestamp rule. At the pointer, an object must contain that
+  exact `relationship`, a predecessor `id` and its exact `subject` (`sha256`,
+  `bytes`). Both anchors must pass their own retained-receipt checks, and the
+  predecessor's subject must match. Missing bindings, forged pins, self-links
+  and cycles refuse. With no rule, predecessor metadata has no effect.
 
 Only records with an authored `target` containing `provider` and `scope` are
 examined. Unmapped definitions/scopes and unverifiable receipt bindings remain
@@ -63,7 +71,13 @@ different length, or retained target with matching length. A same-length match
 does **not** establish current content, provider identity, sync, custody, approval
 or eviction eligibility. Unobserved binding IDs are reported separately. Several
 logical anchors claiming the same target remain ambiguous even for identical
-bytes. No timestamp, basename, case folding or hash-only deduplication chooses
+bytes unless an explicitly admitted succession resolves them. A predecessor is
+historical only on a row where both checked target identities map to that exact
+observed path, including explicit cross-scope mappings. The report preserves all
+`candidate_ids` and separately reports `current_candidate_ids` and
+`historical_candidate_ids`. Forked successors remain ambiguous; a successor's
+length mismatch remains visible even if the older observation matches its
+predecessor. No timestamp, basename, case folding or hash-only deduplication chooses
 between them. Current selections, prior versions and publication state are never
 changed. Only named receipt metadata is opened; media payloads are not read.
 
@@ -82,3 +96,7 @@ The external correspondence fixture uses 147 rows and a table larger than
 64 KiB, with no payload objects. It also checks stale pins, duplicate JSON keys,
 duplicate paths/targets, missing targets, invalid pointers, prefix escapes,
 traversal and conflicting modes before output creation.
+Succession fixtures additionally cover cross-scope historical anchors, stale
+inventory lengths, competing successors, different paths, missing/forged
+predecessors, self-links, cycles and explicit relationship admission. These
+metadata classifications grant no current remote-content or eviction claim.

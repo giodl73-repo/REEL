@@ -26,7 +26,11 @@ pub(super) fn usage(root: &Path, budget: u64) -> Result<u64> {
         }
         for entry in fs::read_dir(root)? {
             let entry = entry?;
-            let meta = match fs::symlink_metadata(entry.path()) {
+            // Windows directory enumeration already supplies attributes and size.
+            // Reopening each path for metadata races Chromium's exclusive handles
+            // (and delete-pending files) and can fail with AccessDenied mid-frame.
+            // DirEntry metadata does not follow reparse points; keep rejecting them.
+            let meta = match entry.metadata() {
                 Ok(meta) => meta,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(e) => return Err(e.into()),
@@ -191,6 +195,23 @@ pub(super) fn native_path(path: &Path) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn exclusive_child_files_are_counted_without_reopening_or_ignoring_them() {
+        use std::{io::Write, os::windows::fs::OpenOptionsExt};
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("exclusive.bin");
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .share_mode(0)
+            .open(&path)
+            .unwrap();
+        file.write_all(b"child-owned").unwrap();
+        file.sync_all().unwrap();
+        assert_eq!(usage(root.path(), 11).unwrap(), 11);
+        assert!(usage(root.path(), 10).is_err());
+        drop(file);
+    }
     #[test]
     fn protocol_polling_does_not_rescan_workspace_and_forced_exit_checks_new_bytes() {
         let root = tempfile::tempdir().unwrap();
