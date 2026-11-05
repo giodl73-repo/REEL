@@ -69,6 +69,7 @@ pub mod series;
 pub mod showrunner;
 pub mod singer_sheet_cleanup;
 pub mod song;
+pub mod song_edition;
 pub mod sonic_assets;
 pub mod sprite_choreography;
 pub mod sprite_library;
