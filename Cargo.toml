@@ -13,8 +13,13 @@ default-run = "reel"
 name = "reel-album"
 path = "src/bin/reel-album.rs"
 
+[[bin]]
+name = "reel-album-video"
+path = "src/bin/reel-album-video.rs"
+
 [dependencies]
 anyhow = "1.0.100"
+ttf-parser = "=0.25.1"
 base64 = "0.22.1"
 clap = { version = "4.5.53", features = ["derive"] }
 ed25519-dalek = { version = "2.2.0", default-features = false, features = ["std", "zeroize"] }
