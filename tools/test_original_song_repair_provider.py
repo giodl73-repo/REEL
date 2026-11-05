@@ -28,10 +28,11 @@ def fixture():
 
 
 class OriginalProviderControls(unittest.TestCase):
-    def test_explicit_float16_uses_native_cuda_selection_and_asserts_actual_dtype(self):
-        fp32, fp16 = object(), object()
+    def test_explicit_half_precisions_preserve_platform_and_assert_actual_dtype(self):
+        fp32, fp16, bf16 = object(), object(), object()
         torch = types.ModuleType('torch')
         torch.float32, torch.float16 = fp32, fp16
+        torch.bfloat16 = bf16
         torch.set_num_threads = mock.Mock()
         original_probe = mock.Mock(return_value=True)
         torch.cuda = types.SimpleNamespace(is_bf16_supported=original_probe)
@@ -43,7 +44,7 @@ class OriginalProviderControls(unittest.TestCase):
         package.gpu_config = gpu
         handler = types.ModuleType('acestep.handler')
         def initialize(**kwargs):
-            self.assertFalse(torch.cuda.is_bf16_supported())
+            self.assertEqual(torch.cuda.is_bf16_supported(),precision == 'bfloat16')
             return 'synthetic initialized', True
         initialized = mock.Mock(side_effect=initialize)
         handler.AceStepHandler = lambda: types.SimpleNamespace(dtype=fp16,initialize_service=initialized)
@@ -53,16 +54,18 @@ class OriginalProviderControls(unittest.TestCase):
         old_path = list(sys.path)
         try:
             with mock.patch.dict(sys.modules,{'torch':torch,'acestep':package,'acestep.gpu_config':gpu,'acestep.handler':handler,'acestep.inference':inference}), mock.patch.dict(os.environ,{}):
-                provider.initialize_ace({'ace_root':'synthetic'},model_precision='float16')
-                self.assertIs(gpu.is_rocm_available,original_platform)
-                self.assertEqual(os.environ['ACESTEP_ROCM_DTYPE'],'float16')
-                self.assertIs(torch.cuda.is_bf16_supported,original_probe)
-                inference.generate_music.assert_not_called()
-                self.assertEqual(initialized.call_args.kwargs['quantization'],'w8a8_dynamic')
-                handler.AceStepHandler = lambda: types.SimpleNamespace(dtype=fp32,initialize_service=initialized)
-                with self.assertRaisesRegex(RuntimeError,'dtype differs'):
-                    provider.initialize_ace({'ace_root':'synthetic'},model_precision='float16')
-                self.assertIs(torch.cuda.is_bf16_supported,original_probe)
+                for precision,dtype in [('float16',fp16),('bfloat16',bf16)]:
+                    handler.AceStepHandler = lambda: types.SimpleNamespace(dtype=dtype,initialize_service=initialized)
+                    provider.initialize_ace({'ace_root':'synthetic'},model_precision=precision)
+                    self.assertIs(gpu.is_rocm_available,original_platform)
+                    self.assertEqual(os.environ['ACESTEP_ROCM_DTYPE'],precision)
+                    self.assertIs(torch.cuda.is_bf16_supported,original_probe)
+                    inference.generate_music.assert_not_called()
+                    self.assertEqual(initialized.call_args.kwargs['quantization'],'w8a8_dynamic')
+                    handler.AceStepHandler = lambda: types.SimpleNamespace(dtype=fp32,initialize_service=initialized)
+                    with self.assertRaisesRegex(RuntimeError,'dtype differs'):
+                        provider.initialize_ace({'ace_root':'synthetic'},model_precision=precision)
+                    self.assertIs(torch.cuda.is_bf16_supported,original_probe)
         finally:
             sys.path[:] = old_path
 
@@ -191,7 +194,7 @@ class OriginalProviderControls(unittest.TestCase):
             validate_original_repair(request,context,16000,8000,2)
 
     def test_one_explicit_attempt_and_finite_conditioning_controls(self):
-        for field,value in [('attempts_per_patch',2),('attempts_per_patch',True),('semantic_planner',True),('seed',True),('repaint_strength',float('nan')),('repaint_mode','unknown'),('model_precision','bfloat16'),('model_precision',True)]:
+        for field,value in [('attempts_per_patch',2),('attempts_per_patch',True),('semantic_planner',True),('seed',True),('repaint_strength',float('nan')),('repaint_mode','unknown'),('model_precision','float64'),('model_precision',True)]:
             request, context = fixture()
             request[field] = value
             with self.assertRaises(ValueError):

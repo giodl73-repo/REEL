@@ -74,25 +74,32 @@ fn initialization_only_callback_checks_receipt_phases_and_refuses_generation() {
 
 #[test]
 fn explicit_model_precision_is_pinned_while_legacy_requests_keep_their_shape() {
-    for explicit in [false, true] {
+    for precision in [None, Some("float32"), Some("float16"), Some("bfloat16")] {
         let f = fixture();
         let (admission, recipe, _, _) = inputs(&f);
         let execution = execution(&f);
         let mut e = packet::parse(&fs::read(&execution).unwrap()).unwrap();
-        if explicit {
-            e["model_precision"] = json!("float16");
+        if let Some(precision) = precision {
+            e["model_precision"] = json!(precision);
             save(&execution, &e);
         }
         let output = f.dir.path().join("generated");
         generate_with(&admission, &recipe, &execution, &output, |inv| fake(inv, 0)).unwrap();
         let request =
             packet::parse(&fs::read(output.join("provider-request.json")).unwrap()).unwrap();
-        assert_eq!(request.get("model_precision").is_some(), explicit);
-        if explicit {
-            assert_eq!(request["model_precision"], "float16");
+        assert_eq!(
+            request.get("model_precision").is_some(),
+            precision.is_some()
+        );
+        if let Some(precision) = precision {
+            assert_eq!(request["model_precision"], precision);
         }
         check_generation(&admission, &recipe, &execution, &output).unwrap();
-        e["model_precision"] = json!(if explicit { "float32" } else { "float16" });
+        e["model_precision"] = json!(if precision == Some("float16") {
+            "float32"
+        } else {
+            "float16"
+        });
         save(&execution, &e);
         assert!(check_generation(&admission, &recipe, &execution, &output).is_err());
     }
@@ -272,7 +279,7 @@ fn invalid_execution_or_missing_installed_bytes_refuse_before_callback_or_output
                 save(&path, &runtime);
                 e["runtime"]["object"] = descriptor(&path);
             }
-            8 => e["model_precision"] = json!("bfloat16"),
+            8 => e["model_precision"] = json!("float64"),
             _ => e["model_precision"] = json!(true),
         }
         save(&execution, &e);

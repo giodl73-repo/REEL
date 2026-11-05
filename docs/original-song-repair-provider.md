@@ -22,7 +22,7 @@ The `reel.original-song-repair-execution.v1` file declares:
 
 - `runtime`, `backend`, `backend_helper`: explicit `path` and exact `object` pins;
 - an explicit private `caption`, `seed`, `repaint_mode` and `repaint_strength`;
-- optional `model_precision`: `float32` or `float16`; omission preserves the
+- optional `model_precision`: `float32`, `float16` or `bfloat16`; omission preserves the
   legacy float32 path and the shape of older provider requests;
 - the exact original `permissions`: `private_only:true`, `external_upload:false`,
   `identifiable_imitation:false`, `public_release:false`;
@@ -98,6 +98,10 @@ probe afterward, and refuses a different actual dtype. It preserves the CUDA dev
 float32 platform override. A new
 precision choice is a separately pinned candidate control and does not change
 the source audio's float32 format, clock, canonical words or protected samples.
+Explicit bfloat16 preserves the installed CUDA capability probe and refuses any
+different initialized dtype. Emulated small arithmetic is not full-model
+compatibility or native GPU support; use a separate initialization check and
+retain subsequent numerical/lyric results before selecting a candidate.
 
 Original-source backend calls now create `provider-progress.jsonl` without
 replacement. At most 32 fixed phase markers / 16 KiB are flushed and synced before

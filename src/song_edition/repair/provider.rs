@@ -172,7 +172,7 @@ fn validate_execution(loaded: &Loaded, e: &Execution) -> Result<()> {
         || !(0.0..=1.0).contains(&e.repaint_strength)
         || e.model_precision
             .as_deref()
-            .is_some_and(|p| !matches!(p, "float32" | "float16"))
+            .is_some_and(|p| !matches!(p, "float32" | "float16" | "bfloat16"))
         || e.permissions != loaded.original.context()["private_scope"]
         || !(1..=3600).contains(&e.timeout_seconds)
         || !(64 * 1024 * 1024..=16u64 * 1024 * 1024 * 1024).contains(&(e.memory_bytes as u64))

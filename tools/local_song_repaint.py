@@ -138,7 +138,7 @@ class OriginalRepairProgress:
 
 def initialize_ace(runtime, progress=None, model_precision='float32'):
     note = progress.emit if progress is not None else lambda stage: None
-    if model_precision not in ('float32','float16'):
+    if model_precision not in ('float32','float16','bfloat16'):
         raise ValueError('Unsupported explicit model precision')
     os.environ['ACESTEP_ROCM_DTYPE'] = model_precision
     sys.path.insert(0, runtime['ace_root'])
@@ -164,7 +164,7 @@ def initialize_ace(runtime, progress=None, model_precision='float32'):
         status, ok = handler.initialize_service(project_root=runtime['ace_root'],config_path='acestep-v15-turbo',device='cuda',use_flash_attention=False,compile_model=False,offload_to_cpu=True,offload_dit_to_cpu=False,quantization='w8a8_dynamic',use_mlx_dit=False)
     finally:
         torch.cuda.is_bf16_supported = original_bfloat16_probe
-    expected_dtype = torch.float32 if model_precision == 'float32' else torch.float16
+    expected_dtype = getattr(torch,model_precision)
     if not ok:
         raise RuntimeError(str(status))
     if handler.dtype is not expected_dtype:
@@ -199,7 +199,7 @@ def validate_original_repair(request, context, rate, frames, channels):
     strength = request.get('repaint_strength')
     if type(strength) not in (int,float) or not 0 <= strength <= 1 or request.get('repaint_mode') not in ['conservative','balanced','aggressive']:
         raise ValueError('Explicit repaint controls required')
-    if request.get('model_precision','float32') not in ('float32','float16'):
+    if request.get('model_precision','float32') not in ('float32','float16','bfloat16'):
         raise ValueError('Unsupported explicit model precision')
     if not isinstance(request.get('caption'),str) or not request['caption'].strip() or len(request['caption'].encode('utf-8')) > 4096:
         raise ValueError('Bounded private provider caption required')
