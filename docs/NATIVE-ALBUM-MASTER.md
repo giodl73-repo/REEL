@@ -34,7 +34,10 @@ no final gap. There is no trimming, retiming, compression or crossfade.
 Outputs are `master.flac`, 320-kbps `master.mp3`, chapter metadata, CUE, tracklist,
 and `receipt.json`. CUE points to the packet's actual `master.flac`. Exact intermediate PCM scratch is removed only after successful
 verification. FLAC must decode to precisely the recomputed complete PCM sequence.
-MP3 must fully decode within 50 ms of the declared clock; both masters must remain
+MP3 must fully decode within 50 ms of the declared clock. Its demuxed audio-packet
+hash must equal a fresh encode of the verified lossless PCM with the pinned
+encoder/settings; changing the receipt hash cannot bless substituted audio.
+Packet hashing streams through FFmpeg and creates no second master. Both masters must remain
 at or below -1 dBTP. The checker recomputes source measurements, quantization,
 track hashes/order and joins independently instead of trusting receipt hashes.
 Tampered outputs, changed sources, false gains and overwrite attempts refuse.

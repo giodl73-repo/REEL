@@ -198,6 +198,45 @@ fn real_ffmpeg_complete_tail_gap_recheck_tamper_and_timeout() {
             .unwrap()
             .contains("FILE \"master.flac\" WAVE")
     );
+    let original_mp3 = fs::read(output.join("master.mp3")).unwrap();
+    let original_receipt = fs::read(output.join("receipt.json")).unwrap();
+    let wrong = t.path().join("wrong.mp3");
+    let mut substitute = command(&q);
+    substitute
+        .args([
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=880:duration=12",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            "320k",
+        ])
+        .arg(&wrong);
+    capture(&mut substitute, 0, Instant::now() + Duration::from_secs(15)).unwrap();
+    fs::write(output.join("master.mp3"), fs::read(&wrong).unwrap()).unwrap();
+    let mut forged: Value = serde_json::from_slice(&original_receipt).unwrap();
+    forged["outputs"]["master.mp3"] =
+        serde_json::to_value(object(&wrong, 1024 * 1024).unwrap()).unwrap();
+    fs::write(
+        output.join("receipt.json"),
+        serde_json::to_vec(&forged).unwrap(),
+    )
+    .unwrap();
+    let refusal = check(&p, &output).unwrap_err();
+    assert!(
+        refusal.to_string().contains("encoded audio differs"),
+        "unexpected refusal: {refusal:#}"
+    );
+    fs::write(output.join("receipt.json"), original_receipt).unwrap();
+    fs::write(output.join("master.mp3"), original_mp3).unwrap();
     OpenOptions::new()
         .append(true)
         .open(output.join("master.mp3"))

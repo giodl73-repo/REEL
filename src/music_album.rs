@@ -625,6 +625,33 @@ fn verify_audio(q: &Request, r: &Receipt, output: &Path, deadline: Instant) -> R
     if listening.bytes % 8 != 0 || (listening.bytes / 8).abs_diff(r.frames) > RATE / 20 {
         bail!("listening album extent differs");
     }
+    let packet_hash = |path: &Path, encode: bool| -> Result<Vec<u8>> {
+        let mut c = command(q);
+        c.args(["-v", "error"]);
+        source(&mut c, path);
+        c.args([
+            "-map",
+            "0:a:0",
+            "-vn",
+            "-c:a",
+            if encode { "libmp3lame" } else { "copy" },
+        ]);
+        if encode {
+            c.args(["-b:a", "320k"]);
+        }
+        c.args(["-f", "hash", "-hash", "sha256", "-"]);
+        let (hash, _) = capture(&mut c, 1024, deadline)?;
+        let text = std::str::from_utf8(&hash)?.trim();
+        if !text.strip_prefix("SHA256=").is_some_and(digest_valid) {
+            bail!("album encoded audio hash unavailable");
+        }
+        Ok(text.as_bytes().to_vec())
+    };
+    if packet_hash(&output.join("master.flac"), true)?
+        != packet_hash(&output.join("master.mp3"), false)?
+    {
+        bail!("listening album encoded audio differs from declared PCM and encoder");
+    }
     for name in ["master.flac", "master.mp3"] {
         if levels(q, &output.join(name), deadline)?.1 > -1.0 {
             bail!("album final true peak exceeds delivery ceiling");
