@@ -13,6 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 mod process;
+pub mod video;
 const RATE: u64 = 48000;
 const REQUEST_MAX: u64 = 524288;
 

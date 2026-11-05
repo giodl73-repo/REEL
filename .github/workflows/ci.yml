@@ -44,6 +44,21 @@ jobs:
           $env:REEL_TEST_FFMPEG = (Get-Command ffmpeg -ErrorAction Stop).Source
           cargo test --all-features --lib music_album::tests::real_ffmpeg_complete_tail_gap_recheck_tamper_and_timeout --locked -- --exact --nocapture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify bilingual album video packets, fonts and phrase pages
+        shell: pwsh
+        run: |
+          $env:REEL_TEST_FFMPEG = (Get-Command ffmpeg -ErrorAction Stop).Source
+          $env:REEL_TEST_FFPROBE = (Get-Command ffprobe -ErrorAction Stop).Source
+          if ($IsWindows) {
+            $env:REEL_TEST_FONT = 'C:/Windows/Fonts/georgia.ttf'
+            $env:REEL_TEST_FONT_FAMILY = 'Georgia'
+          } else {
+            $env:REEL_TEST_FONT = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+            $env:REEL_TEST_FONT_FAMILY = 'DejaVu Sans'
+          }
+          if (-not (Test-Path -LiteralPath $env:REEL_TEST_FONT -PathType Leaf)) { throw 'Explicit fixture font unavailable' }
+          cargo test --all-features --lib music_album::video::tests::real_bilingual_video_preserves_audio_chapters_and_phrase_pages --locked -- --exact --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify bounded large picture controls preserve native frames and clocks
         run: cargo test --all-features --lib scene_delivery::picture_control::tests::native_file_controls_preserve_frames_clocks_and_large_picture_jobs --locked -- --ignored --exact
       - name: Verify RGBA overlays preserve all unselected RGB and YUV frames

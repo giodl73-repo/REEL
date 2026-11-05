@@ -1394,6 +1394,7 @@ dependencies = [
  "tig-core",
  "tig-git",
  "tig-store",
+ "ttf-parser",
  "tungstenite",
  "zeroize",
 ]
