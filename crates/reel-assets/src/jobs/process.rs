@@ -223,7 +223,7 @@ pub struct QuietLimits {
 }
 impl QuietLimits {
     fn validate(&self) -> Result<()> {
-        if !(16 * 1024 * 1024..=16_u64 * 1024 * 1024 * 1024).contains(&(self.memory_bytes as u64))
+        if !(16 * 1024 * 1024..=MAX_QUIET_CHILD_MEMORY_BYTES).contains(&(self.memory_bytes as u64))
             || !(1..=256).contains(&self.processes)
         {
             return Err("Invalid contained child limits".into());

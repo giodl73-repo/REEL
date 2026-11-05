@@ -621,6 +621,7 @@ with open('provider-receipt.json','x',encoding='utf-8') as stream:
     let mut e = packet::parse(&fs::read(&execution).unwrap()).unwrap();
     e["runtime"]["object"] = descriptor(&runtime_path);
     e["backend"]["object"] = descriptor(&backend);
+    e["memory_bytes"] = json!(reel_assets::jobs::MAX_QUIET_CHILD_MEMORY_BYTES);
     save(&execution, &e);
     let output = f.dir.path().join("actual-contained-child");
     let report = generate(&admission, &recipe, &execution, &output).unwrap();

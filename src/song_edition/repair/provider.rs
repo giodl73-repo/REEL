@@ -177,7 +177,8 @@ fn validate_execution(loaded: &Loaded, e: &Execution) -> Result<()> {
             .is_some_and(|p| !matches!(p, "float32" | "float16" | "bfloat16"))
         || e.permissions != loaded.original.context()["private_scope"]
         || !(1..=3600).contains(&e.timeout_seconds)
-        || !(64 * 1024 * 1024..=24u64 * 1024 * 1024 * 1024).contains(&(e.memory_bytes as u64))
+        || !(64 * 1024 * 1024..=reel_assets::jobs::MAX_QUIET_CHILD_MEMORY_BYTES)
+            .contains(&(e.memory_bytes as u64))
         || !(1..=32).contains(&e.processes)
     {
         bail!("provider execution parameters or original private restrictions differ");

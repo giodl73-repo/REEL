@@ -39,6 +39,9 @@ does not alter any retained 16-GiB execution or its replay pins. A larger actual
 job needs a new admitted execution, sufficient measured host headroom, and its
 own native limit/result evidence. Installed-file read budgets, asset/cache
 capacity and Git limits are separate and unchanged. No job is unbounded.
+The wrapper and contained-process validator share one ceiling constant. A tiny
+Windows child fixture exercises the actual upper allowance without allocating
+model memory and rejects one byte above it before execution.
 
 Relative file inputs resolve inside the execution file's directory. Traversal
 and relative escapes refuse. The helper must be the pinned adjacent
