@@ -18,6 +18,11 @@ The builder writes `master.mkv` as FFV1/yuv444p with stereo PCM24, a browser `re
 
 The synthetic regression test uses two stills and checks 48 frames, 96,000 stereo samples, complete output closure and layer-tamper rejection.
 
+Both template versions allow up to ten minutes of presentation coverage, with
+the existing 120-picture bound. Full recordings longer than two minutes can
+therefore retain their complete clock. Registration, build and check share the
+same duration guard; managed job resource budgets still apply independently.
+
 ## Retained primary-reference comparison
 
 `compare_master_to_primaries` accepts retained FFV1 or H.264 masters with square

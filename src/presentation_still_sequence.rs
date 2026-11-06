@@ -402,7 +402,7 @@ fn control_plan(
                 || manifest.picture_timing.is_some()))
         || manifest.pictures.len() != template.picture_count as usize
         || template.frames() == 0
-        || template.frames() > 120 * template.frame_rate as u64
+        || template.frames() > 600 * template.frame_rate as u64
         || (template.frames() * template.sample_rate as u64) % template.frame_rate as u64 != 0
     {
         bail!("invalid presentation still template or picture count");
@@ -1164,6 +1164,34 @@ pub fn cli() {
 #[cfg(test)]
 mod timing_tests {
     use super::*;
+
+    #[test]
+    fn full_song_metadata_accepts_longer_than_two_minutes_with_a_ten_minute_bound() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        for (frames_per_picture, accepted) in [(149, true), (600, true), (601, false), (0, false)] {
+            let raw = serde_json::to_vec(&serde_json::json!({
+                "schema":"reel.presentation-still-template.v1",
+                "template_id":"full-song", "width":64, "height":64,
+                "frame_rate":24, "sample_rate":48000,
+                "picture_count":24, "frames_per_picture":frames_per_picture
+            }))
+            .unwrap();
+            fs::write(root.join("template.json"), &raw).unwrap();
+            let reference = serde_json::json!({"path":"template.json", "sha256":hash(&raw),
+                "bytes":raw.len(), "cache_uri":format!("cache://sha256/{}", hash(&raw))});
+            let manifest = serde_json::to_vec(&serde_json::json!({
+                "schema":"reel.presentation-still-sequence.v1", "episode_id":"fixture",
+                "language":"es", "role":"end-credits", "template":reference,
+                "pictures":vec![reference.clone();24], "editable_layer":reference
+            }))
+            .unwrap();
+            assert_eq!(
+                control_plan(&manifest, &root.to_path_buf()).is_ok(),
+                accepted
+            );
+        }
+    }
 
     #[test]
     fn master_contract_rejects_extra_streams_non_square_pixels_and_wrong_pixel_format() {
