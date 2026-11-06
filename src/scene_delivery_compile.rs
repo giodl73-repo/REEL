@@ -65,6 +65,9 @@ pub struct DeliveryProfile {
     pub frame_rate_numerator: u64,
     pub frame_rate_denominator: u64,
     pub max_composition_samples: u64,
+    /// Explicit consumer decisions, bounded to a language, picture and scene clock.
+    #[serde(default)]
+    pub stillness_decisions: Vec<StillnessDecision>,
     pub score_gain_db: f64,
     pub score_fade_in_samples: u64,
     pub score_fade_out_samples: u64,
@@ -86,6 +89,85 @@ pub struct DeliveryProfile {
         BTreeMap<String, crate::scene_delivery::AudioChannelMapping>,
     #[serde(default)]
     pub sonic_placement_offsets_by_binding: BTreeMap<String, SonicPlacementOffset>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StillnessDecision {
+    pub scene_id: String,
+    pub language: String,
+    pub attachment_id: String,
+    pub source_sha256: String,
+    pub sample_rate: u32,
+    pub maximum_scene_samples: u64,
+    pub reason: String,
+    pub decision: String,
+}
+
+fn apply_stillness_decisions(
+    decisions: &[StillnessDecision],
+    scene_id: &str,
+    language: &str,
+    sample_rate: u32,
+    scene_samples: u64,
+    pictures: &mut [Value],
+) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    let mut selected = Vec::new();
+    for decision in decisions {
+        if decision.scene_id.trim().is_empty()
+            || decision.language.trim().is_empty()
+            || decision.attachment_id.trim().is_empty()
+            || decision.reason.trim().is_empty()
+            || decision.decision.trim().is_empty()
+            || decision.reason.len() > 4096
+            || decision.decision.len() > 4096
+            || decision.sample_rate == 0
+            || decision.maximum_scene_samples == 0
+            || decision.source_sha256.len() != 64
+            || !decision
+                .source_sha256
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+            || !seen.insert((
+                &decision.scene_id,
+                &decision.language,
+                &decision.attachment_id,
+            ))
+        {
+            bail!("invalid or duplicate scoped stillness decision");
+        }
+        if decision.scene_id != scene_id || decision.language != language {
+            continue;
+        }
+        if decision.sample_rate != sample_rate || scene_samples > decision.maximum_scene_samples {
+            bail!("stillness decision does not cover the selected scene clock");
+        }
+        let matches = pictures
+            .iter()
+            .enumerate()
+            .filter(|(_, picture)| picture["attachment_id"] == decision.attachment_id)
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            bail!("stillness decision must name one selected picture attachment");
+        }
+        let (index, picture) = matches[0];
+        if picture["kind"] != "still"
+            || picture["source"]["sha256"].as_str() != Some(decision.source_sha256.as_str())
+            || picture
+                .get("stillness_exception")
+                .is_some_and(|value| !value.is_null())
+        {
+            bail!("stillness decision differs from the selected still picture");
+        }
+        selected.push((index, decision));
+    }
+    // Validate every decision before changing any compiled picture metadata.
+    for (index, decision) in selected {
+        pictures[index]["stillness_exception"] =
+            json!({"reason":decision.reason,"decision":decision.decision});
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
@@ -1281,6 +1363,14 @@ fn compile_with_budget(
                 .push(json!(attachment));
         }
     }
+    apply_stillness_decisions(
+        &profile.stillness_decisions,
+        &scene.scene_id,
+        &request.language,
+        profile.sample_rate,
+        picture_duration,
+        &mut pictures,
+    )?;
     let production = json!({
         "manifest_version":"reel.manifest.v0.2",
         "profile":"animatic",
@@ -1444,6 +1534,142 @@ fn active_scene_events<'a>(
         })
         .map(|event| (event.event_id.as_str(), event))
         .collect())
+}
+
+#[cfg(test)]
+mod stillness_decision_tests {
+    use super::*;
+
+    fn decision() -> StillnessDecision {
+        serde_json::from_value(json!({
+            "scene_id":"poem-scene", "language":"es", "attachment_id":"poem-card",
+            "source_sha256":"a".repeat(64), "sample_rate":44100,
+            "maximum_scene_samples":893601,
+            "reason":"Preserve the requested reading and closing hold",
+            "decision":"consumer/poem-reading-review-v2"
+        }))
+        .unwrap()
+    }
+    fn pictures() -> Vec<Value> {
+        vec![
+            json!({"attachment_id":"poem-card", "kind":"still",
+                "source":{"sha256":"a".repeat(64)}}),
+            json!({"attachment_id":"other-card", "kind":"still",
+                "source":{"sha256":"b".repeat(64)}}),
+        ]
+    }
+
+    #[test]
+    fn exact_consumer_decision_reaches_only_its_selected_picture() {
+        let mut pictures = pictures();
+        let other = pictures[1].clone();
+        apply_stillness_decisions(
+            &[decision()],
+            "poem-scene",
+            "es",
+            44100,
+            893601,
+            &mut pictures,
+        )
+        .unwrap();
+        let exception: crate::scene_delivery::Exception =
+            serde_json::from_value(pictures[0]["stillness_exception"].clone()).unwrap();
+        assert_eq!(exception.decision, "consumer/poem-reading-review-v2");
+        assert_eq!(pictures[1], other);
+    }
+    #[test]
+    fn absent_and_other_language_decisions_leave_picture_bytes_unchanged() {
+        for decisions in [Vec::new(), vec![decision()]] {
+            let mut pictures = pictures();
+            let before = serde_json::to_vec(&pictures).unwrap();
+            apply_stillness_decisions(&decisions, "poem-scene", "en", 44100, 893601, &mut pictures)
+                .unwrap();
+            assert_eq!(serde_json::to_vec(&pictures).unwrap(), before);
+        }
+    }
+    #[test]
+    fn another_scene_cannot_inherit_the_same_picture_decision() {
+        let mut pictures = pictures();
+        let before = pictures.clone();
+        apply_stillness_decisions(
+            &[decision()],
+            "different-scene",
+            "es",
+            44100,
+            893601,
+            &mut pictures,
+        )
+        .unwrap();
+        assert_eq!(pictures, before);
+    }
+    #[test]
+    fn changed_clock_or_longer_scene_cannot_reuse_the_decision() {
+        for (rate, samples) in [(48000, 893601), (44100, 893602)] {
+            let mut pictures = pictures();
+            let before = pictures.clone();
+            assert!(
+                apply_stillness_decisions(
+                    &[decision()],
+                    "poem-scene",
+                    "es",
+                    rate,
+                    samples,
+                    &mut pictures
+                )
+                .is_err()
+            );
+            assert_eq!(pictures, before);
+        }
+    }
+    #[test]
+    fn changed_picture_missing_attachment_or_empty_authority_refuses() {
+        for mutation in 0..6 {
+            let mut decision = decision();
+            match mutation {
+                0 => decision.source_sha256 = "b".repeat(64),
+                1 => decision.attachment_id = "missing".into(),
+                2 => decision.reason.clear(),
+                3 => decision.decision.clear(),
+                4 => decision.maximum_scene_samples = 0,
+                _ => decision.source_sha256 = "A".repeat(64),
+            }
+            let mut pictures = pictures();
+            let before = pictures.clone();
+            assert!(
+                apply_stillness_decisions(
+                    &[decision],
+                    "poem-scene",
+                    "es",
+                    44100,
+                    893601,
+                    &mut pictures
+                )
+                .is_err()
+            );
+            assert_eq!(pictures, before);
+        }
+    }
+    #[test]
+    fn duplicate_or_later_invalid_decision_cannot_partially_waive_a_guard() {
+        let mut invalid = decision();
+        invalid.attachment_id = "missing".into();
+        for decisions in [vec![decision(), decision()], vec![decision(), invalid]] {
+            let mut pictures = pictures();
+            let before = pictures.clone();
+            assert!(
+                apply_stillness_decisions(
+                    &decisions,
+                    "poem-scene",
+                    "es",
+                    44100,
+                    893601,
+                    &mut pictures
+                )
+                .is_err()
+            );
+            assert_eq!(pictures, before);
+        }
+    }
 }
 
 #[cfg(test)]
