@@ -45,6 +45,42 @@ fn programs() -> BoundPrograms {
 #[test]
 fn archived_presentation_materializes_without_checkout_and_refuses_missing_inputs() {
     let (mut f, request) = setup();
+    let runtime = bindings();
+    // Nonuniform full-range JPEG scaling exposes encoder-dependent range
+    // negotiation that a flat tiny PNG cannot detect in the raw reference.
+    let jpeg = f.root().join("scaling-fixture.jpg");
+    let generated = std::process::Command::new(&runtime.ffmpeg.path)
+        .args([
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=1920x1080",
+            "-frames:v",
+            "1",
+            "-q:v",
+            "2",
+        ])
+        .arg(&jpeg)
+        .status()
+        .unwrap();
+    assert!(generated.success());
+    let bytes = fs::read(jpeg).unwrap();
+    let picture = Object::from_bytes(&bytes);
+    fs::write(
+        f.root().join("cache/objects").join(picture.sha256.as_str()),
+        bytes,
+    )
+    .unwrap();
+    for name in ["cel-a", "cel-b"] {
+        update(&f, name, |record| record["selected"] = json!(picture));
+    }
+    update(&f, "presentation-template", |record| {
+        record["authored"]["document"]["width"] = json!(1280);
+        record["authored"]["document"]["height"] = json!(720);
+    });
+    commit(&mut f);
     f.profile["byte_source"]["required"] = json!("prevent-mutation");
     let mut source = f.source();
     let metadata = f.root().join("materialize-metadata");
@@ -73,7 +109,7 @@ fn archived_presentation_materializes_without_checkout_and_refuses_missing_input
         "source":{"schema":reel::tig_inputs::ARCHIVE_PROFILE_SCHEMA,
             "archive":context.archive(),"checkpoint":checkpoint,
             "admitted":f.profile["admitted"],"byte_source":f.profile["byte_source"]},
-        "request":request,"runtime":bindings(),
+        "request":request,"runtime":runtime,
         "max_primary_objects":256,"max_primary_bytes":1024*1024
     });
     for name in [".git", "records", "definitions"] {
@@ -88,6 +124,7 @@ fn archived_presentation_materializes_without_checkout_and_refuses_missing_input
     let output = f.root().join("materialized");
     let result = reel::tig_presentation_cli::materialize(&input, &output).unwrap();
     assert_eq!(result["native_render_and_check"], true);
+    assert_eq!(result["independent_primary_comparison"], true);
     for name in [
         "production_current",
         "adopted",

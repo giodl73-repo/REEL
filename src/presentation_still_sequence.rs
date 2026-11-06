@@ -630,7 +630,10 @@ fn render_command(
     let mut filter = String::new();
     for (i, frames) in picture_frames.iter().enumerate() {
         filter.push_str(&format!(
-            "[{i}:v]scale=w='round(min({},{}*dar))':h='round(min({},{} / dar))',setsar=1,pad={}:{}:(ow-iw)/2:(oh-ih)/2,format=yuv444p,trim=end_frame={frames},setpts=PTS-STARTPTS[v{i}];",
+            // Our FFV1 output negotiates limited YUV; rawvideo also accepts full
+            // range. Pin the scaler output so JPEG range negotiation cannot
+            // change reference pixels merely because the encoder differs.
+            "[{i}:v]scale=w='round(min({},{}*dar))':h='round(min({},{} / dar))':out_range=tv,setsar=1,pad={}:{}:(ow-iw)/2:(oh-ih)/2,format=yuv444p,trim=end_frame={frames},setpts=PTS-STARTPTS[v{i}];",
             template.width, template.height, template.height, template.width, template.width, template.height
         ));
     }
@@ -873,7 +876,14 @@ pub fn compare_master_to_primaries(
             ]);
         let actual = stream_hashes(retained)?;
         if actual != expected {
-            bail!("retained presentation differs from primary reference ({pixel_format})");
+            bail!(
+                "retained presentation differs from primary reference ({pixel_format}); \
+                 picture expected={} actual={}; PCM expected={} actual={}",
+                expected.0,
+                actual.0,
+                expected.1,
+                actual.1
+            );
         }
         matched.push(actual);
     }

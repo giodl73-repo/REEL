@@ -25,8 +25,12 @@ copies. `native-source.json` additionally binds the exact profile, source
 checkpoint, root and compiled manifest. Retain the declared results through the
 outer job; no source or delivered selection changes automatically.
 
-Primary and exact-program guards stay live through native rendering and the
-complete shared checker. Successful materialization is an unapproved candidate,
+Primary and exact-program guards stay live through native rendering, the
+complete shared checker and a fresh decoded YUV/RGB/PCM comparison to the
+primaries. Still production and raw reference explicitly scale into the same
+limited-range YUV contract so JPEG range conversion does not depend on encoder
+defaults.
+Successful materialization is an unapproved candidate,
 with production-current, original-producer, complete-environment/semantic,
 adoption and eviction claims all false. Episode integration still requires the
 normal fresh component reference and final conform checks, actual review and

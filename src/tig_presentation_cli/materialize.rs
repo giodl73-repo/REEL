@@ -130,12 +130,28 @@ pub fn materialize(profile: &Path, output: &Path) -> Result<Value> {
         &provider,
         &output,
     )?;
+    let master_path = output.join("master.mkv");
+    let master = crate::scene_delivery::FileRef {
+        path: "master.mkv".into(),
+        sha256: crate::episode_conform::file_sha(&master_path)?,
+        bytes: fs::metadata(&master_path)?.len(),
+    };
+    presentation_still_sequence::compare_master_to_primaries(
+        compiled.manifest(),
+        &compiled,
+        &provider,
+        &output,
+        &master,
+        &output,
+        p.max_primary_bytes,
+    )?;
     let observation = json!({
         "schema":"reel.tig-presentation-materialization.experimental-1",
         "profile":Object::from_bytes(&raw),
         "source_checkpoint":source.checkpoint(),"source":compiled.root(),
         "manifest":compiled.manifest(),"primary_objects":primaries.len(),
         "primary_logical_bytes":logical_bytes,"native_render_and_check":true,
+        "independent_primary_comparison":true,
         "production_current":false,"adopted":false,"approval":false,
         "original_producer_assertion":false,"eviction_authority":false,
         "complete_environment":false,"complete_semantic_coverage":false
