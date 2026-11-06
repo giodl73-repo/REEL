@@ -602,14 +602,12 @@ fn render_command(
     let mut cmd = command(inputs, MediaProgram::Ffmpeg)?;
     cmd.current_dir(output_dir)
         .args(["-y", "-v", "error", "-nostdin"]);
-    if video_codec == "rawvideo" {
-        cmd.args(["-filter_complex_threads", "1"]);
-    }
+    // Every still is a concurrent looped input. Bound each decoder and the
+    // filter graph so larger sequences cannot multiply host thread defaults.
+    cmd.args(["-filter_complex_threads", "1"]);
     for (picture, frames) in pictures.iter().zip(picture_frames) {
         let seconds_each = *frames as f64 / template.frame_rate as f64;
-        if video_codec == "rawvideo" {
-            cmd.args(["-threads", "1"]);
-        }
+        cmd.args(["-threads", "1"]);
         cmd.args([
             "-loop",
             "1",
@@ -670,9 +668,7 @@ fn render_command(
         "-ac",
         "2",
     ]);
-    if video_codec == "rawvideo" {
-        cmd.args(["-threads:v", "1"]);
-    }
+    cmd.args(["-threads:v", "1"]);
     if video_codec == "ffv1" {
         cmd.args(["-frames:v", &template.frames().to_string()]);
     }

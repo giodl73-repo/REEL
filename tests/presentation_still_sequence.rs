@@ -34,6 +34,67 @@ fn two_stills_render_exact_picture_and_audio_clocks() {
 }
 
 #[test]
+fn twenty_four_concurrent_still_inputs_render_with_exact_clocks() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    assert!(
+        Command::new("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=green:s=64x64:r=24:d=1",
+                "-frames:v",
+                "1"
+            ])
+            .arg(root.join("picture.png"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    fs::write(
+        root.join("template.json"),
+        serde_json::to_vec(&json!({
+            "schema":"reel.presentation-still-template.v1", "template_id":"many-stills",
+            "width":64,"height":64,"frame_rate":24,"sample_rate":48000,
+            "picture_count":24,"frames_per_picture":1
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(root.join("layer.ass"), "[Script Info]\nScriptType: v4.00+\nPlayResX: 64\nPlayResY: 64\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n").unwrap();
+    fs::write(
+        root.join("manifest.json"),
+        serde_json::to_vec(&json!({
+            "schema":"reel.presentation-still-sequence.v1", "episode_id":"many-stills",
+            "language":"es","role":"end-credits", "template":reference(root,"template.json"),
+            "pictures":vec![reference(root,"picture.png");24],
+            "editable_layer":reference(root,"layer.ass")
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let built = run(root, "build");
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let checked = run(root, "check");
+    assert!(
+        checked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("render/receipt.json")).unwrap()).unwrap();
+    assert_eq!(receipt["frames"], 24);
+    assert_eq!(receipt["samples"], 48000);
+}
+
+#[test]
 fn selected_audio_envelope_fades_actual_samples_and_rejects_font_tampering() {
     still_fixture(true, false);
 }
