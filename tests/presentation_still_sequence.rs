@@ -59,7 +59,7 @@ fn twenty_four_concurrent_still_inputs_render_with_exact_clocks() {
         serde_json::to_vec(&json!({
             "schema":"reel.presentation-still-template.v1", "template_id":"many-stills",
             "width":64,"height":64,"frame_rate":24,"sample_rate":48000,
-            "picture_count":24,"frames_per_picture":1
+                "picture_count":24,"frames_per_picture":24
         }))
         .unwrap(),
     )
@@ -90,8 +90,8 @@ fn twenty_four_concurrent_still_inputs_render_with_exact_clocks() {
     );
     let receipt: serde_json::Value =
         serde_json::from_slice(&fs::read(root.join("render/receipt.json")).unwrap()).unwrap();
-    assert_eq!(receipt["frames"], 24);
-    assert_eq!(receipt["samples"], 48000);
+    assert_eq!(receipt["frames"], 576);
+    assert_eq!(receipt["samples"], 1152000);
 }
 
 #[test]
