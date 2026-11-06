@@ -59,6 +59,9 @@ enum Operation {
     /// Independently compare a selected presentation master with its primaries.
     /// This read-only observation does not adopt a managed job or publish media.
     ComparePresentation { profile: PathBuf },
+    /// Low-level archived-source still rendering; requires an outer admitted job.
+    #[command(hide = true)]
+    MaterializePresentation { profile: PathBuf, output: PathBuf },
     /// Publish one exact caller-owned file through an explicitly enrolled cache.
     PublishFile { profile: PathBuf, output: PathBuf },
     /// Recheck retained native outputs and compare their master with a baseline.
@@ -150,6 +153,9 @@ fn main() -> ExitCode {
         }
         Operation::InspectPresentation { profile } => reel::tig_presentation_cli::inspect(&profile),
         Operation::ComparePresentation { profile } => reel::tig_presentation_cli::compare(&profile),
+        Operation::MaterializePresentation { profile, output } => {
+            reel::tig_presentation_cli::materialize(&profile, &output)
+        }
         Operation::PublishFile { profile, output } => {
             reel::tig_native_job_cli::publish_file(&profile, &output)
         }

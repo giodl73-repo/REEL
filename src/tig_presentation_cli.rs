@@ -19,6 +19,8 @@ use tig_core::{
 };
 
 const SCHEMA: &str = "reel.tig-presentation-check-profile.experimental-1";
+mod materialize;
+pub use materialize::materialize;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Profile {

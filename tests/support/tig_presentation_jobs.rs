@@ -14,7 +14,7 @@ use tig_store::{
     source_claims::{Command, SourceJournal},
 };
 
-fn programs() -> BoundPrograms {
+fn bindings() -> Bindings {
     let pin = |path: PathBuf| {
         let path = path.canonicalize().unwrap();
         let pin = ByteIdentity::observe_file(&path).unwrap();
@@ -31,13 +31,144 @@ fn programs() -> BoundPrograms {
             .find(|path| path.is_file())
             .unwrap())
     };
-    BoundPrograms::bind(&Bindings {
+    Bindings {
         host,
         ffmpeg: external("ffmpeg"),
         ffprobe: external("ffprobe"),
         dependencies: Default::default(),
-    })
-    .unwrap()
+    }
+}
+fn programs() -> BoundPrograms {
+    BoundPrograms::bind(&bindings()).unwrap()
+}
+
+#[test]
+fn archived_presentation_materializes_without_checkout_and_refuses_missing_inputs() {
+    let (mut f, request) = setup();
+    let runtime = bindings();
+    // Nonuniform full-range JPEG scaling exposes encoder-dependent range
+    // negotiation that a flat tiny PNG cannot detect in the raw reference.
+    let jpeg = f.root().join("scaling-fixture.jpg");
+    let generated = std::process::Command::new(&runtime.ffmpeg.path)
+        .args([
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=1920x1080",
+            "-frames:v",
+            "1",
+            "-q:v",
+            "2",
+        ])
+        .arg(&jpeg)
+        .status()
+        .unwrap();
+    assert!(generated.success());
+    let bytes = fs::read(jpeg).unwrap();
+    let picture = Object::from_bytes(&bytes);
+    fs::write(
+        f.root().join("cache/objects").join(picture.sha256.as_str()),
+        bytes,
+    )
+    .unwrap();
+    for name in ["cel-a", "cel-b"] {
+        update(&f, name, |record| record["selected"] = json!(picture));
+    }
+    update(&f, "presentation-template", |record| {
+        record["authored"]["document"]["width"] = json!(1280);
+        record["authored"]["document"]["height"] = json!(720);
+    });
+    commit(&mut f);
+    f.profile["byte_source"]["required"] = json!("prevent-mutation");
+    let mut source = f.source();
+    let metadata = f.root().join("materialize-metadata");
+    let mut writer = MetadataStore::create(
+        &metadata,
+        Limits {
+            nodes: 8192,
+            bytes: 8 * 1024 * 1024,
+            database_bytes: 16 * 1024 * 1024,
+            min_free_bytes: 65536,
+        },
+    )
+    .unwrap();
+    let context =
+        tig_presentation::freeze_context(&mut source, &request, &mut writer, TreeLimits::default())
+            .unwrap();
+    let checkpoint = source.checkpoint().clone();
+    let compiled = tig_presentation::compile(&source, &request).unwrap();
+    let primary = compiled.primary_files().next().unwrap().clone();
+    let witness = writer.finish().unwrap();
+    drop(writer);
+    drop(source);
+    let mut profile = json!({
+        "schema":"reel.tig-presentation-materialization-profile.experimental-1",
+        "metadata_root":metadata,"metadata_minimum":witness,
+        "source":{"schema":reel::tig_inputs::ARCHIVE_PROFILE_SCHEMA,
+            "archive":context.archive(),"checkpoint":checkpoint,
+            "admitted":f.profile["admitted"],"byte_source":f.profile["byte_source"]},
+        "request":request,"runtime":runtime,
+        "max_primary_objects":256,"max_primary_bytes":1024*1024
+    });
+    for name in [".git", "records", "definitions"] {
+        fs::rename(
+            f.root().join(name),
+            f.root().join(format!("offline-{name}")),
+        )
+        .unwrap();
+    }
+    let input = f.root().join("materialize-profile.json");
+    fs::write(&input, serde_json::to_vec(&profile).unwrap()).unwrap();
+    let output = f.root().join("materialized");
+    let result = reel::tig_presentation_cli::materialize(&input, &output).unwrap();
+    assert_eq!(result["native_render_and_check"], true);
+    assert_eq!(result["independent_primary_comparison"], true);
+    for name in [
+        "production_current",
+        "adopted",
+        "approval",
+        "eviction_authority",
+    ] {
+        assert_eq!(result[name], false);
+    }
+    assert_eq!(result["source_checkpoint"], json!(checkpoint));
+    let master = fs::read(output.join("master.mkv")).unwrap();
+    assert!(reel::tig_presentation_cli::materialize(&input, &output).is_err());
+    assert_eq!(fs::read(output.join("master.mkv")).unwrap(), master);
+    profile["max_primary_bytes"] = json!(1);
+    fs::write(&input, serde_json::to_vec(&profile).unwrap()).unwrap();
+    let refused = f.root().join("too-small");
+    assert!(reel::tig_presentation_cli::materialize(&input, &refused).is_err());
+    assert!(!refused.exists());
+    profile["max_primary_bytes"] = json!(1024 * 1024);
+    fs::write(&input, serde_json::to_vec(&profile).unwrap()).unwrap();
+    let cached = f.root().join("cache/objects").join(&primary.sha256);
+    fs::rename(&cached, cached.with_extension("unavailable")).unwrap();
+    let missing = f.root().join("missing-primary");
+    assert!(reel::tig_presentation_cli::materialize(&input, &missing).is_err());
+    assert!(!missing.exists());
+    fs::rename(cached.with_extension("unavailable"), &cached).unwrap();
+    let binary = Path::new(env!("CARGO_BIN_EXE_reel-tig-job"));
+    profile["runtime"]["host"] = json!(ByteIdentity::observe_file(binary).unwrap());
+    fs::write(&input, serde_json::to_vec(&profile).unwrap()).unwrap();
+    let cli_output = f.root().join("cli-materialized");
+    let child = std::process::Command::new(binary)
+        .arg("materialize-presentation")
+        .arg(&input)
+        .arg(&cli_output)
+        .output()
+        .unwrap();
+    assert!(
+        child.status.success(),
+        "{}",
+        String::from_utf8_lossy(&child.stderr)
+    );
+    let observation: Value =
+        serde_json::from_slice(&fs::read(cli_output.join("native-source.json")).unwrap()).unwrap();
+    assert_eq!(observation["native_render_and_check"], true);
+    assert_eq!(observation["production_current"], false);
 }
 fn key(value: &str) -> Key {
     Key::parse(value).unwrap()

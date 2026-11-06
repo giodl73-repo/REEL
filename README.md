@@ -61,6 +61,9 @@ validate cache-backed deliveries without recreating their directory layout.
 With `tig-publication`, [bounded native jobs](docs/tig-job-runner.md) use
 `reel-tig-job run` to restore a frozen scene, contain a pinned same-binary worker,
 retain checked outputs through Tig and retire only its owned scratch.
+The [archived still-presentation worker](docs/tig-presentation-materialization.md)
+renders native presentation sources inside an admitted frozen job, with exact
+source/program guards and separate candidate, approval and delivery gates.
 
 **PITFALL doctrine:** [`.pitfall/PITFALL.md`](.pitfall/PITFALL.md) indexes the
 release-approval, provider-boundary, source-canon, private-state, and partial
