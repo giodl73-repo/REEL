@@ -1,8 +1,8 @@
 use super::*;
 
-struct Fixture {
-    dir: tempfile::TempDir,
-    admission: Value,
+pub(in crate::song_edition) struct Fixture {
+    pub(in crate::song_edition) dir: tempfile::TempDir,
+    pub(in crate::song_edition) admission: Value,
 }
 impl Fixture {
     fn put(&self, name: &str, bytes: &[u8]) -> Value {
@@ -10,10 +10,10 @@ impl Fixture {
         fs::write(&path, bytes).unwrap();
         json!({"path":path,"object":{"sha256":sha256_bytes(bytes),"bytes":bytes.len()}})
     }
-    fn file(&self, key: &str) -> PathBuf {
+    pub(in crate::song_edition) fn file(&self, key: &str) -> PathBuf {
         PathBuf::from(self.admission[key]["path"].as_str().unwrap())
     }
-    fn change(&mut self, key: &str, edit: impl FnOnce(&mut Value)) {
+    pub(in crate::song_edition) fn change(&mut self, key: &str, edit: impl FnOnce(&mut Value)) {
         let mut value: Value = packet::parse(&fs::read(self.file(key)).unwrap()).unwrap();
         edit(&mut value);
         let raw = serde_json::to_vec(&value).unwrap();
@@ -42,7 +42,7 @@ impl Fixture {
         });
     }
 }
-fn fixture() -> Fixture {
+pub(in crate::song_edition) fn fixture() -> Fixture {
     let mut f = Fixture {
         dir: tempfile::tempdir().unwrap(),
         admission: Value::Null,

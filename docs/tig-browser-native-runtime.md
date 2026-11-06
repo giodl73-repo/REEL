@@ -47,6 +47,11 @@ CDP interception and content policy are not an OS network sandbox or a complete
 environment declaration. Platform DLLs, fonts and any additional interpretation
 dependencies need explicit enrollment where required by the consuming project.
 
+An observed child directory may disappear before recursive enumeration as
+Chromium retires its own temporary files. Only that child `NotFound` case is
+treated as absent. A missing workspace root, other I/O errors, reparse entries
+and depth, entry or byte overruns still refuse; a failed observer stays failed.
+
 The protocol thread samples workspace usage after at least 250 ms since its
 previous completed scan, with forced scans at admission and before publication.
 It does not recursively scan the browser profile on every CDP message or poll.

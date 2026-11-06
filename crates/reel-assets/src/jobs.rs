@@ -778,6 +778,9 @@ mod lifecycle_tests;
 
 #[cfg(windows)]
 mod process;
+/// Maximum explicit committed-memory allowance for a contained quiet child tree.
+/// This is an admission ceiling, not a default or a reservation of host memory.
+pub const MAX_QUIET_CHILD_MEMORY_BYTES: u64 = 24 * 1024 * 1024 * 1024;
 #[cfg(windows)]
 pub use process::{QuietLimits, run_quiet};
 

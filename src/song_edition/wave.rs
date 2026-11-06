@@ -5,6 +5,7 @@ pub(super) struct Wave {
     pub rate: u32,
     pub channels: u16,
     pub samples: Vec<f32>,
+    pub float_data: Option<std::ops::Range<usize>>,
 }
 fn u16le(raw: &[u8], at: usize) -> u16 {
     u16::from_le_bytes(raw[at..at + 2].try_into().unwrap())
@@ -24,6 +25,7 @@ pub(super) fn decode(raw: &[u8]) -> Result<Wave> {
     let mut offset = 12usize;
     let mut format = None;
     let mut data = None;
+    let mut data_range = None;
     let mut count = 0;
     while offset < raw.len() {
         count += 1;
@@ -75,6 +77,7 @@ pub(super) fn decode(raw: &[u8]) -> Result<Wave> {
                     bail!("duplicate WAVE data")
                 };
                 data = Some(chunk);
+                data_range = Some(offset + 8..end);
             }
             _ => {}
         }
@@ -119,6 +122,7 @@ pub(super) fn decode(raw: &[u8]) -> Result<Wave> {
         rate,
         channels,
         samples,
+        float_data: if tag == 3 { data_range } else { None },
     })
 }
 

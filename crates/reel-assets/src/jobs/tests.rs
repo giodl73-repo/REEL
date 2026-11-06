@@ -505,6 +505,76 @@ fn quiet_child_tree_timeout_stops_descendants_before_return() {
         stopped(&root.path().join(name));
     }
 }
+
+#[test]
+fn quiet_failure_preserves_exit_code_and_reports_job_memory_without_a_log() {
+    let (root, exe) = quiet_fixture();
+    fs::write(root.path().join("in.bin"), b"fixture").unwrap();
+    let error = run_quiet(
+        &exe,
+        &["fail".into(), "in.bin".into(), "out.bin".into()],
+        root.path(),
+        Duration::from_secs(5),
+        quiet_limits(),
+        || Ok(()),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("Job step exited 23"), "{error}");
+    assert!(
+        error.contains("job_memory_limit_bytes=134217728"),
+        "{error}"
+    );
+    let peak = error
+        .split("job_peak_memory_bytes=")
+        .nth(1)
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+    assert!(peak > 0);
+    assert!(!root.path().join("step-0.log").exists());
+}
+#[test]
+fn quiet_explicit_upper_memory_allowance_reaches_job_object_and_next_byte_refuses() {
+    let (root, exe) = quiet_fixture();
+    fs::write(root.path().join("in.bin"), b"fixture").unwrap();
+    let mut limits = quiet_limits();
+    limits.memory_bytes = MAX_QUIET_CHILD_MEMORY_BYTES as usize;
+    let error = run_quiet(
+        &exe,
+        &["fail".into(), "in.bin".into(), "out.bin".into()],
+        root.path(),
+        Duration::from_secs(5),
+        limits,
+        || Ok(()),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("Job step exited 23"), "{error}");
+    assert!(
+        error.contains(&format!(
+            "job_memory_limit_bytes={MAX_QUIET_CHILD_MEMORY_BYTES}"
+        )),
+        "{error}"
+    );
+    limits.memory_bytes += 1;
+    let error = run_quiet(
+        &exe,
+        &["copy".into(), "in.bin".into(), "must-not-exist.bin".into()],
+        root.path(),
+        Duration::from_secs(5),
+        limits,
+        || Ok(()),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("Invalid contained child limits"), "{error}");
+    assert!(!root.path().join("must-not-exist.bin").exists());
+}
+
 #[test]
 fn quiet_child_process_limit_prevents_the_second_process() {
     let (root, exe) = quiet_fixture();
