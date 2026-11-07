@@ -328,19 +328,74 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
 /// Explicit write action. Existing stores/coordination only, private output;
 /// public diagnostics omit source identity, paths and raw compiler errors.
 pub fn capture_context(profile: &Path, output: &Path) -> Result<Value> {
-    capture(profile, output).map_err(|error| {
-        // Only our bounded stage names are public. Lower-level provider/IO errors
-        // may contain private paths; do not format their error chain.
-        match error.downcast_ref::<CaptureStage>() {
-            Some(stage)=>anyhow::anyhow!("source capture refused during {stage}; verify profile, roots, capacity and source contracts"),
-            None=>anyhow::anyhow!("source capture refused; verify profile, roots, capacity and source contracts"),
-        }
-    })
+    capture(profile, output).map_err(capture_failure)
+}
+
+fn capture_failure(error: anyhow::Error) -> anyhow::Error {
+    // Only our bounded stage names are public. Lower-level provider/IO errors
+    // may contain private paths; do not format their error chain.
+    let budget = matches!(
+        error.downcast_ref::<tig_git::source::Error>(),
+        Some(tig_git::source::Error::Budget)
+    ) || matches!(
+        error.downcast_ref::<tig_core::tree::TreeError>(),
+        Some(tig_core::tree::TreeError::Budget)
+    ) || matches!(
+        error.downcast_ref::<tig_store::metadata::Error>(),
+        Some(tig_store::metadata::Error::Budget)
+    );
+    match (error.downcast_ref::<CaptureStage>(), budget) {
+        (Some(stage), true) => anyhow::anyhow!(
+            "source capture refused during {stage}: bounded resource budget exceeded"
+        ),
+        (None, true) => anyhow::anyhow!("source capture refused: bounded resource budget exceeded"),
+        (Some(stage), false) => anyhow::anyhow!(
+            "source capture refused during {stage}; verify profile, roots, capacity and source contracts"
+        ),
+        (None, false) => anyhow::anyhow!(
+            "source capture refused; verify profile, roots, capacity and source contracts"
+        ),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn typed_budget_refusals_keep_the_public_stage_without_private_error_context() {
+        let errors = [
+            anyhow::Error::new(tig_git::source::Error::Budget),
+            anyhow::Error::new(tig_core::tree::TreeError::Budget),
+            anyhow::Error::new(tig_store::metadata::Error::Budget),
+        ];
+        for error in errors {
+            let error = error
+                .context("private/source/path and private artifact text")
+                .context(CaptureStage("native freeze"));
+            let public = format!("{:#}", capture_failure(error));
+            assert_eq!(
+                public,
+                "source capture refused during native freeze: bounded resource budget exceeded"
+            );
+        }
+    }
+
+    #[test]
+    fn arbitrary_error_text_does_not_become_a_public_budget_or_private_diagnostic() {
+        let error = anyhow::anyhow!("Budget: private/source/path and private artifact text")
+            .context(CaptureStage("native freeze"));
+        assert_eq!(
+            format!("{:#}", capture_failure(error)),
+            "source capture refused during native freeze; verify profile, roots, capacity and source contracts"
+        );
+        assert_eq!(
+            format!(
+                "{:#}",
+                capture_failure(anyhow::Error::new(tig_store::metadata::Error::Budget))
+            ),
+            "source capture refused: bounded resource budget exceeded"
+        );
+    }
     #[test]
     fn delivery_capture_requires_its_own_schema_and_bounded_request_before_store_access() {
         let mut value = json!({"schema":crate::tig_delivery_template::SCHEMA,"root_id":"delivery/source",
