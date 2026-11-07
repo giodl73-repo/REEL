@@ -45,7 +45,7 @@ pub use publication::publish_file;
 pub(crate) mod records;
 pub(crate) mod retained;
 mod setup;
-pub use capture::capture_context;
+pub use capture::{capture_context, inspect_capture_budget};
 use preparation::ContextMode;
 #[derive(Serialize)]
 #[serde(untagged)]

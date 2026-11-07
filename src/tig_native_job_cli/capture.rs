@@ -3,6 +3,11 @@ use super::metadata_wait::{MetadataWait, Waiting};
 use super::*;
 use anyhow::Context;
 use reel_assets::admission;
+use tig_core::tree::NodeStore;
+use tig_git::source::native::context::ProductionContext;
+
+mod budget;
+pub use budget::inspect_capture_budget;
 
 const SCHEMA: &str = "reel.tig-native-capture-profile.experimental-1";
 const EPISODE_SCHEMA: &str = "reel.tig-episode-capture-profile.experimental-1";
@@ -41,6 +46,35 @@ enum Contract {
     Browser(crate::tig_browser::Request),
 }
 impl Contract {
+    fn freeze(
+        &self,
+        source: &mut crate::tig_inputs::Source,
+        before: Option<&Path>,
+        store: &mut impl NodeStore,
+    ) -> Result<ProductionContext> {
+        let limits = TreeLimits::default();
+        match self {
+            Self::Browser(request) => {
+                crate::tig_browser::freeze_context(source, request, store, limits)
+                    .map(|(_, context)| context)
+            }
+            Self::Scene(request) => tig_scene::freeze_render_context(
+                source,
+                request,
+                before.ok_or_else(|| anyhow::anyhow!("scene preparation missing"))?,
+                store,
+                limits,
+            ),
+            Self::Episode(request) => {
+                crate::tig_episode::freeze_composition_context(source, request, store, limits)
+            }
+            Self::Delivery(request) => {
+                crate::tig_delivery_template::freeze_context(source, request, store, limits)
+                    .map(|(_, context)| context)
+            }
+        }
+    }
+
     fn parse(schema: &str, value: Value) -> Result<Self> {
         match schema {
             BROWSER_SCHEMA => {
@@ -169,38 +203,9 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
         bail!("metadata bounds changed before capture");
     }
     let before = preparation.as_ref().map(|p| p.path().join("capture"));
-    let context = match &contract {
-        Contract::Browser(request) => crate::tig_browser::freeze_context(
-            &mut source,
-            request,
-            &mut store,
-            TreeLimits::default(),
-        )
-        .map(|(_, context)| context),
-        Contract::Scene(request) => tig_scene::freeze_render_context(
-            &mut source,
-            request,
-            before
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("scene preparation missing"))?,
-            &mut store,
-            TreeLimits::default(),
-        ),
-        Contract::Episode(request) => crate::tig_episode::freeze_composition_context(
-            &mut source,
-            request,
-            &mut store,
-            TreeLimits::default(),
-        ),
-        Contract::Delivery(request) => crate::tig_delivery_template::freeze_context(
-            &mut source,
-            request,
-            &mut store,
-            TreeLimits::default(),
-        )
-        .map(|(_, context)| context),
-    }
-    .context(CaptureStage("native freeze"))?;
+    let context = contract
+        .freeze(&mut source, before.as_deref(), &mut store)
+        .context(CaptureStage("native freeze"))?;
     let mut archive = json!({
         "schema": crate::tig_inputs::ARCHIVE_PROFILE_SCHEMA,
         "archive": context.archive(), "checkpoint": source.checkpoint(),
