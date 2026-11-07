@@ -7,6 +7,8 @@ pub mod job;
 pub mod lifecycle;
 #[cfg(feature = "schema")]
 pub mod metadata_reader;
+#[cfg(feature = "schema")]
+pub mod placement;
 pub mod produced;
 #[cfg(feature = "schema")]
 pub mod schema;

@@ -35,6 +35,40 @@ impl AssetSnapshot {
         change: Change<'_>,
         reader: &mut impl Reader,
     ) -> Result<Prepared, Error> {
+        edits::prepare(
+            self.history_inputs(id, expected, dialect, limits)?,
+            change,
+            reader,
+        )
+        .map_err(Error::Update)
+    }
+
+    /// Reuse this exact captured snapshot for several validated edits of one
+    /// asset, returning one expected-original-base publication/proposal input.
+    pub fn prepare_history_sequence(
+        &self,
+        id: &str,
+        expected: &Object,
+        dialect: Dialect,
+        limits: Limits,
+        changes: Vec<Change<'_>>,
+        reader: &mut impl Reader,
+    ) -> Result<Prepared, Error> {
+        edits::sequence::prepare(
+            self.history_inputs(id, expected, dialect, limits)?,
+            changes,
+            reader,
+        )
+        .map_err(Error::Update)
+    }
+
+    fn history_inputs<'a>(
+        &'a self,
+        id: &str,
+        expected: &'a Object,
+        dialect: Dialect,
+        limits: Limits,
+    ) -> Result<Inputs<'a>, Error> {
         let reference = self.selected.get(id).ok_or(Error::Missing)?;
         if &reference.object != expected {
             return Err(Error::Stale);
@@ -43,18 +77,13 @@ impl AssetSnapshot {
         let instance = self.blobs.get(expected).ok_or(Error::Integrity)?;
         let definition = self.blobs.get(&record.definition).ok_or(Error::Integrity)?;
         let schema = self.blobs.get(&record.schema).ok_or(Error::Integrity)?;
-        edits::prepare(
-            Inputs {
-                expected,
-                instance,
-                definition,
-                authored_schema: schema,
-                dialect,
-                limits,
-            },
-            change,
-            reader,
-        )
-        .map_err(Error::Update)
+        Ok(Inputs {
+            expected,
+            instance,
+            definition,
+            authored_schema: schema,
+            dialect,
+            limits,
+        })
     }
 }

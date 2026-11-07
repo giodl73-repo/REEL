@@ -2,7 +2,7 @@
 use std::io::Cursor;
 use tig_assets::edits::Prepared;
 use tig_core::{Digest, LogicalPath, Object, identity};
-use tig_store::{AckLevel, Key, PublicationBackend, Receipt, Request};
+use tig_store::{AckLevel, Capabilities, Key, PublicationBackend, Receipt, Request};
 
 use crate::source::proposal::Replacement;
 
@@ -77,6 +77,67 @@ fn key(operation: &Key, suffix: &str) -> Result<Key, Error> {
     Key::parse(&format!("history-{}", Digest::blob(&identity).as_str())).map_err(provider)
 }
 
+fn intent(
+    prepared: &Prepared,
+    operation: &Key,
+    owner: &Key,
+    required: AckLevel,
+) -> Result<Vec<u8>, Error> {
+    if prepared.metadata().len() > 256 {
+        return Err(Error::Budget);
+    }
+    let metadata: Vec<_> = prepared.metadata().iter().map(|b| b.object()).collect();
+    let raw = identity::canonical_json(&serde_json::json!({
+        "schema":"tig.history-update-intent.experimental-1",
+        "operation":operation,"owner":owner,"required":required,
+        "expected":prepared.expected(),"record":prepared.record().object(),"metadata":metadata
+    }))
+    .map_err(|_| Error::Invalid)?;
+    if raw.len() > 65_536 {
+        return Err(Error::Budget);
+    }
+    Ok(raw)
+}
+
+/// Check every request before a caller starts publishing any item in a batch.
+/// This checks declared capabilities, not free capacity or retained custody.
+pub fn preflight(
+    prepared: &Prepared,
+    operation: &Key,
+    owner: &Key,
+    required: AckLevel,
+    capabilities: Capabilities,
+) -> Result<(), Error> {
+    if prepared.is_noop() {
+        return Ok(());
+    }
+    let raw = intent(prepared, operation, owner, required)?;
+    capabilities
+        .check(&Request {
+            operation: key(operation, "intent")?,
+            owner: owner.clone(),
+            object: Object::from_bytes(&raw),
+            required,
+        })
+        .map_err(provider)?;
+    for (index, blob) in prepared
+        .metadata()
+        .iter()
+        .chain([prepared.record()])
+        .enumerate()
+    {
+        capabilities
+            .check(&Request {
+                operation: key(operation, &format!("object-{index}"))?,
+                owner: owner.clone(),
+                object: blob.object().clone(),
+                required,
+            })
+            .map_err(provider)?;
+    }
+    Ok(())
+}
+
 /// Caller must retain old roots; success only acknowledges newly prepared bytes.
 pub fn publish(
     prepared: &Prepared,
@@ -95,19 +156,8 @@ pub fn publish(
     if prepared.is_noop() {
         return Ok(result);
     }
-    if prepared.metadata().len() > 256 {
-        return Err(Error::Budget);
-    }
-    let metadata: Vec<_> = prepared.metadata().iter().map(|b| b.object()).collect();
-    let raw = identity::canonical_json(&serde_json::json!({
-        "schema":"tig.history-update-intent.experimental-1",
-        "operation":operation,"owner":owner,"required":required,
-        "expected":prepared.expected(),"record":prepared.record().object(),"metadata":metadata
-    }))
-    .map_err(|_| Error::Invalid)?;
-    if raw.len() > 65_536 {
-        return Err(Error::Budget);
-    }
+    preflight(prepared, operation, owner, required, backend.capabilities())?;
+    let raw = intent(prepared, operation, owner, required)?;
     let intent = Object::from_bytes(&raw);
     let mut requests = vec![(
         Request {
@@ -133,10 +183,6 @@ pub fn publish(
             },
             blob.bytes(),
         ));
-    }
-    let caps = backend.capabilities();
-    for (request, _) in &requests {
-        caps.check(request).map_err(provider)?;
     }
     for (request, bytes) in requests {
         let receipt =

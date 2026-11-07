@@ -85,6 +85,10 @@ pub struct Checkpoint {
     hash: Digest,
 }
 impl Checkpoint {
+    /// Stable enrolled journal/epoch identity, not latest-state or custody proof.
+    pub fn identity(&self) -> &Digest {
+        &self.genesis
+    }
     pub fn sequence(&self) -> u64 {
         self.sequence
     }

@@ -1,8 +1,9 @@
 # Existing-cache history command host
 
-Candidate input REEL49ede239fe66f6a86c608f1ad0dfdd86804d8e24, Tig
-3a1ce2441957023c08efbedeabf725ed5668c81b, qualified upstream through Tig#76
-(main46cf99c88f7de08506074f29718105f2f391b3d8).
+The current dependency is public Tig commit
+`0ceade2a16de1c1ed6cc27e48675e7945d7b61df`; see
+[source provenance](../vendor/README.md) and the
+[consumer workflow](tig-public-integration.md).
 Scope: exact vendor source intake and one optional thin host of Tig's history
 application service through REEL's existing CAS publisher. No cache engine,
 renderer, legacy script, live enrollment or tool binding change.
@@ -37,5 +38,5 @@ Old source/job protection remains until separately acknowledged claim handoff.
 
 Verification: exact upstream source-pin hashes, Cargo fmt, focused synthetic
 history command and existing publication/regression tests, locked checks/Clippy.
-Vendor qualification is not a consumer runtime upgrade. Do not install or merge
-this candidate until upstream hosted qualification and consumer checks pass.
+Vendor qualification does not install a consumer runtime or change a project's
+binding. Consumer Windows/Linux checks must pass before merging dependency updates.

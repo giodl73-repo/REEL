@@ -6,7 +6,7 @@ use tig_store::{existing::Layout, local::LocalStore};
 fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args_os().skip(1).take(4).collect();
     if args.len() != 3 {
-        return Err("usage: tig-history check|publish|propose PROFILE REQUEST".into());
+        return Err("usage: tig-history {check|publish|propose|batch-check|batch-publish|batch-propose} PROFILE REQUEST".into());
     }
     let action = args[0].to_str().ok_or("invalid action")?;
     let result = history_command::execute(

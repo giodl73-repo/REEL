@@ -32,8 +32,12 @@ enum Histories {
 pub struct Inspection {
     summary: Summary,
     histories: Histories,
+    selected_subject: Option<Object>,
 }
 impl Inspection {
+    pub fn selected_subject(&self) -> Option<&Object> {
+        self.selected_subject.as_ref()
+    }
     pub fn summary(&self) -> &Summary {
         &self.summary
     }
@@ -120,6 +124,12 @@ impl AssetSnapshot {
             }
         };
         let mut inspection = Inspection {
+            selected_subject: bound
+                .instance()
+                .value()
+                .selected
+                .as_ref()
+                .map(|pin| pin.object()),
             summary: Summary {
                 schema: "tig.asset-history-inspection.experimental-1",
                 source_checkpoint: self.checkpoint().clone(),

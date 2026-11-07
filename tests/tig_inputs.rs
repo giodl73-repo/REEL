@@ -256,9 +256,15 @@ fn vendored_runtime_source_matches_exact_upstream_pin() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor/tig");
     let manifest: Value =
         serde_json::from_slice(&fs::read(root.join("source-pin.json")).unwrap()).unwrap();
+    assert_eq!(manifest["schema"], "reel.vendored-source.v1");
+    assert_eq!(
+        manifest["repository"],
+        "https://github.com/giodl73-repo/tig"
+    );
+    assert_eq!(manifest["license"], "MIT");
     assert_eq!(
         manifest["commit"],
-        "3a1ce2441957023c08efbedeabf725ed5668c81b"
+        "0ceade2a16de1c1ed6cc27e48675e7945d7b61df"
     );
     let mut listed = std::collections::BTreeSet::new();
     let mut total = 0;
@@ -287,9 +293,7 @@ fn vendored_runtime_source_matches_exact_upstream_pin() {
             );
             if path.is_dir() {
                 walk(root, &path, found);
-            } else if path.extension().is_some_and(|x| x == "rs")
-                || path.file_name().is_some_and(|x| x == "Cargo.toml")
-            {
+            } else if path != root.join("source-pin.json") {
                 found.insert(
                     path.strip_prefix(root)
                         .unwrap()
@@ -302,12 +306,9 @@ fn vendored_runtime_source_matches_exact_upstream_pin() {
     }
     let mut actual = std::collections::BTreeSet::new();
     walk(&root, &root, &mut actual);
-    actual.insert("LICENSE".into());
-    actual.insert("Cargo.lock".into());
-    actual.insert(".gitattributes".into());
     assert_eq!(listed, actual);
-    assert_eq!(listed.len(), 87);
-    assert_eq!(total, 899028);
+    assert_eq!(listed.len(), 115);
+    assert_eq!(total, 1258310);
 }
 
 #[test]

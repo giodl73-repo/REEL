@@ -2,6 +2,8 @@
 #![forbid(unsafe_code)]
 pub mod cache;
 #[cfg(feature = "schema")]
+pub mod catalogue;
+#[cfg(feature = "schema")]
 pub mod history_command;
 pub mod pointer;
 #[cfg(feature = "assets")]
