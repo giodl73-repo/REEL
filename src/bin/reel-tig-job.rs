@@ -79,6 +79,8 @@ enum Operation {
     /// Reopen a frozen delivery source and fully check retained candidate outputs.
     /// No render, execution attestation, owner transition or production claim.
     CheckRetainedDelivery { profile: PathBuf, output: PathBuf },
+    /// Inspect exact compiled controls from a frozen delivery without primary media IO.
+    InspectDelivery { profile: PathBuf },
     /// Explicit one-time shared metadata/journal setup; never invoked by Run.
     Setup { profile: PathBuf, output: PathBuf },
     /// Check existing named stores against private trusted-minimum bindings.
@@ -167,6 +169,9 @@ fn main() -> ExitCode {
         }
         Operation::CheckRetainedDelivery { profile, output } => {
             reel::tig_native_job_cli::check_retained_delivery(&profile, &output)
+        }
+        Operation::InspectDelivery { profile } => {
+            reel::tig_native_job_cli::inspect_delivery(&profile)
         }
         Operation::CompareBrowserRetained {
             profile,

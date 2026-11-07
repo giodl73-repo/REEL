@@ -32,6 +32,8 @@ const TICKET_SCHEMA: &str = "reel.tig-native-worker.experimental-1";
 mod browser;
 mod capture;
 mod comparison;
+mod delivery_inspection;
+pub use delivery_inspection::inspect_delivery;
 pub(crate) mod metadata_wait;
 pub use comparison::{
     check_retained_delivery, compare_browser_retained,
