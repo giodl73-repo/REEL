@@ -199,6 +199,8 @@ struct Receipt {
     font_sha256: Vec<String>,
     master_sha256: String,
     master_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    master_encoding: Option<MasterEncoding>,
     review_sha256: String,
     review_bytes: u64,
     frames: u64,
@@ -208,6 +210,25 @@ struct Receipt {
     #[serde(default)]
     picture_timing_sha256: Option<String>,
     publication: String,
+}
+
+/// Explicit working-master choice; geometry, YUV precision and PCM stay fixed.
+/// Existing callers and v1 receipts retain their FFV1 contract.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum MasterEncoding {
+    #[default]
+    Ffv1,
+    LosslessH264,
+}
+
+impl MasterEncoding {
+    fn codec(self) -> &'static str {
+        match self {
+            Self::Ffv1 => "ffv1",
+            Self::LosslessH264 => "libx264",
+        }
+    }
 }
 
 type LoadedPresentation = (
@@ -281,6 +302,7 @@ fn facts(path: &Path, files: &dyn InputFiles) -> Result<serde_json::Value> {
 #[derive(Clone, Copy)]
 enum MasterContract {
     ProducedFfv1,
+    ProducedLosslessH264,
     RetainedPrimaryReference,
 }
 
@@ -337,9 +359,13 @@ fn check_stream_contract(
     let samples = frames * template.sample_rate as u64 / template.frame_rate as u64;
     // A codec label never proves reference equality. The retained-reference
     // route must subsequently compare every decoded YUV/RGB frame and PCM sample.
-    let video_codec_allowed = video["codec_name"] == "ffv1"
-        || (matches!(contract, MasterContract::RetainedPrimaryReference)
-            && video["codec_name"] == "h264");
+    let video_codec_allowed = match contract {
+        MasterContract::ProducedFfv1 => video["codec_name"] == "ffv1",
+        MasterContract::ProducedLosslessH264 => video["codec_name"] == "h264",
+        MasterContract::RetainedPrimaryReference => {
+            video["codec_name"] == "ffv1" || video["codec_name"] == "h264"
+        }
+    };
     if streams.len() != 2
         || !video_codec_allowed
         || video["pix_fmt"] != "yuv444p"
@@ -513,11 +539,35 @@ pub fn build_with_control_files(
     build_manifest(&bytes, controls, inputs, output_dir)
 }
 
+/// Explicit encoding admission for managed materialization. The source manifest
+/// remains unchanged; the versioned receipt records the selected encoding.
+pub fn build_with_control_files_and_encoding(
+    manifest: &scene_delivery::FileRef,
+    controls: &dyn InputFiles,
+    inputs: &dyn InputFiles,
+    output_dir: &Path,
+    encoding: MasterEncoding,
+) -> Result<()> {
+    scene_delivery::control_name(&manifest.path)?;
+    let bytes = scene_delivery::read_control(controls, manifest)?;
+    build_encoded_manifest(&bytes, controls, inputs, output_dir, encoding)
+}
+
 fn build_manifest(
     raw: &[u8],
     controls: &dyn InputFiles,
     inputs: &dyn InputFiles,
     output_dir: &Path,
+) -> Result<()> {
+    build_encoded_manifest(raw, controls, inputs, output_dir, MasterEncoding::Ffv1)
+}
+
+fn build_encoded_manifest(
+    raw: &[u8],
+    controls: &dyn InputFiles,
+    inputs: &dyn InputFiles,
+    output_dir: &Path,
+    encoding: MasterEncoding,
 ) -> Result<()> {
     if output_dir.exists() {
         bail!("output directory already exists");
@@ -526,7 +576,17 @@ fn build_manifest(
     fs::create_dir_all(output_dir)?;
     let output_dir = fs::canonicalize(output_dir)?;
     prepare_layers(&loaded.0, inputs, &output_dir)?;
-    let mut cmd = render_command(&loaded, inputs, &output_dir, "ffv1")?;
+    let mut cmd = render_command(&loaded, inputs, &output_dir, encoding.codec())?;
+    if encoding == MasterEncoding::LosslessH264 {
+        cmd.args([
+            "-preset",
+            "medium",
+            "-qp",
+            "0",
+            "-frames:v",
+            &loaded.1.frames().to_string(),
+        ]);
+    }
     cmd.arg(output_dir.join("master.mkv"));
     run(cmd)?;
     let (manifest, template, _, _, manifest_bytes, picture_frames) = loaded;
@@ -534,13 +594,20 @@ fn build_manifest(
         &output_dir.join("master.mkv"),
         &template,
         inputs,
-        MasterContract::ProducedFfv1,
+        match encoding {
+            MasterEncoding::Ffv1 => MasterContract::ProducedFfv1,
+            MasterEncoding::LosslessH264 => MasterContract::ProducedLosslessH264,
+        },
     )?;
     write_review(&output_dir, inputs)?;
     let master = output_dir.join("master.mkv");
     let review = output_dir.join("review.mp4");
     let receipt = Receipt {
-        schema: "reel.presentation-still-sequence-receipt.v1".into(),
+        schema: match encoding {
+            MasterEncoding::Ffv1 => "reel.presentation-still-sequence-receipt.v1",
+            MasterEncoding::LosslessH264 => "reel.presentation-still-sequence-receipt.v2",
+        }
+        .into(),
         episode_id: manifest.episode_id,
         language: manifest.language,
         role: manifest.role,
@@ -558,6 +625,7 @@ fn build_manifest(
             .collect(),
         master_sha256: episode_conform::file_sha(&master)?,
         master_bytes: fs::metadata(&master)?.len(),
+        master_encoding: (encoding == MasterEncoding::LosslessH264).then_some(encoding),
         review_sha256: episode_conform::file_sha(&review)?,
         review_bytes: fs::metadata(&review)?.len(),
         frames,
@@ -1127,9 +1195,9 @@ fn check_outputs(
     {
         bail!("retained font differs from selected font");
     }
-    let (frames, samples) = check_media(&master, &template, inputs, MasterContract::ProducedFfv1)?;
-    if receipt.schema != "reel.presentation-still-sequence-receipt.v1"
-        || receipt.episode_id != manifest.episode_id
+    let contract = produced_receipt_contract(&receipt.schema, receipt.master_encoding)?;
+    let (frames, samples) = check_media(&master, &template, inputs, contract)?;
+    if receipt.episode_id != manifest.episode_id
         || receipt.language != manifest.language
         || receipt.role != manifest.role
         || receipt.template_id != template.template_id
@@ -1176,6 +1244,19 @@ fn check_outputs(
     Ok(())
 }
 
+fn produced_receipt_contract(
+    schema: &str,
+    encoding: Option<MasterEncoding>,
+) -> Result<MasterContract> {
+    match (schema, encoding) {
+        ("reel.presentation-still-sequence-receipt.v1", None) => Ok(MasterContract::ProducedFfv1),
+        ("reel.presentation-still-sequence-receipt.v2", Some(MasterEncoding::LosslessH264)) => {
+            Ok(MasterContract::ProducedLosslessH264)
+        }
+        _ => bail!("presentation receipt encoding/version mismatch"),
+    }
+}
+
 pub fn cli() {
     let args = std::env::args().collect::<Vec<_>>();
     let result = (|| -> Result<()> {
@@ -1203,6 +1284,28 @@ pub fn cli() {
 #[cfg(test)]
 mod timing_tests {
     use super::*;
+
+    #[test]
+    fn produced_encoding_requires_its_explicit_receipt_version() {
+        let v1 = "reel.presentation-still-sequence-receipt.v1";
+        let v2 = "reel.presentation-still-sequence-receipt.v2";
+        assert!(matches!(
+            produced_receipt_contract(v1, None).unwrap(),
+            MasterContract::ProducedFfv1
+        ));
+        assert!(matches!(
+            produced_receipt_contract(v2, Some(MasterEncoding::LosslessH264)).unwrap(),
+            MasterContract::ProducedLosslessH264
+        ));
+        for (schema, encoding) in [
+            (v1, Some(MasterEncoding::LosslessH264)),
+            (v2, None),
+            (v2, Some(MasterEncoding::Ffv1)),
+        ] {
+            assert!(produced_receipt_contract(schema, encoding).is_err());
+        }
+        assert!(serde_json::from_str::<MasterEncoding>("\"h264\"").is_err());
+    }
 
     #[test]
     fn master_contract_rejects_extra_streams_non_square_pixels_and_wrong_pixel_format() {
@@ -1233,6 +1336,13 @@ mod timing_tests {
         );
         let mut h264 = streams.clone();
         h264[0]["codec_name"] = serde_json::json!("h264");
+        assert!(
+            check_stream_contract(&streams, &template, MasterContract::ProducedLosslessH264)
+                .is_err()
+        );
+        assert!(
+            check_stream_contract(&h264, &template, MasterContract::ProducedLosslessH264).is_ok()
+        );
         assert!(check_stream_contract(&h264, &template, MasterContract::ProducedFfv1).is_err());
         assert_eq!(
             check_stream_contract(&h264, &template, MasterContract::RetainedPrimaryReference)

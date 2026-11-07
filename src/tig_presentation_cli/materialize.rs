@@ -18,6 +18,8 @@ struct Profile {
     runtime: Bindings,
     max_primary_objects: usize,
     max_primary_bytes: u64,
+    #[serde(default)]
+    master_encoding: presentation_still_sequence::MasterEncoding,
 }
 
 fn output_path(path: &Path, protected: impl Iterator<Item = PathBuf>) -> Result<PathBuf> {
@@ -118,11 +120,12 @@ pub fn materialize(profile: &Path, output: &Path) -> Result<Value> {
     let programs = BoundPrograms::bind(&p.runtime)?;
     let inputs = compiled.prepare(&mut source)?;
     let provider = programs.with_inputs(&inputs);
-    presentation_still_sequence::build_with_control_files(
+    presentation_still_sequence::build_with_control_files_and_encoding(
         compiled.manifest(),
         &compiled,
         &provider,
         &output,
+        p.master_encoding,
     )?;
     presentation_still_sequence::check_with_control_files(
         compiled.manifest(),
@@ -150,6 +153,7 @@ pub fn materialize(profile: &Path, output: &Path) -> Result<Value> {
         "profile":Object::from_bytes(&raw),
         "source_checkpoint":source.checkpoint(),"source":compiled.root(),
         "manifest":compiled.manifest(),"primary_objects":primaries.len(),
+        "master_encoding":p.master_encoding,
         "primary_logical_bytes":logical_bytes,"native_render_and_check":true,
         "independent_primary_comparison":true,
         "production_current":false,"adopted":false,"approval":false,
