@@ -947,17 +947,46 @@ fn parse_stream_hashes(output: &str) -> Result<(String, String)> {
         bail!("unsupported presentation stream hash headers");
     }
     let mut hashes = BTreeMap::new();
-    for line in lines {
+    for (line_index, line) in lines.into_iter().enumerate() {
         if version2 && line.starts_with('#') {
             continue;
         }
         let parts = line.split(',').map(str::trim).collect::<Vec<_>>();
-        if parts.len() != 3 || !matches!(parts[0], "0" | "1") {
-            bail!("unexpected presentation stream hash subject");
+        if parts.len() < 3 || (!version2 && parts.len() != 3) || !matches!(parts[0], "0" | "1") {
+            bail!(
+                "unexpected presentation stream hash subject \
+                 (line={}, characters={}, fields={}, first_codepoint={:?}, version2={})",
+                line_index,
+                line.chars().count(),
+                parts.len(),
+                line.chars().next().map(u32::from),
+                version2
+            );
         }
         let digest = if version2 {
             if parts[1].parse::<u64>().ok().is_none_or(|bytes| bytes == 0) {
                 bail!("empty or invalid presentation stream size");
+            }
+            if parts.len() > 3 {
+                // FFmpeg v2 may append S=N followed by N size/SHA256 pairs
+                // for coded side data. Validate the complete framing while
+                // comparing the decoded picture/PCM payload hashes below.
+                let count = parts[3]
+                    .strip_prefix("S=")
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .filter(|count| *count > 0)
+                    .context("invalid presentation side-data count")?;
+                if count.checked_mul(2).and_then(|n| n.checked_add(4)) != Some(parts.len()) {
+                    bail!("presentation side-data fields differ from count");
+                }
+                for side_data in parts[4..].chunks_exact(2) {
+                    if side_data[0].parse::<u64>().is_err()
+                        || side_data[1].len() != 64
+                        || !side_data[1].bytes().all(|b| b.is_ascii_hexdigit())
+                    {
+                        bail!("invalid presentation side-data checksum");
+                    }
+                }
             }
             parts[2]
         } else {
@@ -1249,6 +1278,36 @@ mod timing_tests {
             current.replace("#version: 2", "#version: 3"),
             current.replace("pcm_s24le", "pcm_s16le"),
             current.replace("0, 123", "0, 0"),
+        ] {
+            assert!(parse_stream_hashes(&bad).is_err());
+        }
+    }
+
+    #[test]
+    fn version_two_side_data_is_fully_framed_and_keeps_payload_hashes() {
+        let video = "a".repeat(64);
+        let audio = "b".repeat(64);
+        let side = "c".repeat(64);
+        let current = format!(
+            "#format: stream checksums\n#version: 2\n#hash: SHA256\n#media_type 0: video\n#codec_id 0: rawvideo\n#media_type 1: audio\n#codec_id 1: pcm_s24le\n0, 123, {video}, S=1, 36, {side}\n1, 456, {audio}, S=2, 0, {side}, 8, {side}\n"
+        );
+        assert_eq!(
+            parse_stream_hashes(&current).unwrap(),
+            (video.clone(), audio.clone())
+        );
+        for bad in [
+            current.replace("S=1", "S=0"),
+            current.replace("S=1", "S=2"),
+            current.replace("S=1", "S=-1"),
+            current.replace("S=1", "S=184467440737095516160"),
+            current.replace("S=1", "X=1"),
+            current.replace(", 36,", ", -36,"),
+            current.replace(&side, "not-a-sha256"),
+            current.replace(&side, &"z".repeat(64)),
+            current.replace(&format!(", 8, {side}"), ""),
+            current.replace(&format!("0, 123, {video}"), &format!("1, 123, {video}")),
+            current.replace(&format!("0, 123, {video}"), &format!("0, 0, {video}")),
+            format!("0,v,SHA256={video}, S=1, 36, {side}\n1,a,SHA256={audio}\n"),
         ] {
             assert!(parse_stream_hashes(&bad).is_err());
         }
