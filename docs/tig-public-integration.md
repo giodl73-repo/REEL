@@ -1,5 +1,9 @@
 # REEL with public Tig
 
+For the overall workflow, see [use cases](use-cases.md) and
+[architecture](architecture.md#reel-and-tig). [Installation](setup/install.md)
+maps the optional features and native runtime requirements.
+
 REEL owns media interpretation, rendering and independent media checks.
 [Tig](https://github.com/giodl73-repo/tig) owns asset records, exact byte identities,
 Git snapshots, guarded resolution and storage lifecycle primitives. Scene controls

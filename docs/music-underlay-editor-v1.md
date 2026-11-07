@@ -20,8 +20,9 @@ layer, source recording, analysis manifest, cache or archive is discovered.
 
 ## Editing
 
-Export creates private static HTML/JavaScript/session files. Use an explicitly
-requested local static server; export starts no service. The interface shows
+Export creates private static HTML/JavaScript/session files. Use the explicitly
+launched [shared Rust editor host](editor-host-v1.md); export starts no service.
+The interface shows
 the selected layer's language and canonical/as-sung kind, with read-only text.
 Select a span, highlight source text and choose **Use selected text**. Assign
 the first/last notes from the shared note list, choose syllable treatment, and

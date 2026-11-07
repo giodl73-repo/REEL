@@ -214,7 +214,7 @@ caller-owned directory, and compares contract pins, exact roots and full capture
 requirements. Opaque controls and selected alignments must remain readable through
 the enrolled providers. Candidate scratch may exist when a later verification
 fails; its caller owns cleanup. The returned source is render-context bound and
-legacy recipe/compilation entry points refuse it. These APIs do not yet admit a
+legacy recipe/compilation entry points refuse it. These context APIs do not admit a
 projected recipe, runtime environment or active render job; see the
 [render context review](reviews/2026-10-27-tig-render-context.md).
 
@@ -234,6 +234,7 @@ controls/alignments and writes new candidate scratch; it can work with Git offli
 Legacy/projected claims and context modes never silently fall back to one another.
 A returned unsigned claimed recipe match proves neither execution nor output
 bytes, runtime/environment availability, approval or custody. Explicit managed
-execution uses `JobPlan::from_render_context` and held runtime components; CLI
-adoption and complete coverage remain subsequent work. See the
+execution uses `JobPlan::from_render_context` and held runtime components. Current
+CLI execution and recovery are documented in [bounded jobs](tig-job-runner.md);
+complete applicable coverage and project runtime adoption remain separate. See the
 [projected recipe review](reviews/2026-10-27-tig-projected-native-recipe.md).

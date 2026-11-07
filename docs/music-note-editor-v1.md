@@ -23,8 +23,9 @@ incomplete export for explicit reconciliation.
 Export reads only the named model, checks its typed grammar and native note
 layout, and writes `index.html`, `editor.js` and `session.json`. It reads no source
 recording, analysis manifest, lyric file, cache or archive and starts no service.
-Open through an explicitly requested local static server. No server is included
-or automatically launched. Browser visual acceptance remains separate.
+Open the export through the explicitly launched
+[shared Rust editor host](editor-host-v1.md). Export starts no service; the host
+is a separate executable. Browser visual acceptance remains separate.
 
 The interface shows a declared-note pitch/timing view, part selection and up to
 100 editable note rows per page. Each changed note needs a reason. Undo, reset,
