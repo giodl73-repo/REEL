@@ -17,6 +17,16 @@ are explicit and checked before primary preparation or output creation. The
 existing source compiler retains all approval, source-clock and primary-state
 admission checks. A private-source admission remains private-source admission.
 
+An optional `master_encoding` selects `ffv1` (the unchanged default) or
+`lossless-h264`. The latter uses native libx264 with QP 0, retaining the same
+canvas, frame/sample clocks, limited-range 4:4:4 pictures and stereo PCM24.
+It writes a v2 still-sequence receipt with `master_encoding: "lossless-h264"`;
+v1 receipts remain FFV1-only. A codec label is not equality evidence: the worker
+still independently compares every decoded YUV/RGB frame and PCM sample against
+the primary render before success. Select this explicitly in a new frozen job;
+existing requests, receipts and retained masters are immutable. Normal measured
+output, scratch, atomic-publication and cache-capacity limits stay in force.
+
 The new output directory must have ordinary existing parents outside metadata
 and asset object stores. Existing directories, traversal and reparse parents
 refuse. Output names and media semantics come from the existing still renderer:
