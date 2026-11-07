@@ -103,8 +103,34 @@ pub(super) fn freeze(
             component.selected.clone(),
         );
     }
-    let manifest: crate::episode_conform::Manifest =
+    let mut manifest: crate::episode_conform::Manifest =
         serde_json::from_slice(&source.read_metadata(&plan.conform, 4 * 1024 * 1024)?)?;
+    // Fail unsupported/stale content before checking expensive component media.
+    // Use the current selected component, never a historical conform master.
+    for (segment, component) in manifest.segments.iter_mut().zip(&plan.components) {
+        segment.master.sha256 = component.selected.sha256.as_str().into();
+        segment.master.bytes = component.selected.bytes;
+    }
+    let mut metadata_bytes = 0usize;
+    crate::episode_conform::preflight_native_invocations(&manifest, |reference| {
+        crate::scene_delivery::control_name(&reference.path)?;
+        let object = Object {
+            sha256: Digest::parse(&reference.sha256)?,
+            bytes: reference.bytes,
+        };
+        let raw = source.read_metadata(&object, 4 * 1024 * 1024)?;
+        metadata_bytes = metadata_bytes
+            .checked_add(raw.len())
+            .context("invocation metadata overflow")?;
+        if metadata_bytes > 16 * 1024 * 1024 {
+            bail!("invocation metadata exceeds budget");
+        }
+        evidence.insert(
+            LogicalPath::parse(&format!("parent/content/{}", object.sha256.as_str()))?,
+            object,
+        );
+        Ok(raw)
+    })?;
     let reference_geometry = crate::media_parity::GeometryAdmission {
         assume_square_for_unspecified_sar: manifest
             .output_geometry

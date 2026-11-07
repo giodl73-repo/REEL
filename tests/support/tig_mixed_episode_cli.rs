@@ -203,9 +203,38 @@ pub(super) fn configure(p: &mut Project, request: &mut reel::tig_episode::Reques
         conform["segments"][index] = json!({"kind":"episode-presentation","id":unit,
             "master":reference(&format!("mixed/{unit}/master.mkv"),&selected),"source_receipt":reference(&format!("mixed/{unit}/receipt.json"),&receipt)});
     }
+    // Exercise the actual nonempty invocation through offline capture,
+    // preparation, protected metadata, current proofs and final assembly.
+    // The ASS layer above renders this literal synthetic source text.
+    let text = "Mixed fixture";
+    let text_hash = Object::from_bytes(text.as_bytes()).sha256;
+    let picture = read(p.repo.path().join("records/cel-credits.tig"))["selected"].clone();
+    let evidence = json!({"schema":"reel.presentation-source-text.v1",
+        "episode_id":"episode-1","role":"credits","language":"es",
+        "picture_binding":"credits.picture","picture_sha256":picture["sha256"],
+        "rendered_source_master_sha256":conform["segments"][3]["master"]["sha256"],
+        "caption_template_id":"credits",
+        "units":[{"source_id":"synthetic-block-1","text":text,"sha256":text_hash}]});
+    let evidence_pin = p.publish("hot", &serde_json::to_vec(&evidence).unwrap());
+    conform["segments"][3]["source_text_evidence"] =
+        reference("mixed/credits-text.json", &evidence_pin);
+    let mut bindings = read(
+        p.data
+            .path()
+            .join(conform["episode_bindings"]["path"].as_str().unwrap()),
+    );
+    bindings["assets"]["credits.picture"] = json!({"logical_id":"cel/credits",
+        "sha256":picture["sha256"],"bytes":picture["bytes"],
+        "cache_uri":format!("cache://sha256/{}",picture["sha256"].as_str().unwrap()),
+        "selection_state":"selected-private-production"});
+    let binding_pin = p.publish("hot", &serde_json::to_vec(&bindings).unwrap());
+    conform["episode_bindings"] = reference("mixed/bindings.json", &binding_pin);
     let episode = json!({"schema":"reel.episode-authoring.v1","episode_id":"episode-1","season_id":"season-1","authoring_state":"ready-for-private-build",
-        "master_template_id":"master","scene_policy_id":"policy","presentation":[{"role":"opening","template_id":"opening","content":{}},{"role":"credits","template_id":"credits","content":{}}],"score_palette":[],"scene_ids":["scene-a","scene-b"]});
-    let master = json!({"schema":"reel.episode-master-template.v2","template_id":"master","ordered_units":[{"kind":"episode-presentation","id":"opening"},{"kind":"scene","id":"scene-a"},{"kind":"scene","id":"scene-b"},{"kind":"episode-presentation","id":"credits"}]});
+        "master_template_id":"master","scene_policy_id":"policy","presentation":[{"role":"opening","template_id":"opening","content":{}},{"role":"credits","template_id":"credits","content":{
+            "picture_binding":"credits.picture","source_text_evidence_sha256_by_language":{"es":evidence_pin.sha256}
+        }}],"score_palette":[],"scene_ids":["scene-a","scene-b"]});
+    let master = json!({"schema":"reel.episode-master-template.v2","template_id":"master","ordered_units":[{"kind":"episode-presentation","id":"opening"},{"kind":"scene","id":"scene-a"},{"kind":"scene","id":"scene-b"},{"kind":"episode-presentation","id":"credits",
+        "source_ids":["synthetic-block-1"],"source_text_sha256_by_language":{"es":[text_hash],"en":[text_hash]}}]});
     let master_pin = p.publish("hot", &serde_json::to_vec(&master).unwrap());
     let catalog = json!({"schema":"reel.scene-template-catalog.v1","templates":[{"template_id":"master","kind":"episode-master","definition_sha256":master_pin.sha256,"required_content_keys":[]},
         {"template_id":"opening","kind":"opening","definition_sha256":Object::from_bytes(b"opening layout").sha256,"required_content_keys":[]},

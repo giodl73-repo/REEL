@@ -144,7 +144,12 @@ impl ParentControls {
         ]
         .into_iter()
         .chain(manifest.source_master_template.iter())
-        {
+        .chain(
+            manifest
+                .segments
+                .iter()
+                .filter_map(|s| s.source_text_evidence.as_ref()),
+        ) {
             let name = output_name(&item.path)?;
             let object = Object {
                 sha256: Digest::parse(&item.sha256)?,
