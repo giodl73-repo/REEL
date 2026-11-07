@@ -308,6 +308,40 @@ fn fake(inv: &Invocation<'_>, mutation: usize) -> Result<bool> {
     Ok(false) // Synthetic qualification callback is never an executed provider.
 }
 #[test]
+fn explicit_context_is_extracted_and_bound_through_provider_and_retained_replay() {
+    let mut f = fixture();
+    let original = wave::encode(&[0.25, -0.125].repeat(128000), 8000, 2).unwrap();
+    fs::write(f.file("recording"), &original).unwrap();
+    f.admission["recording"]["object"] = serde_json::to_value(pin(&original)).unwrap();
+    let original_pin = pin(&original);
+    f.change("original_generation", |g| {
+        g["outputs"] = json!([original_pin])
+    });
+    let (admission, recipe_path, _, mut recipe) = inputs(&f);
+    recipe["patches"][0]["start_frame"] = json!(56000);
+    recipe["patches"][0]["end_frame"] = json!(60000);
+    // The full sixteen-second source extends beyond both default five-second edges.
+    recipe["patches"][0]["context"] = json!({"start_frame":0,"end_frame":128000});
+    save(&recipe_path, &recipe);
+    let execution = execution(&f);
+    let output = f.dir.path().join("explicit-provider-context");
+    let report = generate_with(&admission, &recipe_path, &execution, &output, |inv| {
+        let request = packet::parse(&fs::read(inv.output.join("provider-request.json"))?)?;
+        assert_eq!(request["patches"][0]["context_start_frame"], 0);
+        assert_eq!(request["patches"][0]["context_end_frame"], 128000);
+        let extracted = wave::decode(&fs::read(inv.output.join("patch-source-0.wav"))?)?;
+        let source = wave::decode(&fs::read(f.file("recording"))?)?;
+        assert_eq!(extracted.samples, source.samples);
+        fake(inv, 0)
+    })
+    .unwrap();
+    assert_eq!(report["outside_mask_sample_bits_exact"], true);
+    check_generation(&admission, &recipe_path, &execution, &output).unwrap();
+    recipe["patches"][0]["context"]["start_frame"] = json!(1);
+    save(&recipe_path, &recipe);
+    assert!(check_generation(&admission, &recipe_path, &execution, &output).is_err());
+}
+#[test]
 fn synthetic_raw_pass_materializes_and_preserves_original_without_inventing_request() {
     let f = fixture();
     let (admission, recipe, _, _) = inputs(&f);

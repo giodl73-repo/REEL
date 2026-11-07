@@ -72,9 +72,13 @@ An installation relocation requires an explicitly verified successor descriptor.
 Native preparation re-inspects every original source input and holds the
 admission, recipe, execution, runtime and script bytes. It writes a distinct
 private source context and provider request, plus source-exact conditioning
-windows derived from integer masks and five seconds of neighboring original
-music. Those windows and provider inputs are also held read-only. Supplied words
-come only from the recipe's exact canonical line ranges.
+windows from the recipe's explicit context intervals, or the existing default
+of five seconds around each integer mask. Those windows and provider inputs are
+also held read-only. Supplied words come only from the recipe's exact canonical
+line ranges. Producers must choose context and lyric ranges that correspond;
+the tool does not infer sung boundaries or certify that a supplied line was
+performed. A wider context does not widen the replacement mask: materialization
+and retained replay still verify every protected sample bit outside that mask.
 
 On qualified Windows execution, the existing shared Windows Job Object primitive
 contains the child tree under the declared timeout, aggregate committed-memory
