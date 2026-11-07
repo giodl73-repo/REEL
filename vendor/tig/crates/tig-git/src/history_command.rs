@@ -25,6 +25,9 @@ use tig_store::{
     existing::{Layout, Profile as ByteProfile},
 };
 
+mod batch;
+mod changes;
+
 fn flat() -> Layout {
     Layout::Flat
 }
@@ -75,6 +78,9 @@ struct Document {
 #[derive(Deserialize)]
 #[serde(tag = "operation", rename_all = "kebab-case", deny_unknown_fields)]
 enum Request {
+    Sequence {
+        changes: Vec<Request>,
+    },
     ConfigureDelivery {
         document: Document,
     },
@@ -127,6 +133,9 @@ pub fn execute<B: PublicationBackend>(
     request_path: &Path,
     open: impl FnOnce(&Publication) -> Result<B, publication::Error>,
 ) -> Result<Value, String> {
+    if let Some(action) = action.strip_prefix("batch-") {
+        return batch::execute(action, profile_path, request_path, open);
+    }
     if !matches!(action, "check" | "publish" | "propose") {
         return Err("usage: tig-history check|publish|propose PROFILE REQUEST".into());
     }
@@ -145,59 +154,7 @@ pub fn execute<B: PublicationBackend>(
         .dialect
         .parse()
         .map_err(|_| "invalid schema dialect")?;
-    let document = match &request {
-        Request::ConfigureDelivery { document }
-        | Request::RegisterRevision { document, .. }
-        | Request::RecordDelivery { document, .. } => Some(document),
-        _ => None,
-    };
-    let raw = if let Some(document) = document {
-        let path = if document.path.is_absolute() {
-            document.path.clone()
-        } else {
-            request_path
-                .parent()
-                .unwrap_or(Path::new("."))
-                .join(&document.path)
-        };
-        let raw = bytes(&path)?;
-        if Object::from_bytes(&raw) != document.expected {
-            return Err("change document pin differs".into());
-        }
-        raw
-    } else {
-        Vec::new()
-    };
-    let names = match &request {
-        Request::SelectRevision { streams, .. } => {
-            streams.iter().map(String::as_str).collect::<Vec<_>>()
-        }
-        _ => vec![],
-    };
-    let change = match &request {
-        Request::ConfigureDelivery { .. } => Change::ConfigureDelivery { policy: &raw },
-        Request::RegisterRevision { coverage, .. } => Change::RegisterRevision {
-            manifest: &raw,
-            coverage: *coverage,
-        },
-        Request::RecordDelivery { coverage, .. } => Change::RecordDelivery {
-            event: &raw,
-            coverage: *coverage,
-        },
-        Request::SelectRevision {
-            revision,
-            representation,
-            subject,
-            status,
-            ..
-        } => Change::SelectRevision {
-            revision,
-            representation,
-            subject,
-            status,
-            streams: &names,
-        },
-    };
+    let loaded = changes::Loaded::read(request, request_path)?;
     let matching = profile.publication.as_ref().is_some_and(|p| {
         profile.byte_source.as_ref().is_some_and(|b| {
             b.places.iter().any(|place| {
@@ -242,13 +199,12 @@ pub fn execute<B: PublicationBackend>(
             profile.limits,
         )
         .map_err(|e| e.to_string())?;
-    let prepared = snapshot
-        .prepare_history(
+    let prepared = loaded
+        .prepare(
+            &snapshot,
             &profile.asset,
             &profile.expected,
             dialect,
-            Limits::default(),
-            change,
             &mut reader,
         )
         .map_err(|e| {

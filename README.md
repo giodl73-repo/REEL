@@ -46,6 +46,8 @@ The native [asset input reader](docs/tig-asset-inputs.md) accepts logical IDs
 through an injected resolver such as Tig, preserving exact scoped byte pins.
 The optional [native Tig backend](docs/tig-backend.md) provides an explicit-profile
 `reel-tig-scene` command for guarded scene inputs, using a pinned Tig dependency.
+See [REEL with public Tig](docs/tig-public-integration.md) for the dependency
+boundary, supported features and a synthetic two-version rendering example.
 The [conform component registrar](docs/tig-conform-components.md) gives retained
 scene/presentation masters independent Tig records without copying media.
 The [delivery observation reconciler](docs/tig-delivery-observation.md) matches

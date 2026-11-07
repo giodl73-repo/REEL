@@ -8,7 +8,7 @@ publish = false
 
 [features]
 assets = ["dep:tig-assets"]
-schema = ["assets", "tig-assets/schema"]
+schema = ["assets", "tig-assets/schema", "dep:regex", "dep:flate2"]
 
 [dependencies]
 tig-core = { path = "../tig-core" }
@@ -20,6 +20,9 @@ sha2.workspace = true
 sha1 = "=0.11.0"
 getrandom = "=0.4.3"
 fs2 = "=0.4.3"
+regex = { version = "=1.13.1", optional = true }
+flate2 = { version = "=1.1.9", optional = true }
+
 
 [dev-dependencies]
 tempfile = "=3.27.0"
@@ -55,4 +58,9 @@ required-features = ["assets"]
 [[bin]]
 name = "tig-history"
 path = "src/bin/tig-history.rs"
+required-features = ["schema"]
+
+[[bin]]
+name = "tig-catalogue"
+path = "src/bin/tig-catalogue.rs"
 required-features = ["schema"]

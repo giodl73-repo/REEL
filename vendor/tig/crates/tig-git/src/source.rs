@@ -289,6 +289,33 @@ pub struct Repository {
     limits: Limits,
 }
 impl Repository {
+    /// Local branch/tag commit observations only. No checkout, fetch or hooks.
+    pub fn named_commits(&self) -> Result<Vec<(String, GitId)>> {
+        let raw = self.run(&["for-each-ref", "--format=%(refname)%09%(objecttype)%09%(objectname)%09%(*objecttype)%09%(*objectname)", "refs/heads", "refs/remotes", "refs/tags"], Vec::new(), 1024 * 1024)?;
+        let text = std::str::from_utf8(&raw).map_err(|_| Error::Invalid)?;
+        let mut result = Vec::new();
+        for line in text.lines() {
+            let fields: Vec<_> = line.split('\t').collect();
+            if fields.len() != 5 || fields[0].len() > 512 || fields[0].chars().any(char::is_control)
+            {
+                return Err(Error::Invalid);
+            }
+            let oid = if fields[1] == "commit" {
+                Some(fields[2])
+            } else if fields[3] == "commit" {
+                Some(fields[4])
+            } else {
+                None
+            };
+            if let Some(oid) = oid {
+                result.push((fields[0].to_owned(), GitId::parse(oid)?));
+            }
+            if result.len() > 4096 {
+                return Err(Error::Budget);
+            }
+        }
+        Ok(result)
+    }
     /// One bounded ordinary document from an already captured listing; never HEAD
     /// or a working-file read. Useful for committed profile/manifest adapters.
     pub fn document(&self, snapshot: &Snapshot, path: &LogicalPath) -> Result<Vec<u8>> {
