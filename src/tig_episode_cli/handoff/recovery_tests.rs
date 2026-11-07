@@ -256,6 +256,110 @@ impl Fixture {
     }
 }
 #[test]
+fn legacy_flat_pending_packet_resumes_without_changing_its_selection() {
+    let mut f = Fixture::new();
+    let previous = f.state().current.unwrap().selection;
+    let mut store =
+        MetadataStore::open(&f.profile.metadata_root, &f.profile.metadata_minimum).unwrap();
+    let retained = entries(&previous, &mut store).unwrap();
+    let retention = document(
+        &store,
+        retained
+            .get(&LogicalPath::parse("retention/identity").unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    let input: Selection = serde_json::from_value(retention["source"].clone()).unwrap();
+    let mut objects = BTreeMap::new();
+    for selection in std::iter::once(previous.clone())
+        .chain(std::iter::once(input))
+        .chain(expected(&f.profile).unwrap().iter().map(|source| {
+            f.journal
+                .source(&key(source).unwrap())
+                .unwrap()
+                .unwrap()
+                .current
+                .unwrap()
+                .selection
+        }))
+    {
+        objects.insert(selection.root.sha256.clone(), selection.root.clone());
+        for object in entries(&selection, &mut store).unwrap().into_values() {
+            objects.insert(object.sha256.clone(), object);
+        }
+    }
+    let temporary = expected(&f.profile)
+        .unwrap()
+        .iter()
+        .map(|source| Temporary {
+            source: source.clone(),
+            selection: f
+                .journal
+                .source(&key(source).unwrap())
+                .unwrap()
+                .unwrap()
+                .current
+                .unwrap()
+                .selection,
+            revision: 2,
+            prepared: None,
+        })
+        .collect::<Vec<_>>();
+    let raw = identity::canonical_json(&json!({"schema":HEADER,"source_id":f.profile.source_id,
+        "owner":f.profile.owner,"operation":f.profile.operation,"previous":previous,
+        "root_revision_before":4,"root_revision_after":6,"temporary":temporary,
+        "expected_temporary":expected(&f.profile).unwrap(),"succeeded":true,
+        "purpose":f.profile.inputs.purpose,"record_contract":records::contract(&f.profile.inputs).unwrap(),
+        "native_production_claim":null,"approval":false,"resource_objects":objects.len()})).unwrap();
+    let header = store.put(&raw).unwrap();
+    let mut names = objects
+        .into_values()
+        .map(|object| {
+            (
+                LogicalPath::parse(&format!("objects/{}", object.sha256.as_str())).unwrap(),
+                object,
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    names.insert(
+        LogicalPath::parse("handoff/identity").unwrap(),
+        header.clone(),
+    );
+    let selection = Selection {
+        root: Tree::build(&names, &mut store, TreeLimits::default())
+            .unwrap()
+            .0
+            .root()
+            .clone(),
+        context: header.sha256,
+    };
+    store.finish().unwrap();
+    drop(store);
+    f.journal
+        .apply(
+            phase(
+                &f.profile.source_id,
+                &f.profile.operation,
+                "handoff/prepare",
+            )
+            .unwrap(),
+            Command::Prepare {
+                source: key(&f.profile.source_id).unwrap(),
+                owner: key(&f.profile.owner).unwrap(),
+                expected_revision: 4,
+                selection: selection.clone(),
+            },
+        )
+        .unwrap();
+    let result = finish(&f.profile, &mut f.journal).unwrap();
+    assert_eq!(result["temporary_owner_cleanup_required"], false);
+    assert_eq!(f.state().current.unwrap().selection, selection);
+    let checkpoint = f.journal.checkpoint();
+    finish(&f.profile, &mut f.journal).unwrap();
+    assert_eq!(f.journal.checkpoint(), checkpoint);
+}
+
+#[test]
 fn prepared_episode_handoff_reopens_rebuilds_and_resumes_without_runtime_or_media() {
     let mut f = Fixture::new();
     f.interrupt();

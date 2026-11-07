@@ -3,6 +3,39 @@
 use super::*;
 use tig_core::tree::Tree;
 const HEADER: &str = "reel.tig-episode-retained-context.experimental-1";
+const SUBTREES: &str = "retained-subtrees-v1";
+
+// Absence identifies the original flat layout, including a durable pending
+// packet made by an older runtime. Never rebuild that packet in another layout.
+fn subtree_layout(header: &Value) -> Result<bool> {
+    match header.get("resource_layout") {
+        None => Ok(false),
+        Some(value) if value == SUBTREES => Ok(true),
+        _ => bail!("episode retained resource layout is unsupported"),
+    }
+}
+
+fn retain_tree_names(
+    names: &mut BTreeMap<LogicalPath, Object>,
+    prefix: &str,
+    selection: &Selection,
+    entries: &BTreeMap<LogicalPath, Object>,
+) -> Result<()> {
+    // Preserve each complete relative tree. Canonical directory nodes then
+    // remain identical, so the metadata store only adds the small wrapper.
+    for (name, object) in entries {
+        names.insert(
+            LogicalPath::parse(&format!("{prefix}/{}", name.as_str()))?,
+            object.clone(),
+        );
+    }
+    // A tree's root was also an explicit protected resource in the flat layout.
+    names.insert(
+        LogicalPath::parse(&format!("roots/{}", selection.root.sha256.as_str()))?,
+        selection.root.clone(),
+    );
+    Ok(())
+}
 
 fn verified_reference_flags(report: &Value, all_primary: bool) -> bool {
     report["component_primary_references_verified"] == json!(all_primary)
@@ -170,6 +203,7 @@ fn finish_after_prepare(
             bail!("episode retained context identity or pending state differs");
         }
         let header = document(&reader, header)?;
+        let subtrees = subtree_layout(&header)?;
         if header["schema"] != HEADER
             || header["source_id"] != p.source_id
             || header["owner"] != p.owner
@@ -208,11 +242,15 @@ fn finish_after_prepare(
             let previous: Selection = serde_json::from_value(header["previous"].clone())?;
             let original = entries(&previous, &mut reader)?;
             for object in original.values().chain(std::iter::once(&previous.root)) {
-                if retained.get(&LogicalPath::parse(&format!(
-                    "objects/{}",
-                    object.sha256.as_str()
-                ))?) != Some(object)
-                {
+                let present = if subtrees {
+                    retained.values().any(|value| value == object)
+                } else {
+                    retained.get(&LogicalPath::parse(&format!(
+                        "objects/{}",
+                        object.sha256.as_str()
+                    ))?) == Some(object)
+                };
+                if !present {
                     bail!("episode candidate result is outside retained handoff");
                 }
             }
@@ -268,6 +306,18 @@ fn finish_after_prepare(
             bail!("episode failed result diagnostics missing");
         }
         let input_selection: Selection = serde_json::from_value(header["source"].clone())?;
+        let subtrees = if let Some(pending) = &state.pending {
+            let pending_entries = entries(&pending.selection, &mut reader)?;
+            let header = pending_entries
+                .get(&LogicalPath::parse("handoff/identity")?)
+                .context("episode pending handoff header missing")?;
+            if header.sha256 != pending.selection.context {
+                bail!("episode pending handoff identity differs");
+            }
+            subtree_layout(&document(&reader, header)?)?
+        } else {
+            true
+        };
         let input_entries = entries(&input_selection, &mut reader)?;
         check_purpose(p.inputs.purpose, &input_entries)?;
         let input_header = job_header(&input_selection, &input_entries, &reader)?;
@@ -345,6 +395,16 @@ fn finish_after_prepare(
         let budget = protection(p.max_objects, p.max_logical_bytes)?;
         let mut objects = BTreeMap::new();
         let mut logical_bytes = 0;
+        let mut shared_names = BTreeMap::new();
+        if subtrees {
+            retain_tree_names(&mut shared_names, "contexts/result", &current, &retained)?;
+            retain_tree_names(
+                &mut shared_names,
+                "contexts/input",
+                &input_selection,
+                &input_entries,
+            )?;
+        }
         for object in retained
             .values()
             .chain(input_entries.values())
@@ -449,6 +509,14 @@ fn finish_after_prepare(
             for object in nodes.values().chain(std::iter::once(&selection.root)) {
                 retain(&mut objects, &mut logical_bytes, object, &budget)?;
             }
+            if subtrees {
+                retain_tree_names(
+                    &mut shared_names,
+                    &format!("contexts/temporary/{source}"),
+                    &selection,
+                    &nodes,
+                )?;
+            }
             temporary.push(Temporary {
                 source: source.clone(),
                 selection,
@@ -459,24 +527,38 @@ fn finish_after_prepare(
         let next = completed
             .checked_add(2)
             .context("episode handoff revision overflow")?;
-        let raw = identity::canonical_json(
-            &json!({"schema":HEADER,"source_id":p.source_id,"owner":p.owner,"operation":p.operation,
+        let mut header = json!({"schema":HEADER,"source_id":p.source_id,"owner":p.owner,"operation":p.operation,
             "previous":current,"root_revision_before":completed,"root_revision_after":next,"temporary":temporary,"expected_temporary":expected,"succeeded":succeeded,
-            "purpose":p.inputs.purpose,"record_contract":records::contract(&p.inputs)?,"native_production_claim":null,"approval":false,"resource_objects":objects.len()}),
-        )?;
+            "purpose":p.inputs.purpose,"record_contract":records::contract(&p.inputs)?,"native_production_claim":null,"approval":false,"resource_objects":objects.len()});
+        if subtrees {
+            header["resource_layout"] = json!(SUBTREES);
+            let mut reopened_objects = BTreeMap::new();
+            let mut reopened_bytes = 0;
+            for object in shared_names.values() {
+                retain(&mut reopened_objects, &mut reopened_bytes, object, &budget)?;
+            }
+            if reopened_objects != objects || reopened_bytes != logical_bytes {
+                bail!("episode shared handoff resource closure differs");
+            }
+        }
+        let raw = identity::canonical_json(&header)?;
         if raw.len() > 65536 {
             bail!("episode handoff header exceeds bound");
         }
         let object = Object::from_bytes(&raw);
-        let mut names = objects
-            .into_values()
-            .map(|object| {
-                Ok((
-                    LogicalPath::parse(&format!("objects/{}", object.sha256.as_str()))?,
-                    object,
-                ))
-            })
-            .collect::<Result<BTreeMap<_, _>>>()?;
+        let mut names = if subtrees {
+            shared_names
+        } else {
+            objects
+                .into_values()
+                .map(|object| {
+                    Ok((
+                        LogicalPath::parse(&format!("objects/{}", object.sha256.as_str()))?,
+                        object,
+                    ))
+                })
+                .collect::<Result<BTreeMap<_, _>>>()?
+        };
         names.insert(LogicalPath::parse("handoff/identity")?, object.clone());
         let mut writer = Waiting::new(
             wait.run(|| MetadataStore::open(&p.metadata_root, &p.metadata_minimum))?,
@@ -622,6 +704,105 @@ mod recovery_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tig_core::tree::{MemoryNodes, TreeError, TreeResult};
+
+    struct LimitedNodes {
+        nodes: MemoryNodes,
+        added: usize,
+        limit: usize,
+    }
+    impl NodeStore for LimitedNodes {
+        fn get(&self, object: &Object) -> TreeResult<Option<Vec<u8>>> {
+            self.nodes.get(object)
+        }
+        fn put(&mut self, bytes: &[u8]) -> TreeResult<Object> {
+            let object = Object::from_bytes(bytes);
+            if self.nodes.get(&object)?.is_none() {
+                if self.added == self.limit {
+                    return Err(TreeError::Budget);
+                }
+                self.added += 1;
+            }
+            self.nodes.put(bytes)
+        }
+    }
+
+    #[test]
+    fn sharing_reuses_canonical_nodes_and_preserves_every_protected_resource() {
+        let mut store = LimitedNodes {
+            nodes: MemoryNodes::default(),
+            added: 0,
+            limit: 2048,
+        };
+        let original = (0..1000)
+            .map(|i| {
+                (
+                    LogicalPath::parse(&format!("inputs/input-{i:04}")).unwrap(),
+                    Object::from_bytes(format!("payload-{i}").as_bytes()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let tree = Tree::build(&original, &mut store, TreeLimits::default())
+            .unwrap()
+            .0;
+        let selection = Selection {
+            root: tree.root().clone(),
+            context: Digest::blob(b"identity"),
+        };
+        let mut shared = BTreeMap::new();
+        retain_tree_names(&mut shared, "contexts/input", &selection, &original).unwrap();
+        retain_tree_names(
+            &mut shared,
+            "contexts/temporary/component",
+            &selection,
+            &original,
+        )
+        .unwrap();
+        let expected = original
+            .values()
+            .chain(std::iter::once(&selection.root))
+            .map(|object| (object.sha256.clone(), object.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let actual = shared
+            .values()
+            .map(|object| (object.sha256.clone(), object.clone()))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(expected, actual);
+        store.added = 0;
+        store.limit = 32;
+        let tree = Tree::build(&shared, &mut store, TreeLimits::default())
+            .unwrap()
+            .0;
+        assert!(store.added < 32);
+        assert_eq!(
+            tree.entries(&mut store, TreeLimits::default()).unwrap().0,
+            shared
+        );
+        // Flattening the same closure exceeds the unchanged remaining capacity.
+        let flat = expected
+            .into_values()
+            .map(|object| {
+                (
+                    LogicalPath::parse(&format!("objects/{}", object.sha256.as_str())).unwrap(),
+                    object,
+                )
+            })
+            .collect();
+        store.added = 0;
+        assert_eq!(
+            Tree::build(&flat, &mut store, TreeLimits::default()).unwrap_err(),
+            TreeError::Budget
+        );
+    }
+
+    #[test]
+    fn layouts_preserve_legacy_identity_and_refuse_unknown_versions() {
+        assert!(!subtree_layout(&json!({})).unwrap());
+        assert!(subtree_layout(&json!({"resource_layout":SUBTREES})).unwrap());
+        assert!(subtree_layout(&json!({"resource_layout":"future"})).is_err());
+        assert!(subtree_layout(&json!({"resource_layout":null})).is_err());
+    }
+
     #[test]
     fn reference_flags_preserve_primary_meaning_and_require_checked_retention() {
         assert!(verified_reference_flags(

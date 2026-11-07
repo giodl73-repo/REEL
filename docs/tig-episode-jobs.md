@@ -221,6 +221,13 @@ complete context packet under the root job before withdrawing temporary scene,
 presentation and parent claims. That packet retains previous result evidence,
 selected media, all declared child resources and generated parent metadata.
 Budget accounting deduplicates byte identities; contradictory lengths refuse.
+New handoff packets retain each original tree under a separate context prefix,
+plus explicit root-resource pins. Canonical directory nodes are reused instead
+of rebuilding one flat resource index. The complete unique resource set and
+logical bytes must still match before publication; no metadata limit increases,
+node deletion or payload copying is involved. A versioned header identifies the
+layout. Existing flat packets, including durable pending preparations, retain
+their original layout and exact selection on recovery. Unknown layouts refuse.
 The final result reports `temporary_owner_cleanup_required: false`; the immutable
 worker report preserves its earlier point-in-time state.
 
