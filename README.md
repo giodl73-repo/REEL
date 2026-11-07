@@ -21,6 +21,7 @@ decisions; REEL supplies reusable contracts, compilers, renderers and checks.
 | Build a scene from cels, cues and measured timing | [Native scene authoring](docs/scene-authoring-v1.md) and [delivery](docs/scene-delivery-v0.1.md) |
 | Resolve versioned assets through Tig | [REEL with public Tig](docs/tig-public-integration.md) |
 | Assemble an episode from retained scenes, openings and credits | [Episode workflow](docs/use-cases.md#assemble-an-illustrated-episode) and [managed jobs](docs/tig-episode-jobs.md) |
+| Check a retained delivery candidate against its frozen source | [Retained delivery checker](docs/tig-retained-delivery-check.md) |
 | Edit cels and timing visually | [Cel sorter](docs/cel-sorter-v1.md), [project mapping](docs/cel-sorter-project-v1.md) and [local editor host](docs/editor-host-v1.md) |
 | Edit notation or align lyrics to notes | [Note workshop](docs/music-note-editor-v1.md) and [underlay workshop](docs/music-underlay-editor-v1.md) |
 | Make a continuous album or album video | [Album mastering](docs/NATIVE-ALBUM-MASTER.md) and [album video](docs/NATIVE-ALBUM-VIDEO.md) |
