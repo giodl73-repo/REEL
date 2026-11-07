@@ -372,6 +372,32 @@ fn exercise_variant(mixed: bool, preparation_only: bool, verification_only: bool
         objects.contains(&missing),
         "composition bytes must remain declared even when unavailable"
     );
+    if mixed {
+        let record = read(p.repo.path().join("offline-records/episode-source.tig"));
+        let conform_pin: Object =
+            serde_json::from_value(record["streams"][0]["object"].clone()).unwrap();
+        let conform: episode_conform::Manifest =
+            serde_json::from_value(read(object_file(&p.hot(), &conform_pin))).unwrap();
+        let text = conform
+            .segments
+            .iter()
+            .filter_map(|s| s.source_text_evidence.as_ref())
+            .collect::<Vec<_>>();
+        assert!(
+            !text.is_empty(),
+            "mixed fixture must exercise nonempty invocation content"
+        );
+        for reference in text {
+            let object = Object {
+                sha256: tig_core::Digest::parse(&reference.sha256).unwrap(),
+                bytes: reference.bytes,
+            };
+            assert!(
+                objects.contains(&object),
+                "consumed source-text evidence missing from the frozen resource closure"
+            );
+        }
+    }
     for primary in scenes
         .iter()
         .filter(|scene| !mixed || matches!(scene.unit.as_str(), "scene-a" | "scene-b"))

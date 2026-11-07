@@ -1275,11 +1275,29 @@ fn verify_source_text_evidence(
         )?;
     }
     if evidence.schema != "reel.presentation-source-text.v1"
+        || receipt["selection_evidence_sha256"] != reference.sha256
+    {
+        bail!("editable display evidence differs from selected receipt");
+    }
+    verify_display_text(
+        unit, segment, manifest, invocation, bindings, reference, &evidence,
+    )
+}
+
+fn verify_display_text(
+    unit: &MasterUnit,
+    segment: &Segment,
+    manifest: &Manifest,
+    invocation: &reel_assembly::scene_authoring::PresentationUse,
+    bindings: [&ScopedBindings; 2],
+    reference: &scene_delivery::FileRef,
+    evidence: &SourceTextEvidence,
+) -> Result<()> {
+    if evidence.schema != "reel.presentation-source-text.v1"
         || evidence.episode_id != manifest.episode_id
         || evidence.role != segment.id
         || evidence.language != manifest.language
         || evidence.caption_template_id != invocation.template_id
-        || receipt["selection_evidence_sha256"] != reference.sha256
         || invocation.content["source_text_evidence_sha256_by_language"][&manifest.language]
             != reference.sha256
         || invocation.content["picture_binding"] != evidence.picture_binding
@@ -1317,6 +1335,118 @@ fn verify_source_text_evidence(
         )
     {
         bail!("editable display picture differs from selected clean-picture binding");
+    }
+    Ok(())
+}
+
+/// The currently supported nonempty native invocation is an exact source-text
+/// display. Unknown content must not silently disappear from the native render.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativeDisplayContent {
+    picture_binding: String,
+    source_text_evidence_sha256_by_language: BTreeMap<String, String>,
+}
+
+#[cfg(all(test, feature = "tig-publication"))]
+#[path = "episode_conform/native_display_tests.rs"]
+mod native_display_tests;
+
+fn verify_native_display(
+    unit: Option<&MasterUnit>,
+    segment: &Segment,
+    manifest: &Manifest,
+    invocation: &reel_assembly::scene_authoring::PresentationUse,
+    bindings: [&ScopedBindings; 2],
+    evidence: Option<&SourceTextEvidence>,
+) -> Result<()> {
+    let Some(unit) = unit.filter(|u| !u.source_ids.is_empty()) else {
+        if !invocation.content.as_object().is_some_and(|c| c.is_empty())
+            || segment.source_text_evidence.is_some()
+        {
+            bail!("native invocation content lacks a supported source-text contract");
+        }
+        return Ok(());
+    };
+    let content: NativeDisplayContent = serde_json::from_value(invocation.content.clone())
+        .context("unsupported native invocation-content contract")?;
+    if content.picture_binding.is_empty()
+        || content.source_text_evidence_sha256_by_language.is_empty()
+        || content
+            .source_text_evidence_sha256_by_language
+            .iter()
+            .any(|(language, hash)| !matches!(language.as_str(), "es" | "en") || !valid_sha(hash))
+    {
+        bail!("invalid native invocation-content binding");
+    }
+    let reference = segment
+        .source_text_evidence
+        .as_ref()
+        .context("native editable display lacks source-text evidence")?;
+    let evidence = evidence.context("native editable display evidence missing")?;
+    // A current sealed component proof independently verifies these exact master
+    // bytes. We do not transplant an adoption receipt or treat a changed render
+    // as if it still carried evidence for an older rendered source.
+    if evidence.rendered_source_master_sha256.as_deref() != Some(segment.master.sha256.as_str())
+        || !valid_sha(&segment.master.sha256)
+        || segment.master.bytes == 0
+    {
+        bail!("native editable display evidence differs from selected rendered master");
+    }
+    verify_display_text(
+        unit, segment, manifest, invocation, bindings, reference, evidence,
+    )
+}
+
+/// Metadata preflight only; this grants no media verification or source currency.
+/// The caller must enroll every read pin in its admitted resource closure.
+#[cfg(feature = "tig-publication")]
+pub(crate) fn preflight_native_invocations(
+    manifest: &Manifest,
+    mut read: impl FnMut(&scene_delivery::FileRef) -> Result<Vec<u8>>,
+) -> Result<()> {
+    let episode: Episode = serde_json::from_slice(&read(&manifest.episode)?)?;
+    let master: MasterTemplate =
+        serde_json::from_slice(&read(&manifest.master_template_definition)?)?;
+    let episode_bindings: ScopedBindings =
+        serde_json::from_slice(&read(&manifest.episode_bindings)?)?;
+    let season: ScopedBindings = serde_json::from_slice(&read(&manifest.season_bindings)?)?;
+    if episode.episode_id != manifest.episode_id {
+        bail!("native invocation episode differs from parent");
+    }
+    let ordered = master.schema == "reel.episode-master-template.v2";
+    if (!ordered && master.schema != "reel.episode-master-template.v1")
+        || master.template_id != episode.master_template_id
+    {
+        bail!("native invocation master definition differs from episode");
+    }
+    if ordered {
+        validate_v2_order(&master, manifest)?;
+    }
+    for (index, segment) in manifest
+        .segments
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.kind == SegmentKind::EpisodePresentation)
+    {
+        let invocation = episode
+            .presentation
+            .iter()
+            .find(|p| p.role == segment.id)
+            .context("native invocation missing from episode")?;
+        let evidence: Option<SourceTextEvidence> = segment
+            .source_text_evidence
+            .as_ref()
+            .map(|r| -> Result<_> { Ok(serde_json::from_slice(&read(r)?)?) })
+            .transpose()?;
+        verify_native_display(
+            ordered.then(|| &master.ordered_units[index]),
+            segment,
+            manifest,
+            invocation,
+            [&episode_bindings, &season],
+            evidence.as_ref(),
+        )?;
     }
     Ok(())
 }
@@ -2465,20 +2595,24 @@ fn build_impl(
                     .find(|p| p.role == segment.id)
                     .context("unknown episode presentation role")?;
                 if native.is_some() {
-                    if !invocation
-                        .content
-                        .as_object()
-                        .is_some_and(|content| content.is_empty())
-                    {
-                        bail!("native presentation requires a current invocation-content binding");
-                    }
-                    if ordered_units_v2
-                        && !master_template.ordered_units[segment_index]
-                            .source_ids
-                            .is_empty()
-                    {
-                        bail!("native editable display requires its current source-text contract");
-                    }
+                    let evidence: Option<SourceTextEvidence> = segment
+                        .source_text_evidence
+                        .as_ref()
+                        .map(|reference| -> Result<_> {
+                            Ok(serde_json::from_slice(&scene_delivery::read_control(
+                                controls.unwrap_or(&local_controls),
+                                reference,
+                            )?)?)
+                        })
+                        .transpose()?;
+                    verify_native_display(
+                        ordered_units_v2.then(|| &master_template.ordered_units[segment_index]),
+                        segment,
+                        &manifest,
+                        invocation,
+                        [&episode_bindings, &season],
+                        evidence.as_ref(),
+                    )?;
                 } else {
                     let key = invocation
                         .asset_binding

@@ -5,6 +5,42 @@ an already captured source and existing caches, metadata and source-journal
 stores. It performs no cache or daemon setup. Keep the machine profile, raw
 reports and runtime receipts outside Git.
 
+## Current invocation source text
+
+Native assembly supports the existing `reel.presentation-source-text.v1`
+contract for an ordered presentation with source IDs. Its invocation content
+must contain exactly `picture_binding` and
+`source_text_evidence_sha256_by_language`. The selected language's evidence pin,
+episode, role, caption template, ordered source IDs, original text hashes and
+unique scoped picture binding must agree. Unknown content fields refuse;
+non-text presentations continue to require an empty content object.
+
+The evidence's `rendered_source_master_sha256` must match the current selected
+component master exactly. Assembly additionally requires that master's sealed
+current component proof. This supports an independently checked native master
+with existing exact source-text evidence; it does not transfer evidence to a
+changed render, manufacture a historical adoption receipt, or establish that an
+arbitrary new content field was rendered. A changed master requires separately
+established source-text evidence for its new bytes.
+
+Preparation and execution both preflight this metadata before component media
+verification. Consumed evidence enters the frozen parent resource closure and
+current control snapshot, and assembly repeats the semantic checks after
+obtaining current proofs. Missing, stale or unsupported content fails without
+discarding source IDs or falling back to legacy receipts. Metadata preflight is
+not media verification, human approval, publication or original-producer currency.
+
+Producer-applied editor and rights/provenance review: preserve display order and
+original selected text, reject silent content loss, and keep technical proofs
+separate from creative approval. No independent human review is asserted.
+
+The synthetic mixed-episode CLI fixture carries a nonempty caption invocation
+through offline-source preparation, exact source-text resource membership,
+protected current controls, independent component verification, native assembly,
+retained outputs, and deliberate missing-input failure/recovery. It renders only
+fixture media. Project-specific source correspondence and creative review remain
+separate from these producer tests.
+
 ## Verify retained components without assembling an episode
 
 ```text

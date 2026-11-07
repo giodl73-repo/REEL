@@ -72,6 +72,26 @@ impl CurrentControls {
             bail!("current parent segment coverage differs");
         }
         for (segment, component) in segments.iter_mut().zip(&plan.components) {
+            if let Some(pin) = segment.get("source_text_evidence").filter(|v| !v.is_null()) {
+                let file: FileRef = serde_json::from_value(pin.clone())?;
+                crate::scene_delivery::control_name(&file.path)?;
+                let object = Object {
+                    sha256: Digest::parse(&file.sha256)?,
+                    bytes: file.bytes,
+                };
+                if let std::collections::btree_map::Entry::Vacant(entry) =
+                    metadata.entry(object.clone())
+                {
+                    let body = source.read_metadata(&object, 4 * 1024 * 1024)?;
+                    total = total
+                        .checked_add(body.len())
+                        .context("current parent metadata overflow")?;
+                    if total > 16 * 1024 * 1024 {
+                        bail!("current parent metadata exceeds budget");
+                    }
+                    entry.insert(body);
+                }
+            }
             if segment["id"].as_str() != Some(component.segment_id.as_str()) {
                 bail!("current parent segment order differs");
             }
