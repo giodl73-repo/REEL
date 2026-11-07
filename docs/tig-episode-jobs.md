@@ -34,6 +34,13 @@ Producer-applied editor and rights/provenance review: preserve display order and
 original selected text, reject silent content loss, and keep technical proofs
 separate from creative approval. No independent human review is asserted.
 
+The synthetic mixed-episode CLI fixture carries a nonempty caption invocation
+through offline-source preparation, exact source-text resource membership,
+protected current controls, independent component verification, native assembly,
+retained outputs, and deliberate missing-input failure/recovery. It renders only
+fixture media. Project-specific source correspondence and creative review remain
+separate from these producer tests.
+
 ## Verify retained components without assembling an episode
 
 ```text
