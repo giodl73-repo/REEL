@@ -3,6 +3,86 @@ use std::{fs, path::Path, process::Command};
 use tig_core::Object;
 use tig_store::{metadata::MetadataReader, source_claims::SourceJournal};
 
+/// An actual in-process renderer and the checking CLI have different host byte
+/// identities. The checker must bind itself without rewriting that render recipe.
+pub fn exercise_other_producer(
+    root: &Path,
+    frozen: &Value,
+    candidate: &reel::tig_scene_production::RenderedCandidate,
+    output: &Path,
+    renderer_runtime: &reel::media_runtime::Bindings,
+) {
+    use reel::media_runtime::ByteIdentity;
+    let cache = root.join("other-producer-check-cache");
+    fs::create_dir_all(cache.join("objects/sha256")).unwrap();
+    let coordination = root.join("other-producer-check-coordination");
+    fs::create_dir(&coordination).unwrap();
+    let store = |path: &Path| {
+        let raw = fs::read(path).unwrap();
+        let object = Object::from_bytes(&raw);
+        let parent = cache
+            .join("objects/sha256")
+            .join(&object.sha256.as_str()[..2]);
+        fs::create_dir_all(&parent).unwrap();
+        fs::write(parent.join(object.sha256.as_str()), raw).unwrap();
+        object
+    };
+    let receipt = store(&output.join("receipt.json"));
+    assert_eq!(&receipt, candidate.receipt_object());
+    let outputs = candidate
+        .receipt()
+        .outputs
+        .iter()
+        .map(|(name, file)| (name.clone(), store(&output.join(&file.path))))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut runtime = renderer_runtime.clone();
+    runtime.host =
+        ByteIdentity::observe_file(Path::new(env!("CARGO_BIN_EXE_reel-tig-job"))).unwrap();
+    assert_ne!(runtime.host, renderer_runtime.host);
+    let profile = json!({"schema":"reel.tig-retained-delivery-check.experimental-1",
+        "metadata_root":frozen["metadata_root"],"metadata_minimum":frozen["metadata_minimum"],
+        "source":frozen["source"],"context":frozen["context"],"request":frozen["request"],
+        "runtime":runtime,"producer":candidate.recipe().operation().producer,
+        "recipe":candidate.recipe().fingerprint(),"receipt":receipt,"outputs":outputs,
+        "byte_source":{"required":"prevent-mutation","places":[{"root":cache,"layout":"reel-cas"}]},
+        "cache":{"path_policy":"configured-local-roots","cache_roots":[cache],"coordination_root":coordination,
+            "capacity":{"minimum_free_bytes":0,"minimum_free_basis_points":0}},
+        "preparation_cache":cache,"max_output_bytes":256*1024*1024_u64});
+    let path = root.join("other-producer-check.json");
+    let report = root.join("other-producer-check-report.json");
+    fs::write(&path, serde_json::to_vec(&profile).unwrap()).unwrap();
+    let metadata = Path::new(frozen["metadata_root"].as_str().unwrap());
+    let minimum = serde_json::from_value(frozen["metadata_minimum"].clone()).unwrap();
+    let before = MetadataReader::open(metadata, &minimum)
+        .unwrap()
+        .checkpoint()
+        .clone();
+    let result = Command::new(env!("CARGO_BIN_EXE_reel-tig-job"))
+        .arg("check-retained-delivery")
+        .arg(path)
+        .arg(&report)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let checked: Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+    assert_eq!(checked["native_checked"], true);
+    assert_eq!(checked["producer_admission"], profile["producer"]);
+    assert_ne!(checked["validator"], checked["producer_admission"]);
+    assert_eq!(checked["execution_attested"], false);
+    assert!(checked["production_claim"].is_null());
+    assert_eq!(
+        before,
+        MetadataReader::open(metadata, &before)
+            .unwrap()
+            .checkpoint()
+            .clone()
+    );
+}
+
 pub fn exercise(root: &Path, original: &Value, completed: &Value, cache: &Path) {
     let worker: Value = serde_json::from_slice(
         &fs::read(

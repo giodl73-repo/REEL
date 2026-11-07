@@ -23,18 +23,19 @@ The private profile is `reel.tig-retained-delivery-check.experimental-1` with:
 | `producer`, `recipe` | Original declared runtime-manifest Object and delivery recipe fingerprint |
 | `receipt`, `outputs` | Exact receipt Object and independent logical-name-to-Object media map, excluding `receipt.json` |
 | `byte_source` | Existing cache enrollment with mandatory mutation prevention |
-| `runtime` | Explicit host identity, FFmpeg/FFprobe pins and dependencies |
+| `runtime` | Current checker host identity, FFmpeg/FFprobe pins and dependencies |
 | `cache`, `preparation_cache` | Existing shared coordination and admitted active scratch root |
 | `max_output_bytes` | Bound covering the receipt and all admitted media outputs |
 
 The archived source byte provider must also require mutation prevention. Runtime
-identity and recipe must match, and the complete output set must match both the
+is hash-guarded independently of the original producer admission. The frozen
+recipe must match that original producer, and the complete output set must match both the
 freshly lowered source and the retained receipt. Guards cover every source and
 output throughout the synchronous check. Missing, corrupt, substituted, oversized
 or stale inputs refuse. A report must be new, private and on the admitted scratch
 volume; errors disclose only fixed stage names.
 
-The report records exact source/context/recipe/receipt/output pins, native clocks
+The report records exact source/context/recipe/receipt/output pins, the current validator, native clocks
 and `native_checked:true`. It explicitly records no execution attestation,
 production claim, production authorization, transferred approval or eviction
 authority. It does not establish current-source selection, human acceptance,

@@ -82,9 +82,10 @@ fn check(profile: &Path, output: &Path, stage: &mut &'static str) -> Result<Valu
     }
     *stage = "runtime bindings";
     let programs = BoundPrograms::bind(&profile.runtime)?;
-    if Object::from_bytes(programs.manifest_bytes()) != profile.producer {
-        bail!("declared producer differs from runtime enrollment");
-    }
+    // The current checker may be a different executable from the original
+    // renderer. Bind today's validator, but replay the independently admitted
+    // recipe with its original producer identity; neither attests execution.
+    let validator = Object::from_bytes(programs.manifest_bytes());
     *stage = "scratch admission";
     let preparation = preparation::Preparation::open_on(
         &profile.cache,
@@ -158,6 +159,7 @@ fn check(profile: &Path, output: &Path, stage: &mut &'static str) -> Result<Valu
     let report = json!({"schema":"reel.tig-retained-delivery-check-report.experimental-1",
         "source_checkpoint":source.checkpoint(),"context":profile.context,
         "producer_admission":profile.producer,"recipe":profile.recipe,
+        "validator":validator,
         "receipt":profile.receipt,"outputs":profile.outputs,
         "metadata_minimum":reader.checkpoint(),"native_checked":true,
         "frames":plan.frame_count,"samples":plan.duration_samples,
