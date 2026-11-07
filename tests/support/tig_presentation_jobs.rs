@@ -44,6 +44,15 @@ fn programs() -> BoundPrograms {
 
 #[test]
 fn archived_presentation_materializes_without_checkout_and_refuses_missing_inputs() {
+    archived_materialization(false);
+}
+
+#[test]
+fn archived_lossless_h264_materialization_matches_all_primary_pixels_and_pcm() {
+    archived_materialization(true);
+}
+
+fn archived_materialization(lossless_h264: bool) {
     let (mut f, request) = setup();
     let runtime = bindings();
     // Nonuniform full-range JPEG scaling exposes encoder-dependent range
@@ -112,6 +121,9 @@ fn archived_presentation_materializes_without_checkout_and_refuses_missing_input
         "request":request,"runtime":runtime,
         "max_primary_objects":256,"max_primary_bytes":1024*1024
     });
+    if lossless_h264 {
+        profile["master_encoding"] = json!("lossless-h264");
+    }
     for name in [".git", "records", "definitions"] {
         fs::rename(
             f.root().join(name),
@@ -134,6 +146,21 @@ fn archived_presentation_materializes_without_checkout_and_refuses_missing_input
         assert_eq!(result[name], false);
     }
     assert_eq!(result["source_checkpoint"], json!(checkpoint));
+    let receipt: Value =
+        serde_json::from_slice(&fs::read(output.join("receipt.json")).unwrap()).unwrap();
+    if lossless_h264 {
+        assert_eq!(
+            receipt["schema"],
+            "reel.presentation-still-sequence-receipt.v2"
+        );
+        assert_eq!(receipt["master_encoding"], "lossless-h264");
+    } else {
+        assert_eq!(
+            receipt["schema"],
+            "reel.presentation-still-sequence-receipt.v1"
+        );
+        assert!(receipt.get("master_encoding").is_none());
+    }
     let master = fs::read(output.join("master.mkv")).unwrap();
     assert!(reel::tig_presentation_cli::materialize(&input, &output).is_err());
     assert_eq!(fs::read(output.join("master.mkv")).unwrap(), master);
