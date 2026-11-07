@@ -1,6 +1,9 @@
 # Native browser worker integration
 
-Candidate implementation following [browser source/capture planning](tig-browser-composition.md).
+This is the native worker API following
+[browser source/capture planning](tig-browser-composition.md). For current managed
+execution entry points, see [bounded jobs](tig-job-runner.md) and
+[public integration](tig-public-integration.md).
 `tig_browser::render::native` is a low-level trusted Windows worker operation,
 not a replacement for managed capture, source/job enrollment, capacity admission,
 retention, record proposals or lane adoption. No production binding changes here.

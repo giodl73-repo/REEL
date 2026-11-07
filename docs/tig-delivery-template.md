@@ -57,8 +57,9 @@ Preparation is not a valid render receipt, output freshness decision or custody
 claim. The returned checkpoint identifies metadata; it does not adopt a job or
 hold payloads. Callers still need exact producer/recipe/runtime/resource/source
 admission, guarded prepare, native plan/render/check, result retention and owner
-handoff through existing systems. Complete managed enrollment,
-CLI adoption and actual Recuerdos authoring remain open. A new cel updates its
+handoff through existing systems. The [explicit CLI workflow](#explicit-cli-workflow)
+below supplies that route; project enrollment, runtime adoption and creative
+authoring remain project work. A new cel updates its
 leaf; subsequent lowering changes the consuming Job pin without editing its
 parent. Older archived sources continue to lower their original pins.
 

@@ -21,6 +21,11 @@ working managed episode execution. PRODUCT_PLAN is identified as founding
 direction/milestone history. Public Tig's guide now links back to the common
 architecture and installation paths.
 
+Detailed entry guides also replace obsolete future-renderer/CLI-adoption wording
+with links to current managed routes. Cel, note and underlay guides point to the
+shared Rust host. Presentation qualification counts are explicitly historical,
+and obsolete pending-CI notes are removed while preserving their fixture results.
+
 ## Maintainer-applied role checklists
 
 These are walkthrough/checklist findings, not independent user testing, reviewer
@@ -49,7 +54,7 @@ approval, private-project qualification or creative selection.
 5. Delivery/storage operator: saved inventory association, provider observation,
    actual delivery, custody and explicit eviction application are distinguished.
 
-Relative links across 194 top-level/entry-point documents resolve (471 checked).
+Relative links across 195 top-level/entry-point documents resolve (487 checked).
 Changed-document path casing and heading anchors pass separate checks. All ten
 documented executable targets exist in Cargo metadata. The complete reference
 index matches the actual top-level doc set. No code, schema, runtime, cache or
