@@ -9,6 +9,8 @@ use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use tig_core::{Object, identity};
 
+pub mod sequence;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
     Stale,

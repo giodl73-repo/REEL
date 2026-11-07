@@ -105,7 +105,23 @@ pub struct History {
     revisions: BTreeMap<String, (Object, Revision)>,
     selected: Option<Object>,
 }
+/// Exact immutable revision members; opaque witnesses still require an adapter.
+pub struct RevisionView<'a> {
+    pub revision: &'a Object,
+    pub payloads: Vec<&'a Object>,
+    pub witnesses: Vec<&'a Object>,
+}
 impl History {
+    pub fn entries(&self) -> impl Iterator<Item = RevisionView<'_>> {
+        self.revisions.values().map(|(pin, revision)| RevisionView {
+            revision: pin,
+            payloads: revision.representations.iter().map(|r| &r.object).collect(),
+            witnesses: match &revision.provenance {
+                Provenance::Imported { source } => vec![source],
+                Provenance::Produced { claim, context } => vec![claim, context],
+            },
+        })
+    }
     pub(crate) fn contains_revision(&self, object: &Object) -> bool {
         self.revisions.values().any(|(pin, _)| pin == object)
     }

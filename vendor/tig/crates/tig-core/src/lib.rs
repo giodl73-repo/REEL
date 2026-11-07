@@ -99,6 +99,10 @@ fn check_sizes<'a>(objects: impl Iterator<Item = &'a Object>) -> Result<(), Erro
 }
 
 impl View {
+    /// Positive obligations in this view, not proof that other claims are absent.
+    pub fn claims(&self) -> impl Iterator<Item = &Claim> {
+        self.claims.values()
+    }
     pub fn new(generation: u64, complete: bool, claims: Vec<Claim>) -> Result<Self, Error> {
         if claims.len() > 1024 {
             return Err(Error::Budget);

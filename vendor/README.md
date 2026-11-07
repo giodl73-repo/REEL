@@ -1,18 +1,25 @@
 # Pinned source dependencies
 
-`tig/` contains unmodified Cargo manifests, lock and Rust source from Tig at the
+`tig/` contains unmodified Cargo manifests, lock, Rust source and embedded catalogue
+web assets from Tig at the
 exact commit in `tig/source-pin.json`, with its unchanged MIT license. It is a
 nested workspace excluded from REEL workspace membership. Tig is the upstream
 authority: fixes go upstream and the pin is updated explicitly; no local fork.
 
-Vendoring permits reproducible private-repository CI without cross-repository
-credentials. The pin lists raw lengths/SHA-256 for all 65 imported files
-(694972 bytes). External tests and design documents are omitted. Consumer
-tests reject changed or unlisted source/manifests. This is no cache initialization
+Vendoring permits reproducible builds without cross-repository credentials or
+a separately installed Tig checkout. Upstream is the public
+[giodl73-repo/tig](https://github.com/giodl73-repo/tig) repository.
+The pin lists raw lengths/SHA-256 for all 115 imported files
+(1258310 bytes). Embedded web assets are compile-time `include_str!` dependencies;
+vendoring them does not start a catalogue service. External tests and design
+documents are omitted. Consumer
+tests reject changed or unlisted files. This is no cache initialization
 or shared runtime installation.
 
-Current source 9252a8a1822e99155e5d2bc9bdd4a96476cfe22f is the qualified merge of Tig PR48. Its entire tree
-matches the exact Windows/Linux-tested 9660617 head. It includes bounded native
+Current source [0ceade2a16de1c1ed6cc27e48675e7945d7b61df](https://github.com/giodl73-repo/tig/commit/0ceade2a16de1c1ed6cc27e48675e7945d7b61df)
+is the public baseline after Tig PR1, with passing upstream Windows/Linux CI.
+Only source blobs are imported; no upstream Git history is included.
+It includes bounded native
 source/graph/recipe/job and existing-byte interfaces, plus complete job evidence
 within explicit whole-envelope tree budgets. Runtime names retain their separate
 64-name bound. Pre-execution composition and input evidence use explicit named
