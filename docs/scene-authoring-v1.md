@@ -134,6 +134,9 @@ one-based occurrence. The command checks cue, language, take, text hash, phrase
 occurrences and word clocks, then writes a native alignment and an input-hash
 receipt. Machine word evidence and the resulting markers remain listening and
 review holds until their entrances are checked against the actual recording.
+Separately timed punctuation stays in the immutable evidence and its clock is
+still validated. Phrase matching ignores tokens without letters or numbers;
+blank tokens, invalid clocks and evidence without any lexical tokens fail.
 Adjacent events with the same visible composition are grouped for the policy
 maximum. Preferred cadence produces a hint; exceeding the hard maximum fails.
 A montage may name an explicit different policy. These fingerprints can become

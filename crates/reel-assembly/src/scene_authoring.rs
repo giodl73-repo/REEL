@@ -616,16 +616,21 @@ pub fn spoken_phrase_sample(
         {
             bail!("invalid native word clock");
         }
-        let normalized = tokens(&word.word);
-        if normalized.is_empty() {
+        if word.word.trim().is_empty() {
             bail!("word evidence has an empty token");
         }
+        // Providers may time punctuation as a separate token. Keep its clock
+        // in the ordering checks, but it has no lexical phrase to match.
+        let normalized = tokens(&word.word);
         words.extend(
             normalized
                 .into_iter()
                 .map(|token| (token, word.start_sample)),
         );
         previous = Some(word.start_sample);
+    }
+    if words.is_empty() {
+        bail!("word evidence has no lexical tokens");
     }
     let source_hits = occurrences(&tokens(spoken_text), &wanted);
     let measured_hits = occurrences(
@@ -871,14 +876,17 @@ pub fn resolve_text_triggers(
         {
             bail!("word timing is invalid or out of order");
         }
-        let normalized = tokens(&item.word);
-        if normalized.is_empty() {
+        if item.word.trim().is_empty() {
             bail!("word evidence has an empty token");
         }
+        let normalized = tokens(&item.word);
         for token in normalized {
             words.push((token, item.start_sample));
         }
         prior_start = Some(item.start_sample);
+    }
+    if words.is_empty() {
+        bail!("word evidence has no lexical tokens");
     }
     let measured = words
         .iter()
@@ -2101,6 +2109,102 @@ mod tests {
             .is_err()
         );
         assert!(import_provider_words(br#"{"words":[{"text":"Hola","start":0.1,"end":0.4},{"text":" ","start":0.4,"end":0.45},{"text":"mundo.","start":0.45,"end":3.0}]}"#, &spec).is_err());
+    }
+
+    fn punctuation_trigger_fixture() -> (WordTimingEvidence, TriggerTextSpec) {
+        let spoken = "Hola —. mundo.";
+        let evidence = WordTimingEvidence {
+            schema: WORD_TIMING_SCHEMA.into(),
+            language: "es".into(),
+            cue_id: "cue-1".into(),
+            selected_take_sha256: "a".repeat(64),
+            sample_rate: 1_000,
+            cue_end_sample: 2_000,
+            words: vec![
+                TimedWord {
+                    word: "Hola".into(),
+                    start_sample: 100,
+                    end_sample: 300,
+                },
+                TimedWord {
+                    word: "—.".into(),
+                    start_sample: 400,
+                    end_sample: 401,
+                },
+                TimedWord {
+                    word: "mundo.".into(),
+                    start_sample: 500,
+                    end_sample: 800,
+                },
+            ],
+        };
+        let spec = TriggerTextSpec {
+            schema: TRIGGER_TEXT_SCHEMA.into(),
+            language: evidence.language.clone(),
+            cue_id: evidence.cue_id.clone(),
+            selected_take_sha256: evidence.selected_take_sha256.clone(),
+            spoken_text: spoken.into(),
+            spoken_text_sha256: Sha256::digest(spoken.as_bytes())
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+            markers: vec![
+                TextMarker {
+                    id: "cue-start".into(),
+                    phrase: None,
+                    occurrence: None,
+                },
+                TextMarker {
+                    id: "hello".into(),
+                    phrase: Some("Hola".into()),
+                    occurrence: None,
+                },
+                TextMarker {
+                    id: "world".into(),
+                    phrase: Some("mundo".into()),
+                    occurrence: None,
+                },
+            ],
+        };
+        (evidence, spec)
+    }
+
+    #[test]
+    fn punctuation_tokens_preserve_measured_phrase_entrances() {
+        let (evidence, spec) = punctuation_trigger_fixture();
+        let original = serde_json::to_vec(&evidence).unwrap();
+        verify_word_text(&evidence, &spec.spoken_text).unwrap();
+        assert_eq!(
+            spoken_phrase_sample(&evidence, &spec.spoken_text, "mundo", None).unwrap(),
+            500
+        );
+        let alignment = resolve_text_triggers(&evidence, &spec).unwrap();
+        assert_eq!(alignment.semantic_markers["cue-start"], 0);
+        assert_eq!(alignment.semantic_markers["hello"], 100);
+        assert_eq!(alignment.semantic_markers["world"], 500);
+        assert_eq!(original, serde_json::to_vec(&evidence).unwrap());
+    }
+
+    #[test]
+    fn punctuation_tokens_do_not_bypass_clock_or_empty_evidence_guards() {
+        let (evidence, spec) = punctuation_trigger_fixture();
+        for (start, end) in [(400, 400), (400, 2_001), (50, 51), (600, 601)] {
+            let mut invalid = evidence.clone();
+            invalid.words[1].start_sample = start;
+            invalid.words[1].end_sample = end;
+            assert!(spoken_phrase_sample(&invalid, &spec.spoken_text, "mundo", None).is_err());
+            assert!(resolve_text_triggers(&invalid, &spec).is_err());
+        }
+        let mut blank = evidence.clone();
+        blank.words[1].word = " ".into();
+        assert!(spoken_phrase_sample(&blank, &spec.spoken_text, "mundo", None).is_err());
+        assert!(resolve_text_triggers(&blank, &spec).is_err());
+        let mut punctuation_only = evidence;
+        punctuation_only.words.retain(|word| word.word == "—.");
+        let mut boundary_only = spec.clone();
+        boundary_only.markers.truncate(1);
+        assert!(spoken_phrase_sample(&punctuation_only, &spec.spoken_text, "mundo", None).is_err());
+        assert!(resolve_text_triggers(&punctuation_only, &boundary_only).is_err());
     }
 
     #[test]
