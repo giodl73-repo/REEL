@@ -37,6 +37,14 @@ struct Patch {
     end_frame: u64,
     fade_frames: u64,
     source_lines: [usize; 2],
+    #[serde(default)]
+    context: Option<ContextWindow>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContextWindow {
+    start_frame: u64,
+    end_frame: u64,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -102,6 +110,7 @@ fn load(admission: &Path, recipe_path: &Path) -> Result<Loaded> {
     );
     let mut previous_end = 0;
     let mut geometry = Vec::new();
+    let mut context_pcm_bytes = 0u64;
     for patch in &recipe.patches {
         let [first, last] = patch.source_lines;
         if patch.start_frame < previous_end
@@ -116,11 +125,28 @@ fn load(admission: &Path, recipe_path: &Path) -> Result<Loaded> {
         {
             bail!("repair mask, fades or canonical line range differs");
         }
-        let context_start = patch
-            .start_frame
-            .saturating_sub(u64::from(recipe.sample_rate) * 5);
-        let context_end =
-            (patch.end_frame + u64::from(recipe.sample_rate) * 5).min(recipe.source_frames);
+        let (context_start, context_end) = match &patch.context {
+            Some(context) => (context.start_frame, context.end_frame),
+            None => (
+                patch
+                    .start_frame
+                    .saturating_sub(u64::from(recipe.sample_rate) * 5),
+                (patch.end_frame + u64::from(recipe.sample_rate) * 5).min(recipe.source_frames),
+            ),
+        };
+        if context_start > patch.start_frame
+            || context_end < patch.end_frame
+            || context_end > recipe.source_frames
+        {
+            bail!("repair context must contain its mask inside the original source");
+        }
+        context_pcm_bytes = context_end
+            .checked_sub(context_start)
+            .and_then(|frames| frames.checked_mul(u64::from(recipe.channels)))
+            .and_then(|samples| samples.checked_mul(4))
+            .and_then(|bytes| context_pcm_bytes.checked_add(bytes))
+            .filter(|bytes| *bytes <= AUDIO)
+            .context("repair conditioning PCM exceeds audio bound")?;
         geometry.push(
             json!({"start_frame":patch.start_frame,"end_frame":patch.end_frame,
             "fade_frames":patch.fade_frames,"context_start_frame":context_start,

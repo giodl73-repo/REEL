@@ -26,6 +26,14 @@ The bounded `reel.original-song-repair.v1` recipe repeats those six source field
 Each patch has integer `start_frame`, exclusive `end_frame`, `fade_frames` and
 one-based inclusive `source_lines: [first, last]`. Lines are the existing native
 nonblank canonical line sequence; their original wording survives exactly.
+An optional `context: {"start_frame": ..., "end_frame": ...}` declares the
+conditioning interval in original audio sample frames. It must contain the
+entire replacement mask and stay inside the original recording. Omission keeps
+the existing five-second padding on each side, clipped to the source; retained
+legacy recipes and their request geometry remain unchanged. An explicit context
+can include the complete song when the supplied canonical lines require it.
+Total conditioning PCM across patches remains bounded at 512 MiB; the separate
+512-MiB raw-candidate file allowance is unchanged.
 Each mask is at most 30 seconds. Fades stay inside the mask, last at most one
 second per edge and leave a nonempty core. No insertion or resampling is admitted.
 
@@ -35,8 +43,8 @@ Each entry is a regular file `path` and exact `object` pin. Absolute named files
 remain supported; ordinary relative paths resolve inside the roster's view.
 Traversal, relative escapes and reparse leaves refuse. Relative rosters reopen
 after a retained view moves without relying on a retired staging directory. These are
-raw audio candidates for the mask plus five seconds of context on either side,
-clipped to the original source. Candidates must have that exact native length,
+raw audio candidates for each declared context (or the default padded context).
+Candidates must have that exact native length,
 rate and channels, finite samples and an absolute peak at most 1.001. Total raw
 candidate bytes are bounded at 512 MiB. No raw candidate is treated as proof of
 its generation settings, actual attempt count or performed words.
