@@ -46,7 +46,7 @@ jobs:
           echo "${install_dir}" >> "${GITHUB_PATH}"
       - name: Protect foundation and qualify native/WASM
         run: |
-          git diff --exit-code e4d22e0d2ee4e447dcee3f3b1ae21c7fac91462b HEAD -- crates/reel-assembly
+          git diff --exit-code 3c604c3f26d2e9b0dad37832dc3472b237d50025 HEAD -- crates/reel-assembly
           python browser/assembly/verify-dependencies.py
           cargo +1.95.0 fmt --all -- --check
           cargo +1.95.0 fmt --manifest-path browser/assembly/Cargo.toml -- --check

@@ -19,7 +19,7 @@ def copy(source,destination):
 if run('git','status','--porcelain').strip():
     raise SystemExit('Release staging requires a clean checkout. Commit source first.')
 head=run('git','rev-parse','HEAD').decode().strip()
-run('git','diff','--exit-code','e4d22e0d2ee4e447dcee3f3b1ae21c7fac91462b','--','crates/reel-assembly')
+run('git','diff','--exit-code','3c604c3f26d2e9b0dad37832dc3472b237d50025','--','crates/reel-assembly')
 assert SITE.resolve()==(ROOT.resolve()/'target/reel-release/REEL/assembly')
 if SITE.exists(): shutil.rmtree(SITE)
 SITE.mkdir(parents=True)
@@ -81,7 +81,7 @@ for package in packages:
         links.append('<p><a href="'+html.escape(path)+'">'+html.escape(path)+'</a></p>')
 (SITE/'licenses/index.html').write_text('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>REEL licenses</title><body>'+''.join(links)+'</body></html>',encoding='utf-8')
 copy(P/'BUILD.md',SITE/'BUILD.md')
-provenance={'schema':'reel-assembly-workbench-release-v1','commit':head,'foundation_source':'e4d22e0d2ee4e447dcee3f3b1ae21c7fac91462b','foundation_scope':'crates/reel-assembly','initial_production_integration':'0e34cc35f184dd7d68d47c328843c105f349bd97','repository':'https://github.com/giodl73-repo/REEL','exact_full_source':'https://github.com/giodl73-repo/REEL/archive/'+head+'.zip','rustc':run('rustc','+1.95.0','-vV').decode().strip(),'wasm_bindgen':'0.2.127','wasm_debug_name_section':'removed with wasm-bindgen --remove-name-section','source_zip_sha256':digest((SITE/'source.zip').read_bytes()),'wasm_sha256':digest((SITE/'pkg/reel_assembly_workbench_bg.wasm').read_bytes()),'legal_packages':len(packages),'rust_notice_files':len(rust_notices),'landing_index_sha256':digest(landing),'cross_directory_binary_identity':'Not established. Verify native/WASM response parity instead.','budgets':{'runtime_bytes':RUNTIME_BUDGET_BYTES,'complete_site_bytes':SITE_BUDGET_BYTES},'scope':'Existing REEL semantic dependency diagnostics. Local input-bearing reports are not privacy-safe release receipts; no media, cache bytes, rights, creative selection or production release is verified.'}
+provenance={'schema':'reel-assembly-workbench-release-v1','commit':head,'foundation_source':'3c604c3f26d2e9b0dad37832dc3472b237d50025','foundation_scope':'crates/reel-assembly','initial_production_integration':'0e34cc35f184dd7d68d47c328843c105f349bd97','repository':'https://github.com/giodl73-repo/REEL','exact_full_source':'https://github.com/giodl73-repo/REEL/archive/'+head+'.zip','rustc':run('rustc','+1.95.0','-vV').decode().strip(),'wasm_bindgen':'0.2.127','wasm_debug_name_section':'removed with wasm-bindgen --remove-name-section','source_zip_sha256':digest((SITE/'source.zip').read_bytes()),'wasm_sha256':digest((SITE/'pkg/reel_assembly_workbench_bg.wasm').read_bytes()),'legal_packages':len(packages),'rust_notice_files':len(rust_notices),'landing_index_sha256':digest(landing),'cross_directory_binary_identity':'Not established. Verify native/WASM response parity instead.','budgets':{'runtime_bytes':RUNTIME_BUDGET_BYTES,'complete_site_bytes':SITE_BUDGET_BYTES},'scope':'Existing REEL semantic dependency diagnostics. Local input-bearing reports are not privacy-safe release receipts; no media, cache bytes, rights, creative selection or production release is verified.'}
 write_json(SITE/'provenance.json',provenance)
 files=[]
 for f in sorted(SITE.rglob('*')):
