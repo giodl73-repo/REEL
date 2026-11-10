@@ -37,7 +37,7 @@ impl Drop for Pipeline {
         }
     }
 }
-pub(super) fn run(commands: Vec<Command>, maximum: usize, deadline: Instant) -> Result<Vec<u8>> {
+pub(crate) fn run(commands: Vec<Command>, maximum: usize, deadline: Instant) -> Result<Vec<u8>> {
     if commands.is_empty() || commands.len() > 130 || Instant::now() >= deadline {
         bail!("invalid or expired primary reference pipeline");
     }
