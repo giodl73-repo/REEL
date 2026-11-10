@@ -106,21 +106,26 @@ fn semantic_song_clock_renders_variable_picture_boundaries_without_restarting_au
 
 #[test]
 fn portrait_fit_keeps_square_canvas_pixels() {
-    still_geometry_fixture(false, false, true, false, false);
+    still_geometry_fixture(false, false, true, false, false, false);
 }
 
 #[test]
 fn non_square_source_is_fit_by_display_aspect_before_square_canvas() {
-    still_geometry_fixture(false, false, true, true, false);
+    still_geometry_fixture(false, false, true, true, false, false);
 }
 
 #[test]
 fn retained_h264_reference_requires_every_primary_pixel_and_sample() {
-    still_geometry_fixture(true, false, false, false, true);
+    still_geometry_fixture(true, false, false, false, true, false);
+}
+
+#[test]
+fn full_range_jpeg_captions_preserve_production_codec_range_and_reject_changed_content() {
+    still_geometry_fixture(true, false, false, false, true, true);
 }
 
 fn still_fixture(with_audio: bool, song_clock: bool) {
-    still_geometry_fixture(with_audio, song_clock, false, false, false);
+    still_geometry_fixture(with_audio, song_clock, false, false, false, false);
 }
 
 fn still_geometry_fixture(
@@ -129,10 +134,16 @@ fn still_geometry_fixture(
     portrait: bool,
     non_square: bool,
     h264_reference: bool,
+    jpeg: bool,
 ) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
-    for (name, color) in [("red.png", "red"), ("blue.png", "blue")] {
+    let names = if jpeg {
+        ["red.jpg", "blue.jpg"]
+    } else {
+        ["red.png", "blue.png"]
+    };
+    for (name, color) in names.into_iter().zip(["red", "blue"]) {
         let status = Command::new("ffmpeg")
             .args(["-v", "error", "-f", "lavfi", "-i"])
             .arg(format!(
@@ -181,7 +192,7 @@ fn still_geometry_fixture(
             "schema":"reel.presentation-still-sequence.v1",
             "episode_id":"fixture-episode","language":"es","role":"captions",
             "template":reference(root,"template.json"),
-            "pictures":[reference(root,"red.png"),reference(root,"blue.png")],
+            "pictures":[reference(root,names[0]),reference(root,names[1])],
             "editable_layer":reference(root,"layer.ass")
         }))
         .unwrap(),

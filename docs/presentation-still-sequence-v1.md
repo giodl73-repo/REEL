@@ -32,6 +32,12 @@ compares every decoded YUV and displayed RGB frame and PCM sample against the
 current primary render. H.264 identification alone establishes no equality or
 lossless-encoding claim; lossy pictures or altered audio still fail.
 
+The reference uses the production FFV1 codec through an owned pipe before
+decoding to YUV/RGB hashes. Rendering directly to rawvideo can negotiate a
+different color range around ASS captions and reject an unchanged native master.
+The pipe reuses the bounded deadline and child cleanup implementation; it writes
+no movie file and does not enlarge the ASS/font staging allowance.
+
 This applies only to the independent retained-reference comparison. Newly built
 outputs and their receipt checks continue to require FFV1. A matching reference
 does not authenticate the original producer, enroll a job, change a selection or

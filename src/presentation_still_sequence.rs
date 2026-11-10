@@ -845,10 +845,46 @@ pub fn compare_master_to_primaries(
         .tempdir_in(stage_parent)?;
     prepare_layers(&loaded.0, inputs, stage.path())?;
     let mut matched = Vec::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3600);
     for pixel_format in ["yuv444p", "rgb24"] {
-        let mut reference = render_command(&loaded, inputs, stage.path(), "rawvideo")?;
-        reference.args(["-pix_fmt", pixel_format]);
-        let expected = stream_hashes(reference)?;
+        // Preserve the production codec's format/range negotiation before
+        // decoding the reference. Direct rawvideo output can negotiate another
+        // range around ASS and falsely reject the unchanged FFV1 render.
+        // Pipe the lossless container: no movie or unbounded media buffer is
+        // added to the caller's ASS/font staging allowance.
+        let mut reference = render_command(&loaded, inputs, stage.path(), "ffv1")?;
+        reference.args(["-f", "matroska", "pipe:1"]);
+        let mut decode = command(inputs, MediaProgram::Ffmpeg)?;
+        decode.args([
+            "-v",
+            "error",
+            "-nostdin",
+            "-i",
+            "pipe:0",
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a:0",
+            "-c:v",
+            "rawvideo",
+            "-threads:v",
+            "1",
+            "-pix_fmt",
+            pixel_format,
+            "-c:a",
+            "pcm_s24le",
+            "-f",
+            "streamhash",
+            "-hash",
+            "sha256",
+            "-",
+        ]);
+        let reference_hashes = crate::scene_primary_reference::pipeline::run(
+            vec![reference, decode],
+            16_384,
+            deadline,
+        )?;
+        let expected = parse_stream_hashes(std::str::from_utf8(&reference_hashes)?)?;
         let mut retained = command(inputs, MediaProgram::Ffmpeg)?;
         retained
             .args(["-v", "error", "-nostdin", "-i"])

@@ -12,7 +12,7 @@ use std::{
     process::Command,
     time::{Duration, Instant},
 };
-mod pipeline;
+pub(crate) mod pipeline;
 
 pub struct Budget {
     pub max_staged_bytes: u64,
