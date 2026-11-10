@@ -859,6 +859,10 @@ pub fn compare_master_to_primaries(
             "-v",
             "error",
             "-nostdin",
+            "-threads",
+            "1",
+            "-filter_threads",
+            "1",
             "-i",
             "pipe:0",
             "-map",
@@ -887,7 +891,16 @@ pub fn compare_master_to_primaries(
         let expected = parse_stream_hashes(std::str::from_utf8(&reference_hashes)?)?;
         let mut retained = command(inputs, MediaProgram::Ffmpeg)?;
         retained
-            .args(["-v", "error", "-nostdin", "-i"])
+            .args([
+                "-v",
+                "error",
+                "-nostdin",
+                "-threads",
+                "1",
+                "-filter_threads",
+                "1",
+                "-i",
+            ])
             .arg(&master_path)
             .args([
                 "-map",
