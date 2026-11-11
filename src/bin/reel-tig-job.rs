@@ -54,6 +54,9 @@ enum Operation {
         #[arg(long)]
         publish: bool,
     },
+    /// Rebuild original native audio and retain only an exact receipt-bound stem.
+    /// Does not open pictures, publish assets or assert a new scene production.
+    RecoverSceneAudio { profile: PathBuf, output: PathBuf },
     /// Compile a committed presentation source without media reads or writes.
     InspectPresentation { profile: PathBuf },
     /// Independently compare a selected presentation master with its primaries.
@@ -153,6 +156,9 @@ fn main() -> ExitCode {
             };
             reel::tig_episode_cli::worker(&ticket, &expected)
         })(),
+        Operation::RecoverSceneAudio { profile, output } => {
+            reel::tig_scene_audio_recovery::run(&profile, &output)
+        }
         Operation::RecoverPcmWave { profile, publish } => {
             reel::tig_pcm_recovery::run(&profile, publish)
         }

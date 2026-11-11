@@ -125,6 +125,8 @@ pub mod tig_presentation_cli;
 pub mod tig_presentation_registration;
 #[cfg(feature = "tig-publication")]
 pub mod tig_publication;
+#[cfg(feature = "tig-publication")]
+pub mod tig_scene_audio_recovery;
 
 #[cfg(feature = "tig")]
 pub mod tig_index_association;
