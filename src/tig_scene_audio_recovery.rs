@@ -63,7 +63,6 @@ fn admission(profile: &Profile, job: &Job, receipt: &Receipt) -> Result<()> {
         || receipt.delivery_frames != plan.frame_count
         || !(8000..=192000).contains(&plan.sample_rate)
         || plan.duration_samples == 0
-        || plan.duration_samples > job.max_composition_samples
         || job.audio.is_empty()
         || job.audio.len() > 256
         || job.audio.len() != plan.audio.len()
@@ -255,6 +254,19 @@ mod tests {
         }))
         .unwrap();
         (profile, job, receipt)
+    }
+
+    #[test]
+    fn picture_composition_limit_does_not_cap_full_audio_duration() {
+        let (mut profile, mut job, mut receipt) = fixture();
+        // This limits one unchanged picture composition, not the scene audio.
+        job.max_composition_samples = 480;
+        profile.job = Object::from_bytes(&serde_json::to_vec(&job).unwrap());
+        receipt.plan.job_sha256 = profile.job.sha256.as_str().into();
+        profile.receipt = Object::from_bytes(&serde_json::to_vec(&receipt).unwrap());
+        admission(&profile, &job, &receipt).unwrap();
+        profile.max_workspace_bytes = 1;
+        assert!(admission(&profile, &job, &receipt).is_err());
     }
 
     #[test]

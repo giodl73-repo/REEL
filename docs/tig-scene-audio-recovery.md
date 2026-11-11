@@ -29,6 +29,10 @@ verified requested stem is saved. Cache publication remains a separate explicit
 existing-publisher operation. The command initializes no stores, opens no images,
 changes no asset selection and grants no deletion authority.
 
+The job's `max_composition_samples` limits unchanged picture compositions;
+it does not cap full scene audio duration. Audio recovery retains the explicit
+workspace budget, checked source spans and exact original output hash gate.
+
 This is forensic byte recovery. A frozen job and receipt do not become semantic
 authoring, a new producer attestation, mix approval, or complete-scene validation.
 Reusing original performances grants no new voice identity, consent or release.
