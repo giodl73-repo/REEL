@@ -2090,6 +2090,96 @@ fn cli(root: &Path, args: &[&str]) -> Output {
 
 #[cfg(windows)]
 #[test]
+#[ignore = "requires native FFmpeg; explicit protected audio runtime without ambient tools"]
+fn native_tig_cli_audio_uses_explicit_runtime_and_refuses_wrong_host() {
+    use reel::media_runtime::{Bindings, ByteIdentity};
+    let mut f = Fixture::new();
+    f.profile["byte_source"]["required"] = json!("prevent-mutation");
+    write(f.root(), "profile.json", &f.profile);
+    let host = Path::new(env!("CARGO_BIN_EXE_reel-tig-scene"));
+    let program = |name: &str, variable: &str| {
+        let path = std::env::var_os(variable)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                std::env::split_paths(&std::env::var_os("PATH").unwrap())
+                    .map(|dir| dir.join(format!("{name}.exe")))
+                    .find(|p| p.is_file())
+                    .unwrap()
+            });
+        let pin = ByteIdentity::observe_file(&path).unwrap();
+        reel::scene_delivery::FileRef {
+            path,
+            sha256: pin.sha256,
+            bytes: pin.bytes,
+        }
+    };
+    let mut runtime = Bindings {
+        host: ByteIdentity::observe_file(host).unwrap(),
+        ffmpeg: program("ffmpeg", "REEL_TEST_FFMPEG"),
+        ffprobe: program("ffprobe", "REEL_TEST_FFPROBE"),
+        dependencies: Default::default(),
+    };
+    let invoke = |operation: &str, output: &str| {
+        Command::new(host)
+            .current_dir(f.root())
+            .env("PATH", "")
+            .args([
+                "--profile",
+                "profile.json",
+                "--audio-runtime",
+                "runtime.json",
+                operation,
+                "job.json",
+                output,
+            ])
+            .output()
+            .unwrap()
+    };
+    let actual_host = runtime.host.clone();
+    runtime.host.sha256 = "0".repeat(64);
+    fs::write(
+        f.root().join("runtime.json"),
+        serde_json::to_vec(&runtime).unwrap(),
+    )
+    .unwrap();
+    let refused = invoke("render-audio", "exports/refused");
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("runtime refused"));
+    assert!(!f.root().join("exports/refused").exists());
+    runtime.host = actual_host;
+    fs::write(
+        f.root().join("runtime.json"),
+        serde_json::to_vec(&runtime).unwrap(),
+    )
+    .unwrap();
+    for operation in ["render-audio", "check-audio"] {
+        let result = invoke(operation, "exports/audio");
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(value["declared_runtime"]["complete_environment"], false);
+        assert_eq!(
+            value["declared_runtime"]["host"]["sha256"],
+            runtime.host.sha256
+        );
+        assert!(
+            value["declared_runtime_identity"]["bytes"]
+                .as_u64()
+                .unwrap()
+                > 0
+        );
+        assert!(!String::from_utf8_lossy(&result.stdout).contains(f.root().to_str().unwrap()));
+    }
+    assert!(f.root().join("exports/audio/D.wav").is_file());
+    assert!(f.root().join("exports/audio/mix.wav").is_file());
+    assert!(!f.root().join("exports/audio/master.mkv").exists());
+}
+
+#[cfg(windows)]
+#[test]
 #[ignore = "requires native FFmpeg; standard Tig CLI render/version/archive restore"]
 fn native_tig_cli_renders_two_cels_shared_cue_then_replaces_only_cel_b() {
     let mut f = Fixture::new();

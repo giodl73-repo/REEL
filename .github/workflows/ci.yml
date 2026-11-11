@@ -48,6 +48,14 @@ jobs:
           $env:REEL_TEST_FFPROBE = (Get-Command ffprobe -ErrorAction Stop).Source
           cargo test --all-features --lib tig_scene_audio_recovery::tests::native_recovery_keeps_dialogue_distinct_from_mix_and_refuses_stale_sources --locked -- --exact
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify explicit Tig audio runtime without ambient tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:REEL_TEST_FFMPEG = (Get-Command ffmpeg -ErrorAction Stop).Source
+          $env:REEL_TEST_FFPROBE = (Get-Command ffprobe -ErrorAction Stop).Source
+          cargo test --all-features --test tig_inputs native_tig_cli_audio_uses_explicit_runtime_and_refuses_wrong_host --locked -- --ignored --exact
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify contained original-song repair with synthetic audio
         if: runner.os == 'Windows'
         shell: pwsh
