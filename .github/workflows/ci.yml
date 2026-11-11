@@ -40,6 +40,14 @@ jobs:
         run: python -B tools/test_original_song_repair_provider.py
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test --all-targets --all-features
+      - name: Verify exact native audio recovery without picture inputs
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:REEL_TEST_FFMPEG = (Get-Command ffmpeg -ErrorAction Stop).Source
+          $env:REEL_TEST_FFPROBE = (Get-Command ffprobe -ErrorAction Stop).Source
+          cargo test --all-features --lib tig_scene_audio_recovery::tests::native_recovery_keeps_dialogue_distinct_from_mix_and_refuses_stale_sources --locked -- --exact
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify contained original-song repair with synthetic audio
         if: runner.os == 'Windows'
         shell: pwsh
