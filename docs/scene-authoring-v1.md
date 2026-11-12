@@ -432,3 +432,30 @@ control paths, retains the exact profile and emits `compile-receipt.json`.
 Existing output directories are refused. Identical inputs replay deterministically.
 No runtime adoption, rendering, cache setup, deletion or human approval follows
 from this metadata compilation.
+
+### Explicit producer-source reconciliation
+
+If an already consumed semantic job names the selected recording but its
+production metadata still names an older take, the gain compiler refuses the
+whole bundle. Use the separate
+`reel-scene-authoring reconcile-retained-dialogue-sources <metadata-root> <request.json>`
+step to correct that bookkeeping before applying a gain profile.
+
+The request uses the same pinned semantic/production/profile file references
+and new output directory, with schema `reel.retained-dialogue-source-reconcile.v1`.
+Its profile has schema `reel.dialogue-source-reconciliation-profile.v1` and
+`source_repairs_by_cue`. Each entry supplies `expected_production_source`,
+`source_sha256`, `replacement_source` and a nonempty `reason`.
+The old source must match literally, the SHA must match the unique selected
+D cue, and the replacement must be the canonical hash locator or that selected
+job's own hash-bearing source locator. Already coherent cues cannot be rewritten
+as a cosmetic normalization. Role and saved-gain metadata must already match.
+
+The native command repairs only those declared producer source strings. It
+then requires every D cue to be coherent, including unlisted cues, before
+emitting a distinct bundle. All job audio/picture/font fields, gains, offsets,
+fades, graph selections and original contract bytes remain unchanged; only
+derived metadata hashes advance. The receipt has schema
+`reel.retained-dialogue-source-reconcile-receipt.v1`. A gain profile is a separate
+subsequent operation. Neither step reads, recasts or reselects primary media,
+and neither grants voice, creative or publication approval.
