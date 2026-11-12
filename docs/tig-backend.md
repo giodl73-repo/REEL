@@ -207,6 +207,17 @@ The context is a metadata candidate, not media availability, execution, release,
 global protection or eviction authority. For evidence and limits, see the
 [scoped context review](reviews/2026-10-27-tig-scoped-context.md).
 
+Native scene requests may name `controls.presentation_overlay` using the
+[chapter-overlay declaration](scene-authoring-v1.md#independently-clocked-chapter-overlays).
+Here `scene` is an exact admitted control slot, resolved through the parent's
+retained stream or independently versioned `control_ids` entry. It is included in
+whole-scene requirements and the language context, read through the bounded
+metadata provider and materialized as `presentation-source.json`. The receipt
+still comes from the canonical language's selected primary binding. Frozen render
+parameters pin the overlay compiler module when this feature is used; archive
+replay retains the original source and revalidates the compiled job. No loose
+filesystem source fallback, primary-media read or cache creation is added.
+
 For a distinct compiled-parameter candidate, `tig_scene::freeze_render_context`
 takes a new private output directory as well as the request and metadata store.
 It compiles through the shared interpreter, hash-checks the three generated

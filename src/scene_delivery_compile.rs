@@ -12,7 +12,7 @@ use reel_assembly::{
     },
     selected_closure,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -20,6 +20,57 @@ use std::{
     fs,
     path::{Component, Path, PathBuf},
 };
+
+mod targeted_presentation;
+
+/// Selected receipt inputs for independently clocked presentation verification.
+pub struct PresentationReceiptContext<'a> {
+    pub language: &'a str,
+    pub receipt_path: Option<&'a str>,
+    pub catalog: &'a TemplateCatalog,
+    pub scopes: &'a [&'a ScopedBindings],
+    pub clock: (u32, u64),
+}
+
+/// Verify a presentation-only native source and its exact selected receipt.
+/// This does not grant creative approval or change the target scene's clock.
+pub fn verify_presentation_overlay(
+    root: &Path,
+    declaration: &TargetedPresentation,
+    target: &Scene,
+    context: PresentationReceiptContext<'_>,
+) -> Result<()> {
+    targeted_presentation::Prepared::read(root, Some(declaration), target, &mut BTreeMap::new())?
+        .context("targeted presentation missing")?
+        .validate_receipt(root, target, context)
+}
+
+/// An independently authored presentation placed over an existing scene.
+/// Its identifiers retain the delivery's explicit, stable title identity.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TargetedPresentation {
+    pub scene: String,
+    pub attachment_id: String,
+    pub title_id: String,
+    pub reason: String,
+}
+impl TargetedPresentation {
+    pub(crate) fn validate(&self) -> Result<()> {
+        for (value, limit) in [
+            (&self.scene, 4096),
+            (&self.attachment_id, 256),
+            (&self.title_id, 256),
+            (&self.reason, 4096),
+        ] {
+            if value.trim().is_empty() || value.len() > limit || value.chars().any(char::is_control)
+            {
+                bail!("invalid targeted presentation declaration");
+            }
+        }
+        Ok(())
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -42,6 +93,8 @@ pub struct CompileManifest {
     pub output_dir: String,
     #[serde(default)]
     pub template_receipt: Option<String>,
+    #[serde(default)]
+    pub presentation_overlay: Option<TargetedPresentation>,
 }
 
 #[derive(Deserialize)]
@@ -774,6 +827,12 @@ fn compile_with_budget(
     )?;
     let source_scene: Scene = read(&checked(&root, &request.scene)?, "scene", &mut input_sha256)?;
     let scene = materialize_scene(&source_scene)?;
+    let targeted_presentation = targeted_presentation::Prepared::read(
+        &root,
+        request.presentation_overlay.as_ref(),
+        &scene,
+        &mut input_sha256,
+    )?;
     if scene.presentation.is_none() && request.template_receipt.is_some() {
         bail!("ordinary scene cannot declare a template receipt");
     }
@@ -906,15 +965,30 @@ fn compile_with_budget(
         offset = end;
     }
     let duration = offset;
-    let tail_samples = presentation_tail_samples(
-        &root,
-        request,
-        &scene,
-        &catalog,
-        &scopes,
-        profile.sample_rate,
-        duration,
-    )?;
+    let tail_samples = if let Some(presentation) = &targeted_presentation {
+        presentation.validate_receipt(
+            &root,
+            &scene,
+            PresentationReceiptContext {
+                language: &request.language,
+                receipt_path: request.template_receipt.as_deref(),
+                catalog: &catalog,
+                scopes: &scopes,
+                clock: (profile.sample_rate, duration),
+            },
+        )?;
+        0
+    } else {
+        presentation_tail_samples(
+            &root,
+            request,
+            &scene,
+            &catalog,
+            &scopes,
+            profile.sample_rate,
+            duration,
+        )?
+    };
     let picture_duration = duration
         .checked_add(tail_samples)
         .context("scene title tail overflows native clock")?;
@@ -1339,16 +1413,27 @@ fn compile_with_budget(
             .as_deref()
             .map(|key| asset(key, &scopes))
             .transpose()?;
-        let attachment = format!("presentation-{}", request.language);
+        let attachment = targeted_presentation
+            .as_ref()
+            .map(|value| value.declaration.attachment_id.clone())
+            .unwrap_or_else(|| format!("presentation-{}", request.language));
+        if attachments.iter().any(|value| value["id"] == attachment) {
+            bail!("presentation attachment duplicates an existing attachment");
+        }
+        let title_id = targeted_presentation
+            .as_ref()
+            .map(|value| value.declaration.title_id.as_str())
+            .unwrap_or(&scene.scene_id);
         attachments.push(json!({
             "id": attachment,
-            "target": {"kind":"title","title_id":scene.scene_id},
+            "target": {"kind":"title","title_id":title_id},
             "start":anchor(0, &cues)?,
             "end":scene_end_anchor(&cues, tail_samples)?
         }));
         let mut external = json!({
             "attachment_id": attachment,
-            "reason": format!("Editable {} master", presentation.role),
+            "reason": targeted_presentation.as_ref().map(|value| value.declaration.reason.clone())
+                .unwrap_or_else(|| format!("Editable {} master", presentation.role)),
             "evidence": media_ref(layer, profile.asset_paths),
             "render_mode": "ass-overlay"
         });
@@ -1470,6 +1555,9 @@ fn compile_with_budget(
     });
     if scene.presentation.is_some() {
         build["template_receipt"] = json!(request.template_receipt);
+        if let Some(overlay) = &request.presentation_overlay {
+            build["presentation_overlay"] = json!(overlay);
+        }
     } else if request.template_receipt.is_some() {
         bail!("ordinary scene cannot declare a template receipt");
     }
@@ -1485,7 +1573,7 @@ fn compile_with_budget(
             Ok((cue.cue_id.clone(), asset(key, &scopes)?.sha256.clone()))
         })
         .collect::<Result<BTreeMap<_, _>>>()?;
-    let receipt = json!({
+    let mut receipt = json!({
         "schema":"reel.scene-delivery-compile-receipt.v1",
         "scene_id":scene.scene_id,
         "language":request.language,
@@ -1506,6 +1594,11 @@ fn compile_with_budget(
         "build_sha256":build_sha,
         "state":"private technical compilation; creative review remains external"
     });
+    if targeted_presentation.is_some() {
+        receipt["targeted_presentation_compiler_sha256"] = json!(hash(include_bytes!(
+            "scene_delivery_compile/targeted_presentation.rs"
+        )));
+    }
     emit(&dir, "compile-receipt.json", &receipt)?;
     Ok(receipt)
 }

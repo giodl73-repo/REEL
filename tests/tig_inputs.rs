@@ -51,6 +51,8 @@ mod retained_presentation;
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_store_setup.rs"]
 mod store_setup;
+#[path = "support/tig_targeted_presentation.rs"]
+mod targeted_presentation;
 #[cfg(all(windows, feature = "tig-publication"))]
 #[path = "support/tig_runner.rs"]
 mod tig_runner;
