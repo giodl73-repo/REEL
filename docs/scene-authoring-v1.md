@@ -220,6 +220,46 @@ hashes:
 }
 ```
 
+### Independently clocked chapter overlays
+
+A narrated scene can retain an independently authored chapter title using the
+optional `presentation_overlay` declaration in its compile manifest. The compiler
+copies this declaration into the build manifest:
+
+```json
+{
+  "scene": "authoring/chapter-overlay/scene.json",
+  "attachment_id": "chapter-dated",
+  "title_id": "chapter-dated-title",
+  "reason": "Selected chapter title over the first prose picture"
+}
+```
+
+The source is an existing native `reel.scene-authoring.v1` presentation-only
+scene, ready for private build, with a distinct scene ID and no spoken cues or
+picture events. It must name the same episode, source authority, chapter template
+and content as the canonical target invocation (excluding its delivery-only ASS
+and receipt maps). Its placement is exactly
+`{"mode":"overlay-on-target-scene-start","target_scene_id":"…","target_picture_slot_id":"…"}`;
+the picture slot must be the first materialized event in the requested language.
+A supplied source font binding must agree with the canonical invocation; an
+omitted one leaves the canonical selected font authoritative.
+
+The selected template receipt names the presentation source scene and language.
+Its source-text, ASS hash and byte count, template and definition must match the
+canonical scoped selections. A positive independent sample clock must convert
+exactly to target samples and fit inside the existing narration duration. For
+example, 400 samples at 100 Hz can overlay a longer scene at 44,100 Hz. The
+attachment spans the existing scene; ASS events determine its visible interval.
+Compilation adds no title tail or narration samples. Attachment/title IDs and
+reason are explicit so a retained delivery's identity can be reproduced.
+
+The source and receipt are each limited to 64 KiB. Missing or mismatched context
+refuses; omitting the declaration retains the existing same-clock presentation
+rules. The compile receipt hashes the source and overlay compiler module. The
+scene builder verifies this context, selected layers, delivery identity and span.
+These are technical checks and confer no creative approval.
+
 For multiple scenes, `resolve-language` writes one small file per scene and
 language. A `reel.scene-build-index.v1` lists its project root and each node's
 build manifest, resolved-language file and selected semantic-delivery file.

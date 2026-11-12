@@ -140,6 +140,14 @@ parent record unchanged; prior Git views retain their own bindings. Sonic
 placement evidence uses protected exact input pins during compilation. Rendering
 subsequently prepares the whole job independently.
 
+For an independently clocked chapter title over narration, the optional
+`controls.presentation_overlay` declaration names the exact native source control
+slot in `scene` plus stable attachment/title IDs and reason. The projection is
+part of whole-scene and language requirements, retained provenance and archived
+replay. See [chapter overlay rules](scene-authoring-v1.md#independently-clocked-chapter-overlays)
+for source correspondence, receipt pins and clock limits. Its source never comes
+from an undeclared local path, and the scene's narration duration stays unchanged.
+
 The adapter creates no media cache, copies no primary media, runs no transfers,
 and changes no runtime binding. Compilation is not production approval or asset
 registration. Errors may leave a partial new metadata directory for diagnosis;
