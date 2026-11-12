@@ -402,3 +402,33 @@ hash-verified cache object and joins the selected delivery closure. Unused keys,
 missing/stale evidence, empty reasons and out-of-scene placement reject before
 delivery output. The generated native job retains source/gain/semantic anchors
 and carries explicit channel/placement intent to the shared scene mixer.
+
+## Dialogue profiles for retained deliveries
+
+`reel-scene-authoring compile-retained-dialogue-gains <metadata-root> <request.json>`
+applies source-bound dialogue gains to a retained semantic delivery without
+recompiling its scene identities or opening primary media. Use a request with
+schema `reel.retained-dialogue-gain-compile.v1`, hash/byte-pinned `semantic`,
+`production` and `profile` file references, and a new relative `output_dir`.
+The semantic descriptor supplies the exact job reference; that job supplies
+the contract and production digest. Every path stays in the metadata root.
+
+The profile has schema `reel.dialogue-gain-profile.v1` and
+`dialogue_gain_by_cue`, using the native `{source_sha256, gain_db}` entries.
+Gains are absolute saved dB values. Each entry must uniquely identify a D cue
+and its matching production narration or dialogue source. All D cues, including
+unlisted cues, must match their production source/gain metadata before output.
+Unlisted cues remain unchanged.
+Missing, ambiguous, wrong-source, non-D, nonfinite and out-of-range entries fail.
+The existing native gain range remains unchanged; this does not authorize a
+producer to increase its own policy limits.
+
+The compiler validates the baseline and candidate through native semantic
+selection and cue-clock compilation. It preserves the complete contract bytes,
+graph selection, stable attachment identities, picture/font/presentation sources,
+offsets, fades and all other job/production values. Only declared gains and
+derived production/job references change. The new bundle mirrors the input
+control paths, retains the exact profile and emits `compile-receipt.json`.
+Existing output directories are refused. Identical inputs replay deterministically.
+No runtime adoption, rendering, cache setup, deletion or human approval follows
+from this metadata compilation.

@@ -238,6 +238,22 @@ pub struct DialogueGain {
     pub gain_db: f64,
 }
 
+pub(crate) fn validate_dialogue_gains(gains: &BTreeMap<String, DialogueGain>) -> Result<()> {
+    if gains.iter().any(|(cue, trim)| {
+        cue.is_empty()
+            || !trim.gain_db.is_finite()
+            || trim.gain_db.abs() > 60.0
+            || trim.source_sha256.len() != 64
+            || !trim
+                .source_sha256
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    }) {
+        bail!("invalid source-bound dialogue gains");
+    }
+    Ok(())
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScoreSourceStart {
@@ -909,16 +925,7 @@ fn compile_with_budget(
         || !profile.score_gain_db.is_finite()
         || !profile.sonic_gain_db.is_finite()
         || profile.sonic_gain_db.abs() > 60.0
-        || profile.dialogue_gain_by_cue.iter().any(|(cue, trim)| {
-            cue.is_empty()
-                || !trim.gain_db.is_finite()
-                || trim.gain_db.abs() > 60.0
-                || trim.source_sha256.len() != 64
-                || !trim
-                    .source_sha256
-                    .bytes()
-                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-        })
+        || validate_dialogue_gains(&profile.dialogue_gain_by_cue).is_err()
         || profile
             .sonic_gain_db_by_binding
             .iter()
