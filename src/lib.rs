@@ -72,6 +72,8 @@ pub mod singer_sheet_cleanup;
 pub mod song;
 pub mod song_edition;
 pub mod sonic_assets;
+#[cfg(feature = "speech-provider")]
+pub mod speech_generation;
 pub mod sprite_choreography;
 pub mod sprite_library;
 pub mod sprite_materializer;
