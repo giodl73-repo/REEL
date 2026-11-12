@@ -6,6 +6,140 @@ mod intake;
 #[path = "tig_presentation_jobs.rs"]
 mod jobs;
 
+#[cfg(all(windows, feature = "tig-publication"))]
+fn capture_profile(f: &Fixture, request: &Request) -> Value {
+    let mut input = super::capture::profile(f, request);
+    input["schema"] = json!("reel.tig-presentation-capture-profile.experimental-1");
+    input.as_object_mut().unwrap().remove("preparation_cache");
+    input
+}
+
+#[cfg(all(windows, feature = "tig-publication"))]
+#[test]
+fn presentation_capture_cli_replays_offline_without_primary_bytes_or_overwrite() {
+    use tig_core::tree::TreeLimits;
+    use tig_store::metadata::MetadataReader;
+    let (f, request) = setup();
+    let input = capture_profile(&f, &request);
+    // Leave an enrolled empty store: opening any primary body must now fail.
+    fs::rename(
+        f.root().join("cache/objects"),
+        f.root().join("offline-media"),
+    )
+    .unwrap();
+    fs::create_dir(f.root().join("cache/objects")).unwrap();
+    let output = super::capture::run(&f, &input, "presentation-context.json");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["context_kind"], "presentation");
+    assert_eq!(summary["readback_equal"], true);
+    assert_eq!(summary["media_rendered"], false);
+    assert_eq!(summary["job_adopted"], false);
+    assert_eq!(summary["authorizes_eviction"], false);
+    let bytes = fs::read(f.root().join("presentation-context.json")).unwrap();
+    let fragment: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(fragment["context_mode"], "presentation");
+    assert!(
+        !super::capture::run(&f, &input, "presentation-context.json")
+            .status
+            .success()
+    );
+    assert_eq!(
+        fs::read(f.root().join("presentation-context.json")).unwrap(),
+        bytes
+    );
+    for name in [".git", "records", "definitions"] {
+        fs::rename(
+            f.root().join(name),
+            f.root().join(format!("offline-{name}")),
+        )
+        .unwrap();
+    }
+    let mut reader = MetadataReader::open(
+        &super::capture::metadata_root(f.root()),
+        &serde_json::from_value(fragment["metadata_minimum"].clone()).unwrap(),
+    )
+    .unwrap();
+    let (source, context) = tig_presentation::restore_context(
+        serde_json::from_value(fragment["source"].clone()).unwrap(),
+        &request,
+        &serde_json::from_value(fragment["context"].clone()).unwrap(),
+        &mut reader,
+        TreeLimits::default(),
+    )
+    .unwrap();
+    assert_eq!(source.byte_requests(), 0);
+    assert_eq!(
+        serde_json::to_value(context.selection()).unwrap(),
+        fragment["context"]
+    );
+    let mut changed = request;
+    changed.allowed_primary_states.insert("draft".into());
+    assert!(
+        tig_presentation::restore_context(
+            serde_json::from_value(fragment["source"].clone()).unwrap(),
+            &changed,
+            &serde_json::from_value(fragment["context"].clone()).unwrap(),
+            &mut reader,
+            TreeLimits::default(),
+        )
+        .is_err()
+    );
+}
+
+#[cfg(all(windows, feature = "tig-publication"))]
+#[test]
+fn presentation_capture_cli_refuses_unadmitted_state_bad_clock_and_preparation() {
+    for case in ["state", "clock", "preparation", "request"] {
+        let (mut f, request) = setup();
+        match case {
+            "state" => update(&f, "presentation-layer", |r| {
+                r["status"]["selection_state"] = json!("draft")
+            }),
+            "clock" => update(&f, "presentation-clock", |r| {
+                r["authored"]["document"]["source_at_measurement"]["bytes"] = json!(1)
+            }),
+            _ => {}
+        }
+        if matches!(case, "state" | "clock") {
+            commit(&mut f);
+        }
+        let mut input = capture_profile(&f, &request);
+        if case == "preparation" {
+            input["preparation_cache"] = json!(f.root().join("capture-capacity"));
+        }
+        if case == "request" {
+            input["request"]["primary_definitions"] = json!(["types/presentation-presentation"]);
+        }
+        let output = super::capture::run(&f, &input, "refused-presentation.json");
+        assert!(!output.status.success(), "{case}");
+        assert!(
+            !f.root().join("refused-presentation.json").exists(),
+            "{case}"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!stderr.contains("presentation/layer"));
+        assert!(!stderr.contains(&f.root().to_string_lossy().to_string()));
+        if case == "state" {
+            input["request"]["allowed_primary_states"] =
+                json!(["selected-private-production", "draft"]);
+            let allowed = super::capture::run(&f, &input, "admitted-draft.json");
+            assert!(
+                allowed.status.success(),
+                "{}",
+                String::from_utf8_lossy(&allowed.stderr)
+            );
+            let summary: Value = serde_json::from_slice(&allowed.stdout).unwrap();
+            assert_eq!(summary["job_adopted"], false);
+            assert_eq!(summary["media_rendered"], false);
+        }
+    }
+}
+
 fn setup() -> (Fixture, Request) {
     let mut f = Fixture::new();
     let authored =
