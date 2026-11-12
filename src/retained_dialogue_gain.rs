@@ -37,6 +37,20 @@ pub struct Profile {
 pub struct SourceReconciliationProfile {
     pub schema: String,
     pub source_repairs_by_cue: BTreeMap<String, SourceRepair>,
+    /// Explicitly reconcile producer bookkeeping to the existing job's gain.
+    /// This never changes the selected job audio or its rendered level.
+    #[serde(default)]
+    pub baseline_gain_repairs_by_cue: BTreeMap<String, BaselineGainRepair>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BaselineGainRepair {
+    /// Effective old gain; an absent producer gain field means zero.
+    pub expected_production_gain_db: f64,
+    pub source_sha256: String,
+    pub retained_gain_db: f64,
+    pub reason: String,
 }
 
 #[derive(Deserialize)]
@@ -116,6 +130,7 @@ fn production_cue_index(
     cue: &str,
     audio: &scene_delivery::Audio,
     require_source_match: bool,
+    require_gain_match: bool,
 ) -> Result<usize> {
     let events = production["audio_events"]
         .as_array()
@@ -135,7 +150,8 @@ fn production_cue_index(
             && !event["source"]
                 .as_str()
                 .is_some_and(|s| s.ends_with(&audio.source.sha256)))
-        || event.get("gain_db").and_then(Value::as_f64).unwrap_or(0.0) != audio.gain_db
+        || (require_gain_match
+            && event.get("gain_db").and_then(Value::as_f64).unwrap_or(0.0) != audio.gain_db)
     {
         bail!("production cue {cue} differs from retained narration");
     }
@@ -148,7 +164,7 @@ pub fn compile(root: &Path, request: &Request) -> Result<Value> {
 }
 
 /// Reconcile explicitly named stale producer references to already selected
-/// recordings. This does not reselect recordings or apply gain changes.
+/// recordings and saved gains. This never changes the retained job audio.
 pub fn reconcile_sources(root: &Path, request: &Request) -> Result<Value> {
     compile_operation(root, request, true)
 }
@@ -214,9 +230,44 @@ fn compile_operation(root: &Path, request: &Request, reconcile: bool) -> Result<
     if reconcile {
         let repairs: SourceReconciliationProfile = serde_yaml::from_slice(&profile_raw)?;
         if repairs.schema != "reel.dialogue-source-reconciliation-profile.v1"
-            || repairs.source_repairs_by_cue.is_empty()
+            || (repairs.source_repairs_by_cue.is_empty()
+                && repairs.baseline_gain_repairs_by_cue.is_empty())
         {
             bail!("invalid or empty source reconciliation profile");
+        }
+        for (cue, repair) in repairs.baseline_gain_repairs_by_cue {
+            let audio: Vec<_> = job
+                .audio
+                .iter()
+                .filter(|a| a.cue_id.as_ref() == Some(&cue))
+                .collect();
+            if audio.len() != 1
+                || audio[0].bus != "D"
+                || audio[0].source.sha256 != repair.source_sha256
+                || !repair.expected_production_gain_db.is_finite()
+                || !repair.retained_gain_db.is_finite()
+                || repair.retained_gain_db.abs() > 60.0
+                || repair.retained_gain_db != audio[0].gain_db
+                || repair.reason.trim().is_empty()
+                || repair.reason.len() > 1024
+            {
+                bail!(
+                    "baseline gain reconciliation cue {cue} differs from the selected D recording and saved gain"
+                );
+            }
+            let index = production_cue_index(&production, &cue, audio[0], false, false)?;
+            let current = match production["audio_events"][index].get("gain_db") {
+                None => 0.0,
+                Some(value) => value
+                    .as_f64()
+                    .filter(|gain| gain.is_finite())
+                    .context("producer baseline gain must be finite numeric metadata")?,
+            };
+            if current != repair.expected_production_gain_db || current == repair.retained_gain_db {
+                bail!("baseline gain reconciliation cue {cue} does not bind an exact stale gain");
+            }
+            changes.push(json!({"kind":"producer-baseline-gain-reconciliation","cue_id":cue,"source_sha256":repair.source_sha256,"before_production_gain_db":current,"retained_gain_db":repair.retained_gain_db,"reason":repair.reason}));
+            production["audio_events"][index]["gain_db"] = json!(repair.retained_gain_db);
         }
         for (cue, repair) in repairs.source_repairs_by_cue {
             let audio: Vec<_> = job
@@ -246,7 +297,7 @@ fn compile_operation(root: &Path, request: &Request, reconcile: bool) -> Result<
                 .path
                 .to_str()
                 .context("non-Unicode selected source")?;
-            let index = production_cue_index(&production, &cue, audio, false)?;
+            let index = production_cue_index(&production, &cue, audio, false, true)?;
             let current = production["audio_events"][index]["source"]
                 .as_str()
                 .context("production source missing")?;
@@ -270,7 +321,7 @@ fn compile_operation(root: &Path, request: &Request, reconcile: bool) -> Result<
             if !narration_cues.insert(cue.as_str()) {
                 bail!("ambiguous retained D cue {cue}");
             }
-            production_cue_index(&production, cue, audio, true)?;
+            production_cue_index(&production, cue, audio, true, true)?;
         }
     }
     for (cue, gain) in profile
@@ -293,7 +344,7 @@ fn compile_operation(root: &Path, request: &Request, reconcile: bool) -> Result<
             );
         }
         let (audio_index, audio) = audio[0];
-        let event_index = production_cue_index(&production, cue, audio, true)?;
+        let event_index = production_cue_index(&production, cue, audio, true, true)?;
         job_value["audio"][audio_index]["gain_db"] = json!(gain.gain_db);
         production["audio_events"][event_index]["gain_db"] = json!(gain.gain_db);
         changes.push(json!({"cue_id": cue, "source_sha256": gain.source_sha256, "before_gain_db": audio.gain_db, "gain_db": gain.gain_db}));
@@ -633,6 +684,184 @@ mod tests {
             original,
             fs::read(dir.path().join("production.json")).unwrap()
         );
+    }
+
+    fn baseline_fixture(both: bool, stale_source: bool) -> (tempfile::TempDir, Request) {
+        let (dir, mut request) = if stale_source {
+            reconciliation_fixture(&[0], &[0])
+        } else {
+            reconciliation_fixture(&[], &[])
+        };
+        change_job(dir.path(), &mut request, |job| {
+            job["audio"][0]["gain_db"] = json!(0.010299956639812);
+            if both {
+                job["audio"][1]["gain_db"] = json!(0.010299956639812);
+            }
+        });
+        let mut profile: Value =
+            serde_json::from_slice(&fs::read(dir.path().join("profile.json")).unwrap()).unwrap();
+        profile["baseline_gain_repairs_by_cue"] = json!({"cue1":{
+            "expected_production_gain_db":0.0,"source_sha256":"c".repeat(64),
+            "retained_gain_db":0.010299956639812,
+            "reason":"Reconcile producer bookkeeping to the retained job without changing audio"
+        }});
+        request.profile = write(dir.path(), "profile.json", &profile);
+        (dir, request)
+    }
+
+    #[test]
+    fn explicit_baseline_repair_preserves_job_audio_and_exact_replay_without_media() {
+        let (dir, mut request) = baseline_fixture(false, false);
+        let before_job: Value =
+            serde_json::from_slice(&fs::read(dir.path().join("delivery.json")).unwrap()).unwrap();
+        let before_production: Value =
+            serde_json::from_slice(&fs::read(dir.path().join("production.json")).unwrap()).unwrap();
+        let receipt = reconcile_sources(dir.path(), &request).unwrap();
+        assert_eq!(receipt["primary_media_reads"], 0);
+        assert_eq!(receipt["changes"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            receipt["changes"][0]["kind"],
+            "producer-baseline-gain-reconciliation"
+        );
+        let root = dir.path().join("reconciled");
+        let mut after_job: Value =
+            serde_json::from_slice(&fs::read(root.join("delivery.json")).unwrap()).unwrap();
+        after_job["production_manifest_sha256"] = before_job["production_manifest_sha256"].clone();
+        assert_eq!(after_job, before_job);
+        let mut after_production: Value =
+            serde_json::from_slice(&fs::read(root.join("production.json")).unwrap()).unwrap();
+        assert_eq!(
+            after_production["audio_events"][0]["gain_db"],
+            0.010299956639812
+        );
+        after_production["audio_events"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("gain_db");
+        assert_eq!(after_production, before_production);
+        assert_eq!(
+            fs::read(root.join("contract.json")).unwrap(),
+            fs::read(dir.path().join("contract.json")).unwrap()
+        );
+        request.output_dir = "replay".into();
+        assert_eq!(receipt, reconcile_sources(dir.path(), &request).unwrap());
+        for name in [
+            "semantic.json",
+            "delivery.json",
+            "production.json",
+            "contract.json",
+            "profile.json",
+            "compile-receipt.json",
+        ] {
+            assert_eq!(
+                fs::read(root.join(name)).unwrap(),
+                fs::read(dir.path().join("replay").join(name)).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn baseline_repair_and_source_repair_enable_a_separate_gain_compile() {
+        let (dir, request) = baseline_fixture(false, true);
+        let receipt = reconcile_sources(dir.path(), &request).unwrap();
+        assert_eq!(receipt["changes"].as_array().unwrap().len(), 2);
+        let root = dir.path().join("reconciled");
+        let mut gain_request = Request {
+            schema: "reel.retained-dialogue-gain-compile.v1".into(),
+            semantic: serde_json::from_value(receipt["outputs"]["semantic"].clone()).unwrap(),
+            production: serde_json::from_value(receipt["outputs"]["production"].clone()).unwrap(),
+            profile: request.profile,
+            output_dir: "gain".into(),
+        };
+        change_profile(
+            &root,
+            &mut gain_request,
+            json!({"cue1":{"source_sha256":"c".repeat(64),"gain_db":2.5}}),
+        );
+        let result = compile(&root, &gain_request).unwrap();
+        assert_eq!(result["changes"][0]["before_gain_db"], 0.010299956639812);
+        assert_eq!(result["changes"][0]["gain_db"], 2.5);
+    }
+
+    #[test]
+    fn baseline_repair_refuses_wrong_expected_gain_source_target_and_empty_reason() {
+        for (key, value) in [
+            ("expected_production_gain_db", json!(0.5)),
+            ("source_sha256", json!("f".repeat(64))),
+            ("retained_gain_db", json!(0.0103)),
+            ("retained_gain_db", json!(61.0)),
+            ("retained_gain_db", Value::Null),
+            ("reason", json!(" ")),
+        ] {
+            let (dir, mut request) = baseline_fixture(false, false);
+            let mut profile: Value =
+                serde_json::from_slice(&fs::read(dir.path().join("profile.json")).unwrap())
+                    .unwrap();
+            profile["baseline_gain_repairs_by_cue"]["cue1"][key] = value;
+            request.profile = write(dir.path(), "profile.json", &profile);
+            assert!(reconcile_sources(dir.path(), &request).is_err());
+            assert!(!dir.path().join("reconciled").exists());
+        }
+    }
+
+    #[test]
+    fn undeclared_baseline_difference_refuses_before_output_and_without_changing_inputs() {
+        let (dir, request) = baseline_fixture(true, false);
+        let original = fs::read(dir.path().join("production.json")).unwrap();
+        let error = reconcile_sources(dir.path(), &request)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("cue2 differs from retained narration"));
+        assert!(!dir.path().join("reconciled").exists());
+        assert_eq!(
+            original,
+            fs::read(dir.path().join("production.json")).unwrap()
+        );
+    }
+
+    #[test]
+    fn baseline_repair_cannot_rewrite_a_coherent_gain_or_change_a_non_d_event() {
+        for non_d in [false, true] {
+            let (dir, mut request) = baseline_fixture(false, false);
+            change_job(dir.path(), &mut request, |job| {
+                if non_d {
+                    job["audio"][0]["bus"] = json!("M");
+                } else {
+                    job["audio"][0]["gain_db"] = json!(0.0);
+                }
+            });
+            if !non_d {
+                let mut profile: Value =
+                    serde_json::from_slice(&fs::read(dir.path().join("profile.json")).unwrap())
+                        .unwrap();
+                profile["baseline_gain_repairs_by_cue"]["cue1"]["retained_gain_db"] = json!(0.0);
+                request.profile = write(dir.path(), "profile.json", &profile);
+            }
+            assert!(reconcile_sources(dir.path(), &request).is_err());
+            assert!(!dir.path().join("reconciled").exists());
+        }
+    }
+
+    #[test]
+    fn baseline_repair_rejects_invalid_producer_gain_and_wrong_role() {
+        for invalid in [Value::Null, json!("0"), json!("wrong-role")] {
+            let (dir, mut request) = baseline_fixture(false, false);
+            let mut production: Value =
+                serde_json::from_slice(&fs::read(dir.path().join("production.json")).unwrap())
+                    .unwrap();
+            if invalid == json!("wrong-role") {
+                production["audio_events"][0]["role"] = json!("music");
+            } else {
+                production["audio_events"][0]["gain_db"] = invalid;
+            }
+            request.production = write(dir.path(), "production.json", &production);
+            let sha = request.production.sha256.clone();
+            change_job(dir.path(), &mut request, |job| {
+                job["production_manifest_sha256"] = json!(sha);
+            });
+            assert!(reconcile_sources(dir.path(), &request).is_err());
+            assert!(!dir.path().join("reconciled").exists());
+        }
     }
     #[test]
     fn rejects_non_dialogue_ambiguous_cues_and_unselected_font() {

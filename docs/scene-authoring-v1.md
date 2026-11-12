@@ -449,9 +449,20 @@ Its profile has schema `reel.dialogue-source-reconciliation-profile.v1` and
 The old source must match literally, the SHA must match the unique selected
 D cue, and the replacement must be the canonical hash locator or that selected
 job's own hash-bearing source locator. Already coherent cues cannot be rewritten
-as a cosmetic normalization. Role and saved-gain metadata must already match.
+as a cosmetic normalization. Role metadata must already match.
 
-The native command repairs only those declared producer source strings. It
+When producer saved-gain bookkeeping differs from the gain already used by the
+retained job, explicitly declare `baseline_gain_repairs_by_cue` in the same
+profile. Each entry requires `expected_production_gain_db` (the effective old
+gain; an absent field means zero), `source_sha256`, `retained_gain_db` and a
+nonempty `reason`. The retained gain must match the uniquely selected D cue
+exactly, without a tolerance or rounding, and must be finite within +/-60 dB.
+The old gain must match the pinned producer record. A coherent gain cannot be
+rewritten. For a gain-only bookkeeping repair, use an empty
+`source_repairs_by_cue` map; no source string changes are implied.
+
+The native command repairs only the declared producer source strings and saved
+gain bookkeeping. Existing source-only profiles keep their previous behavior. It
 then requires every D cue to be coherent, including unlisted cues, before
 emitting a distinct bundle. All job audio/picture/font fields, gains, offsets,
 fades, graph selections and original contract bytes remain unchanged; only
