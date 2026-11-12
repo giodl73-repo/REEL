@@ -8,6 +8,18 @@ runtime enrollment and result retention through the existing shared lifecycle.
 This low-level worker does not provide those capabilities independently.
 Native execution uses the existing Windows runtime and containment contracts.
 
+Freeze the presentation itself with `reel-tig-job capture-context PROFILE
+NEW_FRAGMENT`. Use `reel.tig-presentation-capture-profile.experimental-1` with
+the committed `source`, native presentation `request`, existing `metadata_root`,
+`metadata_minimum`, `metadata_cache` and admitted `cache` configuration. Omit
+`preparation_cache`: this operation renders nothing and reads no primary media.
+It freezes and independently reopens the presentation context, preserving its
+exact request, scoped draft-state admission, source archive and controls. The
+fragment supplies the archived `source` and current metadata checkpoint for the
+new materialization profile. No unrelated episode composition is required.
+Capture does not enroll a render, select output or grant approval; the outer
+managed job still supplies those separate resource and lifecycle boundaries.
+
 The private profile uses schema
 `reel.tig-presentation-materialization-profile.experimental-1` and declares the
 existing `metadata_root`/`metadata_minimum`, archived `source`, native presentation

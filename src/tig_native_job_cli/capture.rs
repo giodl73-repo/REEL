@@ -8,6 +8,7 @@ const SCHEMA: &str = "reel.tig-native-capture-profile.experimental-1";
 const EPISODE_SCHEMA: &str = "reel.tig-episode-capture-profile.experimental-1";
 const DELIVERY_SCHEMA: &str = "reel.tig-delivery-capture-profile.experimental-1";
 const BROWSER_SCHEMA: &str = "reel.tig-browser-capture-profile.experimental-1";
+const PRESENTATION_SCHEMA: &str = "reel.tig-presentation-capture-profile.experimental-1";
 const MAX_OUTPUT: usize = 65_536;
 
 #[derive(Debug)]
@@ -39,10 +40,16 @@ enum Contract {
     Episode(crate::tig_episode::Request),
     Delivery(crate::tig_delivery_template::Request),
     Browser(crate::tig_browser::Request),
+    Presentation(crate::tig_presentation::Request),
 }
 impl Contract {
     fn parse(schema: &str, value: Value) -> Result<Self> {
         match schema {
+            PRESENTATION_SCHEMA => {
+                let request: crate::tig_presentation::Request = serde_json::from_value(value)?;
+                request.validate()?;
+                Ok(Self::Presentation(request))
+            }
             BROWSER_SCHEMA => {
                 let request: crate::tig_browser::Request = serde_json::from_value(value)?;
                 request.validate()?;
@@ -92,7 +99,8 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
         .ok_or_else(|| anyhow::anyhow!("capture requires shared coordination"))?;
     let delivery = matches!(&contract, Contract::Delivery(_));
     let browser = matches!(&contract, Contract::Browser(_));
-    if (delivery || browser) == capture.preparation_cache.is_some() {
+    let presentation = matches!(&contract, Contract::Presentation(_));
+    if (delivery || browser || presentation) == capture.preparation_cache.is_some() {
         bail!("only scene/episode capture requires a preparation cache");
     }
     for root in [
@@ -170,6 +178,12 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
     }
     let before = preparation.as_ref().map(|p| p.path().join("capture"));
     let context = match &contract {
+        Contract::Presentation(request) => crate::tig_presentation::freeze_context(
+            &mut source,
+            request,
+            &mut store,
+            TreeLimits::default(),
+        ),
         Contract::Browser(request) => crate::tig_browser::freeze_context(
             &mut source,
             request,
@@ -214,13 +228,21 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
         .run(|| store.inner.finish())
         .context(CaptureStage("metadata finish"))?;
     drop(store);
+    let capture_reads = source.byte_requests();
     drop(source);
     let mut reader = Waiting::new(
         wait.run(|| MetadataReader::open(&capture.metadata_root, &witness))
             .context(CaptureStage("readback open"))?,
         &wait,
     );
-    let (_, restored) = match &contract {
+    let (replayed_source, restored) = match &contract {
+        Contract::Presentation(request) => crate::tig_presentation::restore_context(
+            serde_json::from_value(archive.clone())?,
+            request,
+            context.selection(),
+            &mut reader,
+            TreeLimits::default(),
+        ),
         Contract::Browser(request) => crate::tig_browser::restore_context(
             serde_json::from_value(archive.clone())?,
             request,
@@ -256,6 +278,10 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
         ),
     }
     .context(CaptureStage("native readback"))?;
+    if presentation && (capture_reads != 0 || replayed_source.byte_requests() != 0) {
+        bail!("presentation capture must not open primary bytes");
+    }
+    drop(replayed_source);
     if restored.selection() != context.selection()
         || restored.descriptor() != context.descriptor()
         || restored.requirements() != context.requirements()
@@ -299,6 +325,9 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
     if browser {
         fragment["context_mode"] = json!("browser");
     }
+    if presentation {
+        fragment["context_mode"] = json!("presentation");
+    }
     let bytes = serde_json::to_vec(&fragment)?;
     if bytes.len() > MAX_OUTPUT {
         bail!("capture fragment exceeds budget");
@@ -317,7 +346,7 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
         .map_err(|_| anyhow::anyhow!("capture output publication refused"))?;
     Ok(
         json!({"schema":"reel.tig-native-capture-summary.experimental-1",
-        "context_kind":match contract {Contract::Scene(_)=>"scene",Contract::Episode(_)=>"episode",Contract::Delivery(_)=>"delivery",Contract::Browser(_)=>"browser"},
+        "context_kind":match contract {Contract::Scene(_)=>"scene",Contract::Episode(_)=>"episode",Contract::Delivery(_)=>"delivery",Contract::Browser(_)=>"browser",Contract::Presentation(_)=>"presentation"},
         "readback_equal":true, "fragment_bytes":bytes.len(),
         "roots":context.roots().len(), "primary":context.requirements().primary().len(),
         "controls":context.requirements().controls().len(), "media_rendered":false,
