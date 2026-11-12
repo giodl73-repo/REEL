@@ -50,6 +50,16 @@ JSON reports the captured metadata checkpoint, input-name/verified-object counts
 the normal REEL plan/receipt, and `complete_semantic_coverage: false`. Cache paths
 are not added to that result. Operational errors remain private diagnostics.
 
+For explicit media programs on the audio path, pass `--audio-runtime runtime.json`
+before `render-audio` or `check-audio`. The private file is the existing
+`media_runtime::Bindings` object: exact host, FFmpeg, FFprobe and declared
+dependency pins and paths. REEL holds those program guards through rendering or
+checking and reports their path-free runtime manifest and identity. Invalid or
+unsupported bindings refuse without an ambient-tool fallback. The option refuses
+on other operations; omitting it preserves their historical behavior. Audio-only
+execution still enrolls all declared scene inputs for its shared native plan;
+it emits D/M/E/mix audio without rendering pictures or granting approval.
+
 Each job `FileRef.path` is the exact opaque Tig asset ID, such as `cel/ending`,
 `cue/014` or `scene:picture.p01`; its hash and byte count remain mandatory. Asset
 and definition IDs follow Tig's bounded token contract, not filesystem pathname
