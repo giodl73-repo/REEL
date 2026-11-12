@@ -55,6 +55,7 @@ pub mod production;
 pub mod production_binding;
 pub mod production_operations;
 pub mod production_package;
+pub mod retained_dialogue_gain;
 pub mod review_decision;
 pub mod scene_authoring_inputs;
 pub mod scene_cue_compose;
