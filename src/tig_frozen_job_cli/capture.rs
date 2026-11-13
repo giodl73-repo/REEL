@@ -13,6 +13,7 @@ use std::io::Write;
 use tig_store::metadata::MetadataStore;
 
 const CAPTURE_SCHEMA: &str = "reel.tig-frozen-job-capture-profile.experimental-1";
+const DEPENDENCY_CAPTURE_SCHEMA: &str = "reel.tig-frozen-job-capture-profile.experimental-2";
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Capture {
@@ -25,6 +26,8 @@ struct Capture {
     operation: recipe::Operation,
     descriptor: FileRef,
     runtime: BTreeMap<LogicalPath, Object>,
+    #[serde(default)]
+    dependencies: Option<Dependencies>,
     manifest: FileRef,
     metadata_root: PathBuf,
     metadata_minimum: Checkpoint,
@@ -34,6 +37,12 @@ struct Capture {
 fn execute(path: &Path, output: &Path) -> Result<Value> {
     let (_profile_guard, raw) = read(path, 128 * 1024)?;
     let p: Capture = serde_json::from_value(identity::parse_json(&raw)?)?;
+    let dependencies = dependency_mode(
+        &p.schema,
+        CAPTURE_SCHEMA,
+        DEPENDENCY_CAPTURE_SCHEMA,
+        p.dependencies.as_ref(),
+    )?;
     let parent = output
         .parent()
         .ok_or_else(|| anyhow::anyhow!("capture output parent required"))?;
@@ -42,8 +51,7 @@ fn execute(path: &Path, output: &Path) -> Result<Value> {
         .coordination_root
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("capture coordination required"))?;
-    if p.schema != CAPTURE_SCHEMA
-        || p.profiles.is_empty()
+    if p.profiles.is_empty()
         || p.profiles.len() > 128
         || p.consumption.len() > 128
         || p.runtime.len() > 64
@@ -137,16 +145,17 @@ fn execute(path: &Path, output: &Path) -> Result<Value> {
         trees,
         limits,
     )?;
-    let candidate = job::freeze(
-        &job::Admission {
-            context: &context,
-            plan: &plan,
-            runtime: &p.runtime,
-            output: None,
-        },
-        &mut store,
-        trees,
-    )?;
+    let admission = job::Admission {
+        context: &context,
+        plan: &plan,
+        runtime: &p.runtime,
+        output: None,
+    };
+    let candidate = if let Some(declared) = &p.dependencies {
+        job::freeze_with_dependencies(&admission, &declared.admission(), None, &mut store, trees)?
+    } else {
+        job::freeze(&admission, &mut store, trees)?
+    };
     let witness = wait.run(|| store.inner.finish())?;
     drop(store);
     let mut reader = Waiting::new(
@@ -169,20 +178,30 @@ fn execute(path: &Path, output: &Path) -> Result<Value> {
     }
     let plan =
         source.production_recipe(&p.root_id, &p.profiles, &consumption, &p.operation, limits)?;
-    let resources = job::restore(
-        candidate.selection(),
-        &job::Admission {
-            context: &restored,
-            plan: &plan,
-            runtime: &p.runtime,
-            output: None,
-        },
-        &mut reader,
-        trees,
-    )?;
-    let fragment = json!({"schema":"reel.tig-frozen-job-fragment.experimental-1","metadata_root":p.metadata_root,"metadata_minimum":witness,
+    let admission = job::Admission {
+        context: &restored,
+        plan: &plan,
+        runtime: &p.runtime,
+        output: None,
+    };
+    let resources = if let Some(declared) = &p.dependencies {
+        job::restore_with_dependencies(
+            candidate.selection(),
+            &admission,
+            &declared.admission(),
+            None,
+            &mut reader,
+            trees,
+        )?
+    } else {
+        job::restore(candidate.selection(), &admission, &mut reader, trees)?
+    };
+    let mut fragment = json!({"schema":if dependencies {"reel.tig-frozen-job-fragment.experimental-2"} else {"reel.tig-frozen-job-fragment.experimental-1"},"metadata_root":p.metadata_root,"metadata_minimum":witness,
         "source_context":restored.selection(),"source_checkpoint":p.source_checkpoint,"job_context":resources.selection(),
         "profiles":p.profiles,"consumption":p.consumption,"operation":p.operation,"runtime":p.runtime,"manifest":p.manifest});
+    if let Some(declared) = &p.dependencies {
+        fragment["dependencies"] = serde_json::to_value(declared)?;
+    }
     let bytes = serde_json::to_vec(&fragment)?;
     if bytes.len() > 128 * 1024 {
         bail!("capture fragment exceeds bound");

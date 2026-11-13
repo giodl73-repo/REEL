@@ -237,6 +237,17 @@ fn explicit_control_copy_is_exact_and_never_replaces_an_existing_payload() {
 #[test]
 #[cfg(all(windows, feature = "tig-publication"))]
 fn managed_control_edit_retains_both_objects_before_an_isolated_git_proposal() {
+    managed_control_edit(false);
+}
+
+#[test]
+#[cfg(feature = "tig-publication")]
+fn frozen_job_consumes_explicit_dependencies_without_primary_promotion() {
+    managed_control_edit(true);
+}
+
+#[cfg(feature = "tig-publication")]
+fn managed_control_edit(with_dependencies: bool) {
     use reel::tig_job_runner::{self, Profile as Runner};
     use reel::tig_scene_production::jobs::{Coordination, Identity};
     use std::collections::{BTreeMap, BTreeSet};
@@ -268,7 +279,7 @@ fn managed_control_edit_retains_both_objects_before_an_isolated_git_proposal() {
         fs::copy(root.join(from), repo_root.join(to)).unwrap();
     }
     let git_exe = std::env::split_paths(&std::env::var_os("PATH").unwrap())
-        .map(|p| p.join("git.exe"))
+        .map(|p| p.join(if cfg!(windows) { "git.exe" } else { "git" }))
         .find(|p| p.is_file())
         .unwrap()
         .canonicalize()
@@ -327,8 +338,26 @@ fn managed_control_edit_retains_both_objects_before_an_isolated_git_proposal() {
         "worker-profile.json".into(),
         json!(String::from_utf8(worker_profile.clone()).unwrap()),
     );
+    let composition_object = Object::from_bytes(&fs::read(root.join("replacement.json")).unwrap());
+    let evidence_object = Object::from_bytes(&fs::read(root.join("edit.json")).unwrap());
+    let composition = BTreeMap::from([(
+        LogicalPath::parse("replacement").unwrap(),
+        composition_object.clone(),
+    )]);
+    let evidence = BTreeMap::from([(LogicalPath::parse("edit").unwrap(), evidence_object.clone())]);
+    let dependencies = job::Dependencies {
+        composition: &composition,
+        evidence: &evidence,
+    };
+    let dependency_json = json!({"composition":composition,"evidence":evidence});
+    let mut inputs = json!({});
+    if with_dependencies {
+        files.remove("replacement.json");
+        files.remove("edit.json");
+        inputs = json!({"replacement.json":composition_object,"edit.json":evidence_object});
+    }
     let manifest = json!({"budget_bytes":worker_object.bytes+4*1024*1024,"scratch_bytes":65536,
-        "inputs":{},"tools":{},"installed_tools":{"worker":{"path":worker,"sha256":worker_object.sha256,"bytes":worker_object.bytes}},
+        "inputs":inputs,"tools":{},"installed_tools":{"worker":{"path":worker,"sha256":worker_object.sha256,"bytes":worker_object.bytes}},
         "files":files,"steps":[{"tool":"worker","args":["--control-edit","worker-profile.json","candidate.tig"],"timeout_seconds":30}],
         "outputs":{"record":{"path":"candidate.tig","max_bytes":65536},"control":{"path":"retained-control.json","max_bytes":4096}}});
     let request = serde_json::to_vec(&manifest).unwrap();
@@ -413,17 +442,51 @@ fn managed_control_edit_retains_both_objects_before_an_isolated_git_proposal() {
         runtime: &runtime,
         output: None,
     };
-    let candidate = job::freeze(&admission, &mut writer, TreeLimits::default()).unwrap();
+    let candidate = if with_dependencies {
+        job::freeze_with_dependencies(
+            &admission,
+            &dependencies,
+            None,
+            &mut writer,
+            TreeLimits::default(),
+        )
+    } else {
+        job::freeze(&admission, &mut writer, TreeLimits::default())
+    }
+    .unwrap();
     let minimum = writer.finish().unwrap();
     drop(writer);
     let mut reader = MetadataReader::open(&metadata, &minimum).unwrap();
-    let resources = job::restore(
-        candidate.selection(),
-        &admission,
-        &mut reader,
-        TreeLimits::default(),
-    )
+    let resources = if with_dependencies {
+        job::restore_with_dependencies(
+            candidate.selection(),
+            &admission,
+            &dependencies,
+            None,
+            &mut reader,
+            TreeLimits::default(),
+        )
+    } else {
+        job::restore(
+            candidate.selection(),
+            &admission,
+            &mut reader,
+            TreeLimits::default(),
+        )
+    }
     .unwrap();
+    if with_dependencies {
+        assert!(
+            resources
+                .of(job::Role::Composition)
+                .contains(&composition_object)
+        );
+        assert!(resources.of(job::Role::Evidence).contains(&evidence_object));
+        for object in [&composition_object, &evidence_object] {
+            assert!(!resources.of(job::Role::Primary).contains(object));
+            assert!(!resources.of(job::Role::Runtime).contains(object));
+        }
+    }
     let key = |s| Key::parse(s).unwrap();
     let owners = root.join("owners");
     let mut journal = SourceJournal::create(&owners, key("fixture"), key("epoch")).unwrap();
@@ -455,6 +518,17 @@ fn managed_control_edit_retains_both_objects_before_an_isolated_git_proposal() {
         .unwrap();
     let cache = root.join("active");
     fs::create_dir_all(cache.join("objects/sha256")).unwrap();
+    if with_dependencies {
+        for (name, object) in [
+            ("replacement.json", &composition_object),
+            ("edit.json", &evidence_object),
+        ] {
+            let digest = object.sha256.as_str();
+            let path = cache.join("objects/sha256").join(&digest[..2]).join(digest);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::copy(root.join(name), path).unwrap();
+        }
+    }
     let project = root.join("project");
     fs::create_dir(&project).unwrap();
     let coordination = Coordination {
@@ -482,7 +556,7 @@ fn managed_control_edit_retains_both_objects_before_an_isolated_git_proposal() {
     fs::write(&descriptor_path, &worker_profile).unwrap();
     let cache_admission = json!({"path_policy":"configured-local-roots","cache_roots":[cache],"coordination_root":coordination.root,
         "capacity":{"minimum_free_bytes":0,"minimum_free_basis_points":0}});
-    let capture = json!({"schema":"reel.tig-frozen-job-capture-profile.experimental-1",
+    let mut capture = json!({"schema":"reel.tig-frozen-job-capture-profile.experimental-1",
         "source":{"schema":reel::tig_inputs::PROFILE_SCHEMA,"git_executable":git_exe,"repository":repo_root,"commit":base.as_str(),
             "records":["records"],"definitions":["definitions"],"admitted":[{"id":"types/control","object":profiles[0].definition,"payload":{"kind":"selected"}}],
             "byte_source":{"places":[{"root":cache,"layout":"reel-cas"}],"required":"cooperative-immutable"}},
@@ -492,6 +566,10 @@ fn managed_control_edit_retains_both_objects_before_an_isolated_git_proposal() {
         "descriptor":{"path":descriptor_path,"sha256":Object::from_bytes(&worker_profile).sha256,"bytes":worker_profile.len()},
         "manifest":{"path":manifest_path,"sha256":Object::from_bytes(&request).sha256,"bytes":request.len()},
         "metadata_root":metadata,"metadata_minimum":initial,"metadata_cache":cache,"cache":cache_admission});
+    if with_dependencies {
+        capture["schema"] = json!("reel.tig-frozen-job-capture-profile.experimental-2");
+        capture["dependencies"] = dependency_json.clone();
+    }
     let capture_profile = root.join("capture.json");
     let capture_output = root.join("fragment.json");
     let invoke_capture = |profile: &Value| {
@@ -511,6 +589,9 @@ fn managed_control_edit_retains_both_objects_before_an_isolated_git_proposal() {
         "runtime",
         "definition",
         "missing-store",
+        "dependency-version",
+        "dependency-admission",
+        "empty-dependencies",
     ] {
         let mut bad = capture.clone();
         match changed {
@@ -520,6 +601,24 @@ fn managed_control_edit_retains_both_objects_before_an_isolated_git_proposal() {
             "runtime" => bad["runtime"]["request"] = json!(Object::from_bytes(b"wrong")),
             "definition" => bad["profiles"][0]["definition"] = json!(Object::from_bytes(b"wrong")),
             "missing-store" => bad["metadata_root"] = json!(root.join("missing-store")),
+            "dependency-version" => {
+                bad["schema"] = json!(if with_dependencies {
+                    "reel.tig-frozen-job-capture-profile.experimental-1"
+                } else {
+                    "reel.tig-frozen-job-capture-profile.experimental-2"
+                });
+            }
+            "dependency-admission" => {
+                if with_dependencies {
+                    bad.as_object_mut().unwrap().remove("dependencies");
+                } else {
+                    bad["dependencies"] = dependency_json.clone();
+                }
+            }
+            "empty-dependencies" => {
+                bad["schema"] = json!("reel.tig-frozen-job-capture-profile.experimental-2");
+                bad["dependencies"] = json!({"composition":{},"evidence":{}});
+            }
             _ => unreachable!(),
         }
         let rejected = invoke_capture(&bad);
@@ -552,6 +651,15 @@ fn managed_control_edit_retains_both_objects_before_an_isolated_git_proposal() {
     let fragment: Value = serde_json::from_slice(&fragment_bytes).unwrap();
     assert_eq!(fragment["source_context"], json!(context.selection()));
     assert_eq!(fragment["job_context"], json!(resources.selection()));
+    if with_dependencies {
+        assert_eq!(
+            fragment["schema"],
+            "reel.tig-frozen-job-fragment.experimental-2"
+        );
+        assert_eq!(fragment["dependencies"], dependency_json);
+    } else {
+        assert!(fragment.get("dependencies").is_none());
+    }
     let minimum = serde_json::from_value(fragment["metadata_minimum"].clone()).unwrap();
     assert!(!invoke_capture(&capture).status.success());
     assert_eq!(fs::read(&capture_output).unwrap(), fragment_bytes);
@@ -572,7 +680,15 @@ fn managed_control_edit_retains_both_objects_before_an_isolated_git_proposal() {
     );
     assert_eq!(journal.checkpoint(), before);
     runner.identity.owner = identity.owner.clone();
-    let frozen = json!({"schema":reel::tig_frozen_job_cli::SCHEMA,"project":project,
+    if with_dependencies {
+        // An ordinary legacy runner cannot consume these separately scoped bytes.
+        assert!(
+            tig_job_runner::run(&project, &manifest_path, &resources, &mut journal, &runner)
+                .is_err()
+        );
+        assert_eq!(journal.checkpoint(), before);
+    }
+    let mut frozen = json!({"schema":reel::tig_frozen_job_cli::SCHEMA,"project":project,
         "metadata_root":metadata,"metadata_minimum":minimum,"source_context":context.selection(),
         "source_checkpoint":snapshot.checkpoint(),"profiles":profiles,
         "consumption":[{"definition_id":"types/control","definition":profiles[0].definition,"fields":["label"]}],
@@ -581,6 +697,10 @@ fn managed_control_edit_retains_both_objects_before_an_isolated_git_proposal() {
         "cache":{"path_policy":"configured-local-roots","cache_roots":[cache],"coordination_root":coordination.root,
             "capacity":{"minimum_free_bytes":0,"minimum_free_basis_points":0}},"journal_root":owners,"journal_minimum":before,
         "source_id":"edit","owner":"owner","expected_revision":2,"retain_operation":"retain"});
+    if with_dependencies {
+        frozen["schema"] = json!(reel::tig_frozen_job_cli::DEPENDENCY_SCHEMA);
+        frozen["dependencies"] = dependency_json.clone();
+    }
     drop(journal);
     let frozen_path = root.join("frozen.json");
     let invoke = |profile: &Value| {
@@ -600,6 +720,11 @@ fn managed_control_edit_retains_both_objects_before_an_isolated_git_proposal() {
         "selection",
         "consumption",
         "schema",
+        "dependency-admission",
+        "dependency-role",
+        "dependency-version",
+        "empty-dependencies",
+        "dependency-object",
     ] {
         let mut bad = frozen.clone();
         match changed {
@@ -611,6 +736,32 @@ fn managed_control_edit_retains_both_objects_before_an_isolated_git_proposal() {
             "selection" => bad["job_context"]["context"] = json!(Digest::blob(b"wrong")),
             "consumption" => bad["consumption"][0]["fields"] = json!([]),
             "schema" => bad["schema"] = json!("unknown"),
+            "dependency-admission" => {
+                if with_dependencies {
+                    bad.as_object_mut().unwrap().remove("dependencies");
+                } else {
+                    bad["dependencies"] = dependency_json.clone();
+                }
+            }
+            "dependency-role" => {
+                bad["dependencies"] = json!({"composition":{"edit":evidence_object},"evidence":{"replacement":composition_object}});
+            }
+            "empty-dependencies" => {
+                bad["schema"] = json!(reel::tig_frozen_job_cli::DEPENDENCY_SCHEMA);
+                bad["dependencies"] = json!({"composition":{},"evidence":{}});
+            }
+            "dependency-object" => {
+                bad["dependencies"] = dependency_json.clone();
+                bad["dependencies"]["composition"]["replacement"]["bytes"] =
+                    json!(composition_object.bytes + 1);
+            }
+            "dependency-version" => {
+                bad["schema"] = json!(if with_dependencies {
+                    reel::tig_frozen_job_cli::SCHEMA
+                } else {
+                    reel::tig_frozen_job_cli::DEPENDENCY_SCHEMA
+                });
+            }
             _ => unreachable!(),
         }
         let rejected = invoke(&bad);
@@ -623,7 +774,10 @@ fn managed_control_edit_retains_both_objects_before_an_isolated_git_proposal() {
         let reopened = SourceJournal::open(&owners, &before).unwrap();
         assert_eq!(reopened.checkpoint(), before);
     }
+    let offline_repo = root.join("source-offline");
+    fs::rename(&repo_root, &offline_repo).unwrap();
     let executed = invoke(&frozen);
+    fs::rename(&offline_repo, &repo_root).unwrap();
     assert!(
         executed.status.success(),
         "{}",
@@ -633,6 +787,10 @@ fn managed_control_edit_retains_both_objects_before_an_isolated_git_proposal() {
     assert_eq!(result["production_claim"], Value::Null);
     assert_eq!(result["creative_approval"], false);
     assert_eq!(result["workspace_retained"], false);
+    if with_dependencies {
+        assert_eq!(result["dependency_roles_admitted"], true);
+        assert_eq!(result["original_producer_currency"], false);
+    }
     let record_bytes = fs::read(result["outputs"]["record"]["path"].as_str().unwrap()).unwrap();
     let control_bytes = fs::read(result["outputs"]["control"]["path"].as_str().unwrap()).unwrap();
     let new_record: Value = serde_json::from_slice(&record_bytes).unwrap();
