@@ -539,8 +539,16 @@ fn opening_fixture_with_output_mode(
                 .output()
                 .unwrap();
             assert!(!rejected.status.success());
+            let expected = match index {
+                0 => "retain-source cannot trim or repair the selected source",
+                1 => "unsupported or conflicting presentation lossless encoding",
+                2 => "unknown variant",
+                _ => unreachable!(),
+            };
             assert!(
-                String::from_utf8_lossy(&rejected.stderr).contains("complete unchanged source")
+                String::from_utf8_lossy(&rejected.stderr).contains(expected),
+                "{}",
+                String::from_utf8_lossy(&rejected.stderr)
             );
             assert!(!out.exists());
         }
@@ -812,6 +820,11 @@ fn opening_fixture_with_output_mode(
         conform["output_frame_rate"] =
             json!({"numerator":fps,"denominator":1,"policy":"repeat-only"});
         conform["audio_frame_conform"] = json!("pad-silence-to-picture-boundaries");
+        // MP4 and native Matroska can expose different unknown-range tags.
+        // Current conform requires an explicit interpretation and independently
+        // checks that declaring limited range preserves displayed RGB.
+        conform["output_geometry"] = json!({"width":64,"height":64,
+            "policy":"preserve-aspect-lanczos","assume_color_range_for_unspecified":"tv"});
         for segment in conform["segments"].as_array_mut().unwrap() {
             segment["tail_hold_frames"] = json!(fps * 2);
         }
