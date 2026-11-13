@@ -91,6 +91,9 @@ pub struct Manifest {
     pub source: scene_delivery::FileRef,
     #[serde(default)]
     pub output_mode: Option<OutputMode>,
+    /// Explicit compact lossless intermediate; omission preserves FFV1 behavior.
+    #[serde(default)]
+    pub lossless_video_encoding: Option<String>,
     #[serde(default)]
     pub selection_evidence: Option<scene_delivery::FileRef>,
     #[serde(default)]
@@ -139,6 +142,8 @@ pub struct Receipt {
     pub source_bytes: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_mode: Option<OutputMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lossless_video_encoding: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_range: Option<SourceRange>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -593,7 +598,9 @@ fn master_facts(
     manifest: &Manifest,
     inputs: &(impl scene_delivery::InputFiles + ?Sized),
 ) -> Result<(u64, u64, String, u32)> {
-    if manifest.output_mode == Some(OutputMode::RetainSource) {
+    if manifest.lossless_video_encoding.as_deref() == Some("h264-lossless") {
+        source_facts_with_encoding(path, inputs, true)
+    } else if manifest.output_mode == Some(OutputMode::RetainSource) {
         // Retention does not promise a lossless codec. Geometry, decoded
         // content, exact bytes and continuous clocks are still checked.
         source_facts(path, inputs)
@@ -606,6 +613,14 @@ fn master_facts(
 fn source_facts(
     path: &Path,
     inputs: &(impl scene_delivery::InputFiles + ?Sized),
+) -> Result<(u64, u64, String, u32)> {
+    source_facts_with_encoding(path, inputs, false)
+}
+
+fn source_facts_with_encoding(
+    path: &Path,
+    inputs: &(impl scene_delivery::InputFiles + ?Sized),
+    h264_lossless_master: bool,
 ) -> Result<(u64, u64, String, u32)> {
     let output =
         episode_conform::command_with_inputs(inputs, scene_delivery::MediaProgram::Ffprobe)?
@@ -632,6 +647,14 @@ fn source_facts(
     }
     let v = video[0];
     let a = audio[0];
+    if h264_lossless_master
+        && (v["codec_name"] != "h264"
+            || v["pix_fmt"] != "yuv444p"
+            || v["has_b_frames"] != 0
+            || a["codec_name"] != "pcm_s24le")
+    {
+        bail!("presentation master differs from declared lossless H.264 policy");
+    }
     Ok((
         v["width"].as_u64().context("source width")?,
         v["height"].as_u64().context("source height")?,
@@ -727,6 +750,15 @@ fn build_manifest(
         bail!("presentation output must be a new directory");
     }
     let manifest: Manifest = serde_json::from_slice(manifest_bytes)?;
+    if manifest
+        .lossless_video_encoding
+        .as_deref()
+        .is_some_and(|encoding| encoding != "h264-lossless")
+        || (manifest.lossless_video_encoding.is_some()
+            && manifest.output_mode == Some(OutputMode::RetainSource))
+    {
+        bail!("unsupported or conflicting presentation lossless encoding");
+    }
     if manifest.output_mode == Some(OutputMode::RetainSource)
         && (manifest.source_range.is_some()
             || manifest.evidence_range_pointer.is_some()
@@ -925,7 +957,9 @@ fn build_manifest(
         .tempdir_in(parent)?;
     let master = stage.path().join("master.mkv");
     if manifest.output_mode == Some(OutputMode::RetainSource)
-        || (manifest.source_range.is_none() && is_native_lossless(&source, asset_root)?)
+        || (manifest.lossless_video_encoding.is_none()
+            && manifest.source_range.is_none()
+            && is_native_lossless(&source, asset_root)?)
     {
         fs::copy(&source, &master)?;
     } else {
@@ -959,16 +993,16 @@ fn build_manifest(
                     resolved_range_filter(range, &definition, false, audio_sample_window.as_ref())?
                 });
         }
+        command.args(["-map", "0:v:0", "-map", "0:a:0", "-fps_mode", "passthrough"]);
+        if manifest.lossless_video_encoding.as_deref() == Some("h264-lossless") {
+            command.args([
+                "-c:v", "libx264", "-crf", "0", "-preset", "veryfast", "-bf", "0",
+            ]);
+        } else {
+            command.args(["-c:v", "ffv1"]);
+        }
         let status = command
             .args([
-                "-map",
-                "0:v:0",
-                "-map",
-                "0:a:0",
-                "-fps_mode",
-                "passthrough",
-                "-c:v",
-                "ffv1",
                 "-pix_fmt",
                 "yuv444p",
                 "-c:a",
@@ -1078,6 +1112,7 @@ fn build_manifest(
         source_sha256: selected.sha256.clone(),
         source_bytes: selected.bytes,
         output_mode: manifest.output_mode,
+        lossless_video_encoding: manifest.lossless_video_encoding,
         source_range: manifest.source_range,
         evidence_range_pointer: manifest.evidence_range_pointer,
         audio_clock_repair: manifest.audio_clock_repair,

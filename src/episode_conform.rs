@@ -2657,11 +2657,14 @@ fn build_impl(
         retained_sources.push(
             segment.kind == SegmentKind::EpisodePresentation
                 && presentation_rechecked
-                && (if native.is_some() {
-                    receipt["retained_source"].is_object()
-                } else {
-                    receipt["output_mode"] == "retain-source"
-                }),
+                // H.264 is admitted only after the adoption checker has proved
+                // the declared lossless encoding and complete source equality.
+                && (receipt["lossless_video_encoding"] == "h264-lossless"
+                    || if native.is_some() {
+                        receipt["retained_source"].is_object()
+                    } else {
+                        receipt["output_mode"] == "retain-source"
+                    }),
         );
         sources.push(master);
         upstream_verified.push(rechecked);
