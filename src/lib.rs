@@ -30,6 +30,8 @@ pub mod continuity;
 pub mod craft_plan;
 pub mod cue_import;
 pub mod cue_relative;
+mod decoded_video_hash;
+pub mod episode_captions;
 pub mod episode_conform;
 pub mod episode_delivery;
 pub mod exposure_sheet;

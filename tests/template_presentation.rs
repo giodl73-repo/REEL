@@ -56,6 +56,9 @@ fn template(kind: &str) -> EditableTextTemplate {
         fixed_duration_seconds: (kind == "chapter-title").then_some(4),
         post_poem_title_duration_ms: None,
         chapter: (kind == "chapter-title").then_some(ChapterStyle {
+            hide_number: false,
+            full_scene_duration: false,
+            title_plate: None,
             number: chapter_line(54, 110, 88),
             title: chapter_line(36, 190, 102),
             fade_in_ms: 750,

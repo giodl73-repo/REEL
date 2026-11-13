@@ -74,7 +74,7 @@ impl OutputFrameRate {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct FrameRateVerification {
     pub input_fps: String,
     pub output_fps: String,

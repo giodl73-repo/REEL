@@ -242,6 +242,7 @@ pub fn lower(source: &mut Source, request: &Request) -> Result<Prepared> {
         audio: document.audio.as_deref().map(asset).transpose()?,
         source_clock: document.source_clock.as_deref().map(asset).transpose()?,
         audio_window: document.audio_window,
+        lossless_master: None,
         width: document.width,
         height: document.height,
         fps: document.fps,

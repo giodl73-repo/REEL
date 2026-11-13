@@ -28,15 +28,13 @@ type NativeScenes<'a> =
     BTreeMap<String, &'a crate::tig_scene_production::jobs::reference::VerifiedScene<'a>>;
 #[cfg(not(feature = "tig-publication"))]
 type NativeScenes<'a> = BTreeMap<String, &'a ()>;
+mod checkpoint;
+pub mod parts;
 
 pub const SCHEMA: &str = "reel.episode-conform.v1";
 mod clocks;
 mod holds;
 pub use clocks::{FrameRateVerification, OutputFrameRate};
-fn is_zero(value: &u64) -> bool {
-    *value == 0
-}
-
 fn verify_native_delivery_proof(
     receipt: &serde_json::Value,
     job: &scene_delivery::FileRef,
@@ -54,6 +52,13 @@ fn verify_native_delivery_proof(
 #[cfg(test)]
 mod native_proof_tests {
     use super::*;
+    #[test]
+    fn missing_hash_path_diagnostic_identifies_the_requested_file() {
+        let root = tempfile::tempdir().unwrap();
+        let requested = root.path().join("missing-native-input.json");
+        let error = file_sha(&requested).unwrap_err();
+        assert!(format!("{error:#}").contains("missing-native-input.json"));
+    }
     #[test]
     fn imported_roots_reject_outside_symlink_targets() {
         let root = tempfile::tempdir().unwrap();
@@ -143,6 +148,10 @@ pub struct Manifest {
     /// dependencies and tool binaries have been rehashed. Defaults to full checks.
     #[serde(default)]
     pub reuse_verified_presentations: bool,
+    /// Optional read-only assembled candidate. Every source and every ordered
+    /// decoded frame/sample is still checked before it can be published.
+    #[serde(default)]
+    pub preassembled_master: Option<scene_delivery::FileRef>,
 }
 
 impl Manifest {
@@ -197,6 +206,140 @@ fn is_false(value: &bool) -> bool {
     !value
 }
 
+#[cfg(test)]
+mod repeat_only_tests {
+    use super::*;
+
+    #[test]
+    fn checkpoint_roundtrip_preserves_repeat_only_frame_evidence() {
+        let evidence = FrameRateVerification {
+            input_fps: "25/1".into(),
+            output_fps: "30/1".into(),
+            input_frames: 11,
+            output_frames: 14,
+            repeated_frames: 3,
+            transformed_source_matches_selected: true,
+        };
+        let value = serde_json::to_value(&evidence).unwrap();
+        let restored: FrameRateVerification = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(restored).unwrap(), value);
+    }
+
+    #[test]
+    fn clock_is_explicit_reduced_bounded_and_cannot_drop_frames() {
+        let rate = OutputFrameRate {
+            numerator: 60,
+            denominator: 2,
+            policy: "repeat-only".into(),
+        };
+        assert_eq!(rate.clock().unwrap(), (30, 1));
+        assert!(rate.filter("30/1").unwrap().is_none());
+        assert!(
+            rate.filter("25/1")
+                .unwrap()
+                .unwrap()
+                .contains("round=up:eof_action=pass")
+        );
+        assert_eq!(rate.frames(11, "25/1").unwrap(), 14);
+        assert_eq!(rate.frames(3015, "30/1").unwrap(), 3015);
+        assert!(rate.filter("50/1").is_err());
+        for (numerator, denominator, policy) in [
+            (0, 1, "repeat-only"),
+            (30, 0, "repeat-only"),
+            (121, 1, "repeat-only"),
+            (30, 1, "nearest"),
+        ] {
+            assert!(
+                OutputFrameRate {
+                    numerator,
+                    denominator,
+                    policy: policy.into()
+                }
+                .clock()
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn moving_source_retains_every_frame_and_audio_through_fractional_end() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source.mkv");
+        let selected = temp.path().join("selected.mkv");
+        let status = command("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=s=32x32:r=25:d=0.44",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=437:sample_rate=48000:duration=0.44",
+                "-ac",
+                "2",
+                "-shortest",
+                "-c:v",
+                "ffv1",
+                "-pix_fmt",
+                "yuv444p",
+                "-c:a",
+                "pcm_s24le",
+            ])
+            .arg(&source)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let rate = OutputFrameRate {
+            numerator: 30,
+            denominator: 1,
+            policy: "repeat-only".into(),
+        };
+        let status = command("ffmpeg")
+            .args(["-v", "error", "-nostdin", "-i"])
+            .arg(&source)
+            .args(["-map", "0:v:0", "-map", "0:a:0", "-vf"])
+            .arg(rate.filter("25/1").unwrap().unwrap())
+            .args(["-c:v", "ffv1", "-pix_fmt", "yuv444p", "-c:a", "copy"])
+            .arg(&selected)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let raw = |path: &Path| {
+            let output = command("ffmpeg")
+                .args(["-v", "error", "-nostdin", "-i"])
+                .arg(path)
+                .args(["-map", "0:v:0", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            output.stdout
+        };
+        let before = raw(&source);
+        let after = raw(&selected);
+        let bytes_per_frame = 32 * 32 * 3;
+        assert_eq!(before.len() / bytes_per_frame, 11);
+        assert_eq!(after.len() / bytes_per_frame, 14);
+        let mut original = before.chunks_exact(bytes_per_frame).peekable();
+        for frame in after.chunks_exact(bytes_per_frame) {
+            if original.peek().is_some_and(|next| *next == frame) {
+                original.next();
+            }
+        }
+        assert!(
+            original.next().is_none(),
+            "an original moving frame was lost or reordered"
+        );
+        assert_eq!(probe(&selected).unwrap().fps, "30/1");
+        assert_eq!(
+            decoded_digest(&source, false).unwrap(),
+            decoded_digest(&selected, false).unwrap()
+        );
+    }
+}
+
 fn scoped_import_root(input_root: &Path, scope: Option<&Path>) -> Result<PathBuf> {
     let Some(scope) = scope else {
         return Ok(input_root.to_path_buf());
@@ -217,12 +360,13 @@ fn scoped_import_root(input_root: &Path, scope: Option<&Path>) -> Result<PathBuf
     Ok(selected)
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GeometryVerification {
     pub input_width: u64,
     pub input_height: u64,
     pub input_sample_aspect_ratio: String,
-    #[serde(skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub sample_aspect_ratio_assumed_square: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assumed_color_space: Option<String>,
@@ -236,7 +380,7 @@ pub struct GeometryVerification {
     pub transformed_source_matches_selected: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct EncodedDelivery {
     pub filename: String,
     pub sha256: String,
@@ -357,7 +501,8 @@ pub enum SegmentKind {
     EpisodePresentation,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SegmentReceipt {
     pub kind: String,
     pub id: String,
@@ -373,9 +518,9 @@ pub struct SegmentReceipt {
     pub frames: u64,
     pub samples: u64,
     pub audio_padding_samples: u64,
-    #[serde(skip_serializing_if = "is_zero")]
+    #[serde(default, skip_serializing_if = "u64_is_zero")]
     pub tail_hold_frames: u64,
-    #[serde(skip_serializing_if = "is_zero")]
+    #[serde(default, skip_serializing_if = "u64_is_zero")]
     pub tail_hold_samples: u64,
     pub start_frame: u64,
     pub start_sample: u64,
@@ -387,12 +532,50 @@ pub struct SegmentReceipt {
     pub frame_rate_verification: Option<FrameRateVerification>,
 }
 
-#[derive(Debug, Serialize)]
+fn u64_is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
+fn hold_samples(
+    frames: u64,
+    start_frame: u64,
+    sample_rate: u32,
+    fps_num: u64,
+    fps_den: u64,
+) -> Result<u64> {
+    if fps_num == 0
+        || fps_den == 0
+        || sample_rate == 0
+        || u128::from(frames) * u128::from(fps_den) > u128::from(fps_num) * 60
+    {
+        bail!("silent picture hold requires a valid clock and at most sixty seconds");
+    }
+    let boundary = |frame: u64| -> Result<u64> {
+        let value = u128::from(frame)
+            .checked_mul(u128::from(sample_rate))
+            .and_then(|v| v.checked_mul(u128::from(fps_den)))
+            .and_then(|v| v.checked_add(u128::from(fps_num) / 2))
+            .context("hold sample clock overflow")?
+            / u128::from(fps_num);
+        u64::try_from(value).context("hold sample clock overflow")
+    };
+    boundary(
+        start_frame
+            .checked_add(frames)
+            .context("hold frame clock overflow")?,
+    )?
+    .checked_sub(boundary(start_frame)?)
+    .context("hold sample clock order")
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Receipt {
     pub schema: String,
     pub episode_id: String,
     pub language: String,
     pub manifest_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preparation_sha256: Option<String>,
     pub episode_presentation_fingerprint_sha256: String,
     pub ffmpeg_version: String,
     pub output_sample_rate: u32,
@@ -403,7 +586,11 @@ pub struct Receipt {
     pub master_sha256: String,
     pub master_bytes: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub preassembled_master: Option<scene_delivery::FileRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub encoded_delivery: Option<EncodedDelivery>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub normalization_retirement: Option<NormalizationRetirement>,
     pub decoded_master_matches_ordered_segments: bool,
     pub timestamps_verified: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -418,15 +605,29 @@ pub struct Receipt {
     pub publication: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NormalizationRetirement {
+    pub files: usize,
+    pub bytes: u64,
+    pub policy: String,
+}
+
+pub(crate) struct NormalizationRetirementRequest {
+    pub root: PathBuf,
+    pub files: Vec<scene_delivery::FileRef>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PresentationVerificationCache {
     pub reused_verified_checks: usize,
     pub fresh_full_checks: usize,
     pub policy: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct MediaFacts {
+    pub requires_lossless_normalization: bool,
     pub width: u64,
     pub height: u64,
     pub sample_aspect_ratio: String,
@@ -454,7 +655,8 @@ fn fps_parts(fps: &str) -> Result<(u64, u64)> {
 }
 
 pub(crate) fn file_sha(path: &Path) -> Result<String> {
-    let mut file = fs::File::open(path)?;
+    let mut file =
+        fs::File::open(path).with_context(|| format!("opening hash input {}", path.display()))?;
     let mut digest = Sha256::new();
     let mut buffer = [0u8; 65536];
     loop {
@@ -584,6 +786,15 @@ mod media_tool_resolution_tests {
     }
 }
 
+pub(crate) fn probe(path: &Path) -> Result<MediaFacts> {
+    probe_with_inputs(path, Path::new("."))
+}
+
+#[cfg(test)]
+pub(crate) fn probe_selected_source(path: &Path) -> Result<MediaFacts> {
+    probe_segment(path, Path::new("."), true)
+}
+
 pub(crate) fn probe_with_inputs(
     path: &Path,
     inputs: &(impl scene_delivery::InputFiles + ?Sized),
@@ -621,6 +832,10 @@ fn probe_segment(
         bail!("episode segment must have one picture and one audio stream");
     }
     let (v, a) = (video[0], audio[0]);
+    let native_lossless_format = matches!(v["codec_name"].as_str(), Some("ffv1" | "h264"))
+        && v["pix_fmt"] == "yuv444p"
+        && a["codec_name"] == "pcm_s24le"
+        && a["channels"] == 2;
     if a["channels"] != 2
         || (!retained
             && (!matches!(v["codec_name"].as_str(), Some("ffv1" | "h264"))
@@ -643,6 +858,7 @@ fn probe_segment(
         bail!("invalid episode media geometry or clock");
     }
     Ok(MediaFacts {
+        requires_lossless_normalization: !native_lossless_format,
         reordered_video_frames: v["has_b_frames"].as_u64().unwrap_or(0),
         video_codec: v["codec_name"]
             .as_str()
@@ -673,7 +889,6 @@ fn probe_segment(
     })
 }
 
-#[cfg(test)]
 fn decoded_digest(path: &Path, video: bool) -> Result<(String, u64)> {
     decoded_digest_with_padding(path, video, 0)
 }
@@ -686,7 +901,6 @@ pub(crate) fn decoded_digest_with_inputs(
     decoded_digest_with_options(path, video, 0, None, "yuv444p", inputs)
 }
 
-#[cfg(test)]
 fn decoded_digest_with_padding(
     path: &Path,
     video: bool,
@@ -695,7 +909,6 @@ fn decoded_digest_with_padding(
     decoded_digest_with_filter(path, video, padding_samples, None)
 }
 
-#[cfg(test)]
 fn decoded_digest_with_filter(
     path: &Path,
     video: bool,
@@ -782,7 +995,6 @@ mod color_declaration_tests {
     }
 }
 
-#[cfg(test)]
 fn decoded_digest_with_pixel_format(
     path: &Path,
     video: bool,
@@ -917,6 +1129,9 @@ fn selected_receipt(segment: &Segment, language: &str, receipt: &serde_json::Val
             bail!("direct scene delivery does not bind selected receipt/master");
         }
         return Ok(());
+    }
+    if segment.master_proof.is_some() {
+        bail!("scene master proof requires a semantic-scoped direct delivery receipt");
     }
     if segment.semantic_delivery.is_some() {
         bail!("semantic delivery scope requires a direct scene-delivery receipt");
@@ -1916,6 +2131,122 @@ struct Provided<'a> {
     native_scenes: Option<&'a NativeScenes<'a>>,
 }
 
+pub fn prepare(
+    manifest_path: &Path,
+    input_root: &Path,
+    asset_root: &Path,
+    output: &Path,
+) -> Result<()> {
+    if input_root.canonicalize()? != asset_root.canonicalize()? {
+        bail!("native preparation requires one closed input/asset workspace");
+    }
+    let scope = checkpoint::snapshot_job_scope(asset_root)
+        .context("capturing closed native preparation source scope")?;
+    build_internal(
+        manifest_path,
+        input_root,
+        asset_root,
+        output,
+        Some(scope),
+        None,
+        None,
+    )
+    .context("preparing selected native program")?;
+    Ok(())
+}
+
+/// Normalize the next bounded group. Assembly and final verification stay separate.
+pub fn prepare_batch(
+    manifest_path: &Path,
+    input_root: &Path,
+    asset_root: &Path,
+    output: &Path,
+    max_segments: usize,
+) -> Result<()> {
+    if input_root.canonicalize()? != asset_root.canonicalize()? || !(1..=64).contains(&max_segments)
+    {
+        bail!("bounded preparation requires one closed workspace and 1..64 segments");
+    }
+    if output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+        .canonicalize()?
+        != asset_root.canonicalize()?
+    {
+        bail!("batch preparation must be directly inside its closed workspace");
+    }
+    let resume = if output.exists() {
+        Some(checkpoint::load_normalization(output, asset_root)?)
+    } else {
+        None
+    };
+    if let Some(state) = &resume {
+        if fs::read(manifest_path)? != state.manifest_bytes {
+            bail!("normalization progress manifest changed");
+        }
+    }
+    let scope = match &resume {
+        Some(state) => state.source_scope.clone(),
+        None => checkpoint::snapshot_job_scope(asset_root)?,
+    };
+    build_internal(
+        manifest_path,
+        input_root,
+        asset_root,
+        output,
+        Some(scope),
+        Some(BatchPreparation {
+            max_segments,
+            resume,
+        }),
+        None,
+    )?;
+    Ok(())
+}
+
+struct BatchPreparation {
+    max_segments: usize,
+    resume: Option<checkpoint::NormalizationState>,
+}
+
+pub fn finish(prepared: &Path, asset_root: &Path, output: &Path) -> Result<Receipt> {
+    checkpoint::finish(prepared, asset_root, output, false)
+}
+
+/// Explicitly consume only generated preparation normalizations after ordered
+/// picture/PCM, timestamp and boundary verification, before compact encoding.
+/// Original declared inputs and the assembled master remain unchanged.
+pub fn finish_consuming_normalized(
+    prepared: &Path,
+    asset_root: &Path,
+    output: &Path,
+) -> Result<Receipt> {
+    checkpoint::finish(prepared, asset_root, output, true)
+}
+
+/// Verify ordered lossless picture/PCM, clocks and boundaries, then consume only
+/// generated normalizations. This checkpoint is not a completed delivery.
+pub fn verify_prepared_consuming_normalized(prepared: &Path, asset_root: &Path) -> Result<()> {
+    checkpoint::verify_preparation(prepared, asset_root)
+}
+
+/// Encode an unchanged, previously verified lossless preparation. The encoded
+/// movie still requires a separate complete decode and delivery-policy check.
+pub fn encode_verified_preparation(prepared: &Path, asset_root: &Path) -> Result<()> {
+    checkpoint::encode_verified(prepared, asset_root)
+}
+
+/// Finish a verified encoding only after complete decoding and policy checks.
+pub fn finish_encoded_preparation(
+    prepared: &Path,
+    asset_root: &Path,
+    output: &Path,
+) -> Result<Receipt> {
+    checkpoint::finish_encoded(prepared, asset_root, output)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn build_impl(
     manifest_path: &Path,
     input_root: &Path,
@@ -1923,6 +2254,51 @@ fn build_impl(
     output: &Path,
     provided: Provided<'_>,
 ) -> Result<Receipt> {
+    build_internal_with_inputs(
+        manifest_path,
+        input_root,
+        asset_root,
+        output,
+        provided,
+        None,
+        None,
+        None,
+    )?
+    .context("missing final conform receipt")
+}
+
+fn build_internal(
+    manifest_path: &Path,
+    input_root: &Path,
+    asset_root: &Path,
+    output: &Path,
+    preparation_scope: Option<Vec<scene_delivery::FileRef>>,
+    batch: Option<BatchPreparation>,
+    part_range: Option<&parts::Range>,
+) -> Result<Option<Receipt>> {
+    build_internal_with_inputs(
+        manifest_path,
+        input_root,
+        asset_root,
+        output,
+        Provided::default(),
+        preparation_scope,
+        batch,
+        part_range,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_internal_with_inputs(
+    manifest_path: &Path,
+    input_root: &Path,
+    asset_root: &Path,
+    output: &Path,
+    provided: Provided<'_>,
+    preparation_scope: Option<Vec<scene_delivery::FileRef>>,
+    mut batch: Option<BatchPreparation>,
+    part_range: Option<&parts::Range>,
+) -> Result<Option<Receipt>> {
     let Provided {
         scene_inputs,
         scene_outputs,
@@ -1939,7 +2315,8 @@ fn build_impl(
     let local_programs = PathBuf::from(".");
     let local_controls = input_root.to_path_buf();
     let programs = programs.unwrap_or(&local_programs);
-    if output.exists() {
+    let resuming = batch.as_ref().is_some_and(|b| b.resume.is_some());
+    if output.exists() && !resuming {
         bail!("episode output must be a new directory");
     }
     if explicit_programs {
@@ -1955,6 +2332,25 @@ fn build_impl(
         fs::read(manifest_path)?
     };
     let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
+    let protected_inputs = scene_inputs.is_some()
+        || scene_outputs.is_some()
+        || presentations.is_some()
+        || explicit_programs
+        || controls.is_some()
+        || scene_controls.is_some()
+        || presentation_controls.is_some()
+        || native_presentations.is_some()
+        || native_scenes.is_some();
+    if protected_inputs
+        && (manifest.preassembled_master.is_some()
+            || preparation_scope.is_some()
+            || batch.is_some()
+            || part_range.is_some())
+    {
+        bail!(
+            "standalone preparation and preassembled masters require their closed workspace route; protected native inputs cannot fall back to local media"
+        );
+    }
     if let Some(native) = native_scenes {
         let scenes = manifest
             .segments
@@ -2084,6 +2480,9 @@ fn build_impl(
         {
             bail!("provided scene outputs require exact direct native recheck coverage");
         }
+    }
+    if let Some(range) = part_range {
+        range.validate(&manifest)?;
     }
     if manifest.compact_delivery.as_ref().is_some_and(|profile| {
         profile.crf > 51
@@ -2221,6 +2620,31 @@ fn build_impl(
     let mut presentation_cache_hits = 0;
     let mut presentation_cache_misses = 0;
     for (segment_index, segment) in manifest.segments.iter().enumerate() {
+        // Validate the complete selected order, but never open media outside the
+        // explicitly staged range. Full coverage is checked by the part consumer.
+        if part_range.is_some_and(|r| !r.contains(segment_index)) {
+            match segment.kind {
+                SegmentKind::Scene => {
+                    seen_scenes.push(segment.id.clone());
+                    let role = segment.role.as_deref().unwrap_or("chapter-scenes");
+                    if role != "chapter-scenes" || observed_roles.last().is_none_or(|v| v != role) {
+                        observed_roles.push(role.into());
+                    }
+                }
+                SegmentKind::EpisodePresentation => {
+                    observed_roles.push(segment.id.clone());
+                    if !seen_roles.insert(segment.id.clone()) {
+                        bail!("duplicate presentation role");
+                    }
+                }
+            }
+            sources.push(PathBuf::new());
+            upstream_verified.push(false);
+            presentation_verified.push(false);
+            retained_sources.push(false);
+            presentation_counts.push(None);
+            continue;
+        }
         if !ordered_units_v2 && segment.source_text_evidence.is_some() {
             bail!("v1 episode segment cannot carry v2 source-text evidence");
         }
@@ -2669,6 +3093,7 @@ fn build_impl(
         sources.push(master);
         upstream_verified.push(rechecked);
         presentation_verified.push(presentation_rechecked);
+        retained_sources.push(presentation_rechecked && receipt["output_mode"] == "retain-source");
     }
     if seen_scenes != *expected_scenes {
         bail!("episode scene order or coverage mismatch");
@@ -2698,17 +3123,53 @@ fn build_impl(
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     fs::create_dir_all(parent)?;
-    let stage = tempfile::Builder::new()
-        .prefix(".episode-conform-")
-        .tempdir_in(parent)?;
-    let work = stage.path();
+    let stage = if resuming {
+        None
+    } else {
+        Some(
+            tempfile::Builder::new()
+                .prefix(".episode-conform-")
+                .tempdir_in(parent)?,
+        )
+    };
+    let work = stage.as_ref().map_or(output, |stage| stage.path());
     let temp = tempfile::tempdir_in(work)?;
     let mut normalized = Vec::new();
     let mut records = Vec::new();
     let mut common: Option<MediaFacts> = None;
     let mut frame_cursor = 0u64;
     let mut sample_cursor = 0u64;
+    if let Some(range) = part_range {
+        frame_cursor = range.start_frame;
+        sample_cursor = range.start_sample;
+    }
+    if let Some(state) = batch.as_mut().and_then(|b| b.resume.take()) {
+        if state.presentation_fingerprint_sha256 != presentation.fingerprint_sha256 {
+            bail!("normalization progress presentation scope changed");
+        }
+        normalized = state.normalized;
+        records = state.records;
+        common = Some(state.first);
+        frame_cursor = state.frame_cursor;
+        sample_cursor = state.sample_cursor;
+    }
+    let completed = records.len();
+    if batch.is_some() && completed == manifest.segments.len() {
+        bail!("normalization is complete; assemble the preparation next");
+    }
     for (index, (segment, source)) in manifest.segments.iter().zip(&sources).enumerate() {
+        if part_range.is_some_and(|r| !r.contains(index)) {
+            continue;
+        }
+        if index < completed {
+            continue;
+        }
+        if batch
+            .as_ref()
+            .is_some_and(|b| index - completed >= b.max_segments)
+        {
+            break;
+        }
         let retained = retained_sources[index];
         let facts = probe_segment(source, programs, retained)?;
         let mut output_facts = facts.clone();
@@ -2780,6 +3241,7 @@ fn build_impl(
             }
             output_facts.width = u64::from(geometry.width);
             output_facts.height = u64::from(geometry.height);
+            output_facts.sample_aspect_ratio = "1:1".into();
             let resized = (facts.width, facts.height) != (output_facts.width, output_facts.height);
             match (resized, assumed_square) {
                 (true, true) => Some(format!(
@@ -3098,6 +3560,12 @@ fn build_impl(
                 if actual != expected {
                     bail!("frame conform changed native audio prefix or nonzero padded tail");
                 }
+                if needs_normalization {
+                    // This exact file was created above in our private temp
+                    // directory. The checked padded replacement is now the
+                    // only consumed copy; original selected sources remain.
+                    fs::remove_file(&selected)?;
+                }
                 selected = padded;
                 audio_hash = actual.0;
                 samples = actual.1 / 6;
@@ -3137,6 +3605,15 @@ fn build_impl(
                 || audio.1 != samples.checked_mul(6).context("hold audio overflow")?
             {
                 bail!("silent picture hold has wrong frame or sample count");
+            }
+            if selected == temp.path().join(format!("normalized-{index:03}.mkv"))
+                || selected == temp.path().join(format!("padded-{index:03}.mkv"))
+            {
+                // The checked held replacement contains the complete prefix.
+                // Retire only our exact superseded scratch, never a source.
+                fs::remove_file(&selected).with_context(|| {
+                    format!("retiring superseded hold scratch {}", selected.display())
+                })?;
             }
             selected = held;
             picture_hash = picture.0;
@@ -3183,10 +3660,106 @@ fn build_impl(
         }
         normalized.push(selected);
     }
-    let list_path = temp.path().join("segments.ffconcat");
+    if let Some(range) = part_range {
+        parts::publish(
+            range,
+            &manifest_bytes,
+            &common.context("no part media")?,
+            &records,
+            &normalized,
+            work,
+            asset_root,
+            &preparation_scope.context("part scope missing")?,
+        )?;
+        drop(temp);
+        fs::rename(stage.context("part stage missing")?.keep(), output)?;
+        return Ok(None);
+    }
+    if batch.is_some() {
+        let state = checkpoint::NormalizationState {
+            source_scope: preparation_scope.context("batch preparation scope missing")?,
+            manifest_bytes,
+            first: common.context("no normalized media")?,
+            records,
+            normalized,
+            frame_cursor,
+            sample_cursor,
+            presentation_fingerprint_sha256: presentation.fingerprint_sha256,
+            presentation_cache_hits,
+            presentation_cache_misses,
+        };
+        checkpoint::save_normalization(&state, work, asset_root)?;
+        let _ = temp.keep();
+        if let Some(stage) = stage {
+            fs::rename(stage.keep(), output)?;
+        }
+        return Ok(None);
+    }
+    let first = common.context("no episode media")?;
+    let master = assemble_normalized(
+        &manifest,
+        &first,
+        &normalized,
+        work,
+        temp.path(),
+        asset_root,
+        programs,
+    )?;
+    let state = ConformState {
+        manifest_bytes,
+        first,
+        records,
+        normalized,
+        master,
+        frame_cursor,
+        sample_cursor,
+        presentation_fingerprint_sha256: presentation.fingerprint_sha256,
+        presentation_cache_hits,
+        presentation_cache_misses,
+        preparation_sha256: None,
+        normalization_retirement: None,
+    };
+    if preparation_scope.is_some() {
+        let snapshot = preparation_scope.context("preparation scope missing")?;
+        let checkpoint = checkpoint::capture(&state, work, asset_root, snapshot)?;
+        fs::write(
+            work.join("prepared.json"),
+            serde_json::to_vec_pretty(&checkpoint)?,
+        )?;
+        let _ = temp.keep();
+        let work = stage.context("preparation stage missing")?.keep();
+        fs::rename(&work, output).with_context(|| {
+            format!(
+                "publishing preparation {} to {}",
+                work.display(),
+                output.display()
+            )
+        })?;
+        return Ok(None);
+    }
+    let external = manifest.preassembled_master.is_some();
+    let receipt = finalize_conform_with_inputs(state, work, external, programs)?;
+    drop(temp);
+    fs::rename(
+        stage.as_ref().context("conform stage missing")?.path(),
+        output,
+    )?;
+    Ok(Some(receipt))
+}
+
+fn assemble_normalized(
+    manifest: &Manifest,
+    first: &MediaFacts,
+    normalized: &[PathBuf],
+    work: &Path,
+    temporary: &Path,
+    asset_root: &Path,
+    programs: &(impl scene_delivery::InputFiles + ?Sized),
+) -> Result<PathBuf> {
+    let list_path = temporary.join("segments.ffconcat");
     let mut list = fs::File::create(&list_path)?;
     writeln!(list, "ffconcat version 1.0")?;
-    for path in &normalized {
+    for path in normalized {
         let escaped = path
             .to_string_lossy()
             .replace('\\', "/")
@@ -3194,63 +3767,85 @@ fn build_impl(
         writeln!(list, "file '{escaped}'")?;
     }
     drop(list);
-    let master = work.join("master.mkv");
-    let mut concat = command_with_inputs(programs, scene_delivery::MediaProgram::Ffmpeg)?;
-    concat
-        .args([
-            "-v",
-            "error",
-            "-nostdin",
-            "-reinit_filter",
-            "0",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-        ])
-        .arg(&list_path)
-        .args(["-map", "0:v:0", "-map", "0:a:0"]);
-    if manifest.audio_frame_conform.is_some() {
-        // Preserve the episode-wide setpts/asetpts counters when an adopted
-        // display changes SAR or color metadata. Filter reinitialization would
-        // restart N at zero; the muxer then clamps the remaining video PTS to
-        // the preceding frame. Ordered decoded-content checks still reject any
-        // incompatible source property that changes the selected pixels/audio.
-        let facts = common.as_ref().context("no common frame clock")?;
-        let (num, den) = fps_parts(&facts.fps)?;
+    let master = match &manifest.preassembled_master {
+        Some(reference) => scene_delivery::checked_file(asset_root, reference)?,
+        None => work.join("master.mkv"),
+    };
+    if manifest.preassembled_master.is_none() {
+        let mut concat = command_with_inputs(programs, scene_delivery::MediaProgram::Ffmpeg)?;
         concat
-            .args(["-vf"])
-            .arg(format!("setpts=N*{den}/({num}*TB)"))
             .args([
-                "-af",
-                "asetpts=N/SR/TB",
-                "-fps_mode",
-                "passthrough",
-                "-c:a",
-                "pcm_s24le",
-            ]);
-        if manifest
-            .compact_delivery
-            .as_ref()
-            .and_then(|p| p.intermediate_video_encoding.as_deref())
-            == Some("h264-lossless")
-        {
-            concat.args([
-                "-c:v", "libx264", "-crf", "0", "-preset", "veryfast", "-bf", "0", "-pix_fmt",
-                "yuv444p",
-            ]);
+                "-v",
+                "error",
+                "-nostdin",
+                "-reinit_filter",
+                "0",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+            ])
+            .arg(&list_path)
+            .args(["-map", "0:v:0", "-map", "0:a:0"]);
+        if manifest.audio_frame_conform.is_some() {
+            // Preserve the episode-wide setpts/asetpts counters when an adopted
+            // display changes SAR or color metadata. Filter reinitialization would
+            // restart N at zero; the muxer then clamps the remaining video PTS to
+            // the preceding frame. Ordered decoded-content checks still reject any
+            // incompatible source property that changes the selected pixels/audio.
+            let facts = first;
+            let (num, den) = fps_parts(&facts.fps)?;
+            concat
+                .args(["-vf"])
+                // Integer frame ticks avoid floating division rounding an exact
+                // boundary down by a whole frame (for example frame 81 at 30fps).
+                .arg(format!("settb=expr={den}/{num},setpts=N"))
+                .args([
+                    "-af",
+                    "asetpts=N/SR/TB",
+                    "-fps_mode",
+                    "passthrough",
+                    "-c:a",
+                    "pcm_s24le",
+                ]);
+            if manifest
+                .compact_delivery
+                .as_ref()
+                .and_then(|p| p.intermediate_video_encoding.as_deref())
+                == Some("h264-lossless")
+            {
+                concat.args([
+                    "-c:v", "libx264", "-crf", "0", "-preset", "veryfast", "-bf", "0", "-pix_fmt",
+                    "yuv444p",
+                ]);
+            } else {
+                concat.args(["-c:v", "ffv1", "-pix_fmt", "yuv444p"]);
+            }
         } else {
-            concat.args(["-c:v", "ffv1", "-pix_fmt", "yuv444p"]);
+            concat.args(["-c", "copy"]);
         }
-    } else {
-        concat.args(["-c", "copy"]);
+        let status = concat.arg(&master).status()?;
+        if !status.success() {
+            bail!("episode lossless concat failed");
+        }
     }
-    let status = concat.arg(&master).status()?;
-    if !status.success() {
-        bail!("episode lossless concat failed");
+    if manifest.preassembled_master.is_some() {
+        let candidate = probe_with_inputs(&master, programs)?;
+        if (
+            candidate.width,
+            candidate.height,
+            &candidate.fps,
+            candidate.sample_rate,
+        ) != (
+            first.width,
+            first.height,
+            &first.fps,
+            manifest.output_sample_rate,
+        ) {
+            bail!("preassembled master geometry, frame rate or sample rate differs from episode");
+        }
     }
-    let first = common.context("no episode media")?;
     if manifest.output_geometry.is_some() {
         let final_facts = probe_with_inputs(&master, programs)?;
         if final_facts.sample_aspect_ratio != "1:1"
@@ -3259,6 +3854,111 @@ fn build_impl(
             bail!("conformed master changed declared sample aspect ratio or color properties");
         }
     }
+    Ok(master)
+}
+
+/// Assemble fully checked normalization batches into an ordinary preparation.
+pub fn assemble_preparation(prepared: &Path, asset_root: &Path) -> Result<()> {
+    let progress = checkpoint::load_normalization(prepared, asset_root)?;
+    let manifest: Manifest = serde_json::from_slice(&progress.manifest_bytes)?;
+    if progress.records.len() != manifest.segments.len() {
+        bail!("cannot assemble incomplete normalization coverage");
+    }
+    let temp = tempfile::tempdir_in(prepared)?;
+    let master = assemble_normalized(
+        &manifest,
+        &progress.first,
+        &progress.normalized,
+        prepared,
+        temp.path(),
+        asset_root,
+        Path::new("."),
+    )?;
+    let state = ConformState {
+        normalization_retirement: None,
+        preparation_sha256: None,
+        manifest_bytes: progress.manifest_bytes,
+        first: progress.first,
+        records: progress.records,
+        normalized: progress.normalized,
+        master,
+        frame_cursor: progress.frame_cursor,
+        sample_cursor: progress.sample_cursor,
+        presentation_fingerprint_sha256: progress.presentation_fingerprint_sha256,
+        presentation_cache_hits: progress.presentation_cache_hits,
+        presentation_cache_misses: progress.presentation_cache_misses,
+    };
+    let issued = checkpoint::capture(&state, prepared, asset_root, progress.source_scope)?;
+    fs::write(
+        prepared.join("prepared.json"),
+        serde_json::to_vec_pretty(&issued)?,
+    )?;
+    Ok(())
+}
+
+pub(crate) struct ConformState {
+    pub normalization_retirement: Option<NormalizationRetirementRequest>,
+    pub preparation_sha256: Option<String>,
+    pub manifest_bytes: Vec<u8>,
+    pub first: MediaFacts,
+    pub records: Vec<SegmentReceipt>,
+    pub normalized: Vec<PathBuf>,
+    pub master: PathBuf,
+    pub frame_cursor: u64,
+    pub sample_cursor: u64,
+    pub presentation_fingerprint_sha256: String,
+    pub presentation_cache_hits: usize,
+    pub presentation_cache_misses: usize,
+}
+
+fn finalize_conform_with_inputs(
+    state: ConformState,
+    work: &Path,
+    master_external: bool,
+    programs: &(impl scene_delivery::InputFiles + ?Sized),
+) -> Result<Receipt> {
+    finalize_conform_mode_with_inputs(state, work, master_external, false, programs)
+}
+
+fn finalize_conform_mode(
+    state: ConformState,
+    work: &Path,
+    master_external: bool,
+    defer_compact: bool,
+) -> Result<Receipt> {
+    finalize_conform_mode_with_inputs(state, work, master_external, defer_compact, Path::new("."))
+}
+
+fn finalize_conform_mode_with_inputs(
+    state: ConformState,
+    work: &Path,
+    master_external: bool,
+    defer_compact: bool,
+    programs: &(impl scene_delivery::InputFiles + ?Sized),
+) -> Result<Receipt> {
+    let ConformState {
+        normalization_retirement,
+        preparation_sha256,
+        manifest_bytes,
+        first,
+        records,
+        normalized,
+        master,
+        frame_cursor,
+        sample_cursor,
+        presentation_fingerprint_sha256,
+        presentation_cache_hits,
+        presentation_cache_misses,
+    } = state;
+    let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
+    let upstream_verified = records
+        .iter()
+        .map(|r| r.upstream_delivery_verified)
+        .collect::<Vec<_>>();
+    let presentation_verified = records
+        .iter()
+        .map(|r| r.upstream_presentation_verified)
+        .collect::<Vec<_>>();
     let video_lengths = records
         .iter()
         .map(|r| r.frames * first.width * first.height * 3)
@@ -3340,6 +4040,37 @@ fn build_impl(
             });
         }
     }
+    // All source/ordered-content/timestamp/boundary checks above must succeed
+    // before an explicitly requested intermediate can be retired. These are
+    // generated preparation files, never canonical assets or original inputs.
+    let normalization_retirement = if let Some(request) = normalization_retirement {
+        if manifest.compact_delivery.is_none() {
+            bail!("normalization retirement requires compact delivery");
+        }
+        let mut bytes = 0u64;
+        for file in &request.files {
+            let path = scene_delivery::checked_file(&request.root, file)?;
+            if path == master.canonicalize()? {
+                bail!("assembled master cannot be retired as a normalization");
+            }
+            bytes = bytes
+                .checked_add(file.bytes)
+                .context("retirement byte overflow")?;
+            fs::remove_file(&path).with_context(|| {
+                format!(
+                    "consuming verified normalization scratch {}",
+                    path.display()
+                )
+            })?;
+        }
+        Some(NormalizationRetirement {
+            files: request.files.len(),
+            bytes,
+            policy: "Explicit generated-normalization consumption after ordered picture/PCM, timestamp and boundary checks; original inputs and assembled master preserved".into(),
+        })
+    } else {
+        None
+    };
     let version = command_with_inputs(programs, scene_delivery::MediaProgram::Ffmpeg)?
         .arg("-version")
         .output()?;
@@ -3348,152 +4079,13 @@ fn build_impl(
         .next()
         .unwrap_or("")
         .to_owned();
-    let encoded_delivery = if let Some(profile) = &manifest.compact_delivery {
-        if profile.crf > 51 || !(32..=512).contains(&profile.audio_bitrate_kbps) {
-            bail!("invalid compact episode encoding profile");
-        }
-        let target = work.join("episode.mp4");
-        let mut compact_encoder =
-            command_with_inputs(programs, scene_delivery::MediaProgram::Ffmpeg)?;
-        compact_encoder
-            .args(["-v", "error", "-nostdin", "-i"])
-            .arg(&master)
-            .args(["-map", "0:v:0", "-map", "0:a:0", "-c:v", "libx264", "-crf"])
-            .arg(profile.crf.to_string())
-            .args(["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a"])
-            .arg(format!("{}k", profile.audio_bitrate_kbps))
-            .args(["-movflags", "+faststart"]);
-        if manifest.output_geometry.is_some() {
-            for (key, flag) in [
-                ("color_range", "-color_range"),
-                ("color_space", "-colorspace"),
-                ("color_transfer", "-color_trc"),
-                ("color_primaries", "-color_primaries"),
-            ] {
-                let value = &first.color_properties[key];
-                if value != "unknown" {
-                    compact_encoder.args([flag, value]);
-                }
-            }
-            // libx264 may omit its default limited-range VUI flag. MP4 does not
-            // retain Matroska's range tag, so pin known range in the bitstream.
-            match first.color_properties["color_range"].as_str() {
-                "tv" => {
-                    compact_encoder.args(["-bsf:v", "h264_metadata=video_full_range_flag=0"]);
-                }
-                "pc" => {
-                    compact_encoder.args(["-bsf:v", "h264_metadata=video_full_range_flag=1"]);
-                }
-                _ => {}
-            }
-        }
-        let status = compact_encoder.arg(&target).status()?;
-        if !status.success() {
-            bail!("compact episode encoding failed");
-        }
-        let decoded = command_with_inputs(programs, scene_delivery::MediaProgram::Ffmpeg)?
-            .args(["-v", "error", "-xerror", "-nostdin", "-i"])
-            .arg(&target)
-            .args(["-map", "0:v:0", "-map", "0:a:0", "-f", "null", "-"])
-            .status()?;
-        if !decoded.success() {
-            bail!("compact episode full decode failed");
-        }
-        let probe = command_with_inputs(programs, scene_delivery::MediaProgram::Ffprobe)?
-            .args([
-                "-v",
-                "error",
-                "-count_frames",
-                "-show_streams",
-                "-of",
-                "json",
-            ])
-            .arg(&target)
-            .output()?;
-        if !probe.status.success() {
-            bail!("compact episode probe failed");
-        }
-        let facts: serde_json::Value = serde_json::from_slice(&probe.stdout)?;
-        let streams = facts["streams"]
-            .as_array()
-            .context("compact episode streams missing")?;
-        let video = streams
-            .iter()
-            .find(|s| s["codec_type"] == "video")
-            .context("compact video missing")?;
-        let audio = streams
-            .iter()
-            .find(|s| s["codec_type"] == "audio")
-            .context("compact audio missing")?;
-        if manifest.output_geometry.is_some()
-            && (video["sample_aspect_ratio"] != "1:1"
-                || first
-                    .color_properties
-                    .iter()
-                    .any(|(key, expected)| video[key].as_str().unwrap_or("unknown") != expected))
-        {
-            bail!(
-                "compact delivery changed declared sample aspect ratio or color properties: expected {:?}, actual {:?}",
-                first.color_properties,
-                video
-            );
-        }
-        let (encoded_num, encoded_den) = fps_parts(
-            video["r_frame_rate"]
-                .as_str()
-                .context("compact frame rate missing")?,
-        )?;
-        let (source_num, source_den) = fps_parts(&first.fps)?;
-        let audio_duration: f64 = audio["duration"]
-            .as_str()
-            .context("compact audio duration missing")?
-            .parse()?;
-        let expected_audio_duration = sample_cursor as f64 / f64::from(manifest.output_sample_rate);
-        // MP4 edit lists trim encoder delay; allow one AAC frame plus one source
-        // video frame for container quantization, never cumulative scene padding.
-        let duration_tolerance =
-            1024.0 / f64::from(manifest.output_sample_rate) + source_den as f64 / source_num as f64;
-        if video["codec_name"] != "h264"
-            || video["width"].as_u64() != Some(first.width)
-            || video["height"].as_u64() != Some(first.height)
-            || video["nb_read_frames"]
-                .as_str()
-                .and_then(|s| s.parse::<u64>().ok())
-                != Some(frame_cursor)
-            || audio["codec_name"] != "aac"
-            || audio["sample_rate"]
-                .as_str()
-                .and_then(|s| s.parse::<u32>().ok())
-                != Some(manifest.output_sample_rate)
-            || audio["channels"].as_u64() != Some(2)
-            || u128::from(encoded_num) * u128::from(source_den)
-                != u128::from(source_num) * u128::from(encoded_den)
-            || !audio_duration.is_finite()
-            || (audio_duration - expected_audio_duration).abs() > duration_tolerance
-        {
-            bail!("compact episode media differs from selected delivery policy");
-        }
-        Some(EncodedDelivery {
-            filename: "episode.mp4".into(),
-            sha256: file_sha(&target)?,
-            bytes: fs::metadata(&target)?.len(),
-            video_codec: "h264".into(),
-            audio_codec: "aac".into(),
-            crf: profile.crf,
-            audio_bitrate_kbps: profile.audio_bitrate_kbps,
-            decoded_frames: frame_cursor,
-            full_decode_verified: true,
-            lossless_master_retained: profile.retain_lossless_master,
-        })
-    } else {
-        None
-    };
-    let receipt = Receipt {
+    let mut receipt = Receipt {
         schema: "reel.episode-conform-receipt.v1".into(),
-        episode_id: manifest.episode_id,
-        language: manifest.language,
+        episode_id: manifest.episode_id.clone(),
+        language: manifest.language.clone(),
         manifest_sha256: sha(&manifest_bytes),
-        episode_presentation_fingerprint_sha256: presentation.fingerprint_sha256,
+        preparation_sha256,
+        episode_presentation_fingerprint_sha256: presentation_fingerprint_sha256,
         ffmpeg_version,
         output_sample_rate: manifest.output_sample_rate,
         output_geometry: manifest.output_geometry.clone(),
@@ -3501,7 +4093,9 @@ fn build_impl(
         total_samples: sample_cursor,
         master_sha256: file_sha(&master)?,
         master_bytes: fs::metadata(&master)?.len(),
-        encoded_delivery,
+        preassembled_master: manifest.preassembled_master.clone(),
+        encoded_delivery: None,
+        normalization_retirement,
         decoded_master_matches_ordered_segments: true,
         timestamps_verified: true,
         presentation_verification_cache: manifest.reuse_verified_presentations.then(|| {
@@ -3538,6 +4132,22 @@ fn build_impl(
         segments: records,
         publication: "not-authorized".into(),
     };
+    if defer_compact {
+        compact_profile(&manifest)?;
+        return Ok(receipt);
+    }
+    if manifest.compact_delivery.is_some() {
+        let target = work.join("episode.mp4");
+        encode_compact_with_inputs(&manifest, &first, &master, &target, programs)?;
+        receipt.encoded_delivery = Some(verify_compact_with_inputs(
+            &manifest,
+            &first,
+            frame_cursor,
+            sample_cursor,
+            &target,
+            programs,
+        )?);
+    }
     fs::write(
         work.join("receipt.json"),
         serde_json::to_vec_pretty(&receipt)?,
@@ -3549,9 +4159,268 @@ fn build_impl(
     {
         // This file was created by this bounded conform, and all source masters
         // remain untouched. Its exact hash stays in the provenance receipt.
-        fs::remove_file(&master)?;
+        if !master_external {
+            fs::remove_file(&master)?;
+        }
+    } else if master_external {
+        // A supplied candidate is immutable input, including when a retained
+        // lossless copy is requested. Never rename or delete its original.
+        fs::copy(&master, work.join("master.mkv"))?;
     }
-    drop(temp);
-    fs::rename(work, output)?;
     Ok(receipt)
+}
+
+fn compact_profile(manifest: &Manifest) -> Result<&CompactDelivery> {
+    let profile = manifest
+        .compact_delivery
+        .as_ref()
+        .context("compact delivery profile missing")?;
+    if profile.crf > 51 || !(32..=512).contains(&profile.audio_bitrate_kbps) {
+        bail!("invalid compact episode encoding profile");
+    }
+    Ok(profile)
+}
+
+fn encode_compact(
+    manifest: &Manifest,
+    first: &MediaFacts,
+    master: &Path,
+    target: &Path,
+) -> Result<()> {
+    encode_compact_with_inputs(manifest, first, master, target, Path::new("."))
+}
+
+fn encode_compact_with_inputs(
+    manifest: &Manifest,
+    first: &MediaFacts,
+    master: &Path,
+    target: &Path,
+    programs: &(impl scene_delivery::InputFiles + ?Sized),
+) -> Result<()> {
+    let profile = compact_profile(manifest)?;
+    let mut compact_encoder = command_with_inputs(programs, scene_delivery::MediaProgram::Ffmpeg)?;
+    compact_encoder
+        .args(["-v", "error", "-nostdin", "-i"])
+        .arg(master)
+        .args(["-map", "0:v:0", "-map", "0:a:0", "-c:v", "libx264", "-crf"])
+        .arg(profile.crf.to_string())
+        .args(["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a"])
+        .arg(format!("{}k", profile.audio_bitrate_kbps))
+        .args(["-movflags", "+faststart"]);
+    if manifest.output_geometry.is_some() {
+        for (key, flag) in [
+            ("color_range", "-color_range"),
+            ("color_space", "-colorspace"),
+            ("color_transfer", "-color_trc"),
+            ("color_primaries", "-color_primaries"),
+        ] {
+            let value = &first.color_properties[key];
+            if value != "unknown" {
+                compact_encoder.args([flag, value]);
+            }
+        }
+        // libx264 may omit its default limited-range VUI flag. MP4 does not
+        // retain Matroska's range tag, so pin known range in the bitstream.
+        match first.color_properties["color_range"].as_str() {
+            "tv" => {
+                compact_encoder.args(["-bsf:v", "h264_metadata=video_full_range_flag=0"]);
+            }
+            "pc" => {
+                compact_encoder.args(["-bsf:v", "h264_metadata=video_full_range_flag=1"]);
+            }
+            _ => {}
+        }
+    }
+    let status = compact_encoder.arg(target).status()?;
+    if !status.success() {
+        bail!("compact episode encoding failed");
+    }
+    Ok(())
+}
+
+fn verify_compact(
+    manifest: &Manifest,
+    first: &MediaFacts,
+    frame_cursor: u64,
+    sample_cursor: u64,
+    target: &Path,
+) -> Result<EncodedDelivery> {
+    verify_compact_with_inputs(
+        manifest,
+        first,
+        frame_cursor,
+        sample_cursor,
+        target,
+        Path::new("."),
+    )
+}
+
+fn verify_compact_with_inputs(
+    manifest: &Manifest,
+    first: &MediaFacts,
+    frame_cursor: u64,
+    sample_cursor: u64,
+    target: &Path,
+    programs: &(impl scene_delivery::InputFiles + ?Sized),
+) -> Result<EncodedDelivery> {
+    let profile = compact_profile(manifest)?;
+    let decoded = command_with_inputs(programs, scene_delivery::MediaProgram::Ffmpeg)?
+        .args(["-v", "error", "-xerror", "-nostdin", "-i"])
+        .arg(target)
+        .args(["-map", "0:v:0", "-map", "0:a:0", "-f", "null", "-"])
+        .status()?;
+    if !decoded.success() {
+        bail!("compact episode full decode failed");
+    }
+    let probe = command_with_inputs(programs, scene_delivery::MediaProgram::Ffprobe)?
+        .args([
+            "-v",
+            "error",
+            "-count_frames",
+            "-show_streams",
+            "-of",
+            "json",
+        ])
+        .arg(target)
+        .output()?;
+    if !probe.status.success() {
+        bail!("compact episode probe failed");
+    }
+    let facts: serde_json::Value = serde_json::from_slice(&probe.stdout)?;
+    let streams = facts["streams"]
+        .as_array()
+        .context("compact episode streams missing")?;
+    let video = streams
+        .iter()
+        .find(|s| s["codec_type"] == "video")
+        .context("compact video missing")?;
+    let audio = streams
+        .iter()
+        .find(|s| s["codec_type"] == "audio")
+        .context("compact audio missing")?;
+    if manifest.output_geometry.is_some()
+        && (video["sample_aspect_ratio"] != "1:1"
+            || first
+                .color_properties
+                .iter()
+                .any(|(key, expected)| video[key].as_str().unwrap_or("unknown") != expected))
+    {
+        bail!(
+            "compact delivery changed declared sample aspect ratio or color properties: expected {:?}, actual {:?}",
+            first.color_properties,
+            video
+        );
+    }
+    let (encoded_num, encoded_den) = fps_parts(
+        video["r_frame_rate"]
+            .as_str()
+            .context("compact frame rate missing")?,
+    )?;
+    let (source_num, source_den) = fps_parts(&first.fps)?;
+    let audio_duration: f64 = audio["duration"]
+        .as_str()
+        .context("compact audio duration missing")?
+        .parse()?;
+    let expected_audio_duration = sample_cursor as f64 / f64::from(manifest.output_sample_rate);
+    // MP4 edit lists trim encoder delay; allow one AAC frame plus one source
+    // video frame for container quantization, never cumulative scene padding.
+    let duration_tolerance =
+        1024.0 / f64::from(manifest.output_sample_rate) + source_den as f64 / source_num as f64;
+    if video["codec_name"] != "h264"
+        || video["width"].as_u64() != Some(first.width)
+        || video["height"].as_u64() != Some(first.height)
+        || video["nb_read_frames"]
+            .as_str()
+            .and_then(|s| s.parse::<u64>().ok())
+            != Some(frame_cursor)
+        || audio["codec_name"] != "aac"
+        || audio["sample_rate"]
+            .as_str()
+            .and_then(|s| s.parse::<u32>().ok())
+            != Some(manifest.output_sample_rate)
+        || audio["channels"].as_u64() != Some(2)
+        || u128::from(encoded_num) * u128::from(source_den)
+            != u128::from(source_num) * u128::from(encoded_den)
+        || !audio_duration.is_finite()
+        || (audio_duration - expected_audio_duration).abs() > duration_tolerance
+    {
+        bail!("compact episode media differs from selected delivery policy");
+    }
+    Ok(EncodedDelivery {
+        filename: "episode.mp4".into(),
+        sha256: file_sha(target)?,
+        bytes: fs::metadata(target)?.len(),
+        video_codec: "h264".into(),
+        audio_codec: "aac".into(),
+        crf: profile.crf,
+        audio_bitrate_kbps: profile.audio_bitrate_kbps,
+        decoded_frames: frame_cursor,
+        full_decode_verified: true,
+        lossless_master_retained: profile.retain_lossless_master,
+    })
+}
+
+#[cfg(test)]
+mod selected_source_audio_tests {
+    use super::*;
+
+    #[test]
+    fn encoded_sources_require_retained_mode_and_stereo_while_native_pcm24_stays_strict() {
+        let temp = tempfile::tempdir().unwrap();
+        for (index, codec, channels, accepted) in [
+            (0, "libmp3lame", "2", true),
+            (1, "libmp3lame", "1", false),
+            (2, "libopus", "2", true),
+            (3, "pcm_f32le", "2", true),
+        ] {
+            let file = temp.path().join(format!("source-{index}.media"));
+            let status = command("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc2=s=32x32:r=24:d=1",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=437:sample_rate=48000:duration=1",
+                    "-ac",
+                    channels,
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-c:a",
+                    codec,
+                    "-f",
+                    if codec == "libmp3lame" {
+                        "mp4"
+                    } else {
+                        "matroska"
+                    },
+                ])
+                .arg(&file)
+                .status()
+                .unwrap();
+            assert!(status.success());
+            assert!(
+                probe(&file).is_err(),
+                "encoded audio must not enter strict native input"
+            );
+            assert_eq!(
+                probe_selected_source(&file).is_ok(),
+                accepted,
+                "{codec}/{channels}"
+            );
+            if accepted {
+                assert!(
+                    probe_selected_source(&file)
+                        .unwrap()
+                        .requires_lossless_normalization
+                );
+            }
+        }
+    }
 }
