@@ -8,8 +8,7 @@ creative approval. Local test logs remain outside source control.
 ## Selected behavior
 
 Integrate native episode caption sidecars, resumable normalization in a closed
-workspace, immutable programme parts, prefix composition, and optional persistent
-chapter-title plates. Caption words and language come from pinned selected source
+workspace, immutable programme parts and prefix composition. Caption words and language come from pinned selected source
 tracks; their placement follows the verified native episode sample clock. An
 explicitly empty track can cover a caption-free title section.
 
@@ -36,6 +35,9 @@ declared square-pixel transformation.
 - The square-pixel output-facts correction is included with the preparation path
   that exercises it; the rest of its inherited legacy pipeline is not a separate
   replacement for current native production.
+- Exclude the additional chapter-title plate/full-scene extension. It is not
+  needed by captions or programme parts and would modify the separately frozen
+  workbench foundation. Keep the current compiler and exact-source guard.
 - Old project handoff notes and historical private production reports remain in
   their retained source history; they are not current qualification evidence.
 
