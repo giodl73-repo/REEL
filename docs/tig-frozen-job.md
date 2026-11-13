@@ -23,6 +23,10 @@ is no media read, render, cache setup, source adoption or output retention. A la
 failure may leave deduplicated metadata nodes; existing roots remain intact and
 no usable fragment is reported as successful.
 
+Capture currently requires Windows allocation geometry for the existing native
+preparation budget. Unsupported hosts refuse before metadata capture; dependency
+admission does not change that platform boundary.
+
 The fragment contains the exact source and job selections, new metadata minimum,
 graph/recipe/runtime admission and manifest pin needed by `run-frozen`. Keep it
 private. It is a candidate, not an ownership claim. Use the existing `tig-source
@@ -35,6 +39,30 @@ After adoption, combine the fragment's admission fields with the explicit projec
 cache and journal fields below, change the profile schema to the run schema and
 omit the fragment schema. Check the resulting source owner/revision before the
 run. This is an explicit operator handoff, not an automatic source transition.
+
+### Explicit composition and evidence dependencies
+
+Use `reel.tig-frozen-job-capture-profile.experimental-2` when the job consumes
+retained components or evidence outside its production closure. Supply a
+`dependencies` object with `composition` and `evidence` maps from logical names
+to exact Objects (`sha256` and `bytes`). At least one map must be nonempty;
+together they admit at most 4096 entries within the existing profile bound.
+For example:
+
+```json
+{"dependencies":{"composition":{"opening":{"sha256":"<64 hex digits>","bytes":1234}},"evidence":{}}}
+```
+
+The existing Tig dependency APIs freeze and replay these distinct roles. The
+version-2 fragment includes the same dependency maps. Copy them unchanged into
+`reel.tig-frozen-job-profile.experimental-2` for execution. A missing declaration,
+different role or mismatched version refuses admission. Version-1 profiles and
+fragments retain their original contract and omit `dependencies`.
+
+These are explicit pre-execution inputs, not production primaries or tools.
+Capture admits their pins without reading their media bytes; execution verifies
+the bytes through the existing managed runner. Dependency admission neither
+checks the upstream producer's present currency nor grants creative approval.
 
 ## Execute the protected job
 
@@ -70,8 +98,9 @@ from an asset's status. Keep them outside Git and public logs. Profile intake is
 128 KiB and manifest intake 256 KiB. Existing bounded Tig APIs independently
 replay the source context and job admission. Checkpoint, recipe parameters,
 request pin and full resource selection must match before execution. Claimed
-outputs and extra composition/evidence contexts refuse through the existing
-runner's input-only contract.
+outputs refuse through the existing runner's input-only contract. Version 1
+also refuses composition/evidence inputs; version 2 admits only its explicitly
+replayed dependency roles. Tools still require Runtime admission.
 
 The runner checks owner, revision and current selection under its scoped source
 fence, admits capacity, verifies input/tool pins, executes contained children and
@@ -92,6 +121,8 @@ both control and candidate record as outputs, reopen their durable result root,
 then use the existing proposal API on those exact retained bytes. Keep the result
 owner until explicit consumer adoption or retirement supersedes it. Generic job
 success has `production_claim: null` and `creative_approval: false`.
+Version-2 success additionally reports `dependency_roles_admitted: true` and
+`original_producer_currency: false`.
 
 See [control candidates](tig-control-edit.md) for the worker contract. The
 synthetic managed fixture runs this command before the existing one-record Git

@@ -487,8 +487,8 @@ fn independent_later_island_reanchors_stale_candidate_identities() {
     for (position, syllable) in input.canonical.iter_mut().enumerate() {
         syllable.word = format!("word-{}", position + 1);
     }
-    for position in 3..6 {
-        input.evidence[position].candidates = vec![EvidenceCandidate {
+    for (position, evidence) in input.evidence.iter_mut().enumerate().take(6).skip(3) {
+        evidence.candidates = vec![EvidenceCandidate {
             canonical_index: position as u32,
             confidence_micros: 990_000,
         }];
