@@ -242,7 +242,7 @@ fn managed_control_edit_retains_both_objects_before_an_isolated_git_proposal() {
 
 #[test]
 #[cfg(feature = "tig-publication")]
-fn frozen_job_consumes_explicit_dependencies_without_primary_promotion() {
+fn frozen_job_dependencies_preserve_roles_and_platform_admission() {
     managed_control_edit(true);
 }
 
@@ -638,6 +638,26 @@ fn managed_control_edit(with_dependencies: bool) {
     }
     assert!(!root.join("missing-store").exists());
     let captured = invoke_capture(&capture);
+    if !cfg!(windows) {
+        // The shared native preparation budget deliberately requires Windows
+        // allocation geometry. Dependency role replay above is portable; the
+        // CLI must refuse before capture mutates metadata on unsupported hosts.
+        assert!(!captured.status.success());
+        assert!(captured.stdout.is_empty());
+        assert!(!capture_output.exists());
+        assert_eq!(
+            String::from_utf8_lossy(&captured.stderr).trim(),
+            "frozen capture refused or incomplete; retain existing source and inspect private metadata"
+        );
+        assert_eq!(
+            MetadataReader::open(&metadata, &initial)
+                .unwrap()
+                .checkpoint(),
+            &initial
+        );
+        assert_eq!(journal.checkpoint(), journal_before_capture);
+        return;
+    }
     assert!(
         captured.status.success(),
         "{}",

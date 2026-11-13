@@ -15,8 +15,9 @@ Producer-applied review:
 | --- | --- |
 | Preserve resource meaning | Dependency maps replay with their exact roles, names, hashes and sizes; objects are not promoted to Primary or Runtime |
 | Keep old admission bounded | Legacy profiles refuse dependency declarations; version 2 requires a nonempty declaration within the same profile/tree bounds |
+| Preserve supported platforms | Capture still requires the existing Windows allocation geometry; the non-Windows fixture checks portable role replay and capture refusal without metadata or journal mutation |
 | Preserve ownership on refusal | Existing owner/revision/selection checks and scoped fences remain; invalid-version, missing-declaration, changed-role and altered-size fixtures leave the journal unchanged |
-| Operate without source history | The synthetic CLI fixture captures, adopts, hides the source repository, executes the component/evidence inputs and retains checked outputs |
+| Operate without source history | On Windows, the synthetic CLI fixture captures, adopts, hides the source repository, executes the component/evidence inputs and retains checked outputs |
 | Keep claims separate | Generic success retains a null production claim and false creative approval; version 2 explicitly reports no original-producer currency assertion |
 
 The integration fixture also checks that the ordinary runner refuses the same

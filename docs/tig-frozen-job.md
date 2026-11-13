@@ -23,6 +23,10 @@ is no media read, render, cache setup, source adoption or output retention. A la
 failure may leave deduplicated metadata nodes; existing roots remain intact and
 no usable fragment is reported as successful.
 
+Capture currently requires Windows allocation geometry for the existing native
+preparation budget. Unsupported hosts refuse before metadata capture; dependency
+admission does not change that platform boundary.
+
 The fragment contains the exact source and job selections, new metadata minimum,
 graph/recipe/runtime admission and manifest pin needed by `run-frozen`. Keep it
 private. It is a candidate, not an ownership claim. Use the existing `tig-source
