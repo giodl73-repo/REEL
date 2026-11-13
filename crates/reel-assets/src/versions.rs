@@ -84,6 +84,9 @@ pub(crate) fn verification_payloads(
 pub struct State {
     #[serde(skip)]
     pub metadata_roots: BTreeSet<String>,
+    /// Runtime-only, validated source-role grants; immutable versions stay unchanged.
+    #[serde(skip)]
+    pub source_inputs: BTreeMap<String, BTreeSet<String>>,
     pub generation: u64,
     pub versions: BTreeMap<String, Version>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -145,13 +148,23 @@ impl State {
                 }
                 queue.push(target);
             }
-            for existing in self
-                .versions
-                .values()
-                .filter_map(|v| v.dependency_contract.as_ref())
-            {
-                if !contract.primary_inputs.is_disjoint(&existing.outputs)
-                    || !contract.outputs.is_disjoint(&existing.primary_inputs)
+            for other in self.versions.values() {
+                let Some(existing) = &other.dependency_contract else {
+                    continue;
+                };
+                let granted = |consumer: &str, hash: &String| {
+                    self.source_inputs
+                        .get(consumer)
+                        .is_some_and(|hashes| hashes.contains(hash))
+                };
+                if contract
+                    .primary_inputs
+                    .intersection(&existing.outputs)
+                    .any(|h| !granted(&version.logical_id, h))
+                    || contract
+                        .outputs
+                        .intersection(&existing.primary_inputs)
+                        .any(|h| !granted(&other.logical_id, h))
                 {
                     return Err(
                         "A declared output cannot also be registered as a primary input".into(),
@@ -518,6 +531,9 @@ pub(crate) fn read_with(root: &Path, storage: Option<&crate::Config>) -> Result<
         }
         state.metadata_roots.insert(oid);
     }
+    let grants = crate::source_reuse::read(root, &state, storage)?;
+    state.source_inputs = grants.inputs;
+    state.metadata_roots.extend(grants.metadata_roots);
     Ok(state)
 }
 
