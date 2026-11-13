@@ -2,6 +2,36 @@
 use serde_json::{Value, json};
 use std::{fs, path::Path, process::Command};
 use tig_core::Object;
+
+#[cfg(feature = "tig-publication")]
+#[test]
+fn frozen_capture_failure_names_stage_without_private_inputs() {
+    let root = tempfile::tempdir().unwrap();
+    let profile = root.path().join("private-owner-profile.json");
+    let output = root.path().join("private-output.json");
+    for (contents, stage) in [
+        (None, "profile read"),
+        (Some(b"private-token"), "profile validation"),
+    ] {
+        if let Some(contents) = contents {
+            fs::write(&profile, contents).unwrap();
+        }
+        let error = reel::tig_frozen_job_cli::capture(&profile, &output)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            format!(
+                "frozen capture refused during {stage}; retain existing source and inspect private metadata"
+            )
+        );
+        assert!(!error.contains("private-token"));
+        assert!(!error.contains("private-owner"));
+        assert!(!error.contains(&root.path().to_string_lossy().to_string()));
+        assert!(!output.exists());
+    }
+}
+
 fn file(root: &Path, name: &str, bytes: &[u8]) -> Value {
     fs::write(root.join(name), bytes).unwrap();
     let object = Object::from_bytes(bytes);
@@ -344,7 +374,19 @@ fn managed_control_edit(with_dependencies: bool) {
         LogicalPath::parse("replacement").unwrap(),
         composition_object.clone(),
     )]);
-    let evidence = BTreeMap::from([(LogicalPath::parse("edit").unwrap(), evidence_object.clone())]);
+    let mut evidence =
+        BTreeMap::from([(LogicalPath::parse("edit").unwrap(), evidence_object.clone())]);
+    if with_dependencies {
+        // The complete operator profile exceeds an identity document's 64 KiB,
+        // while both it and the replay profile remain under their 128-KiB cap.
+        // Bucket names also keep each native metadata tree node bounded.
+        for n in 0..650 {
+            evidence.insert(
+                LogicalPath::parse(&format!("group{}/item{n:04}", n / 100)).unwrap(),
+                evidence_object.clone(),
+            );
+        }
+    }
     let dependencies = job::Dependencies {
         composition: &composition,
         evidence: &evidence,
@@ -569,6 +611,8 @@ fn managed_control_edit(with_dependencies: bool) {
     if with_dependencies {
         capture["schema"] = json!("reel.tig-frozen-job-capture-profile.experimental-2");
         capture["dependencies"] = dependency_json.clone();
+        let bytes = serde_json::to_vec(&capture).unwrap();
+        assert!((65_537..=131_072).contains(&bytes.len()));
     }
     let capture_profile = root.join("capture.json");
     let capture_output = root.join("fragment.json");
@@ -647,7 +691,7 @@ fn managed_control_edit(with_dependencies: bool) {
         assert!(!capture_output.exists());
         assert_eq!(
             String::from_utf8_lossy(&captured.stderr).trim(),
-            "frozen capture refused or incomplete; retain existing source and inspect private metadata"
+            "frozen capture refused during metadata allocation admission; retain existing source and inspect private metadata"
         );
         assert_eq!(
             MetadataReader::open(&metadata, &initial)

@@ -23,6 +23,17 @@ is no media read, render, cache setup, source adoption or output retention. A la
 failure may leave deduplicated metadata nodes; existing roots remain intact and
 no usable fragment is reported as successful.
 
+Refusals name the failing stage, such as request validation, source freeze or job
+replay. These diagnostics omit the underlying private paths, record names and
+payload text. A stage name changes no admission check and grants no retry,
+adoption or cleanup authority; inspect the exact private controls before retrying.
+
+Capture and replay operator profiles share their existing 128-KiB intake bound.
+They reject duplicate keys, fractional or unsafe integers, nesting beyond 32
+levels and more than 4096 JSON values. Native canonical identity documents keep
+their separate 64-KiB limit. Bucket large dependency maps into logical subpaths
+so each native metadata tree node also stays within that identity limit.
+
 Capture currently requires Windows allocation geometry for the existing native
 preparation budget. Unsupported hosts refuse before metadata capture; dependency
 admission does not change that platform boundary.
