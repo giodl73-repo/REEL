@@ -582,16 +582,20 @@ fn decode_hash(path: &Path, format: &str, fps: Option<u32>) -> Result<String> {
         .collect::<String>())
 }
 fn full_probe(path: &Path) -> Result<Value> {
-    Ok(serde_json::from_str(&FfmpegAdapter.run_ffprobe(
-        &[
-            "-v".into(),
-            "error".into(),
-            "-show_streams".into(),
-            "-of".into(),
-            "json".into(),
-        ],
-        &[FfmpegAdapter.path_argument(path)?],
-    )?)?)
+    // This path prepares PCM with the native FFmpeg executable. Probe it through
+    // the same native transport, without the older adapter's Windows WSL route.
+    let output = crate::episode_conform::command("ffprobe")
+        .args(["-v", "error", "-show_streams", "-of", "json"])
+        .arg(path)
+        .output()?;
+    if !output.status.success() {
+        bail!(
+            "browser master ffprobe failed ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(serde_json::from_slice(&output.stdout)?)
 }
 fn prepare_master_pcm(destination: &Path, source: &Path, m: &LosslessMaster) -> Result<PathBuf> {
     let probe = full_probe(source)?;
