@@ -507,7 +507,9 @@ fn ordered_geometry_fixture_with_rate(
             assert!(!rejected.status.success());
             assert!(
                 String::from_utf8_lossy(&rejected.stderr)
-                    .contains("consistent source color properties")
+                    .contains("consistent source color properties"),
+                "{}",
+                String::from_utf8_lossy(&rejected.stderr)
             );
             manifest["output_geometry"]["assume_color_range_for_unspecified"] = "pc".into();
             write(&root.join(&manifest_name), &manifest);

@@ -3093,7 +3093,6 @@ fn build_internal_with_inputs(
         sources.push(master);
         upstream_verified.push(rechecked);
         presentation_verified.push(presentation_rechecked);
-        retained_sources.push(presentation_rechecked && receipt["output_mode"] == "retain-source");
     }
     if seen_scenes != *expected_scenes {
         bail!("episode scene order or coverage mismatch");
