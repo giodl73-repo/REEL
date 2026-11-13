@@ -210,6 +210,14 @@ fn opening_fixture_with_output_mode(
     };
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
+    // Leave a bounded picture interval for codec tail samples. MP3 decoder
+    // padding differs by build; it must be measured and preserved, never trimmed
+    // or assumed to equal the lavfi input duration.
+    let audio_source = if encoded_audio.is_some() {
+        "sine=frequency=440:sample_rate=48000:duration=1.96"
+    } else {
+        "sine=frequency=440:sample_rate=48000:duration=2"
+    };
     let status = ffmpeg()
         .args([
             "-v",
@@ -219,12 +227,7 @@ fn opening_fixture_with_output_mode(
             "-i",
             "testsrc2=s=64x64:r=24:d=2",
         ])
-        .args([
-            "-f",
-            "lavfi",
-            "-i",
-            "sine=frequency=440:sample_rate=48000:duration=2",
-        ])
+        .args(["-f", "lavfi", "-i", audio_source])
         .args([
             "-filter:a",
             &filter,
@@ -238,8 +241,12 @@ fn opening_fixture_with_output_mode(
             } else {
                 "pcm_s24le"
             }),
-            "-shortest",
         ])
+        .args(if encoded_audio.is_none() {
+            vec!["-shortest"]
+        } else {
+            vec![]
+        })
         .args(if gapped && origin {
             vec![
                 "-vf",
@@ -392,9 +399,28 @@ fn opening_fixture_with_output_mode(
     );
     let receipt: Value =
         serde_json::from_slice(&fs::read(root.join("adopted/receipt.json")).unwrap()).unwrap();
+    let source_pcm = encoded_audio.map(|_| {
+        let decoded = ffmpeg()
+            .args(["-v", "error", "-i"])
+            .arg(root.join("opening.mkv"))
+            .args(["-map", "0:a:0", "-c:a", "pcm_s24le", "-f", "s24le", "-"])
+            .output()
+            .unwrap();
+        assert!(decoded.status.success());
+        assert_eq!(decoded.stdout.len() % 6, 0);
+        decoded.stdout
+    });
+    let source_samples = source_pcm
+        .as_ref()
+        .map_or(if excerpt { 48000 } else { 96000 }, |pcm| {
+            u64::try_from(pcm.len() / 6).unwrap()
+        });
+    if encoded_audio.is_some() {
+        assert!((94080..=96000).contains(&source_samples));
+    }
     assert_eq!(receipt["schema"], "reel.presentation-master-receipt.v1");
     assert_eq!(receipt["frames"], if excerpt { 24 } else { 48 });
-    assert_eq!(receipt["samples"], if excerpt { 48000 } else { 96000 });
+    assert_eq!(receipt["samples"], source_samples);
     assert_eq!(receipt["source_content_matches_lossless_master"], true);
     assert_eq!(receipt["publication"], "not-authorized");
     if compact {
@@ -483,7 +509,11 @@ fn opening_fixture_with_output_mode(
         if encoded_audio.is_some() {
             for (picture, field, expected_bytes) in [
                 (true, "decoded_picture_sha256", 48 * 64 * 64 * 3),
-                (false, "decoded_audio_sha256", 96000 * 6),
+                (
+                    false,
+                    "decoded_audio_sha256",
+                    usize::try_from(source_samples).unwrap() * 6,
+                ),
             ] {
                 let mut decoder = ffmpeg();
                 decoder
@@ -901,11 +931,11 @@ fn opening_fixture_with_output_mode(
     if let Some((_, fps)) = encoded_audio {
         let selected = &conformed_receipt["segments"][0];
         assert_eq!(selected["input_frames"], 48);
-        assert_eq!(selected["input_samples"], 96000);
+        assert_eq!(selected["input_samples"], source_samples);
         assert_eq!(selected["frames"], fps * 4);
         assert_eq!(selected["samples"], 192000);
         assert_eq!(selected["tail_hold_samples"], 96000);
-        assert_eq!(selected["audio_padding_samples"], 0);
+        assert_eq!(selected["audio_padding_samples"], 96000 - source_samples);
         assert_eq!(
             selected["frame_rate_verification"]["transformed_source_matches_selected"],
             true
@@ -918,16 +948,10 @@ fn opening_fixture_with_output_mode(
             .unwrap();
         assert!(normalized_audio.status.success());
         assert_eq!(normalized_audio.stdout.len(), 336000 * 6);
-        let source = ffmpeg()
-            .args(["-v", "error", "-i"])
-            .arg(root.join("opening.mkv"))
-            .args(["-map", "0:a:0", "-c:a", "pcm_s24le", "-f", "s24le", "-"])
-            .output()
-            .unwrap();
-        assert!(source.status.success());
-        assert_eq!(&normalized_audio.stdout[..96000 * 6], source.stdout);
+        let source = source_pcm.as_ref().unwrap();
+        assert_eq!(&normalized_audio.stdout[..source.len()], source);
         assert!(
-            normalized_audio.stdout[96000 * 6..192000 * 6]
+            normalized_audio.stdout[source.len()..192000 * 6]
                 .iter()
                 .all(|b| *b == 0)
         );
