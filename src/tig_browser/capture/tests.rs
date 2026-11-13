@@ -32,6 +32,7 @@ fn manifest() -> BrowserCompositionManifest {
         audio: None,
         source_clock: None,
         audio_window: None,
+        lossless_master: None,
     }
 }
 fn png(color: [u8; 4]) -> Vec<u8> {

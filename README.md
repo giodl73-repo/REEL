@@ -21,6 +21,7 @@ decisions; REEL supplies reusable contracts, compilers, renderers and checks.
 | Build a scene from cels, cues and measured timing | [Native scene authoring](docs/scene-authoring-v1.md) and [delivery](docs/scene-delivery-v0.1.md) |
 | Resolve versioned assets through Tig | [REEL with public Tig](docs/tig-public-integration.md) |
 | Assemble an episode from retained scenes, openings and credits | [Episode workflow](docs/use-cases.md#assemble-an-illustrated-episode) and [managed jobs](docs/tig-episode-jobs.md) |
+| Build reusable programme sections and episode captions | [Bounded programme parts](docs/programme-parts-v2.md) and [captions](docs/episode-captions-v1.md) |
 | Check a retained delivery candidate against its frozen source | [Retained delivery checker](docs/tig-retained-delivery-check.md) |
 | Inspect exact compiled delivery controls without opening primary media | [Frozen delivery inspection](docs/tig-delivery-inspection.md) |
 | Recover a missing original native dialogue/music/effect stem | [Exact native audio recovery](docs/tig-scene-audio-recovery.md) |

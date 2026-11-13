@@ -137,6 +137,7 @@ mod tests {
             }),
             source_clock: Some(clock_ref),
             audio_window: None,
+            lossless_master: None,
         };
         (
             manifest,

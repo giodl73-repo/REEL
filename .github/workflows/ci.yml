@@ -19,6 +19,7 @@ env:
 jobs:
   rust:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
@@ -39,7 +40,7 @@ jobs:
       - name: Verify shared original-song backend context guards without models
         run: python -B tools/test_original_song_repair_provider.py
       - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: cargo test --all-targets --all-features
+      - run: cargo test --all-targets --all-features --no-fail-fast
       - name: Verify exact native audio recovery without picture inputs
         if: runner.os == 'Windows'
         shell: pwsh
