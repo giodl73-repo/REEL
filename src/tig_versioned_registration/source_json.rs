@@ -57,7 +57,11 @@ impl<'de> Deserialize<'de> for Source {
 }
 
 pub(super) fn parse(bytes: &[u8]) -> Result<Value> {
-    if bytes.len() > super::LIMIT {
+    parse_bounded(bytes, super::LIMIT)
+}
+
+pub(crate) fn parse_bounded(bytes: &[u8], byte_limit: usize) -> Result<Value> {
+    if bytes.len() > byte_limit {
         bail!("source JSON byte budget exceeded");
     }
     let Source(value) = serde_json::from_slice(bytes)?;
