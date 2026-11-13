@@ -124,9 +124,37 @@ fn read(path: &Path, maximum: u64) -> Result<(File, Vec<u8>)> {
     }
     Ok((file, bytes))
 }
+
+// Operator profiles are not canonical identity documents. Keep their existing
+// 128-KiB allowance while retaining duplicate-key, depth/node and integer guards.
+fn parse_profile(bytes: &[u8]) -> Result<Value> {
+    let value = crate::tig_versioned_registration::source_json::parse_bounded(bytes, 128 * 1024)?;
+    fn numbers(value: &Value) -> Result<()> {
+        match value {
+            Value::Number(_) => {
+                identity::canonical_json(value)?;
+            }
+            Value::Array(items) => {
+                for item in items {
+                    numbers(item)?;
+                }
+            }
+            Value::Object(items) => {
+                for item in items.values() {
+                    numbers(item)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    numbers(&value)?;
+    Ok(value)
+}
+
 fn execute(path: &Path) -> Result<Value> {
     let (_profile_guard, raw) = read(path, 128 * 1024)?;
-    let p: Profile = serde_json::from_value(identity::parse_json(&raw)?)?;
+    let p: Profile = serde_json::from_value(parse_profile(&raw)?)?;
     let dependencies = dependency_mode(
         &p.schema,
         SCHEMA,
@@ -282,4 +310,31 @@ pub fn run(path: &Path) -> Result<Value> {
             "frozen job refused or incomplete; preserve owned scratch and inspect private state"
         )
     })
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::parse_profile;
+    use serde_json::json;
+
+    #[test]
+    fn operator_profile_byte_allowance_keeps_strict_identity_value_guards() {
+        let large = json!({"items":vec!["x".repeat(1000);70]});
+        let bytes = serde_json::to_vec(&large).unwrap();
+        assert!(bytes.len() > 65_536);
+        assert_eq!(parse_profile(&bytes).unwrap(), large);
+        for invalid in [
+            br#"{"items":{"name":1,"name":2}}"#.as_slice(),
+            br#"{"value":0.5}"#,
+            br#"{"value":9007199254740992}"#,
+        ] {
+            assert!(parse_profile(invalid).is_err());
+        }
+        let oversized = serde_json::to_vec(&json!({"text":"x".repeat(131_072)})).unwrap();
+        assert!(parse_profile(&oversized).is_err());
+        let too_many = serde_json::to_vec(&json!({"items":vec![0;4096]})).unwrap();
+        assert!(parse_profile(&too_many).is_err());
+        let deep = format!("{}0{}", "[".repeat(33), "]".repeat(33));
+        assert!(parse_profile(deep.as_bytes()).is_err());
+    }
 }
