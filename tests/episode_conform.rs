@@ -262,6 +262,32 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
         serde_json::from_slice(&fs::read(compact_output.join("receipt.json")).unwrap()).unwrap();
     assert_eq!(compact_receipt["encoded_delivery"]["decoded_frames"], 120);
     assert_eq!(
+        compact_receipt["consumed_intermediate_scratch_retired"],
+        true
+    );
+    // Releasing generated intermediates cannot alter any component's decoded
+    // content, frame/sample clock, source identity, or boundary findings.
+    assert_eq!(compact_receipt["segments"], receipt["segments"]);
+    assert_eq!(
+        compact_receipt["boundary_findings"],
+        receipt["boundary_findings"]
+    );
+    for name in [
+        "opening.mkv",
+        "scene-a.mkv",
+        "chapter.mkv",
+        "scene-b.mkv",
+        "credits.mkv",
+    ] {
+        let selected = compact["segments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|segment| segment["master"]["path"] == name)
+            .unwrap();
+        assert_eq!(reference(root, name), selected["master"]);
+    }
+    assert_eq!(
         compact_receipt["encoded_delivery"]["full_decode_verified"],
         true
     );

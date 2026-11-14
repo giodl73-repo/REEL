@@ -405,6 +405,7 @@ pub struct Receipt {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub encoded_delivery: Option<EncodedDelivery>,
     pub decoded_master_matches_ordered_segments: bool,
+    pub consumed_intermediate_scratch_retired: bool,
     pub timestamps_verified: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub presentation_verification_cache: Option<PresentationVerificationCache>,
@@ -3340,6 +3341,13 @@ fn build_impl(
             });
         }
     }
+    // All selected segments have been compared with the assembled master,
+    // timestamps checked, and boundary consumers finished. Retire only this
+    // build's owned normalization/padding directory before allocating delivery
+    // output. Keep the master and all original input paths intact; a failed
+    // retirement must fail the build rather than silently exceed its budget.
+    temp.close()
+        .context("retire consumed episode normalization scratch")?;
     let version = command_with_inputs(programs, scene_delivery::MediaProgram::Ffmpeg)?
         .arg("-version")
         .output()?;
@@ -3503,6 +3511,7 @@ fn build_impl(
         master_bytes: fs::metadata(&master)?.len(),
         encoded_delivery,
         decoded_master_matches_ordered_segments: true,
+        consumed_intermediate_scratch_retired: true,
         timestamps_verified: true,
         presentation_verification_cache: manifest.reuse_verified_presentations.then(|| {
             PresentationVerificationCache {
@@ -3551,7 +3560,6 @@ fn build_impl(
         // remain untouched. Its exact hash stays in the provenance receipt.
         fs::remove_file(&master)?;
     }
-    drop(temp);
     fs::rename(work, output)?;
     Ok(receipt)
 }

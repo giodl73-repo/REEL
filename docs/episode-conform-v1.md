@@ -1,5 +1,11 @@
 # Data-driven episode conform
 
+After ordered decoded-content, timestamp and boundary checks finish, conform
+closes its owned normalization/padding scratch directory before compact encoding.
+Failure to retire that consumed scratch fails the build. Original inputs and the
+verified assembled master remain intact; encoding settings and checks are unchanged.
+Successful receipts expose `consumed_intermediate_scratch_retired`.
+
 Segments may declare `tail_hold_frames` (default zero). A hold preserves every
 selected source frame/sample, repeats the final picture and adds only silent
 audio. It is limited to sixty seconds and uses checked global fractional-frame
