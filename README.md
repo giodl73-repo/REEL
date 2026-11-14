@@ -24,6 +24,7 @@ decisions; REEL supplies reusable contracts, compilers, renderers and checks.
 | Build reusable programme sections and episode captions | [Bounded programme parts](docs/programme-parts-v2.md) and [captions](docs/episode-captions-v1.md) |
 | Check a retained delivery candidate against its frozen source | [Retained delivery checker](docs/tig-retained-delivery-check.md) |
 | Inspect exact compiled delivery controls without opening primary media | [Frozen delivery inspection](docs/tig-delivery-inspection.md) |
+| Recover a receipt-pinned compiled episode manifest from existing metadata | [Episode control inspection](docs/tig-episode-control-inspection.md) |
 | Recover a missing original native dialogue/music/effect stem | [Exact native audio recovery](docs/tig-scene-audio-recovery.md) |
 | Inspect or explicitly execute a private speech attempt | [Tig speech adapter](docs/tig-speech-generation.md) |
 | Edit cels and timing visually | [Cel sorter](docs/cel-sorter-v1.md), [project mapping](docs/cel-sorter-project-v1.md) and [local editor host](docs/editor-host-v1.md) |
