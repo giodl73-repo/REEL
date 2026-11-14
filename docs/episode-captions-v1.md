@@ -33,6 +33,9 @@ The strict input contract is `reel.episode-captions.v1`:
 All FileRefs use the existing scene-delivery contract and must resolve inside
 one explicitly staged root, with exact path case, byte length and SHA-256.
 The conform recipe and receipt use their existing strict Rust types. There must
+be an exact manifest-hash match. For current native Tig composition, recover the
+receipt-pinned compiled manifest with [compiled-control inspection](tig-episode-control-inspection.md)
+instead of substituting its authored baseline. There must
 be exactly one track per ordered native segment, in the same order; no fixed
 segment count or Journey identity is built into the adapter. An explicit empty
 SRT (with words hash of `[]`) represents a selected caption-free segment. Missing
