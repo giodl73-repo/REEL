@@ -68,7 +68,7 @@ struct Temporary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     prepared: Option<source_claims::Reference>,
 }
-#[cfg(test)]
+#[cfg(all(test, windows))]
 fn expected(p: &Profile) -> Result<Vec<String>> {
     source_reuse::expected(p, source_reuse::resolve(p)?.as_ref())
 }
