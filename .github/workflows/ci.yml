@@ -211,6 +211,9 @@ jobs:
       - name: Verify mixed scene and presentation episode CLI with original renders offline
         if: runner.os == 'Windows'
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::episode_cli::mixed_episode_cli_checks_opening_scenes_and_credits_with_complete_owned_handoff --locked -- --ignored --exact
+      - name: Verify repeated native episode at the unchanged source identity guard
+        if: runner.os == 'Windows'
+        run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::episode_cli::completed_native_episode_reuses_retired_components_at_full_source_guard --locked -- --ignored --exact --test-threads=1
       - name: Verify browser opening and still credits through owned episode assembly
         if: runner.os == 'Windows'
         shell: pwsh
