@@ -8,6 +8,14 @@ use tig_store::source_claims::Selection as SourceSelection;
 mod mixed_components;
 #[path = "tig_episode_records.rs"]
 mod output_records;
+#[path = "tig_episode_source_reuse_cli.rs"]
+mod source_reuse_fixture;
+
+#[test]
+#[ignore = "requires native FFmpeg and pinned Tig proposal executable; repeat native episode at full source guard"]
+fn completed_native_episode_reuses_retired_components_at_full_source_guard() {
+    exercise_variant_mode(true, false, false, false, true);
+}
 
 #[test]
 #[ignore = "requires native FFmpeg; bounded episode CLI with captured source and old jobs offline"]
@@ -154,6 +162,15 @@ fn exercise_purpose(mixed: bool, preparation_only: bool, verification_only: bool
     exercise_variant(mixed, preparation_only, verification_only, false);
 }
 fn exercise_variant(mixed: bool, preparation_only: bool, verification_only: bool, browser: bool) {
+    exercise_variant_mode(mixed, preparation_only, verification_only, browser, false);
+}
+fn exercise_variant_mode(
+    mixed: bool,
+    preparation_only: bool,
+    verification_only: bool,
+    browser: bool,
+    reuse: bool,
+) {
     if !preparation_only && !verification_only {
         assert!(
             std::env::var_os("REEL_TEST_TIG_PROPOSE").is_some(),
@@ -684,6 +701,11 @@ fn exercise_variant(mixed: bool, preparation_only: bool, verification_only: bool
         finished["journal_checkpoint"],
         serde_json::to_value(&checkpoint).unwrap()
     );
+    if reuse {
+        drop(reader);
+        source_reuse_fixture::exercise(&p, &binary, &profile, &result, &mut journal);
+        return;
+    }
     let mut changed_contract = profile.clone();
     changed_contract["inputs"]["record_outputs"] = json!([]);
     changed_contract["inputs"]["git_handoff"] = Value::Null;

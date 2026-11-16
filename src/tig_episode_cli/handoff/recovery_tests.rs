@@ -9,6 +9,157 @@ struct Fixture {
     // Drop journal handles before the owned temporary directory on Windows.
     _root: tempfile::TempDir,
 }
+
+fn repeated_pool_case(succeeded: bool, protect_parent: bool) {
+    let mut f = Fixture::new();
+    finish(&f.profile, &mut f.journal).unwrap();
+    let original = f.state().current.unwrap().selection;
+    let mut reader =
+        MetadataReader::open(&f.profile.metadata_root, &f.profile.metadata_minimum).unwrap();
+    let old = retained_header(&original, &mut reader).unwrap();
+    let previous: Selection = serde_json::from_value(old["previous"].clone()).unwrap();
+    let mut result_names = entries(&previous, &mut reader).unwrap();
+    let old_retention = document(
+        &reader,
+        &result_names[&LogicalPath::parse("retention/identity").unwrap()],
+    )
+    .unwrap();
+    let input: Selection = serde_json::from_value(old_retention["source"].clone()).unwrap();
+    drop(reader);
+    f.profile.reuse_children = Some(original.clone());
+    f.profile.expected_revision = 6;
+    f.profile.operation = "run-v2".into();
+    let pool = source_reuse::resolve(&f.profile).unwrap().unwrap();
+    source_reuse::check_retired(&f.profile, Some(&pool), &mut f.journal).unwrap();
+    adopt(&mut f.journal, "episode", input.clone(), 6);
+    let coordination = Coordination {
+        root: f.profile.cache.coordination_root.clone().unwrap(),
+    };
+    let mut guards = Vec::new();
+    for (label, child) in &pool {
+        if label == "parent" && !protect_parent {
+            continue;
+        }
+        let old_child = old["temporary"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["source"] == child.source)
+            .unwrap();
+        let selected: Selection = serde_json::from_value(old_child["selection"].clone()).unwrap();
+        guards.push(
+            jobs::ScopedSource::protect(
+                &mut f.journal,
+                &coordination,
+                Identity {
+                    source: key(&child.source).unwrap(),
+                    owner: key("fixture").unwrap(),
+                },
+                child.revision,
+                &phase("episode", "run-v2", &format!("protect/{label}")).unwrap(),
+                &selected,
+            )
+            .unwrap(),
+        );
+    }
+    drop(guards);
+    let mut store =
+        MetadataStore::open(&f.profile.metadata_root, &f.profile.metadata_minimum).unwrap();
+    let raw = identity::canonical_json(&json!({"schema":"reel.tig-runner-retention.experimental-1","source_id":"episode","owner":"fixture","revision":8,"succeeded":succeeded,"source":input})).unwrap();
+    let retention = store.put(&raw).unwrap();
+    result_names.insert(
+        LogicalPath::parse("retention/identity").unwrap(),
+        retention.clone(),
+    );
+    if !succeeded {
+        result_names.remove(
+            &LogicalPath::parse(&format!(
+                "outputs/{}",
+                Digest::blob(b"worker.json").as_str()
+            ))
+            .unwrap(),
+        );
+    }
+    for name in ["result/request", "result/evidence"] {
+        result_names.insert(
+            LogicalPath::parse(name).unwrap(),
+            store
+                .put(
+                    &identity::canonical_json(
+                        &json!({"synthetic_diagnostic":name,"succeeded":succeeded}),
+                    )
+                    .unwrap(),
+                )
+                .unwrap(),
+        );
+    }
+    let result = Selection {
+        root: Tree::build(&result_names, &mut store, TreeLimits::default())
+            .unwrap()
+            .0
+            .root()
+            .clone(),
+        context: retention.sha256,
+    };
+    f.profile.metadata_minimum = store.finish().unwrap();
+    drop(store);
+    adopt(&mut f.journal, "episode", result, 8);
+    let outcome = finish(&f.profile, &mut f.journal).unwrap();
+    assert_eq!(outcome["succeeded"], succeeded);
+    assert_eq!(
+        outcome["sources_withdrawn"],
+        if protect_parent { 2 } else { 1 }
+    );
+    assert_eq!(f.state().revision, 12);
+    assert!(
+        f.state()
+            .predecessors
+            .iter()
+            .any(|version| version.selection == original)
+    );
+    assert_eq!(fs::read(&f.report).unwrap(), f.report_bytes);
+    for (label, child) in &pool {
+        let state = f
+            .journal
+            .source(&key(&child.source).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            state.revision,
+            if label == "parent" && !protect_parent {
+                3
+            } else {
+                6
+            }
+        );
+        assert!(state.current.is_none());
+        assert!(state.pending.is_none());
+    }
+    let checkpoint = f.journal.checkpoint();
+    assert_eq!(
+        finish(&f.profile, &mut f.journal).unwrap()["succeeded"],
+        succeeded
+    );
+    assert_eq!(f.journal.checkpoint(), checkpoint);
+    f.profile.expected_revision = 12;
+    f.profile.reuse_children = Some(f.state().current.unwrap().selection);
+    f.profile.operation = "run-v3".into();
+    let next = source_reuse::resolve(&f.profile).unwrap().unwrap();
+    source_reuse::check_retired(&f.profile, Some(&next), &mut f.journal).unwrap();
+    for label in pool.keys() {
+        assert_eq!(next[label].source, pool[label].source);
+    }
+}
+
+#[test]
+fn repeated_completed_pool_preserves_history_and_recovers_idempotently() {
+    repeated_pool_case(true, true);
+}
+
+#[test]
+fn reused_partial_failure_leaves_untouched_sources_retired_and_pool_reusable() {
+    repeated_pool_case(false, false);
+}
 fn tree(store: &mut impl NodeStore, name: &str, value: Value, extra: &[Object]) -> Selection {
     let raw = identity::canonical_json(&value).unwrap();
     let object = store.put(&raw).unwrap();

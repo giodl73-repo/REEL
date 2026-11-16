@@ -20,10 +20,12 @@ fn check(t: &Ticket, journal: &mut SourceJournal) -> Result<()> {
     Ok(())
 }
 fn identity(t: &Ticket, phase_name: &str) -> Result<Identity> {
-    let source = phase(&t.source_id, &t.operation, phase_name)?;
-    if source == key(&t.source_id)? {
-        bail!("episode child cannot alias runner source");
-    }
+    let source = source_reuse::source(
+        &t.source_id,
+        &t.operation,
+        phase_name,
+        t.reused_children.as_ref(),
+    )?;
     Ok(Identity {
         source,
         owner: key(&t.owner)?,
@@ -64,6 +66,11 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
     if t.schema != TICKET {
         bail!("unsupported episode worker");
     }
+    source_reuse::validate_pool(
+        &source_reuse::labels(&t.inputs),
+        &t.source_id,
+        t.reused_children.as_ref(),
+    )?;
     let wait = MetadataWait::default();
     let programs = BoundPrograms::bind(&t.inputs.runtime)?;
     let (mut source, context) = restore(&t.inputs, &t.metadata_root, &t.metadata_minimum, &wait)
@@ -247,7 +254,10 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
                     &mut journal,
                     &coordination,
                     identity(&t, &format!("scene/{}", spec.id))?,
-                    0,
+                    source_reuse::revision(
+                        &format!("scene/{}", spec.id),
+                        t.reused_children.as_ref(),
+                    )?,
                     &phase(
                         &t.source_id,
                         &t.operation,
@@ -269,7 +279,10 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
                     &mut journal,
                     &coordination,
                     identity(&t, &format!("presentation/{}", spec.id))?,
-                    0,
+                    source_reuse::revision(
+                        &format!("presentation/{}", spec.id),
+                        t.reused_children.as_ref(),
+                    )?,
                     &phase(
                         &t.source_id,
                         &t.operation,
@@ -357,7 +370,7 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
             &tig_episode::CompositionOwnership {
                 coordination: &coordination,
                 identity: identity(&t, "parent")?,
-                expected_revision: 0,
+                expected_revision: source_reuse::revision("parent", t.reused_children.as_ref())?,
                 budget: &budget,
             },
             &phase(&t.source_id, &t.operation, "protect/parent")?,

@@ -5,6 +5,17 @@ use tig_core::tree::Tree;
 const HEADER: &str = "reel.tig-episode-retained-context.experimental-1";
 const SUBTREES: &str = "retained-subtrees-v1";
 
+pub(super) fn retained_header(selection: &Selection, store: &mut impl NodeStore) -> Result<Value> {
+    let names = entries(selection, store)?;
+    let pin = names
+        .get(&LogicalPath::parse("handoff/identity")?)
+        .context("episode reuse handoff missing")?;
+    if pin.sha256 != selection.context {
+        bail!("episode reuse handoff context differs");
+    }
+    document(store, pin)
+}
+
 // Absence identifies the original flat layout, including a durable pending
 // packet made by an older runtime. Never rebuild that packet in another layout.
 fn subtree_layout(header: &Value) -> Result<bool> {
@@ -57,24 +68,9 @@ struct Temporary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     prepared: Option<source_claims::Reference>,
 }
+#[cfg(test)]
 fn expected(p: &Profile) -> Result<Vec<String>> {
-    p.inputs
-        .scenes
-        .iter()
-        .map(|spec| format!("scene/{}", spec.id))
-        .chain(
-            p.inputs
-                .presentations
-                .iter()
-                .map(|spec| format!("presentation/{}", spec.id)),
-        )
-        .chain(std::iter::once("parent".into()))
-        .map(|name| {
-            Ok(phase(&p.source_id, &p.operation, &name)?
-                .as_str()
-                .to_owned())
-        })
-        .collect()
+    source_reuse::expected(p, source_reuse::resolve(p)?.as_ref())
 }
 fn entries(
     selection: &Selection,
@@ -182,7 +178,8 @@ fn finish_after_prepare(
         &wait,
     );
     let retained = entries(&current, &mut reader)?;
-    let expected = expected(p)?;
+    let reused_children = source_reuse::resolve(p)?;
+    let expected = source_reuse::expected(p, reused_children.as_ref())?;
     let mut ordered = expected.clone();
     ordered.sort();
     let mut guards = Vec::new();
@@ -210,6 +207,10 @@ fn finish_after_prepare(
             || header["operation"] != p.operation
             || header["root_revision_after"].as_u64() != Some(state.revision)
             || header["record_contract"] != serde_json::to_value(records::contract(&p.inputs)?)?
+            || header.get("reuse_children_from").unwrap_or(&Value::Null)
+                != &serde_json::to_value(&p.reuse_children)?
+            || header.get("reused_children").unwrap_or(&Value::Null)
+                != &serde_json::to_value(&reused_children)?
             || serde_json::from_value::<Purpose>(
                 header.get("purpose").cloned().unwrap_or(json!("assemble")),
             )? != p.inputs.purpose
@@ -233,8 +234,18 @@ fn finish_after_prepare(
         }
         if !succeeded {
             for source in expected.iter().filter(|id| !present.contains(id)) {
-                if journal.source(&key(source)?)?.is_some() {
-                    bail!("episode absent temporary source changed");
+                if let Some(child) = journal.source(&key(source)?)? {
+                    let untouched = reused_children
+                        .as_ref()
+                        .and_then(|pool| pool.values().find(|entry| &entry.source == source));
+                    if untouched.is_none_or(|entry| {
+                        child.owner != identity.owner
+                            || child.revision != entry.revision
+                            || child.current.is_some()
+                            || child.pending.is_some()
+                    }) {
+                        bail!("episode absent temporary source changed");
+                    }
                 }
             }
         }
@@ -420,13 +431,39 @@ fn finish_after_prepare(
                 }
                 continue;
             };
+            let label = source_reuse::labels(&p.inputs)
+                .into_iter()
+                .find(|label| {
+                    source_reuse::source(
+                        &p.source_id,
+                        &p.operation,
+                        label,
+                        reused_children.as_ref(),
+                    )
+                    .is_ok_and(|id| id.as_str() == source)
+                })
+                .context("episode component scope missing")?;
+            let before = source_reuse::revision(&label, reused_children.as_ref())?;
+            if reused_children.is_some()
+                && child.revision == before
+                && child.current.is_none()
+                && child.pending.is_none()
+                && child.owner == identity.owner
+                && !succeeded
+            {
+                continue;
+            }
             let prepared = child
                 .pending
                 .as_ref()
                 .map(|pending| pending.reference.clone());
             let selection = match (&child.current, &child.pending) {
-                (Some(current), None) if child.revision == 2 => current.selection.clone(),
-                (None, Some(pending)) if !succeeded && child.revision == 1 => {
+                (Some(current), None) if Some(child.revision) == before.checked_add(2) => {
+                    current.selection.clone()
+                }
+                (None, Some(pending))
+                    if !succeeded && Some(child.revision) == before.checked_add(1) =>
+                {
                     pending.selection.clone()
                 }
                 _ => bail!("episode temporary source changed before handoff"),
@@ -434,24 +471,7 @@ fn finish_after_prepare(
             if child.owner != identity.owner {
                 bail!("episode temporary source changed before handoff");
             }
-            if let Some(reference) = &prepared {
-                let label = p
-                    .inputs
-                    .scenes
-                    .iter()
-                    .map(|spec| format!("scene/{}", spec.id))
-                    .chain(
-                        p.inputs
-                            .presentations
-                            .iter()
-                            .map(|spec| format!("presentation/{}", spec.id)),
-                    )
-                    .chain(std::iter::once("parent".into()))
-                    .find(|label| {
-                        phase(&p.source_id, &p.operation, label)
-                            .is_ok_and(|id| id.as_str() == source)
-                    })
-                    .context("episode pending component scope missing")?;
+            if prepared.is_some() || reused_children.is_some() {
                 let worker_operation =
                     phase(&p.source_id, &p.operation, &format!("protect/{label}"))?;
                 let acknowledged = SourceJournal::acknowledge(
@@ -468,12 +488,35 @@ fn finish_after_prepare(
                     Command::Prepare {
                         source: key(source)?,
                         owner: identity.owner.clone(),
-                        expected_revision: 0,
+                        expected_revision: before,
                         selection: selection.clone(),
                     },
                 )?;
-                if &acknowledged.reference != reference {
-                    bail!("episode pending component preparation differs");
+                if let Some(reference) = &prepared {
+                    if &acknowledged.reference != reference {
+                        bail!("episode pending component preparation differs");
+                    }
+                } else {
+                    SourceJournal::acknowledge(
+                        &p.journal_root,
+                        &p.journal_minimum,
+                        jobs::phase(
+                            &Identity {
+                                source: key(source)?,
+                                owner: identity.owner.clone(),
+                            },
+                            &worker_operation,
+                            "adopt",
+                        )?,
+                        Command::Adopt {
+                            source: key(source)?,
+                            owner: identity.owner.clone(),
+                            expected_revision: before
+                                .checked_add(1)
+                                .context("episode reuse revision overflow")?,
+                            prepared: acknowledged.reference,
+                        },
+                    )?;
                 }
             }
             if source == expected.last().context("episode parent source missing")? {
@@ -530,6 +573,10 @@ fn finish_after_prepare(
         let mut header = json!({"schema":HEADER,"source_id":p.source_id,"owner":p.owner,"operation":p.operation,
             "previous":current,"root_revision_before":completed,"root_revision_after":next,"temporary":temporary,"expected_temporary":expected,"succeeded":succeeded,
             "purpose":p.inputs.purpose,"record_contract":records::contract(&p.inputs)?,"native_production_claim":null,"approval":false,"resource_objects":objects.len()});
+        if let Some(pool) = &reused_children {
+            header["reuse_children_from"] = serde_json::to_value(&p.reuse_children)?;
+            header["reused_children"] = serde_json::to_value(pool)?;
+        }
         if subtrees {
             header["resource_layout"] = json!(SUBTREES);
             let mut reopened_objects = BTreeMap::new();
