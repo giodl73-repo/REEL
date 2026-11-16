@@ -47,14 +47,18 @@ pub(super) fn append_silent_picture_hold(
     if frames == 0 || samples == 0 || !matches!(video_codec, "h264" | "ffv1") {
         bail!("invalid silent picture hold");
     }
-    let filter = format!("tpad=stop_mode=clone:stop={frames}");
+    let source_facts = probe_with_inputs(source, programs)?;
+    let (n, d) = fps_parts(&source_facts.fps)?;
+    // Matroska's millisecond source ticks can make tpad repeat a PTS at 30fps.
+    // The admitted source already passed its clock checks; emit the unchanged
+    // ordered pictures on exact frame ticks, including the added final hold.
+    let filter = format!("tpad=stop_mode=clone:stop={frames},settb=expr={d}/{n},setpts=N");
     let expected_picture =
         decoded_digest_with_options(source, true, 0, Some(&filter), "yuv444p", programs)?;
     let expected_audio =
         decoded_digest_with_options(source, false, samples, None, "yuv444p", programs)?;
     let expected_rgb =
         decoded_digest_with_options(source, true, 0, Some(&filter), "rgb24", programs)?;
-    let source_facts = probe_with_inputs(source, programs)?;
     let mut encoder = command_with_inputs(programs, scene_delivery::MediaProgram::Ffmpeg)?;
     encoder
         .args(["-v", "error", "-nostdin", "-i"])
@@ -140,71 +144,87 @@ mod silent_hold_tests {
     #[test]
     fn lossless_hold_keeps_the_moving_picture_and_tone_prefix_then_adds_only_last_picture_and_zero_audio()
      {
-        let temp = tempfile::tempdir().unwrap();
-        let source = temp.path().join("source.mkv");
-        assert!(
-            command("ffmpeg")
-                .args([
-                    "-v",
-                    "error",
-                    "-f",
-                    "lavfi",
-                    "-i",
-                    "testsrc2=s=32x32:r=24:d=1",
-                    "-f",
-                    "lavfi",
-                    "-i",
-                    "sine=frequency=937:sample_rate=48000:duration=1",
-                    "-c:v",
-                    "ffv1",
-                    "-pix_fmt",
-                    "yuv444p",
-                    "-colorspace",
-                    "bt709",
-                    "-color_trc",
-                    "bt709",
-                    "-color_primaries",
-                    "bt709",
-                    "-color_range",
-                    "tv",
-                    "-c:a",
-                    "pcm_s24le",
-                    "-ac",
-                    "2"
-                ])
-                .arg(&source)
-                .status()
-                .unwrap()
-                .success()
-        );
-        let original_picture = decoded_digest(&source, true).unwrap();
-        let original_audio = decoded_digest(&source, false).unwrap();
-        for codec in ["ffv1", "h264"] {
-            let output = temp.path().join(format!("held-{codec}.mkv"));
-            let (picture, audio) =
-                append_silent_picture_hold(&source, &output, 48, 96000, codec, Path::new(""))
-                    .unwrap();
-            assert_eq!(picture.1, 72 * 32 * 32 * 3);
-            assert_eq!(audio.1, 144000 * 6);
-            assert_eq!(
-                decoded_digest_with_filter(&output, true, 0, Some("trim=end_frame=24")).unwrap(),
-                original_picture
+        for fps in [24, 25, 30] {
+            let temp = tempfile::tempdir().unwrap();
+            let source = temp.path().join("source.mkv");
+            let picture_source = format!("testsrc2=s=32x32:r={fps}:d=1");
+            assert!(
+                command("ffmpeg")
+                    .args([
+                        "-v",
+                        "error",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        &picture_source,
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        "sine=frequency=937:sample_rate=48000:duration=1",
+                        "-c:v",
+                        "ffv1",
+                        "-pix_fmt",
+                        "yuv444p",
+                        "-colorspace",
+                        "bt709",
+                        "-color_trc",
+                        "bt709",
+                        "-color_primaries",
+                        "bt709",
+                        "-color_range",
+                        "tv",
+                        "-c:a",
+                        "pcm_s24le",
+                        "-ac",
+                        "2"
+                    ])
+                    .arg(&source)
+                    .status()
+                    .unwrap()
+                    .success()
             );
-            let pcm = command("ffmpeg")
-                .args(["-v", "error", "-i"])
-                .arg(&output)
-                .args(["-map", "0:a:0", "-c:a", "pcm_s24le", "-f", "s24le", "-"])
-                .output()
+            let original_picture = decoded_digest(&source, true).unwrap();
+            let original_audio = decoded_digest(&source, false).unwrap();
+            for codec in ["ffv1", "h264"] {
+                let output = temp.path().join(format!("held-{codec}.mkv"));
+                let (picture, audio) = append_silent_picture_hold(
+                    &source,
+                    &output,
+                    2 * fps,
+                    96000,
+                    codec,
+                    Path::new(""),
+                )
                 .unwrap();
-            assert!(pcm.status.success());
-            let prefix = Sha256::digest(&pcm.stdout[..48000 * 6])
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>();
-            assert_eq!(prefix, original_audio.0);
-            assert!(pcm.stdout[48000 * 6..].iter().all(|v| *v == 0));
-            let source_bytes = fs::read(&source).unwrap();
-            assert!(!source_bytes.is_empty());
+                episode_delivery::verify_timestamps(&output, 48000, fps, 1).unwrap();
+                assert_eq!(picture.1, 3 * fps * 32 * 32 * 3);
+                assert_eq!(audio.1, 144000 * 6);
+                assert_eq!(
+                    decoded_digest_with_filter(
+                        &output,
+                        true,
+                        0,
+                        Some(&format!("trim=end_frame={fps}"))
+                    )
+                    .unwrap(),
+                    original_picture
+                );
+                let pcm = command("ffmpeg")
+                    .args(["-v", "error", "-i"])
+                    .arg(&output)
+                    .args(["-map", "0:a:0", "-c:a", "pcm_s24le", "-f", "s24le", "-"])
+                    .output()
+                    .unwrap();
+                assert!(pcm.status.success());
+                let prefix = Sha256::digest(&pcm.stdout[..48000 * 6])
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>();
+                assert_eq!(prefix, original_audio.0);
+                assert!(pcm.stdout[48000 * 6..].iter().all(|v| *v == 0));
+                let source_bytes = fs::read(&source).unwrap();
+                assert!(!source_bytes.is_empty());
+            }
         }
     }
 }

@@ -217,6 +217,32 @@ class OriginalProviderControls(unittest.TestCase):
         validate_original_repair(request,context,8000,8000,2)
         self.assertEqual(context['canonical_lyrics'],'Álpha beta\nDelta echo')
 
+    def test_explicit_context_can_exceed_legacy_padding(self):
+        request, context = fixture()
+        request['source_frames'] = context['source_frames'] = 128000
+        patch = request['patches'][0]
+        patch.update(start_frame=56000,end_frame=60000,context_start_frame=0,context_end_frame=128000)
+        validate_original_repair(request,context,8000,128000,2)
+        for key,value in [('context_start_frame',-1),('context_start_frame',56001),('context_end_frame',59999),('context_end_frame',128001),('context_start_frame',False)]:
+            changed = copy.deepcopy(request)
+            changed['patches'][0][key] = value
+            with self.assertRaises(ValueError):
+                validate_original_repair(changed,context,8000,128000,2)
+
+    def test_explicit_context_total_pcm_is_bounded(self):
+        request, context = fixture()
+        frames = 96000*600
+        request.update(source_frames=frames,sample_rate=96000)
+        context.update(source_frames=frames,sample_rate=96000)
+        patch = request['patches'][0]
+        patch.update(context_end_frame=frames)
+        validate_original_repair(request,context,96000,frames,2)
+        second = copy.deepcopy(patch)
+        second.update(start_frame=6000,end_frame=7000)
+        request['patches'].append(second)
+        with self.assertRaises(ValueError):
+            validate_original_repair(request,context,96000,frames,2)
+
     def test_cpu_route_rejects_incompatible_controls_before_model_work(self):
         request, context = fixture()
         request.update(compute_device='cpu',quantization='none',model_precision='float32',offload_dit_to_cpu=False)
@@ -240,7 +266,7 @@ class OriginalProviderControls(unittest.TestCase):
                 validate_original_repair(request,context,8000,8000,2)
 
     def test_clock_masks_context_and_literal_word_changes_refuse(self):
-        for field,value in [('start_frame',True),('end_frame',8001),('fade_frames',1500),('context_start_frame',1),('source_lines',[0,1]),('supplied_lyrics','Alpha beta\nDelta echo')]:
+        for field,value in [('start_frame',True),('end_frame',8001),('fade_frames',1500),('context_start_frame',2001),('source_lines',[0,1]),('supplied_lyrics','Alpha beta\nDelta echo')]:
             request, context = fixture()
             request['patches'][0][field] = value
             with self.assertRaises(ValueError):

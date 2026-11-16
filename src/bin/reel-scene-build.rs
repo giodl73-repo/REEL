@@ -34,6 +34,8 @@ struct BuildManifest {
     semantic_delivery: String,
     #[serde(default)]
     template_receipt: Option<String>,
+    #[serde(default)]
+    presentation_overlay: Option<reel::scene_delivery_compile::TargetedPresentation>,
 }
 
 #[derive(Deserialize)]
@@ -254,6 +256,12 @@ fn emit_changed_only_graph(index_path: &str, asset_root: &Path, output_path: &st
         }
         if let Some(receipt) = &manifest.template_receipt {
             inputs.push(local_file("template-receipt", &checked(&root, receipt)?)?);
+        }
+        if let Some(overlay) = &manifest.presentation_overlay {
+            inputs.push(local_file(
+                "presentation-source",
+                &checked(&root, &overlay.scene)?,
+            )?);
         }
         inputs.push(bound_asset("contract", asset_root, &scene_job.contract)?);
         for (number, picture) in scene_job.pictures.iter().enumerate() {
@@ -635,11 +643,32 @@ fn validate_template_layer(
         })
         .collect::<Vec<_>>();
     let Some(presentation) = &scene.presentation else {
-        if manifest.template_receipt.is_some() || !overlays.is_empty() {
+        if manifest.template_receipt.is_some()
+            || manifest.presentation_overlay.is_some()
+            || !overlays.is_empty()
+        {
             bail!("ordinary scene cannot silently consume a template layer");
         }
         return Ok(None);
     };
+    if let Some(overlay) = &manifest.presentation_overlay {
+        reel::scene_delivery_compile::verify_presentation_overlay(
+            root,
+            overlay,
+            scene,
+            reel::scene_delivery_compile::PresentationReceiptContext {
+                language: &manifest.language,
+                receipt_path: manifest.template_receipt.as_deref(),
+                catalog: &read(&checked(root, &manifest.catalog)?)?,
+                scopes: &[
+                    &read(&checked(root, &manifest.scene_bindings)?)?,
+                    &read(&checked(root, &manifest.episode_bindings)?)?,
+                    &read(&checked(root, &manifest.season_bindings)?)?,
+                ],
+                clock: (plan.sample_rate, plan.duration_samples),
+            },
+        )?;
+    }
     let path = checked(
         root,
         manifest
@@ -650,17 +679,19 @@ fn validate_template_layer(
     let bytes = fs::read(&path)?;
     let receipt: serde_json::Value = serde_json::from_slice(&bytes)?;
     if receipt_string(&receipt, "schema")? != "reel.editable-layer-compile-receipt.v1"
-        || receipt_string(&receipt, "scene_id")? != scene.scene_id
+        || (manifest.presentation_overlay.is_none()
+            && receipt_string(&receipt, "scene_id")? != scene.scene_id)
         || receipt_string(&receipt, "language")? != manifest.language
         || receipt_string(&receipt, "template_id")? != presentation.template_id
         || receipt_string(&receipt, "template_definition_sha256")?
             != resolved.template_definitions[&presentation.template_id]
-        || receipt
-            .get("duration_samples")
-            .and_then(|value| value.as_u64())
-            != Some(plan.duration_samples)
-        || receipt.get("sample_rate").and_then(|value| value.as_u64())
-            != Some(plan.sample_rate as u64)
+        || (manifest.presentation_overlay.is_none()
+            && (receipt
+                .get("duration_samples")
+                .and_then(|value| value.as_u64())
+                != Some(plan.duration_samples)
+                || receipt.get("sample_rate").and_then(|value| value.as_u64())
+                    != Some(plan.sample_rate as u64)))
     {
         bail!("template compile receipt differs from selected scene and native clock");
     }
@@ -828,6 +859,29 @@ fn build_scene(
     )?;
     let template =
         validate_template_layer(&root, &manifest, &scene, &resolved, &job, &delivery_plan)?;
+    if let Some(overlay) = &manifest.presentation_overlay {
+        let contract =
+            reel::cue_relative::load(job_path.parent().unwrap().join(&job.contract.path))?;
+        let attachment = contract
+            .attachments
+            .iter()
+            .find(|item| item.id == overlay.attachment_id)
+            .context("targeted presentation attachment missing")?;
+        let span = delivery_plan
+            .external_layer_spans
+            .iter()
+            .find(|item| item.attachment_id == overlay.attachment_id)
+            .context("targeted presentation span missing")?;
+        if !matches!(&attachment.target, reel::cue_relative::Target::Title { title_id } if title_id == &overlay.title_id)
+            || span.start_sample != 0
+            || span.end_sample != delivery_plan.duration_samples
+            || !job.external_layers.iter().any(|layer| {
+                layer.attachment_id == overlay.attachment_id && layer.reason == overlay.reason
+            })
+        {
+            bail!("targeted presentation delivery identity or span differs from declaration");
+        }
+    }
     let planned_spans = delivery_plan
         .pictures
         .iter()

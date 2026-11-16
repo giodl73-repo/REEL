@@ -45,6 +45,15 @@ states `technical_validation_state: decoded-source-equivalent` and keeps
 creative review and publication open. It does not establish that the inherited
 source text, cast, score, or imagery was approved.
 
+Set `"lossless_video_encoding": "h264-lossless"` for a compact lossless
+H.264/yuv444p intermediate with stereo PCM24. The encoder uses CRF 0 without
+reordered frames. The declaration is preserved in the receipt and independently
+rechecked alongside the complete decoded source picture/audio, stream policy
+and timestamps. Episode conform admits this codec only after that upstream
+adoption check succeeds. Omitting the field preserves the existing FFV1 behavior
+and receipt shape. Unknown encodings and combining an encoding with
+`"output_mode": "retain-source"` are rejected.
+
 When episode conform consumes this receipt, its segment must name the exact
 adoption manifest. Conform reruns the adoption and compares selected source,
 template, evidence and decoded master content. A receipt without that manifest

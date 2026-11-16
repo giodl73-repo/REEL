@@ -13,6 +13,7 @@ use std::io::Write;
 use tig_store::metadata::MetadataStore;
 
 const CAPTURE_SCHEMA: &str = "reel.tig-frozen-job-capture-profile.experimental-1";
+const DEPENDENCY_CAPTURE_SCHEMA: &str = "reel.tig-frozen-job-capture-profile.experimental-2";
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Capture {
@@ -25,15 +26,24 @@ struct Capture {
     operation: recipe::Operation,
     descriptor: FileRef,
     runtime: BTreeMap<LogicalPath, Object>,
+    #[serde(default)]
+    dependencies: Option<Dependencies>,
     manifest: FileRef,
     metadata_root: PathBuf,
     metadata_minimum: Checkpoint,
     metadata_cache: PathBuf,
     cache: reel_assets::Config,
 }
-fn execute(path: &Path, output: &Path) -> Result<Value> {
+fn execute(path: &Path, output: &Path, stage: &mut &'static str) -> Result<Value> {
     let (_profile_guard, raw) = read(path, 128 * 1024)?;
-    let p: Capture = serde_json::from_value(identity::parse_json(&raw)?)?;
+    *stage = "profile validation";
+    let p: Capture = serde_json::from_value(parse_profile(&raw)?)?;
+    let dependencies = dependency_mode(
+        &p.schema,
+        CAPTURE_SCHEMA,
+        DEPENDENCY_CAPTURE_SCHEMA,
+        p.dependencies.as_ref(),
+    )?;
     let parent = output
         .parent()
         .ok_or_else(|| anyhow::anyhow!("capture output parent required"))?;
@@ -42,8 +52,7 @@ fn execute(path: &Path, output: &Path) -> Result<Value> {
         .coordination_root
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("capture coordination required"))?;
-    if p.schema != CAPTURE_SCHEMA
-        || p.profiles.is_empty()
+    if p.profiles.is_empty()
         || p.profiles.len() > 128
         || p.consumption.len() > 128
         || p.runtime.len() > 64
@@ -62,12 +71,14 @@ fn execute(path: &Path, output: &Path) -> Result<Value> {
     {
         bail!("capture requires explicit existing stores and new bounded output");
     }
+    *stage = "store volume validation";
     let volume = admission::volume_id(&p.metadata_cache).map_err(|e| anyhow::anyhow!("{e}"))?;
     for root in [&p.metadata_root, parent] {
         if admission::volume_id(root).map_err(|e| anyhow::anyhow!("{e}"))? != volume {
             bail!("capture metadata/output must share admitted volume");
         }
     }
+    *stage = "descriptor validation";
     let (_descriptor_guard, descriptor) = read(&p.descriptor.path, 65536)?;
     let descriptor_pin = Object::from_bytes(&descriptor);
     if descriptor_pin
@@ -79,6 +90,7 @@ fn execute(path: &Path, output: &Path) -> Result<Value> {
     {
         bail!("capture descriptor differs from operation");
     }
+    *stage = "request validation";
     let (_manifest_guard, request) = read(&p.manifest.path, 256 * 1024)?;
     let request_pin = Object::from_bytes(&request);
     if request_pin
@@ -91,6 +103,7 @@ fn execute(path: &Path, output: &Path) -> Result<Value> {
         bail!("capture request differs from runtime");
     }
     reel_assets::jobs::check_request(&request).map_err(|e| anyhow::anyhow!("{e}"))?;
+    *stage = "source validation";
     let mut source = Source::open(p.source)?;
     if source.checkpoint() != &p.source_checkpoint {
         bail!("capture source checkpoint differs");
@@ -111,17 +124,21 @@ fn execute(path: &Path, output: &Path) -> Result<Value> {
             fields: c.fields.clone(),
         })
         .collect();
+    *stage = "recipe planning";
     let plan =
         source.production_recipe(&p.root_id, &p.profiles, &consumption, &p.operation, limits)?;
     let wait = MetadataWait::default();
+    *stage = "metadata inspection";
     let reader = wait.run(|| MetadataReader::open(&p.metadata_root, &p.metadata_minimum))?;
     let bounds = reader.limits();
     let minimum = reader.checkpoint().clone();
     drop(reader);
+    *stage = "metadata allocation admission";
     let allowance = metadata_allowance(&p.metadata_cache, bounds.database_bytes, 1024 * 1024)?;
     let _reservation =
         admission::reserve_on(&p.metadata_root, &p.cache, &p.metadata_cache, allowance)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+    *stage = "metadata writer admission";
     let mut store = Waiting::new(
         wait.run(|| MetadataStore::open(&p.metadata_root, &minimum))?,
         &wait,
@@ -129,6 +146,7 @@ fn execute(path: &Path, output: &Path) -> Result<Value> {
     if store.inner.limits() != bounds {
         bail!("capture metadata bounds changed");
     }
+    *stage = "source freeze";
     let context = source.freeze_context(
         &p.root_id,
         &p.profiles,
@@ -137,22 +155,27 @@ fn execute(path: &Path, output: &Path) -> Result<Value> {
         trees,
         limits,
     )?;
-    let candidate = job::freeze(
-        &job::Admission {
-            context: &context,
-            plan: &plan,
-            runtime: &p.runtime,
-            output: None,
-        },
-        &mut store,
-        trees,
-    )?;
+    let admission = job::Admission {
+        context: &context,
+        plan: &plan,
+        runtime: &p.runtime,
+        output: None,
+    };
+    *stage = "job freeze";
+    let candidate = if let Some(declared) = &p.dependencies {
+        job::freeze_with_dependencies(&admission, &declared.admission(), None, &mut store, trees)?
+    } else {
+        job::freeze(&admission, &mut store, trees)?
+    };
+    *stage = "metadata finish";
     let witness = wait.run(|| store.inner.finish())?;
     drop(store);
+    *stage = "metadata reopen";
     let mut reader = Waiting::new(
         wait.run(|| MetadataReader::open(&p.metadata_root, &witness))?,
         &wait,
     );
+    *stage = "source replay";
     let restored = source.replay_context(
         context.selection(),
         &p.profiles,
@@ -167,22 +190,35 @@ fn execute(path: &Path, output: &Path) -> Result<Value> {
     {
         bail!("capture source readback differs");
     }
+    *stage = "recipe replay";
     let plan =
         source.production_recipe(&p.root_id, &p.profiles, &consumption, &p.operation, limits)?;
-    let resources = job::restore(
-        candidate.selection(),
-        &job::Admission {
-            context: &restored,
-            plan: &plan,
-            runtime: &p.runtime,
-            output: None,
-        },
-        &mut reader,
-        trees,
-    )?;
-    let fragment = json!({"schema":"reel.tig-frozen-job-fragment.experimental-1","metadata_root":p.metadata_root,"metadata_minimum":witness,
+    let admission = job::Admission {
+        context: &restored,
+        plan: &plan,
+        runtime: &p.runtime,
+        output: None,
+    };
+    *stage = "job replay";
+    let resources = if let Some(declared) = &p.dependencies {
+        job::restore_with_dependencies(
+            candidate.selection(),
+            &admission,
+            &declared.admission(),
+            None,
+            &mut reader,
+            trees,
+        )?
+    } else {
+        job::restore(candidate.selection(), &admission, &mut reader, trees)?
+    };
+    *stage = "fragment publication";
+    let mut fragment = json!({"schema":if dependencies {"reel.tig-frozen-job-fragment.experimental-2"} else {"reel.tig-frozen-job-fragment.experimental-1"},"metadata_root":p.metadata_root,"metadata_minimum":witness,
         "source_context":restored.selection(),"source_checkpoint":p.source_checkpoint,"job_context":resources.selection(),
         "profiles":p.profiles,"consumption":p.consumption,"operation":p.operation,"runtime":p.runtime,"manifest":p.manifest});
+    if let Some(declared) = &p.dependencies {
+        fragment["dependencies"] = serde_json::to_value(declared)?;
+    }
     let bytes = serde_json::to_vec(&fragment)?;
     if bytes.len() > 128 * 1024 {
         bail!("capture fragment exceeds bound");
@@ -198,5 +234,10 @@ fn execute(path: &Path, output: &Path) -> Result<Value> {
 }
 /// Explicit metadata writes only; all byte/source obligations remain external.
 pub fn capture(profile: &Path, output: &Path) -> Result<Value> {
-    execute(profile, output).map_err(|_| anyhow::anyhow!("frozen capture refused or incomplete; retain existing source and inspect private metadata"))
+    let mut stage = "profile read";
+    execute(profile, output, &mut stage).map_err(|_| {
+        anyhow::anyhow!(
+            "frozen capture refused during {stage}; retain existing source and inspect private metadata"
+        )
+    })
 }

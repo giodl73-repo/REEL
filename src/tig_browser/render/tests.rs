@@ -150,6 +150,7 @@ fn fixture_with_clock(root: &Path, audio: bool, corrupt: bool, clock: bool) -> (
             sha256: inputs["clock.json"].sha256.clone(),
         }),
         audio_window: None,
+        lossless_master: None,
     };
     let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
     (

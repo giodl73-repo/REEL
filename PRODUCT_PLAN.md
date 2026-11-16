@@ -1,5 +1,11 @@
 # REEL Product Plan
 
+This document preserves the founding product direction and milestone history.
+For current interfaces and implemented source, start with the
+[README](README.md), [architecture](docs/architecture.md),
+[use cases](docs/use-cases.md) and [capability roadmap](docs/tooling-roadmap.md).
+Future-tense sections below are planning records, not the current support matrix.
+
 ## Thesis
 
 REEL is the Design Labs home for making movies and videos across the portfolio.

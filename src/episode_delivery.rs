@@ -70,7 +70,7 @@ pub struct BoundaryDecision {
     pub evidence: FileRef,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BoundaryFinding {
     pub left_scene: String,
     pub right_scene: String,
@@ -494,6 +494,11 @@ pub(crate) fn verify_timestamps_with_inputs(
         .context("master timestamps missing")?;
     let (mut video, mut audio) = (0u64, 0u64);
     for frame in frames {
+        // Complete selected movies can retain timed text. Subtitle events are
+        // not decoded picture/audio samples and have no best-effort AV clock.
+        if frame["media_type"] == "subtitle" {
+            continue;
+        }
         let time = frame["best_effort_timestamp_time"]
             .as_str()
             .context("frame timestamp missing")?

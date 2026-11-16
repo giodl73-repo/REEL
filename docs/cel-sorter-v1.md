@@ -33,8 +33,9 @@ Verification/copy reads are capped to declared bytes plus one; a growing source
 cannot bypass the budget. Failure may leave an incomplete new export directory,
 never a successful session or automatic cleanup of that directory.
 
-Serve the resulting folder through an explicitly requested local range-capable
-server. Drag cards, use up/down buttons, edit holds, substitute an already-bound
+Serve the resulting folder through the explicitly launched
+[shared Rust editor host](editor-host-v1.md), which supports media ranges.
+Drag cards, use up/down buttons, edit holds, substitute an already-bound
 image or remove a card. Playback uses the edited holds and the unchanged song.
 Fit holds to the full song before saving. Browser drafts persist locally; Save
 downloads a versioned `reel.cel-sorter-edit` request, including notes and exact input

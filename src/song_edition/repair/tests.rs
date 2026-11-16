@@ -94,6 +94,68 @@ fn hand_computed_mask_and_fades_preserve_every_outside_bit_and_original_evidence
     assert!(materialize(&admission, &recipe, &candidates, &output).is_err());
 }
 #[test]
+fn explicit_context_indexes_raw_audio_without_expanding_the_replacement_mask() {
+    let f = fixture();
+    let (admission, recipe_path, candidates_path, mut recipe) = inputs(&f);
+    recipe["patches"][0]["context"] = json!({"start_frame":1000,"end_frame":6000});
+    recipe["patches"][0]["fade_frames"] = json!(0);
+    save(&recipe_path, &recipe);
+    let mut candidates: Value = packet::parse(&fs::read(&candidates_path).unwrap()).unwrap();
+    candidates["recipe"] = serde_json::to_value(pin(&fs::read(&recipe_path).unwrap())).unwrap();
+    save(&candidates_path, &candidates);
+    let output = f.dir.path().join("explicit-context");
+    // A legacy full-source candidate cannot masquerade as the shorter context.
+    assert!(materialize(&admission, &recipe_path, &candidates_path, &output).is_err());
+    assert!(!output.exists());
+    let mut samples = Vec::new();
+    for frame in 0..5000 {
+        let value = frame as f32 / 8000.0;
+        samples.extend([value, -value]);
+    }
+    let raw = wave::encode(&samples, 8000, 2).unwrap();
+    let raw_path = PathBuf::from(candidates["patches"][0]["path"].as_str().unwrap());
+    fs::write(raw_path, &raw).unwrap();
+    candidates["patches"][0]["object"] = serde_json::to_value(pin(&raw)).unwrap();
+    save(&candidates_path, &candidates);
+    materialize(&admission, &recipe_path, &candidates_path, &output).unwrap();
+    check(&admission, &recipe_path, &candidates_path, &output).unwrap();
+    let source = wave::decode(&fs::read(f.file("recording")).unwrap()).unwrap();
+    let actual = wave::decode(&fs::read(output.join("recording.wav")).unwrap()).unwrap();
+    for frame in 0..8000 {
+        for channel in 0..2 {
+            let expected = if (2000..5000).contains(&frame) {
+                samples[(frame - 1000) * 2 + channel]
+            } else {
+                source.samples[frame * 2 + channel]
+            };
+            assert_eq!(
+                actual.samples[frame * 2 + channel].to_bits(),
+                expected.to_bits()
+            );
+        }
+    }
+}
+#[test]
+fn invalid_explicit_contexts_refuse_without_creating_output() {
+    for context in [
+        json!({"start_frame":2001,"end_frame":6000}),
+        json!({"start_frame":1000,"end_frame":4999}),
+        json!({"start_frame":0,"end_frame":8001}),
+        json!({"start_frame":0}),
+        json!({"start_frame":0,"end_frame":8000,"extra":true}),
+        json!({"start_frame":-1,"end_frame":8000}),
+    ] {
+        let f = fixture();
+        let (admission, recipe_path, candidates, mut recipe) = inputs(&f);
+        recipe["patches"][0]["context"] = context;
+        save(&recipe_path, &recipe);
+        let output = f.dir.path().join("invalid-context");
+        assert!(plan(&admission, &recipe_path).is_err());
+        assert!(materialize(&admission, &recipe_path, &candidates, &output).is_err());
+        assert!(!output.exists());
+    }
+}
+#[test]
 fn invalid_clock_provenance_masks_and_words_refuse_without_output() {
     for mutation in 0..11 {
         let f = fixture();

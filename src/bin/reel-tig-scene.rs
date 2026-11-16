@@ -2,10 +2,11 @@
 use anyhow::{Result, anyhow, bail};
 use clap::{Parser, Subcommand};
 use reel::{
+    media_runtime::{Bindings, BoundPrograms},
     scene_delivery,
     tig_inputs::{Profile, Source, read_job, read_reference},
 };
-use std::{path::PathBuf, process::ExitCode};
+use std::{fs::File, io::Read, path::PathBuf, process::ExitCode};
 
 #[derive(Parser)]
 #[command(
@@ -14,6 +15,9 @@ use std::{path::PathBuf, process::ExitCode};
 struct Args {
     #[arg(long)]
     profile: PathBuf,
+    /// Exact host/FFmpeg/FFprobe bindings for render-audio and check-audio.
+    #[arg(long)]
+    audio_runtime: Option<PathBuf>,
     #[command(subcommand)]
     command: Operation,
 }
@@ -58,8 +62,35 @@ enum Operation {
         reference: PathBuf,
     },
 }
+fn bind_audio_runtime(args: &Args) -> Result<Option<BoundPrograms>> {
+    let Some(path) = &args.audio_runtime else {
+        return Ok(None);
+    };
+    if !matches!(
+        &args.command,
+        Operation::RenderAudio { .. } | Operation::CheckAudio { .. }
+    ) {
+        bail!("audio runtime is supported only for render-audio and check-audio");
+    }
+    let mut bytes = Vec::new();
+    File::open(path)
+        .map_err(|_| anyhow!("cannot open explicit audio runtime"))?
+        .take(65_537)
+        .read_to_end(&mut bytes)
+        .map_err(|_| anyhow!("cannot read explicit audio runtime"))?;
+    if bytes.len() > 65_536 {
+        bail!("explicit audio runtime exceeds metadata budget");
+    }
+    let bindings: Bindings =
+        serde_json::from_slice(&bytes).map_err(|_| anyhow!("invalid explicit audio runtime"))?;
+    Ok(Some(
+        BoundPrograms::bind(&bindings).map_err(|_| anyhow!("explicit audio runtime refused"))?,
+    ))
+}
+
 fn run() -> Result<()> {
     let args = Args::parse();
+    let audio_runtime = bind_audio_runtime(&args)?;
     if let Operation::PlanRetained { request } = &args.command {
         let request = reel::tig_retained_presentation::Request::read(request)?;
         let mut source = Source::open(Profile::read(&args.profile)?)?;
@@ -132,15 +163,33 @@ fn run() -> Result<()> {
         Operation::Render { output, .. } => serde_json::to_value(
             scene_delivery::render_with_inputs(&job_path, &inputs, &output)?,
         )?,
-        Operation::RenderAudio { output, .. } => serde_json::to_value(
-            scene_delivery::render_audio_with_inputs(&job_path, &inputs, &output)?,
-        )?,
+        Operation::RenderAudio { output, .. } => {
+            let receipt = if let Some(programs) = &audio_runtime {
+                scene_delivery::render_audio_with_inputs(
+                    &job_path,
+                    &programs.with_inputs(&inputs),
+                    &output,
+                )?
+            } else {
+                scene_delivery::render_audio_with_inputs(&job_path, &inputs, &output)?
+            };
+            serde_json::to_value(receipt)?
+        }
         Operation::Check { output, .. } => serde_json::to_value(
             scene_delivery::check_with_inputs(&job_path, &inputs, &output)?,
         )?,
-        Operation::CheckAudio { output, .. } => serde_json::to_value(
-            scene_delivery::check_audio_with_inputs(&job_path, &inputs, &output)?,
-        )?,
+        Operation::CheckAudio { output, .. } => {
+            let receipt = if let Some(programs) = &audio_runtime {
+                scene_delivery::check_audio_with_inputs(
+                    &job_path,
+                    &programs.with_inputs(&inputs),
+                    &output,
+                )?
+            } else {
+                scene_delivery::check_audio_with_inputs(&job_path, &inputs, &output)?
+            };
+            serde_json::to_value(receipt)?
+        }
         Operation::Compare {
             output, reference, ..
         } => {
@@ -170,15 +219,18 @@ fn run() -> Result<()> {
             )?)?
         }
     };
-    println!(
-        "{}",
-        serde_json::json!({"schema":"reel.tig-scene-result.experimental-1","source_checkpoint":inputs.checkpoint(),"input_names":inputs.names(),"verified_objects":inputs.objects(),"complete_semantic_coverage":false,"result":result})
-    );
+    let mut report = serde_json::json!({"schema":"reel.tig-scene-result.experimental-1","source_checkpoint":inputs.checkpoint(),"input_names":inputs.names(),"verified_objects":inputs.objects(),"complete_semantic_coverage":false,"result":result});
+    if let Some(programs) = &audio_runtime {
+        report["declared_runtime"] = serde_json::from_slice(programs.manifest_bytes())?;
+        report["declared_runtime_identity"] = serde_json::to_value(programs.identity())?;
+    }
+    println!("{report}");
     if comparison && result["equal"] != true {
         bail!("decoded media comparison differs");
     }
     Ok(())
 }
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -186,5 +238,48 @@ fn main() -> ExitCode {
             eprintln!("{error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unrelated_operation_refuses_runtime_before_reading_files() {
+        let args = Args::try_parse_from([
+            "reel-tig-scene",
+            "--profile",
+            "missing-profile",
+            "--audio-runtime",
+            "missing-runtime",
+            "plan",
+            "missing-job",
+        ])
+        .unwrap();
+        let error = bind_audio_runtime(&args).err().unwrap();
+        assert!(error.to_string().contains("supported only"));
+    }
+
+    #[test]
+    fn oversized_audio_runtime_refuses_before_binding_or_output() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("runtime.json");
+        let output = temp.path().join("new-output");
+        std::fs::write(&path, vec![b' '; 65_537]).unwrap();
+        let args = Args::try_parse_from([
+            "reel-tig-scene",
+            "--profile",
+            "missing-profile",
+            "--audio-runtime",
+            path.to_str().unwrap(),
+            "render-audio",
+            "missing-job",
+            output.to_str().unwrap(),
+        ])
+        .unwrap();
+        let error = bind_audio_runtime(&args).err().unwrap();
+        assert!(error.to_string().contains("metadata budget"));
+        assert!(!output.exists());
     }
 }

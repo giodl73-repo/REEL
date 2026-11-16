@@ -70,13 +70,13 @@ fn delivery_candidate(private_review: bool) {
             .unwrap()
     };
     let host = ByteIdentity::observe_file(&std::env::current_exe().unwrap()).unwrap();
-    let programs = BoundPrograms::bind(&Bindings {
+    let runtime = Bindings {
         host,
         ffmpeg: file(locate("ffmpeg")),
         ffprobe: file(locate("ffprobe")),
         dependencies: Default::default(),
-    })
-    .unwrap();
+    };
+    let programs = BoundPrograms::bind(&runtime).unwrap();
     let mut source = f.source();
     if private_review {
         admit_review(&f, &source, &mut request);
@@ -276,6 +276,13 @@ fn delivery_candidate(private_review: bool) {
         assert_eq!(
             captured["context"],
             serde_json::to_value(managed_context.selection()).unwrap()
+        );
+        crate::retained_delivery_check::exercise_other_producer(
+            f.root(),
+            &captured,
+            &candidate,
+            &output,
+            &runtime,
         );
         native_cli::exercise_delivery(
             f.root(),

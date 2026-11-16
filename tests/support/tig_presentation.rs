@@ -1,6 +1,6 @@
 use super::*;
 
-fn presentation_fixture(alias: bool) -> (Fixture, reel::tig_scene::Request) {
+pub(super) fn presentation_fixture(alias: bool) -> (Fixture, reel::tig_scene::Request) {
     let (mut f, mut request) = native_scene_fixture();
     let root = f.root();
     let load = |path: &str| -> Value {
@@ -67,7 +67,7 @@ fn presentation_fixture(alias: bool) -> (Fixture, reel::tig_scene::Request) {
     f.profile["commit"] = json!(git(root, &["rev-parse", "HEAD"]));
     (f, request)
 }
-fn replace_receipt(f: &mut Fixture, update: impl FnOnce(&mut Value)) -> Object {
+pub(super) fn replace_receipt(f: &mut Fixture, update: impl FnOnce(&mut Value)) -> Object {
     let path = f.root().join("records/presentation-receipt.tig");
     let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     let mut value: Value = serde_json::from_slice(

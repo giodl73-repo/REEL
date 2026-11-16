@@ -220,6 +220,46 @@ hashes:
 }
 ```
 
+### Independently clocked chapter overlays
+
+A narrated scene can retain an independently authored chapter title using the
+optional `presentation_overlay` declaration in its compile manifest. The compiler
+copies this declaration into the build manifest:
+
+```json
+{
+  "scene": "authoring/chapter-overlay/scene.json",
+  "attachment_id": "chapter-dated",
+  "title_id": "chapter-dated-title",
+  "reason": "Selected chapter title over the first prose picture"
+}
+```
+
+The source is an existing native `reel.scene-authoring.v1` presentation-only
+scene, ready for private build, with a distinct scene ID and no spoken cues or
+picture events. It must name the same episode, source authority, chapter template
+and content as the canonical target invocation (excluding its delivery-only ASS
+and receipt maps). Its placement is exactly
+`{"mode":"overlay-on-target-scene-start","target_scene_id":"…","target_picture_slot_id":"…"}`;
+the picture slot must be the first materialized event in the requested language.
+A supplied source font binding must agree with the canonical invocation; an
+omitted one leaves the canonical selected font authoritative.
+
+The selected template receipt names the presentation source scene and language.
+Its source-text, ASS hash and byte count, template and definition must match the
+canonical scoped selections. A positive independent sample clock must convert
+exactly to target samples and fit inside the existing narration duration. For
+example, 400 samples at 100 Hz can overlay a longer scene at 44,100 Hz. The
+attachment spans the existing scene; ASS events determine its visible interval.
+Compilation adds no title tail or narration samples. Attachment/title IDs and
+reason are explicit so a retained delivery's identity can be reproduced.
+
+The source and receipt are each limited to 64 KiB. Missing or mismatched context
+refuses; omitting the declaration retains the existing same-clock presentation
+rules. The compile receipt hashes the source and overlay compiler module. The
+scene builder verifies this context, selected layers, delivery identity and span.
+These are technical checks and confer no creative approval.
+
 For multiple scenes, `resolve-language` writes one small file per scene and
 language. A `reel.scene-build-index.v1` lists its project root and each node's
 build manifest, resolved-language file and selected semantic-delivery file.
@@ -362,3 +402,71 @@ hash-verified cache object and joins the selected delivery closure. Unused keys,
 missing/stale evidence, empty reasons and out-of-scene placement reject before
 delivery output. The generated native job retains source/gain/semantic anchors
 and carries explicit channel/placement intent to the shared scene mixer.
+
+## Dialogue profiles for retained deliveries
+
+`reel-scene-authoring compile-retained-dialogue-gains <metadata-root> <request.json>`
+applies source-bound dialogue gains to a retained semantic delivery without
+recompiling its scene identities or opening primary media. Use a request with
+schema `reel.retained-dialogue-gain-compile.v1`, hash/byte-pinned `semantic`,
+`production` and `profile` file references, and a new relative `output_dir`.
+The semantic descriptor supplies the exact job reference; that job supplies
+the contract and production digest. Every path stays in the metadata root.
+
+The profile has schema `reel.dialogue-gain-profile.v1` and
+`dialogue_gain_by_cue`, using the native `{source_sha256, gain_db}` entries.
+Gains are absolute saved dB values. Each entry must uniquely identify a D cue
+and its matching production narration or dialogue source. All D cues, including
+unlisted cues, must match their production source/gain metadata before output.
+Unlisted cues remain unchanged.
+Missing, ambiguous, wrong-source, non-D, nonfinite and out-of-range entries fail.
+The existing native gain range remains unchanged; this does not authorize a
+producer to increase its own policy limits.
+
+The compiler validates the baseline and candidate through native semantic
+selection and cue-clock compilation. It preserves the complete contract bytes,
+graph selection, stable attachment identities, picture/font/presentation sources,
+offsets, fades and all other job/production values. Only declared gains and
+derived production/job references change. The new bundle mirrors the input
+control paths, retains the exact profile and emits `compile-receipt.json`.
+Existing output directories are refused. Identical inputs replay deterministically.
+No runtime adoption, rendering, cache setup, deletion or human approval follows
+from this metadata compilation.
+
+### Explicit producer-source reconciliation
+
+If an already consumed semantic job names the selected recording but its
+production metadata still names an older take, the gain compiler refuses the
+whole bundle. Use the separate
+`reel-scene-authoring reconcile-retained-dialogue-sources <metadata-root> <request.json>`
+step to correct that bookkeeping before applying a gain profile.
+
+The request uses the same pinned semantic/production/profile file references
+and new output directory, with schema `reel.retained-dialogue-source-reconcile.v1`.
+Its profile has schema `reel.dialogue-source-reconciliation-profile.v1` and
+`source_repairs_by_cue`. Each entry supplies `expected_production_source`,
+`source_sha256`, `replacement_source` and a nonempty `reason`.
+The old source must match literally, the SHA must match the unique selected
+D cue, and the replacement must be the canonical hash locator or that selected
+job's own hash-bearing source locator. Already coherent cues cannot be rewritten
+as a cosmetic normalization. Role metadata must already match.
+
+When producer saved-gain bookkeeping differs from the gain already used by the
+retained job, explicitly declare `baseline_gain_repairs_by_cue` in the same
+profile. Each entry requires `expected_production_gain_db` (the effective old
+gain; an absent field means zero), `source_sha256`, `retained_gain_db` and a
+nonempty `reason`. The retained gain must match the uniquely selected D cue
+exactly, without a tolerance or rounding, and must be finite within +/-60 dB.
+The old gain must match the pinned producer record. A coherent gain cannot be
+rewritten. For a gain-only bookkeeping repair, use an empty
+`source_repairs_by_cue` map; no source string changes are implied.
+
+The native command repairs only the declared producer source strings and saved
+gain bookkeeping. Existing source-only profiles keep their previous behavior. It
+then requires every D cue to be coherent, including unlisted cues, before
+emitting a distinct bundle. All job audio/picture/font fields, gains, offsets,
+fades, graph selections and original contract bytes remain unchanged; only
+derived metadata hashes advance. The receipt has schema
+`reel.retained-dialogue-source-reconcile-receipt.v1`. A gain profile is a separate
+subsequent operation. Neither step reads, recasts or reselects primary media,
+and neither grants voice, creative or publication approval.

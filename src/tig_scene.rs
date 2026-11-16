@@ -65,9 +65,15 @@ pub struct Controls {
     pub policy: String,
     pub profile: String,
     pub template_receipt: Option<String>,
+    /// Exact admitted control slot containing a native presentation-only scene.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presentation_overlay: Option<Box<scene_delivery_compile::TargetedPresentation>>,
 }
 impl Request {
     pub(crate) fn validate(&self) -> Result<()> {
+        if let Some(overlay) = &self.controls.presentation_overlay {
+            overlay.validate()?;
+        }
         if self.schema != SCHEMA
             || self.primary_definitions.is_empty()
             || self.primary_definitions.len() > 256
@@ -208,6 +214,13 @@ fn production_profiles(source: &Source, request: &Request) -> Result<Vec<Profile
     ]
     .into_iter()
     .chain(request.controls.template_receipt.iter())
+    .chain(
+        request
+            .controls
+            .presentation_overlay
+            .iter()
+            .map(|value| &value.scene),
+    )
     .filter(|slot| !controls.ids.contains_key(slot.as_str()))
     .cloned()
     .collect();
@@ -596,7 +609,15 @@ fn read_source(source: &mut Source, request: &Request) -> Result<NativeState> {
         ("episode.json", &request.controls.episode),
         ("policy.json", &request.controls.policy),
         ("profile.json", &request.controls.profile),
-    ] {
+    ]
+    .into_iter()
+    .chain(
+        request
+            .controls
+            .presentation_overlay
+            .iter()
+            .map(|value| ("presentation-source.json", &value.scene)),
+    ) {
         let control = control_catalog.materialize(source, &parent, slot, &mut total)?;
         controls.insert(name, control.bytes);
         if let Some(origin) = control.authored {
@@ -702,7 +723,15 @@ fn derive_scope(
         &request.controls.episode,
         &request.controls.policy,
         &request.controls.profile,
-    ] {
+    ]
+    .into_iter()
+    .chain(
+        request
+            .controls
+            .presentation_overlay
+            .iter()
+            .map(|value| &value.scene),
+    ) {
         if let Some(id) = control_catalog.ids.get(slot) {
             language_roots.insert(id.clone());
         }
@@ -875,7 +904,12 @@ fn compile_with_scope(
     if let Some(bytes) = template {
         budget.write_bytes(output, "template-receipt.json", &bytes)?;
     }
-    let manifest = json!({"schema":"reel.scene-delivery-compile.v1","catalog":"catalog.json","episode":"episode.json","scene":"scene.json","policy":"policy.json", "season_bindings":"season-bindings.json","episode_bindings":"episode-bindings.json","scene_bindings":"scene-bindings.json","graph":"graph.json","pointer":"pointer.json","alignment_paths":"alignment-paths.json","profile":"profile.json","language":request.language,"delivery_id":request.delivery_id,"delivery_title":request.delivery_title,"output_dir":"delivery","template_receipt":template_path});
+    let mut manifest = json!({"schema":"reel.scene-delivery-compile.v1","catalog":"catalog.json","episode":"episode.json","scene":"scene.json","policy":"policy.json", "season_bindings":"season-bindings.json","episode_bindings":"episode-bindings.json","scene_bindings":"scene-bindings.json","graph":"graph.json","pointer":"pointer.json","alignment_paths":"alignment-paths.json","profile":"profile.json","language":request.language,"delivery_id":request.delivery_id,"delivery_title":request.delivery_title,"output_dir":"delivery","template_receipt":template_path});
+    if let Some(overlay) = &request.controls.presentation_overlay {
+        let mut overlay = overlay.clone();
+        overlay.scene = "presentation-source.json".into();
+        manifest["presentation_overlay"] = json!(overlay);
+    }
     let compile: CompileManifest = serde_json::from_value(manifest.clone())?;
     budget.compact(output, "compile.json", &manifest)?;
     let declared_inputs = required.as_ref().map(|required| {

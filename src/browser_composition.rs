@@ -48,6 +48,37 @@ pub struct BrowserCompositionManifest {
     /// ordinary WAV padding/trimming remains unchanged when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio_window: Option<PcmWindow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lossless_master: Option<LosslessMaster>,
+}
+
+/// Opt-in FFV1/YUV444/PCM24 master. Anchors are source sample positions:
+/// pickup, three ordered entrances, and phrase endpoint.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LosslessMaster {
+    pub source_clock: HashedAsset,
+    pub anchor_ids: [String; 5],
+    pub sample_rate: u32,
+    pub source_samples: u64,
+    pub start_sample: u64,
+    pub end_sample: u64,
+    pub anchors: [u64; 5],
+    pub selected_pcm_sha256: String,
+    pub envelope_pcm_sha256: String,
+    #[serde(default)]
+    pub fade_in_samples: u64,
+    #[serde(default)]
+    pub fade_out_samples: u64,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MasterVerification {
+    pub encoding: String,
+    pub selected_pcm_sha256: String,
+    pub envelope_pcm_sha256: String,
+    pub samples: u64,
+    pub decoded_yuv444_sha256: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -73,6 +104,15 @@ pub struct RenderOptions {
     pub browser: PathBuf,
     pub output: PathBuf,
     pub clean_picture: bool,
+    /// Keep the exact captured PNG for a single-frame composition.
+    pub poster: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Poster {
+    pub path: String,
+    pub sha256: String,
+    pub bytes: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -109,6 +149,10 @@ pub struct BrowserCompositionReport {
     pub output_bytes: u64,
     pub output_duration_ms: u64,
     pub audio_streams: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub master_verification: Option<MasterVerification>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poster: Option<Poster>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -180,6 +224,40 @@ pub(crate) fn validate_manifest(
         {
             bail!("browser composition dynamic region is outside the delivery canvas");
         }
+    }
+    if let Some(m) = &manifest.lossless_master {
+        let samples = m
+            .end_sample
+            .checked_sub(m.start_sample)
+            .context("invalid master sample window")?;
+        if manifest.audio.is_none()
+            || ![44100, 48000].contains(&m.sample_rate)
+            || m.end_sample > m.source_samples
+            || samples == 0
+            || u128::from(samples) * u128::from(manifest.fps)
+                != u128::from(manifest.frame_count) * u128::from(m.sample_rate)
+            || m.anchors[0] != m.start_sample
+            || m.anchors[4] != m.end_sample
+            || m.anchors.windows(2).any(|w| w[0] >= w[1])
+            || m.fade_in_samples
+                .checked_add(m.fade_out_samples)
+                .is_none_or(|n| n > samples)
+        {
+            bail!("invalid lossless master source clock, anchors, or envelope");
+        }
+        let anchors = anchor_frames(m, manifest.fps)?;
+        if anchors.windows(2).any(|w| w[0] >= w[1]) {
+            bail!("collapsed master frame anchors");
+        }
+        if !manifest
+            .assets
+            .iter()
+            .any(|a| a.path == m.source_clock.path && a.sha256 == m.source_clock.sha256)
+        {
+            bail!("source clock must be a declared hashed asset");
+        }
+        validate_hash(&m.selected_pcm_sha256)?;
+        validate_hash(&m.envelope_pcm_sha256)?;
     }
     let mut paths = BTreeSet::new();
     for asset in std::iter::once(&manifest.source)
@@ -382,6 +460,232 @@ fn fraction(value: &str) -> Result<f64> {
     Ok(numerator.parse::<f64>()? / denominator)
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BoundSourceClock {
+    schema: String,
+    source_sha256: String,
+    sample_rate: u32,
+    total_samples: u64,
+    evidence: crate::scene_delivery::FileRef,
+    anchors: Vec<BoundAnchor>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BoundAnchor {
+    id: String,
+    sample: u64,
+}
+fn verify_source_clock(root: &Path, manifest: &BrowserCompositionManifest) -> Result<()> {
+    let Some(m) = &manifest.lossless_master else {
+        return Ok(());
+    };
+    let path = root
+        .join(relative_path(&m.source_clock.path)?)
+        .canonicalize()?;
+    if !path.starts_with(root)
+        || fs::metadata(&path)?.len() > 4 * 1024 * 1024
+        || production::sha256_path(&path)? != m.source_clock.sha256
+    {
+        bail!("source clock changed or escapes root");
+    }
+    let c: BoundSourceClock = serde_json::from_slice(&fs::read(path)?)?;
+    if c.schema != "reel.presentation-source-clock.v1"
+        || c.source_sha256
+            != manifest
+                .audio
+                .as_ref()
+                .context("clock audio missing")?
+                .sha256
+        || c.sample_rate != m.sample_rate
+        || c.total_samples != m.source_samples
+    {
+        bail!("source clock differs from selected original audio");
+    }
+    let mut anchors = std::collections::BTreeMap::new();
+    for a in c.anchors {
+        if a.id.trim().is_empty()
+            || a.sample > c.total_samples
+            || anchors.insert(a.id, a.sample).is_some()
+        {
+            bail!("invalid source clock anchor");
+        }
+    }
+    let mut used = BTreeSet::new();
+    for (id, sample) in m.anchor_ids.iter().zip(m.anchors) {
+        if !used.insert(id) || anchors.get(id) != Some(&sample) {
+            bail!("selected source clock anchor differs");
+        }
+    }
+    let evidence_path = c
+        .evidence
+        .path
+        .to_str()
+        .context("clock evidence path must be UTF8")?;
+    if !manifest
+        .assets
+        .iter()
+        .any(|a| a.path == evidence_path && a.sha256 == c.evidence.sha256)
+    {
+        bail!("clock evidence must be a declared hashed asset");
+    }
+    crate::scene_delivery::checked_file(root, &c.evidence)?;
+    Ok(())
+}
+fn anchor_frames(m: &LosslessMaster, fps: u32) -> Result<Vec<u64>> {
+    m.anchors
+        .iter()
+        .map(|s| {
+            u64::try_from(
+                (u128::from(
+                    s.checked_sub(m.start_sample)
+                        .context("anchor before window")?,
+                ) * u128::from(fps)
+                    + u128::from(m.sample_rate) / 2)
+                    / u128::from(m.sample_rate),
+            )
+            .context("anchor frame overflow")
+        })
+        .collect()
+}
+fn decode_hash(path: &Path, format: &str, fps: Option<u32>) -> Result<String> {
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args(["-v", "error"]);
+    if let Some(fps) = fps {
+        cmd.args(["-framerate", &fps.to_string()]);
+    }
+    cmd.arg("-i").arg(path);
+    if format == "s24le" {
+        cmd.args(["-map", "0:a:0", "-c:a", "pcm_s24le", "-f", "s24le"]);
+    } else {
+        cmd.args(["-map", "0:v:0", "-pix_fmt", format, "-f", "rawvideo"]);
+    }
+    let mut child = cmd.arg("-").stdout(Stdio::piped()).spawn()?;
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    let mut input = child.stdout.take().context("decode output missing")?;
+    let mut buffer = [0; 65536];
+    loop {
+        let n = input.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        hash.update(&buffer[..n]);
+    }
+    if !child.wait()?.success() {
+        bail!("master identity decode failed");
+    }
+    Ok(hash
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>())
+}
+fn full_probe(path: &Path) -> Result<Value> {
+    // This path prepares PCM with the native FFmpeg executable. Probe it through
+    // the same native transport, without the older adapter's Windows WSL route.
+    let output = crate::episode_conform::command("ffprobe")
+        .args(["-v", "error", "-show_streams", "-of", "json"])
+        .arg(path)
+        .output()?;
+    if !output.status.success() {
+        bail!(
+            "browser master ffprobe failed ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(serde_json::from_slice(&output.stdout)?)
+}
+fn prepare_master_pcm(destination: &Path, source: &Path, m: &LosslessMaster) -> Result<PathBuf> {
+    let probe = full_probe(source)?;
+    let streams = probe["streams"]
+        .as_array()
+        .context("source audio streams missing")?;
+    if streams.len() != 1
+        || streams[0]["codec_type"] != "audio"
+        || streams[0]["sample_rate"]
+            .as_str()
+            .and_then(|v| v.parse::<u32>().ok())
+            != Some(m.sample_rate)
+        || streams[0]["channels"] != 2
+        || !matches!(
+            streams[0]["codec_name"].as_str(),
+            Some("pcm_s16le" | "pcm_s24le" | "pcm_s32le" | "pcm_f32le" | "pcm_f64le")
+        )
+    {
+        bail!("master requires original stereo PCM at declared rate");
+    }
+    let raw = tempfile::NamedTempFile::new()?;
+    if !Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-i"])
+        .arg(source)
+        .args(["-map", "0:a:0", "-c:a", "pcm_s24le", "-f", "s24le"])
+        .arg(raw.path())
+        .status()?
+        .success()
+    {
+        bail!("master PCM normalization failed");
+    }
+    if fs::metadata(raw.path())?.len()
+        != m.source_samples
+            .checked_mul(6)
+            .context("source PCM overflow")?
+    {
+        bail!("source PCM sample count changed");
+    }
+    use std::io::{Seek, SeekFrom};
+    let mut file = fs::File::open(raw.path())?;
+    file.seek(SeekFrom::Start(
+        m.start_sample
+            .checked_mul(6)
+            .context("PCM offset overflow")?,
+    ))?;
+    let count = m.end_sample - m.start_sample;
+    let mut writer = std::io::BufWriter::new(fs::File::create(destination)?);
+    use sha2::{Digest, Sha256};
+    let mut selected = Sha256::new();
+    let mut envelope = Sha256::new();
+    for i in 0..count {
+        let mut sample = [0u8; 6];
+        file.read_exact(&mut sample)?;
+        selected.update(sample);
+        let gain = if i < m.fade_in_samples {
+            Some((i, m.fade_in_samples))
+        } else if i >= count - m.fade_out_samples {
+            Some((count - 1 - i, m.fade_out_samples))
+        } else {
+            None
+        };
+        if let Some((n, d)) = gain {
+            for c in [0, 3] {
+                let v = i32::from_le_bytes([0, sample[c], sample[c + 1], sample[c + 2]]) >> 8;
+                let v = (i128::from(v) * i128::from(n) / i128::from(d)) as i32;
+                sample[c..c + 3].copy_from_slice(&v.to_le_bytes()[..3]);
+            }
+        }
+        envelope.update(sample);
+        writer.write_all(&sample)?;
+    }
+    if selected
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>()
+        != m.selected_pcm_sha256
+        || envelope
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+            != m.envelope_pcm_sha256
+    {
+        bail!("selected/enveloped PCM identity differs");
+    }
+    writer.flush()?;
+    Ok(destination.into())
+}
+
 fn verify_video_probe(probe: &Value, manifest: &BrowserCompositionManifest) -> Result<usize> {
     let streams = probe["streams"]
         .as_array()
@@ -390,13 +694,31 @@ fn verify_video_probe(probe: &Value, manifest: &BrowserCompositionManifest) -> R
         .iter()
         .find(|stream| stream["codec_type"] == "video")
         .ok_or_else(|| anyhow!("browser composition has no video stream"))?;
+    if manifest.lossless_master.is_some()
+        && (video["codec_name"] != "ffv1"
+            || video["pix_fmt"] != "yuv444p"
+            || streams
+                .iter()
+                .find(|s| s["codec_type"] == "audio")
+                .is_none_or(|a| {
+                    a["codec_name"] != "pcm_s24le"
+                        || a["channels"] != 2
+                        || a["sample_rate"]
+                            .as_str()
+                            .and_then(|v| v.parse::<u32>().ok())
+                            != manifest.lossless_master.as_ref().map(|m| m.sample_rate)
+                }))
+    {
+        bail!("invalid lossless master codecs");
+    }
     if video["width"].as_u64() != Some(u64::from(manifest.width))
         || video["height"].as_u64() != Some(u64::from(manifest.height))
         || fraction(video["avg_frame_rate"].as_str().unwrap_or("0/1"))? != f64::from(manifest.fps)
-        || video["nb_frames"]
-            .as_str()
-            .and_then(|value| value.parse::<u64>().ok())
-            != Some(manifest.frame_count)
+        || (manifest.lossless_master.is_none()
+            && video["nb_frames"]
+                .as_str()
+                .and_then(|value| value.parse::<u64>().ok())
+                != Some(manifest.frame_count))
     {
         bail!("browser composition output has dropped, duplicated, or non-CFR video frames");
     }
@@ -406,12 +728,99 @@ fn verify_video_probe(probe: &Value, manifest: &BrowserCompositionManifest) -> R
         .count())
 }
 
+fn validate_poster(options: &RenderOptions, frame_count: u64) -> Result<()> {
+    let Some(poster) = &options.poster else {
+        return Ok(());
+    };
+    if frame_count != 1 {
+        bail!("a lossless poster requires exactly one composition frame");
+    }
+    if poster.exists()
+        || poster
+            .extension()
+            .is_none_or(|ext| !ext.eq_ignore_ascii_case("png"))
+    {
+        bail!("poster must be a new PNG file");
+    }
+    let parent = |path: &Path| {
+        path.parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."))
+            .to_path_buf()
+    };
+    let output_parent = parent(&options.output);
+    let poster_parent = parent(poster);
+    fs::create_dir_all(&output_parent)?;
+    fs::create_dir_all(&poster_parent)?;
+    if output_parent.canonicalize()? != poster_parent.canonicalize()? {
+        bail!("poster must be beside the composition video and receipt");
+    }
+    Ok(())
+}
+
+fn publish_poster(source: &Path, destination: &Path) -> Result<Poster> {
+    let parent = destination
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut temp = Builder::new()
+        .prefix(".reel-poster-")
+        .suffix(".png")
+        .tempfile_in(parent)?;
+    std::io::copy(&mut fs::File::open(source)?, &mut temp)?;
+    temp.persist_noclobber(destination)?;
+    Ok(Poster {
+        path: destination
+            .file_name()
+            .and_then(|n| n.to_str())
+            .context("non-UTF8 poster name")?
+            .into(),
+        sha256: production::sha256_path(destination)?,
+        bytes: fs::metadata(destination)?.len(),
+    })
+}
+
+fn verify_poster(poster: &Poster, frame: &FrameLineage, root: &Path) -> Result<()> {
+    let relative = relative_path(&poster.path)?;
+    if relative.components().count() != 1
+        || relative
+            .extension()
+            .is_none_or(|ext| !ext.eq_ignore_ascii_case("png"))
+    {
+        bail!("poster must be a sibling file");
+    }
+    let root = if root.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        root
+    }
+    .canonicalize()?;
+    let path = root.join(relative).canonicalize()?;
+    if !path.starts_with(&root) {
+        bail!("poster escapes its receipt directory");
+    }
+    if poster.sha256 != frame.sha256
+        || poster.bytes != fs::metadata(&path)?.len()
+        || production::sha256_path(path)? != poster.sha256
+    {
+        bail!("poster differs from the exact captured composition frame");
+    }
+    Ok(())
+}
+
 pub fn render(options: &RenderOptions) -> Result<BrowserCompositionReport> {
+    if options.output.exists() {
+        bail!("browser composition output must be a new file");
+    }
     let manifest_path = options.manifest.canonicalize()?;
     let manifest = load_manifest(&manifest_path)?;
+    if manifest.lossless_master.is_some() && manifest.source_clock.is_some() {
+        bail!("choose one explicit browser source-clock declaration");
+    }
     if manifest.audio_window.is_some() {
         bail!("exact PCM windows require the bounded native browser renderer");
     }
+    validate_poster(options, manifest.frame_count)?;
     let root = options.asset_root.canonicalize()?;
     let stage = TempDir::new()?;
     let mut inputs = vec![InputLineage {
@@ -440,6 +849,7 @@ pub fn render(options: &RenderOptions) -> Result<BrowserCompositionReport> {
         inputs.push(lineage.clone());
     }
 
+    verify_source_clock(&root, &manifest)?;
     let browser = options.browser.canonicalize()?;
     let port = free_port()?;
     let profile = TempDir::new()?;
@@ -491,16 +901,22 @@ pub fn render(options: &RenderOptions) -> Result<BrowserCompositionReport> {
         json!({"urls": ["http://*", "https://*", "ws://*", "wss://*"]}),
     )?;
     id += 1;
-    let source_clock = source_clock_event(&manifest, |asset, limit| {
-        let mut raw = Vec::new();
-        fs::File::open(stage.path().join(relative_path(&asset.path)?))?
-            .take(limit + 1)
-            .read_to_end(&mut raw)?;
-        if raw.len() as u64 > limit {
-            bail!("browser clock metadata exceeds bound");
-        }
-        Ok(raw)
-    })?;
+    let source_clock = if let Some(master) = &manifest.lossless_master {
+        Some(
+            json!({"sampleRate":master.sample_rate,"startSample":master.start_sample,"endSample":master.end_sample,"anchors":master.anchors,"anchorFrames":anchor_frames(master,manifest.fps)?}),
+        )
+    } else {
+        source_clock_event(&manifest, |asset, limit| {
+            let mut raw = Vec::new();
+            fs::File::open(stage.path().join(relative_path(&asset.path)?))?
+                .take(limit + 1)
+                .read_to_end(&mut raw)?;
+            if raw.len() as u64 > limit {
+                bail!("browser clock metadata exceeds bound");
+            }
+            Ok(raw)
+        })?
+    };
     let clock = frame_clock_with_source(manifest.fps, source_clock.as_ref());
     cdp(
         &mut socket,
@@ -547,6 +963,18 @@ pub fn render(options: &RenderOptions) -> Result<BrowserCompositionReport> {
             bail!("browser composition did not finish loading");
         }
         thread::sleep(Duration::from_millis(20));
+    }
+    if manifest.lossless_master.is_some() {
+        let fonts = cdp(
+            &mut socket,
+            id,
+            "Runtime.evaluate",
+            json!({"expression":"document.fonts.ready.then(()=>Array.from(document.fonts).every(f=>f.status==='loaded'))","returnByValue":true,"awaitPromise":true}),
+        )?;
+        id += 1;
+        if fonts["result"]["value"] != true {
+            bail!("master fonts did not load");
+        }
     }
     if options.clean_picture {
         cdp(
@@ -613,12 +1041,27 @@ pub fn render(options: &RenderOptions) -> Result<BrowserCompositionReport> {
         bail!("pixels outside declared dynamic regions changed between browser frames");
     }
     drop(socket);
+    let master_pcm = manifest
+        .lossless_master
+        .as_ref()
+        .map(|m| {
+            prepare_master_pcm(
+                &stage.path().join("master.pcm"),
+                &audio.as_ref().context("master audio missing")?.0,
+                m,
+            )
+        })
+        .transpose()?;
     let duration_seconds = manifest.frame_count as f64 / f64::from(manifest.fps);
     let output_parent = options.output.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(output_parent)?;
     let temp = Builder::new()
         .prefix(".reel-browser-")
-        .suffix(".mp4")
+        .suffix(if manifest.lossless_master.is_some() {
+            ".mkv"
+        } else {
+            ".mp4"
+        })
         .tempfile_in(output_parent)?
         .into_temp_path();
     let adapter = FfmpegAdapter;
@@ -632,9 +1075,22 @@ pub fn render(options: &RenderOptions) -> Result<BrowserCompositionReport> {
         adapter.path_argument(&frames_dir.join("frame-%08d.png"))?,
     ]);
     if let Some((audio_path, _)) = &audio {
-        args.extend(["-i".into(), adapter.path_argument(audio_path)?]);
+        if let Some(m) = &manifest.lossless_master {
+            args.extend([
+                "-f".into(),
+                "s24le".into(),
+                "-ar".into(),
+                m.sample_rate.to_string(),
+                "-ac".into(),
+                "2".into(),
+            ]);
+        }
+        args.extend([
+            "-i".into(),
+            adapter.path_argument(master_pcm.as_ref().unwrap_or(audio_path))?,
+        ]);
     }
-    if audio.is_some() {
+    if audio.is_some() && manifest.lossless_master.is_none() {
         args.extend([
             "-filter_complex".into(),
             format!("[1:a:0]apad,atrim=duration={duration_seconds:.9}[a]"),
@@ -649,17 +1105,42 @@ pub fn render(options: &RenderOptions) -> Result<BrowserCompositionReport> {
         manifest.frame_count.to_string(),
         "-r".into(),
         manifest.fps.to_string(),
-        "-c:v".into(),
-        "libx264".into(),
-        "-pix_fmt".into(),
-        "yuv420p".into(),
-        "-crf".into(),
-        "18".into(),
-        "-movflags".into(),
-        "+faststart".into(),
     ]);
-    if audio.is_some() {
-        args.extend(["-c:a".into(), "aac".into(), "-b:a".into(), "192k".into()]);
+    if manifest.lossless_master.is_some() {
+        args.extend(
+            [
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                "-c:v",
+                "ffv1",
+                "-level",
+                "3",
+                "-pix_fmt",
+                "yuv444p",
+                "-c:a",
+                "pcm_s24le",
+            ]
+            .map(str::to_string),
+        );
+    } else {
+        args.extend(
+            [
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-crf",
+                "18",
+                "-movflags",
+                "+faststart",
+            ]
+            .map(str::to_string),
+        );
+        if audio.is_some() {
+            args.extend(["-c:a", "aac", "-b:a", "192k"].map(str::to_string));
+        }
     }
     args.push(adapter.path_argument(&temp)?);
     adapter.run_ffmpeg(&args, &[])?;
@@ -669,12 +1150,52 @@ pub fn render(options: &RenderOptions) -> Result<BrowserCompositionReport> {
     if output_duration_ms != duration_ms {
         bail!("browser composition output duration is not exact");
     }
-    let probe: Value = serde_json::from_str(&adapter.ffprobe_json(&temp)?)?;
+    let probe: Value = if manifest.lossless_master.is_some() {
+        full_probe(&temp)?
+    } else {
+        serde_json::from_str(&adapter.ffprobe_json(&temp)?)?
+    };
     let audio_streams = verify_video_probe(&probe, &manifest)?;
     if audio_streams != usize::from(audio.is_some()) {
         bail!("browser composition audio stream binding failed");
     }
+    let master_verification = if let Some(m) = &manifest.lossless_master {
+        let expected = decode_hash(
+            &frames_dir.join("frame-%08d.png"),
+            "yuv444p",
+            Some(manifest.fps),
+        )?;
+        let actual = decode_hash(&temp, "yuv444p", None)?;
+        if expected != actual || decode_hash(&temp, "s24le", None)? != m.envelope_pcm_sha256 {
+            bail!("lossless master decoded pixel/PCM identity failed");
+        }
+        Some(MasterVerification {
+            encoding: "ffv1-yuv444p-pcm-s24le.v1".into(),
+            selected_pcm_sha256: m.selected_pcm_sha256.clone(),
+            envelope_pcm_sha256: m.envelope_pcm_sha256.clone(),
+            samples: m.end_sample - m.start_sample,
+            decoded_yuv444_sha256: actual,
+        })
+    } else {
+        None
+    };
     temp.persist(&options.output)?;
+    let poster = options
+        .poster
+        .as_ref()
+        .map(|path| publish_poster(&frames_dir.join("frame-00000000.png"), path))
+        .transpose()?;
+    if let Some(poster) = &poster {
+        verify_poster(
+            poster,
+            &frames[0],
+            options
+                .output
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new(".")),
+        )?;
+    }
     let report = BrowserCompositionReport {
         schema: ARTIFACT_SCHEMA.into(),
         manifest_sha256: production::sha256_path(&manifest_path)?,
@@ -693,6 +1214,8 @@ pub fn render(options: &RenderOptions) -> Result<BrowserCompositionReport> {
         output_bytes: fs::metadata(&options.output)?.len(),
         output_duration_ms,
         audio_streams,
+        master_verification,
+        poster,
     };
     fs::write(
         options.output.with_extension("browser-artifacts.json"),
@@ -726,6 +1249,16 @@ pub fn check(
             bail!("browser composition frame sequence is dropped, duplicated, or reordered");
         }
     }
+    if let Some(poster) = &report.poster {
+        if report.frame_count != 1 {
+            bail!("poster requires a single-frame composition receipt");
+        }
+        verify_poster(
+            poster,
+            &report.frames[0],
+            report_path.parent().unwrap_or(Path::new(".")),
+        )?;
+    }
     if !manifest.dynamic_regions.is_empty()
         && report
             .frames
@@ -749,6 +1282,7 @@ pub fn check(
             bail!("browser composition input changed after render");
         }
     }
+    verify_source_clock(&root, &manifest)?;
     let output_hash = production::sha256_path(video)?;
     if output_hash != report.output_sha256 {
         bail!("browser composition video hash mismatch");
@@ -758,8 +1292,36 @@ pub fn check(
     if duration_ms != report.duration_ms || duration_ms != report.output_duration_ms {
         bail!("browser composition duration is not exact");
     }
-    let probe: Value = serde_json::from_str(&FfmpegAdapter.ffprobe_json(video)?)?;
+    let probe: Value = if manifest.lossless_master.is_some() {
+        full_probe(video)?
+    } else {
+        serde_json::from_str(&FfmpegAdapter.ffprobe_json(video)?)?
+    };
     let audio_streams = verify_video_probe(&probe, &manifest)?;
+    match (&manifest.lossless_master, &report.master_verification) {
+        (None, None) => {}
+        (Some(m), Some(e)) => {
+            let scratch = TempDir::new()?;
+            let source = root.join(relative_path(
+                &manifest
+                    .audio
+                    .as_ref()
+                    .context("master audio missing")?
+                    .path,
+            )?);
+            prepare_master_pcm(&scratch.path().join("selected.pcm"), &source, m)?;
+            if e.encoding != "ffv1-yuv444p-pcm-s24le.v1"
+                || e.selected_pcm_sha256 != m.selected_pcm_sha256
+                || e.envelope_pcm_sha256 != m.envelope_pcm_sha256
+                || e.samples != m.end_sample - m.start_sample
+                || decode_hash(video, "s24le", None)? != e.envelope_pcm_sha256
+                || decode_hash(video, "yuv444p", None)? != e.decoded_yuv444_sha256
+            {
+                bail!("master verification changed");
+            }
+        }
+        _ => bail!("master verification mode mismatch"),
+    }
     if audio_streams != report.audio_streams {
         bail!("browser composition audio stream count changed");
     }
@@ -776,6 +1338,355 @@ pub fn check(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn poster_preserves_capture_bytes_and_rejects_tampering_and_overwrite() {
+        let dir = TempDir::new().unwrap();
+        let source = dir.path().join("capture.png");
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([18, 86, 52, 255]))
+            .save(&source)
+            .unwrap();
+        let destination = dir.path().join("poster.png");
+        let poster = publish_poster(&source, &destination).unwrap();
+        let frame = FrameLineage {
+            index: 0,
+            sha256: production::sha256_path(&source).unwrap(),
+            sequence_sha256: String::new(),
+            stable_background_sha256: None,
+        };
+        verify_poster(&poster, &frame, dir.path()).unwrap();
+        assert_eq!(fs::read(&source).unwrap(), fs::read(&destination).unwrap());
+        assert!(publish_poster(&source, &destination).is_err());
+        assert_eq!(fs::read(&source).unwrap(), fs::read(&destination).unwrap());
+        fs::write(&destination, b"tampered").unwrap();
+        assert!(verify_poster(&poster, &frame, dir.path()).is_err());
+        let escaped = Poster {
+            path: "../capture.png".into(),
+            ..poster
+        };
+        assert!(verify_poster(&escaped, &frame, dir.path()).is_err());
+    }
+
+    #[test]
+    fn poster_preflight_rejects_animation_existing_files_and_other_directories() {
+        let dir = TempDir::new().unwrap();
+        let mut options = RenderOptions {
+            manifest: "unused".into(),
+            asset_root: dir.path().into(),
+            browser: "unused".into(),
+            output: dir.path().join("composition.mp4"),
+            clean_picture: true,
+            poster: Some(dir.path().join("poster.png")),
+        };
+        assert!(validate_poster(&options, 2).is_err());
+        validate_poster(&options, 1).unwrap();
+        fs::write(options.poster.as_ref().unwrap(), b"keep existing bytes").unwrap();
+        assert!(validate_poster(&options, 1).is_err());
+        options.poster = Some(dir.path().join("other/poster.png"));
+        assert!(validate_poster(&options, 1).is_err());
+        assert_eq!(
+            fs::read(dir.path().join("poster.png")).unwrap(),
+            b"keep existing bytes"
+        );
+    }
+
+    #[test]
+    fn poster_check_accepts_a_receipt_filename_in_the_current_directory() {
+        let file = Builder::new()
+            .prefix(".reel-poster-test-")
+            .suffix(".png")
+            .tempfile_in(".")
+            .unwrap();
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([18, 86, 52, 255]))
+            .save(file.path())
+            .unwrap();
+        let sha256 = production::sha256_path(file.path()).unwrap();
+        let poster = Poster {
+            path: file.path().file_name().unwrap().to_str().unwrap().into(),
+            sha256: sha256.clone(),
+            bytes: fs::metadata(file.path()).unwrap().len(),
+        };
+        let frame = FrameLineage {
+            index: 0,
+            sha256,
+            sequence_sha256: String::new(),
+            stable_background_sha256: None,
+        };
+        verify_poster(&poster, &frame, Path::new("")).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires local Chromium-compatible browser and FFmpeg"]
+    fn single_frame_browser_poster_is_the_exact_capture_and_is_rechecked() {
+        let edge = PathBuf::from(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe");
+        assert!(
+            edge.is_file(),
+            "explicit browser integration test needs Edge"
+        );
+        let dir = TempDir::new().unwrap();
+        let html = dir.path().join("poster.html");
+        fs::write(
+            &html,
+            "<!doctype html><style>html,body{margin:0;background:#125634}</style>",
+        )
+        .unwrap();
+        let manifest = BrowserCompositionManifest {
+            schema: MANIFEST_SCHEMA.into(),
+            source: HashedAsset {
+                path: "poster.html".into(),
+                sha256: production::sha256_path(&html).unwrap(),
+            },
+            assets: vec![],
+            width: 160,
+            height: 90,
+            fps: 25,
+            frame_count: 1,
+            dynamic_regions: vec![],
+            audio: None,
+            source_clock: None,
+            audio_window: None,
+            lossless_master: None,
+        };
+        let manifest_path = dir.path().join("composition.json");
+        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let video = dir.path().join("composition.mp4");
+        let png = dir.path().join("composition.png");
+        let report = render(&RenderOptions {
+            manifest: manifest_path.clone(),
+            asset_root: dir.path().into(),
+            browser: edge,
+            output: video.clone(),
+            clean_picture: true,
+            poster: Some(png.clone()),
+        })
+        .unwrap();
+        let poster = report.poster.unwrap();
+        assert_eq!(poster.sha256, report.frames[0].sha256);
+        assert_eq!(
+            image::open(&png).unwrap().to_rgba8().get_pixel(5, 5).0,
+            [18, 86, 52, 255]
+        );
+        let receipt = video.with_extension("browser-artifacts.json");
+        assert!(
+            check(&receipt, &manifest_path, dir.path(), &video)
+                .unwrap()
+                .passed
+        );
+        fs::write(&png, b"not the captured frame").unwrap();
+        assert!(check(&receipt, &manifest_path, dir.path(), &video).is_err());
+    }
+    #[test]
+    #[ignore = "requires local Chromium-compatible browser and FFmpeg"]
+    fn ffv1_master_keeps_three_overlapping_cels_and_exact_pcm_window() {
+        let dir = TempDir::new().unwrap();
+        let html = dir.path().join("title.html");
+        fs::copy(r"C:\Windows\Fonts\arial.ttf", dir.path().join("title.ttf")).unwrap();
+        fs::write(&html,r##"<!doctype html><style>@font-face{font-family:Title;src:url(title.ttf)}html,body{margin:0;background:#faf7ed;font-family:Title}svg{position:absolute}</style><svg width="160" height="90"><rect id="a" x="10" y="10" width="60" height="60" fill="red"/><rect id="b" x="40" y="20" width="60" height="60" fill="green"/><rect id="c" x="70" y="30" width="60" height="60" fill="blue"/><text id="t" x="20" y="45">Editable title</text></svg><script>addEventListener('reelframe',e=>{const k=e.detail.sourceClock.anchorFrames;a.style.opacity=e.detail.frame>=k[1]?1:0;b.style.opacity=e.detail.frame>=k[2]?1:0;c.style.opacity=e.detail.frame>=k[3]?1:0;b.setAttribute('x',40+e.detail.frame);c.setAttribute('y',30-e.detail.frame);t.style.opacity=e.detail.frame<e.detail.sourceClock.anchorFrames[1]?0:1})</script>"##).unwrap();
+        let wav = dir.path().join("theme.wav");
+        assert!(
+            Command::new("ffmpeg")
+                .args([
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=440:sample_rate=48000:duration=0.3",
+                    "-ac",
+                    "2",
+                    "-c:a",
+                    "pcm_s24le"
+                ])
+                .arg(&wav)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let raw = dir.path().join("theme.pcm");
+        assert!(
+            Command::new("ffmpeg")
+                .args(["-v", "error", "-i"])
+                .arg(&wav)
+                .args(["-f", "s24le"])
+                .arg(&raw)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let bytes = fs::read(&raw).unwrap();
+        let selected = &bytes[1600 * 6..11200 * 6];
+        let hash = production::sha256_bytes(selected);
+        fs::write(
+            dir.path().join("clock-evidence.json"),
+            br#"{"fixture":"producer sample selections; no human approval"}"#,
+        )
+        .unwrap();
+        let evidence = fs::read(dir.path().join("clock-evidence.json")).unwrap();
+        fs::write(dir.path().join("clock.json"),serde_json::to_vec(&json!({"schema":"reel.presentation-source-clock.v1","source_sha256":production::sha256_path(&wav).unwrap(),"sample_rate":48000,"total_samples":14400,"evidence":{"path":"clock-evidence.json","sha256":production::sha256_bytes(&evidence),"bytes":evidence.len()},"anchors":[{"id":"pickup","sample":1600},{"id":"h1","sample":3200},{"id":"h2","sample":4800},{"id":"h3","sample":8000},{"id":"endpoint","sample":11200}]})).unwrap()).unwrap();
+        let clock_asset = HashedAsset {
+            path: "clock.json".into(),
+            sha256: production::sha256_path(dir.path().join("clock.json")).unwrap(),
+        };
+        let manifest = BrowserCompositionManifest {
+            schema: MANIFEST_SCHEMA.into(),
+            source: HashedAsset {
+                path: "title.html".into(),
+                sha256: production::sha256_path(&html).unwrap(),
+            },
+            assets: vec![
+                HashedAsset {
+                    path: "title.ttf".into(),
+                    sha256: production::sha256_path(dir.path().join("title.ttf")).unwrap(),
+                },
+                clock_asset.clone(),
+                HashedAsset {
+                    path: "clock-evidence.json".into(),
+                    sha256: production::sha256_bytes(&evidence),
+                },
+            ],
+            width: 160,
+            height: 90,
+            fps: 30,
+            frame_count: 6,
+            dynamic_regions: vec![],
+            audio: Some(HashedAsset {
+                path: "theme.wav".into(),
+                sha256: production::sha256_path(&wav).unwrap(),
+            }),
+            source_clock: None,
+            audio_window: None,
+            lossless_master: Some(LosslessMaster {
+                source_clock: clock_asset,
+                anchor_ids: ["pickup", "h1", "h2", "h3", "endpoint"].map(str::to_owned),
+                sample_rate: 48000,
+                source_samples: 14400,
+                start_sample: 1600,
+                end_sample: 11200,
+                anchors: [1600, 3200, 4800, 8000, 11200],
+                selected_pcm_sha256: hash.clone(),
+                envelope_pcm_sha256: hash,
+                fade_in_samples: 0,
+                fade_out_samples: 0,
+            }),
+        };
+        let m = dir.path().join("manifest.json");
+        fs::write(&m, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let output = dir.path().join("title.mkv");
+        let report = render(&RenderOptions {
+            manifest: m.clone(),
+            asset_root: dir.path().into(),
+            browser: PathBuf::from(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
+            output: output.clone(),
+            clean_picture: true,
+            poster: None,
+        })
+        .unwrap();
+        assert_eq!(report.master_verification.as_ref().unwrap().samples, 9600);
+        assert_ne!(report.frames[0].sha256, report.frames[1].sha256);
+        assert!(
+            check(
+                &output.with_extension("browser-artifacts.json"),
+                &m,
+                dir.path(),
+                &output
+            )
+            .unwrap()
+            .passed
+        );
+        let mut bad = manifest.clone();
+        bad.lossless_master.as_mut().unwrap().anchors[2] = 3200;
+        fs::write(&m, serde_json::to_vec(&bad).unwrap()).unwrap();
+        assert!(load_manifest(&m).is_err());
+        bad = manifest.clone();
+        bad.lossless_master.as_mut().unwrap().end_sample -= 1;
+        fs::write(&m, serde_json::to_vec(&bad).unwrap()).unwrap();
+        assert!(load_manifest(&m).is_err());
+        bad = manifest;
+        bad.lossless_master.as_mut().unwrap().envelope_pcm_sha256 = "0".repeat(64);
+        assert!(
+            prepare_master_pcm(
+                &dir.path().join("bad.pcm"),
+                &wav,
+                bad.lossless_master.as_ref().unwrap()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn linear_master_envelope_has_exact_pcm_samples_and_rejects_wrong_length() {
+        let dir = TempDir::new().unwrap();
+        let input = dir.path().join("constant.pcm");
+        let mut bytes = vec![];
+        for _ in 0..4 {
+            for _ in 0..2 {
+                bytes.extend_from_slice(&1000i32.to_le_bytes()[..3]);
+            }
+        }
+        fs::write(&input, &bytes).unwrap();
+        let wav = dir.path().join("constant.wav");
+        assert!(
+            Command::new("ffmpeg")
+                .args([
+                    "-v", "error", "-f", "s24le", "-ar", "48000", "-ac", "2", "-i"
+                ])
+                .arg(&input)
+                .args(["-c:a", "pcm_s24le"])
+                .arg(&wav)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let mut expected = vec![];
+        for value in [0i32, 500, 500, 0] {
+            for _ in 0..2 {
+                expected.extend_from_slice(&value.to_le_bytes()[..3]);
+            }
+        }
+        let mut m = LosslessMaster {
+            source_clock: HashedAsset {
+                path: "unused".into(),
+                sha256: "0".repeat(64),
+            },
+            anchor_ids: ["pickup", "h1", "h2", "h3", "endpoint"].map(str::to_owned),
+            sample_rate: 48000,
+            source_samples: 4,
+            start_sample: 0,
+            end_sample: 4,
+            anchors: [0, 1, 2, 3, 4],
+            selected_pcm_sha256: production::sha256_bytes(&bytes),
+            envelope_pcm_sha256: production::sha256_bytes(&expected),
+            fade_in_samples: 2,
+            fade_out_samples: 2,
+        };
+        let output = dir.path().join("envelope.pcm");
+        prepare_master_pcm(&output, &wav, &m).unwrap();
+        assert_eq!(fs::read(output).unwrap(), expected);
+        m.source_samples = 5;
+        assert!(prepare_master_pcm(&dir.path().join("wrong.pcm"), &wav, &m).is_err());
+    }
+
+    #[test]
+    fn source_sample_anchors_use_nearest_rational_frames() {
+        let m = LosslessMaster {
+            source_clock: HashedAsset {
+                path: "clock.json".into(),
+                sha256: "0".repeat(64),
+            },
+            anchor_ids: ["pickup", "h1", "h2", "h3", "endpoint"].map(str::to_owned),
+            sample_rate: 48000,
+            source_samples: 9600,
+            start_sample: 0,
+            end_sample: 9600,
+            anchors: [0, 800, 2400, 5600, 9600],
+            selected_pcm_sha256: "0".repeat(64),
+            envelope_pcm_sha256: "0".repeat(64),
+            fade_in_samples: 0,
+            fade_out_samples: 0,
+        };
+        assert_eq!(anchor_frames(&m, 30).unwrap(), vec![0, 1, 2, 4, 6]);
+    }
+
     #[test]
     fn rejects_parent_paths_and_external_references() {
         assert!(relative_path("../outside.svg").is_err());
@@ -850,6 +1761,7 @@ mod tests {
             audio: None,
             source_clock: None,
             audio_window: None,
+            lossless_master: None,
         };
         let manifest_path = dir.path().join("composition.yaml");
         fs::write(&manifest_path, serde_yaml::to_string(&manifest).unwrap()).unwrap();
@@ -860,6 +1772,7 @@ mod tests {
             browser: edge,
             output: output.clone(),
             clean_picture: true,
+            poster: None,
         })
         .unwrap();
         assert_ne!(report.frames[0].sha256, report.frames[1].sha256);

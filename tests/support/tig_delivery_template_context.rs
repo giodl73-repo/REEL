@@ -1,5 +1,7 @@
 use super::*;
 use tig_core::tree::{MemoryNodes, TreeLimits};
+#[path = "tig_delivery_inspection.rs"]
+mod inspection;
 #[path = "tig_delivery_template_render.rs"]
 mod render;
 

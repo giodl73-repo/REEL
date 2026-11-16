@@ -48,8 +48,9 @@ primary bytes.
 The synthetic integration test renders through the actual guarded Tig reader,
 checks the generated receipt and independently compares the master to its
 primary inputs. Metadata never needs filesystem materialization. This is a
-producer test, not yet a managed presentation job, parent-composition admission,
-complete runtime/font isolation, creative approval or permission to evict inputs.
+producer test. That fixture alone does not establish managed job enrollment,
+parent-composition admission, complete runtime/font isolation, creative approval
+or permission to evict inputs.
 
 `build_with_control_files` accepts an exact manifest pin and separate metadata
 and primary-input providers. Template, timing, source clock and clock evidence
@@ -359,6 +360,13 @@ selection separate, and is not a complete environment reproducibility claim.
 
 ## Local qualification
 
+The counts and timings below record historical implementation slices, not a
+current installed-runtime inventory. For current managed execution, see
+[presentation materialization](tig-presentation-materialization.md) and
+[episode jobs](tig-episode-jobs.md). Current source qualification is visible in
+[CI](https://github.com/giodl73-repo/REEL/actions/workflows/ci.yml); private-project
+adoption remains separate.
+
 The intake extension passes all 16 presentation-source tests, including eight
 intake cases. They cover bounded metadata-only import, shared identity reuse,
 unadmitted identity collisions, record size limits, raw decimal measurement
@@ -377,14 +385,14 @@ All five still-sequence integration cases pass, including source-clock cache
 production and decoded parity with originals unavailable (4.35 seconds total).
 The library passes 213 tests with nine explicitly ignored (2.61 seconds),
 including the timing tests moved with their kernel. Locked all-target,
-all-feature Clippy passes with warnings denied. Hosted qualification is pending;
-these checks do not qualify actual project adoption or installed runtime pins.
+all-feature Clippy passes with warnings denied. These historical checks do not
+qualify actual project adoption or installed runtime pins.
 
 The retained-output extension also passes with the output directory renamed
 offline, missing retained subjects and contradictory movie pins. Its final run
 passes all five integration cases (15.93 seconds), 213 library tests with nine
 explicitly ignored (13.50 seconds), and locked all-target/all-feature Clippy with
-warnings denied. Hosted qualification remains pending.
+warnings denied.
 
 The final primary-reference extension passes all five integration cases (12.16
 seconds), including silent/audio-envelope/source-clock geometry cases, cache-only

@@ -1,8 +1,13 @@
 # Production manifest contract
 
-The production manifest is the ordered handoff from REEL design work to a future
-renderer. It should be detailed enough for a human or agent to render a draft,
-but neutral enough that the renderer can be selected later.
+The production manifest is the ordered handoff from REEL design work to
+validation, timing conform, planning and supported render commands. It retains
+renderer-neutral declarations alongside the implemented FFmpeg route.
+
+This page documents the original manifest family. For the current entry points,
+see [getting started](../docs/getting-started.md) and
+[architecture](../docs/architecture.md). Native scene controls and Tig instances
+are separate contracts, not alternate filenames for this manifest.
 
 Use YAML for production manifests. New integrations should start from the
 sanitized v0.2 planning fixture at

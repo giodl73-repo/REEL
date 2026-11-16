@@ -7,8 +7,10 @@ use tig_store::existing::{
     ByteSource, Profile as ByteProfile, ReadCache, RequiredProtection, VerifiedRead,
 };
 mod browser;
+mod delivery;
 mod revalidation;
 pub use browser::{compare_browser_retained, compare_browser_retained_with_failure_report};
+pub use delivery::check_retained_delivery;
 
 const SCHEMA: &str = "reel.tig-retained-comparison.experimental-1";
 const DERIVED_SCHEMA: &str = "reel.tig-retained-comparison.experimental-2";

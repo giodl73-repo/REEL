@@ -48,6 +48,86 @@ original source, and is recorded in geometry verification. Other range values
 refuse. Registration, non-executable parent planning and rendering share these
 clock/range scalar checks; metadata planning does not claim media verification.
 
+Long native jobs can use two bounded steps with the same checked source closure:
+
+```
+reel-episode-conform prepare conform.json --input-root . --asset-root . --output-dir prepared
+reel-episode-conform finish prepared --input-root . --asset-root . --output-dir out
+```
+
+When normalization itself exceeds one bounded step, a closed native job can
+declare multiple `prepare-batch` steps followed by assembly and finish:
+
+```
+reel-episode-conform prepare-batch conform.json --input-root . --asset-root . --output-dir prepared --max-segments 3
+# Repeat the same command ceil(segment_count / 3) times in the frozen job.
+reel-episode-conform assemble-preparation prepared --asset-root .
+reel-episode-conform finish prepared --input-root . --asset-root . --output-dir out
+```
+
+Each batch performs the existing upstream checks and normalizes only the next
+ordered group. It retains `normalization-progress.json` and verified generated
+media inside the same job workspace. Subsequent batches rehash every original
+input and retained intermediate and require the same manifest, closed job and
+validator/FFmpeg/FFprobe bytes. Completed media is reused without re-encoding.
+The progress record is explicitly incomplete: it has no assembled master,
+`prepared.json`, final receipt or delivery. Assembly rejects incomplete coverage;
+finish still performs all ordered decoded picture/PCM, timestamp, boundary and
+encoded-delivery checks. Existing one-step preparation remains unchanged.
+
+The steps keep the original per-step timeout and operation/storage limits.
+These are checkpoints within one frozen job, not a cross-job resume API.
+Default job retirement still applies on failure; preserving failed debugging
+scratch requires an explicit bounded retention decision and later disposal.
+
+Preparation requires a closed native job workspace (`job.json`). It verifies the
+declared input/tool/inline-file hashes, rejects undeclared files and links, runs
+the complete upstream/normalization checks, and retains its exact normalized
+segments and lossless assembly. `prepared.json` explicitly records that the full
+episode is still unverified. It is neither a final receipt nor creative approval.
+
+Finish rehashes every original input and retained intermediate, requires the same
+validator/FFmpeg/FFprobe bytes, and verifies the prepared order and clocks. It then
+performs the same complete ordered picture/PCM comparisons, timestamp/boundary
+checks, encoding and full encoded-delivery decode as ordinary `build`. The final
+receipt binds `preparation_sha256`; the exact preparation record is copied into
+the final output. Preparation sources remain unchanged. Both steps use the
+existing job limits; this mode does not extend a timeout or omit a check.
+
+An explicit `finish-consume-normalized` command uses the same arguments as
+`finish`. It requires preparation directly inside the same closed job workspace.
+After the complete ordered picture/PCM, timestamp and boundary checks succeed,
+it rehashes and retires only the exact generated `normalized-NNN.mkv`,
+`padded-NNN.mkv` and `held-NNN.mkv` files inside that preparation's temporary subdirectory, before
+compact encoding. Original inputs and the assembled master remain unchanged;
+ordinary `finish` continues to preserve all preparation sources. The final
+receipt records retired file/byte counts. A consumed preparation is one-shot;
+an encoding failure requires fresh preparation. This is temporary execution
+storage, not cache-object deletion, tiering, selection or creative approval.
+
+Preparation directories are owned job scratch. Reusing one after that scratch is
+discarded requires explicit retention of its referenced intermediate bytes; the
+final receipt alone does not claim that those temporary files remain available.
+
+Decoded picture checks use FFmpeg's SHA-256 hash muxer over packed raw video,
+with an independent raw-packet byte/frame counter. Ordered segment cuts count
+decoded frames rather than seeking timestamps. The SHA-256 values are identical
+to the historical raw-video pipe checks; short/extra frames remain errors.
+
+An optional `preassembled_master` FileRef supplies a read-only assembled
+candidate. REEL still validates every current source, compares every ordered
+decoded picture/audio segment, checks geometry/rates/timestamps, and fully decodes
+the final compact delivery. The supplied file is never renamed or deleted.
+Retaining a lossless output makes a separate copy.
+
+Preparation, programme parts and preassembled-master consumption use the
+standalone filesystem route in their declared workspace. Protected native
+input/output/control providers cannot opt into these filesystem shortcuts:
+conform refuses the combination before reading local primary media. Existing
+native provider-based assembly keeps its explicit tool bindings and full source
+checks. These standalone features require separate producer qualification before
+adoption by a managed project.
+
 `reel-episode-conform` builds one language-local lossless FFV1/PCM24 master from
 selected scene and presentation masters:
 
@@ -117,7 +197,7 @@ frame rate. To join different resolutions, declare an output size explicitly:
 
 This policy accepts square-pixel sources with the same aspect ratio as the
 target. It rejects cropping, stretching, non-square pixels, unsupported
-policies, and frame-rate changes. Dimensions must be 1–16384. Sources already
+policies, and implicit frame-rate changes. Dimensions must be 1–16384. Sources already
 at the target size are retained at that size. Other sources are scaled with
 Lanczos as part of lossless normalization; the declared transformation is
 independently decoded from the original and must match normalized picture
@@ -150,6 +230,15 @@ Normalized streams, the full master, and compact output must retain the declared
 matrix; the segment receipt preserves original color tags and records the
 assumption. This is a verified interpretation of untagged decoded content, not
 permission to relabel known color spaces or claim source color calibration.
+
+The independent `"assume_color_range_for_unspecified":"tv"` declaration can
+resolve an absent range tag to limited range. It accepts only `tv`, changes only
+an unknown tag, and preserves known range tags. Before normalization, the full
+original decoded RGB must match the explicitly declared interpretation exactly.
+If both matrix and range are declared, the combined interpretation is checked.
+The original tags and `assumed_color_range` remain in each affected segment's
+geometry receipt. This is a verified interpretation of existing displayed pixels,
+not color correction or permission to relabel a known full-range source.
 
 The receipt records the output policy and, for each segment, original and
 output dimensions, original decoded picture hash, whether scaling occurred,
@@ -222,3 +311,40 @@ delivery receipts it rechecks their complete REEL scene-delivery outputs. It
 does not rerun the authoring compiler, independently rebuild presentation
 masters, or prove asset-authority or human approval. Real episode promotion
 must retain those upstream gates.
+
+Long compact deliveries can divide native completion into three bounded steps,
+after `assemble-preparation` has issued the ordinary preparation:
+
+```text
+reel-episode-conform verify-consume-normalized prepared --asset-root .
+reel-episode-conform encode-verified prepared --asset-root .
+reel-episode-conform finish-encoded prepared --input-root . --asset-root . --output-dir out
+```
+
+The first step performs the existing complete ordered picture/PCM, timestamp
+and cut-boundary checks before consuming generated normalizations. It writes
+`prepared/verified-lossless/verification.json`, explicitly marking compact
+delivery pending. It issues no final receipt. The second step encodes the
+unchanged verified master and records its exact bytes in `encoding.json`;
+`full_decode_verified` remains false. Repeating an existing encoding is refused.
+The final step performs the existing fail-on-error full decode, decoded frame
+count, geometry/color, codec, audio sample-rate/channel, frame-rate and duration
+checks before publishing the ordinary `receipt.json` and `episode.mp4` into
+the new output directory. Lossless retention follows the selected profile.
+
+Every stage rehashes the preparation, declared source scope, native job,
+validator, FFmpeg/FFprobe and assembled master. Source, tool, clock, checkpoint
+or encoded-byte changes invalidate continuation. These checkpoints belong to
+one closed native-job workspace; they do not grant human approval or replace
+the final delivery receipt. The final output also includes
+`verified-lossless.json` and `encoding.json` for explicitly declared evidence
+retention. Existing `finish` and `finish-consume-normalized` keep their complete
+validation behavior. A preparation stays pinned to its original executable;
+adopting a new runtime requires a new recipe and preparation.
+
+Retained-source presentation normalization also converts encoded source audio to
+stereo PCM24 when the source already has the selected sample rate. A matching
+sample rate alone does not permit AAC or PCM16 stream-copy into the lossless
+intermediate. The original selected container remains unchanged; existing
+decoded picture/PCM identity, frame/sample counts and timestamp checks still
+apply before conform accepts the normalized segment.

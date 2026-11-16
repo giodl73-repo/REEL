@@ -140,6 +140,14 @@ parent record unchanged; prior Git views retain their own bindings. Sonic
 placement evidence uses protected exact input pins during compilation. Rendering
 subsequently prepares the whole job independently.
 
+For an independently clocked chapter title over narration, the optional
+`controls.presentation_overlay` declaration names the exact native source control
+slot in `scene` plus stable attachment/title IDs and reason. The projection is
+part of whole-scene and language requirements, retained provenance and archived
+replay. See [chapter overlay rules](scene-authoring-v1.md#independently-clocked-chapter-overlays)
+for source correspondence, receipt pins and clock limits. Its source never comes
+from an undeclared local path, and the scene's narration duration stays unchanged.
+
 The adapter creates no media cache, copies no primary media, runs no transfers,
 and changes no runtime binding. Compilation is not production approval or asset
 registration. Errors may leave a partial new metadata directory for diagnosis;
@@ -458,8 +466,9 @@ source provenance. Preparation/execution scratch cleanup belongs to the caller.
 Direct callers use `render_projected_with_programs` (or the explicit-output-set
 variant), with independently protected resources and held declared programs.
 Rendering still performs independent output checking before a candidate can
-produce a claim. The CLI's native mode is not implicitly switched; explicit CLI
-adoption is subsequent work. Neither path establishes complete environment,
+produce a claim. CLI modes are selected explicitly; see
+[bounded managed jobs](tig-job-runner.md) for compiled-context execution and
+recovery. Neither path establishes complete environment,
 global source/job coverage, approval or eviction authority. See the
 [projected managed job review](reviews/2026-10-27-tig-projected-managed-jobs.md).
 Generated primary-input correspondence is not yet verified by this adapter;
@@ -470,8 +479,8 @@ copied controls, generated native metadata and generic compiler contracts, with
 a4 MiB per-document limit. Serialization and raw writes refuse before creating
 the offending file; valid document bytes retain their existing representation.
 Partial preparation remains caller-owned. These limits do not reserve physical
-disk space or account for filesystem allocation overhead. CLI compiled-context
-adoption still requires capacity admission for its preparation passes. Generic
+disk space or account for filesystem allocation overhead. Managed compiled-context
+execution requires capacity admission for its preparation passes. Generic
 non-native compiler APIs retain their existing unbounded behavior. See the
 [preparation budget review](reviews/2026-10-27-tig-bounded-preparation.md).
 
@@ -515,8 +524,9 @@ capacity, workspace/scratch growth or byte availability, infer undeclared runtim
 dependencies, authenticate unsigned claims, establish independent retained custody
 or authorize cleanup/selection/delivery. Ambiguous persisted transitions keep
 their requirements and need exact owner recovery; there is no timeout reset.
-Native managed CLI adoption, global source/job coverage and storage convergence
-remain separate integration work.
+The [managed CLI](tig-job-runner.md) supplies explicit outer admission and
+execution. Global source/job coverage, project runtime adoption and storage
+convergence remain separate integration work.
 
 For generic trusted child jobs, the optional [Tig-backed bounded runner](tig-job-runner.md)
 reuses existing workspace admission, process containment and scratch retirement

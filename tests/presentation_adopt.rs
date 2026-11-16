@@ -37,6 +37,32 @@ fn selected_native_opening_preserves_exact_bytes_and_rechecks_timing() {
 }
 
 #[test]
+fn declared_lossless_h264_preserves_source_and_passes_episode_conform() {
+    opening_fixture_with_reset(
+        "libx264",
+        "yuv420p",
+        false,
+        false,
+        false,
+        false,
+        (false, None, Some("h264-lossless")),
+    );
+}
+
+#[test]
+fn declared_lossless_h264_preserves_an_exact_source_excerpt() {
+    opening_fixture_with_reset(
+        "libx264",
+        "yuv420p",
+        true,
+        false,
+        false,
+        false,
+        (false, None, Some("h264-lossless")),
+    );
+}
+
+#[test]
 fn retain_source_preserves_compressed_bytes_and_rejects_edits_or_substitution() {
     use reel::presentation_adopt;
     let temp = tempfile::tempdir().unwrap();
@@ -314,7 +340,7 @@ fn opening_fixture(
         gapped,
         audio_gap,
         repair,
-        (origin, None),
+        (origin, None, None),
     );
 }
 
@@ -325,9 +351,9 @@ fn opening_fixture_with_reset(
     gapped: bool,
     audio_gap: bool,
     repair: bool,
-    clock: (bool, Option<u32>),
+    clock: (bool, Option<u32>, Option<&str>),
 ) {
-    let (origin, reset_sample) = clock;
+    let (origin, reset_sample, lossless_encoding) = clock;
     let prerange_reset = reset_sample.is_some();
     let filter = if audio_gap {
         "pan=stereo|c0=c0|c1=c0,asetpts=PTS+if(gte(N\\,24000)\\,0.1/TB\\,0)".to_string()
@@ -441,6 +467,9 @@ fn opening_fixture_with_reset(
         "selection_evidence":reference(root,"legacy-receipt.json"),
         "evidence_hash_pointer":"/series_opening/cache_uri"
     });
+    if let Some(encoding) = lossless_encoding {
+        manifest["lossless_video_encoding"] = encoding.into();
+    }
     if excerpt {
         manifest["source_range"] = json!({"start_frame":12,"frame_count":24});
         manifest["evidence_range_pointer"] = "/source_range".into();
@@ -487,6 +516,55 @@ fn opening_fixture_with_reset(
     assert_eq!(receipt["samples"], if excerpt { 48000 } else { 96000 });
     assert_eq!(receipt["source_content_matches_lossless_master"], true);
     assert_eq!(receipt["publication"], "not-authorized");
+    if let Some(encoding) = lossless_encoding {
+        assert_eq!(receipt["lossless_video_encoding"], encoding);
+        let mut unbound_receipt = receipt.clone();
+        unbound_receipt
+            .as_object_mut()
+            .unwrap()
+            .remove("lossless_video_encoding");
+        write(
+            &root.join("unbound-encoding-receipt.json"),
+            &unbound_receipt,
+        );
+        assert!(
+            reel::presentation_adopt::check(
+                &root.join("manifest.json"),
+                root,
+                root,
+                &root.join("adopted/master.mkv"),
+                &root.join("unbound-encoding-receipt.json"),
+                root,
+            )
+            .is_err()
+        );
+        let mut unsupported = manifest.clone();
+        unsupported["lossless_video_encoding"] = "h264-lossy".into();
+        write(&root.join("unsupported-encoding.json"), &unsupported);
+        assert!(
+            reel::presentation_adopt::build(
+                &root.join("unsupported-encoding.json"),
+                root,
+                root,
+                &root.join("unsupported-encoding-output"),
+            )
+            .is_err()
+        );
+        assert!(!root.join("unsupported-encoding-output").exists());
+        let mut conflicting = manifest.clone();
+        conflicting["output_mode"] = "retain-source".into();
+        write(&root.join("conflicting-encoding.json"), &conflicting);
+        assert!(
+            reel::presentation_adopt::build(
+                &root.join("conflicting-encoding.json"),
+                root,
+                root,
+                &root.join("conflicting-encoding-output"),
+            )
+            .is_err()
+        );
+        assert!(!root.join("conflicting-encoding-output").exists());
+    }
     if origin {
         assert_eq!(
             receipt["audio_sample_window"]["audio_anchor_sample"],
@@ -1367,7 +1445,7 @@ fn decoded_origin_maps_a_prerange_audio_reset_to_local_samples() {
         false,
         false,
         true,
-        (true, Some(12000)),
+        (true, Some(12000), None),
     );
 }
 
@@ -1380,7 +1458,7 @@ fn decoded_origin_rejects_an_overlap_at_the_selected_anchor() {
         false,
         false,
         true,
-        (true, Some(28672)),
+        (true, Some(28672), None),
     );
 }
 
@@ -1393,6 +1471,6 @@ fn decoded_origin_rejects_a_reset_inside_the_selected_range() {
         false,
         false,
         true,
-        (true, Some(48000)),
+        (true, Some(48000), None),
     );
 }

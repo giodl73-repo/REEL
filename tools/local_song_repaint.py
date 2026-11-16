@@ -224,6 +224,7 @@ def validate_original_repair(request, context, rate, frames, channels):
         raise ValueError('Original canonical source missing')
     lines = [line for line in re.split('[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]',text) if line.strip()]
     previous = 0
+    conditioning_bytes = 0
     for patch in patches:
         for key in ['start_frame','end_frame','fade_frames','context_start_frame','context_end_frame']:
             if type(patch.get(key)) is not int:
@@ -231,8 +232,12 @@ def validate_original_repair(request, context, rate, frames, channels):
         start,end = patch['start_frame'],patch['end_frame']
         if not previous <= start < end <= frames or end-start > 30*rate or not 0 <= patch['fade_frames'] <= min(rate,(end-start-1)//2):
             raise ValueError('Original mask or fades differ')
-        if patch['context_start_frame'] != max(0,start-5*rate) or patch['context_end_frame'] != min(frames,end+5*rate):
+        context_start,context_end = patch['context_start_frame'],patch['context_end_frame']
+        if not 0 <= context_start <= start < end <= context_end <= frames:
             raise ValueError('Original neighboring music context differs')
+        conditioning_bytes += (context_end-context_start)*channels*4
+        if conditioning_bytes > 512*1024*1024:
+            raise ValueError('Original conditioning audio exceeds bound')
         selected = patch.get('source_lines')
         if not isinstance(selected,list) or len(selected) != 2 or any(type(n) is not int for n in selected):
             raise ValueError('Canonical line range required')

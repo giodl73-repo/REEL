@@ -15,6 +15,8 @@ struct Descriptor {
     schema: String,
     native: Language,
     compiler: Object,
+    #[serde(default)]
+    targeted_presentation_compiler: Option<Object>,
     adapter: Object,
     authoring: Digest,
     compiled_inputs: BTreeMap<String, Object>,
@@ -52,6 +54,8 @@ fn descriptor(
         || serde_json::to_value(&d.native.native.request)? != serde_json::to_value(request)?
         || d.native.native.binding_adapter_sha256.is_some()
             != d.native.native.control_adapter_sha256.is_some()
+        || d.targeted_presentation_compiler.is_some()
+            != request.controls.presentation_overlay.is_some()
         || d.compiled_inputs
             .keys()
             .map(String::as_str)
@@ -60,6 +64,7 @@ fn descriptor(
         || d.compiled_inputs
             .values()
             .chain([&d.compiler, &d.adapter])
+            .chain(d.targeted_presentation_compiler.iter())
             .any(|p| p.bytes == 0 || p.bytes > crate::tig_inputs::JOB_BYTES_MAX as u64)
         || operation.name != "reel.native-language.render.experimental-1"
         || operation.semantics != Object::from_bytes(SEMANTICS).sha256
@@ -108,7 +113,7 @@ pub(super) fn prepare(
     }
     tig_scene::compile_language_context(&mut source, request, output)?;
     check_contracts(&original.compiled_inputs, output)?;
-    let evidence = json!({
+    let mut evidence = json!({
         "schema":"reel.retained-contract-equivalence.experimental-1",
         "original_descriptor":Object::from_bytes(&raw),
         "original_compiler":original.compiler,"original_adapter":original.adapter,
@@ -123,6 +128,12 @@ pub(super) fn prepare(
         "original_claim_replayed":false,"production_claim":null,
         "current_production_currency":"not-asserted"
     });
+    if let Some(compiler) = original.targeted_presentation_compiler {
+        evidence["original_targeted_presentation_compiler"] = json!(compiler);
+        evidence["current_targeted_presentation_compiler"] = json!(Object::from_bytes(
+            include_bytes!("../../scene_delivery_compile/targeted_presentation.rs")
+        ));
+    }
     Ok((source, evidence))
 }
 
@@ -161,10 +172,15 @@ mod tests {
             "missing-input",
             "operation",
             "parameters",
+            "unexpected-overlay-compiler",
         ] {
             let mut value = original();
             match case {
                 "unknown" => value["unknown"] = json!(true),
+                "unexpected-overlay-compiler" => {
+                    value["targeted_presentation_compiler"] =
+                        json!(Object::from_bytes(b"undeclared overlay compiler"))
+                }
                 "schema" => value["native"]["schema"] = json!("future"),
                 "request" => value["native"]["native"]["request"]["language"] = json!("en"),
                 "partial-adapters" => {

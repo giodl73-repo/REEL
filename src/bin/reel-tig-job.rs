@@ -54,8 +54,14 @@ enum Operation {
         #[arg(long)]
         publish: bool,
     },
+    /// Rebuild original native audio and retain only an exact receipt-bound stem.
+    /// Does not open pictures, publish assets or assert a new scene production.
+    RecoverSceneAudio { profile: PathBuf, output: PathBuf },
     /// Compile a committed presentation source without media reads or writes.
     InspectPresentation { profile: PathBuf },
+    /// Read exact compiled episode controls from an admitted frozen metadata root.
+    /// Does not open primary media, execute programs or mutate the store.
+    InspectEpisodeControls { profile: PathBuf },
     /// Independently compare a selected presentation master with its primaries.
     /// This read-only observation does not adopt a managed job or publish media.
     ComparePresentation { profile: PathBuf },
@@ -76,6 +82,11 @@ enum Operation {
     },
     /// Recompile original controls and verify retained bytes; no production claim.
     RevalidateRetained { profile: PathBuf, output: PathBuf },
+    /// Reopen a frozen delivery source and fully check retained candidate outputs.
+    /// No render, execution attestation, owner transition or production claim.
+    CheckRetainedDelivery { profile: PathBuf, output: PathBuf },
+    /// Inspect exact compiled controls from a frozen delivery without primary media IO.
+    InspectDelivery { profile: PathBuf },
     /// Explicit one-time shared metadata/journal setup; never invoked by Run.
     Setup { profile: PathBuf, output: PathBuf },
     /// Check existing named stores against private trusted-minimum bindings.
@@ -148,10 +159,16 @@ fn main() -> ExitCode {
             };
             reel::tig_episode_cli::worker(&ticket, &expected)
         })(),
+        Operation::RecoverSceneAudio { profile, output } => {
+            reel::tig_scene_audio_recovery::run(&profile, &output)
+        }
         Operation::RecoverPcmWave { profile, publish } => {
             reel::tig_pcm_recovery::run(&profile, publish)
         }
         Operation::InspectPresentation { profile } => reel::tig_presentation_cli::inspect(&profile),
+        Operation::InspectEpisodeControls { profile } => {
+            reel::tig_native_job_cli::inspect_episode_controls(&profile)
+        }
         Operation::ComparePresentation { profile } => reel::tig_presentation_cli::compare(&profile),
         Operation::MaterializePresentation { profile, output } => {
             reel::tig_presentation_cli::materialize(&profile, &output)
@@ -161,6 +178,12 @@ fn main() -> ExitCode {
         }
         Operation::CompareRetained { profile, output } => {
             reel::tig_native_job_cli::compare_retained(&profile, &output)
+        }
+        Operation::CheckRetainedDelivery { profile, output } => {
+            reel::tig_native_job_cli::check_retained_delivery(&profile, &output)
+        }
+        Operation::InspectDelivery { profile } => {
+            reel::tig_native_job_cli::inspect_delivery(&profile)
         }
         Operation::CompareBrowserRetained {
             profile,

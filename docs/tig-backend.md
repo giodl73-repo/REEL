@@ -50,6 +50,16 @@ JSON reports the captured metadata checkpoint, input-name/verified-object counts
 the normal REEL plan/receipt, and `complete_semantic_coverage: false`. Cache paths
 are not added to that result. Operational errors remain private diagnostics.
 
+For explicit media programs on the audio path, pass `--audio-runtime runtime.json`
+before `render-audio` or `check-audio`. The private file is the existing
+`media_runtime::Bindings` object: exact host, FFmpeg, FFprobe and declared
+dependency pins and paths. REEL holds those program guards through rendering or
+checking and reports their path-free runtime manifest and identity. Invalid or
+unsupported bindings refuse without an ambient-tool fallback. The option refuses
+on other operations; omitting it preserves their historical behavior. Audio-only
+execution still enrolls all declared scene inputs for its shared native plan;
+it emits D/M/E/mix audio without rendering pictures or granting approval.
+
 Each job `FileRef.path` is the exact opaque Tig asset ID, such as `cel/ending`,
 `cue/014` or `scene:picture.p01`; its hash and byte count remain mandatory. Asset
 and definition IDs follow Tig's bounded token contract, not filesystem pathname
@@ -197,6 +207,17 @@ The context is a metadata candidate, not media availability, execution, release,
 global protection or eviction authority. For evidence and limits, see the
 [scoped context review](reviews/2026-10-27-tig-scoped-context.md).
 
+Native scene requests may name `controls.presentation_overlay` using the
+[chapter-overlay declaration](scene-authoring-v1.md#independently-clocked-chapter-overlays).
+Here `scene` is an exact admitted control slot, resolved through the parent's
+retained stream or independently versioned `control_ids` entry. It is included in
+whole-scene requirements and the language context, read through the bounded
+metadata provider and materialized as `presentation-source.json`. The receipt
+still comes from the canonical language's selected primary binding. Frozen render
+parameters pin the overlay compiler module when this feature is used; archive
+replay retains the original source and revalidates the compiled job. No loose
+filesystem source fallback, primary-media read or cache creation is added.
+
 For a distinct compiled-parameter candidate, `tig_scene::freeze_render_context`
 takes a new private output directory as well as the request and metadata store.
 It compiles through the shared interpreter, hash-checks the three generated
@@ -214,7 +235,7 @@ caller-owned directory, and compares contract pins, exact roots and full capture
 requirements. Opaque controls and selected alignments must remain readable through
 the enrolled providers. Candidate scratch may exist when a later verification
 fails; its caller owns cleanup. The returned source is render-context bound and
-legacy recipe/compilation entry points refuse it. These APIs do not yet admit a
+legacy recipe/compilation entry points refuse it. These context APIs do not admit a
 projected recipe, runtime environment or active render job; see the
 [render context review](reviews/2026-10-27-tig-render-context.md).
 
@@ -234,6 +255,7 @@ controls/alignments and writes new candidate scratch; it can work with Git offli
 Legacy/projected claims and context modes never silently fall back to one another.
 A returned unsigned claimed recipe match proves neither execution nor output
 bytes, runtime/environment availability, approval or custody. Explicit managed
-execution uses `JobPlan::from_render_context` and held runtime components; CLI
-adoption and complete coverage remain subsequent work. See the
+execution uses `JobPlan::from_render_context` and held runtime components. Current
+CLI execution and recovery are documented in [bounded jobs](tig-job-runner.md);
+complete applicable coverage and project runtime adoption remain separate. See the
 [projected recipe review](reviews/2026-10-27-tig-projected-native-recipe.md).

@@ -23,8 +23,46 @@ use tig_store::{
 };
 
 pub const SCHEMA: &str = "reel.tig-frozen-job-profile.experimental-1";
+pub const DEPENDENCY_SCHEMA: &str = "reel.tig-frozen-job-profile.experimental-2";
 mod capture;
 pub use capture::capture;
+/// Explicit pre-execution dependencies keep their existing Tig roles. They are
+/// neither production primaries nor an assertion about their upstream producer.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Dependencies {
+    #[serde(default)]
+    composition: BTreeMap<LogicalPath, Object>,
+    #[serde(default)]
+    evidence: BTreeMap<LogicalPath, Object>,
+}
+impl Dependencies {
+    fn admission(&self) -> job::Dependencies<'_> {
+        job::Dependencies {
+            composition: &self.composition,
+            evidence: &self.evidence,
+        }
+    }
+}
+fn dependency_mode(
+    schema: &str,
+    legacy: &str,
+    versioned: &str,
+    dependencies: Option<&Dependencies>,
+) -> Result<bool> {
+    match (schema, dependencies) {
+        (s, None) if s == legacy => Ok(false),
+        (s, Some(d)) if s == versioned && (!d.composition.is_empty() || !d.evidence.is_empty()) => {
+            // The bounded profile and the existing Tig tree/name/size checks
+            // remain authoritative; refuse oversized declarations before IO.
+            if d.composition.len().saturating_add(d.evidence.len()) > 4096 {
+                bail!("frozen dependency declaration exceeds bounds");
+            }
+            Ok(true)
+        }
+        _ => bail!("frozen dependency schema and explicit admission differ"),
+    }
+}
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Consumption {
@@ -45,6 +83,8 @@ struct Profile {
     consumption: Vec<Consumption>,
     operation: recipe::Operation,
     runtime: BTreeMap<LogicalPath, Object>,
+    #[serde(default)]
+    dependencies: Option<Dependencies>,
     job_context: Selection,
     manifest: FileRef,
     cache: reel_assets::Config,
@@ -84,16 +124,49 @@ fn read(path: &Path, maximum: u64) -> Result<(File, Vec<u8>)> {
     }
     Ok((file, bytes))
 }
+
+// Operator profiles are not canonical identity documents. Keep their existing
+// 128-KiB allowance while retaining duplicate-key, depth/node and integer guards.
+fn parse_profile(bytes: &[u8]) -> Result<Value> {
+    let value = crate::tig_versioned_registration::source_json::parse_bounded(bytes, 128 * 1024)?;
+    fn numbers(value: &Value) -> Result<()> {
+        match value {
+            Value::Number(_) => {
+                identity::canonical_json(value)?;
+            }
+            Value::Array(items) => {
+                for item in items {
+                    numbers(item)?;
+                }
+            }
+            Value::Object(items) => {
+                for item in items.values() {
+                    numbers(item)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    numbers(&value)?;
+    Ok(value)
+}
+
 fn execute(path: &Path) -> Result<Value> {
     let (_profile_guard, raw) = read(path, 128 * 1024)?;
-    let p: Profile = serde_json::from_value(identity::parse_json(&raw)?)?;
+    let p: Profile = serde_json::from_value(parse_profile(&raw)?)?;
+    let dependencies = dependency_mode(
+        &p.schema,
+        SCHEMA,
+        DEPENDENCY_SCHEMA,
+        p.dependencies.as_ref(),
+    )?;
     let coordination = p
         .cache
         .coordination_root
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("explicit coordination required"))?;
-    if p.schema != SCHEMA
-        || p.profiles.is_empty()
+    if p.profiles.is_empty()
         || p.profiles.len() > 128
         || p.consumption.len() > 128
         || p.runtime.len() > 64
@@ -175,17 +248,24 @@ fn execute(path: &Path) -> Result<Value> {
             bytes: limits.bytes,
         },
     )?;
-    let resources = job::restore(
-        &p.job_context,
-        &job::Admission {
-            context: &context,
-            plan: &plan,
-            runtime: &p.runtime,
-            output: None,
-        },
-        &mut reader,
-        trees,
-    )?;
+    let admission = job::Admission {
+        context: &context,
+        plan: &plan,
+        runtime: &p.runtime,
+        output: None,
+    };
+    let resources = if let Some(declared) = &p.dependencies {
+        job::restore_with_dependencies(
+            &p.job_context,
+            &admission,
+            &declared.admission(),
+            None,
+            &mut reader,
+            trees,
+        )?
+    } else {
+        job::restore(&p.job_context, &admission, &mut reader, trees)?
+    };
     let mut journal = SourceJournal::open(&p.journal_root, &p.journal_minimum)?;
     let profile = tig_job_runner::Profile {
         config: &p.cache,
@@ -199,7 +279,12 @@ fn execute(path: &Path) -> Result<Value> {
         metadata_minimum: &p.metadata_minimum,
         tree_limits: trees,
     };
-    let mut result = tig_job_runner::run(
+    let run = if dependencies {
+        tig_job_runner::run_with_dependencies
+    } else {
+        tig_job_runner::run
+    };
+    let mut result = run(
         &p.project,
         &p.manifest.path,
         &resources,
@@ -211,6 +296,10 @@ fn execute(path: &Path) -> Result<Value> {
     result["succeeded"] = Value::Bool(true);
     result["production_claim"] = Value::Null;
     result["creative_approval"] = Value::Bool(false);
+    if dependencies {
+        result["dependency_roles_admitted"] = Value::Bool(true);
+        result["original_producer_currency"] = Value::Bool(false);
+    }
     Ok(result)
 }
 /// Trusted caller admission, existing metadata and exact owner required. Public
@@ -221,4 +310,31 @@ pub fn run(path: &Path) -> Result<Value> {
             "frozen job refused or incomplete; preserve owned scratch and inspect private state"
         )
     })
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::parse_profile;
+    use serde_json::json;
+
+    #[test]
+    fn operator_profile_byte_allowance_keeps_strict_identity_value_guards() {
+        let large = json!({"items":vec!["x".repeat(1000);70]});
+        let bytes = serde_json::to_vec(&large).unwrap();
+        assert!(bytes.len() > 65_536);
+        assert_eq!(parse_profile(&bytes).unwrap(), large);
+        for invalid in [
+            br#"{"items":{"name":1,"name":2}}"#.as_slice(),
+            br#"{"value":0.5}"#,
+            br#"{"value":9007199254740992}"#,
+        ] {
+            assert!(parse_profile(invalid).is_err());
+        }
+        let oversized = serde_json::to_vec(&json!({"text":"x".repeat(131_072)})).unwrap();
+        assert!(parse_profile(&oversized).is_err());
+        let too_many = serde_json::to_vec(&json!({"items":vec![0;4096]})).unwrap();
+        assert!(parse_profile(&too_many).is_err());
+        let deep = format!("{}0{}", "[".repeat(33), "]".repeat(33));
+        assert!(parse_profile(deep.as_bytes()).is_err());
+    }
 }

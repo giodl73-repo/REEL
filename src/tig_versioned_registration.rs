@@ -14,7 +14,7 @@ use tig_core::{Object, identity};
 use tig_store::existing::{ByteSource, Profile as ByteProfile, ReadCache};
 
 const LIMIT: usize = 65_536;
-mod source_json;
+pub(crate) mod source_json;
 /// Preserve ordinary stream names; encode longer external labels without truncation.
 /// The disjoint prefix cannot collide with a literal `version/<name>` slot.
 pub fn version_slot(name: &str) -> Result<String> {

@@ -30,6 +30,8 @@ pub mod continuity;
 pub mod craft_plan;
 pub mod cue_import;
 pub mod cue_relative;
+mod decoded_video_hash;
+pub mod episode_captions;
 pub mod episode_conform;
 pub mod episode_delivery;
 pub mod exposure_sheet;
@@ -55,6 +57,7 @@ pub mod production;
 pub mod production_binding;
 pub mod production_operations;
 pub mod production_package;
+pub mod retained_dialogue_gain;
 pub mod review_decision;
 pub mod scene_authoring_inputs;
 pub mod scene_cue_compose;
@@ -71,6 +74,8 @@ pub mod singer_sheet_cleanup;
 pub mod song;
 pub mod song_edition;
 pub mod sonic_assets;
+#[cfg(feature = "speech-provider")]
+pub mod speech_generation;
 pub mod sprite_choreography;
 pub mod sprite_library;
 pub mod sprite_materializer;
@@ -125,6 +130,8 @@ pub mod tig_presentation_cli;
 pub mod tig_presentation_registration;
 #[cfg(feature = "tig-publication")]
 pub mod tig_publication;
+#[cfg(feature = "tig-publication")]
+pub mod tig_scene_audio_recovery;
 
 #[cfg(feature = "tig")]
 pub mod tig_index_association;

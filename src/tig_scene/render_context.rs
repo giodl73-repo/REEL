@@ -16,6 +16,8 @@ struct Parameters {
     schema: String,
     native: Value,
     compiler: Object,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    targeted_presentation_compiler: Option<Object>,
     adapter: Object,
     authoring: tig_core::Digest,
     compiled_inputs: BTreeMap<String, Object>,
@@ -27,6 +29,11 @@ fn parameters(request: &Request, authoring: tig_core::Digest) -> Result<Paramete
         schema: RENDER_SCHEMA.into(),
         native: serde_json::from_slice(&scoped::scoped_descriptor(request)?)?,
         compiler: Object::from_bytes(include_bytes!("../scene_delivery_compile.rs")),
+        targeted_presentation_compiler: request.controls.presentation_overlay.as_ref().map(|_| {
+            Object::from_bytes(include_bytes!(
+                "../scene_delivery_compile/targeted_presentation.rs"
+            ))
+        }),
         adapter: Object::from_bytes(include_bytes!("render_context.rs")),
         authoring,
         compiled_inputs: BTreeMap::new(),
@@ -42,6 +49,7 @@ fn check_parameters(raw: &[u8], request: &Request) -> Result<()> {
     if stored.schema != expected.schema
         || stored.native != expected.native
         || stored.compiler != expected.compiler
+        || stored.targeted_presentation_compiler != expected.targeted_presentation_compiler
         || stored.adapter != expected.adapter
         || stored.compiled_inputs.len() != INPUTS.len()
         || INPUTS.iter().any(|(name, _)| {

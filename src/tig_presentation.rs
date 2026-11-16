@@ -35,7 +35,7 @@ pub struct Request {
     pub allowed_primary_states: BTreeSet<String>,
 }
 impl Request {
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         let definitions = [
             &self.source_definition,
             &self.template_definition,

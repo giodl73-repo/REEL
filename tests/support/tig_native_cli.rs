@@ -673,6 +673,9 @@ fn exercise_mode(
         }
         if mode == "automatic" {
             check_candidates(root, &completed, &original_record, &template);
+            if delivery {
+                crate::retained_delivery_check::exercise(root, &automatic, &completed, &cache);
+            }
             if historical_compiler {
                 crate::retained_comparison::exercise_historical_compiler(
                     root, &automatic, &completed, reference, &cache,
