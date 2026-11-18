@@ -533,6 +533,15 @@ pub fn check_with(
     }
     Ok(packet.receipt)
 }
+/// Build a bounded producer packet in memory from exact source reads. Storage,
+/// workspace ownership and native task completion remain the caller's concern.
+pub fn capture_with(
+    request: &[u8],
+    mut input: impl FnMut(&Pin) -> Result<Vec<u8>>,
+) -> Result<(Receipt, BTreeMap<String, Vec<u8>>)> {
+    let packet = prepare_with(request, &mut input)?;
+    Ok((packet.receipt, packet.files))
+}
 fn inventory(root: &Path, at: &Path, depth: usize, files: &mut BTreeSet<String>) -> Result<()> {
     ensure!(
         depth <= 16 && ordinary(at)?.is_dir(),

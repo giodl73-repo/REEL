@@ -71,6 +71,24 @@ fn bind(packet: &Packet, profile: &NativeProfile) -> Result<(Inputs, publication
     let bound = publication::bind_comic(packet, &mut inputs)?;
     Ok((inputs, bound))
 }
+pub(crate) struct Generated {
+    _inputs: NativeInputs,
+    pub(crate) receipt: reel_publication::comic_source::Receipt,
+    pub(crate) files: BTreeMap<String, Vec<u8>>,
+}
+pub(crate) fn generate(packet: &Packet, profile: &NativeProfile) -> Result<Generated> {
+    let (inputs, _bound) = bind(packet, profile)?;
+    let request = source(packet, &inputs, "request.json")
+        .map_err(|_| error(ErrorKind::Integrity, "comic-request-closure"))?;
+    let (receipt, files) =
+        reel_publication::comic::capture_with(&request, |pin| source(packet, &inputs, &pin.path))
+            .map_err(|_| error(ErrorKind::Integrity, "comic-worker-production"))?;
+    Ok(Generated {
+        _inputs: inputs.native,
+        receipt,
+        files,
+    })
+}
 fn inventory(
     root: &Path,
     at: &Path,

@@ -20,7 +20,7 @@ pub struct PinnedFile {
     pub sha256: String,
 }
 impl PinnedFile {
-    fn read(&self) -> Result<(Vec<u8>, File)> {
+    pub(crate) fn read(&self) -> Result<(Vec<u8>, File)> {
         if !self.path.is_absolute()
             || self
                 .path
@@ -117,7 +117,7 @@ fn observer<'a>(plan: &Plan, bindings: &'a Bindings) -> Result<NativeObserver<'a
 pub fn inspect(plan: &Plan, bindings: &Bindings) -> Result<graph::Frontier> {
     graph::inspect(plan, &mut observer(plan, bindings)?)
 }
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReadyTask {
     pub ticket: reel_workflow::handoff::Ticket,
@@ -145,6 +145,30 @@ pub fn import_ready(
     result: reel_workflow::ReturnedResult,
     returns: &crate::response::Returns,
 ) -> Result<reel_workflow::handoff::State> {
+    let selected = select(plan, bindings, batch_pin, id)?;
+    if result.attempt_id != selected.task.ticket.attempt_id {
+        return Err(error(ErrorKind::Conflict, "graph-original-batch-attempt"));
+    }
+    reel_workflow::check_result(&selected.task.ticket.packet, &result)?;
+    if let Some(prior) = &selected.observed.result {
+        reel_workflow::check_replay(prior, &result)?;
+        handoff::resume(&selected.task.journal, &selected.profile, Some(returns))
+    } else {
+        handoff::import(&selected.task.journal, &selected.profile, result, returns)
+    }
+}
+pub(crate) struct Selection {
+    pub(crate) task: ReadyTask,
+    pub(crate) profile: handoff::Profile,
+    pub(crate) observed: Job,
+    _pins: Vec<File>,
+}
+pub(crate) fn select(
+    plan: &Plan,
+    bindings: &Bindings,
+    batch_pin: &PinnedFile,
+    id: &str,
+) -> Result<Selection> {
     let (raw, _batch_file) = batch_pin.read()?;
     let batch: Batch = reel_workflow::decode(&raw)?;
     if batch.schema != "reel.workflow-ready-batch.v1"
@@ -185,7 +209,7 @@ pub fn import_ready(
     }
     let job = observer
         .loaded
-        .get(id)
+        .remove(id)
         .ok_or_else(|| error(ErrorKind::Missing, "graph-job-binding"))?;
     if job.binding.profile != task.profile
         || job.binding.journal != task.journal
@@ -195,16 +219,28 @@ pub fn import_ready(
         return Err(error(ErrorKind::Conflict, "graph-batch-job-binding"));
     }
     let observed = handoff::observe(&job.binding.journal, &job.profile)?;
-    if observed.ticket != task.ticket || result.attempt_id != task.ticket.attempt_id {
+    if observed.ticket != task.ticket {
         return Err(error(ErrorKind::Conflict, "graph-original-batch-ticket"));
     }
-    reel_workflow::check_result(&task.ticket.packet, &result)?;
-    if let Some(prior) = &observed.result {
-        reel_workflow::check_replay(prior, &result)?;
-        handoff::resume(&job.binding.journal, &job.profile, Some(returns))
-    } else {
-        handoff::import(&job.binding.journal, &job.profile, result, returns)
+    let stage_pin = job
+        .binding
+        .staging_ticket
+        .as_ref()
+        .ok_or_else(|| error(ErrorKind::Missing, "graph-original-staging-ticket"))?;
+    let (stage_raw, stage_file) = stage_pin.read()?;
+    let stage: staging::Ticket = reel_workflow::decode(&stage_raw)?;
+    if !stage.matches(&job.profile.binding.admission)?
+        || stage.directory() != task.workspace
+        || task.input_bindings != task.workspace.join("input-bindings.json")
+    {
+        return Err(error(ErrorKind::Conflict, "graph-original-batch-workspace"));
     }
+    Ok(Selection {
+        task: task.clone(),
+        profile: job.profile,
+        observed,
+        _pins: vec![_batch_file, job._held, stage_file],
+    })
 }
 /// Explicit task selection, at most 16. Reopens original claims and checks all
 /// named native bytes via owned staging before writing one exclusive private batch.

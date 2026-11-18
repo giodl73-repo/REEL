@@ -20,6 +20,7 @@ pub mod response;
 pub mod retention;
 pub mod staging;
 pub use staging::comic_export;
+pub use staging::worker;
 use tig_git::{
     annex::workflow::reader,
     source::{

@@ -2368,16 +2368,22 @@ fn staged_retention_refuses_lost_original_response_coverage_before_new_admission
 #[test]
 #[ignore = "Synthetic comic, installed private test font and existing explicitly declared native pool; no project adoption"]
 fn native_comic_worker_receipt_replay_retention_and_bare_history_complete_together() {
-    comic_native_case(false);
+    comic_native_case(false, false);
 }
 #[cfg(windows)]
 #[test]
 #[ignore = "Synthetic selected issue part and explicit existing native pool; no project adoption"]
 fn native_comic_part_preserves_master_identity_and_bounds_its_protected_source_closure() {
-    comic_native_case(true);
+    comic_native_case(true, false);
 }
 #[cfg(windows)]
-fn comic_native_case(partitioned: bool) {
+#[test]
+#[ignore = "Synthetic in-process comic dispatch and explicitly declared existing native pool; no project adoption"]
+fn native_comic_dispatch_materializes_and_retains_original_ready_task() {
+    comic_native_case(true, true);
+}
+#[cfg(windows)]
+fn comic_native_case(partitioned: bool, dispatch: bool) {
     use reel_publication::{
         ComicPage, Content, Edition, PageKind, Publication, ReadingDirection,
         comic_source::{
@@ -2860,15 +2866,191 @@ fn comic_native_case(partitioned: bool) {
         "{}",
         String::from_utf8_lossy(&created.stdout)
     );
-    let completed = Command::new(&executable)
-        .arg("import-handoff")
-        .arg(&journal)
-        .arg(&profile_path)
-        .arg(&result_path)
-        .arg(&returns_path)
-        .arg("--apply")
-        .output()
+    let mut worker_controls = Vec::new();
+    let completed = if dispatch {
+        use reel_workflow_native::{graph, staging, worker};
+        let (plan, bindings, batch_path) = exercise_waiting_graph(
+            &case,
+            &fixture.packet,
+            &profile,
+            &journal,
+            &profile_path,
+            false,
+        );
+        graph::export_ready(
+            &plan,
+            &bindings,
+            std::slice::from_ref(&fixture.packet.task.id),
+            &batch_path,
+        )
         .unwrap();
+        let batch = graph::PinnedFile {
+            path: batch_path,
+            sha256: digest(&fs::read(case.temp.path().join("ready-batch.json")).unwrap()),
+        };
+        let mut changed_binding = graph::Bindings {
+            schema: bindings.schema.clone(),
+            tasks: bindings.tasks.clone(),
+        };
+        changed_binding
+            .tasks
+            .get_mut(&fixture.packet.task.id)
+            .unwrap()
+            .staging_ticket = None;
+        assert!(
+            graph::import_ready(
+                &plan,
+                &changed_binding,
+                &batch,
+                &fixture.packet.task.id,
+                result.clone(),
+                &returns
+            )
+            .is_err()
+        );
+        let parent = case.temp.path().join("worker-scratch");
+        fs::create_dir(&parent).unwrap();
+        let stage = staging::Profile {
+            schema: "reel.workflow-staging.v1".into(),
+            parent,
+            maximum_bytes: 64 * 1024 * 1024,
+            capacity_policy: reel_assets::admission::Policy {
+                minimum_free_bytes: 65536,
+                minimum_free_basis_points: 0,
+                max_object_bytes: 512 * 1024 * 1024,
+                ..Default::default()
+            },
+        };
+        let plan_path = case.temp.path().join("worker-plan.json");
+        let bindings_path = case.temp.path().join("worker-bindings.json");
+        let stage_path = case.temp.path().join("worker-profile.json");
+        let ticket_path = case.temp.path().join("worker-ticket.json");
+        for (path, raw) in [
+            (&plan_path, serde_json::to_vec(&plan).unwrap()),
+            (&bindings_path, serde_json::to_vec(&bindings).unwrap()),
+            (&stage_path, serde_json::to_vec(&stage).unwrap()),
+        ] {
+            fs::write(path, raw).unwrap();
+        }
+        let prepared = Command::new(&executable)
+            .arg("prepare-worker")
+            .arg(&plan_path)
+            .arg(&bindings_path)
+            .arg(&batch.path)
+            .arg(&batch.sha256)
+            .arg(&fixture.packet.task.id)
+            .arg(&stage_path)
+            .arg(&ticket_path)
+            .arg("--apply")
+            .output()
+            .unwrap();
+        assert!(
+            prepared.status.success(),
+            "{}",
+            String::from_utf8_lossy(&prepared.stdout)
+        );
+        let raw = fs::read(&ticket_path).unwrap();
+        let pin = digest(&raw);
+        let ticket: worker::Ticket = serde_json::from_slice(&raw).unwrap();
+        let invoke = |command: &str, hash: &str| {
+            Command::new(&executable)
+                .arg(command)
+                .arg(&plan_path)
+                .arg(&bindings_path)
+                .arg(&ticket_path)
+                .arg(hash)
+                .arg("--apply")
+                .output()
+                .unwrap()
+        };
+        assert!(!invoke("run-worker", &"0".repeat(64)).status.success());
+        let materialized = invoke("materialize-worker", &pin);
+        assert!(
+            materialized.status.success(),
+            "{}",
+            String::from_utf8_lossy(&materialized.stdout)
+        );
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&materialized.stdout).unwrap()["task_completed"],
+            false
+        );
+        assert_eq!(
+            graph::inspect(&plan, &bindings).unwrap().rows[0].status,
+            reel_workflow::graph::Status::Waiting
+        );
+        for name in result.artifacts.keys() {
+            assert_eq!(
+                fs::read(ticket.directory().join("packet").join(name)).unwrap(),
+                fs::read(returns.root.join(name)).unwrap()
+            );
+        }
+        let mut unavailable: response::Returns =
+            serde_json::from_slice(&fs::read(ticket.directory().join("returns.json")).unwrap())
+                .unwrap();
+        unavailable.root = case.temp.path().join("unavailable-worker-return");
+        let unavailable_path = case.temp.path().join("unavailable-worker-returns.json");
+        fs::write(&unavailable_path, serde_json::to_vec(&unavailable).unwrap()).unwrap();
+        let pending = Command::new(&executable)
+            .arg("import-ready")
+            .arg(&plan_path)
+            .arg(&bindings_path)
+            .arg(&batch.path)
+            .arg(&batch.sha256)
+            .arg(&fixture.packet.task.id)
+            .arg(ticket.directory().join("result.json"))
+            .arg(&unavailable_path)
+            .arg("--apply")
+            .output()
+            .unwrap();
+        assert!(!pending.status.success());
+        assert_eq!(
+            graph::inspect(&plan, &bindings).unwrap().rows[0].status,
+            reel_workflow::graph::Status::NeedsRecovery
+        );
+        let completed = invoke("run-worker", &pin);
+        assert!(
+            completed.status.success(),
+            "{}",
+            String::from_utf8_lossy(&completed.stdout)
+        );
+        assert!(invoke("run-worker", &pin).status.success());
+        let name = result
+            .artifacts
+            .keys()
+            .find(|name| name.ends_with(".svg"))
+            .unwrap();
+        let path = ticket.directory().join("packet").join(name);
+        let original = fs::read(&path).unwrap();
+        fs::write(&path, b"altered owned fixture").unwrap();
+        assert!(!invoke("run-worker", &pin).status.success());
+        assert_eq!(fs::read(&path).unwrap(), b"altered owned fixture");
+        fs::write(path, original).unwrap();
+        fs::copy(ticket.directory().join("result.json"), &result_path).unwrap();
+        worker_controls.extend([
+            ("worker-ticket.json", raw),
+            ("worker-plan.json", fs::read(&plan_path).unwrap()),
+            ("worker-bindings.json", fs::read(&bindings_path).unwrap()),
+            ("worker-batch.json", fs::read(&batch.path).unwrap()),
+            ("worker-materialized.json", materialized.stdout),
+            ("worker-interrupted-import.json", pending.stdout),
+            (
+                "worker-location.json",
+                serde_json::to_vec(&json!({"workspace":ticket.directory(),"ticket":ticket_path}))
+                    .unwrap(),
+            ),
+        ]);
+        completed
+    } else {
+        Command::new(&executable)
+            .arg("import-handoff")
+            .arg(&journal)
+            .arg(&profile_path)
+            .arg(&result_path)
+            .arg(&returns_path)
+            .arg("--apply")
+            .output()
+            .unwrap()
+    };
     if !completed.status.success() {
         eprintln!(
             "Synthetic comic diagnostic root: {}",
@@ -2884,6 +3066,7 @@ fn comic_native_case(partitioned: bool) {
         serde_json::from_slice::<serde_json::Value>(&completed.stdout).unwrap()["task_completed"],
         true
     );
+    let result: ReturnedResult = serde_json::from_slice(&fs::read(&result_path).unwrap()).unwrap();
     let bare = case.temp.path().join("comic-history.git");
     git(
         fixture.temp.path(),
@@ -3132,7 +3315,9 @@ fn comic_native_case(partitioned: bool) {
     if let Some(unselected) = unselected {
         assert!(case.protected(&unselected).is_empty());
     }
-    if let Some(directory) = std::env::var_os(if partitioned {
+    if let Some(directory) = std::env::var_os(if dispatch {
+        "REEL_COMIC_WORKER_NATIVE_EVIDENCE_DIRECTORY"
+    } else if partitioned {
         "REEL_COMIC_PART_NATIVE_EVIDENCE_DIRECTORY"
     } else {
         "REEL_COMIC_NATIVE_EVIDENCE_DIRECTORY"
@@ -3153,7 +3338,7 @@ fn comic_native_case(partitioned: bool) {
                 "locations.json",
                 serde_json::to_vec(&json!({"journal":journal,"exported_packet":exported_packet,"restored":restored,"edited_output":edited_output})).unwrap(),
             ),
-        ] {
+        ].into_iter().chain(worker_controls) {
             let mut file = fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)

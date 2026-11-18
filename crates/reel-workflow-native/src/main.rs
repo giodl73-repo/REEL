@@ -63,6 +63,65 @@ fn new_receipt(
 }
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
+        [command, plan, bindings, ticket, pin, apply]
+            if command == "materialize-worker" && apply == "--apply" =>
+        {
+            let plan = read_control(Path::new(plan))?;
+            let bindings = read_control(Path::new(bindings))?;
+            reel_workflow_native::worker::materialize_file(
+                &plan,
+                &bindings,
+                Path::new(ticket),
+                pin,
+            )?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"native-worker-materialization","outputs_materialized":true,
+                "task_completed":false,"provider_invoked":false,"selected":false,"scratch_retirement_authorized":false}),
+            )
+        }
+        [
+            command,
+            plan,
+            bindings,
+            batch,
+            pin,
+            task,
+            staging,
+            output,
+            apply,
+        ] if command == "prepare-worker" && apply == "--apply" => {
+            let plan = read_control(Path::new(plan))?;
+            let bindings = read_control(Path::new(bindings))?;
+            let staging = read_control(Path::new(staging))?;
+            let batch = reel_workflow_native::graph::PinnedFile {
+                path: batch.into(),
+                sha256: pin.clone(),
+            };
+            reel_workflow_native::worker::prepare_file(
+                &plan,
+                &bindings,
+                &batch,
+                task,
+                &staging,
+                Path::new(output),
+            )?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"native-worker-preparation","worker_executed":false,"task_completed":false,"selected":false,"scratch_retirement_authorized":false}),
+            )
+        }
+        [command, plan, bindings, ticket, pin, apply]
+            if command == "run-worker" && apply == "--apply" =>
+        {
+            let plan = read_control(Path::new(plan))?;
+            let bindings = read_control(Path::new(bindings))?;
+            let state =
+                reel_workflow_native::worker::run_file(&plan, &bindings, Path::new(ticket), pin)?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"native-deterministic-worker","state":state,
+                "task_completed":state==reel_workflow::handoff::State::Retained,"provider_invoked":false,
+                "selected":false,"input_claims_released":false,"scratch_retirement_authorized":false}),
+            )
+        }
         [
             command,
             plan,
@@ -514,6 +573,9 @@ fn main() -> ExitCode {
         println!(concat!(
             "reel-workflow-native check-snapshot PACKET PROFILE\n",
             "reel-workflow-native inspect-run PLAN RUN_BINDINGS\n",
+            "reel-workflow-native prepare-worker PLAN RUN_BINDINGS BATCH BATCH_SHA256 TASK_ID STAGING_PROFILE NEW_TICKET --apply\n",
+            "reel-workflow-native run-worker PLAN RUN_BINDINGS WORKER_TICKET TICKET_SHA256 --apply\n",
+            "reel-workflow-native materialize-worker PLAN RUN_BINDINGS WORKER_TICKET TICKET_SHA256 --apply\n",
             "reel-workflow-native export-ready PLAN RUN_BINDINGS TASK_IDS_JSON NEW_PRIVATE_BATCH --apply\n",
             "reel-workflow-native import-ready PLAN RUN_BINDINGS BATCH BATCH_SHA256 TASK_ID RESULT RETURNS --apply\n",
             "reel-workflow-native comic-render REQUEST NEW_DIRECTORY\n",

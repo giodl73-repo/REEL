@@ -582,6 +582,50 @@ Dependency artifact references remain planning metadata. This does not forward
 unselected parent payloads as child inputs or silently register them as Git records.
 Current byte inputs must still resolve through each task's explicit committed
 native declarations. Retained upstream input adapters, complete comic assembly,
-automatic worker/provider dispatch, actor admission/close scheduling and resource
+general worker/provider dispatch, actor admission/close scheduling and resource
 retirement remain in the full completion ledger. Batch controls are private
 instructions/evidence, not reusable proof of current custody or release permission.
+
+## Owned deterministic comic worker
+
+```text
+reel-workflow-native prepare-worker PLAN RUN_BINDINGS BATCH BATCH_SHA256 TASK_ID STAGING_PROFILE NEW_TICKET --apply
+reel-workflow-native materialize-worker PLAN RUN_BINDINGS WORKER_TICKET TICKET_SHA256 --apply
+reel-workflow-native run-worker PLAN RUN_BINDINGS WORKER_TICKET TICKET_SHA256 --apply
+```
+
+One explicitly selected, already protected ready task can now use the in-process
+Rust comic producer. Its tool contract must name the exact running native
+executable; another runtime or operation refuses. This path executes the known
+comic implementation, without interpreting prompts as commands or invoking a
+provider. Both whole editions and explicit selected issue parts use the existing
+exact source binder and producer limits.
+
+Preparation rechecks the current plan, original batch/profile/attempt, source
+claims and actual native inputs. It reserves an owned workspace under an existing
+staging parent outside source/control roots. The staging budget must cover twice
+the request's output limit plus 10 MiB of controls/evidence. The private ticket is
+written exclusively and must subsequently be supplied with its exact byte hash.
+An interrupted preparation preserves its partial control and conservative capacity.
+
+Materialization creates a complete editable producer packet plus pinned invocation,
+result, return and inventory controls using the existing exclusive staging engine.
+An initially Waiting task remains Waiting. `run-worker` materializes if needed,
+verifies the complete owned packet, constructs the normal tool result, and delegates to the
+original native import/retention lifecycle. Source read gates are dropped before
+new lifecycle effects; durable source claims remain. Completion requires verified
+retained ownership. A local complete marker or worker manifest cannot confer it.
+
+Retries use the same ticket, task, attempt and operation. Interrupted deterministic
+writes reconcile identical files through the bounded staging mechanism. Pending
+or retained native effects reopen the existing completed packet and reconcile the
+original handoff result. Changed output, unknown files, replaced ownership, stale
+plans or mismatched runtime pins refuse without overwriting evidence or starting
+a fresh attempt. Scratch, capacity and actor slots remain preserved. No asset
+selection, creative/translation/font approval, printer readiness or release follows
+from technical completion. General workers, issue assembly from retained parents,
+provider execution and admission/retirement scheduling remain open. Renderer
+limits do not guarantee native result admission: the actual distinct resources
+must still fit the existing close bound. Explicitly partition larger editions;
+materialized outputs and original claims remain preserved if result admission
+refuses.

@@ -62,7 +62,7 @@ fn runtime_artifact(tool: &Tool) -> Artifact {
         media_type: "application/octet-stream".into(),
     }
 }
-fn runtime(tool: &Tool) -> Result<File> {
+pub(crate) fn runtime(tool: &Tool) -> Result<File> {
     let held = hold_tool(tool)?;
     if tool.path.canonicalize().map_err(io_error)?
         != std::env::current_exe()

@@ -9,8 +9,8 @@ checked again before closing the objective.
 
 | Requirement | Authoritative implementation/evidence | Work still required |
 | --- | --- | --- |
-| Reusable Rust orchestration in REEL | `reel-workflow` verified frontier, native run bindings/inspection, protected multi-job batches and original-operation return/recovery with downstream frontier evidence | Add execution/admission scheduling, retained upstream byte inputs and project configuration; preserve existing producers. |
-| Direct API/proxy/subprocess and makefile-like handoff | Native-backed prompt batch export/return/continuation, original tickets and runtime pins, exact task/result/dependency keys | Real provider transports, bounded subprocess/worker dispatch and retained upstream byte inputs; complete production graph qualification. |
+| Reusable Rust orchestration in REEL | `reel-workflow` verified frontier, native run bindings/inspection, protected multi-job batches, original-operation return/recovery and explicitly selected owned comic worker | Add broader execution/admission scheduling, retained upstream byte inputs and project configuration; preserve existing producers. |
+| Direct API/proxy/subprocess and makefile-like handoff | Native-backed prompt batch export/return/continuation, original tickets/runtime pins and exact task/result/dependency keys; in-process deterministic comic dispatch | Real provider transports, bounded subprocess/general worker dispatch and retained upstream byte inputs; complete production graph qualification. |
 | Exact Tig input/candidate/history lifecycle | Exact SDK/source pins, native input admission/staging, immutable result work, retained proof and completion fixtures | Explicit approved selection CAS/new-path admission, guarded close/retirement and full workflow retry/error qualification. No new cache engine. |
 | Image generation and other intelligence | Typed text/image/review operations and named output contracts | Provider execution, response normalization, model/config/provenance recording and operation-specific verification. |
 | Speech recording, including requested ElevenLabs integration | Existing speech task contract; recorded project cues remain source assets | Verify current official API/model contract for the requested version; implement configurable transport and recording/timing evidence. Existing season-5 recordings must be reusable without regeneration. |
@@ -20,7 +20,7 @@ checked again before closing the objective.
 | Review copies with stable cel IDs | Existing root review/asset authority surfaces described in the orchestration plan | Connect generated review copies and exact frame/sample locations to findings, fixes and affected consumer invalidation. |
 | Packaging, review, issue filing and fixes | Existing packaging/review checks; `ReviewFinding` task type; project/root role checklists | Machine-readable findings, issue dedup/routing and authorized issue adapter, scoped repairs, contextual review, closure evidence and dependency invalidation. |
 | HTML/CSS/SVG and browser compositions | Existing root browser/composition and vector/print surfaces | Explicit workflow contracts/producer bindings, reference closure, deterministic checks and bounded execution policy. Returned code is never an implicit shell command. |
-| Comic editions, pages, panels, editable lettering and reading order | `reel-publication`, shared print renderer, bilingual fixtures; native receipt/replay/export/restoration; selected-part admission/recovery tied to portable full master/plan | Connect final assembly to retained upstream results; automated dispatch and full issue qualification. |
+| Comic editions, pages, panels, editable lettering and reading order | `reel-publication`, shared print renderer, bilingual fixtures; native receipt/replay/export/restoration; selected-part admission/recovery tied to portable full master/plan; owned exact-runtime comic dispatch | Connect final assembly to retained upstream results; complete issue scheduling and qualification. |
 | Larger complete comic issues | Explicit grouping preserves spreads; a selected-part native fixture binds the full master/plan while protecting only its bounded page closure; private assembler preserves ordered reading output and editable packets | Implement full part scheduling/retained dependency assembly within actor/128-path bounds and qualify larger actual issues. One admitted part, three-page assembly and 40-page metadata evidence do not establish complete issue qualification. |
 | Multiple languages and source canon | Language-specific task/edition keys, immutable selected source descriptors | End-to-end bilingual film and comic fix tests; source wording and separate approvals remain project-owned. |
 | Multiple projects/repos | Generic logical IDs/commits; synthetic provider and comic consumers | Owned consumer profiles for relevant repos, independent historical access, project instructions/rights and rollback evidence. No modifications to active lanes or historical repositories are inferred. |
@@ -30,8 +30,8 @@ checked again before closing the objective.
 | Review and release authority | `.roles`, `.pitfall`, private controls and separate technical flags | Continue producer-applied reviews per feature. Technical completion cannot grant creative, translation, likeness/voice, font, print or public release approval. |
 
 Current ordering: connect issue-sized plans/assembly to native admission and retained
-upstream results; build native issue reconstruction and deterministic worker
-dispatch on the bounded native comic receipt/replay path; connect film,
+upstream results; build native issue reconstruction and extend deterministic
+dispatch beyond the owned comic worker; connect film,
 cue/style/language and review/fix flows; implement provider transports; finish
 explicit selection/retirement and project adoption qualification. Independent
 pieces may proceed in another order when actual evidence makes that useful.
