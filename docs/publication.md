@@ -179,9 +179,16 @@ cover that edition exactly once in its declared order, contain 1–32 pages each
 and preserve spreads. Part IDs must be unique even ignoring case. The existing
 512-page publication and 1 MiB control bounds apply, with at most 128 parts.
 The metadata check reads no artwork or fonts and performs no rendering.
+The portable `comic_issue_source::{Plan, Part}` types and `comic-issue-check`
+command are also available without the `comic` feature. Loading/checking a part
+plan does not require a renderer or font service.
 Rust callers can use `Plan::part_publication(id)` to derive a checked subset
 definition without changing original page, language or source identity. This is
 an unselected definition, not an admitted workflow task or a committed record.
+Its output contracts remain the final edition contracts; a part worker has its
+own frozen per-page output contracts. Workflow tasks use an explicit pinned
+`tool.part` selector against the full master/plan rather than presenting a subset
+definition as the original master.
 
 `reel.comic-issue-assembly.v1` has `plan` (a relative path/hash/length pin),
 `parts` (part ID to exact relative packet `receipt.json` pin), and `limits`

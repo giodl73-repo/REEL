@@ -445,6 +445,31 @@ that would strand a job beyond the qualified close bound. Larger issue planning,
 native issue scheduling, provider execution, selection and retirement remain
 open in the [full completion ledger](../../docs/workflow-completion.md).
 
+## Explicit comic part tasks
+
+An optional `tool.part` on `reel.workflow-tool.v1` has schema
+`reel.workflow-comic-part.v1`, an exact `plan` Artifact and a `part_id`.
+The plan must be a distinct declared JSON input, bounded to 1 MiB. Existing tool
+tasks omit this field when absent, preserving their original serialization and
+fingerprints. It is not a prompt, an implicitly selected record or a new provider.
+
+The binding reads the full master publication and pinned issue plan, validates
+all contiguous groups/spreads, and requires the embedded master and edition to
+match exactly. It then reads only the selected group's page/font/art/request
+closure, checking original logical page identities, panel/utterance order and
+language. Each part still uses the existing producer limits and all native
+source/phase/close/actor admission bounds. Part output contracts are the task's
+frozen five-per-page derivatives plus its own PDF/transcript; the master's final
+edition contracts remain unchanged. Parts' PDF/transcript logical IDs are scoped
+by their separate task/attempt context and must not be treated as the final issue.
+
+Master, plan or part changes invalidate the task key. Whole-master changes
+currently invalidate all bound parts, even if a local page's bytes did not change.
+Narrower cross-commit reuse requires an explicit checked recipe-equivalence path;
+matching bytes alone cannot replace source/governance identity. The part selector
+does not schedule other parts, allocate actors, select results or complete an
+issue. Native final assembly still needs explicit retained upstream dependencies.
+
 ## Retained comic packet export and editable restoration
 
 ```text

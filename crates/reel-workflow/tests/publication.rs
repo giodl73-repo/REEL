@@ -185,6 +185,7 @@ fn build() -> (Plan, Memory, Receipt) {
         id: "render".into(),
         operation: Operation::DeterministicTool,
         tool: Some(ToolContract {
+            part: None,
             schema: "reel.workflow-tool.v1".into(),
             capability: ToolCapability::ComicRender,
             executable,
@@ -238,6 +239,154 @@ fn build() -> (Plan, Memory, Receipt) {
 }
 fn packet(plan: &Plan) -> Packet {
     make_packet(plan, "render", BTreeMap::new()).unwrap()
+}
+fn part_build() -> (Plan, Memory, Receipt) {
+    let (mut workflow, mut memory, receipt) = build();
+    let task = &mut workflow.tasks[0];
+    let tool = task.tool.as_mut().unwrap();
+    let mut publication: Publication =
+        serde_json::from_slice(&memory.bytes[&tool.publication.logical_id]).unwrap();
+    let Content::Comic { pages, .. } = &mut publication.editions[0].content else {
+        unreachable!()
+    };
+    let mut second = pages[0].clone();
+    second.id = "page02".into();
+    second.source.logical_id = "page/page02-source".into();
+    pages.push(second);
+    publication.editions[0]
+        .outputs
+        .retain(|name, _| name == "reading.pdf" || name == "transcript.json");
+    let master = memory.put(
+        &tool.publication.logical_id,
+        "application/json",
+        serde_json::to_vec(&publication).unwrap(),
+    );
+    task.inputs.retain(|a| a.logical_id != master.logical_id);
+    task.inputs.push(master.clone());
+    tool.publication = master;
+    let issue = reel_publication::comic_issue_source::Plan {
+        schema: "reel.comic-issue-plan.v1".into(),
+        publication,
+        edition_id: "es".into(),
+        parts: vec![
+            reel_publication::comic_issue_source::Part {
+                id: "opening".into(),
+                pages: vec!["page01".into()],
+            },
+            reel_publication::comic_issue_source::Part {
+                id: "closing".into(),
+                pages: vec!["page02".into()],
+            },
+        ],
+    };
+    let plan = memory.put(
+        "publication/issue-plan",
+        "application/json",
+        serde_json::to_vec(&issue).unwrap(),
+    );
+    tool.part = Some(ComicPart {
+        schema: "reel.workflow-comic-part.v1".into(),
+        plan: plan.clone(),
+        part_id: "opening".into(),
+    });
+    task.inputs.push(plan);
+    (workflow, memory, receipt)
+}
+#[test]
+fn part_task_reads_the_master_and_plan_but_only_its_selected_page_closure() {
+    let (workflow, mut reader, receipt) = part_build();
+    let packet = packet(&workflow);
+    let bound = bind_comic(&packet, &mut reader).unwrap();
+    assert_eq!(bound.input_objects(), 7);
+    assert!(!reader.reads.contains_key("page/page02-source"));
+    assert_eq!(reader.reads["publication/issue-plan"], 1);
+    check_comic_receipt(
+        &bound,
+        &result(&packet, &receipt),
+        &serde_json::to_vec(&receipt).unwrap(),
+    )
+    .unwrap();
+    let mut different = workflow.clone();
+    different.tasks[0]
+        .tool
+        .as_mut()
+        .unwrap()
+        .part
+        .as_mut()
+        .unwrap()
+        .part_id = "closing".into();
+    let different_packet = make_packet(&different, "render", BTreeMap::new()).unwrap();
+    assert_ne!(different_packet.task_key, packet.task_key);
+    assert!(bind_comic(&different_packet, &mut reader).is_err());
+    assert!(check_result(&different_packet, &result(&packet, &receipt)).is_err());
+}
+#[test]
+fn part_plan_cannot_replace_the_master_or_cross_edition_boundaries() {
+    let (mut workflow, mut reader, _) = part_build();
+    let tool = workflow.tasks[0].tool.as_mut().unwrap();
+    let old = tool.part.as_ref().unwrap().plan.clone();
+    let mut issue: reel_publication::comic_issue_source::Plan =
+        serde_json::from_slice(&reader.bytes[&old.logical_id]).unwrap();
+    issue.publication.editions[0].language = "en".into();
+    let changed = reader.put(
+        &old.logical_id,
+        "application/json",
+        serde_json::to_vec(&issue).unwrap(),
+    );
+    tool.part.as_mut().unwrap().plan = changed.clone();
+    workflow.tasks[0]
+        .inputs
+        .retain(|a| a.logical_id != old.logical_id);
+    workflow.tasks[0].inputs.push(changed);
+    assert_eq!(
+        bind_comic(&packet(&workflow), &mut reader)
+            .unwrap_err()
+            .code,
+        "comic-part-master-binding"
+    );
+    let (mut workflow, mut reader, _) = part_build();
+    workflow.tasks[0]
+        .tool
+        .as_mut()
+        .unwrap()
+        .part
+        .as_mut()
+        .unwrap()
+        .part_id = "absent".into();
+    assert_eq!(
+        bind_comic(&packet(&workflow), &mut reader)
+            .unwrap_err()
+            .kind,
+        ErrorKind::Missing
+    );
+}
+#[test]
+fn part_metadata_must_be_a_distinct_declared_bounded_input() {
+    let (mut workflow, _, _) = part_build();
+    let plan_id = workflow.tasks[0]
+        .tool
+        .as_ref()
+        .unwrap()
+        .part
+        .as_ref()
+        .unwrap()
+        .plan
+        .logical_id
+        .clone();
+    workflow.tasks[0].inputs.retain(|a| a.logical_id != plan_id);
+    assert!(check_plan(&workflow).is_err());
+    let (mut workflow, _, _) = part_build();
+    let tool = workflow.tasks[0].tool.as_mut().unwrap();
+    tool.source_bindings
+        .insert("unexpected.json".into(), plan_id);
+    assert!(check_plan(&workflow).is_err());
+    let (workflow, _, _) = build();
+    assert!(
+        !serde_json::to_value(&workflow).unwrap()["tasks"][0]["tool"]
+            .as_object()
+            .unwrap()
+            .contains_key("part")
+    );
 }
 fn result(packet: &Packet, receipt: &Receipt) -> ReturnedResult {
     ReturnedResult {

@@ -2,7 +2,7 @@
 use reel_publication::{MAX_CONTROL_BYTES, Publication};
 use std::{fs::File, io::Read};
 
-fn check(path: &str) -> Result<(), &'static str> {
+fn control<T: serde::de::DeserializeOwned>(path: &str) -> Result<T, &'static str> {
     let file = File::open(path).map_err(|_| "manifest-open")?;
     let mut bytes = Vec::new();
     file.take(MAX_CONTROL_BYTES as u64 + 1)
@@ -11,13 +11,14 @@ fn check(path: &str) -> Result<(), &'static str> {
     if bytes.len() > MAX_CONTROL_BYTES {
         return Err("manifest-bytes");
     }
-    let publication: Publication = serde_json::from_slice(&bytes).map_err(|_| "manifest-json")?;
+    serde_json::from_slice(&bytes).map_err(|_| "manifest-json")
+}
+fn check(path: &str) -> Result<(), &'static str> {
+    let publication: Publication = control(path)?;
     reel_publication::check_publication(&publication).map_err(|e| e.code)
 }
-#[cfg(feature = "comic")]
 fn check_issue(path: &str) -> Result<(), &'static str> {
-    let raw = reel_publication::comic_issue::read_plan(std::path::Path::new(path))
-        .map_err(|_| "issue-plan-read")?;
+    let raw: reel_publication::comic_issue_source::Plan = control(path)?;
     raw.check().map_err(|_| "issue-plan-contract")
 }
 fn main() -> std::process::ExitCode {
@@ -30,7 +31,6 @@ fn main() -> std::process::ExitCode {
     }
     let result = match args.as_slice() {
         [command, path] if command == "check" => check(path),
-        #[cfg(feature = "comic")]
         [command, path] if command == "comic-issue-check" => check_issue(path),
         #[cfg(feature = "comic")]
         [command, request, output] if command == "comic-issue-assemble" => {

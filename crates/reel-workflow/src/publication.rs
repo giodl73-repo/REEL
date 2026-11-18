@@ -157,7 +157,22 @@ pub fn bind_comic(packet: &Packet, reader: &mut impl InputReader) -> Result<Boun
     {
         return bad(ErrorKind::Conflict, "publication-edition-language-binding");
     }
-    let Content::Comic { pages, .. } = &edition.content else {
+    let part_publication = if let Some(part) = &tool.part {
+        let plan: reel_publication::comic_issue_source::Plan =
+            decode(&verified(reader, &part.plan, MAX_CONTROL_BYTES as u64)?)?;
+        plan.check()?;
+        if plan.publication != publication || plan.edition_id != tool.edition_id {
+            return bad(ErrorKind::Conflict, "comic-part-master-binding");
+        }
+        Some(plan.part_publication(&part.part_id)?)
+    } else {
+        None
+    };
+    let selected = part_publication
+        .as_ref()
+        .map(|p| &p.editions[0])
+        .unwrap_or(edition);
+    let Content::Comic { pages, .. } = &selected.content else {
         return bad(ErrorKind::Unsupported, "comic-capability-required");
     };
     if pages.len() != request.pages.len()
@@ -170,14 +185,15 @@ pub fn bind_comic(packet: &Packet, reader: &mut impl InputReader) -> Result<Boun
     {
         return bad(ErrorKind::Budget, "comic-producer-scope");
     }
-    if packet.task.outputs != edition.outputs {
+    if tool.part.is_none() && packet.task.outputs != edition.outputs {
         return bad(ErrorKind::Conflict, "edition-output-contract");
     }
     let page_order: Vec<_> = pages.iter().map(|p| p.id.clone()).collect();
     let types = output_types(&page_order);
-    if types.len() != edition.outputs.len()
+    let outputs = &packet.task.outputs;
+    if types.len() != outputs.len()
         || types.iter().any(|(name, media)| {
-            edition.outputs.get(name).is_none_or(|c| {
+            outputs.get(name).is_none_or(|c| {
                 c.media_type != *media || !c.required || c.max_bytes > request.limits.output_bytes
             })
         })
@@ -197,6 +213,10 @@ pub fn bind_comic(packet: &Packet, reader: &mut impl InputReader) -> Result<Boun
         tool.publication.logical_id.clone(),
         tool.request.logical_id.clone(),
     ]);
+    if let Some(part) = &tool.part {
+        source_ids.insert(part.plan.logical_id.clone());
+        read_ids.insert(part.plan.logical_id.clone());
+    }
     for (selected, pin) in pages.iter().zip(&request.pages) {
         let asset = leaf(packet, pin)?;
         // Matching content is insufficient: require the selected logical page input.
@@ -283,7 +303,7 @@ pub fn bind_comic(packet: &Packet, reader: &mut impl InputReader) -> Result<Boun
         logical_bytes,
         input_objects: source_ids.len(),
         expected_sources: sources,
-        outputs: edition.outputs.clone(),
+        outputs: outputs.clone(),
         executable: tool.executable.clone(),
     })
 }

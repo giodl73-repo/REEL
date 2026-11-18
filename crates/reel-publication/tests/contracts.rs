@@ -44,6 +44,63 @@ fn publication() -> Publication {
         }],
     }
 }
+#[test]
+fn issue_part_metadata_is_available_without_a_renderer_and_preserves_source_identity() {
+    use reel_publication::comic_issue_source::{Part, Plan};
+    let mut work = publication();
+    let Content::Comic { pages, .. } = &mut work.editions[0].content else {
+        unreachable!()
+    };
+    pages[0].spread_id = Some("spread-a".into());
+    pages[1].spread_id = Some("spread-a".into());
+    let mut plan = Plan {
+        schema: "reel.comic-issue-plan.v1".into(),
+        publication: work.clone(),
+        edition_id: "es-reading".into(),
+        parts: vec![Part {
+            id: "spread".into(),
+            pages: vec!["page01".into(), "page02".into()],
+        }],
+    };
+    plan.check().unwrap();
+    assert_eq!(plan.part_publication("spread").unwrap(), work);
+    plan.parts = vec![
+        Part {
+            id: "left".into(),
+            pages: vec!["page01".into()],
+        },
+        Part {
+            id: "right".into(),
+            pages: vec!["page02".into()],
+        },
+    ];
+    assert_eq!(plan.check().unwrap_err().code, "issue-part-split-spread");
+}
+#[test]
+fn issue_plan_cli_is_metadata_only_even_without_the_comic_feature() {
+    use reel_publication::comic_issue_source::{Part, Plan};
+    let plan = Plan {
+        schema: "reel.comic-issue-plan.v1".into(),
+        publication: publication(),
+        edition_id: "es-reading".into(),
+        parts: vec![Part {
+            id: "all".into(),
+            pages: vec!["page01".into(), "page02".into()],
+        }],
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("issue.json");
+    std::fs::write(&file, serde_json::to_vec(&plan).unwrap()).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_reel-publication"))
+        .arg("comic-issue-check")
+        .arg(file)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["payloads_verified"], false);
+    assert_eq!(report["outputs_written"], false);
+}
 fn pages(publication: &mut Publication) -> &mut Vec<ComicPage> {
     let Content::Comic { pages, .. } = &mut publication.editions[0].content else {
         panic!()

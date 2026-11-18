@@ -1937,6 +1937,16 @@ fn staged_retention_refuses_lost_original_response_coverage_before_new_admission
 #[test]
 #[ignore = "Synthetic comic, installed private test font and existing explicitly declared native pool; no project adoption"]
 fn native_comic_worker_receipt_replay_retention_and_bare_history_complete_together() {
+    comic_native_case(false);
+}
+#[cfg(windows)]
+#[test]
+#[ignore = "Synthetic selected issue part and explicit existing native pool; no project adoption"]
+fn native_comic_part_preserves_master_identity_and_bounds_its_protected_source_closure() {
+    comic_native_case(true);
+}
+#[cfg(windows)]
+fn comic_native_case(partitioned: bool) {
     use reel_publication::{
         ComicPage, Content, Edition, PageKind, Publication, ReadingDirection,
         comic_source::{
@@ -2079,7 +2089,7 @@ fn native_comic_worker_receipt_replay_retention_and_bare_history_complete_togeth
             },
         );
     }
-    let publication = Publication {
+    let mut publication = Publication {
         schema: reel_publication::PUBLICATION_SCHEMA.into(),
         id: "synthetic-comic".into(),
         editions: vec![Edition {
@@ -2099,12 +2109,69 @@ fn native_comic_worker_receipt_replay_retention_and_bare_history_complete_togeth
             outputs: contracts.clone(),
         }],
     };
+    let mut unselected = None;
+    if partitioned {
+        let mut second = page.clone();
+        second.id = "page02".into();
+        second.utterances[0].lines = vec!["Seguimos.".into()];
+        let (asset, _) = put(
+            "comic/page-two",
+            "pages/page02.json",
+            "application/json",
+            serde_json::to_vec_pretty(&second).unwrap(),
+        );
+        unselected = Some(Object {
+            sha256: tig_core::Digest::parse(&asset.sha256).unwrap(),
+            bytes: asset.bytes,
+        });
+        let Content::Comic { pages, .. } = &mut publication.editions[0].content else {
+            unreachable!()
+        };
+        let mut selected = pages[0].clone();
+        selected.id = second.id;
+        selected.source = asset;
+        pages.push(selected);
+        publication.editions[0]
+            .outputs
+            .retain(|name, _| name == "reading.pdf" || name == "transcript.json");
+    }
     let (publication_asset, _) = put(
         "comic/publication",
         "publication.json",
         "application/json",
         serde_json::to_vec_pretty(&publication).unwrap(),
     );
+    let part = if partitioned {
+        use reel_publication::comic_issue_source::{Part, Plan as IssuePlan};
+        let issue = IssuePlan {
+            schema: "reel.comic-issue-plan.v1".into(),
+            publication: publication.clone(),
+            edition_id: "es".into(),
+            parts: vec![
+                Part {
+                    id: "opening".into(),
+                    pages: vec!["page01".into()],
+                },
+                Part {
+                    id: "closing".into(),
+                    pages: vec!["page02".into()],
+                },
+            ],
+        };
+        let (plan, _) = put(
+            "comic/issue-plan",
+            "issue-plan.json",
+            "application/json",
+            serde_json::to_vec_pretty(&issue).unwrap(),
+        );
+        Some(reel_workflow::ComicPart {
+            schema: "reel.workflow-comic-part.v1".into(),
+            plan,
+            part_id: "opening".into(),
+        })
+    } else {
+        None
+    };
     fixture.profile.records.clear();
     fixture.profile.bindings.clear();
     fixture.profile.input_streams.clear();
@@ -2125,6 +2192,9 @@ fn native_comic_worker_receipt_replay_retention_and_bare_history_complete_togeth
             Key::from_object(&Object::from_bytes(raw)).unlocked_pointer(),
         )
         .unwrap();
+        if asset.logical_id == "comic/page-two" {
+            continue;
+        }
         fixture.profile.records.push(record);
         fixture
             .profile
@@ -2155,6 +2225,7 @@ fn native_comic_worker_receipt_replay_retention_and_bare_history_complete_togeth
         native_inputs: Some(Fixture::declaration(&fixture.profile)),
         operation: Operation::DeterministicTool,
         tool: Some(ToolContract {
+            part,
             schema: "reel.workflow-tool.v1".into(),
             capability: ToolCapability::ComicRender,
             executable: worker.clone(),
@@ -2164,14 +2235,21 @@ fn native_comic_worker_receipt_replay_retention_and_bare_history_complete_togeth
             source_bindings: assets
                 .iter()
                 .filter(|(_, a, _)| {
-                    a.logical_id != "comic/request" && a.logical_id != "comic/publication"
+                    a.logical_id != "comic/request"
+                        && a.logical_id != "comic/publication"
+                        && a.logical_id != "comic/issue-plan"
+                        && a.logical_id != "comic/page-two"
                 })
                 .map(|(p, a, _)| (p.clone(), a.logical_id.clone()))
                 .collect(),
         }),
         language: Some("es".into()),
         prompt: String::new(),
-        inputs: assets.iter().map(|(_, a, _)| a.clone()).collect(),
+        inputs: assets
+            .iter()
+            .filter(|(_, a, _)| a.logical_id != "comic/page-two")
+            .map(|(_, a, _)| a.clone())
+            .collect(),
         depends_on: vec![],
         outputs: contracts,
     };
@@ -2200,6 +2278,9 @@ fn native_comic_worker_receipt_replay_retention_and_bare_history_complete_togeth
         .accept()
         .unwrap();
     for (path, _, raw) in &assets {
+        if path == "pages/page02.json" {
+            continue;
+        }
         tig_git::annex::workflow::publication::publish(
             &tig_git::annex::workflow::publication::Profile {
                 schema: "tig.annex-file-publication.experimental-1".into(),
@@ -2617,7 +2698,14 @@ fn native_comic_worker_receipt_replay_retention_and_bare_history_complete_togeth
         fs::read(rebuilt.join(format!("{page_id}-reading.png"))).unwrap(),
         fs::read(edited_output.join(format!("{page_id}-reading.png"))).unwrap()
     );
-    if let Some(directory) = std::env::var_os("REEL_COMIC_NATIVE_EVIDENCE_DIRECTORY") {
+    if let Some(unselected) = unselected {
+        assert!(case.protected(&unselected).is_empty());
+    }
+    if let Some(directory) = std::env::var_os(if partitioned {
+        "REEL_COMIC_PART_NATIVE_EVIDENCE_DIRECTORY"
+    } else {
+        "REEL_COMIC_NATIVE_EVIDENCE_DIRECTORY"
+    }) {
         use std::io::Write;
         let directory = PathBuf::from(directory);
         assert!(directory.is_absolute() && directory.is_dir());

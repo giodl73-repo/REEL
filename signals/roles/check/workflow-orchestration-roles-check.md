@@ -298,3 +298,18 @@ issue rhythm, project adoption or permissions. Exported packets, workflow contro
 and font/license bytes stay private. Actor close, scratch/capacity retirement,
 selection and creative/translation/font/print/release authority remain separate.
 These are producer-applied checklists, not independent reviewers or approval.
+
+2026-11-18 explicit part follow-up, producer-applied comics-editor, engineering
+and rights/provenance lenses: every bounded page job must retain full master/plan
+identity, source logical IDs, language and spread boundaries. The worker consumes
+only its selected page closure; that does not authorize partial-issue delivery or
+claim unrendered pages are available. Part PDF/transcript artifacts remain scoped
+to their task/attempt and cannot silently become final edition selections.
+
+Portable metadata checks require no font/media reads. Master or plan changes
+currently invalidate all bound tasks; equal pixels are not cross-commit governance
+equivalence. Full issue and neighboring-page fix review remain necessary. Native
+qualification now covers selected-part admission, retention, bare-history resume,
+export/restoration/fresh editing and absence of a protection claim for the unused
+page. This is one part of a synthetic two-page master; no complete issue,
+independent review, human approval, project migration or release is inferred.

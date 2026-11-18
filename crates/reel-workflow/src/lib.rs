@@ -96,6 +96,15 @@ pub struct ToolContract {
     pub request: Artifact,
     /// Portable producer-relative path -> exact declared logical asset identity.
     pub source_bindings: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part: Option<ComicPart>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ComicPart {
+    pub schema: String,
+    pub plan: Artifact,
+    pub part_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -223,6 +232,27 @@ fn task(value: &Task) -> Result<()> {
             artifact(&tool.executable)?;
             artifact(&tool.publication)?;
             artifact(&tool.request)?;
+            if let Some(part) = &tool.part {
+                artifact(&part.plan)?;
+                if part.schema != "reel.workflow-comic-part.v1"
+                    || !token(&part.part_id)
+                    || part.plan.media_type != "application/json"
+                    || part.plan.bytes > MAX_CONTROL_BYTES as u64
+                    || !value.inputs.contains(&part.plan)
+                    || [
+                        &tool.publication.logical_id,
+                        &tool.request.logical_id,
+                        &tool.executable.logical_id,
+                    ]
+                    .contains(&&part.plan.logical_id)
+                    || tool
+                        .source_bindings
+                        .values()
+                        .any(|id| id == &part.plan.logical_id)
+                {
+                    return fail(ErrorKind::Invalid, "comic-part-input-binding");
+                }
+            }
             if tool.publication.logical_id == tool.request.logical_id
                 || tool.publication.media_type != "application/json"
                 || tool.request.media_type != "application/json"

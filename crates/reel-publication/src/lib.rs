@@ -7,6 +7,7 @@ use std::fmt;
 pub mod comic;
 #[cfg(feature = "comic")]
 pub mod comic_issue;
+pub mod comic_issue_source;
 pub mod comic_source;
 
 pub const PUBLICATION_SCHEMA: &str = "reel.publication.v1";

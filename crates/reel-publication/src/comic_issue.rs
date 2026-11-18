@@ -1,114 +1,15 @@
 //! Explicit comic parts and private ordered reading assembly. This is not a
 //! native job planner: actor, source-closure and retention admission remain separate.
-use crate::{
-    Artifact, ArtifactSet, ComicPage, Content, Publication, comic, comic_source::*, valid_id,
-};
+use crate::{Artifact, ArtifactSet, comic, comic_source::*};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Part {
-    pub id: String,
-    pub pages: Vec<String>,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Plan {
-    pub schema: String,
-    pub publication: Publication,
-    pub edition_id: String,
-    /// Authored contiguous groups, in reading order; never silently chunked.
-    pub parts: Vec<Part>,
-}
+pub use crate::comic_issue_source::{Part, Plan};
 /// Bounded, read-only metadata decoding. Call `Plan::check` to validate it.
 pub fn read_plan(path: &Path) -> Result<Plan> {
     let raw = comic::read(&std::path::absolute(path)?, crate::MAX_CONTROL_BYTES as u64)?;
     Ok(serde_json::from_slice(&raw)?)
-}
-impl Plan {
-    pub fn check(&self) -> Result<()> {
-        ensure!(
-            serde_json::to_vec(self)?.len() <= crate::MAX_CONTROL_BYTES,
-            "issue plan byte bound exceeded"
-        );
-        crate::check_publication(&self.publication)?;
-        ensure!(
-            self.schema == "reel.comic-issue-plan.v1" && (1..=128).contains(&self.parts.len()),
-            "issue plan contract refused"
-        );
-        let pages = self.pages()?;
-        let mut offset = 0;
-        let mut names = std::collections::BTreeSet::new();
-        for part in &self.parts {
-            ensure!(
-                valid_id(&part.id)
-                    && names.insert(part.id.to_ascii_lowercase())
-                    && (1..=32).contains(&part.pages.len()),
-                "issue part identity/count refused"
-            );
-            let end = offset + part.pages.len();
-            ensure!(
-                end <= pages.len()
-                    && part
-                        .pages
-                        .iter()
-                        .eq(pages[offset..end].iter().map(|p| &p.id)),
-                "issue part page order/coverage differs"
-            );
-            if end < pages.len() {
-                ensure!(
-                    pages[end - 1].spread_id.is_none()
-                        || pages[end - 1].spread_id != pages[end].spread_id,
-                    "issue part splits spread"
-                );
-            }
-            offset = end;
-        }
-        ensure!(offset == pages.len(), "issue pages missing");
-        Ok(())
-    }
-    fn pages(&self) -> Result<&[ComicPage]> {
-        let edition = self
-            .publication
-            .editions
-            .iter()
-            .find(|e| e.id == self.edition_id)
-            .context("issue edition absent")?;
-        let Content::Comic { pages, .. } = &edition.content else {
-            anyhow::bail!("comic issue required")
-        };
-        Ok(pages)
-    }
-    /// A derived part definition preserves page/source/order and language identity.
-    /// It is not a selected or committed asset, nor a workflow admission receipt.
-    pub fn part_publication(&self, id: &str) -> Result<Publication> {
-        self.check()?;
-        let part = self
-            .parts
-            .iter()
-            .find(|p| p.id == id)
-            .context("issue part absent")?;
-        let mut edition = self
-            .publication
-            .editions
-            .iter()
-            .find(|e| e.id == self.edition_id)
-            .context("issue edition absent")?
-            .clone();
-        let Content::Comic { pages, .. } = &mut edition.content else {
-            anyhow::bail!("comic issue required")
-        };
-        pages.retain(|p| part.pages.contains(&p.id));
-        let publication = Publication {
-            schema: self.publication.schema.clone(),
-            id: self.publication.id.clone(),
-            editions: vec![edition],
-        };
-        crate::check_publication(&publication)?;
-        Ok(publication)
-    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
