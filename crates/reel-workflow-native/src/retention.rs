@@ -63,6 +63,14 @@ pub struct RetainedGuard {
     _outputs: Vec<reader::VerifiedRead>,
     _comic: Option<crate::comic::Proof>,
 }
+impl RetainedGuard {
+    pub(crate) fn comic_files(&self) -> Result<&std::collections::BTreeMap<String, Vec<u8>>> {
+        self._comic
+            .as_ref()
+            .and_then(|proof| proof.files.as_ref())
+            .ok_or_else(|| error(ErrorKind::Unsupported, "retention-comic-capture-required"))
+    }
+}
 
 fn check(packet: &Packet, receipt: &Receipt, result: &ReturnedResult) -> Result<()> {
     check_result(packet, result)?;
@@ -179,12 +187,60 @@ pub fn verify(
     result: &ReturnedResult,
     acknowledgement: &Acknowledgement,
 ) -> Result<RetainedGuard> {
+    verify_inner(
+        packet,
+        source,
+        profile,
+        receipt,
+        result,
+        acknowledgement,
+        false,
+    )
+}
+pub(crate) fn capture_comic(
+    packet: &Packet,
+    source: &NativeProfile,
+    profile: &admission::Profile,
+    receipt: &Receipt,
+    result: &ReturnedResult,
+    acknowledgement: &Acknowledgement,
+) -> Result<RetainedGuard> {
+    if result.provenance.mode != reel_workflow::Mode::Tool {
+        return Err(error(
+            ErrorKind::Unsupported,
+            "retention-comic-result-required",
+        ));
+    }
+    verify_inner(
+        packet,
+        source,
+        profile,
+        receipt,
+        result,
+        acknowledgement,
+        true,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+fn verify_inner(
+    packet: &Packet,
+    source: &NativeProfile,
+    profile: &admission::Profile,
+    receipt: &Receipt,
+    result: &ReturnedResult,
+    acknowledgement: &Acknowledgement,
+    capture: bool,
+) -> Result<RetainedGuard> {
     check(packet, receipt, result)?;
     let _annex = hold_tool(&source.annex)?;
     let prepared = Prepared::open(packet, source, profile, &receipt.attempt_id)?;
     let fences = prepared.verify_retained(receipt, result, acknowledgement)?;
     let outputs = outputs(source, result)?;
-    let comic = crate::comic::check_native(packet, source, result)?;
+    let comic = if capture {
+        crate::comic::capture_native(packet, source, result)?
+    } else {
+        crate::comic::check_native(packet, source, result)?
+    };
     Ok(RetainedGuard {
         _fences: fences,
         _prepared: prepared,

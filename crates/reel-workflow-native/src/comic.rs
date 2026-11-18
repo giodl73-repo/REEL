@@ -30,6 +30,7 @@ impl InputReader for Inputs {
 pub(crate) struct Proof {
     _inputs: NativeInputs,
     _outputs: Vec<reader::VerifiedRead>,
+    pub(crate) files: Option<BTreeMap<String, Vec<u8>>>,
 }
 fn pin(result: &ReturnedResult) -> Result<&Artifact> {
     result
@@ -180,6 +181,21 @@ pub(crate) fn check_native(
     profile: &NativeProfile,
     result: &ReturnedResult,
 ) -> Result<Option<Proof>> {
+    native_proof(packet, profile, result, false)
+}
+pub(crate) fn capture_native(
+    packet: &Packet,
+    profile: &NativeProfile,
+    result: &ReturnedResult,
+) -> Result<Option<Proof>> {
+    native_proof(packet, profile, result, true)
+}
+fn native_proof(
+    packet: &Packet,
+    profile: &NativeProfile,
+    result: &ReturnedResult,
+    capture: bool,
+) -> Result<Option<Proof>> {
     if result.provenance.mode != reel_workflow::Mode::Tool {
         return Ok(None);
     }
@@ -213,28 +229,34 @@ pub(crate) fn check_native(
     publication::check_comic_receipt(&bound, result, &receipt)?;
     let request = source(packet, &inputs, "request.json")
         .map_err(|_| error(ErrorKind::Integrity, "comic-request-closure"))?;
+    let mut files = capture.then(BTreeMap::new);
     reel_publication::comic::check_with(
         &request,
         |p| source(packet, &inputs, &p.path),
         |name, _| {
-            if name == "receipt.json" {
-                return Ok(receipt.clone());
+            let raw = if name == "receipt.json" {
+                receipt.clone()
+            } else if let Some(path) = name.strip_prefix("sources/") {
+                source(packet, &inputs, path)?
+            } else {
+                native_read(
+                    result
+                        .artifacts
+                        .get(name)
+                        .ok_or_else(|| anyhow::anyhow!("declared native output required"))?,
+                )
+                .map_err(|_| anyhow::anyhow!("native output refused"))?
+            };
+            if let Some(files) = &mut files {
+                files.insert(name.to_owned(), raw.clone());
             }
-            if let Some(path) = name.strip_prefix("sources/") {
-                return source(packet, &inputs, path);
-            }
-            native_read(
-                result
-                    .artifacts
-                    .get(name)
-                    .ok_or_else(|| anyhow::anyhow!("declared native output required"))?,
-            )
-            .map_err(|_| anyhow::anyhow!("native output refused"))
+            Ok(raw)
         },
     )
     .map_err(|_| error(ErrorKind::Integrity, "comic-native-deterministic-replay"))?;
     Ok(Some(Proof {
         _inputs: inputs.native,
         _outputs: held,
+        files,
     }))
 }

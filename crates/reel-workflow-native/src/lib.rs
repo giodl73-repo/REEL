@@ -18,6 +18,7 @@ mod qualified;
 pub mod response;
 pub mod retention;
 pub mod staging;
+pub use staging::comic_export;
 use tig_git::{
     annex::workflow::reader,
     source::{

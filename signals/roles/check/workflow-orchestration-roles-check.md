@@ -278,3 +278,23 @@ Part metadata cannot bypass the 128-path close bound or 16-actor admission limit
 Issue-level creative and neighboring-page fix review remain required; preserving
 source order does not assess reveals, story quality or translation authority.
 These are producer-applied checks, not independent review or human approval.
+
+2026-11-18 native export follow-up, producer-applied comics-editor, engineering
+and rights/provenance lenses: editable recovery must begin with exact native
+retained source/output objects and record/annex binding, not the continued
+presence of a worker folder. A fresh owned workspace and conservative capacity
+record follow proof; export rechecks it on every call, including completed copies.
+Native guard lifetimes cover immutable publication and final verification.
+Checkpoint witness refresh preserves the original admission/retained-work export
+identity; it cannot silently allocate another workspace after uncertain preparation.
+Source restoration is separately pinned and grants no native custody by itself.
+
+The existing-store fixture now removes original inputs and render outputs, uses
+bare history, exports/restores/rebuilds exactly, then changes lettering while
+preserving clean art. Wrong owner/ticket, missing native store and corrupted local
+lettering refuse; the local corruption is left untouched. All native regressions
+pass. This establishes bounded synthetic editable recovery, not finished artwork,
+issue rhythm, project adoption or permissions. Exported packets, workflow controls
+and font/license bytes stay private. Actor close, scratch/capacity retirement,
+selection and creative/translation/font/print/release authority remain separate.
+These are producer-applied checklists, not independent reviewers or approval.

@@ -22,6 +22,8 @@ const MAX_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_FILES: usize = 256;
 const MAX_ENTRIES: usize = 2048;
 const ATTEMPTS: usize = 4;
+#[path = "comic_export.rs"]
+pub mod comic_export;
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -78,7 +80,7 @@ struct Plan {
     manifest: Manifest,
     controls: BTreeMap<String, Vec<u8>>,
 }
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct Summary {
     pub staged_files: usize,
     pub logical_bytes: u64,
@@ -229,7 +231,18 @@ fn plan(packet: &Packet, source: &NativeProfile, receipt: &Receipt) -> Result<Pl
             return Err(error(ErrorKind::Conflict, "staging-control-alias"));
         }
     }
-    if files.len() > MAX_FILES {
+    check_entries(&files)?;
+    Ok(Plan {
+        manifest: Manifest {
+            schema: "reel.workflow-staging-manifest.v1".into(),
+            operation: receipt.operation_identity()?,
+            files,
+        },
+        controls,
+    })
+}
+fn check_entries(files: &BTreeMap<String, Entry>) -> Result<()> {
+    if files.is_empty() || files.len() > MAX_FILES {
         return Err(error(ErrorKind::Budget, "staging-file-count"));
     }
     let mut folded = BTreeSet::new();
@@ -245,14 +258,7 @@ fn plan(packet: &Packet, source: &NativeProfile, receipt: &Receipt) -> Result<Pl
             }
         }
     }
-    Ok(Plan {
-        manifest: Manifest {
-            schema: "reel.workflow-staging-manifest.v1".into(),
-            operation: receipt.operation_identity()?,
-            files,
-        },
-        controls,
-    })
+    Ok(())
 }
 fn configuration(profile: &Profile, coordination: &Path) -> Result<reel_assets::Config> {
     if profile.schema != "reel.workflow-staging.v1"
@@ -348,6 +354,22 @@ pub fn prepare(
     let _claims = admission::Prepared::open(packet, source, admission, &receipt.attempt_id)?
         .reopen(receipt)?;
     check_parent(&profile.parent, source, admission)?;
+    let plan = plan(packet, source, receipt)?;
+    let (profile, reservation, owner) =
+        prepare_owned(profile, &admission.scope.coordination_root, &plan)?;
+    Ok(Ticket {
+        schema: "reel.workflow-staging-ticket.v1".into(),
+        profile,
+        reservation,
+        admission: receipt.clone(),
+        owner,
+    })
+}
+fn prepare_owned(
+    profile: &Profile,
+    coordination: &Path,
+    plan: &Plan,
+) -> Result<(Profile, Reservation, Owner)> {
     let parent = open_workspace_directory(&profile.parent).map_err(scoped_error)?;
     let mut profile = profile.clone();
     if let Some(minimum) = profile
@@ -359,9 +381,8 @@ pub fn prepare(
             profile.capacity_policy.minimum_free_bytes.max(*minimum);
     }
     profile.parent = parent.path().into();
-    let config = configuration(&profile, &admission.scope.coordination_root)?;
-    let plan = plan(packet, source, receipt)?;
-    checked_budget(&profile, &plan)?;
+    let config = configuration(&profile, coordination)?;
+    checked_budget(&profile, plan)?;
     if fs::symlink_metadata(
         parent
             .path()
@@ -381,15 +402,15 @@ pub fn prepare(
         profile.maximum_bytes,
     )
     .map_err(scoped_error)?;
-    let result = create_owner(&plan, &parent).map(|owner| Ticket {
-        schema: "reel.workflow-staging-ticket.v1".into(),
-        profile,
-        reservation: Reservation {
-            id: reservation.id.clone(),
-            volume: reservation.volume_id.clone(),
-        },
-        admission: receipt.clone(),
-        owner,
+    let result = create_owner(plan, &parent).map(|owner| {
+        (
+            profile,
+            Reservation {
+                id: reservation.id.clone(),
+                volume: reservation.volume_id.clone(),
+            },
+            owner,
+        )
     });
     reservation.retain_for_recovery();
     result
@@ -431,6 +452,14 @@ fn open_owner(profile: &Profile, owner: &Owner, plan: &Plan) -> Result<View> {
     })
 }
 fn completion(plan: &Plan, ticket_hash: &str) -> Result<Vec<u8>> {
+    if plan.manifest.schema == "reel.workflow-comic-export-manifest.v1" {
+        return json(
+            &serde_json::json!({"schema":"reel.workflow-exported-comic.v1",
+            "ticket_sha256":ticket_hash,"manifest":Object::from_bytes(&json(&plan.manifest)?),
+            "files":plan.manifest.files.len(),"native_retained_proof_rechecked":true,
+            "task_completed":false,"selected":false}),
+        );
+    }
     json(
         &serde_json::json!({"schema":"reel.workflow-staged-inputs.v1","ticket_sha256":ticket_hash,"manifest":Object::from_bytes(&json(&plan.manifest)?),"files":plan.manifest.files.len(),"retained_owner_acknowledged":false,"task_completed":false,"selected":false}),
     )

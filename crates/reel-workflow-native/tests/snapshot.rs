@@ -2216,7 +2216,8 @@ fn native_comic_worker_receipt_replay_retention_and_bare_history_complete_togeth
         )
         .unwrap();
     }
-    let output = case.temp.path().join("rendered");
+    let output_owner = tempfile::tempdir_in(case.temp.path()).unwrap();
+    let output = output_owner.path().join("rendered");
     let rendered = Command::new(&executable)
         .arg("comic-render")
         .arg(raw_source.path().join("request.json"))
@@ -2364,6 +2365,7 @@ fn native_comic_worker_receipt_replay_retention_and_bare_history_complete_togeth
         let _ = case.temp.keep();
         let _ = fixture.temp.keep();
         let _ = raw_source.keep();
+        let _ = output_owner.keep();
         panic!("{}", String::from_utf8_lossy(&completed.stdout));
     }
     assert_eq!(
@@ -2397,6 +2399,224 @@ fn native_comic_worker_receipt_replay_retention_and_bare_history_complete_togeth
         "{}",
         String::from_utf8_lossy(&historical.stdout)
     );
+    output_owner.close().unwrap();
+    // Restore from native bytes alone, using bare history and the original retained
+    // acknowledgement. Both raw worker inputs and the rendered packet are gone.
+    use reel_workflow_native::{comic_export, staging};
+    let ack_path = profile.acknowledgements.join(format!(
+        "retained-{}-{}.json",
+        profile.binding.admission.task_key, profile.binding.admission.attempt_id
+    ));
+    let ack: reel_workflow_native::retention::Acknowledgement =
+        serde_json::from_slice(&fs::read(&ack_path).unwrap()).unwrap();
+    let parent = case.temp.path().join("export-scratch");
+    fs::create_dir(&parent).unwrap();
+    let staging = staging::Profile {
+        schema: "reel.workflow-staging.v1".into(),
+        parent: parent.clone(),
+        maximum_bytes: 16 * 1024 * 1024,
+        capacity_policy: reel_assets::admission::Policy {
+            minimum_free_bytes: 65536,
+            minimum_free_basis_points: 0,
+            max_object_bytes: 512 * 1024 * 1024,
+            ..Default::default()
+        },
+    };
+    let mut wrong_ack = ack.clone();
+    wrong_ack.target.owner = tig_store::Key::parse("wrong-owner").unwrap();
+    assert!(
+        comic_export::prepare(
+            &fixture.packet,
+            &profile.source,
+            &profile.admission,
+            &profile.binding.admission,
+            &result,
+            &wrong_ack,
+            &staging
+        )
+        .is_err()
+    );
+    assert_eq!(fs::read_dir(&parent).unwrap().count(), 0);
+    let native_path = case.temp.path().join("export-native.json");
+    let admission_path = case.temp.path().join("export-admission.json");
+    let receipt_path = case.temp.path().join("export-receipt.json");
+    let staging_path = case.temp.path().join("export-staging.json");
+    let ticket_path = case.temp.path().join("export-ticket.json");
+    for (p, raw) in [
+        (&native_path, serde_json::to_vec(&profile.source).unwrap()),
+        (
+            &admission_path,
+            serde_json::to_vec(&profile.admission).unwrap(),
+        ),
+        (
+            &receipt_path,
+            profile.binding.admission.canonical_bytes().unwrap(),
+        ),
+        (&staging_path, serde_json::to_vec(&staging).unwrap()),
+    ] {
+        fs::write(p, raw).unwrap();
+    }
+    let prepared = Command::new(&executable)
+        .arg("prepare-comic-export")
+        .arg(&packet_path)
+        .arg(&native_path)
+        .arg(&admission_path)
+        .arg(&receipt_path)
+        .arg(&result_path)
+        .arg(&ack_path)
+        .arg(&staging_path)
+        .arg(&ticket_path)
+        .arg("--apply")
+        .output()
+        .unwrap();
+    assert!(
+        prepared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&prepared.stdout)
+    );
+    let ticket_raw = fs::read(&ticket_path).unwrap();
+    let ticket_pin = digest(&ticket_raw);
+    let ticket: comic_export::Ticket = serde_json::from_slice(&ticket_raw).unwrap();
+    let exported_packet = ticket.packet_directory();
+    assert!(!exported_packet.exists());
+    assert_eq!(
+        comic_export::export(
+            &fixture.packet,
+            &profile.source,
+            &profile.admission,
+            &ticket_raw,
+            &"0".repeat(64)
+        )
+        .unwrap_err()
+        .kind,
+        ErrorKind::Integrity
+    );
+    let exported = Command::new(&executable)
+        .arg("export-comic")
+        .arg(&packet_path)
+        .arg(&native_path)
+        .arg(&admission_path)
+        .arg(&ticket_path)
+        .arg(&ticket_pin)
+        .arg("--apply")
+        .output()
+        .unwrap();
+    assert!(
+        exported.status.success(),
+        "{}",
+        String::from_utf8_lossy(&exported.stdout)
+    );
+    assert!(!serde_json::from_slice::<serde_json::Value>(&exported.stdout).unwrap()["export"]["already_complete"].as_bool().unwrap());
+    assert_eq!(
+        fs::read(exported_packet.join("receipt.json")).unwrap(),
+        receipt_raw
+    );
+    let repeated = comic_export::export_file(
+        &fixture.packet,
+        &profile.source,
+        &profile.admission,
+        &ticket_path,
+        &ticket_pin,
+    )
+    .unwrap();
+    assert!(repeated.already_complete);
+    let mut missing: NativeProfile =
+        serde_json::from_slice(&fs::read(&native_path).unwrap()).unwrap();
+    missing.source.pool.repository = case.temp.path().join("unavailable-native-store");
+    assert!(
+        comic_export::export(
+            &fixture.packet,
+            &missing,
+            &profile.admission,
+            &ticket_raw,
+            &ticket_pin
+        )
+        .is_err()
+    );
+    let lettering = exported_packet.join(format!("{}-lettering.svg", receipt.page_order[0]));
+    let original_lettering = fs::read(&lettering).unwrap();
+    fs::write(&lettering, b"altered local output").unwrap();
+    assert_eq!(
+        comic_export::export(
+            &fixture.packet,
+            &profile.source,
+            &profile.admission,
+            &ticket_raw,
+            &ticket_pin
+        )
+        .unwrap_err()
+        .kind,
+        ErrorKind::Integrity
+    );
+    assert_eq!(fs::read(&lettering).unwrap(), b"altered local output");
+    fs::write(&lettering, &original_lettering).unwrap();
+    let restored = case.temp.path().join("restored-editable");
+    let restore = Command::new(&executable)
+        .arg("comic-restore")
+        .arg(&exported_packet)
+        .arg(&restored)
+        .arg(&result.worker_receipt.as_ref().unwrap().sha256)
+        .output()
+        .unwrap();
+    assert!(
+        restore.status.success(),
+        "{}",
+        String::from_utf8_lossy(&restore.stdout)
+    );
+    let rebuilt = case.temp.path().join("rebuilt-restored");
+    let rebuild = Command::new(&executable)
+        .arg("comic-render")
+        .arg(restored.join("request.json"))
+        .arg(&rebuilt)
+        .output()
+        .unwrap();
+    assert!(
+        rebuild.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rebuild.stdout)
+    );
+    for (name, artifact) in &result.artifacts {
+        assert_eq!(
+            digest(&fs::read(rebuilt.join(name)).unwrap()),
+            artifact.sha256
+        );
+    }
+    let mut restored_request: Request =
+        serde_json::from_slice(&fs::read(restored.join("request.json")).unwrap()).unwrap();
+    let page_path = restored.join(&restored_request.pages[0].path);
+    let mut edited_page: PageSource =
+        serde_json::from_slice(&fs::read(&page_path).unwrap()).unwrap();
+    edited_page.utterances[0].lines = vec!["Mira la luz.".into()];
+    let edited_raw = serde_json::to_vec_pretty(&edited_page).unwrap();
+    fs::write(page_path, &edited_raw).unwrap();
+    restored_request.pages[0].sha256 = digest(&edited_raw);
+    restored_request.pages[0].bytes = edited_raw.len() as u64;
+    fs::write(
+        restored.join("request.json"),
+        serde_json::to_vec_pretty(&restored_request).unwrap(),
+    )
+    .unwrap();
+    let edited_output = case.temp.path().join("edited-restored");
+    let edited = Command::new(&executable)
+        .arg("comic-render")
+        .arg(restored.join("request.json"))
+        .arg(&edited_output)
+        .output()
+        .unwrap();
+    assert!(
+        edited.status.success(),
+        "{}",
+        String::from_utf8_lossy(&edited.stdout)
+    );
+    let page_id = &receipt.page_order[0];
+    assert_eq!(
+        fs::read(rebuilt.join(format!("{page_id}-clean.png"))).unwrap(),
+        fs::read(edited_output.join(format!("{page_id}-clean.png"))).unwrap()
+    );
+    assert_ne!(
+        fs::read(rebuilt.join(format!("{page_id}-reading.png"))).unwrap(),
+        fs::read(edited_output.join(format!("{page_id}-reading.png"))).unwrap()
+    );
     if let Some(directory) = std::env::var_os("REEL_COMIC_NATIVE_EVIDENCE_DIRECTORY") {
         use std::io::Write;
         let directory = PathBuf::from(directory);
@@ -2407,9 +2627,12 @@ fn native_comic_worker_receipt_replay_retention_and_bare_history_complete_togeth
             ("result.json", fs::read(result_path).unwrap()),
             ("completion.json", completed.stdout),
             ("historical.json", historical.stdout),
+            ("export-preparation.json", prepared.stdout),
+            ("export-completion.json", exported.stdout),
+            ("export-ticket.json", ticket_raw),
             (
                 "locations.json",
-                serde_json::to_vec(&json!({"journal":journal})).unwrap(),
+                serde_json::to_vec(&json!({"journal":journal,"exported_packet":exported_packet,"restored":restored,"edited_output":edited_output})).unwrap(),
             ),
         ] {
             let mut file = fs::OpenOptions::new()

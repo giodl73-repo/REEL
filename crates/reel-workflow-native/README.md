@@ -424,7 +424,7 @@ and output objects. It no longer needs the original worker source directory or
 return files, but DOES need the retained source payloads as well as outputs;
 missing historical source bytes refuse without a current/latest fallback.
 Captured source copies are reconstructed from those original pinned native
-inputs for replay; native packet restoration/export is still a separate feature.
+inputs for replay. Explicit packet export below uses that same verified closure.
 
 Native SDK object gates are exclusive. The adapter shares one held guard per
 physical object inside an operation, including duplicate output bytes and inputs
@@ -442,5 +442,60 @@ resume. It grants no project/creator/font/printer approval. The provider ingress
 fixture also registers two logical outputs with identical bytes to check guard
 sharing without losing logical identity. A separate fixture refuses output sets
 that would strand a job beyond the qualified close bound. Larger issue planning,
-native editable restoration, provider execution, selection and retirement remain
+native issue scheduling, provider execution, selection and retirement remain
 open in the [full completion ledger](../../docs/workflow-completion.md).
+
+## Retained comic packet export and editable restoration
+
+```text
+reel-workflow-native prepare-comic-export PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT ACK STAGING_PROFILE NEW_TICKET --apply
+reel-workflow-native export-comic PACKET NATIVE_PROFILE ADMISSION_PROFILE TICKET TICKET_SHA256 --apply
+reel-workflow-native comic-restore PACKET NEW_DIRECTORY RECEIPT_SHA256
+```
+
+Preparation verifies the original native retained work, actor/store coverage,
+source snapshot/record/annex bindings and actual source/output bytes. Comic replay
+captures the exact producer packet, including editable source copies. Provider
+results cannot masquerade as comic packets. Preparation then uses the existing
+staging profile (`reel.workflow-staging.v1`), owned-directory intent and preserved
+capacity admission. Persist the new private ticket and pin its exact raw SHA256
+before exporting. Failure during initial preparation or ticket writing preserves
+scratch and conservative capacity; diagnose the original operation rather than
+allocating another identity.
+
+Export reopens the exact ticket and its original acknowledgement, verifies native
+retained proof again, and holds source/output reads and retained actor fences
+through immutable file publication and final verification. It reuses the staging
+engine's bounded attempts, flushed part files, exclusive hard links, namespace
+identities and conservative capacity lease. Interrupted writes preserve evidence;
+matching flushed parts can resume. Changed files, replaced directories, unexpected
+entries and exhausted attempts refuse without overwriting or deleting anything.
+The original input-staging ticket/completion schemas and bytes remain unchanged;
+comic exports have separate operation, ticket, manifest and completion schemas.
+Export operation identity derives from the original admission identity and
+retained WorkRef, excluding checkpoint witnesses that may advance on rediscovery.
+Exact original controls remain bound by the ticket/intent. A refreshed witness
+cannot silently create a second workspace or replace the original pinned ticket.
+
+`comic_export::Ticket::packet_directory()` provides the private producer-packet
+locator. The workspace contains `packet/` (the exact render outputs, worker
+receipt and `sources/` tree), workflow controls and owned intent/completion files.
+The `packet/` subtree can be checked or restored using its externally pinned
+worker receipt. The source-restoration command alone validates a local packet's
+source hashes; it does not recheck native custody. Restoring sources supports an
+exact rebuild and a fresh local lettering version with clean art preserved.
+It does not restore a whole Git repository or select the edited version.
+
+Every export call rechecks native proof, including an already completed export.
+Missing native bytes or history cannot fall back to the copied packet or its
+completion marker. Scratch must remain outside native pool/index/metadata/control
+roots and the source Git repository. Existing staging limits still apply: 256
+files, portable names/depth, 512 MiB maximum reservation with copy/evidence budget,
+four immutable part attempts and 2,048 workspace entries. Comic renderer limits
+remain smaller where applicable; oversized exports refuse instead of silently
+splitting work. The complete export packet and all controls remain private.
+
+This operation acknowledges no new task completion, releases no source claims,
+does not retire scratch/capacity, and does not change asset selections. An exported
+packet can supply an explicit local issue-assembly part; native upstream-result
+dependencies, issue scheduling and final issue retention remain separate work.

@@ -63,6 +63,79 @@ fn new_receipt(
 }
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
+        [
+            command,
+            packet,
+            source,
+            profile,
+            receipt,
+            result,
+            ack,
+            staging,
+            ticket,
+            apply,
+        ] if command == "prepare-comic-export" && apply == "--apply" => {
+            use std::io::Write;
+            let packet = read_control(Path::new(packet))?;
+            let source = read_control(Path::new(source))?;
+            let profile = read_control(Path::new(profile))?;
+            let receipt = read_control(Path::new(receipt))?;
+            let result = read_control(Path::new(result))?;
+            let ack = read_control(Path::new(ack))?;
+            let staging = read_control(Path::new(staging))?;
+            let mut file = new_receipt(Path::new(ticket), &source, &profile)?;
+            let prepared = reel_workflow_native::comic_export::prepare(
+                &packet, &source, &profile, &receipt, &result, &ack, &staging,
+            )?;
+            file.write_all(&prepared.canonical_bytes()?)
+                .and_then(|_| file.sync_all())
+                .map_err(|_| reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::NeedsRecovery,
+                    code: "comic-export-ticket-write-preserve".into(),
+                })?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"native-comic-export-preparation",
+                "native_retained_proof_rechecked":true,"payloads_copied":false,
+                "task_completed":false,"selected":false,"input_claims_released":false,
+                "scratch_retirement_authorized":false}),
+            )
+        }
+        [command, packet, source, profile, ticket, pin, apply]
+            if command == "export-comic" && apply == "--apply" =>
+        {
+            let packet = read_control(Path::new(packet))?;
+            let source = read_control(Path::new(source))?;
+            let profile = read_control(Path::new(profile))?;
+            let summary = reel_workflow_native::comic_export::export_file(
+                &packet,
+                &source,
+                &profile,
+                Path::new(ticket),
+                pin,
+            )?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"native-comic-packet-export",
+                "native_retained_proof_rechecked":true,"payloads_copied":true,"export":summary,
+                "task_completed":false,"selected":false,"input_claims_released":false,
+                "scratch_retirement_authorized":false}),
+            )
+        }
+        [command, packet, output, receipt_pin] if command == "comic-restore" => {
+            reel_publication::comic::restore_sources(
+                Path::new(packet),
+                Path::new(output),
+                receipt_pin,
+            )
+            .map_err(|_| reel_workflow::Error {
+                kind: reel_workflow::ErrorKind::Integrity,
+                code: "comic-source-restore-refused-preserve".into(),
+            })?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-comic-source-restoration",
+                "sources_restored":true,"native_retained_proof_rechecked":false,
+                "task_completed":false,"selected":false,"print_ready":false}),
+            )
+        }
         [command, request, output] if command == "comic-render" || command == "comic-check" => {
             let checked = if command == "comic-render" {
                 reel_publication::comic::render(Path::new(request), Path::new(output))
@@ -386,6 +459,9 @@ fn main() -> ExitCode {
             "reel-workflow-native accept-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE ATTEMPT NEW_RECEIPT --apply\n",
             "reel-workflow-native reopen-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT\n",
             "reel-workflow-native prepare-stage PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT STAGING_PROFILE NEW_TICKET\n",
+            "reel-workflow-native prepare-comic-export PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT ACK STAGING_PROFILE NEW_TICKET --apply\n",
+            "reel-workflow-native export-comic PACKET NATIVE_PROFILE ADMISSION_PROFILE TICKET TICKET_SHA256 --apply\n",
+            "reel-workflow-native comic-restore PACKET NEW_DIRECTORY RECEIPT_SHA256\n",
             "reel-workflow-native export-stage PACKET NATIVE_PROFILE ADMISSION_PROFILE TICKET TICKET_SHA256\n",
             "reel-workflow-native stage-response PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT RETURNS NEW_CANDIDATE --apply\n",
             "reel-workflow-native register-response PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT RETURNS NEW_CANDIDATE --apply\n",
