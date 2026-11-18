@@ -16,6 +16,7 @@ exports/
 Thumbs.db
 *.tmp
 /target
+/crates/reel-workflow-native/target
 __pycache__/
 *.pyc
 

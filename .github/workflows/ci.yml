@@ -81,6 +81,13 @@ jobs:
         run: |
           cargo clippy -p reel-print -p reel-publication -p reel-workflow --all-targets --all-features --locked -- -D warnings
           cargo test -p reel-print -p reel-publication -p reel-workflow --all-targets --all-features --locked
+      - name: Check isolated native workflow input bridge
+        # The workflow bridge has its own qualified SDK and lockfile. It must not
+        # upgrade the existing producer SDK through workspace feature unification.
+        run: |
+          cargo fmt --manifest-path crates/reel-workflow-native/Cargo.toml -- --check
+          cargo clippy --manifest-path crates/reel-workflow-native/Cargo.toml --all-targets --locked -- -D warnings
+          cargo test --manifest-path crates/reel-workflow-native/Cargo.toml --all-targets --locked
       - name: Check native music contracts and note proposal tooling
         run: |
           cargo clippy -p reel-music --all-targets --locked -- -D warnings

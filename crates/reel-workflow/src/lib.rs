@@ -102,6 +102,9 @@ pub struct ToolContract {
 #[serde(deny_unknown_fields)]
 pub struct Task {
     pub id: String,
+    /// Optional exact canonical native record-to-annex input declaration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_inputs: Option<Artifact>,
     pub operation: Operation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool: Option<ToolContract>,
@@ -237,6 +240,12 @@ fn task(value: &Task) -> Result<()> {
             return fail(ErrorKind::Invalid, "task-prompt");
         }
         _ => (),
+    }
+    if let Some(binding) = &value.native_inputs {
+        artifact(binding)?;
+        if binding.media_type != "application/json" || binding.bytes > MAX_CONTROL_BYTES as u64 {
+            return fail(ErrorKind::Invalid, "native-input-declaration");
+        }
     }
     let mut inputs = BTreeSet::new();
     for input in &value.inputs {

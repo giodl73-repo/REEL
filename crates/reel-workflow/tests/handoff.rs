@@ -12,6 +12,7 @@ fn pin(id: &str) -> Artifact {
 }
 fn fixture() -> (Ticket, ReturnedResult) {
     let task = Task {
+        native_inputs: None,
         id: "review".into(),
         operation: Operation::ReviewFinding,
         tool: None,

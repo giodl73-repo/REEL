@@ -30,7 +30,7 @@ see [publication contracts](publication.md). The single-output v1 prototype is
 not silently reinterpreted.
 
 No API/proxy, ElevenLabs recording, image-generation, GitHub issue, native
-storage admission, retained-owner acknowledgement, selection application or
+job admission, retained-owner acknowledgement, selection application or
 scratch retirement adapter is installed. `check-result` never marks a task
 complete. Direct mode currently has a library adapter boundary and synthetic
 tests, not a live endpoint. Handoff is private packet construction/checking,
@@ -171,6 +171,33 @@ activation generation, object pins, source/Index checkpoints and owner ack. Neve
 replace an uncertain operation with a new identity to make retry appear clean.
 
 ## Bounded implementation work packages
+
+### Qualified native input bridge (2026-11-18)
+
+[`reel-workflow-native`](../crates/reel-workflow-native/README.md) is a separate
+workspace using the exact 247-file qualified SDK in `vendor/tig-workflow`.
+Existing producers retain their older SDK. The bridge uses
+`Repository::native_annex`, not matching-byte discovery: record and all declared
+annex leaves must agree in the task's exact commit. A canonical portable
+declaration is pinned in optional `Task.native_inputs`; changing even a
+byte-identical leaf path or stream choice changes the task key. No declaration
+means existing v2 intelligence task keys remain unchanged.
+
+Metadata resolution works against bare Git history without original working
+files. `NativeInputs` implements the publication `InputReader` with the qualified
+single-store reader and retains byte/executable guards. Its local CLI checks
+metadata or the publication input closure without production dispatch.
+Typed snapshot errors become structured workflow errors; generic provider I/O
+does not acquire a guessed retry class. Neither check acknowledges native job
+protection. The native operational ticket is distinct from this input
+declaration. The newer four-store API is not incorporated here.
+
+Actual evidence: 48 shared tests, eight default native-bridge tests and an
+explicit Windows guarded read of a previously published synthetic 1 MiB object.
+All 247 source pins match, with source line endings preserved. This covers the
+tested source-binding/read behavior, not a full native comic workflow.
+W1 still requires accepted actor protection and resumable staging; W2-W5 remain
+open. See the [current handoff](handoff/2026-11-18-native-workflow-inputs.md).
 
 ### Comic consumer assessment
 

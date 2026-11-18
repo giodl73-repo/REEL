@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 
 fn task(id: &str) -> Task {
     Task {
+        native_inputs: None,
         id: id.into(),
         operation: Operation::TextProposal,
         tool: None,
@@ -89,6 +90,32 @@ fn additive_tool_contract_preserves_existing_v2_intelligence_fingerprint() {
             .get("tool")
             .is_none()
     );
+}
+
+#[test]
+fn native_input_declarations_are_task_bound_and_require_bounded_json_pins() {
+    let mut graph = plan();
+    let original = packet().task_key;
+    graph.tasks[0].native_inputs = Some(Artifact {
+        logical_id: "control/native-bindings".into(),
+        sha256: digest(b"{}"),
+        bytes: 2,
+        media_type: "application/json".into(),
+    });
+    let declared = make_packet(&graph, "note", BTreeMap::new()).unwrap();
+    assert_ne!(declared.task_key, original);
+    graph.tasks[0].native_inputs.as_mut().unwrap().sha256 = digest(b"changed");
+    assert_ne!(
+        make_packet(&graph, "note", BTreeMap::new())
+            .unwrap()
+            .task_key,
+        declared.task_key
+    );
+    graph.tasks[0].native_inputs.as_mut().unwrap().media_type = "text/plain".into();
+    assert!(check_plan(&graph).is_err());
+    graph.tasks[0].native_inputs.as_mut().unwrap().media_type = "application/json".into();
+    graph.tasks[0].native_inputs.as_mut().unwrap().bytes = MAX_CONTROL_BYTES as u64 + 1;
+    assert!(check_plan(&graph).is_err());
 }
 
 #[test]

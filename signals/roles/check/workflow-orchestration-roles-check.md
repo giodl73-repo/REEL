@@ -125,3 +125,22 @@ producer profiles. A generic comic adapter must bind exact workflow resources
 through the qualified Rust lifecycle, rather than mislabel a film projection or
 infer native protection from this control journal. Existing native limits and
 historical bindings remain unchanged.
+
+2026-11-18 native input follow-up, producer-applied editor/rights/custody lenses:
+the selected logical record and annex leaf must agree in the exact task commit;
+finding identical bytes at another path is insufficient. The portable mapping
+and stream choices are now pinned in the task identity, while machine locators
+remain private. A declaration change invalidates the task key. Bare Git metadata
+restores identity without the authored working files. The isolated SDK intake
+preserves all 247 qualified upstream pins and leaves existing producer bindings
+unchanged; its ancestry commit is not relabeled as a clean release.
+
+Guarded input access is not durable job admission. Native CLI observations keep
+that flag false, publish nothing and expose no submitted paths/text. The native
+read fixture exercised an existing synthetic store and exact 1 MiB object;
+neither the fixture nor the source-binding checks establish retained-owner
+acknowledgement, full comic production, creative approval or project adoption.
+Source-binding/alias/stream/history tests and all SDK pin checks supplement the
+shared suite (57 actual tests including the explicit native read). Actor
+acceptance, manual staging, logical registration, recovery and selection
+qualification remain open rather than being inferred from successful reads.

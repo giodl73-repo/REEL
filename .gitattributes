@@ -13,3 +13,6 @@ manifests/fixtures/sprite-library/two-color.ppm text eol=lf
 manifests/fixtures/sprite-library/two-color-reversed.ppm text eol=lf
 
 browser/** text eol=lf
+
+# Preserve qualified source bytes exactly across platforms and Git checkouts.
+vendor/tig-workflow/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

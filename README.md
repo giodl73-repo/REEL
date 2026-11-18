@@ -19,6 +19,9 @@ The additive [workflow orchestration plan](docs/workflow-orchestration.md) maps
 the existing crates to direct and manual prompt/result execution. The
 `reel-workflow` prototype checks private task packets and returned candidate bytes;
 production staging, retention, providers and selection remain explicit next gates.
+The isolated [native workflow input bridge](crates/reel-workflow-native/README.md)
+now binds exact committed records to declared annex leaves and holds guarded
+native reads. It does not yet admit durable workflow jobs.
 
 [Publication contracts](docs/publication.md) add film and comic language editions,
 ordered page/panel metadata and independently tracked output sets through
