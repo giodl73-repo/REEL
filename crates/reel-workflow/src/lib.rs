@@ -1,0 +1,401 @@
+//! Pure workflow contracts. No provider, storage admission, retention, selection,
+//! task completion, Git mutation or approval follows from these checks.
+pub use reel_publication::{Artifact, ArtifactSet, OutputContract, OutputContracts};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+
+pub const PLAN_SCHEMA: &str = "reel.workflow-plan.v2";
+pub const PACKET_SCHEMA: &str = "reel.workflow-packet.v2";
+pub const RESULT_SCHEMA: &str = "reel.workflow-result.v2";
+pub const MAX_CONTROL_BYTES: usize = 1024 * 1024;
+const MAX_TASKS: usize = 128;
+const MAX_INPUTS: usize = 128;
+const MAX_PROMPT_BYTES: usize = 64 * 1024;
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ErrorKind {
+    Invalid,
+    Integrity,
+    Missing,
+    Conflict,
+    Stale,
+    Denied,
+    Busy,
+    Unsupported,
+    NeedsRecovery,
+    Budget,
+}
+
+/// Bounded diagnostics contain no submitted prompt, path, provider reply or secret.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Error {
+    pub kind: ErrorKind,
+    pub code: String,
+}
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}: {}", self.kind, self.code)
+    }
+}
+impl std::error::Error for Error {}
+pub type Result<T> = std::result::Result<T, Error>;
+
+impl From<reel_publication::Error> for Error {
+    fn from(value: reel_publication::Error) -> Self {
+        let kind = match value.kind {
+            reel_publication::ErrorKind::Invalid => ErrorKind::Invalid,
+            reel_publication::ErrorKind::Missing => ErrorKind::Missing,
+            reel_publication::ErrorKind::Conflict => ErrorKind::Conflict,
+            reel_publication::ErrorKind::Budget => ErrorKind::Budget,
+        };
+        Self {
+            kind,
+            code: value.code.into(),
+        }
+    }
+}
+
+fn fail<T>(kind: ErrorKind, code: &str) -> Result<T> {
+    Err(Error {
+        kind,
+        code: code.into(),
+    })
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum Operation {
+    TextProposal,
+    ImageCandidate,
+    SpeechCandidate,
+    BrowserSourceCandidate,
+    ReviewFinding,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Task {
+    pub id: String,
+    pub operation: Operation,
+    pub language: Option<String>,
+    pub prompt: String,
+    pub inputs: Vec<Artifact>,
+    pub depends_on: Vec<String>,
+    pub outputs: OutputContracts,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Plan {
+    pub schema: String,
+    pub project: String,
+    pub source_commit: String,
+    pub tasks: Vec<Task>,
+}
+
+/// Planning reference only. A hash or caller-supplied descriptor is not a
+/// retained-owner acknowledgement. Execution must independently admit resources.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DependencyResult {
+    pub result_sha256: String,
+    pub artifacts: ArtifactSet,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Packet {
+    pub schema: String,
+    pub project: String,
+    pub source_commit: String,
+    pub task: Task,
+    pub dependencies: BTreeMap<String, DependencyResult>,
+    pub task_key: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum Mode {
+    Direct,
+    Handoff,
+}
+
+/// Provider/model fields record supplied provenance, not authenticated identity.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Provenance {
+    pub mode: Mode,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ReturnedResult {
+    pub schema: String,
+    pub task_id: String,
+    pub task_key: String,
+    pub attempt_id: String,
+    pub artifacts: ArtifactSet,
+    pub provenance: Provenance,
+}
+
+fn token(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+        && value != "."
+        && value != ".."
+}
+fn hex(value: &str, lengths: &[usize]) -> bool {
+    lengths.contains(&value.len())
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+fn artifact(value: &Artifact) -> Result<()> {
+    reel_publication::check_artifact(value).map_err(Into::into)
+}
+fn task(value: &Task) -> Result<()> {
+    if !token(&value.id)
+        || value.language.as_ref().is_some_and(|s| !token(s))
+        || value.prompt.trim().is_empty()
+        || value.prompt.len() > MAX_PROMPT_BYTES
+        || value.inputs.len() > MAX_INPUTS
+        || value.depends_on.len() > MAX_TASKS
+    {
+        return fail(ErrorKind::Invalid, "task-contract");
+    }
+    reel_publication::check_contracts(&value.outputs)?;
+    let mut inputs = BTreeSet::new();
+    for input in &value.inputs {
+        artifact(input)?;
+        if !inputs.insert(&input.logical_id) {
+            return fail(ErrorKind::Conflict, "duplicate-input-identity");
+        }
+    }
+    let dependencies: BTreeSet<_> = value.depends_on.iter().collect();
+    if dependencies.len() != value.depends_on.len()
+        || dependencies.iter().any(|id| !token(id) || **id == value.id)
+    {
+        return fail(ErrorKind::Invalid, "task-dependencies");
+    }
+    Ok(())
+}
+
+/// Only bounded metadata is decoded. Unknown fields refuse; no assets are read.
+pub fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
+    if bytes.len() > MAX_CONTROL_BYTES {
+        return fail(ErrorKind::Budget, "control-bytes");
+    }
+    serde_json::from_slice(bytes).map_err(|_| Error {
+        kind: ErrorKind::Invalid,
+        code: "control-json".into(),
+    })
+}
+pub fn digest(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+pub fn canonical_digest(value: &impl Serialize) -> Result<String> {
+    let bytes = serde_json::to_vec(value).map_err(|_| Error {
+        kind: ErrorKind::Invalid,
+        code: "control-encoding".into(),
+    })?;
+    if bytes.len() > MAX_CONTROL_BYTES {
+        return fail(ErrorKind::Budget, "control-bytes");
+    }
+    Ok(digest(&bytes))
+}
+
+/// Returns a stable topological order, refusing cycles and missing dependencies.
+pub fn check_plan(plan: &Plan) -> Result<Vec<String>> {
+    canonical_digest(plan)?;
+    if plan.schema != PLAN_SCHEMA
+        || !token(&plan.project)
+        || !hex(&plan.source_commit, &[40, 64])
+        || plan.tasks.is_empty()
+        || plan.tasks.len() > MAX_TASKS
+    {
+        return fail(ErrorKind::Invalid, "plan-contract");
+    }
+    let mut by_id = BTreeMap::new();
+    for value in &plan.tasks {
+        task(value)?;
+        if by_id.insert(value.id.clone(), value).is_some() {
+            return fail(ErrorKind::Conflict, "duplicate-task-identity");
+        }
+    }
+    if by_id
+        .values()
+        .any(|t| t.depends_on.iter().any(|id| !by_id.contains_key(id)))
+    {
+        return fail(ErrorKind::Missing, "dependency-task");
+    }
+    let mut resolved = BTreeSet::new();
+    let mut ordered = Vec::new();
+    while !by_id.is_empty() {
+        let next = by_id
+            .iter()
+            .find(|(_, t)| t.depends_on.iter().all(|id| resolved.contains(id)))
+            .map(|(id, _)| id.clone());
+        let Some(id) = next else {
+            return fail(ErrorKind::Invalid, "dependency-cycle");
+        };
+        by_id.remove(&id);
+        resolved.insert(id.clone());
+        ordered.push(id);
+    }
+    Ok(ordered)
+}
+
+fn packet_key(packet: &Packet) -> Result<String> {
+    // Exclude the self-hash; declaration order of inputs/dependencies is explicit.
+    canonical_digest(&(
+        &packet.schema,
+        &packet.project,
+        &packet.source_commit,
+        &packet.task,
+        &packet.dependencies,
+    ))
+}
+pub fn check_packet(packet: &Packet) -> Result<()> {
+    canonical_digest(packet)?;
+    task(&packet.task)?;
+    if packet.schema != PACKET_SCHEMA
+        || !token(&packet.project)
+        || !hex(&packet.source_commit, &[40, 64])
+        || !hex(&packet.task_key, &[64])
+    {
+        return fail(ErrorKind::Invalid, "packet-contract");
+    }
+    if packet.dependencies.len() != packet.task.depends_on.len()
+        || packet
+            .task
+            .depends_on
+            .iter()
+            .any(|id| !packet.dependencies.contains_key(id))
+    {
+        return fail(ErrorKind::Missing, "dependency-result");
+    }
+    for dependency in packet.dependencies.values() {
+        reel_publication::check_artifact_set(&dependency.artifacts)?;
+        if !hex(&dependency.result_sha256, &[64]) {
+            return fail(ErrorKind::Invalid, "dependency-result-digest");
+        }
+    }
+    if packet.task_key != packet_key(packet)? {
+        return fail(ErrorKind::Integrity, "packet-key");
+    }
+    Ok(())
+}
+
+/// Builds a private planning packet. Input closure/protection and dependency
+/// retention must be admitted by the managed lifecycle before real dispatch.
+pub fn make_packet(
+    plan: &Plan,
+    task_id: &str,
+    dependencies: BTreeMap<String, DependencyResult>,
+) -> Result<Packet> {
+    check_plan(plan)?;
+    let value = plan
+        .tasks
+        .iter()
+        .find(|t| t.id == task_id)
+        .ok_or_else(|| Error {
+            kind: ErrorKind::Missing,
+            code: "requested-task".into(),
+        })?;
+    let mut packet = Packet {
+        schema: PACKET_SCHEMA.into(),
+        project: plan.project.clone(),
+        source_commit: plan.source_commit.clone(),
+        task: value.clone(),
+        dependencies,
+        task_key: String::new(),
+    };
+    packet.task_key = packet_key(&packet)?;
+    check_packet(&packet)?;
+    Ok(packet)
+}
+
+pub fn check_result(packet: &Packet, result: &ReturnedResult) -> Result<()> {
+    check_packet(packet)?;
+    canonical_digest(result)?;
+    if result.schema != RESULT_SCHEMA
+        || !token(&result.attempt_id)
+        || !token(&result.task_id)
+        || !hex(&result.task_key, &[64])
+        || [&result.provenance.provider, &result.provenance.model]
+            .iter()
+            .any(|v| v.as_ref().is_some_and(|s| !token(s)))
+    {
+        return fail(ErrorKind::Invalid, "result-contract");
+    }
+    if result.task_id != packet.task.id || result.task_key != packet.task_key {
+        return fail(ErrorKind::Stale, "result-task-binding");
+    }
+    reel_publication::check_outputs(&packet.task.outputs, &result.artifacts)?;
+    Ok(())
+}
+
+/// Verifies supplied bytes, not their semantic quality, provenance or retention.
+pub fn check_output(
+    packet: &Packet,
+    result: &ReturnedResult,
+    name: &str,
+    bytes: &[u8],
+) -> Result<()> {
+    check_result(packet, result)?;
+    let artifact = result.artifacts.get(name).ok_or(Error {
+        kind: ErrorKind::Missing,
+        code: "named-output".into(),
+    })?;
+    if bytes.len() as u64 != artifact.bytes || digest(bytes) != artifact.sha256 {
+        return fail(ErrorKind::Integrity, "output-content");
+    }
+    Ok(())
+}
+
+/// Same logical attempt may replay exactly. A different response under that
+/// attempt conflicts; it must not overwrite the first or become a fresh retry.
+pub fn check_replay(prior: &ReturnedResult, returned: &ReturnedResult) -> Result<()> {
+    if prior.task_key != returned.task_key
+        || prior.task_id != returned.task_id
+        || prior.attempt_id != returned.attempt_id
+        || prior != returned
+    {
+        return fail(ErrorKind::Conflict, "attempt-result-conflict");
+    }
+    Ok(())
+}
+
+/// Implementations own admission, provider calls and uncertain-operation recovery.
+/// This crate does not install an adapter or dispatch automatically.
+pub trait DirectAdapter {
+    fn execute(&mut self, packet: &Packet, attempt_id: &str) -> Result<ReturnedResult>;
+}
+pub fn call_direct(
+    adapter: &mut impl DirectAdapter,
+    packet: &Packet,
+    attempt_id: &str,
+) -> Result<ReturnedResult> {
+    check_packet(packet)?;
+    if !token(attempt_id) {
+        return fail(ErrorKind::Invalid, "attempt-identity");
+    }
+    let result = adapter.execute(packet, attempt_id)?;
+    check_result(packet, &result)?;
+    if result.attempt_id != attempt_id || result.provenance.mode != Mode::Direct {
+        return fail(ErrorKind::Conflict, "direct-attempt-binding");
+    }
+    Ok(result)
+}

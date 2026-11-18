@@ -3,6 +3,7 @@
 //! No musical interpretation, selection, publication or cache mutation.
 mod pages;
 mod pdf;
+pub mod vector;
 
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};

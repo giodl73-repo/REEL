@@ -1443,6 +1443,7 @@ name = "reel-print"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "flate2",
  "lopdf",
  "resvg",
  "roxmltree",
@@ -1452,6 +1453,32 @@ dependencies = [
  "svg2pdf",
  "tempfile",
  "ttf-parser",
+]
+
+[[package]]
+name = "reel-publication"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "lopdf",
+ "reel-print",
+ "resvg",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+]
+
+[[package]]
+name = "reel-workflow"
+version = "0.1.0"
+dependencies = [
+ "reel-publication",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
 ]
 
 [[package]]

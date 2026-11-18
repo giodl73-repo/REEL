@@ -1,0 +1,92 @@
+---
+work: workflow-orchestration
+stage: panel
+format: production-workflow
+style: renderer-neutral
+source_scenario: project-owned
+author: producer
+rubric_version: v0.1
+created: 2026-11-17
+updated: 2026-11-17
+sources: [docs/workflow-orchestration.md, .roles/ROLE.md]
+---
+
+# Workflow orchestration producer role review
+
+Target: docs/workflow-orchestration.md, docs/publication.md, formats/comic-issue.md,
+crates/reel-publication and crates/reel-workflow, additive to
+REEL base 3954171a53086973f3160cd033b27524fa359008. Method: source/contract
+inspection, failure scenarios and targeted synthetic tests. Applied REEL's
+nine craft checklists and Melena's six technical checklists supplied by the
+producing project. These are producer lenses, not delegated/independent reviewers
+or human approval. No private media, actual provider or production store is used.
+
+| Lens / severity | Finding | Owner / disposition and evidence |
+| --- | --- | --- |
+| Story / Animation, high | Valid generation can violate canon, current references or requested cadence. | Project policy + REEL W5: immutable input references; separate school/performance/technique and shot/exposure timing. Actual visual-context acceptance remains open. |
+| Editor / Platform, high | Minimal rebuild can omit neighboring context; review/delivery formats differ. | REEL W5: separate rebuild/review scope, project-specific derivatives and full-film checks. No current render claim. |
+| Sound / Reconstruction, high | New take changes clocks and dependent mixes. | Existing assembly/audio engines + W5: preserve selected takes, exact alignment and protected-region checks. Listening/neutral reconstruction remains operation-specific. |
+| Lyrics / Score, high | Input text/transcription does not prove performed wording or authorize adaptation. | Upstream text/music authority: separate hashed layers and decisions; activate deeper checks on changed layers. No musical approval claim. |
+| Rights / Provider privacy, blocking before real dispatch | Handoff is also egress; returned code/identity may be untrusted. | W1/W5: same permitted context in both modes, private packets, unknown provenance explicit, code review. W0 makes no dispatch or provider-authentication claim. |
+| Identity, high | Task ID alone accepts stale or wrong-language results. | W0: task fingerprint binds exact project/source/task/input/dependency/output contracts. Direct and handoff use shared checks; logical/source/review IDs remain separate. |
+| Concurrency / Recovery, blocking before lifecycle adoption | Duplicate effects and old-operation replay can corrupt task accounting. | W1/W2: preserve original operation/WorkRef/activation; exact replay/conflict checks in W0 do not claim durable idempotency. Lost replies propagate NeedsRecovery without auto retry. |
+| Placement / Custody, blocking before real staging | Wait/timeout does not relinquish claims or prove retained outputs. | Existing Tig lifecycle + W1/W2: expose actual 16-actor table/128-change limits; retain/reopen/owner ack before completion. No automatic expiry, deletion or custody inference. |
+| Git / Adoption, blocking before selection | Detached proposal is not expected-ref selection CAS. Qualified source includes uncommitted changes. | W3: explicit baseline transaction and new-path handling. Pin source manifests; do not infer latest API from ancestry. W0 changes no SDK binding or selection. |
+
+Preserved tension: engineering limits rebuilds to changed dependencies; craft
+review inspects neighboring sequence/full required outputs. Both remain required.
+
+Design disposition: proceed with bounded W0 contracts. W1-W5 remain explicit
+qualification gates; this record approves no production, source selection,
+translation, voice, private/public delivery or cache retirement. See the work
+package table for remaining fixtures. Validation results belong in the handoff;
+test design alone is not counted as execution evidence.
+
+W0 local execution: ten synthetic integration tests pass, including the actual
+CLI export/no-clobber/result-byte checks and a fake direct adapter. Targeted
+locked offline Clippy with `-D warnings`, workspace rustfmt check and Git diff
+whitespace check pass. The consumed external SDK's 247 source-manifest entries
+were hash/length verified with zero mismatches; this did not install or adopt it.
+Cargo reported inability to update its global last-use database on the full D
+volume; compilation and tests succeeded using the existing shared C target.
+Hosted CI, native lifecycle acceptance and other work packages remain untested.
+
+Comic-format follow-up supersedes that W0 count: eight publication and twelve
+workflow synthetic integration tests pass. Named output-set validation is shared
+between crates; workflow v2 refuses the earlier single-output schema. Tests cover
+film references, language-local spatial order, duplicate IDs, silent/cover pages,
+spread pairs, required/unknown/conflicting output sets, output allowance overflow,
+actual read-only publication CLI and existing workflow CLI refusals. Locked offline
+tests, targeted strict Clippy, workspace fmt and tracked/new-file whitespace checks
+are the required final checks. No actual comic page render or print claim follows.
+
+Applied the new Comics Publication Editor lens with story/editor/platform/rights:
+page-turn and language-fit review, semantic layer ownership and fresh lettering
+restoration remain adapter acceptance gates. The new metadata checks cannot prove
+those qualities. Existing BBJ comic/print lenses informed this requirement; BBJ's
+roles, active files, frozen tools and asset/runtime bindings were not changed.
+
+Comic producer follow-up: `comic` is an explicit opt-in feature. A new bounded
+page author assembles separately pinned PNG layers, rectangular panels and exact
+utterance geometry, reusing reel-print's existing font/SVG machinery plus its
+new in-memory lossless raster/PDF page entry. Default metadata checks retain
+their inert scope. The new worker's render/check/receipt-pinned restore are
+explicit operations over owned development packets, not native publication.
+
+Actual local tests: five print regressions, two comic production/restoration
+fixtures, eight publication contracts and twelve workflow contracts pass (27
+total). The persistent synthetic fixture writes ES, EN, a bounded Spanish text
+fix, an exact source-restored rebuild and a new edit from restored sources.
+All ten PDF pages independently rasterize to exact selected PNG RGB bytes;
+all six distinct page appearances were visually inspected. Existing source
+unavailability, restored editable lettering, protected clean art/unmodified page
+and English outputs, stale pins/path traversal, balloon fit and existing-output
+refusals have actual evidence. No end-to-end native handoff/retention, arbitrary
+panel geometry, print-ready production, finished illustration, selection or
+creative approval is claimed.
+
+Craft disposition: the synthetic pages are legible mechanism proofs with simple
+shapes, not publication art. Font advance checks do not replace actual text fit;
+role assignments do not prove semantic layer ownership. Native custody/adoption
+findings stay open. Build/cache capacity on C/D required using the existing F
+build target and temporary root; no asset deletion or cache migration was used.

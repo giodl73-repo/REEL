@@ -77,6 +77,10 @@ jobs:
           cargo test --all-features --test tig_inputs managed_browser_cli_renders_retains_and_proposes_with_source_offline --locked -- --ignored --test-threads=1
       - name: Check shared authoring and camera contracts
         run: cargo test -p reel-assembly --all-targets --locked
+      - name: Check publication and workflow contracts
+        run: |
+          cargo clippy -p reel-print -p reel-publication -p reel-workflow --all-targets --all-features --locked -- -D warnings
+          cargo test -p reel-print -p reel-publication -p reel-workflow --all-targets --all-features --locked
       - name: Check native music contracts and note proposal tooling
         run: |
           cargo clippy -p reel-music --all-targets --locked -- -D warnings

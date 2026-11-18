@@ -189,6 +189,45 @@ pub fn merge(parts: Vec<Arc<Document>>) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// Lossless opaque reading page. Editable SVG/text sources are retained by the
+/// producer; this raster PDF page is not a searchable-text or press derivative.
+pub(crate) fn raster_page(pixels: &resvg::tiny_skia::Pixmap) -> Result<Document> {
+    use std::io::Write;
+    let mut rgb = Vec::with_capacity(pixels.width() as usize * pixels.height() as usize * 3);
+    for pixel in pixels.data().chunks_exact(4) {
+        ensure!(pixel[3] == 255, "opaque reading page required");
+        rgb.extend_from_slice(&pixel[..3]);
+    }
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(&rgb)?;
+    let compressed = encoder.finish()?;
+    let mut doc = Document::with_version("1.7");
+    let parent = doc.new_object_id();
+    let image=doc.add_object(lopdf::Stream::new(dictionary! {"Type"=>"XObject","Subtype"=>"Image",
+        "Width"=>pixels.width(),"Height"=>pixels.height(),"ColorSpace"=>"DeviceRGB","BitsPerComponent"=>8,
+        "Filter"=>"FlateDecode"},compressed));
+    let content = doc.add_object(lopdf::Stream::new(
+        dictionary! {},
+        format!(
+            "q {} 0 0 {} 0 0 cm /Im0 Do Q",
+            pixels.width(),
+            pixels.height()
+        )
+        .into_bytes(),
+    ));
+    let resources = dictionary! {"XObject"=>dictionary! {"Im0"=>image}};
+    let page = doc.add_object(dictionary! {"Type"=>"Page","Parent"=>parent,
+    "MediaBox"=>vec![0.into(),0.into(),pixels.width().into(),pixels.height().into()],
+    "Resources"=>resources,"Contents"=>content});
+    doc.objects.insert(
+        parent,
+        dictionary! {"Type"=>"Pages","Count"=>1,"Kids"=>vec![page.into()]}.into(),
+    );
+    let catalog = doc.add_object(dictionary! {"Type"=>"Catalog","Pages"=>parent});
+    doc.trailer.set("Root", catalog);
+    Ok(doc)
+}
+
 /// Font writers may allocate auxiliary objects by randomized map order. Walk
 /// the reachable PDF graph in dictionary-key/array order before assigning IDs.
 /// Encoded drawing streams and font bytes are never rewritten.

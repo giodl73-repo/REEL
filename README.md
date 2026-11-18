@@ -15,6 +15,19 @@ surface, while the Rust CLI owns manifest validation, render planning, and
 review-pack orchestration. FFmpeg remains an external renderer dependency rather
 than something REEL rewrites.
 
+The additive [workflow orchestration plan](docs/workflow-orchestration.md) maps
+the existing crates to direct and manual prompt/result execution. The
+`reel-workflow` prototype checks private task packets and returned candidate bytes;
+production staging, retention, providers and selection remain explicit next gates.
+
+[Publication contracts](docs/publication.md) add film and comic language editions,
+ordered page/panel metadata and independently tracked output sets through
+`reel-publication`. Its opt-in `comic` producer renders bounded layered pages and
+reading PDFs and restores captured editable sources. Managed workflow/native
+retention and project adoption remain separate qualification; the
+[comic issue grammar](formats/comic-issue.md)
+defines the format's reading and review requirements.
+
 **Review roles:** REEL uses
 [ROLES](https://github.com/giodl73-repo/ROLES), the `.roles` convention for
 repository-local review panels. The founding panel checks story, animation style,

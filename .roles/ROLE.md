@@ -39,6 +39,14 @@ Use the smallest complete panel for the artifact:
 - private exchange or candidate delivery requires rights/provenance and
   platform/audience review.
 
+## Comic publications
+
+Use [Comics Publication Editor](comics-editor.md), story direction, editing,
+platform/audience and rights/provenance for comic scripts, layered pages and
+reading editions. Apply animation direction when adapting to motion; static
+panel order is not animation timing. Project-specific canon/translation and
+printer/physical-proof authority remain with the producing project.
+
 These roles test evidence and production contracts. They do not determine who
 owns a composition, approve a translation or performance, grant voice consent,
 select a creative master, or authorize publication. Those decisions remain

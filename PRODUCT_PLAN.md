@@ -1,5 +1,19 @@
 # REEL Product Plan
 
+The additive [workflow orchestration plan](docs/workflow-orchestration.md) defines
+direct and manual prompt/result modes over existing production and Tig lifecycle
+interfaces. `reel-workflow` currently supplies bounded task/result contract checks;
+managed staging/retention, providers, issue automation and selection application
+remain separately qualified work packages.
+
+Comics are a first-class publication format in the
+[publication plan](docs/publication.md): reusable layered art/lettering, spatial
+page sequencing, multilingual editions, reading proofs and scoped fix/rebuilds.
+The `reel-publication` crate supplies edition and named output-set contracts.
+Its optional comic producer now passes a synthetic bilingual page/book rendering,
+one-line fix and source-restoration fixture. Managed lifecycle integration and
+actual project adoption still require separate qualification.
+
 ## Thesis
 
 REEL is the Design Labs home for making movies and videos across the portfolio.
