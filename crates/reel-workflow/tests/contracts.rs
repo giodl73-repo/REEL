@@ -5,6 +5,7 @@ fn task(id: &str) -> Task {
     Task {
         id: id.into(),
         operation: Operation::TextProposal,
+        tool: None,
         language: Some("es".into()),
         prompt: "Return one synthetic editorial note.".into(),
         inputs: vec![],
@@ -49,6 +50,7 @@ fn returned(packet: &Packet, mode: Mode) -> ReturnedResult {
             mode,
             provider: None,
             model: None,
+            executable: None,
         },
     }
 }
@@ -71,6 +73,21 @@ fn plans_are_project_neutral_and_language_specific() {
         make_packet(&other, "note", BTreeMap::new())
             .unwrap()
             .task_key
+    );
+}
+
+#[test]
+fn additive_tool_contract_preserves_existing_v2_intelligence_fingerprint() {
+    let original = packet();
+    assert_eq!(
+        original.task_key,
+        "dd09506181be2b4ae2a5b98a9d916affc785788fc1e82795b701cd16d13c8524"
+    );
+    assert!(
+        serde_json::to_value(&original.task)
+            .unwrap()
+            .get("tool")
+            .is_none()
     );
 }
 

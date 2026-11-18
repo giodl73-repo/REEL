@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+pub mod handoff;
+pub mod publication;
 
 pub const PLAN_SCHEMA: &str = "reel.workflow-plan.v2";
 pub const PACKET_SCHEMA: &str = "reel.workflow-packet.v2";
@@ -74,6 +76,26 @@ pub enum Operation {
     SpeechCandidate,
     BrowserSourceCandidate,
     ReviewFinding,
+    DeterministicTool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToolCapability {
+    ComicRender,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ToolContract {
+    pub schema: String,
+    pub capability: ToolCapability,
+    pub executable: Artifact,
+    pub publication: Artifact,
+    pub edition_id: String,
+    pub request: Artifact,
+    /// Portable producer-relative path -> exact declared logical asset identity.
+    pub source_bindings: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -81,6 +103,8 @@ pub enum Operation {
 pub struct Task {
     pub id: String,
     pub operation: Operation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<ToolContract>,
     pub language: Option<String>,
     pub prompt: String,
     pub inputs: Vec<Artifact>,
@@ -122,6 +146,7 @@ pub struct Packet {
 pub enum Mode {
     Direct,
     Handoff,
+    Tool,
 }
 
 /// Provider/model fields record supplied provenance, not authenticated identity.
@@ -131,6 +156,8 @@ pub struct Provenance {
     pub mode: Mode,
     pub provider: Option<String>,
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executable: Option<Artifact>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -165,7 +192,6 @@ fn artifact(value: &Artifact) -> Result<()> {
 fn task(value: &Task) -> Result<()> {
     if !token(&value.id)
         || value.language.as_ref().is_some_and(|s| !token(s))
-        || value.prompt.trim().is_empty()
         || value.prompt.len() > MAX_PROMPT_BYTES
         || value.inputs.len() > MAX_INPUTS
         || value.depends_on.len() > MAX_TASKS
@@ -173,6 +199,45 @@ fn task(value: &Task) -> Result<()> {
         return fail(ErrorKind::Invalid, "task-contract");
     }
     reel_publication::check_contracts(&value.outputs)?;
+    match (&value.operation, &value.tool) {
+        (Operation::DeterministicTool, Some(tool)) => {
+            if !value.prompt.is_empty()
+                || tool.schema != "reel.workflow-tool.v1"
+                || !token(&tool.edition_id)
+                || tool.source_bindings.len() > MAX_INPUTS
+                || value.language.is_none()
+                || tool
+                    .source_bindings
+                    .iter()
+                    .any(|(path, id)| !publication::portable_source(path) || id.is_empty())
+            {
+                return fail(ErrorKind::Invalid, "deterministic-tool-contract");
+            }
+            artifact(&tool.executable)?;
+            artifact(&tool.publication)?;
+            artifact(&tool.request)?;
+            if tool.publication.logical_id == tool.request.logical_id
+                || tool.publication.media_type != "application/json"
+                || tool.request.media_type != "application/json"
+                || !value.inputs.contains(&tool.publication)
+                || !value.inputs.contains(&tool.request)
+                || tool
+                    .source_bindings
+                    .values()
+                    .any(|id| !value.inputs.iter().any(|a| &a.logical_id == id))
+            {
+                return fail(ErrorKind::Invalid, "tool-input-binding");
+            }
+        }
+        (Operation::DeterministicTool, None) => {
+            return fail(ErrorKind::Missing, "deterministic-tool");
+        }
+        (_, Some(_)) => return fail(ErrorKind::Invalid, "intelligence-task-has-tool"),
+        (_, None) if value.prompt.trim().is_empty() => {
+            return fail(ErrorKind::Invalid, "task-prompt");
+        }
+        _ => (),
+    }
     let mut inputs = BTreeSet::new();
     for input in &value.inputs {
         artifact(input)?;
@@ -343,6 +408,17 @@ pub fn check_result(packet: &Packet, result: &ReturnedResult) -> Result<()> {
     if result.task_id != packet.task.id || result.task_key != packet.task_key {
         return fail(ErrorKind::Stale, "result-task-binding");
     }
+    if let Some(tool) = &packet.task.tool {
+        if result.provenance.mode != Mode::Tool
+            || result.provenance.executable.as_ref() != Some(&tool.executable)
+            || result.provenance.provider.is_some()
+            || result.provenance.model.is_some()
+        {
+            return fail(ErrorKind::Conflict, "tool-result-provenance");
+        }
+    } else if result.provenance.mode == Mode::Tool || result.provenance.executable.is_some() {
+        return fail(ErrorKind::Invalid, "intelligence-result-provenance");
+    }
     reel_publication::check_outputs(&packet.task.outputs, &result.artifacts)?;
     Ok(())
 }
@@ -389,6 +465,9 @@ pub fn call_direct(
     attempt_id: &str,
 ) -> Result<ReturnedResult> {
     check_packet(packet)?;
+    if packet.task.operation == Operation::DeterministicTool {
+        return fail(ErrorKind::Unsupported, "llm-adapter-cannot-run-tool");
+    }
     if !token(attempt_id) {
         return fail(ErrorKind::Invalid, "attempt-identity");
     }

@@ -34,7 +34,9 @@ storage admission, retained-owner acknowledgement, selection application or
 scratch retirement adapter is installed. `check-result` never marks a task
 complete. Direct mode currently has a library adapter boundary and synthetic
 tests, not a live endpoint. Handoff is private packet construction/checking,
-not yet qualified resumable export/import against managed resources.
+not yet qualified resumable export/import against managed resources. An additive
+private handoff coordinator now records recovery intent through an injected
+managed-lifecycle port; the native implementation of that port remains open.
 
 Example local contract commands (synthetic files only until W1/W2 qualify):
 
@@ -42,6 +44,8 @@ Example local contract commands (synthetic files only until W1/W2 qualify):
 reel-workflow check-plan PLAN
 reel-workflow export-task PLAN TASK NEW_PACKET [DEPENDENCY_DESCRIPTORS]
 reel-workflow check-result PACKET RESULT PAYLOAD_BINDINGS
+reel-workflow check-handoff DIRECTORY
+reel-workflow cancel-handoff DIRECTORY
 ```
 
 Packets contain complete supplied prompts and exact input descriptors, not
@@ -211,13 +215,102 @@ lettering, clean art and source archive assets), profile-specific validation
 capabilities, and pinned deterministic-tool tasks alongside intelligence tasks.
 The W0 v2 contracts now share named multi-artifact output sets with
 `reel-publication`; film and comic edition structure is separately checkable.
-The W0 operation enum still describes intelligence proposals and does not yet
-dispatch deterministic comic assembly through managed lifecycle admission. The
+W0 now also describes pinned deterministic comic tools and checks their source
+and receipt correspondence. It does not dispatch them through managed lifecycle admission. The
 optional publication producer now passes the bounded bilingual page/lettering/
 book-render, one-line fix and source-unavailable restoration fixture described in
 [publication contracts](publication.md). Native retention, stale-handoff integration
 and selection application remain separate qualification, without touching an active
 BBJ issue or pretending comic art is an animation rig.
+
+### Deterministic publication task binding
+
+`DeterministicTool` tasks use `reel.workflow-tool.v1`: an exact executable
+artifact, publication artifact, selected edition, comic request artifact and
+explicit producer-relative-path to logical-input bindings. Intelligence prompts
+remain separate; existing v2 intelligence task fingerprints are unchanged.
+Portable comic source/receipt types are available without enabling rendering.
+
+`publication::bind_comic` consumes an injected bounded `InputReader`. It checks
+the selected logical page identities (matching bytes under another identity are
+insufficient), language, page/panel/utterance order, exact font/license/art pins,
+complete declared closure and worker output contract. `BoundComic` cannot be
+deserialized as a claimed successful check. Its input count and byte total are
+conservative declared identities, not a native deduplicated object census.
+
+```text
+reel-workflow check-publication-task PACKET INPUT_BINDINGS TOOL
+reel-workflow check-publication-result PACKET INPUT_BINDINGS TOOL RESULT RECEIPT PAYLOAD_BINDINGS
+```
+
+These read-only CLI commands use explicit local filename maps and guarded input
+handles. They verify executable bytes, sources, task/result provenance, producer
+receipt correspondence and returned payload bytes. They report
+`snapshot_binding_verified:false`; matching local files cannot prove committed
+record-to-annex-leaf binding. They execute no tool and acknowledge no retention,
+completion or selection. A receipt is correspondence evidence, not worker
+authentication or creative approval. A qualified native reader must establish
+the exact snapshot binding and preserve guarded resources across the operation.
+
+The synthetic integration uses nine declared inputs and twelve output artifacts.
+A separately invoked frozen worker reproduces the earlier Spanish fixed edition
+exactly; both PDF pages independently rasterize to the selected PNG RGB bytes.
+The fixture uses a deliberately synthetic zero commit and establishes no native
+admission. Tests also refuse stale readers, changed tools, wrong logical aliases,
+missing/unused inputs, wrong language/order and forged receipt authority.
+
+### Durable handoff recovery coordinator
+
+`handoff::Journal` owns only private task-control records in an explicitly new
+directory outside Git. It is not an asset cache, native claim journal or retained
+owner. Its immutable ticket contains the exact task packet/attempt, lifecycle
+executable pin and a native admission-packet pin. That native packet must preserve
+the original operation, WorkRef, activation generation, source/Index checkpoints,
+object pins and owner acknowledgement; the coordinator never invents replacements.
+
+The injected `Lifecycle::reopen` must verify that admission against the exact
+task/attempt/source closure and hold a `ProtectedJob` guard across effects and
+acknowledgement readback. Creation requires already active protection. No
+production implementation of this port is installed. The qualified CLI's
+`prepare-protection` currently compiles its existing producer profiles and
+requires a retained native render; it is not a generic comic/manual staging
+endpoint. Wrapping it alone cannot qualify W1 for comics.
+
+```text
+waiting -> import-pending -> retained
+waiting -> cancelled (native protection preserved)
+```
+
+The coordinator exclusive-creates and flushes an import-intent record before
+calling registration. A crash, publication failure or missing owner readback
+leaves the original result/attempt pending. Resume calls reconciliation of that
+exact operation, never a second registration or fresh identity. The native
+adapter may finish the original operation only through its qualified recovery
+protocol. It must validate every payload and logical registration identity and
+verify retained publication independently before a retained marker is written.
+Reopening a retained marker rechecks native acknowledgement when `resume` runs;
+local replay alone is not proof. Task completion and selection stay separate.
+
+Waiting has no clock or expiry. Cancellation only changes a waiting task's local
+state; it cannot cancel an uncertain import, close a native actor, release claims
+or remove anything. There are deliberately no close/release/delete methods in
+this coordinator. Actor handoff and guarded scratch retirement remain separate
+native operations. Local CLI inspection/cancellation report
+`native_state_verified:false` and emit no prompt, native binding or ticket IDs.
+
+Records form a bounded hash chain (128 records, 1 MiB each), with strict file
+names, ordinary-file checks and exclusive writes. Concurrent transition attempts
+conflict; stale instances reload state before mutation. Partial/corrupt tails and
+unexpected entries stop recovery and remain untouched. These controls detect
+accidental changes, not an authenticated hostile journal rewrite. File contents
+are synced; power-loss durability of directory entries is not qualified. They
+do not replace native fencing, source freshness or NTFS custody qualification.
+
+Nine fault-injection tests cover process restart, publication before a lost
+response, owner-readback failure, stale generation, wrong attempt, stale local
+instances, preserved partial/corrupt records, cancellation and the actual
+privacy-bounded CLI. Test adapters are synthetic; no native job or cache was
+created and no project was adopted.
 
 | Package | Owner / entry | Exit evidence still required |
 | --- | --- | --- |

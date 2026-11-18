@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 #[cfg(feature = "comic")]
 pub mod comic;
+pub mod comic_source;
 
 pub const PUBLICATION_SCHEMA: &str = "reel.publication.v1";
 pub const MAX_CONTROL_BYTES: usize = 1024 * 1024;

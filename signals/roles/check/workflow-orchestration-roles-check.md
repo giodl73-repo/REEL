@@ -90,3 +90,38 @@ shapes, not publication art. Font advance checks do not replace actual text fit;
 role assignments do not prove semantic layer ownership. Native custody/adoption
 findings stay open. Build/cache capacity on C/D required using the existing F
 build target and temporary root; no asset deletion or cache migration was used.
+
+Deterministic binding follow-up, producer-applied comics/editor/rights lenses:
+exact logical page identity, language-local order, all source pins and output
+namespace are now checked against the selected edition. A byte-identical logical
+alias is refused. Tool returns cannot claim approval, print readiness or native
+retention through their receipt. The local CLI explicitly leaves snapshot binding
+unverified; source correspondence is insufficient for custody. Existing v2 LLM
+task keys remain stable, and tool tasks cannot enter the LLM adapter.
+
+Execution evidence: 38 targeted tests pass, including ten new binding tests and
+a prior-key compatibility test. A separately invoked frozen tool reproduces all
+twelve earlier fixed-edition outputs; two written PDF pages independently match
+PNG RGB and were visually inspected. Synthetic inputs/zero commit establish no
+native lifecycle or project adoption. Native protection, retained-owner recovery,
+selection transactions and human creative approval remain open gates. A mutable
+build-target tool locator was found and superseded with frozen hash-verified
+copies; the historical profile remains unchanged rather than relabeled.
+
+Handoff recovery follow-up, producer-applied editor/rights/custody lenses:
+waiting and cancellation must preserve native claims; a lost provider/import
+response must preserve the original attempt and operation, not create a second
+candidate. The new coordinator records intent before invoking its protected-job
+port, verifies retained acknowledgement before recording success, and reconciles
+pending work on restart. Partial journals stop without truncation or cleanup.
+Local retained markers cannot authenticate native custody; CLI state reports
+explicitly leave native verification false. Creative approval, completion,
+selection, actor release and scratch retirement remain separate.
+
+Nine coordinator/CLI fault-injection tests supplement the prior 38 tests. These
+use a synthetic lifecycle implementation and do not close W1/W2 qualification.
+The inspected qualified protection CLI only prepares its existing retained-native
+producer profiles. A generic comic adapter must bind exact workflow resources
+through the qualified Rust lifecycle, rather than mislabel a film projection or
+infer native protection from this control journal. Existing native limits and
+historical bindings remain unchanged.

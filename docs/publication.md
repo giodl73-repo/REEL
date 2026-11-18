@@ -141,8 +141,12 @@ multilingual equivalence, prove semantic art ownership or qualify a printer.
 Existing `reel-print` collection behavior remains separate and its regression
 fixtures continue to apply.
 
-Next work must bind this producer to the publication edition/source contract and
-qualified workflow/Tig lifecycle. Broader production should generalize accepted
+The workflow binding now checks a pinned producer against the selected edition,
+complete source contract and returned receipt; see
+[deterministic publication task binding](workflow-orchestration.md#deterministic-publication-task-binding).
+The local checker executes no tool and makes no native snapshot/custody claim.
+Next work must connect that binding to the qualified workflow/Tig lifecycle.
+Broader production should generalize accepted
 compose/assemble/verify/rebuild/pdf behavior with synthetic fixtures and original
 upstream source rights. Do not change BBJ's admitted tool versions, port its story data, execute
 frozen authoring helpers or claim that its current LFS/native profile switched to
