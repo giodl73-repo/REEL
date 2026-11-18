@@ -1,6 +1,7 @@
 //! Bounded positive input claims over an EXISTING effects-enabled index.
 //! No initialization, payload availability, publication, retention or selection.
 mod response;
+mod retention;
 use crate::{
     NativeProfile, SnapshotInputs, error,
     qualified::{self, slots},
@@ -85,7 +86,7 @@ pub struct Prepared {
 /// Constructed by actual native work/activation/coverage readback; not from a
 /// deserialized receipt. Holds the original cooperating actor fence, not bytes.
 pub struct ClaimsGuard {
-    _fence: reel_assets::admission::MetadataLock,
+    _fences: Vec<reel_assets::admission::MetadataLock>,
     _prepared: Prepared,
 }
 pub(crate) fn limits() -> projection::Limits {
@@ -469,7 +470,7 @@ impl Prepared {
     /// coverage. The returned fence must outlive any operation relying on it.
     pub fn reopen(self, receipt: &Receipt) -> Result<ClaimsGuard> {
         self.check_receipt(receipt)?;
-        self.reopen_checked(receipt)
+        self.reopen_checked(receipt, None)
     }
     fn check_receipt(&self, receipt: &Receipt) -> Result<()> {
         if receipt.schema != "reel.workflow-native-admission-receipt.v1"
@@ -487,14 +488,9 @@ impl Prepared {
         }
         Ok(())
     }
-    fn reopen_checked(self, receipt: &Receipt) -> Result<ClaimsGuard> {
+    fn reopen_checked(self, receipt: &Receipt, companion: Option<&Key>) -> Result<ClaimsGuard> {
         let (mut index, mut nodes) = self.stores(Some(receipt))?;
-        let fence = qualified::prepublication::actor_fence(
-            index.identity(),
-            &self.profile.scope.coordination_root,
-            &self.profile.scope.actor,
-        )
-        .map_err(native_error)?;
+        let fences = self.actor_fences(&index, companion)?;
         let expected = slots::activation(
             &index,
             &self.profile.scope,
@@ -570,9 +566,32 @@ impl Prepared {
             return Err(error(ErrorKind::Stale, "admission-generation-or-coverage"));
         }
         Ok(ClaimsGuard {
-            _fence: fence,
+            _fences: fences,
             _prepared: self,
         })
+    }
+    fn actor_fences(
+        &self,
+        index: &Index,
+        companion: Option<&Key>,
+    ) -> Result<Vec<reel_assets::admission::MetadataLock>> {
+        let mut actors = vec![&self.profile.scope.actor];
+        if let Some(actor) = companion {
+            actors.push(actor);
+        }
+        actors.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        actors.dedup();
+        actors
+            .into_iter()
+            .map(|actor| {
+                qualified::prepublication::actor_fence(
+                    index.identity(),
+                    &self.profile.scope.coordination_root,
+                    actor,
+                )
+                .map_err(native_error)
+            })
+            .collect()
     }
 }
 impl Receipt {

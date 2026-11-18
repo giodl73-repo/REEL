@@ -70,6 +70,69 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
             profile,
             receipt,
             result,
+            target,
+            output,
+            apply,
+        ] if matches!(command.as_str(), "stage-retention" | "retain-response")
+            && apply == "--apply" =>
+        {
+            use std::io::Write;
+            let packet = read_control(Path::new(packet))?;
+            let source = read_control(Path::new(source))?;
+            let profile = read_control(Path::new(profile))?;
+            let receipt = read_control(Path::new(receipt))?;
+            let result = read_control(Path::new(result))?;
+            let target = read_control(Path::new(target))?;
+            let mut file = new_receipt(Path::new(output), &source, &profile)?;
+            let ack = if command == "retain-response" {
+                reel_workflow_native::retention::retain(
+                    &packet, &source, &profile, &receipt, &result, &target,
+                )?
+            } else {
+                reel_workflow_native::retention::stage(
+                    &packet, &source, &profile, &receipt, &result, &target,
+                )?
+            };
+            file.write_all(&ack.canonical_bytes()?)
+                .and_then(|_| file.sync_all())
+                .map_err(|_| reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::NeedsRecovery,
+                    code: "retention-write-ack-reconcile-original".into(),
+                })?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"workflow-retained-registration",
+                "retained_owner_acknowledged":command == "retain-response",
+                "native_bytes_reopened":command == "retain-response",
+                "task_completed":false,"selected":false,"input_claims_released":false,
+                "scratch_retirement_authorized":false}),
+            )
+        }
+        [command, packet, source, profile, receipt, result, ack]
+            if command == "verify-retained" =>
+        {
+            let packet = read_control(Path::new(packet))?;
+            let source = read_control(Path::new(source))?;
+            let profile = read_control(Path::new(profile))?;
+            let receipt = read_control(Path::new(receipt))?;
+            let result = read_control(Path::new(result))?;
+            let ack = read_control(Path::new(ack))?;
+            let _guard = reel_workflow_native::retention::verify(
+                &packet, &source, &profile, &receipt, &result, &ack,
+            )?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"workflow-retained-verification",
+                "retained_owner_acknowledged":true,"native_bytes_reopened":true,
+                "task_completed":false,"selected":false,"input_claims_released":false,
+                "scratch_retirement_authorized":false}),
+            )
+        }
+        [
+            command,
+            packet,
+            source,
+            profile,
+            receipt,
+            result,
             returns,
             output,
             apply,
@@ -262,8 +325,12 @@ fn main() -> ExitCode {
             "reel-workflow-native stage-response PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT RETURNS NEW_CANDIDATE --apply\n",
             "reel-workflow-native register-response PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT RETURNS NEW_CANDIDATE --apply\n",
             "reel-workflow-native ingest-response PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT RETURNS NEW_CANDIDATE --apply\n",
+            "reel-workflow-native stage-retention PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT RETAINED_TARGET NEW_ACK --apply\n",
+            "reel-workflow-native retain-response PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT RETAINED_TARGET NEW_ACK --apply\n",
+            "reel-workflow-native verify-retained PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT ACK\n",
             "Response staging records work; registration admits output claims; ingestion publishes native bytes.\n",
-            "No provider execution, retained-result ownership, completion, cleanup or selection."
+            "Retain-response acknowledges retained ownership; verify-retained checks live retained protection and bytes.\n",
+            "No provider execution, task completion, cleanup, actor close or selection."
         ));
         return ExitCode::SUCCESS;
     }

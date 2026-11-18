@@ -27,7 +27,7 @@ pub struct Returns {
     pub files: BTreeMap<String, String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
     pub schema: String,
@@ -126,7 +126,7 @@ fn verify(
     })
 }
 
-fn identity(
+pub(crate) fn identity(
     profile: &admission::Profile,
     receipt: &Receipt,
     result: &ReturnedResult,

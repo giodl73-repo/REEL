@@ -30,7 +30,7 @@ see [publication contracts](publication.md). The single-output v1 prototype is
 not silently reinterpreted.
 
 No API/proxy, ElevenLabs recording, image-generation, GitHub issue,
-retained-owner acknowledgement, selection application or
+selection application or
 scratch retirement adapter is installed. `check-result` never marks a task
 complete. Direct mode currently has a library adapter boundary and synthetic
 tests, not a live endpoint. Handoff is private packet construction/checking,
@@ -41,7 +41,8 @@ The native input bridge now supports explicit durable input-claim admission in
 an existing actor and pinned resumable input export. It does not implement the
 full result-registration/retention lifecycle port. A bounded provider-response
 adapter now stages logical registration, admits output claims and publishes exact
-unselected bytes; native retained-owner completion remains open.
+unselected bytes. Native retained actor acknowledgement/readback is now available
+for provider responses; handoff task-completion integration remains open.
 
 Example local contract commands (synthetic files only until W1/W2 qualify):
 
@@ -78,9 +79,28 @@ Bounds include 32 artifacts, 128 MiB total returned bytes, one 64 KiB native
 evidence node and the original native phase/resource limits. Qualification covers
 direct/manual provider returns in the explicit single-store Windows scope;
 deterministic comic/tool receipts are refused pending their native correspondence
-adapter. Retained-owner acknowledgement, task completion, coordinator integration,
-selection and retirement remain open. See the
+adapter. Retained-owner acknowledgement is now covered below; task completion,
+coordinator integration, selection and retirement remain open. See the
 [ingress handoff](handoff/2026-11-18-workflow-response-ingress.md).
+
+### Retained provider responses (2026-11-18)
+
+The native adapter can now stage/execute immutable retained work for an existing
+registered response and verify actual owner/store coverage plus native output
+bytes. It preserves the retained actor's existing history and every current job
+reference/root. Target identity is fixed by original task/attempt work; unknown
+or wrong owners, routed/job actor targets and incomplete assigned-store coverage
+are refused. Ordered actor fences protect admission; immutable native Prepare
+recovery never allocates another operation.
+
+Historical verification and completed-acknowledgement recovery work after source
+actor advancement and use only the retained fence. They refuse missing bytes or
+lost retained coverage. They do not infer readiness from source scratch, an old
+CLI report or serialized acknowledgement. This is a bounded workflow adapter over
+SDK work, not the scene runner's producer outcome-adoption protocol. The native
+handoff coordinator port, tool/comic receipt integration, durable task completion,
+selection and retirement remain open. See the
+[retention handoff](handoff/2026-11-18-workflow-retained-acknowledgement.md).
 
 ## Ownership
 
@@ -223,9 +243,10 @@ All 247 source pins match, with source line endings preserved. This covers the
 tested source-binding/read behavior, not a full native comic workflow.
 W1 now has explicit positive input-claim admission and bounded resumable byte
 staging (below). W2 now has bounded provider-response registration and native
-ingress, with retained-owner completion still open. Full managed result-lifecycle
+ingress and retained-owner readback, with native coordinator completion still
+open. Full managed result-lifecycle
 qualification and W3-W5 remain open. See the
-[current handoff](handoff/2026-11-18-workflow-response-ingress.md).
+[current handoff](handoff/2026-11-18-workflow-retained-acknowledgement.md).
 
 ### Durable input-claim admission (2026-11-18)
 

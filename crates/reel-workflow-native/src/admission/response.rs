@@ -2,7 +2,7 @@
 //! Uses existing SDK work and retains the original generation and all references.
 use super::*;
 
-fn entries(
+pub(super) fn entries(
     selection: &Selection,
     nodes: &mut MetadataStore,
 ) -> Result<BTreeMap<LogicalPath, Object>> {
@@ -51,7 +51,7 @@ impl Prepared {
         self.reopen(receipt)
     }
 
-    fn check_response(
+    pub(super) fn check_response(
         &self,
         record: &work::Record,
         receipt: &Receipt,

@@ -24,7 +24,8 @@ now binds exact committed records to declared annex leaves and holds guarded
 native reads. Explicit input admission can protect declared resources in an
 existing job actor. Pinned private tickets support resumable input staging.
 Returned provider files can be registered by task/attempt, protected and ingested
-as unselected native candidates; retained-result completion remains open.
+as unselected native candidates. Retained actor registration and exact historical
+readback now have a bounded native adapter; task-completion integration remains open.
 
 [Publication contracts](docs/publication.md) add film and comic language editions,
 ordered page/panel metadata and independently tracked output sets through

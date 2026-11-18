@@ -201,3 +201,23 @@ and native source-correspondence adapter exists. Return files, input claims and
 capacity remain preserved. Retained-owner ack, coordinator completion, expected
 baseline selection, actor close and guarded retirement remain open. These are
 producer-applied findings, not independent reviewers or human approvals.
+
+2026-11-18 retained-acknowledgement follow-up, producer-applied engineering,
+editor and rights/provenance lenses: immutable logical registration and published
+bytes must be followed by actual retained-owner coverage and native byte
+reopening. The adapter now preserves all existing retained paths/root and current
+job references/root, validates the exact enrolled target owner and every assigned
+source store, and reads back the original native work and positive retained
+claims. It does not impersonate the managed scene runner's producer adoption
+schema or treat an acknowledgement file as live authority.
+
+Native Prepare recovery preserves original task/attempt/work/evidence. Historical
+readback and completed-ack recovery depend on immutable work and retained coverage,
+not the former source actor's generation or scratch. Lost coverage and absent
+native bytes refuse without selection, cleanup or substitution. Fixtures preserve
+unrelated retained history and model source advancement and coverage loss/restore
+only through explicit synthetic SDK operations; those are not guarded close or
+retirement qualification. Native handoff coordinator completion, tool/comic worker
+receipts, selection and retirement stay open. Technical acknowledgement grants no
+creative, translation, consent, rights, print or release approval. These remain
+producer-applied checklists, not independent review or actual human decisions.

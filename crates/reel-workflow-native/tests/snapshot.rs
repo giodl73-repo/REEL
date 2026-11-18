@@ -867,6 +867,579 @@ fn external_response_native_ingress_reopens_and_replays_across_cli_restart() {
     }
 }
 
+#[cfg(windows)]
+fn retained_target() -> reel_workflow_native::retention::Target {
+    reel_workflow_native::retention::Target {
+        schema: "reel.workflow-retained-target.v1".into(),
+        actor: tig_store::Key::parse("retained").unwrap(),
+        owner: tig_store::Key::parse("owner").unwrap(),
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn retained_registration_stages_exact_identity_and_refuses_wrong_owner_or_store_scope() {
+    use reel_workflow_native::{admission::Prepared, response, retention};
+    let fixture = Fixture::new();
+    let case = AdmissionCase::new(&fixture);
+    let receipt = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    let (result, returns) = response_fixture(&fixture.packet, &case.temp.path().join("returns"));
+    response::register(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &result,
+        &returns,
+    )
+    .unwrap();
+    let target = retained_target();
+    let first = retention::stage(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &result,
+        &target,
+    )
+    .unwrap();
+    let second = retention::stage(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &result,
+        &target,
+    )
+    .unwrap();
+    assert_eq!(first.work, second.work);
+    assert_eq!(first.evidence, second.evidence);
+    assert_eq!(
+        case.protected(&Object::from_bytes(b"synthetic response")),
+        vec![case.profile.scope.actor.clone()]
+    );
+    for actor in ["slot", "main", "unknown"] {
+        let mut bad = target.clone();
+        bad.actor = tig_store::Key::parse(actor).unwrap();
+        assert_eq!(
+            retention::stage(
+                &fixture.packet,
+                &case.source,
+                &case.profile,
+                &receipt,
+                &result,
+                &bad
+            )
+            .unwrap_err()
+            .kind,
+            ErrorKind::Denied
+        );
+    }
+    let mut bad = target.clone();
+    bad.owner = tig_store::Key::parse("wrong-owner").unwrap();
+    assert_eq!(
+        retention::stage(
+            &fixture.packet,
+            &case.source,
+            &case.profile,
+            &receipt,
+            &result,
+            &bad
+        )
+        .unwrap_err()
+        .kind,
+        ErrorKind::Denied
+    );
+    // Missing native runtime/provider cannot turn staged metadata into an ack.
+    assert!(
+        retention::retain(
+            &fixture.packet,
+            &case.source,
+            &case.profile,
+            &receipt,
+            &result,
+            &target
+        )
+        .is_err()
+    );
+    let case = AdmissionCase::with_extra_source_store(
+        &fixture,
+        tig_core::Digest::blob(b"synthetic-store"),
+        Some(tig_core::Digest::blob(b"extra-store")),
+    );
+    let receipt = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    let (result, returns) = response_fixture(&fixture.packet, &case.temp.path().join("returns"));
+    response::register(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &result,
+        &returns,
+    )
+    .unwrap();
+    assert_eq!(
+        retention::stage(
+            &fixture.packet,
+            &case.source,
+            &case.profile,
+            &receipt,
+            &result,
+            &target
+        )
+        .unwrap_err()
+        .kind,
+        ErrorKind::Denied
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn retained_native_prepare_recovers_original_work_and_keeps_job_claims() {
+    use reel_workflow_native::{admission::Prepared, response, retention};
+    use tig_store::{
+        metadata::MetadataStore,
+        source_claims::protection::{self, Index, work},
+    };
+    let fixture = Fixture::new();
+    let case = AdmissionCase::new(&fixture);
+    let receipt = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    let (result, returns) = response_fixture(&fixture.packet, &case.temp.path().join("returns"));
+    response::register(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &result,
+        &returns,
+    )
+    .unwrap();
+    let target = retained_target();
+    let staged = retention::stage(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &result,
+        &target,
+    )
+    .unwrap();
+    let mut nodes =
+        MetadataStore::open(&case.profile.metadata_root, &staged.metadata_checkpoint).unwrap();
+    let mut index = Index::open(&case.profile.index_root, &staged.index_checkpoint).unwrap();
+    let record = work::read(&mut index, &staged.work, &nodes).unwrap();
+    let mut interrupted = false;
+    assert!(
+        index
+            .update_hook(&record.update, &mut nodes, |stage| {
+                if stage == protection::Stage::Prepared {
+                    interrupted = true;
+                    Err(protection::Error::Unknown)
+                } else {
+                    Ok(())
+                }
+            })
+            .is_err()
+    );
+    assert!(interrupted);
+    drop(nodes);
+    drop(index);
+    let mut changed = result.clone();
+    changed.provenance.model = Some("changed-model".into());
+    assert!(
+        retention::stage(
+            &fixture.packet,
+            &case.source,
+            &case.profile,
+            &receipt,
+            &changed,
+            &target
+        )
+        .is_err()
+    );
+    assert!(
+        Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+            .unwrap()
+            .reopen(&receipt)
+            .is_err()
+    );
+    let resumed = retention::stage(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &result,
+        &target,
+    )
+    .unwrap();
+    assert_eq!(staged.work, resumed.work);
+    assert_eq!(staged.evidence, resumed.evidence);
+    for object in [
+        Object::from_bytes(b"synthetic response"),
+        Object::from_bytes(b"synthetic input"),
+        receipt.activation.clone(),
+        receipt.source_archive.clone(),
+    ] {
+        assert_eq!(
+            case.protected(&object),
+            vec![target.actor.clone(), case.profile.scope.actor.clone()]
+        );
+    }
+    Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .reopen(&receipt)
+        .unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "Uses only an explicitly declared existing synthetic pool; retained work/recovery and historical verification, no pool setup or real project selection"]
+fn retained_native_acknowledgement_replays_and_survives_source_advance_but_not_lost_coverage() {
+    use reel_workflow_native::{NativeProfile, admission::Prepared, response, retention};
+    use tig_core::{
+        Digest,
+        tree::{NodeStore, Tree, TreeLimits},
+    };
+    use tig_store::{
+        metadata::MetadataStore,
+        source_claims::{
+            Selection,
+            protection::{self, Index, work},
+        },
+    };
+    let path =
+        std::env::var_os("REEL_NATIVE_INPUT_FIXTURE").expect("Set REEL_NATIVE_INPUT_FIXTURE");
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    let object: Object = serde_json::from_value(value["object"].clone()).unwrap();
+    let native: tig_git::annex::workflow::reader::Profile =
+        serde_json::from_value(value["source"].clone()).unwrap();
+    let annex: Tool = serde_json::from_value(value["annex"].clone()).unwrap();
+    let mut fixture = Fixture::with_object(object.clone());
+    let git_raw = fs::read(&native.pool.git).unwrap();
+    fixture.profile.git = Tool {
+        path: native.pool.git.clone(),
+        sha256: digest(&git_raw),
+        bytes: git_raw.len() as u64,
+    };
+    let mut case = AdmissionCase::with_store(&fixture, native.store.clone());
+    let control = case.source.source.pool.control.clone();
+    case.source = NativeProfile {
+        snapshot: fixture.profile.clone(),
+        annex,
+        source: native,
+    };
+    case.source.source.pool.control = control;
+    let receipt = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    let (result, returns) = response_fixture(&fixture.packet, &case.temp.path().join("returns"));
+    response::ingest(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &result,
+        &returns,
+    )
+    .unwrap();
+    let target = retained_target();
+    // Preserve unrelated retained history, rather than replacing its tree.
+    let mut nodes =
+        MetadataStore::open(&case.profile.metadata_root, &case.profile.metadata_minimum).unwrap();
+    let mut index = Index::open(&case.profile.index_root, &case.profile.index_minimum).unwrap();
+    let old = index.actor(&mut nodes, &target.actor).unwrap();
+    let history = nodes.put(b"unrelated retained history").unwrap();
+    let history_path = LogicalPath::parse("prior/history").unwrap();
+    let entries = BTreeMap::from([(history_path.clone(), history.clone())]);
+    let root = Tree::build(&entries, &mut nodes, TreeLimits::default())
+        .unwrap()
+        .0
+        .root()
+        .clone();
+    let update = protection::Update {
+        operation: tig_store::Key::parse("fixture-history").unwrap(),
+        actor: target.actor.clone(),
+        owner: target.owner.clone(),
+        expected_revision: old.revision,
+        selection: Selection {
+            root,
+            context: Digest::blob(b"prior-history"),
+        },
+        changes: entries.into_iter().map(|(p, o)| (p, Some(o))).collect(),
+        ready: true,
+    };
+    let work_ref = work::stage(&mut index, &update, None, &mut nodes).unwrap();
+    work::execute(&mut index, &work_ref, &mut nodes).unwrap();
+    drop(index);
+    drop(nodes);
+    let staged = retention::stage(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &result,
+        &target,
+    )
+    .unwrap();
+    let mut nodes =
+        MetadataStore::open(&case.profile.metadata_root, &staged.metadata_checkpoint).unwrap();
+    let mut index = Index::open(&case.profile.index_root, &staged.index_checkpoint).unwrap();
+    let record = work::read(&mut index, &staged.work, &nodes).unwrap();
+    assert!(
+        index
+            .update_hook(&record.update, &mut nodes, |stage| {
+                if stage == protection::Stage::Prepared {
+                    Err(protection::Error::Unknown)
+                } else {
+                    Ok(())
+                }
+            })
+            .is_err()
+    );
+    drop(index);
+    drop(nodes);
+    let controls = [
+        ("packet.json", serde_json::to_vec(&fixture.packet).unwrap()),
+        ("native.json", serde_json::to_vec(&case.source).unwrap()),
+        ("profile.json", serde_json::to_vec(&case.profile).unwrap()),
+        ("admission.json", receipt.canonical_bytes().unwrap()),
+        ("result.json", serde_json::to_vec(&result).unwrap()),
+        ("target.json", serde_json::to_vec(&target).unwrap()),
+    ];
+    for (name, raw) in &controls {
+        fs::write(case.temp.path().join(name), raw).unwrap();
+    }
+    let invoke = |command: &str, suffix: &str| {
+        let mut call = Command::new(env!("CARGO_BIN_EXE_reel-workflow-native"));
+        call.arg(command);
+        call.args(
+            controls
+                .iter()
+                .take(5)
+                .map(|(name, _)| case.temp.path().join(name)),
+        );
+        if command == "retain-response" {
+            call.arg(case.temp.path().join("target.json"))
+                .arg(case.temp.path().join(suffix))
+                .arg("--apply");
+        } else {
+            call.arg(case.temp.path().join(suffix));
+        }
+        call.output().unwrap()
+    };
+    let first = invoke("retain-response", "ack-1.json");
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stdout)
+    );
+    let repeated = invoke("retain-response", "ack-2.json");
+    assert!(
+        repeated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&repeated.stdout)
+    );
+    let ack: retention::Acknowledgement =
+        serde_json::from_slice(&fs::read(case.temp.path().join("ack-2.json")).unwrap()).unwrap();
+    assert_eq!(ack.work, staged.work);
+    assert_eq!(ack.evidence, staged.evidence);
+    let verification = invoke("verify-retained", "ack-2.json");
+    assert!(
+        verification.status.success(),
+        "{}",
+        String::from_utf8_lossy(&verification.stdout)
+    );
+    for object in [&object, &Object::from_bytes(b"synthetic response")] {
+        assert_eq!(
+            case.protected(object),
+            vec![target.actor.clone(), case.profile.scope.actor.clone()]
+        );
+    }
+    assert_eq!(case.protected(&history), vec![target.actor.clone()]);
+    let mut corrupted = ack.clone();
+    corrupted.work = receipt.work.clone();
+    assert!(
+        retention::verify(
+            &fixture.packet,
+            &case.source,
+            &case.profile,
+            &receipt,
+            &result,
+            &corrupted
+        )
+        .is_err()
+    );
+    // Synthetic SDK mutation models another source generation, NOT qualified
+    // scratch retirement or guarded slot close. Retained proof is historical.
+    let mut nodes =
+        MetadataStore::open(&case.profile.metadata_root, &ack.metadata_checkpoint).unwrap();
+    let mut index = Index::open(&case.profile.index_root, &ack.index_checkpoint).unwrap();
+    let old = index.actor(&mut nodes, &case.profile.scope.actor).unwrap();
+    let old_entries = Tree::from_root(old.selection.root)
+        .entries(&mut nodes, TreeLimits::default())
+        .unwrap()
+        .0;
+    let update = protection::Update {
+        operation: tig_store::Key::parse("fixture-source-advance").unwrap(),
+        actor: case.profile.scope.actor.clone(),
+        owner: case.profile.scope.owner.clone(),
+        expected_revision: old.revision,
+        selection: Selection {
+            root: Tree::empty(&mut nodes).unwrap().root().clone(),
+            context: Digest::blob(b"new-generation"),
+        },
+        changes: old_entries.into_keys().map(|p| (p, None)).collect(),
+        ready: true,
+    };
+    let work_ref = work::stage(&mut index, &update, None, &mut nodes).unwrap();
+    work::execute(&mut index, &work_ref, &mut nodes).unwrap();
+    drop(index);
+    drop(nodes);
+    // Historical readback must not take the former source job's actor fence.
+    let busy_source = reel_assets::admission::lock(
+        &case
+            .profile
+            .scope
+            .coordination_root
+            .join("tig-native-publication")
+            .join(case.profile.index_identity.as_str())
+            .join(Digest::blob(case.profile.scope.actor.as_str().as_bytes()).as_str()),
+    )
+    .unwrap();
+    let historical = invoke("verify-retained", "ack-2.json");
+    assert!(
+        historical.status.success(),
+        "{}",
+        String::from_utf8_lossy(&historical.stdout)
+    );
+    let recovered_historical = invoke("retain-response", "ack-after-advance.json");
+    assert!(
+        recovered_historical.status.success(),
+        "{}",
+        String::from_utf8_lossy(&recovered_historical.stdout)
+    );
+    drop(busy_source);
+    assert!(
+        Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+            .unwrap()
+            .reopen(&receipt)
+            .is_err()
+    );
+    if let Some(directory) = std::env::var_os("REEL_RETENTION_EVIDENCE_DIRECTORY") {
+        use std::io::Write;
+        let directory = PathBuf::from(directory);
+        assert!(directory.is_absolute() && directory.is_dir());
+        for (name, raw) in controls.iter().cloned().chain([
+            ("acknowledgement.json", ack.canonical_bytes().unwrap()),
+            ("retention-report.json", repeated.stdout),
+            ("historical-verification.json", historical.stdout),
+        ]) {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(directory.join(name))
+                .unwrap();
+            file.write_all(&raw).unwrap();
+            file.sync_all().unwrap();
+        }
+    }
+    // Model loss of retained coverage without deleting any payload. Restore it
+    // through another explicit immutable SDK work record after the refusal.
+    let mut nodes =
+        MetadataStore::open(&case.profile.metadata_root, &ack.metadata_checkpoint).unwrap();
+    let mut index = Index::open(&case.profile.index_root, &ack.index_checkpoint).unwrap();
+    let current = index.actor(&mut nodes, &target.actor).unwrap();
+    let original_selection = current.selection.clone();
+    let mut next = Tree::from_root(current.selection.root)
+        .entries(&mut nodes, TreeLimits::default())
+        .unwrap()
+        .0;
+    assert!(next.contains_key(&history_path));
+    let output = Object::from_bytes(b"synthetic response");
+    let changes: BTreeMap<_, _> = next
+        .iter()
+        .filter(|(_, o)| **o == output)
+        .map(|(p, _)| (p.clone(), None))
+        .collect();
+    for path in changes.keys() {
+        next.remove(path);
+    }
+    let update = protection::Update {
+        operation: tig_store::Key::parse("fixture-lost-retained-coverage").unwrap(),
+        actor: target.actor.clone(),
+        owner: target.owner.clone(),
+        expected_revision: current.revision,
+        selection: Selection {
+            root: Tree::build(&next, &mut nodes, TreeLimits::default())
+                .unwrap()
+                .0
+                .root()
+                .clone(),
+            context: Digest::blob(b"lost-coverage"),
+        },
+        changes: changes.clone(),
+        ready: true,
+    };
+    let work_ref = work::stage(&mut index, &update, None, &mut nodes).unwrap();
+    work::execute(&mut index, &work_ref, &mut nodes).unwrap();
+    drop(index);
+    drop(nodes);
+    assert!(
+        retention::verify(
+            &fixture.packet,
+            &case.source,
+            &case.profile,
+            &receipt,
+            &result,
+            &ack
+        )
+        .is_err()
+    );
+    let mut nodes =
+        MetadataStore::open(&case.profile.metadata_root, &ack.metadata_checkpoint).unwrap();
+    let mut index = Index::open(&case.profile.index_root, &ack.index_checkpoint).unwrap();
+    let current = index.actor(&mut nodes, &target.actor).unwrap();
+    let update = protection::Update {
+        operation: tig_store::Key::parse("fixture-restore-retained-coverage").unwrap(),
+        actor: target.actor.clone(),
+        owner: target.owner.clone(),
+        expected_revision: current.revision,
+        selection: original_selection,
+        changes: changes
+            .into_keys()
+            .map(|p| (p, Some(output.clone())))
+            .collect(),
+        ready: true,
+    };
+    let work_ref = work::stage(&mut index, &update, None, &mut nodes).unwrap();
+    work::execute(&mut index, &work_ref, &mut nodes).unwrap();
+    drop(index);
+    drop(nodes);
+    retention::verify(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &result,
+        &ack,
+    )
+    .unwrap();
+    if std::env::var_os("REEL_RETENTION_EVIDENCE_DIRECTORY").is_some() {
+        let _ = case.temp.keep();
+        let _ = fixture.temp.keep();
+    }
+}
+
 struct AdmissionCase {
     temp: tempfile::TempDir,
     profile: reel_workflow_native::admission::Profile,
@@ -877,6 +1450,13 @@ impl AdmissionCase {
         Self::with_store(fixture, tig_core::Digest::blob(b"synthetic-store"))
     }
     fn with_store(fixture: &Fixture, store: tig_core::Digest) -> Self {
+        Self::with_extra_source_store(fixture, store, None)
+    }
+    fn with_extra_source_store(
+        fixture: &Fixture,
+        store: tig_core::Digest,
+        extra: Option<tig_core::Digest>,
+    ) -> Self {
         use tig_core::{Digest, tree::Tree};
         use tig_store::{
             Key,
@@ -888,6 +1468,7 @@ impl AdmissionCase {
         };
         let key = |s: &str| Key::parse(s).unwrap();
         let digest = |s: &str| Digest::blob(s.as_bytes());
+        let source_stores: Vec<_> = std::iter::once(store.clone()).chain(extra).collect();
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
         fs::create_dir(root.join("coordination")).unwrap();
@@ -912,13 +1493,17 @@ impl AdmissionCase {
                 owner: key("index-owner"),
                 subject: digest("group"),
                 policies: vec![digest("policy")],
-                stores: vec![store.clone()],
+                stores: source_stores.clone(),
                 actors: ["main", "retained", "slot"]
                     .into_iter()
                     .map(|id| Actor {
                         id: key(id),
                         owner: key("owner"),
-                        stores: vec![store.clone()],
+                        stores: if id == "slot" {
+                            source_stores.clone()
+                        } else {
+                            vec![store.clone()]
+                        },
                     })
                     .collect(),
                 max_bindings: 8192,
@@ -935,7 +1520,7 @@ impl AdmissionCase {
             index.identity(),
             "slot",
             "owner",
-            [store]
+            source_stores
         ]))
         .unwrap();
         let idle = Selection {

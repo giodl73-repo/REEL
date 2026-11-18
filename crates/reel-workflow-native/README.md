@@ -1,12 +1,12 @@
-# Native workflow input bridge
+# Native workflow bridge
 
 This bridge binds a task's exact Git commit, logical records and
 explicit annex leaves using Tig's qualified Rust SDK. Its publication
 `InputReader` holds verified native streams and executable handles through the
 check. Explicit admission can now protect the declared input objects under an
 existing enrolled job actor. A pinned staging ticket supports resumable private
-input export. It does not publish
-outputs, acknowledge retained ownership or apply selections.
+input export. Read-only input checks, explicit response ingress and retained
+acknowledgement commands have separate boundaries below.
 
 Build/check this separate workspace explicitly:
 
@@ -251,6 +251,66 @@ conflicts, unsafe/incomplete mappings, changed bytes and fault-injected native
 Prepare recovery. One explicit fixture ingests a synthetic response into the
 existing test store, reopens its exact bytes, retries in another CLI process and
 verifies the same WorkRef and original positive input/output claims. It initializes
-no pool, changes no defaults and selects no project asset. Retained-owner ack,
-handoff coordinator completion, capacity release, scratch retirement, actor close
-and selection remain separate unimplemented operations for this adapter.
+no pool, changes no defaults and selects no project asset. Retained-owner ack has
+its own adapter below. Handoff coordinator completion, capacity release, scratch
+retirement, actor close and selection remain separate unimplemented operations.
+
+## Retained actor acknowledgement
+
+`retention` adds workflow-specific retained actor registration over the existing
+SDK work/index/metadata primitives. It does not impersonate a producer
+`JobContext` or the managed scene runner's SourceJournal outcome-adoption schema.
+It requires an already registered response and exact task/attempt/admission:
+
+```json
+{"schema":"reel.workflow-retained-target.v1","actor":"retained","owner":"owner"}
+```
+
+`stage-retention PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT TARGET
+NEW_ACK --apply` freezes an immutable retained update but grants no new retained
+claims. `retain-response` takes the same arguments, reopens the already published
+outputs, executes the original retained work and verifies positive retained-owner
+coverage. `verify-retained PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT
+ACK` rechecks actual original work, metadata/checkpoint witnesses, ready retained
+coverage and exact native output bytes. It writes nothing. All receipt files
+remain private; their JSON flags/descriptors are not authority. A live
+`RetainedGuard` holds the retained fence, exact snapshot/runtime pins and native
+output guards. No command marks the handoff task complete or retires scratch.
+
+The ready retained actor must differ from the job and routed source actors, have
+the exact enrolled owner and cover EVERY store assigned to the job actor. New
+admission takes source/retained actor fences in stable order. The update preserves
+all retained paths and its prior root, adds every current job reference/root and
+pins immutable registration evidence. Existing history is never replaced or
+deleted. It is bounded to 512 distinct resource objects, 1 GiB summed logical
+bytes, one 64 KiB evidence node, 128 changed paths and the existing tree limits.
+It refuses oversized work rather than splitting phases or allocating a new actor.
+
+Logical retained identity is index/task/attempt; immutable evidence binds the
+original response WorkRef, result registration, admission and target owner. A
+changed target/result conflicts. Interrupted native Prepare is reconciled only
+through that original admitted work; failed replies use a NEW receipt destination
+with the same inputs. An already completed operation can be rediscovered and
+its acknowledgement regenerated after the original source actor advances.
+Checkpoint witnesses may advance; the original WorkRef and evidence remain exact.
+
+Historical verification consults immutable original response/retained work and
+current retained coverage. It takes only the retained actor fence, so another
+job using the former source actor does not block it. Missing native bytes or
+lost retained coverage refuses; neither source scratch nor newer candidates can
+substitute. Only result output bytes are reopened: historical input claims and
+archived metadata do not assert every input payload is currently available.
+The current byte reader still uses one explicit existing store; other assigned
+stores must be covered by enrollment/positive retained claims, not discovered.
+
+Two metadata fixtures cover staged logical replay, wrong owners/actors, incomplete
+store coverage and original native Prepare recovery without releasing job claims.
+An explicit native fixture qualifies exact retained output reopening, uncertain
+update recovery across CLI processes, preserved unrelated history, historical
+readback/ack regeneration after source advance and refusal after lost coverage.
+Its source advance and loss/restoration of coverage are explicit synthetic SDK
+test operations, not qualification of slot close or retirement. No payloads are
+deleted. Tool/comic worker receipt integration, the native `handoff::Lifecycle`
+port, task completion, expected-baseline selection, guarded actor close and scratch
+retirement remain open. Native byte/claim verification grants no creative,
+translation, rights, print or release approval.

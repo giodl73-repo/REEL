@@ -14,6 +14,7 @@ use tig_core::{LogicalPath, Object};
 pub mod admission;
 mod qualified;
 pub mod response;
+pub mod retention;
 pub mod staging;
 use tig_git::{
     annex::workflow::reader,
