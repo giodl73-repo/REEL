@@ -601,6 +601,7 @@ name = "reel-workflow-native"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "fs2",
  "reel-assets",
  "reel-workflow",
  "serde",

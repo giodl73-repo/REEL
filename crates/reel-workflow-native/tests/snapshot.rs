@@ -457,6 +457,9 @@ struct AdmissionCase {
 }
 impl AdmissionCase {
     fn new(fixture: &Fixture) -> Self {
+        Self::with_store(fixture, tig_core::Digest::blob(b"synthetic-store"))
+    }
+    fn with_store(fixture: &Fixture, store: tig_core::Digest) -> Self {
         use tig_core::{Digest, tree::Tree};
         use tig_store::{
             Key,
@@ -492,13 +495,13 @@ impl AdmissionCase {
                 owner: key("index-owner"),
                 subject: digest("group"),
                 policies: vec![digest("policy")],
-                stores: vec![digest("synthetic-store")],
+                stores: vec![store.clone()],
                 actors: ["main", "retained", "slot"]
                     .into_iter()
                     .map(|id| Actor {
                         id: key(id),
                         owner: key("owner"),
-                        stores: vec![digest("synthetic-store")],
+                        stores: vec![store.clone()],
                     })
                     .collect(),
                 max_bindings: 8192,
@@ -515,7 +518,7 @@ impl AdmissionCase {
             index.identity(),
             "slot",
             "owner",
-            [digest("synthetic-store")]
+            [store]
         ]))
         .unwrap();
         let idle = Selection {
@@ -562,7 +565,7 @@ impl AdmissionCase {
                 owner: key("owner"),
                 operation: key("workflow-job"),
                 policy: digest("policy"),
-                store: digest("synthetic-store"),
+                store: store.clone(),
             },
         };
         let annex = Tool {
@@ -574,7 +577,7 @@ impl AdmissionCase {
             snapshot: fixture.profile.clone(),
             annex: annex.clone(),
             source: tig_git::annex::workflow::reader::Profile {
-                store: digest("synthetic-store"),
+                store,
                 maximum_bytes: 1024,
                 pool: tig_git::annex::process::Enrollment {
                     git: fixture.profile.git.path.clone(),
@@ -977,4 +980,246 @@ fn native_pending_update_blocks_claim_guard_until_its_original_operation_is_reco
         case.protected(&Object::from_bytes(b"synthetic input")),
         vec![case.profile.scope.actor.clone()]
     );
+}
+
+#[cfg(windows)]
+#[test]
+fn staging_cli_prepares_a_pinned_ticket_but_never_substitutes_local_bytes_for_missing_native_inputs()
+ {
+    use reel_workflow_native::{admission::Prepared, staging};
+    let fixture = Fixture::new();
+    let case = AdmissionCase::new(&fixture);
+    let root = case.temp.path();
+    let receipt = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    let scratch = root.join("scratch");
+    fs::create_dir(&scratch).unwrap();
+    let stage = staging::Profile {
+        schema: "reel.workflow-staging.v1".into(),
+        parent: scratch.clone(),
+        maximum_bytes: 8 * 1024 * 1024,
+        capacity_policy: reel_assets::admission::Policy {
+            minimum_free_bytes: 65536,
+            minimum_free_basis_points: 0,
+            max_object_bytes: 512 * 1024 * 1024,
+            ..Default::default()
+        },
+    };
+    let packet = root.join("packet.json");
+    let source = root.join("source.json");
+    let admission = root.join("admission.json");
+    let accepted = root.join("accepted.json");
+    let stage_profile = root.join("stage.json");
+    let ticket = root.join("ticket.json");
+    for (path, raw) in [
+        (&packet, serde_json::to_vec(&fixture.packet).unwrap()),
+        (&source, serde_json::to_vec(&case.source).unwrap()),
+        (&admission, serde_json::to_vec(&case.profile).unwrap()),
+        (&accepted, receipt.canonical_bytes().unwrap()),
+        (&stage_profile, serde_json::to_vec(&stage).unwrap()),
+    ] {
+        fs::write(path, raw).unwrap();
+    }
+    let prepare = || {
+        Command::new(env!("CARGO_BIN_EXE_reel-workflow-native"))
+            .arg("prepare-stage")
+            .arg(&packet)
+            .arg(&source)
+            .arg(&admission)
+            .arg(&accepted)
+            .arg(&stage_profile)
+            .arg(&ticket)
+            .output()
+            .unwrap()
+    };
+    let result = prepare();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stdout)
+    );
+    let original = fs::read(&ticket).unwrap();
+    let pin = digest(&original);
+    assert!(!prepare().status.success());
+    assert_eq!(fs::read(&ticket).unwrap(), original);
+    let exported = Command::new(env!("CARGO_BIN_EXE_reel-workflow-native"))
+        .arg("export-stage")
+        .arg(&packet)
+        .arg(&source)
+        .arg(&admission)
+        .arg(&ticket)
+        .arg(&pin)
+        .output()
+        .unwrap();
+    assert!(!exported.status.success());
+    let workspace = scratch.join(format!("handoff-{}", receipt.operation_identity().unwrap()));
+    assert_eq!(fs::read_dir(workspace).unwrap().count(), 1); // Only durable intent; no input publication.
+    assert_eq!(
+        case.protected(&Object::from_bytes(b"synthetic input")),
+        vec![case.profile.scope.actor.clone()]
+    );
+    assert!(!case.source.source.pool.repository.exists());
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "Requires an explicitly declared existing synthetic native payload; no pool setup or adoption"]
+fn accepted_claims_native_bytes_and_pinned_workspace_stage_together_across_cli_restart() {
+    use reel_workflow_native::{NativeProfile, admission::Prepared, staging};
+    let path =
+        std::env::var_os("REEL_NATIVE_INPUT_FIXTURE").expect("Set REEL_NATIVE_INPUT_FIXTURE");
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    let object: Object = serde_json::from_value(value["object"].clone()).unwrap();
+    let native: tig_git::annex::workflow::reader::Profile =
+        serde_json::from_value(value["source"].clone()).unwrap();
+    let annex: Tool = serde_json::from_value(value["annex"].clone()).unwrap();
+    let mut fixture = Fixture::with_object(object.clone());
+    let raw = fs::read(&native.pool.git).unwrap();
+    fixture.profile.git = Tool {
+        path: native.pool.git.clone(),
+        sha256: digest(&raw),
+        bytes: raw.len() as u64,
+    };
+    let mut case = AdmissionCase::with_store(&fixture, native.store.clone());
+    let control = case.source.source.pool.control.clone();
+    case.source = NativeProfile {
+        snapshot: fixture.profile.clone(),
+        annex,
+        source: native,
+    };
+    case.source.source.pool.control = control;
+    let receipt = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    let parent = case.temp.path().join("scratch");
+    fs::create_dir(&parent).unwrap();
+    let profile = staging::Profile {
+        schema: "reel.workflow-staging.v1".into(),
+        parent: parent.clone(),
+        maximum_bytes: 8 * 1024 * 1024,
+        capacity_policy: reel_assets::admission::Policy {
+            minimum_free_bytes: 65536,
+            minimum_free_basis_points: 0,
+            max_object_bytes: 512 * 1024 * 1024,
+            ..Default::default()
+        },
+    };
+    let ticket = staging::prepare(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &profile,
+    )
+    .unwrap();
+    let bytes = ticket.canonical_bytes().unwrap();
+    let pin = digest(&bytes);
+    assert!(
+        staging::prepare(
+            &fixture.packet,
+            &case.source,
+            &case.profile,
+            &receipt,
+            &profile
+        )
+        .is_err()
+    );
+    assert!(
+        staging::export(
+            &fixture.packet,
+            &case.source,
+            &case.profile,
+            &bytes,
+            &"0".repeat(64)
+        )
+        .is_err()
+    );
+    let packet = case.temp.path().join("stage-packet.json");
+    let source = case.temp.path().join("stage-native.json");
+    let admission = case.temp.path().join("stage-admission.json");
+    let ticket_path = case.temp.path().join("stage-ticket.json");
+    for (path, raw) in [
+        (&packet, serde_json::to_vec(&fixture.packet).unwrap()),
+        (&source, serde_json::to_vec(&case.source).unwrap()),
+        (&admission, serde_json::to_vec(&case.profile).unwrap()),
+        (&ticket_path, bytes.clone()),
+    ] {
+        fs::write(path, raw).unwrap();
+    }
+    let call = || {
+        Command::new(env!("CARGO_BIN_EXE_reel-workflow-native"))
+            .arg("export-stage")
+            .arg(&packet)
+            .arg(&source)
+            .arg(&admission)
+            .arg(&ticket_path)
+            .arg(&pin)
+            .output()
+            .unwrap()
+    };
+    let first = call();
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stdout)
+    );
+    let repeated = call();
+    assert!(
+        repeated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&repeated.stdout)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&repeated.stdout).unwrap();
+    assert_eq!(report["workspace"]["already_complete"], true);
+    assert_eq!(report["retained_owner_acknowledged"], false);
+    assert_eq!(
+        case.protected(&object),
+        vec![case.profile.scope.actor.clone()]
+    );
+    assert_eq!(
+        fs::read_dir(case.profile.scope.coordination_root.join("admissions"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|s| s == "json"))
+            .count(),
+        1
+    );
+    let original = case.source.source.pool.repository.clone();
+    case.source.source.pool.repository = case.temp.path().join("unavailable-native-pool");
+    assert!(staging::export(&fixture.packet, &case.source, &case.profile, &bytes, &pin).is_err());
+    case.source.source.pool.repository = original;
+    assert_eq!(
+        case.protected(&object),
+        vec![case.profile.scope.actor.clone()]
+    );
+    if let Some(directory) = std::env::var_os("REEL_STAGING_EVIDENCE_DIRECTORY") {
+        use std::io::Write;
+        let directory = PathBuf::from(directory);
+        assert!(directory.is_absolute() && directory.is_dir());
+        for (name, raw) in [
+            ("packet.json", fs::read(&packet).unwrap()),
+            ("native-profile.json", fs::read(&source).unwrap()),
+            ("admission-profile.json", fs::read(&admission).unwrap()),
+            ("admission-receipt.json", receipt.canonical_bytes().unwrap()),
+            (
+                "staging-profile.json",
+                serde_json::to_vec(&profile).unwrap(),
+            ),
+            ("ticket.json", bytes),
+            ("result.json", repeated.stdout),
+        ] {
+            let mut output = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(directory.join(name))
+                .unwrap();
+            output.write_all(&raw).unwrap();
+            output.sync_all().unwrap();
+        }
+        let _ = case.temp.keep();
+        let _ = fixture.temp.keep();
+    }
 }

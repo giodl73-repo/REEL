@@ -561,6 +561,14 @@ impl Prepared {
     }
 }
 impl Receipt {
+    /// Stable original operation identity, independent of later witness minima.
+    pub fn operation_identity(&self) -> Result<String> {
+        Ok(reel_workflow::digest(&encode(
+            &serde_json::json!({"schema":"reel.workflow-native-operation.v1",
+            "task_key":self.task_key,"attempt_id":self.attempt_id,"scope":self.scope,"input":self.input,
+            "source_archive":self.source_archive,"candidate":self.candidate,"activation":self.activation,"work":self.work}),
+        )?))
+    }
     pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
         encode(self)
     }

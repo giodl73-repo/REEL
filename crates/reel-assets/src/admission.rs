@@ -338,6 +338,78 @@ pub fn reserve_on(root: &Path, config: &Config, cache: &Path, bytes: u64) -> Res
     }
     reserve_candidates(root, config, &[cache.to_path_buf()], bytes)
 }
+
+/// Reopen one exact preserved capacity admission. Never creates an entry/lease,
+/// allocates a new ID, releases capacity or discovers a destination. Drop keeps
+/// the conservative record; explicit qualified retirement remains separate.
+pub fn resume_preserved_on(
+    config: &Config,
+    cache: &Path,
+    id: &str,
+    volume: &str,
+    bytes: u64,
+) -> Result<Reservation> {
+    if !id.starts_with("job-")
+        || id.len() <= 4
+        || id.len() > 128
+        || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        || !config.cache_roots.contains(&cache.to_path_buf())
+        || bytes == 0
+        || bytes > config.capacity.max_object_bytes
+    {
+        return Err("Invalid preserved capacity admission".into());
+    }
+    let dir = config
+        .coordination_root
+        .as_ref()
+        .ok_or("Explicit capacity coordination required")?;
+    if !dir.is_absolute() || !dir.is_dir() {
+        return Err("Existing capacity coordination required".into());
+    }
+    let _lock = capacity_lock(dir)?;
+    let base = dir.join("admissions");
+    let path = base.join(format!("{id}.json"));
+    let lease_path = base.join(format!("{id}.lease"));
+    for path in [&base, &path, &lease_path] {
+        let metadata = fs::symlink_metadata(path)?;
+        #[cfg(windows)]
+        let linked = {
+            use std::os::windows::fs::MetadataExt;
+            metadata.file_attributes() & 0x400 != 0
+        };
+        #[cfg(not(windows))]
+        let linked = metadata.file_type().is_symlink();
+        if linked || (path == &base && !metadata.is_dir()) || (path != &base && !metadata.is_file())
+        {
+            return Err("Unsafe preserved capacity admission".into());
+        }
+    }
+    use std::io::Read;
+    let mut raw = Vec::new();
+    File::open(&path)?.take(8193).read_to_end(&mut raw)?;
+    if raw.len() > 8192 {
+        return Err("Capacity admission exceeds bound".into());
+    }
+    let entry: Entry = serde_json::from_slice(&raw)?;
+    if entry.id != id
+        || entry.volume_id != volume
+        || entry.bytes != bytes
+        || entry.cache_root != cache
+        || volume_id(cache)? != volume
+    {
+        return Err("Preserved capacity identity differs".into());
+    }
+    let lease = OpenOptions::new().read(true).write(true).open(lease_path)?;
+    fs2::FileExt::try_lock_exclusive(&lease)?;
+    Ok(Reservation {
+        id: id.into(),
+        volume_id: volume.into(),
+        cache_root: cache.into(),
+        dir: dir.clone(),
+        lease: Some(lease),
+        retained: true,
+    })
+}
 /// Explicit named archival custody, never an automatic admission fallback.
 pub fn reserve_archive_on(
     root: &Path,
@@ -372,6 +444,46 @@ pub fn release_stale(root: &Path, config: &Config, id: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn preserved_capacity_resumes_original_lease_and_does_not_release_on_drop() {
+        use super::*;
+        let temp = tempfile::tempdir().unwrap();
+        let scratch = temp.path().join("scratch");
+        let coordinate = temp.path().join("coordinate");
+        fs::create_dir(&scratch).unwrap();
+        fs::create_dir(&coordinate).unwrap();
+        let config = Config {
+            cache_roots: vec![scratch.clone()],
+            coordination_root: Some(coordinate.clone()),
+            capacity: Policy {
+                minimum_free_bytes: 0,
+                minimum_free_basis_points: 0,
+                ..Policy::default()
+            },
+            ..Config::default()
+        };
+        let reservation = reserve_on(temp.path(), &config, &scratch, 4096).unwrap();
+        let id = reservation.id.clone();
+        let volume = reservation.volume_id.clone();
+        assert!(resume_preserved_on(&config, &scratch, &id, &volume, 4096).is_err());
+        reservation.retain_for_recovery();
+        assert!(resume_preserved_on(&config, &scratch, &id, &volume, 4097).is_err());
+        let resumed = resume_preserved_on(&config, &scratch, &id, &volume, 4096).unwrap();
+        assert!(resume_preserved_on(&config, &scratch, &id, &volume, 4096).is_err());
+        drop(resumed);
+        assert!(
+            coordinate
+                .join("admissions")
+                .join(format!("{id}.json"))
+                .is_file()
+        );
+        assert_eq!(
+            reserved(&coordinate.join("admissions"), &volume).unwrap(),
+            4096
+        );
+        let again = resume_preserved_on(&config, &scratch, &id, &volume, 4096).unwrap();
+        drop(again);
+    }
     use super::*;
     #[test]
     fn explicit_transaction_wait_is_bounded_and_never_breaks_another_lock() {

@@ -163,3 +163,21 @@ remain exact. Tight native node/atomic transition limits are surfaced, not worke
 around. The 68-test evidence does not combine synthetic claim journals with a
 physical production pool or qualify an end-to-end comic handoff. Byte staging,
 candidate idempotency, native retained completion and project adoption stay open.
+
+2026-11-18 staging follow-up, producer-applied engineering/editor/rights/custody
+lenses: the ticket pins the original admission and concrete directory identities;
+staged bytes and exact prompts cannot imply rights, creative approval or retained
+output ownership. Preparation is separate from export; original claims and
+capacity survive process exit. Resume checks actual native sources and refuses
+scratch substitution. Unknown/replaced namespaces, changed files and partials are
+preserved, never overwritten or deleted. Initial uncertainty without a complete
+ticket requires explicit diagnosis rather than silent adoption or a new job ID.
+
+The 107-test local evidence includes fault-injected filesystem staging, capacity
+lease recovery, existing job regressions and a coupled native claim/read/export
+fixture across CLI processes. Its cooperating controller/store scope is explicit,
+not a claim that provider defaults or all external writers were adopted. Inputs
+remain private and exact; no browser package interpretation, provider dispatch,
+candidate ingestion, result retention, completion or selection is inferred.
+Comic source layout support is not an end-to-end native comic/render qualification.
+Native result registration and guarded retirement remain open acceptance gates.

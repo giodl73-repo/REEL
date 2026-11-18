@@ -22,7 +22,8 @@ production staging, retention, providers and selection remain explicit next gate
 The isolated [native workflow input bridge](crates/reel-workflow-native/README.md)
 now binds exact committed records to declared annex leaves and holds guarded
 native reads. Explicit input admission can protect declared resources in an
-existing job actor; manual staging and retained-result completion remain open.
+existing job actor. Pinned private tickets support resumable input staging;
+retained-result completion remains open.
 
 [Publication contracts](docs/publication.md) add film and comic language editions,
 ordered page/panel metadata and independently tracked output sets through

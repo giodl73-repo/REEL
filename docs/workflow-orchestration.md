@@ -7,7 +7,7 @@ source_scenario: project-owned
 author: producer
 rubric_version: v0.1
 created: 2026-11-17
-updated: 2026-11-17
+updated: 2026-11-18
 sources: [Cargo.toml, .roles/ROLE.md, .pitfall/PITFALL.md]
 ---
 
@@ -38,7 +38,8 @@ not yet qualified resumable export/import against managed resources. An additive
 private handoff coordinator now records recovery intent through an injected
 managed-lifecycle port; the native implementation of that port remains open.
 The native input bridge now supports explicit durable input-claim admission in
-an existing actor. It does not implement the full lifecycle port or stage bytes.
+an existing actor and pinned resumable input export. It does not implement the
+full result-registration/retention lifecycle port.
 
 Example local contract commands (synthetic files only until W1/W2 qualify):
 
@@ -198,9 +199,9 @@ Actual evidence: 48 shared tests, eight default native-bridge tests and an
 explicit Windows guarded read of a previously published synthetic 1 MiB object.
 All 247 source pins match, with source line endings preserved. This covers the
 tested source-binding/read behavior, not a full native comic workflow.
-W1 now has explicit positive input-claim admission (below), but still requires
-resumable byte staging and full managed qualification; W2-W5 remain
-open. See the [current handoff](handoff/2026-11-18-native-workflow-inputs.md).
+W1 now has explicit positive input-claim admission and bounded resumable byte
+staging (below). Full managed result-lifecycle qualification and W2-W5 remain
+open. See the [current handoff](handoff/2026-11-18-workflow-staging.md).
 
 ### Durable input-claim admission (2026-11-18)
 
@@ -238,6 +239,26 @@ and native bounds. The native pool read is separate, not a combined end-to-end
 comic job. Private persistent evidence and frozen executable/source pins are
 outside Git; initial colliding evidence exports were superseded by separated,
 exclusive-create capture directories. Original fixtures remained intact.
+
+### Resumable staging (2026-11-18)
+
+The native bridge now separates fresh workspace preparation from export using
+an externally pinned private ticket. Original actor claims are reopened for both;
+the original shared capacity reservation persists across process exit. File IDs,
+intent pins, bounded exclusive parts and immutable publication protect restart
+without adopting unknown directories or overwriting evidence. Every export,
+including a completed-workspace recheck, verifies original native bytes rather
+than substituting a scratch copy. Comic producer-relative source layouts and
+exact prompts are preserved; outputs and provider execution remain separate.
+
+The qualified fixture now combines accepted claims, guarded native input bytes,
+owned staging, capacity preservation and CLI restart under an explicit synthetic
+controller scope. It modifies no provider defaults, payload store or project
+binding. Shared reservation/namespace primitives are reused rather than adding a
+cache engine. Initial preparation uncertainty without a valid ticket remains
+explicit diagnosis; no automatic claim/capacity release or workspace deletion
+is available. Result idempotency, retained-owner completion and selection remain
+open. See the [staging handoff](handoff/2026-11-18-workflow-staging.md).
 
 ### Comic consumer assessment
 

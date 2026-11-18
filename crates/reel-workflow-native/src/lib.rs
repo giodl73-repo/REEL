@@ -1,5 +1,5 @@
-//! Qualified SDK inputs and explicit input-claim admission. Guarded reads alone
-//! do not establish durable job protection or retained-result ownership.
+//! Qualified SDK inputs, explicit input claims and resumable private staging.
+//! Guarded reads alone do not establish durable job or retained-result ownership.
 use reel_workflow::{Artifact, Error, ErrorKind, Packet, Result, publication::InputReader};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -13,6 +13,7 @@ use tig_assets::resolve::AssetResolver;
 use tig_core::{LogicalPath, Object};
 pub mod admission;
 mod qualified;
+pub mod staging;
 use tig_git::{
     annex::workflow::reader,
     source::{

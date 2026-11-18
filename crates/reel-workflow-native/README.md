@@ -4,7 +4,8 @@ This bridge binds a task's exact Git commit, logical records and
 explicit annex leaves using Tig's qualified Rust SDK. Its publication
 `InputReader` holds verified native streams and executable handles through the
 check. Explicit admission can now protect the declared input objects under an
-existing enrolled job actor. It does not stage a manual workspace, publish
+existing enrolled job actor. A pinned staging ticket supports resumable private
+input export. It does not publish
 outputs, acknowledge retained ownership or apply selections.
 
 Build/check this separate workspace explicitly:
@@ -17,6 +18,8 @@ reel-workflow-native check-publication-native PACKET NATIVE_PROFILE
 reel-workflow-native preview-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE ATTEMPT
 reel-workflow-native accept-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE ATTEMPT NEW_RECEIPT --apply
 reel-workflow-native reopen-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT
+reel-workflow-native prepare-stage PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT STAGING_PROFILE NEW_TICKET
+reel-workflow-native export-stage PACKET NATIVE_PROFILE ADMISSION_PROFILE TICKET TICKET_SHA256
 ```
 
 The isolated graph consumes `vendor/tig-workflow`, preserving all 247 source pins
@@ -69,7 +72,7 @@ it creates no store or payload. It was run locally against a previously publishe
 1 MiB object, including allowance and undeclared-read refusal. This does not
 qualify a complete native comic job, external import or retained publication.
 
-Next: stage resumable handoffs and implement idempotent
+Next: implement idempotent
 registration/retained-owner recovery through `handoff::Lifecycle`. Completion,
 selection and guarded scratch retirement remain separate. Project adoption
 requires those fixtures and an owned rollback.
@@ -126,7 +129,65 @@ scope; this adapter admits one declared store.
 Four original slot tests and six workflow/CLI admission fixtures exercise real
 isolated native metadata journals, restart/lost-response reuse, claim coverage,
 retained source metadata, scope refusal, node bounds and preserved CLI failures.
-They do not create a native payload pool. Full native-pool adoption, staged byte
-materialization, external candidate registration and retained-owner completion
+They do not create a native payload pool. Full native-pool adoption, comic
+production, external candidate registration and retained-owner completion
 still require end-to-end qualification before a real film/comic project adopts
 the workflow.
+
+## Resumable private input export
+
+`reel.workflow-staging.v1` declares an existing private scratch `parent`, a
+`maximum_bytes` logical ceiling (at most 512 MiB), and the existing REEL
+`capacity_policy`. The parent must be outside index, metadata, coordination and
+native provider roots. It is scratch, not a new asset cache. The adapter reuses
+REEL's shared capacity ledger under the original admission coordination root;
+it never initializes a payload store or allocates another native actor.
+
+Preparation reopens actual original claims, guards directory namespaces, reserves
+capacity, creates a fresh operation-named workspace and immutable intent, then
+returns a private ticket with parent/workspace file identities, exact intent pin,
+original admission and reservation identity. Persist the ticket and pin its raw
+SHA256 before exporting. The CLI requires a new private ticket file. An existing
+workspace is not adopted by preparation. Initial failure before a complete
+ticket leaves evidence and conservative capacity for explicit diagnosis; that
+boundary is not automatically repaired or silently retried under another ID.
+
+Export requires that external ticket pin. Each invocation reopens actual claims,
+checks the same directory identities and intent, reacquires the original capacity
+lease, verifies the workspace, and reads the original exact native inputs while
+holding provider guards. Completed scratch copies cannot excuse a missing native
+provider. There is no latest fallback, hydration, output import or provider call.
+
+The bundle contains packet, original admission, native declaration, portable input
+bindings and the exact prompt when present. Generic inputs use numbered paths;
+comic source bindings preserve a separate `source/request.json` and exact
+producer-relative files. Comic source/edition correspondence is checked before
+export. No native comic render or multilingual creative approval follows.
+
+Files are exclusive-create immutable parts, flushed before hard-link publication
+inside the owned workspace. Resume verifies/reuses a complete part or creates a
+new bounded part; incomplete parts remain untouched. A completion marker is
+committed only after input verification and is rechecked against actual files.
+`already_complete` means the verified marker existed at the start. Unexpected
+entries, altered files, replaced directories, wrong tickets or exhausted bounds
+stop without cleanup or replacement. Outputs belong outside this immutable input
+bundle until a separate output-admission adapter is qualified.
+
+Bounds are 256 exported files, 2,048 workspace entries, 16 path segments, four
+part attempts per file, and the existing 64 MiB input/1 MiB control bounds.
+Logical scratch usage includes parts AND published names, even for hard links.
+Capacity/free-space policy is checked and preserved; neither a completed export,
+timeout nor failure releases its record. Separate retained-result verification
+and guarded retirement must precede explicit capacity release. Directory/file
+guards protect active operations; durable native claims survive process exit.
+Power-loss directory-entry durability and hostile local control rewrites are
+outside this qualification.
+
+Five filesystem fault fixtures and one CLI preflight fixture cover partial and
+flushed copies, no-overwrite recovery, ownership, tampering, bounds and missing
+sources. An explicit Windows fixture combines actual admitted native claims,
+guarded access to an existing synthetic 1 MiB payload, preserved capacity and
+CLI restart/export. Its private controller enrollment/cooperating-writer scope
+is a declared fixture assumption; it changes no provider defaults or project
+bindings and does not attest all external writers. This qualifies bounded input
+staging, not result ingestion, retained ownership or production project adoption.

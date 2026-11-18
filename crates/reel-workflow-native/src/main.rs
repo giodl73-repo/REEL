@@ -63,6 +63,44 @@ fn new_receipt(
 }
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
+        [command, packet, source, profile, receipt, stage, output]
+            if command == "prepare-stage" =>
+        {
+            use std::io::Write;
+            let packet = read_control(Path::new(packet))?;
+            let source = read_control(Path::new(source))?;
+            let profile = read_control(Path::new(profile))?;
+            let receipt = read_control(Path::new(receipt))?;
+            let stage = read_control(Path::new(stage))?;
+            let mut file = new_receipt(Path::new(output), &source, &profile)?;
+            let ticket = reel_workflow_native::staging::prepare(
+                &packet, &source, &profile, &receipt, &stage,
+            )?;
+            file.write_all(&ticket.canonical_bytes()?)
+                .and_then(|_| file.sync_all())
+                .map_err(|_| reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::NeedsRecovery,
+                    code: "staging-ticket-write-preserve".into(),
+                })?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-staging-ticket","payloads_exported":false,"capacity_preserved":true,"input_claims_released":false,"task_completed":false,"selected":false}),
+            )
+        }
+        [command, packet, source, profile, ticket, pin] if command == "export-stage" => {
+            let packet = read_control(Path::new(packet))?;
+            let source = read_control(Path::new(source))?;
+            let profile = read_control(Path::new(profile))?;
+            let summary = reel_workflow_native::staging::export_file(
+                &packet,
+                &source,
+                &profile,
+                Path::new(ticket),
+                pin,
+            )?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-guarded-input-export","workspace":summary,"retained_owner_acknowledged":false,"input_claims_released":false,"task_completed":false,"selected":false}),
+            )
+        }
         [command, packet, source, profile, attempt] if command == "preview-admission" => {
             let packet = read_control(Path::new(packet))?;
             let source = read_control(Path::new(source))?;
@@ -159,7 +197,7 @@ fn main() -> ExitCode {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if matches!(args.as_slice(), [a] if a == "--help") {
         println!(
-            "reel-workflow-native check-snapshot PACKET PROFILE\nreel-workflow-native check-publication-native PACKET PROFILE\nreel-workflow-native preview-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE ATTEMPT\nreel-workflow-native accept-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE ATTEMPT NEW_RECEIPT --apply\nreel-workflow-native reopen-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT\nOnly explicit acceptance changes input claims. No production, retained-result ownership, completion or selection."
+            "reel-workflow-native check-snapshot PACKET PROFILE\nreel-workflow-native check-publication-native PACKET PROFILE\nreel-workflow-native preview-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE ATTEMPT\nreel-workflow-native accept-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE ATTEMPT NEW_RECEIPT --apply\nreel-workflow-native reopen-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT\nreel-workflow-native prepare-stage PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT STAGING_PROFILE NEW_TICKET\nreel-workflow-native export-stage PACKET NATIVE_PROFILE ADMISSION_PROFILE TICKET TICKET_SHA256\nOnly explicit acceptance changes input claims. No provider execution, retained-result ownership, completion or selection."
         );
         return ExitCode::SUCCESS;
     }
