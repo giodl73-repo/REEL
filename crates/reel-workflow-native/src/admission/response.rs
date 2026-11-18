@@ -127,6 +127,11 @@ impl ClaimsGuard {
             )
             .map_err(|e| native_error(e.into()))?;
             let next = entries(target.selection(), &mut nodes)?;
+            // Qualified slot close clears the full source tree in one bounded
+            // phase. Never grow a job that cannot subsequently close safely.
+            if next.len() > protection::MAX_CHANGES {
+                return Err(error(ErrorKind::Budget, "response-job-close-path-limit"));
+            }
             let mut changes = BTreeMap::new();
             for (path, object) in &next {
                 if old.get(path) != Some(object) {

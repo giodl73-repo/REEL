@@ -35,6 +35,7 @@ fn packet() -> Packet {
 fn returned(packet: &Packet, mode: Mode) -> ReturnedResult {
     ReturnedResult {
         schema: RESULT_SCHEMA.into(),
+        worker_receipt: None,
         task_id: packet.task.id.clone(),
         task_key: packet.task_key.clone(),
         attempt_id: "attempt-1".into(),

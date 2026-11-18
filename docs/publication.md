@@ -145,7 +145,9 @@ The workflow binding now checks a pinned producer against the selected edition,
 complete source contract and returned receipt; see
 [deterministic publication task binding](workflow-orchestration.md#deterministic-publication-task-binding).
 The local checker executes no tool and makes no native snapshot/custody claim.
-Next work must connect that binding to the qualified workflow/Tig lifecycle.
+The native workflow now connects comic receipts, deterministic replay, candidate
+publication and retained proof to journal completion. See the
+[native comic handoff](handoff/2026-11-18-workflow-native-comic.md).
 Broader production should generalize accepted
 compose/assemble/verify/rebuild/pdf behavior with synthetic fixtures and original
 upstream source rights. Do not change BBJ's admitted tool versions, port its story data, execute
@@ -155,8 +157,9 @@ restoration tests. A successful old project tool invocation is not qualification
 of a new shared adapter.
 
 The first rendering/source-restoration fixture is implemented. Stale workflow
-returns have separate contract tests; a complete managed comic handoff still
-requires actual protection, idempotent registration, retained/reopened native
-outputs and expected-baseline selection under the upstream lifecycle. Only after
+returns have separate contract tests. Bounded synthetic native handoff now covers
+actual protection, logical registration, deterministic replay and retained native
+outputs. Larger issue planning, expected-baseline selection and project adoption
+remain open under the upstream lifecycle. Only after
 that qualification and owned rollback should a project adopt the shared producer.
 Issue-level review/selection, printer preflight and delivery remain distinct gates.

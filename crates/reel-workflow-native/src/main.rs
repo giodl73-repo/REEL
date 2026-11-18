@@ -63,6 +63,22 @@ fn new_receipt(
 }
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
+        [command, request, output] if command == "comic-render" || command == "comic-check" => {
+            let checked = if command == "comic-render" {
+                reel_publication::comic::render(Path::new(request), Path::new(output))
+            } else {
+                reel_publication::comic::check(Path::new(request), Path::new(output))
+            };
+            checked.map_err(|_| reel_workflow::Error {
+                kind: reel_workflow::ErrorKind::Integrity,
+                code: "comic-worker-refused-preserve".into(),
+            })?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-comic-worker","rendered":true,
+                "outputs_written":command == "comic-render","retained_owner_acknowledged":false,
+                "task_completed":false,"selected":false}),
+            )
+        }
         [command, packet, profile, journal, apply]
             if command == "create-handoff" && apply == "--apply" =>
         {
@@ -363,6 +379,8 @@ fn main() -> ExitCode {
     if matches!(args.as_slice(), [a] if a == "--help") {
         println!(concat!(
             "reel-workflow-native check-snapshot PACKET PROFILE\n",
+            "reel-workflow-native comic-render REQUEST NEW_DIRECTORY\n",
+            "reel-workflow-native comic-check REQUEST DIRECTORY\n",
             "reel-workflow-native check-publication-native PACKET PROFILE\n",
             "reel-workflow-native preview-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE ATTEMPT\n",
             "reel-workflow-native accept-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE ATTEMPT NEW_RECEIPT --apply\n",

@@ -61,6 +61,7 @@ pub struct RetainedGuard {
     pub(crate) _prepared: Prepared,
     _annex: File,
     _outputs: Vec<reader::VerifiedRead>,
+    _comic: Option<crate::comic::Proof>,
 }
 
 fn check(packet: &Packet, receipt: &Receipt, result: &ReturnedResult) -> Result<()> {
@@ -68,27 +69,26 @@ fn check(packet: &Packet, receipt: &Receipt, result: &ReturnedResult) -> Result<
     if result.attempt_id != receipt.attempt_id {
         return Err(error(ErrorKind::Conflict, "retention-original-attempt"));
     }
-    if result.provenance.mode == reel_workflow::Mode::Tool {
-        return Err(error(
-            ErrorKind::Unsupported,
-            "retention-tool-receipt-adapter-required",
-        ));
+    if result.provenance.mode == reel_workflow::Mode::Tool && result.worker_receipt.is_none() {
+        return Err(error(ErrorKind::Missing, "comic-worker-receipt-required"));
     }
-    Ok(())
-}
-fn outputs(source: &NativeProfile, result: &ReturnedResult) -> Result<Vec<reader::VerifiedRead>> {
-    if result.artifacts.len() > 32
-        || result
-            .artifacts
-            .values()
+    if result.artifacts.len() > reel_publication::MAX_OUTPUTS
+        || response::artifacts(result)
             .try_fold(0u64, |n, a| n.checked_add(a.bytes))
             .is_none_or(|n| n > 128 * 1024 * 1024)
     {
         return Err(error(ErrorKind::Budget, "retention-output-bounds"));
     }
-    result
-        .artifacts
-        .values()
+    Ok(())
+}
+fn outputs(source: &NativeProfile, result: &ReturnedResult) -> Result<Vec<reader::VerifiedRead>> {
+    // Comic proof owns its source/output gates and performs full replay.
+    if result.provenance.mode == reel_workflow::Mode::Tool {
+        return Ok(Vec::new());
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    response::artifacts(result)
+        .filter(|a| seen.insert((a.sha256.clone(), a.bytes)))
         .map(|a| {
             reader::open(
                 &source.source,
@@ -153,12 +153,18 @@ pub fn retain(
     // Native read guards hold object effect gates. Do not keep those gates
     // while admitting a NEW index update. Original positive job claims and the
     // ordered source/retained fences protect this transition instead.
-    drop(outputs(source, result)?);
+    drop(outputs(source, result).map_err(|e| phase(e, "retention-output-preflight"))?);
+    drop(
+        crate::comic::check_native(packet, source, result)
+            .map_err(|e| phase(e, "retention-comic-preflight"))?,
+    );
     let acknowledgement = guard
         .retain_response(receipt, &candidate, target, true)
         .map_err(|e| phase(e, "retention-apply"))?;
     guard.verify_retention(receipt, &acknowledgement)?;
-    let _outputs = outputs(source, result)?;
+    let _outputs = outputs(source, result).map_err(|e| phase(e, "retention-output-readback"))?;
+    let _comic = crate::comic::check_native(packet, source, result)
+        .map_err(|e| phase(e, "retention-comic-readback"))?;
     Ok(acknowledgement)
 }
 
@@ -178,10 +184,12 @@ pub fn verify(
     let prepared = Prepared::open(packet, source, profile, &receipt.attempt_id)?;
     let fences = prepared.verify_retained(receipt, result, acknowledgement)?;
     let outputs = outputs(source, result)?;
+    let comic = crate::comic::check_native(packet, source, result)?;
     Ok(RetainedGuard {
         _fences: fences,
         _prepared: prepared,
         _annex,
         _outputs: outputs,
+        _comic: comic,
     })
 }

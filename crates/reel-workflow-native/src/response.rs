@@ -5,7 +5,7 @@ use crate::{
     admission::{self, Prepared, Receipt},
     error, hold_tool, io_error,
 };
-use reel_workflow::{ErrorKind, Mode, Packet, Result, ReturnedResult, check_result};
+use reel_workflow::{Artifact, ErrorKind, Mode, Packet, Result, ReturnedResult, check_result};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -16,6 +16,12 @@ use tig_core::{Digest, LogicalPath, Object};
 use tig_store::{Key, source_claims::protection::work::WorkRef};
 
 const MAX_BYTES: u64 = 128 * 1024 * 1024;
+pub(crate) fn artifacts(result: &ReturnedResult) -> impl Iterator<Item = &Artifact> {
+    result
+        .artifacts
+        .values()
+        .chain(result.worker_receipt.iter())
+}
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -56,13 +62,8 @@ fn verify(
     if result.attempt_id != receipt.attempt_id {
         return Err(error(ErrorKind::Conflict, "response-original-attempt"));
     }
-    // Worker receipts need their own production-specific validation before they
-    // can enter this generic provider adapter. Never infer tool approval here.
-    if result.provenance.mode == Mode::Tool {
-        return Err(error(
-            ErrorKind::Unsupported,
-            "response-tool-receipt-adapter-required",
-        ));
+    if result.provenance.mode == Mode::Tool && result.worker_receipt.is_none() {
+        return Err(error(ErrorKind::Missing, "comic-worker-receipt-required"));
     }
     if !cfg!(windows) {
         return Err(error(
@@ -77,7 +78,7 @@ fn verify(
             .components()
             .any(|p| matches!(p, std::path::Component::ParentDir))
         || returns.files.keys().ne(result.artifacts.keys())
-        || returns.files.len() > 32
+        || returns.files.len() > reel_publication::MAX_OUTPUTS
         || returns.files.values().any(|p| !crate::staging::portable(p))
     {
         return Err(error(ErrorKind::Invalid, "response-explicit-file-set"));
@@ -119,6 +120,25 @@ fn verify(
         reel_workflow::check_output(packet, result, name, &raw)?;
         files.push(held);
     }
+    if result.provenance.mode == Mode::Tool {
+        if paths.contains("receipt.json") {
+            return Err(error(ErrorKind::Conflict, "comic-receipt-path-alias"));
+        }
+        let receipt = result
+            .worker_receipt
+            .as_ref()
+            .ok_or_else(|| error(ErrorKind::Missing, "comic-worker-receipt-required"))?;
+        if total
+            .checked_add(receipt.bytes)
+            .is_none_or(|n| n > MAX_BYTES)
+        {
+            return Err(error(ErrorKind::Budget, "response-byte-limit"));
+        }
+        let (extra_files, extra_directories) =
+            crate::comic::check_returned(packet, source, result, &root, &returns.files)?;
+        files.extend(extra_files);
+        directories.extend(extra_directories);
+    }
     Ok(Verified {
         _directories: directories,
         _files: files,
@@ -148,9 +168,7 @@ pub(crate) fn identity(
         "schema":"reel.workflow-response-registration.v1", "index":profile.index_identity,
         "admission":receipt.operation_identity()?, "store":profile.scope.store, "result":result
     }))?;
-    let objects = result
-        .artifacts
-        .values()
+    let objects = artifacts(result)
         .map(|a| {
             Ok(Object {
                 sha256: Digest::parse(&a.sha256)
@@ -237,8 +255,16 @@ pub fn ingest(
     let _annex = hold_tool(&source.annex)?;
     let (_guard, candidate) = protected(packet, source, profile, receipt, result, true)?;
     let mut publications = Vec::new();
-    for (name, path) in &returns.files {
-        let artifact = &result.artifacts[name];
+    let mut published_objects = BTreeSet::new();
+    for (artifact, path) in returns
+        .files
+        .iter()
+        .map(|(name, path)| (&result.artifacts[name], path.as_str()))
+        .chain(result.worker_receipt.as_ref().map(|a| (a, "receipt.json")))
+    {
+        if !published_objects.insert((artifact.sha256.clone(), artifact.bytes)) {
+            continue;
+        }
         let published = tig_git::annex::workflow::publication::publish(
             &tig_git::annex::workflow::publication::Profile {
                 schema: "tig.annex-file-publication.experimental-1".into(),

@@ -19,7 +19,7 @@ struct Packet {
     files: BTreeMap<String, Vec<u8>>,
 }
 struct Inputs<'a> {
-    root: &'a Path,
+    read: &'a mut dyn FnMut(&Pin) -> Result<Vec<u8>>,
     max: u64,
     used: u64,
     expanded_bytes: u64,
@@ -95,7 +95,7 @@ impl Inputs<'_> {
                 .is_some_and(|n| n <= self.max),
             "source closure byte bound exceeded"
         );
-        let raw = read(&self.root.join(&pin.path), pin.bytes)?;
+        let raw = (self.read)(pin)?;
         let actual = object(&raw);
         ensure!(
             actual.sha256 == pin.sha256 && actual.bytes == pin.bytes,
@@ -319,7 +319,15 @@ fn page(
 }
 fn prepare(request_path: &Path) -> Result<Packet> {
     let raw = read(request_path, 1024 * 1024)?;
-    let request: Request = serde_json::from_slice(&raw)?;
+    let root = request_path
+        .parent()
+        .context("request parent required")?
+        .canonicalize()?;
+    prepare_with(&raw, &mut |pin| read(&root.join(&pin.path), pin.bytes))
+}
+fn prepare_with(raw: &[u8], read_input: &mut dyn FnMut(&Pin) -> Result<Vec<u8>>) -> Result<Packet> {
+    ensure!(raw.len() <= 1024 * 1024, "request byte bound exceeded");
+    let request: Request = serde_json::from_slice(raw)?;
     ensure!(
         request.schema == "reel.comic-build.v1"
             && valid_id(&request.publication_id)
@@ -334,12 +342,8 @@ fn prepare(request_path: &Path) -> Result<Packet> {
             && (1..=128 * 1024 * 1024).contains(&request.limits.output_bytes),
         "comic byte allowance refused"
     );
-    let root = request_path
-        .parent()
-        .context("request parent required")?
-        .canonicalize()?;
     let mut inputs = Inputs {
-        root: &root,
+        read: read_input,
         max: request.limits.input_bytes,
         used: raw.len() as u64,
         expanded_bytes: 0,
@@ -420,7 +424,7 @@ fn prepare(request_path: &Path) -> Result<Packet> {
         })
         .collect();
     crate::check_artifact_set(&outputs)?;
-    inputs.files.insert("request.json".into(), raw.clone());
+    inputs.files.insert("request.json".into(), raw.to_vec());
     let source_files = inputs
         .files
         .iter()
@@ -434,7 +438,7 @@ fn prepare(request_path: &Path) -> Result<Packet> {
         publication_id: request.publication_id,
         edition_id: request.edition_id,
         language: request.language,
-        request: object(&raw),
+        request: object(raw),
         page_order: sources.iter().map(|s| s.id.clone()).collect(),
         outputs,
         source_files,
@@ -495,6 +499,22 @@ pub fn check(request: &Path, output: &Path) -> Result<Receipt> {
     for (name, expected) in &packet.files {
         ensure!(
             read(&output.join(name), expected.len() as u64)? == *expected,
+            "comic packet differs"
+        );
+    }
+    Ok(packet.receipt)
+}
+/// Deterministic replay against injected exact source/output readers. Performs
+/// no filesystem writes and does not infer worker identity, rights or custody.
+pub fn check_with(
+    request: &[u8],
+    mut input: impl FnMut(&Pin) -> Result<Vec<u8>>,
+    mut output: impl FnMut(&str, u64) -> Result<Vec<u8>>,
+) -> Result<Receipt> {
+    let packet = prepare_with(request, &mut input)?;
+    for (name, expected) in &packet.files {
+        ensure!(
+            output(name, expected.len() as u64)? == *expected,
             "comic packet differs"
         );
     }

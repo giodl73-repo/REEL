@@ -12,6 +12,7 @@ use std::{
 use tig_assets::resolve::AssetResolver;
 use tig_core::{LogicalPath, Object};
 pub mod admission;
+mod comic;
 pub mod handoff;
 mod qualified;
 pub mod response;
@@ -312,6 +313,8 @@ pub struct NativeInputs {
     source: reader::Profile,
     held: Vec<reader::VerifiedRead>,
     _annex_guard: File,
+    captured: BTreeMap<Object, Vec<u8>>,
+    reads: usize,
 }
 impl NativeInputs {
     pub fn open(packet: &Packet, profile: &NativeProfile) -> Result<Self> {
@@ -333,10 +336,15 @@ impl NativeInputs {
             source: profile.source.clone(),
             held: Vec::new(),
             _annex_guard: guard,
+            captured: BTreeMap::new(),
+            reads: 0,
         })
     }
     pub fn snapshot(&self) -> &SnapshotInputs {
         &self.snapshot
+    }
+    pub(crate) fn captured(&self, object: &Object) -> Option<&[u8]> {
+        self.captured.get(object).map(Vec::as_slice)
     }
 }
 impl InputReader for NativeInputs {
@@ -348,8 +356,15 @@ impl InputReader for NativeInputs {
             return Err(error(ErrorKind::Budget, "native-read-allowance"));
         }
         // Reject unbounded repeat opens even if the consumer misbehaves.
-        if self.held.len() >= 256 {
+        if self.reads >= 256 {
             return Err(error(ErrorKind::Budget, "native-read-count"));
+        }
+        self.reads += 1;
+        let object = &self.snapshot.objects[&asset.logical_id];
+        // The exact declared logical record/leaf binding was checked above and
+        // at snapshot admission. Reuse only this operation's already held gate.
+        if let Some(bytes) = self.captured.get(object) {
+            return Ok(bytes.clone());
         }
         let mut guard = reader::open(&self.source, &self.snapshot.objects[&asset.logical_id])
             .map_err(io_error)?;
@@ -362,6 +377,7 @@ impl InputReader for NativeInputs {
             return Err(error(ErrorKind::Integrity, "native-read-content"));
         }
         self.held.push(guard);
+        self.captured.insert(object.clone(), bytes.clone());
         Ok(bytes)
     }
 }

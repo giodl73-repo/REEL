@@ -242,6 +242,7 @@ fn packet(plan: &Plan) -> Packet {
 fn result(packet: &Packet, receipt: &Receipt) -> ReturnedResult {
     ReturnedResult {
         schema: RESULT_SCHEMA.into(),
+        worker_receipt: None,
         task_id: "render".into(),
         task_key: packet.task_key.clone(),
         attempt_id: "attempt-1".into(),
@@ -308,6 +309,42 @@ fn same_bytes_under_another_logical_page_id_do_not_satisfy_selection() {
     assert_eq!(
         bind_comic(&packet(&plan), &mut memory).unwrap_err().code,
         "selected-page-logical-binding"
+    );
+}
+
+#[test]
+fn worker_receipt_pin_is_optional_for_legacy_contracts_but_exact_when_present() {
+    let (plan, mut memory, receipt) = build();
+    let packet = packet(&plan);
+    let bound = bind_comic(&packet, &mut memory).unwrap();
+    let mut returned = result(&packet, &receipt);
+    assert!(
+        !serde_json::to_value(&returned)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .contains_key("worker_receipt")
+    );
+    let raw = serde_json::to_vec(&receipt).unwrap();
+    returned.worker_receipt = Some(Artifact {
+        logical_id: "receipt/comic".into(),
+        sha256: digest(&raw),
+        bytes: raw.len() as u64,
+        media_type: "application/json".into(),
+    });
+    check_result(&packet, &returned).unwrap();
+    check_comic_receipt(&bound, &returned, &raw).unwrap();
+    returned.worker_receipt.as_mut().unwrap().sha256 = "0".repeat(64);
+    assert_eq!(
+        check_comic_receipt(&bound, &returned, &raw)
+            .unwrap_err()
+            .kind,
+        ErrorKind::Integrity
+    );
+    returned.worker_receipt.as_mut().unwrap().media_type = "image/png".into();
+    assert_eq!(
+        check_result(&packet, &returned).unwrap_err().kind,
+        ErrorKind::Invalid
     );
 }
 

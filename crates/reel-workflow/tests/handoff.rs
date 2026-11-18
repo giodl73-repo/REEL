@@ -42,6 +42,7 @@ fn fixture() -> (Ticket, ReturnedResult) {
     .unwrap();
     let result = ReturnedResult {
         schema: RESULT_SCHEMA.into(),
+        worker_receipt: None,
         task_id: packet.task.id.clone(),
         task_key: packet.task_key.clone(),
         attempt_id: "attempt-1".into(),

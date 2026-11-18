@@ -238,11 +238,14 @@ declared return location is allowed. Missing/corrupt returns stop; no fallback
 or fresh operation is inferred. Ingress may have succeeded before receipt writing
 fails. This is why failed files and original operation identities are preserved.
 
-Bounds: Windows/NTFS, one explicitly enrolled existing native store, 32 returned
-artifacts, 128 MiB total payload, one 64 KiB registration metadata node, and
-existing envelope/tree/native phase bounds. Only direct/manual provider results
-are accepted. Deterministic comic/tool responses are refused until their worker
-receipt and native source-correspondence adapter is installed. MIME declarations
+Bounds: Windows/NTFS, one explicitly enrolled existing native store, up to 256
+declared returned artifacts plus a tool receipt, 128 MiB total payload including
+that receipt, one 64 KiB registration metadata node, and existing native phase
+bounds. The job's resulting flat reference tree must fit the qualified 128-path
+close phase as well as each update's changed-path limit. Oversized imports refuse
+before protection/publication; issue partitioning is explicit planning work.
+Direct/manual provider and deterministic comic results are accepted. Comic
+receipt/source replay has its own additional requirements below. MIME declarations
 and supplied provenance are checked as contracts, not authenticated or creatively
 approved. Opaque browser payloads receive byte validation only.
 
@@ -311,7 +314,7 @@ readback/ack regeneration after source advance and refusal after lost coverage.
 Its source advance and loss/restoration of coverage are explicit synthetic SDK
 test operations, not qualification of slot close or retirement. No payloads are
 deleted. The native `handoff::Lifecycle` port and technical task completion are
-described below. Tool/comic worker receipt integration, expected-baseline selection,
+described below. Expected-baseline selection,
 guarded actor close and scratch retirement remain open. Native byte/claim verification grants no creative,
 translation, rights, print or release approval.
 
@@ -347,8 +350,8 @@ operation or retained result is reconciled through original native handles.
 Completed-journal resume verifies current retained claims and native bytes; a
 saved success report or plain local `check-handoff` inspection is not proof.
 Journal/runtime/target binding changes refuse before import intent. Direct/manual
-provider results are supported; tool/comic results remain refused pending their
-worker/source adapter.
+provider results and deterministic comic results are supported. Comic tool results
+require the receipt/source/replay checks below.
 
 Reopening is passive. During recovery, a separate original-generation fence may
 coexist with native Prepare; it grants no mutation capability. Effect entrypoints
@@ -387,3 +390,57 @@ and fixed the read-gate/new-admission conflict that retained recovery alone had
 not covered. Provider execution, complete comic production, selection, guarded
 actor close and scratch/capacity retirement remain separate acceptance gates.
 No production project or public release is adopted by these fixtures.
+
+## Native comic worker receipts and replay
+
+The v2 result envelope has an optional `worker_receipt` artifact. It is omitted
+when absent so existing provider result bytes remain stable. Legacy local tool
+checks may still supply a separate receipt; native comic import requires the
+pin, JSON media type, bounded length and distinct logical identity. The bytes
+live at `receipt.json` beneath the explicit returned packet root. They are part
+of original logical registration, native publication and retained proof, rather
+than mutable side evidence outside task identity.
+
+The same frozen native executable supplies `comic-render REQUEST NEW_DIRECTORY`
+and `comic-check REQUEST DIRECTORY`, using the shared publication renderer. These
+standalone producer/check commands grant no retained ownership or task completion.
+Use a worker/verifier pair with matching frozen renderer dependencies; version
+differences that change bytes require an explicit new derivative, not acceptance
+of whichever output happens to exist. Executable provenance remains a supplied
+claim; deterministic replay verifies content without authenticating a worker.
+
+Before native registration, the adapter resolves every declared comic input
+against its exact Git commit/record/annex binding, checks the selected edition,
+language, page/panel/utterance order and full source map, verifies the pinned
+receipt and refuses worker approval/retention/print authority. It then replays
+the actual renderer against those native sources and compares every render,
+transcript, PDF, receipt and captured editable source copy. Returned directories
+must have exactly the declared packet files, ordinary namespaces, at most 1,024
+entries and depth 16. No arbitrary archive extraction or returned code execution
+is involved. Active file/directory guards preserve the checked files during ingest.
+
+Retained verification repeats deterministic replay against exact native source
+and output objects. It no longer needs the original worker source directory or
+return files, but DOES need the retained source payloads as well as outputs;
+missing historical source bytes refuse without a current/latest fallback.
+Captured source copies are reconstructed from those original pinned native
+inputs for replay; native packet restoration/export is still a separate feature.
+
+Native SDK object gates are exclusive. The adapter shares one held guard per
+physical object inside an operation, including duplicate output bytes and inputs
+whose exact declared records resolve to the same object. Logical record/leaf
+validation occurs before any reuse. This is bounded in-memory verified-read reuse,
+not a persistent cache, lookup substitution or logical registration dedup engine.
+Read gates close before new index admission and reopen for retained proof. Existing
+256-read/64 MiB input and renderer page/pixel/byte limits continue to apply.
+
+A real synthetic fixture publishes declared sources into the existing test pool,
+runs the pinned native comic worker, rejects forged approval and altered render
+bytes before registration, then completes the native journal. It switches to
+bare Git history and removes the original worker input directory before retained
+resume. It grants no project/creator/font/printer approval. The provider ingress
+fixture also registers two logical outputs with identical bytes to check guard
+sharing without losing logical identity. A separate fixture refuses output sets
+that would strand a job beyond the qualified close bound. Larger issue planning,
+native editable restoration, provider execution, selection and retirement remain
+open in the [full completion ledger](../../docs/workflow-completion.md).

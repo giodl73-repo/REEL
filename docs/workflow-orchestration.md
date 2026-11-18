@@ -75,11 +75,11 @@ Input selection, activation, policy and all current references/root are preserve
 The three stages are `stage-response` (logical registration only),
 `register-response` (positive output claims) and `ingest-response` (verified native
 publication). They preserve returned files and require new private receipt paths.
-Bounds include 32 artifacts, 128 MiB total returned bytes, one 64 KiB native
+Bounds include up to 256 artifact descriptors, 128 MiB total returned bytes, one 64 KiB native
 evidence node and the original native phase/resource limits. Qualification covers
 direct/manual provider returns in the explicit single-store Windows scope;
-deterministic comic/tool receipts are refused pending their native correspondence
-adapter. Retained-owner acknowledgement and native coordinator completion are
+deterministic comics additionally require pinned receipts and full native source/
+render replay. Other deterministic capabilities remain unimplemented. Retained-owner acknowledgement and native coordinator completion are
 covered below; selection and retirement remain open. See the
 [ingress handoff](handoff/2026-11-18-workflow-response-ingress.md).
 
@@ -99,7 +99,7 @@ lost retained coverage. They do not infer readiness from source scratch, an old
 CLI report or serialized acknowledgement. This is a bounded workflow adapter over
 SDK work, not the scene runner's producer outcome-adoption protocol. The native
 handoff coordinator port now connects this proof to technical task completion.
-Tool/comic receipt integration, selection and retirement remain open. See the
+Comic receipt integration is now described below; selection and retirement remain open. See the
 [retention handoff](handoff/2026-11-18-workflow-retained-acknowledgement.md).
 
 ### Native journal completion (2026-11-18)
@@ -120,8 +120,27 @@ read gates while keeping durable job protection and ordered actor fences, then
 reopens exact bytes. The integration fixture exposed this gate conflict, which
 retained-Prepare recovery alone had not exercised. Lost completion is recovered
 through original work and a pinned acknowledgement without re-importing files.
-Tool/comic worker receipts, selection, guarded actor close and scratch retirement
+Selection, guarded actor close and scratch retirement
 remain open. See the [native completion handoff](handoff/2026-11-18-workflow-native-handoff.md).
+
+### Native comic replay (2026-11-18)
+
+Comic tool results now carry an optional v2 `worker_receipt` pin, required by
+native import and included in original result identity, publication and retained
+proof. The native adapter binds the exact committed edition/source closure,
+refuses worker authority claims and deterministically rerenders the complete
+packet. Retained verification repeats the check from native sources and output
+objects, including after original worker inputs disappear and Git metadata moves
+to bare history. Per-operation native gates are shared by physical object only
+after logical record/leaf binding; logical task/artifact registration remains exact.
+
+The native executable supplies paired `comic-render`/`comic-check` commands using
+the shared renderer. Artifact-count capacity does not relax native admission:
+the source tree must remain clearable within the original 128-path close phase.
+Large issues require explicit page/part plans. The full objective and remaining
+provider/film/review/selection/retirement work are tracked in the
+[completion ledger](workflow-completion.md); see the
+[native comic handoff](handoff/2026-11-18-workflow-native-comic.md) for evidence.
 
 ## Ownership
 
@@ -473,7 +492,7 @@ and journal completion. No production project is adopted.
 | --- | --- | --- |
 | W0 task/result contracts | reel-workflow; committed REEL base and synthetic inputs | Bounded DAG/identity checks, direct fake and handoff equivalence, stale/duplicate/corrupt refusal, no-clobber CLI are implemented. Production adoption is separate. |
 | W1 resumable manual staging | REEL lifecycle adapter; exact qualified SDK/source profile | Actual accepted protection, exact closure/staging, interrupted export, days-long reopen/cancel and conservative slot return under synthetic fixtures. |
-| W2 idempotent external candidate registration | REEL adapter over existing Tig publisher and retained owner | Bounded provider imports, retained native proof and journal completion now pass synthetic native fixtures. Tool/comic receipts and full producer integration remain required. |
+| W2 idempotent external candidate registration | REEL adapter over existing Tig publisher and retained owner | Bounded provider and comic imports, deterministic comic replay, retained native proof and journal completion pass synthetic fixtures. Issue-sized planning, other producers and real project adoption remain required. |
 | W3 expected-baseline selection application | REEL Git adapter over Tig proposals | Expected-ref compare/apply or checked merge; new-path registration separately admitted; stale main/other writer refuses without overwriting selection. |
 | W4 structured integration errors | REEL adapters | Normalize typed SDK observations; unknown I/O/uncertain CLI failure remains NeedsRecovery or Unsupported. Never infer safe retry from exit 1. |
 | W5 providers, review and project adoption | REEL + each project | API/proxy/subprocess adapters, explicit image/speech operations, issue dedup/closure, bilingual film fix/isolation, second synthetic project and owned rollback. |

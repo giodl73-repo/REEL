@@ -233,11 +233,10 @@ impl<'p> Lifecycle for Adapter<'p> {
         let mut held_ack = None;
         if let Some(result) = &self.result {
             reel_workflow::check_result(&ticket.packet, result)?;
-            if result.provenance.mode == reel_workflow::Mode::Tool {
-                return Err(error(
-                    ErrorKind::Unsupported,
-                    "handoff-tool-receipt-adapter-required",
-                ));
+            if result.provenance.mode == reel_workflow::Mode::Tool
+                && result.worker_receipt.is_none()
+            {
+                return Err(error(ErrorKind::Missing, "comic-worker-receipt-required"));
             }
             prepared
                 .has_retention_work(&p.binding.admission, result, &p.binding.target)

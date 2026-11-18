@@ -172,6 +172,10 @@ pub struct ReturnedResult {
     pub attempt_id: String,
     pub artifacts: ArtifactSet,
     pub provenance: Provenance,
+    /// Optional exact deterministic-worker receipt. Older v2 results retain
+    /// their byte representation when absent; native tool ingestion requires it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_receipt: Option<Artifact>,
 }
 
 fn token(value: &str) -> bool {
@@ -427,6 +431,19 @@ pub fn check_result(packet: &Packet, result: &ReturnedResult) -> Result<()> {
         }
     } else if result.provenance.mode == Mode::Tool || result.provenance.executable.is_some() {
         return fail(ErrorKind::Invalid, "intelligence-result-provenance");
+    }
+    if let Some(receipt) = &result.worker_receipt {
+        artifact(receipt)?;
+        if packet.task.tool.is_none()
+            || receipt.media_type != "application/json"
+            || receipt.bytes > MAX_CONTROL_BYTES as u64
+            || result
+                .artifacts
+                .values()
+                .any(|a| a.logical_id == receipt.logical_id)
+        {
+            return fail(ErrorKind::Invalid, "worker-receipt-contract");
+        }
     }
     reel_publication::check_outputs(&packet.task.outputs, &result.artifacts)?;
     Ok(())

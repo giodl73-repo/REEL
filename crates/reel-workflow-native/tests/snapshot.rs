@@ -460,6 +460,7 @@ fn response_fixture(
     (
         ReturnedResult {
             schema: RESULT_SCHEMA.into(),
+            worker_receipt: None,
             task_id: packet.task.id.clone(),
             task_key: packet.task_key.clone(),
             attempt_id: "attempt-1".into(),
@@ -766,6 +767,15 @@ fn external_response_native_ingress_reopens_and_replays_across_cli_restart() {
         sha256: digest(&git_raw),
         bytes: git_raw.len() as u64,
     };
+    fixture.packet.task.outputs.insert(
+        "mirror".into(),
+        OutputContract {
+            media_type: "text/plain".into(),
+            max_bytes: 100,
+            required: true,
+        },
+    );
+    fixture.repin();
     let mut case = AdmissionCase::with_store(&fixture, native.store.clone());
     let control = case.source.source.pool.control.clone();
     case.source = NativeProfile {
@@ -778,7 +788,13 @@ fn external_response_native_ingress_reopens_and_replays_across_cli_restart() {
         .unwrap()
         .accept()
         .unwrap();
-    let (result, returns) = response_fixture(&fixture.packet, &case.temp.path().join("returns"));
+    let (mut result, mut returns) =
+        response_fixture(&fixture.packet, &case.temp.path().join("returns"));
+    let mut mirror = result.artifacts["note"].clone();
+    mirror.logical_id = "candidate/mirror".into();
+    result.artifacts.insert("mirror".into(), mirror);
+    returns.files.insert("mirror".into(), "mirror.txt".into());
+    fs::write(returns.root.join("mirror.txt"), b"synthetic response").unwrap();
     let files = [
         ("packet.json", serde_json::to_vec(&fixture.packet).unwrap()),
         ("native.json", serde_json::to_vec(&case.source).unwrap()),
@@ -831,6 +847,7 @@ fn external_response_native_ingress_reopens_and_replays_across_cli_restart() {
     let mut raw = Vec::new();
     reopened.read_to_end(&mut raw).unwrap();
     assert_eq!(raw, b"synthetic response");
+    drop(reopened);
     assert_eq!(
         case.protected(&output),
         vec![case.profile.scope.actor.clone()]
@@ -843,6 +860,24 @@ fn external_response_native_ingress_reopens_and_replays_across_cli_restart() {
         fs::read(returns.root.join("note.txt")).unwrap(),
         b"synthetic response"
     );
+    let retained = reel_workflow_native::retention::retain(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &result,
+        &retained_target(),
+    )
+    .unwrap();
+    reel_workflow_native::retention::verify(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &result,
+        &retained,
+    )
+    .unwrap();
     if let Some(directory) = std::env::var_os("REEL_RESPONSE_EVIDENCE_DIRECTORY") {
         use std::io::Write;
         let directory = PathBuf::from(directory);
@@ -1892,6 +1927,585 @@ fn staged_retention_refuses_lost_original_response_coverage_before_new_admission
         case.protected(&Object::from_bytes(b"synthetic response"))
             .is_empty()
     );
+    assert_eq!(
+        case.protected(&Object::from_bytes(b"synthetic input")),
+        vec![case.profile.scope.actor.clone()]
+    );
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "Synthetic comic, installed private test font and existing explicitly declared native pool; no project adoption"]
+fn native_comic_worker_receipt_replay_retention_and_bare_history_complete_together() {
+    use reel_publication::{
+        ComicPage, Content, Edition, PageKind, Publication, ReadingDirection,
+        comic_source::{
+            Layer, LayerRole, Limits, PageSource, Panel, Pin, Receipt as ComicReceipt, Request,
+            Utterance,
+        },
+    };
+    use reel_workflow_native::{NativeProfile, admission::Prepared, response};
+    use tig_store::source_claims::protection::Index;
+    let value: serde_json::Value = serde_json::from_slice(
+        &fs::read(std::env::var_os("REEL_NATIVE_INPUT_FIXTURE").expect("native fixture required"))
+            .unwrap(),
+    )
+    .unwrap();
+    let native: tig_git::annex::workflow::reader::Profile =
+        serde_json::from_value(value["source"].clone()).unwrap();
+    let annex: Tool = serde_json::from_value(value["annex"].clone()).unwrap();
+    let mut fixture = Fixture::new();
+    let raw_source = tempfile::tempdir().unwrap();
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_reel-workflow-native"));
+    let worker_bytes = fs::read(&executable).unwrap();
+    let worker = Artifact {
+        logical_id: "tool/native-comic".into(),
+        sha256: digest(&worker_bytes),
+        bytes: worker_bytes.len() as u64,
+        media_type: "application/octet-stream".into(),
+    };
+    let mut assets = Vec::<(String, Artifact, Vec<u8>)>::new();
+    let mut put = |id: &str, path: &str, media: &str, bytes: Vec<u8>| -> (Artifact, Pin) {
+        let target = raw_source.path().join(path);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(target, &bytes).unwrap();
+        let asset = Artifact {
+            logical_id: id.into(),
+            sha256: digest(&bytes),
+            bytes: bytes.len() as u64,
+            media_type: media.into(),
+        };
+        let pin = Pin {
+            path: path.into(),
+            sha256: asset.sha256.clone(),
+            bytes: asset.bytes,
+        };
+        assets.push((path.into(), asset.clone(), bytes));
+        (asset, pin)
+    };
+    let font_path = std::env::var_os("REEL_COMIC_TEST_FONT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("C:/Windows/Fonts/arial.ttf"));
+    let family = std::env::var("REEL_COMIC_TEST_FONT_FAMILY").unwrap_or_else(|_| "Arial".into());
+    let license = std::env::var_os("REEL_COMIC_TEST_FONT_LICENSE")
+        .map(|p| fs::read(p).unwrap())
+        .unwrap_or_else(|| {
+            b"Synthetic private fixture uses an installed font; no redistribution rights granted."
+                .to_vec()
+        });
+    let (_, font) = put(
+        "comic/font",
+        "fonts/body.ttf",
+        "font/ttf",
+        fs::read(font_path).unwrap(),
+    );
+    let (_, license) = put("comic/license", "fonts/license.txt", "text/plain", license);
+    let mut pixels = resvg::tiny_skia::Pixmap::new(72, 72).unwrap();
+    pixels.fill(resvg::tiny_skia::Color::from_rgba8(230, 240, 244, 255));
+    let (_, image) = put(
+        "comic/image",
+        "art/background.png",
+        "image/png",
+        pixels.encode_png().unwrap(),
+    );
+    let page = PageSource {
+        schema: "reel.comic-page.v1".into(),
+        id: "page01".into(),
+        width: 200,
+        height: 200,
+        panels: vec![Panel {
+            id: "panel-a".into(),
+            rect: [8, 8, 184, 184],
+        }],
+        layers: vec![Layer {
+            id: "background".into(),
+            panel_id: "panel-a".into(),
+            role: LayerRole::Background,
+            source: image,
+            rect: [8, 8, 184, 184],
+        }],
+        utterances: vec![Utterance {
+            id: "line-a".into(),
+            panel_id: "panel-a".into(),
+            speaker: "Narrador".into(),
+            lines: vec!["La luz sigue.".into()],
+            rect: [20, 20, 160, 50],
+            font_size: 14,
+            tail: None,
+        }],
+    };
+    let (page_asset, page_pin) = put(
+        "comic/page",
+        "pages/page01.json",
+        "application/json",
+        serde_json::to_vec_pretty(&page).unwrap(),
+    );
+    let request = Request {
+        schema: "reel.comic-build.v1".into(),
+        publication_id: "synthetic-comic".into(),
+        edition_id: "es".into(),
+        language: "es".into(),
+        font_family: family,
+        font,
+        font_license: license,
+        pages: vec![page_pin],
+        limits: Limits {
+            input_bytes: 8 * 1024 * 1024,
+            output_bytes: 16 * 1024 * 1024,
+        },
+    };
+    let (request_asset, _) = put(
+        "comic/request",
+        "request.json",
+        "application/json",
+        serde_json::to_vec_pretty(&request).unwrap(),
+    );
+    let mut contracts = BTreeMap::new();
+    for (name, media) in [
+        ("page01-clean.svg", "image/svg+xml"),
+        ("page01-clean.png", "image/png"),
+        ("page01-lettering.svg", "image/svg+xml"),
+        ("page01-reading.svg", "image/svg+xml"),
+        ("page01-reading.png", "image/png"),
+        ("reading.pdf", "application/pdf"),
+        ("transcript.json", "application/json"),
+    ] {
+        contracts.insert(
+            name.into(),
+            OutputContract {
+                media_type: media.into(),
+                max_bytes: 16 * 1024 * 1024,
+                required: true,
+            },
+        );
+    }
+    let publication = Publication {
+        schema: reel_publication::PUBLICATION_SCHEMA.into(),
+        id: "synthetic-comic".into(),
+        editions: vec![Edition {
+            id: "es".into(),
+            language: "es".into(),
+            content: Content::Comic {
+                reading_direction: ReadingDirection::LeftToRight,
+                pages: vec![ComicPage {
+                    id: "page01".into(),
+                    kind: PageKind::Story,
+                    source: page_asset,
+                    panel_order: vec!["panel-a".into()],
+                    utterance_order: vec!["line-a".into()],
+                    spread_id: None,
+                }],
+            },
+            outputs: contracts.clone(),
+        }],
+    };
+    let (publication_asset, _) = put(
+        "comic/publication",
+        "publication.json",
+        "application/json",
+        serde_json::to_vec_pretty(&publication).unwrap(),
+    );
+    fixture.profile.records.clear();
+    fixture.profile.bindings.clear();
+    fixture.profile.input_streams.clear();
+    let definition =
+        Object::from_bytes(&fs::read(fixture.temp.path().join("definitions/input.json")).unwrap());
+    for (i, (_, asset, raw)) in assets.iter().enumerate() {
+        let record = format!("records/comic-{i}.tig");
+        let leaf = format!("payloads/comic-{i}.bin");
+        write(
+            fixture.temp.path(),
+            &record,
+            json!({"schema":"tig.instance.design-1","id":asset.logical_id,
+            "definition":{"id":"types/input","sha256":definition.sha256,"bytes":definition.bytes},
+            "authored":{"text":"synthetic comic source"},"selected":Object::from_bytes(raw),"streams":[],"status":{},"metadata":{}}),
+        );
+        fs::write(
+            fixture.temp.path().join(&leaf),
+            Key::from_object(&Object::from_bytes(raw)).unlocked_pointer(),
+        )
+        .unwrap();
+        fixture.profile.records.push(record);
+        fixture
+            .profile
+            .input_streams
+            .insert(asset.logical_id.clone(), None);
+        fixture.profile.bindings.insert(
+            asset.logical_id.clone(),
+            Binding {
+                selected: LogicalPath::parse(&leaf).unwrap(),
+                streams: BTreeMap::new(),
+            },
+        );
+    }
+    git(fixture.temp.path(), &["add", "records", "payloads"]);
+    git(
+        fixture.temp.path(),
+        &["commit", "-m", "synthetic comic declarations"],
+    );
+    fixture.profile.commit = git(fixture.temp.path(), &["rev-parse", "HEAD"]);
+    let git_bytes = fs::read(&native.pool.git).unwrap();
+    fixture.profile.git = Tool {
+        path: native.pool.git.clone(),
+        sha256: digest(&git_bytes),
+        bytes: git_bytes.len() as u64,
+    };
+    let task = Task {
+        id: "comic-render".into(),
+        native_inputs: Some(Fixture::declaration(&fixture.profile)),
+        operation: Operation::DeterministicTool,
+        tool: Some(ToolContract {
+            schema: "reel.workflow-tool.v1".into(),
+            capability: ToolCapability::ComicRender,
+            executable: worker.clone(),
+            publication: publication_asset,
+            edition_id: "es".into(),
+            request: request_asset,
+            source_bindings: assets
+                .iter()
+                .filter(|(_, a, _)| {
+                    a.logical_id != "comic/request" && a.logical_id != "comic/publication"
+                })
+                .map(|(p, a, _)| (p.clone(), a.logical_id.clone()))
+                .collect(),
+        }),
+        language: Some("es".into()),
+        prompt: String::new(),
+        inputs: assets.iter().map(|(_, a, _)| a.clone()).collect(),
+        depends_on: vec![],
+        outputs: contracts,
+    };
+    fixture.packet = make_packet(
+        &Plan {
+            schema: PLAN_SCHEMA.into(),
+            project: "synthetic-comic".into(),
+            source_commit: fixture.profile.commit.clone(),
+            tasks: vec![task],
+        },
+        "comic-render",
+        BTreeMap::new(),
+    )
+    .unwrap();
+    let mut case = AdmissionCase::with_store(&fixture, native.store.clone());
+    let control = case.source.source.pool.control.clone();
+    case.source = NativeProfile {
+        snapshot: fixture.profile.clone(),
+        annex,
+        source: native,
+    };
+    case.source.source.pool.control = control;
+    case.source.source.maximum_bytes = 16 * 1024 * 1024;
+    let admission = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    for (path, _, raw) in &assets {
+        tig_git::annex::workflow::publication::publish(
+            &tig_git::annex::workflow::publication::Profile {
+                schema: "tig.annex-file-publication.experimental-1".into(),
+                pool: case.source.source.pool.clone(),
+                store: case.profile.scope.store.clone(),
+                source_root: raw_source.path().into(),
+                source: LogicalPath::parse(path).unwrap(),
+                source_owned: true,
+                expected: Some(Object::from_bytes(raw)),
+                include_private_location: false,
+                maximum_bytes: 16 * 1024 * 1024,
+                minimum_free_bytes: 100 * 1024 * 1024,
+            },
+        )
+        .unwrap();
+    }
+    let output = case.temp.path().join("rendered");
+    let rendered = Command::new(&executable)
+        .arg("comic-render")
+        .arg(raw_source.path().join("request.json"))
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(
+        rendered.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rendered.stdout)
+    );
+    let receipt_file = output.join("receipt.json");
+    let receipt_raw = fs::read(&receipt_file).unwrap();
+    let receipt: ComicReceipt = serde_json::from_slice(&receipt_raw).unwrap();
+    let receipt_pin = |raw: &[u8]| Artifact {
+        logical_id: "synthetic-comic/es/receipt.json".into(),
+        sha256: digest(raw),
+        bytes: raw.len() as u64,
+        media_type: "application/json".into(),
+    };
+    let result = ReturnedResult {
+        schema: RESULT_SCHEMA.into(),
+        task_id: "comic-render".into(),
+        task_key: fixture.packet.task_key.clone(),
+        attempt_id: "attempt-1".into(),
+        artifacts: receipt.outputs.clone(),
+        provenance: Provenance {
+            mode: Mode::Tool,
+            provider: None,
+            model: None,
+            executable: Some(worker),
+        },
+        worker_receipt: Some(receipt_pin(&receipt_raw)),
+    };
+    let returns = response::Returns {
+        schema: "reel.workflow-returns.v1".into(),
+        root: output.clone(),
+        files: result
+            .artifacts
+            .keys()
+            .map(|n| (n.clone(), n.clone()))
+            .collect(),
+    };
+    let before = Index::open(&case.profile.index_root, &case.profile.index_minimum)
+        .unwrap()
+        .checkpoint();
+    let mut false_receipt = receipt.clone();
+    false_receipt.human_approval = true;
+    let raw = serde_json::to_vec_pretty(&false_receipt).unwrap();
+    fs::write(&receipt_file, &raw).unwrap();
+    let mut false_result = result.clone();
+    false_result.worker_receipt = Some(receipt_pin(&raw));
+    assert_eq!(
+        response::register(
+            &fixture.packet,
+            &case.source,
+            &case.profile,
+            &admission,
+            &false_result,
+            &returns
+        )
+        .unwrap_err()
+        .kind,
+        ErrorKind::Denied
+    );
+    let picture = output.join("page01-reading.svg");
+    let original = fs::read(&picture).unwrap();
+    let mut changed = original.clone();
+    changed.push(b'\n');
+    fs::write(&picture, &changed).unwrap();
+    let mut altered = receipt.clone();
+    altered
+        .outputs
+        .get_mut("page01-reading.svg")
+        .unwrap()
+        .sha256 = digest(&changed);
+    altered.outputs.get_mut("page01-reading.svg").unwrap().bytes = changed.len() as u64;
+    let raw = serde_json::to_vec_pretty(&altered).unwrap();
+    fs::write(&receipt_file, &raw).unwrap();
+    let mut false_result = result.clone();
+    false_result.artifacts = altered.outputs;
+    false_result.worker_receipt = Some(receipt_pin(&raw));
+    assert_eq!(
+        response::register(
+            &fixture.packet,
+            &case.source,
+            &case.profile,
+            &admission,
+            &false_result,
+            &returns
+        )
+        .unwrap_err()
+        .kind,
+        ErrorKind::Integrity
+    );
+    fs::write(&picture, &original).unwrap();
+    fs::write(&receipt_file, &receipt_raw).unwrap();
+    assert_eq!(
+        Index::open(&case.profile.index_root, &before)
+            .unwrap()
+            .checkpoint(),
+        before
+    );
+    let mut profile = handoff_profile(&case, admission, executable.clone());
+    let packet_path = case.temp.path().join("comic-packet.json");
+    let profile_path = case.temp.path().join("comic-profile.json");
+    let result_path = case.temp.path().join("comic-result.json");
+    let returns_path = case.temp.path().join("comic-returns.json");
+    for (p, r) in [
+        (&packet_path, serde_json::to_vec(&fixture.packet).unwrap()),
+        (&profile_path, serde_json::to_vec(&profile).unwrap()),
+        (&result_path, serde_json::to_vec(&result).unwrap()),
+        (&returns_path, serde_json::to_vec(&returns).unwrap()),
+    ] {
+        fs::write(p, r).unwrap();
+    }
+    let journal = case.temp.path().join("comic-journal");
+    let created = Command::new(&executable)
+        .arg("create-handoff")
+        .arg(&packet_path)
+        .arg(&profile_path)
+        .arg(&journal)
+        .arg("--apply")
+        .output()
+        .unwrap();
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stdout)
+    );
+    let completed = Command::new(&executable)
+        .arg("import-handoff")
+        .arg(&journal)
+        .arg(&profile_path)
+        .arg(&result_path)
+        .arg(&returns_path)
+        .arg("--apply")
+        .output()
+        .unwrap();
+    if !completed.status.success() {
+        eprintln!(
+            "Synthetic comic diagnostic root: {}",
+            case.temp.path().display()
+        );
+        let _ = case.temp.keep();
+        let _ = fixture.temp.keep();
+        let _ = raw_source.keep();
+        panic!("{}", String::from_utf8_lossy(&completed.stdout));
+    }
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&completed.stdout).unwrap()["task_completed"],
+        true
+    );
+    let bare = case.temp.path().join("comic-history.git");
+    git(
+        fixture.temp.path(),
+        &[
+            "clone",
+            "--bare",
+            "--no-hardlinks",
+            fixture.temp.path().to_str().unwrap(),
+            bare.to_str().unwrap(),
+        ],
+    );
+    profile.source.snapshot.repository = bare;
+    raw_source.close().unwrap();
+    fs::write(&profile_path, serde_json::to_vec(&profile).unwrap()).unwrap();
+    let historical = Command::new(&executable)
+        .arg("resume-handoff")
+        .arg(&journal)
+        .arg(&profile_path)
+        .arg("-")
+        .arg("--apply")
+        .output()
+        .unwrap();
+    assert!(
+        historical.status.success(),
+        "{}",
+        String::from_utf8_lossy(&historical.stdout)
+    );
+    if let Some(directory) = std::env::var_os("REEL_COMIC_NATIVE_EVIDENCE_DIRECTORY") {
+        use std::io::Write;
+        let directory = PathBuf::from(directory);
+        assert!(directory.is_absolute() && directory.is_dir());
+        for (name, raw) in [
+            ("packet.json", fs::read(packet_path).unwrap()),
+            ("profile.json", fs::read(profile_path).unwrap()),
+            ("result.json", fs::read(result_path).unwrap()),
+            ("completion.json", completed.stdout),
+            ("historical.json", historical.stdout),
+            (
+                "locations.json",
+                serde_json::to_vec(&json!({"journal":journal})).unwrap(),
+            ),
+        ] {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(directory.join(name))
+                .unwrap();
+            file.write_all(&raw).unwrap();
+            file.sync_all().unwrap();
+        }
+        let _ = case.temp.keep();
+        let _ = fixture.temp.keep();
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn returned_artifact_set_cannot_grow_a_job_beyond_its_qualified_close_bound() {
+    use reel_workflow_native::{admission::Prepared, response};
+    use tig_store::source_claims::protection::Index;
+    let mut fixture = Fixture::new();
+    fixture.packet.task.outputs.clear();
+    for i in 0..110 {
+        fixture.packet.task.outputs.insert(
+            format!("part-{i:03}"),
+            OutputContract {
+                media_type: "text/plain".into(),
+                max_bytes: 3,
+                required: true,
+            },
+        );
+    }
+    fixture.repin();
+    let case = AdmissionCase::new(&fixture);
+    let receipt = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    let root = case.temp.path().join("returns");
+    fs::create_dir(&root).unwrap();
+    let mut artifacts = BTreeMap::new();
+    let mut files = BTreeMap::new();
+    for i in 0..110 {
+        let name = format!("part-{i:03}");
+        let raw = format!("{i:03}").into_bytes();
+        fs::write(root.join(&name), &raw).unwrap();
+        files.insert(name.clone(), name.clone());
+        artifacts.insert(
+            name.clone(),
+            Artifact {
+                logical_id: format!("candidate/{name}"),
+                sha256: digest(&raw),
+                bytes: 3,
+                media_type: "text/plain".into(),
+            },
+        );
+    }
+    let result = ReturnedResult {
+        schema: RESULT_SCHEMA.into(),
+        task_id: fixture.packet.task.id.clone(),
+        task_key: fixture.packet.task_key.clone(),
+        attempt_id: "attempt-1".into(),
+        artifacts,
+        provenance: Provenance {
+            mode: Mode::Handoff,
+            provider: None,
+            model: None,
+            executable: None,
+        },
+        worker_receipt: None,
+    };
+    let before = Index::open(&case.profile.index_root, &receipt.index_checkpoint)
+        .unwrap()
+        .checkpoint();
+    let error = response::register(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &result,
+        &response::Returns {
+            schema: "reel.workflow-returns.v1".into(),
+            root,
+            files,
+        },
+    )
+    .unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Budget);
+    assert_eq!(error.code, "response-job-close-path-limit");
+    assert_eq!(
+        Index::open(&case.profile.index_root, &before)
+            .unwrap()
+            .checkpoint(),
+        before
+    );
+    assert!(case.protected(&Object::from_bytes(b"000")).is_empty());
     assert_eq!(
         case.protected(&Object::from_bytes(b"synthetic input")),
         vec![case.profile.scope.actor.clone()]

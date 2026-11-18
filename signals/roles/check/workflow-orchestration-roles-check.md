@@ -243,3 +243,22 @@ It does not approve text, translation, images, voice/likeness, fonts, comics,
 printing or release. Tool/comic worker integration, explicit selection and
 guarded close/retirement remain open. This is producer-applied review with
 synthetic native evidence, not independent reviewers or human approval.
+
+2026-11-18 native comic follow-up, producer-applied comics-editor, engineering
+and rights/provenance lenses: a supplied worker receipt is insufficient for
+completion. The result now pins it, native registration/retention includes its
+object, and the actual source closure and complete rendered packet are replayed.
+Page/panel/utterance order, language, source IDs and editable source copies remain
+exact. Forged authority and altered rendered bytes refuse before registration.
+Historical proof uses original native bytes and bare Git metadata, not a surviving
+worker input folder. Missing bytes never become a latest lookup.
+
+The coupled fixture exposed exclusive native gate reuse conflicts. Guarded reads
+now share one physical-object handle within the operation only after logical
+binding checks; logical artifact roles and exact attempt identity are preserved.
+An additional budget gate prevents output protection from growing a job beyond
+the qualified clear phase. Large issues need an explicit plan, not hidden phases,
+extra actors or history deletion. The full scope remains in the completion ledger;
+providers, review/fix integration, selection and retirement are not inferred from
+one comic fixture. These are producer-applied checks, not independent reviewers
+or creative, rights, translation, print or release approval.

@@ -308,6 +308,14 @@ pub fn check_comic_receipt(
     receipt_bytes: &[u8],
 ) -> Result<()> {
     let receipt: Receipt = decode(receipt_bytes)?;
+    if let Some(pin) = &result.worker_receipt {
+        if pin.media_type != "application/json"
+            || pin.bytes != receipt_bytes.len() as u64
+            || pin.sha256 != digest(receipt_bytes)
+        {
+            return bad(ErrorKind::Integrity, "comic-worker-receipt-pin");
+        }
+    }
     if result.schema != RESULT_SCHEMA
         || result.task_id != bound.task_id
         || result.task_key != bound.task_key

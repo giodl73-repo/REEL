@@ -27,6 +27,9 @@ Returned provider files can be registered by task/attempt, protected and ingeste
 as unselected native candidates. Retained actor registration and exact historical
 readback now have a bounded native adapter. The native handoff journal records
 technical task completion only after actual retained proof and output reopening.
+Comic tool results now follow this path with pinned worker receipts and full
+deterministic replay. The [completion ledger](docs/workflow-completion.md) tracks
+remaining workflow requirements beyond this bounded integration.
 
 [Publication contracts](docs/publication.md) add film and comic language editions,
 ordered page/panel metadata and independently tracked output sets through

@@ -239,6 +239,27 @@ fn bilingual_pages_fix_preserves_art_and_restores_editable_sources_without_origi
     let es_output = root.join("es");
     let en_output = root.join("en");
     let es = render(&es_request, &es_output).unwrap();
+    let replayed = check_with(
+        &fs::read(&es_request).unwrap(),
+        |pin| Ok(fs::read(input.join(&pin.path))?),
+        |name, _| Ok(fs::read(es_output.join(name))?),
+    )
+    .unwrap();
+    assert_eq!(replayed.outputs, es.outputs);
+    assert!(
+        check_with(
+            &fs::read(&es_request).unwrap(),
+            |pin| Ok(fs::read(input.join(&pin.path))?),
+            |name, _| {
+                let mut raw = fs::read(es_output.join(name))?;
+                if name == "reading.pdf" {
+                    raw.push(0);
+                }
+                Ok(raw)
+            }
+        )
+        .is_err()
+    );
     let en = render(&en_request, &en_output).unwrap();
     assert_eq!(es.page_order, vec!["page01", "page02"]);
     assert!(!es.human_approval && !es.retained_owner_acknowledged && !es.print_ready);
