@@ -29,14 +29,16 @@ Current v2 task/result contracts use named multi-artifact sets shared with
 see [publication contracts](publication.md). The single-output v1 prototype is
 not silently reinterpreted.
 
-No API/proxy, ElevenLabs recording, image-generation, GitHub issue, native
-job admission, retained-owner acknowledgement, selection application or
+No API/proxy, ElevenLabs recording, image-generation, GitHub issue,
+retained-owner acknowledgement, selection application or
 scratch retirement adapter is installed. `check-result` never marks a task
 complete. Direct mode currently has a library adapter boundary and synthetic
 tests, not a live endpoint. Handoff is private packet construction/checking,
 not yet qualified resumable export/import against managed resources. An additive
 private handoff coordinator now records recovery intent through an injected
 managed-lifecycle port; the native implementation of that port remains open.
+The native input bridge now supports explicit durable input-claim admission in
+an existing actor. It does not implement the full lifecycle port or stage bytes.
 
 Example local contract commands (synthetic files only until W1/W2 qualify):
 
@@ -196,8 +198,46 @@ Actual evidence: 48 shared tests, eight default native-bridge tests and an
 explicit Windows guarded read of a previously published synthetic 1 MiB object.
 All 247 source pins match, with source line endings preserved. This covers the
 tested source-binding/read behavior, not a full native comic workflow.
-W1 still requires accepted actor protection and resumable staging; W2-W5 remain
+W1 now has explicit positive input-claim admission (below), but still requires
+resumable byte staging and full managed qualification; W2-W5 remain
 open. See the [current handoff](handoff/2026-11-18-native-workflow-inputs.md).
+
+### Durable input-claim admission (2026-11-18)
+
+The native bridge can now preview, explicitly accept and reopen a task/attempt's
+declared input projection in an existing enrolled job actor. It reuses the exact
+EVID-151 slot source and original tests; the shim preserves the native fence
+domain. All original SDK/module pins are verified. No production enrollment,
+bootstrap, payload cache initialization or new claim engine was added.
+
+The resource set includes SDK-archived record/definition/schema metadata, exact
+task/declaration controls, selected inputs, every declared annex stream and
+runtime pins. Admission is not payload availability or complete producer-semantic
+coverage. The source must declare the same effects-enabled controller/store as
+the operational admission profile. Trusted enrollment, minimum checkpoints and
+cooperating writer scope are explicit, not inferred from paths.
+
+Qualified native work handles typed-idle acceptance and original-operation retry.
+Readback verifies the original completed WorkRef, activation, current generation,
+policy and positive resource coverage while holding the actor fence. Pending
+native state blocks a live claims guard; native acceptance recovery remains with
+the original qualified work protocol. Claims do not expire automatically.
+
+The CLI requires explicit `--apply`, a new private receipt outside managed roots
+and actual guarded readback before writing acceptance. Partial receipts remain;
+recovery uses the same task/attempt/operation and another new receipt path. These
+commands neither mark a task complete nor acknowledge result retention. `Receipt`
+can supply the exact operational `Ticket.native_binding` pin, but the full
+`handoff::Lifecycle` implementation and resumable materialization remain open.
+
+Local evidence now totals 68 tests: 48 shared, 19 default native tests and one
+explicit guarded native byte read. Six workflow admission fixtures use isolated
+native metadata journals with no physical payload pool. Four unchanged original
+slot tests additionally cover handoff interruption, generation fencing, coverage
+and native bounds. The native pool read is separate, not a combined end-to-end
+comic job. Private persistent evidence and frozen executable/source pins are
+outside Git; initial colliding evidence exports were superseded by separated,
+exclusive-create capture directories. Original fixtures remained intact.
 
 ### Comic consumer assessment
 

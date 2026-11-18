@@ -1,4 +1,5 @@
-//! Qualified SDK input bridge. Guarded reads are not durable job protection.
+//! Qualified SDK inputs and explicit input-claim admission. Guarded reads alone
+//! do not establish durable job protection or retained-result ownership.
 use reel_workflow::{Artifact, Error, ErrorKind, Packet, Result, publication::InputReader};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -10,6 +11,8 @@ use std::{
 };
 use tig_assets::resolve::AssetResolver;
 use tig_core::{LogicalPath, Object};
+pub mod admission;
+mod qualified;
 use tig_git::{
     annex::workflow::reader,
     source::{
@@ -57,7 +60,7 @@ impl SnapshotProfile {
         Ok(bytes)
     }
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeProfile {
     pub snapshot: SnapshotProfile,
@@ -163,6 +166,9 @@ pub struct SnapshotInputs {
     checkpoint: String,
     git: Tool,
     _git_guard: File,
+    archive: Object,
+    metadata: tig_core::tree::MemoryNodes,
+    declared_objects: BTreeSet<Object>,
 }
 impl SnapshotInputs {
     pub fn open(packet: &Packet, profile: &SnapshotProfile) -> Result<Self> {
@@ -262,12 +268,25 @@ impl SnapshotInputs {
             }
             objects.insert(asset.logical_id.clone(), object.clone());
         }
+        let mut metadata = tig_core::tree::MemoryNodes::default();
+        let archive = bound
+            .assets
+            .archive_metadata(&mut metadata, tig_core::tree::TreeLimits::default())
+            .map_err(git_error)?;
         Ok(Self {
             packet: packet.clone(),
             objects,
             checkpoint: bound.assets.checkpoint().as_str().into(),
             git: profile.git.clone(),
             _git_guard: guard,
+            archive,
+            metadata,
+            declared_objects: bound
+                .payloads
+                .bindings()
+                .iter()
+                .map(|b| b.object.clone())
+                .collect(),
         })
     }
     pub fn input_count(&self) -> usize {

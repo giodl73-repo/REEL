@@ -4,12 +4,14 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 publish = false
-description = "Exact committed record-to-annex input binding for REEL workflows"
+description = "Exact native inputs and explicit durable input claims for REEL workflows"
 
 # Isolated dependency graph: do not upgrade existing REEL producer SDKs implicitly.
 [workspace]
 
 [dependencies]
+anyhow = "1.0.100"
+reel-assets = { path = "../reel-assets" }
 reel-workflow = { path = "../reel-workflow" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.145"
@@ -17,6 +19,7 @@ sha2 = "0.11.0"
 tig-core = { path = "../../vendor/tig-workflow/crates/tig-core" }
 tig-assets = { path = "../../vendor/tig-workflow/crates/tig-assets" }
 tig-git = { path = "../../vendor/tig-workflow/crates/tig-git", features = ["assets"] }
+tig-store = { path = "../../vendor/tig-workflow/crates/tig-store" }
 
 [dev-dependencies]
 tempfile = "=3.27.0"

@@ -144,3 +144,22 @@ Source-binding/alias/stream/history tests and all SDK pin checks supplement the
 shared suite (57 actual tests including the explicit native read). Actor
 acceptance, manual staging, logical registration, recovery and selection
 qualification remain open rather than being inferred from successful reads.
+
+2026-11-18 input admission follow-up, producer-applied engineering/editor/rights
+and custody lenses: accepted object claims must survive process exit and never
+be confused with byte availability, completed production or retained publication.
+The workflow adapter now reuses the qualified slot module, binds task/attempt
+and original operation, archives exact source metadata and reopens actual native
+WorkRef/activation/coverage under the original actor fence. Serialized receipts
+cannot grant a guard. Native pending state prevents live verification; recovery
+retains original work identity. Cancellation, expiry, release and deletion are
+not side effects of these entries.
+
+Six real metadata-journal workflow/CLI fixtures supplement four unchanged original
+slot tests and the existing source/byte fixtures. CLI output leaves availability,
+retained-owner acknowledgement, completion and selection false; private receipts
+require new destinations outside managed roots. Original SDK/module source pins
+remain exact. Tight native node/atomic transition limits are surfaced, not worked
+around. The 68-test evidence does not combine synthetic claim journals with a
+physical production pool or qualify an end-to-end comic handoff. Byte staging,
+candidate idempotency, native retained completion and project adoption stay open.

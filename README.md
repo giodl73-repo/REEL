@@ -21,7 +21,8 @@ the existing crates to direct and manual prompt/result execution. The
 production staging, retention, providers and selection remain explicit next gates.
 The isolated [native workflow input bridge](crates/reel-workflow-native/README.md)
 now binds exact committed records to declared annex leaves and holds guarded
-native reads. It does not yet admit durable workflow jobs.
+native reads. Explicit input admission can protect declared resources in an
+existing job actor; manual staging and retained-result completion remain open.
 
 [Publication contracts](docs/publication.md) add film and comic language editions,
 ordered page/panel metadata and independently tracked output sets through

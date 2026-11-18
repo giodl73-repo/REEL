@@ -425,17 +425,556 @@ fn existing_native_store_reads_exact_committed_input_with_guards_and_no_publicat
             .write_all(&serde_json::to_vec(&value).unwrap())
             .unwrap();
         output.sync_all().unwrap();
-        fs::write(
-            directory.join("packet.json"),
-            serde_json::to_vec_pretty(&fixture.packet).unwrap(),
-        )
-        .unwrap();
-        fs::write(
-            directory.join("snapshot-profile.json"),
-            serde_json::to_vec_pretty(&fixture.profile).unwrap(),
-        )
-        .unwrap();
+        for (name, raw) in [
+            (
+                "packet.json",
+                serde_json::to_vec_pretty(&fixture.packet).unwrap(),
+            ),
+            (
+                "snapshot-profile.json",
+                serde_json::to_vec_pretty(&fixture.profile).unwrap(),
+            ),
+        ] {
+            let mut output = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(directory.join(name))
+                .unwrap();
+            output.write_all(&raw).unwrap();
+            output.sync_all().unwrap();
+        }
         // Preserve this synthetic Git source for exact replay; no asset cache created.
         let _ = fixture.temp.keep();
     }
+}
+
+// These admission fixtures create only isolated native metadata/index journals.
+// Their synthetic store declaration does not claim a real payload pool exists.
+struct AdmissionCase {
+    temp: tempfile::TempDir,
+    profile: reel_workflow_native::admission::Profile,
+    source: reel_workflow_native::NativeProfile,
+}
+impl AdmissionCase {
+    fn new(fixture: &Fixture) -> Self {
+        use tig_core::{Digest, tree::Tree};
+        use tig_store::{
+            Key,
+            metadata::{Limits, MetadataStore},
+            source_claims::{
+                Selection, SourceJournal, coordinated,
+                protection::{Actor, Enrollment, Index, Routing, work},
+            },
+        };
+        let key = |s: &str| Key::parse(s).unwrap();
+        let digest = |s: &str| Digest::blob(s.as_bytes());
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir(root.join("coordination")).unwrap();
+        let mut nodes = MetadataStore::create(
+            &root.join("metadata"),
+            Limits {
+                nodes: 100000,
+                bytes: 32 * 1024 * 1024,
+                database_bytes: 64 * 1024 * 1024,
+                min_free_bytes: 65536,
+            },
+        )
+        .unwrap();
+        let empty = Selection {
+            root: Tree::empty(&mut nodes).unwrap().root().clone(),
+            context: digest("empty"),
+        };
+        let mut index = Index::create_effects(
+            &root.join("index"),
+            key("epoch"),
+            Enrollment {
+                owner: key("index-owner"),
+                subject: digest("group"),
+                policies: vec![digest("policy")],
+                stores: vec![digest("synthetic-store")],
+                actors: ["main", "retained", "slot"]
+                    .into_iter()
+                    .map(|id| Actor {
+                        id: key(id),
+                        owner: key("owner"),
+                        stores: vec![digest("synthetic-store")],
+                    })
+                    .collect(),
+                max_bindings: 8192,
+            },
+            Some(Routing {
+                source: key("main"),
+                actor: key("main"),
+            }),
+        )
+        .unwrap();
+        // Exact typed idle binding from the qualified slots protocol.
+        let raw = tig_core::identity::canonical_json(&json!([
+            "reel.job-actor-idle.experimental-1",
+            index.identity(),
+            "slot",
+            "owner",
+            [digest("synthetic-store")]
+        ]))
+        .unwrap();
+        let idle = Selection {
+            root: Tree::empty(&mut nodes).unwrap().root().clone(),
+            context: Digest::blob(&raw),
+        };
+        index
+            .bootstrap(
+                [
+                    ("main".into(), empty.clone()),
+                    ("retained".into(), empty.clone()),
+                    ("slot".into(), idle),
+                ]
+                .into(),
+                &mut nodes,
+            )
+            .unwrap();
+        let mut journal = SourceJournal::create_coordinated(
+            &root.join("source"),
+            key("project"),
+            key("epoch"),
+            coordinated::Binding {
+                index: index.identity().clone(),
+                source: key("main"),
+                actor: key("main"),
+                owner: key("owner"),
+                initial: empty,
+            },
+        )
+        .unwrap();
+        work::adoption::enrollment::initialize(&mut index, &mut journal, &mut nodes).unwrap();
+        let minimum = index.checkpoint();
+        let identity = index.identity().clone();
+        let profile = reel_workflow_native::admission::Profile {
+            schema: "reel.workflow-native-admission.v1".into(),
+            index_root: root.join("index"),
+            index_identity: identity.clone(),
+            index_minimum: minimum.clone(),
+            metadata_root: root.join("metadata"),
+            metadata_minimum: nodes.finish().unwrap(),
+            scope: reel_workflow_native::admission::Scope {
+                coordination_root: root.join("coordination"),
+                actor: key("slot"),
+                owner: key("owner"),
+                operation: key("workflow-job"),
+                policy: digest("policy"),
+                store: digest("synthetic-store"),
+            },
+        };
+        let annex = Tool {
+            path: root.join("unused-annex.exe"),
+            sha256: digest("synthetic-annex-runtime").as_str().into(),
+            bytes: 23,
+        };
+        let source = reel_workflow_native::NativeProfile {
+            snapshot: fixture.profile.clone(),
+            annex: annex.clone(),
+            source: tig_git::annex::workflow::reader::Profile {
+                store: digest("synthetic-store"),
+                maximum_bytes: 1024,
+                pool: tig_git::annex::process::Enrollment {
+                    git: fixture.profile.git.path.clone(),
+                    executable: annex.path,
+                    repository: root.join("no-payload-pool"),
+                    tools: vec![root.into()],
+                    empty_config: root.join("unused.config"),
+                    empty_hooks: root.join("unused-hooks"),
+                    temporary: root.into(),
+                    legacy_profile: None,
+                    command_millis: 1000,
+                    output_bytes: 65536,
+                    control: Some(tig_git::annex::process::ControlBinding {
+                        root: profile.index_root.clone(),
+                        index: identity,
+                        minimum,
+                        store: profile.scope.store.clone(),
+                    }),
+                },
+            },
+        };
+        Self {
+            temp,
+            profile,
+            source,
+        }
+    }
+    fn protected(&self, object: &Object) -> Vec<tig_store::Key> {
+        use tig_store::{metadata::MetadataStore, source_claims::protection::Index};
+        let mut nodes =
+            MetadataStore::open(&self.profile.metadata_root, &self.profile.metadata_minimum)
+                .unwrap();
+        let mut index = Index::open(&self.profile.index_root, &self.profile.index_minimum).unwrap();
+        index
+            .inspect(&mut nodes, object, &self.profile.scope.store)
+            .unwrap()
+            .protected_by
+    }
+}
+
+#[test]
+fn workflow_claims_survive_restart_and_lost_response_with_original_work_and_activation() {
+    use reel_workflow_native::admission::Prepared;
+    let fixture = Fixture::new();
+    let case = AdmissionCase::new(&fixture);
+    let before = fs::read(case.profile.metadata_root.join("metadata.json")).unwrap();
+    let prepared =
+        Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1").unwrap();
+    let preview = prepared.preview().unwrap();
+    assert_eq!(preview.total_actor_limit, 16);
+    assert_eq!(preview.changed_path_limit, 128);
+    assert_eq!(
+        before,
+        fs::read(case.profile.metadata_root.join("metadata.json")).unwrap()
+    );
+    let payload = Object::from_bytes(b"synthetic input");
+    assert!(case.protected(&payload).is_empty());
+    let accepted = prepared.accept().unwrap();
+    assert_eq!(
+        case.protected(&payload),
+        vec![case.profile.scope.actor.clone()]
+    );
+    // Unused record stream bytes are also covered, not just the chosen input.
+    assert_eq!(
+        case.protected(&Object::from_bytes(b"preview")),
+        vec![case.profile.scope.actor.clone()]
+    );
+    drop(prepared);
+    let retry = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    assert_eq!(retry.work, accepted.work);
+    assert_eq!(retry.activation, accepted.activation);
+    let guard = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .reopen(&accepted)
+        .unwrap();
+    // Reopened generation is fenced; another cooperating acceptance cannot run.
+    assert!(
+        Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+            .unwrap()
+            .accept()
+            .is_err()
+    );
+    drop(guard);
+    assert_eq!(
+        case.protected(&payload),
+        vec![case.profile.scope.actor.clone()]
+    );
+    assert!(!case.temp.path().join("no-payload-pool").exists());
+}
+
+#[test]
+fn admission_rejects_changed_attempt_store_scope_receipt_and_unmanaged_provider() {
+    use reel_workflow_native::admission::Prepared;
+    let fixture = Fixture::new();
+    let mut case = AdmissionCase::new(&fixture);
+    let receipt = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    assert!(
+        Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-2")
+            .unwrap()
+            .accept()
+            .is_err()
+    );
+    let mut changed = receipt.clone();
+    changed.activation = Object::from_bytes(b"wrong-generation");
+    assert!(
+        Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+            .unwrap()
+            .reopen(&changed)
+            .is_err()
+    );
+    let mut changed = receipt.clone();
+    changed.scope.operation = tig_store::Key::parse("other-operation").unwrap();
+    assert!(
+        Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+            .unwrap()
+            .reopen(&changed)
+            .is_err()
+    );
+    let original = case.source.annex.sha256.clone();
+    case.source.annex.sha256 = tig_core::Digest::blob(b"different-runtime").as_str().into();
+    assert!(
+        Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+            .unwrap()
+            .preview()
+            .is_err()
+    );
+    assert!(
+        Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+            .unwrap()
+            .reopen(&receipt)
+            .is_err()
+    );
+    case.source.annex.sha256 = original;
+    case.profile.scope.store = tig_core::Digest::blob(b"wrong-store");
+    assert!(Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1").is_err());
+    case.source.source.pool.control = None;
+    assert!(Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1").is_err());
+}
+
+#[test]
+fn claimed_source_archive_reopens_without_authored_working_files() {
+    use reel_workflow_native::admission::Prepared;
+    use tig_assets::resolve::AssetResolver;
+    use tig_core::tree::TreeLimits;
+    use tig_store::metadata::MetadataStore;
+    let fixture = Fixture::new();
+    let case = AdmissionCase::new(&fixture);
+    let receipt = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    fs::write(
+        fixture.temp.path().join("records/input.tig"),
+        b"not available",
+    )
+    .unwrap();
+    let mut nodes =
+        MetadataStore::open(&case.profile.metadata_root, &receipt.metadata_checkpoint).unwrap();
+    let restored = tig_git::source::native::AssetSnapshot::from_metadata_archive(
+        &mut nodes,
+        &receipt.source_archive,
+        tig_git::source::native::Limits::default(),
+        TreeLimits::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        restored
+            .resolve_id("input/source")
+            .unwrap()
+            .selected()
+            .unwrap(),
+        &Object::from_bytes(b"synthetic input")
+    );
+    Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .reopen(&receipt)
+        .unwrap();
+}
+
+#[test]
+fn admission_cli_requires_explicit_apply_private_new_receipts_and_preserves_failures() {
+    let fixture = Fixture::new();
+    let case = AdmissionCase::new(&fixture);
+    let root = case.temp.path();
+    let packet = root.join("packet.json");
+    let source = root.join("native-profile.json");
+    let profile = root.join("admission-profile.json");
+    fs::write(&packet, serde_json::to_vec(&fixture.packet).unwrap()).unwrap();
+    fs::write(&source, serde_json::to_vec(&case.source).unwrap()).unwrap();
+    fs::write(&profile, serde_json::to_vec(&case.profile).unwrap()).unwrap();
+    let call = |command: &str, tail: &[&std::ffi::OsStr]| {
+        Command::new(env!("CARGO_BIN_EXE_reel-workflow-native"))
+            .arg(command)
+            .arg(&packet)
+            .arg(&source)
+            .arg(&profile)
+            .args(tail)
+            .output()
+            .unwrap()
+    };
+    let attempt = std::ffi::OsStr::new("attempt-1");
+    let apply = std::ffi::OsStr::new("--apply");
+    let preview = call("preview-admission", &[attempt]);
+    assert!(preview.status.success());
+    let receipt = root.join("receipt.json");
+    assert!(
+        !call("accept-admission", &[attempt, receipt.as_os_str()])
+            .status
+            .success()
+    );
+    assert!(!receipt.exists());
+    let forbidden = case.profile.index_root.join("not-a-private-receipt.json");
+    assert!(
+        !call("accept-admission", &[attempt, forbidden.as_os_str(), apply])
+            .status
+            .success()
+    );
+    assert!(!forbidden.exists());
+    assert!(
+        case.protected(&Object::from_bytes(b"synthetic input"))
+            .is_empty()
+    );
+    let result = call("accept-admission", &[attempt, receipt.as_os_str(), apply]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stdout)
+    );
+    let raw = String::from_utf8(result.stdout).unwrap();
+    assert!(!raw.contains("PRIVATE"));
+    assert!(!raw.contains("input/source"));
+    let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(value["durable_input_claims_verified"], true);
+    assert_eq!(value["payloads_verified"], false);
+    assert_eq!(value["retained_owner_acknowledged"], false);
+    let original = fs::read(&receipt).unwrap();
+    assert!(
+        !call("accept-admission", &[attempt, receipt.as_os_str(), apply])
+            .status
+            .success()
+    );
+    assert_eq!(fs::read(&receipt).unwrap(), original);
+    assert!(
+        call("reopen-admission", &[receipt.as_os_str()])
+            .status
+            .success()
+    );
+    let partial = root.join("changed-attempt-partial.json");
+    assert!(
+        !call(
+            "accept-admission",
+            &[
+                std::ffi::OsStr::new("attempt-2"),
+                partial.as_os_str(),
+                apply
+            ]
+        )
+        .status
+        .success()
+    );
+    assert_eq!(fs::metadata(&partial).unwrap().len(), 0); // Original operation remains admitted; failure is preserved.
+    let recovered = root.join("recovered-receipt.json");
+    assert!(
+        call("accept-admission", &[attempt, recovered.as_os_str(), apply])
+            .status
+            .success()
+    );
+    let old: reel_workflow_native::admission::Receipt = serde_json::from_slice(&original).unwrap();
+    let new: reel_workflow_native::admission::Receipt =
+        serde_json::from_slice(&fs::read(recovered).unwrap()).unwrap();
+    assert_eq!(old.work, new.work);
+    assert_eq!(old.activation, new.activation);
+    if let Some(directory) = std::env::var_os("REEL_ADMISSION_EVIDENCE_DIRECTORY") {
+        let directory = PathBuf::from(directory);
+        assert!(directory.is_absolute() && directory.is_dir());
+        // Preserve exact synthetic metadata/source roots for frozen-tool readback.
+        // No payload pool exists in this fixture.
+        for (name, path) in [
+            ("packet.json", &packet),
+            ("native-profile.json", &source),
+            ("admission-profile.json", &profile),
+            ("receipt.json", &receipt),
+        ] {
+            let raw = fs::read(path).unwrap();
+            let mut output = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(directory.join(name))
+                .unwrap();
+            use std::io::Write;
+            output.write_all(&raw).unwrap();
+            output.sync_all().unwrap();
+        }
+        let _ = case.temp.keep();
+        let _ = fixture.temp.keep();
+    }
+}
+
+#[test]
+fn admission_node_budget_refuses_before_claim_or_metadata_changes() {
+    let mut fixture = Fixture::new();
+    let case = AdmissionCase::new(&fixture);
+    let mut task = fixture.packet.task.clone();
+    task.prompt = "p".repeat(64 * 1024);
+    fixture.packet = make_packet(
+        &Plan {
+            schema: PLAN_SCHEMA.into(),
+            project: fixture.packet.project.clone(),
+            source_commit: fixture.profile.commit.clone(),
+            tasks: vec![task],
+        },
+        "review",
+        BTreeMap::new(),
+    )
+    .unwrap();
+    let before = fs::read(case.profile.metadata_root.join("metadata.json")).unwrap();
+    let error = reel_workflow_native::admission::Prepared::open(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        "attempt-1",
+    )
+    .err()
+    .unwrap();
+    assert_eq!(error.kind, ErrorKind::Budget);
+    assert_eq!(
+        before,
+        fs::read(case.profile.metadata_root.join("metadata.json")).unwrap()
+    );
+    assert!(
+        case.protected(&Object::from_bytes(b"synthetic input"))
+            .is_empty()
+    );
+}
+
+#[test]
+fn native_pending_update_blocks_claim_guard_until_its_original_operation_is_reconciled() {
+    use reel_workflow_native::admission::Prepared;
+    use tig_store::{
+        Key,
+        metadata::MetadataStore,
+        source_claims::protection::{Error as NativeError, Index, Stage, Update},
+    };
+    let fixture = Fixture::new();
+    let case = AdmissionCase::new(&fixture);
+    let receipt = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    let mut nodes =
+        MetadataStore::open(&case.profile.metadata_root, &receipt.metadata_checkpoint).unwrap();
+    let mut index = Index::open(&case.profile.index_root, &receipt.index_checkpoint).unwrap();
+    let actor = Key::parse("retained").unwrap();
+    let state = index.actor(&mut nodes, &actor).unwrap();
+    let update = Update {
+        operation: Key::parse("original-interrupted-update").unwrap(),
+        actor,
+        owner: case.profile.scope.owner.clone(),
+        expected_revision: state.revision,
+        selection: state.selection,
+        changes: BTreeMap::new(),
+        ready: true,
+    };
+    assert!(
+        index
+            .update_hook(&update, &mut nodes, |stage| if stage == Stage::Prepared {
+                Err(NativeError::Injected)
+            } else {
+                Ok(())
+            })
+            .is_err()
+    );
+    nodes.finish().unwrap();
+    drop(index);
+    drop(nodes);
+    assert!(
+        Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+            .unwrap()
+            .reopen(&receipt)
+            .is_err()
+    );
+    let mut nodes =
+        MetadataStore::open(&case.profile.metadata_root, &receipt.metadata_checkpoint).unwrap();
+    let mut index = Index::open(&case.profile.index_root, &receipt.index_checkpoint).unwrap();
+    index.update(&update, &mut nodes).unwrap();
+    nodes.finish().unwrap();
+    drop(index);
+    drop(nodes);
+    Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .reopen(&receipt)
+        .unwrap();
+    assert_eq!(
+        case.protected(&Object::from_bytes(b"synthetic input")),
+        vec![case.profile.scope.actor.clone()]
+    );
 }
