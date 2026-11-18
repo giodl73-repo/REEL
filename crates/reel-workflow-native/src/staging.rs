@@ -62,6 +62,13 @@ impl Ticket {
     pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
         json(self)
     }
+    /// Private locator only; `export` must verify ownership and bytes before use.
+    pub fn directory(&self) -> PathBuf {
+        self.profile.parent.join(&self.owner.name)
+    }
+    pub(crate) fn matches(&self, receipt: &Receipt) -> Result<bool> {
+        Ok(self.admission.operation_identity()? == receipt.operation_identity()?)
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -276,7 +283,11 @@ fn configuration(profile: &Profile, coordination: &Path) -> Result<reel_assets::
         ..reel_assets::Config::default()
     })
 }
-fn check_parent(parent: &Path, source: &NativeProfile, profile: &admission::Profile) -> Result<()> {
+pub(crate) fn check_parent(
+    parent: &Path,
+    source: &NativeProfile,
+    profile: &admission::Profile,
+) -> Result<()> {
     if !cfg!(windows) {
         return Err(error(
             ErrorKind::Unsupported,

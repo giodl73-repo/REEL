@@ -65,6 +65,67 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
         [
             command,
+            plan,
+            bindings,
+            batch,
+            pin,
+            task,
+            result,
+            returns,
+            apply,
+        ] if command == "import-ready" && apply == "--apply" => {
+            let plan = read_control(Path::new(plan))?;
+            let bindings = read_control(Path::new(bindings))?;
+            let result = read_control(Path::new(result))?;
+            let returns = read_control(Path::new(returns))?;
+            let state = reel_workflow_native::graph::import_ready(
+                &plan,
+                &bindings,
+                &reel_workflow_native::graph::PinnedFile {
+                    path: batch.into(),
+                    sha256: pin.clone(),
+                },
+                task,
+                result,
+                &returns,
+            )?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"native-ready-result","state":state,
+                "task_completed":state==reel_workflow::handoff::State::Retained,"selected":false,
+                "input_claims_released":false,"scratch_retirement_authorized":false}),
+            )
+        }
+        [command, plan, bindings] if command == "inspect-run" => {
+            let plan = read_control(Path::new(plan))?;
+            let bindings = read_control(Path::new(bindings))?;
+            let frontier = reel_workflow_native::graph::inspect(&plan, &bindings)?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-native-run-observations",
+                "all_tasks_retained_observed":frontier.rows.iter().all(|r|r.status==reel_workflow::graph::Status::RetainedObserved),
+                "tasks":frontier.rows,"verified_waiting":frontier.waiting.len(),"needs_admission":frontier.needs_admission.len(),
+                "atomic_custody_snapshot":false,"provider_invoked":false,"task_completed":false,"selected":false}),
+            )
+        }
+        [command, plan, bindings, tasks, output, apply]
+            if command == "export-ready" && apply == "--apply" =>
+        {
+            let plan = read_control(Path::new(plan))?;
+            let bindings = read_control(Path::new(bindings))?;
+            let tasks = read_control::<Vec<String>>(Path::new(tasks))?;
+            let count = reel_workflow_native::graph::export_ready(
+                &plan,
+                &bindings,
+                &tasks,
+                Path::new(output),
+            )?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-native-ready-batch","exported_tasks":count,
+                "named_native_inputs_checked":true,"provider_invoked":false,"task_completed":false,
+                "selected":false,"input_claims_released":false}),
+            )
+        }
+        [
+            command,
             packet,
             source,
             profile,
@@ -452,6 +513,9 @@ fn main() -> ExitCode {
     if matches!(args.as_slice(), [a] if a == "--help") {
         println!(concat!(
             "reel-workflow-native check-snapshot PACKET PROFILE\n",
+            "reel-workflow-native inspect-run PLAN RUN_BINDINGS\n",
+            "reel-workflow-native export-ready PLAN RUN_BINDINGS TASK_IDS_JSON NEW_PRIVATE_BATCH --apply\n",
+            "reel-workflow-native import-ready PLAN RUN_BINDINGS BATCH BATCH_SHA256 TASK_ID RESULT RETURNS --apply\n",
             "reel-workflow-native comic-render REQUEST NEW_DIRECTORY\n",
             "reel-workflow-native comic-check REQUEST DIRECTORY\n",
             "reel-workflow-native check-publication-native PACKET PROFILE\n",

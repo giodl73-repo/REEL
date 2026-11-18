@@ -9,8 +9,8 @@ checked again before closing the objective.
 
 | Requirement | Authoritative implementation/evidence | Work still required |
 | --- | --- | --- |
-| Reusable Rust orchestration in REEL | `reel-workflow`, isolated `reel-workflow-native`, publication/assembly/assets crates | Complete a usable graph runner and project configuration; preserve existing producers. |
-| Direct API/proxy/subprocess and makefile-like handoff | Task/result/dependency keys, private prompt export, native handoff journal | Real provider transports, bounded subprocess adapter, ready-task batch export/return and graph continuation. |
+| Reusable Rust orchestration in REEL | `reel-workflow` verified frontier, native run bindings/inspection, protected multi-job batches and original-operation return/recovery with downstream frontier evidence | Add execution/admission scheduling, retained upstream byte inputs and project configuration; preserve existing producers. |
+| Direct API/proxy/subprocess and makefile-like handoff | Native-backed prompt batch export/return/continuation, original tickets and runtime pins, exact task/result/dependency keys | Real provider transports, bounded subprocess/worker dispatch and retained upstream byte inputs; complete production graph qualification. |
 | Exact Tig input/candidate/history lifecycle | Exact SDK/source pins, native input admission/staging, immutable result work, retained proof and completion fixtures | Explicit approved selection CAS/new-path admission, guarded close/retirement and full workflow retry/error qualification. No new cache engine. |
 | Image generation and other intelligence | Typed text/image/review operations and named output contracts | Provider execution, response normalization, model/config/provenance recording and operation-specific verification. |
 | Speech recording, including requested ElevenLabs integration | Existing speech task contract; recorded project cues remain source assets | Verify current official API/model contract for the requested version; implement configurable transport and recording/timing evidence. Existing season-5 recordings must be reusable without regeneration. |

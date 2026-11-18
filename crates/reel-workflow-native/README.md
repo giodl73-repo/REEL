@@ -524,3 +524,64 @@ This operation acknowledges no new task completion, releases no source claims,
 does not retire scratch/capacity, and does not change asset selections. An exported
 packet can supply an explicit local issue-assembly part; native upstream-result
 dependencies, issue scheduling and final issue retention remain separate work.
+
+## Verified frontier and manual ready batches
+
+```text
+reel-workflow-native inspect-run PLAN RUN_BINDINGS
+reel-workflow-native export-ready PLAN RUN_BINDINGS TASK_IDS_JSON NEW_PRIVATE_BATCH --apply
+reel-workflow-native import-ready PLAN RUN_BINDINGS BATCH BATCH_SHA256 TASK_ID RESULT RETURNS --apply
+```
+
+The existing workflow plan remains `reel.workflow-plan.v2`. Private
+`reel.workflow-run-bindings.v1` controls map task IDs to existing journal paths,
+an exact profile file pin (`{path, sha256}`), and an optional staging ticket file
+pin. Missing entries mean explicitly unadmitted work; a configured journal/profile
+that is missing or corrupt refuses rather than being treated as a fresh job.
+The inspector reads only named controls, not a workspace-wide job census.
+
+The frontier checks tasks in topological order. A retained result unlocks children
+only after its original packet/attempt/result/acknowledgement match and native
+retained work, coverage and bytes verify. Children bind the actual canonical
+result digest and artifact set. Changed plans, attempts or parent results make old
+child packets stale. Independent branches remain inspectable after a refusal.
+Waiting jobs recheck original claims and target readiness; pending imports require
+recovery, cancelled jobs remain cancelled, and neither is dispatched automatically.
+Inspection prints task/key/status metadata and sanitized errors, never prompt text.
+These are sequential observations, not an atomic custody snapshot or a new run
+completion certificate. The JSON says `all_tasks_retained_observed`, not that a
+new owner has accepted a complete production.
+
+Export requires an explicit nonempty task-ID list, at most 16 entries, with no
+implicit truncation or actor allocation. Every selected job must already be
+admitted and Waiting with its own exact staging ticket. Export locks the original
+journal controls, reopens original claims, and uses existing owned staging to
+verify/materialize all named native input bytes before writing one exclusive
+private `reel.workflow-ready-batch.v1` control. It preserves original tickets,
+runtime pins, attempts, prompts, packet/dependency metadata and input-binding
+locations. A claim or local completion file cannot replace missing native bytes.
+Existing/unsafe batch paths refuse; interrupted writes and conservative capacity
+reservations remain for diagnosis. Batch paths cannot pollute source journals,
+acknowledgement directories, source repositories or managed/staged input roots.
+Shared acknowledgement directories do not require taking the same writer fence
+twice during a multi-job export.
+
+The exported task's `packet.operation` distinguishes intelligence prompts from
+deterministic tools. Export invokes neither. Operators can run the frozen prompt
+and input package externally, then return a normal result/returns manifest.
+`import-ready` pins the exact batch, rechecks the current plan/frontier and original
+job binding, and delegates to the existing lifecycle. Changed plans/parent contexts,
+attempts, profiles or replay bodies refuse before effects. Matching pending or
+already retained results reconcile the original operation, without a replacement
+attempt. Effects still require the ORIGINAL pinned lifecycle executable. A newer
+read-only inspector may observe an older qualified runtime; it cannot impersonate
+that runtime for import. Use its existing `import-handoff`/`resume-handoff` interface
+when handling older tickets that predate these graph commands.
+
+Dependency artifact references remain planning metadata. This does not forward
+unselected parent payloads as child inputs or silently register them as Git records.
+Current byte inputs must still resolve through each task's explicit committed
+native declarations. Retained upstream input adapters, complete comic assembly,
+automatic worker/provider dispatch, actor admission/close scheduling and resource
+retirement remain in the full completion ledger. Batch controls are private
+instructions/evidence, not reusable proof of current custody or release permission.

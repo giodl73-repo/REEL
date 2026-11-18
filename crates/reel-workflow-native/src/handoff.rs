@@ -293,6 +293,9 @@ struct Controls {
     _writers: Vec<reel_assets::admission::MetadataLock>,
 }
 fn controls(path: &Path, profile: &Profile) -> Result<Controls> {
+    controls_mode(path, profile, true)
+}
+fn controls_mode(path: &Path, profile: &Profile, acknowledgement_writer: bool) -> Result<Controls> {
     if !cfg!(windows) {
         return Err(error(
             ErrorKind::Unsupported,
@@ -367,15 +370,21 @@ fn controls(path: &Path, profile: &Profile) -> Result<Controls> {
             .join(reel_workflow::digest(journal.to_string_lossy().as_bytes())),
     )
     .map_err(|_| error(ErrorKind::Busy, "handoff-writer-busy"))?;
-    let ack_writer = reel_assets::admission::lock(
-        &profile
-            .admission
-            .scope
-            .coordination_root
-            .join("workflow-handoff-acks")
-            .join(reel_workflow::digest(ack.to_string_lossy().as_bytes())),
-    )
-    .map_err(|_| error(ErrorKind::Busy, "handoff-ack-writer-busy"))?;
+    let ack_writer = if acknowledgement_writer {
+        Some(
+            reel_assets::admission::lock(
+                &profile
+                    .admission
+                    .scope
+                    .coordination_root
+                    .join("workflow-handoff-acks")
+                    .join(reel_workflow::digest(ack.to_string_lossy().as_bytes())),
+            )
+            .map_err(|_| error(ErrorKind::Busy, "handoff-ack-writer-busy"))?,
+        )
+    } else {
+        None
+    };
     let mut count = 0usize;
     for entry in std::fs::read_dir(&ack).map_err(io_error)? {
         let entry = entry.map_err(io_error)?;
@@ -402,7 +411,108 @@ fn controls(path: &Path, profile: &Profile) -> Result<Controls> {
     }
     Ok(Controls {
         _directories: directories,
-        _writers: vec![writer, ack_writer],
+        _writers: std::iter::once(writer).chain(ack_writer).collect(),
+    })
+}
+
+fn observed(journal: &Journal) -> reel_workflow::graph::Job {
+    reel_workflow::graph::Job {
+        ticket: journal.ticket().clone(),
+        state: journal.state(),
+        result: journal.result().cloned(),
+        acknowledgement: journal.acknowledgement().cloned(),
+    }
+}
+fn inspection_binding(journal: &Journal, profile: &Profile) -> Result<File> {
+    let ticket = journal.ticket();
+    if ticket.native_binding != profile.binding.artifact()?
+        || ticket.lifecycle_tool != runtime_artifact(&profile.runtime)
+        || ticket.attempt_id != profile.binding.admission.attempt_id
+    {
+        return Err(error(ErrorKind::Conflict, "handoff-inspection-binding"));
+    }
+    // Read-only compatibility check: hold the ORIGINAL qualified runtime bytes.
+    // This inspector never impersonates it or invokes lifecycle effects.
+    hold_tool(&profile.runtime)
+}
+pub(crate) fn observe(path: &Path, profile: &Profile) -> Result<reel_workflow::graph::Job> {
+    let _controls = controls_mode(path, profile, false)?;
+    let journal = Journal::open(path)?;
+    let _runtime = inspection_binding(&journal, profile)?;
+    Ok(observed(&journal))
+}
+pub(crate) fn verify_observation(
+    path: &Path,
+    profile: &Profile,
+    expected: &reel_workflow::graph::Job,
+) -> Result<()> {
+    let _controls = controls_mode(path, profile, false)?;
+    let journal = Journal::open(path)?;
+    let _runtime = inspection_binding(&journal, profile)?;
+    if observed(&journal) != *expected {
+        return Err(error(ErrorKind::Stale, "handoff-observation-changed"));
+    }
+    match journal.state() {
+        State::Waiting => {
+            let prepared = Prepared::open(
+                &expected.ticket.packet,
+                &profile.source,
+                &profile.admission,
+                &expected.ticket.attempt_id,
+            )?;
+            prepared
+                .validate_retained_target(&profile.binding.admission, &profile.binding.target)?;
+            let _claims = prepared.reopen(&profile.binding.admission)?;
+        }
+        State::Retained => {
+            let (ack, _held) = ack_read(profile)?;
+            if Some(&ack.artifact()?) != expected.acknowledgement.as_ref()
+                || ack.target != profile.binding.target
+            {
+                return Err(error(ErrorKind::Conflict, "handoff-pinned-acknowledgement"));
+            }
+            let result = expected
+                .result
+                .as_ref()
+                .ok_or_else(|| error(ErrorKind::Missing, "handoff-observed-result"))?;
+            let _proof = retention::verify(
+                &expected.ticket.packet,
+                &profile.source,
+                &profile.admission,
+                &profile.binding.admission,
+                result,
+                &ack,
+            )?;
+        }
+        _ => {
+            return Err(error(
+                ErrorKind::Conflict,
+                "handoff-observed-state-not-verifiable",
+            ));
+        }
+    }
+    Ok(())
+}
+pub(crate) struct WaitingControl {
+    _controls: Controls,
+    _runtime: File,
+    pub(crate) ticket: Ticket,
+}
+pub(crate) fn lock_waiting(
+    path: &Path,
+    profile: &Profile,
+    packet: &Packet,
+) -> Result<WaitingControl> {
+    let controls = controls_mode(path, profile, false)?;
+    let journal = Journal::open(path)?;
+    let runtime = inspection_binding(&journal, profile)?;
+    if journal.state() != State::Waiting || &journal.ticket().packet != packet {
+        return Err(error(ErrorKind::Stale, "handoff-no-longer-waiting"));
+    }
+    Ok(WaitingControl {
+        _controls: controls,
+        _runtime: runtime,
+        ticket: journal.ticket().clone(),
     })
 }
 

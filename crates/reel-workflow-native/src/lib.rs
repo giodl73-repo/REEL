@@ -13,6 +13,7 @@ use tig_assets::resolve::AssetResolver;
 use tig_core::{LogicalPath, Object};
 pub mod admission;
 mod comic;
+pub mod graph;
 pub mod handoff;
 mod qualified;
 pub mod response;

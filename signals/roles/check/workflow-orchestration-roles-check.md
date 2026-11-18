@@ -313,3 +313,21 @@ qualification now covers selected-part admission, retention, bare-history resume
 export/restoration/fresh editing and absence of a protection claim for the unused
 page. This is one part of a synthetic two-page master; no complete issue,
 independent review, human approval, project migration or release is inferred.
+
+2026-11-18 native frontier follow-up, producer-applied engineering and
+rights/provenance lenses: a local journal marker cannot unlock downstream work
+without exact current packet/attempt correspondence and actual native retained
+proof. Changed parent contexts refuse stale children; independent branches remain
+visible. Inspection omits prompts and sanitizes errors. Its observations are
+sequential, not an atomic custody certificate or an approval decision.
+
+Manual batches require original admitted Waiting jobs and pinned staging tickets.
+Missing payloads refuse despite claims, multi-job export retains independent
+original controls/claims, and shared acknowledgement directories do not require
+duplicate writer ownership. Returns recheck pinned batch/current plan and either
+import or reconcile the original result, without new attempts or relaxed runtime
+pins. The native fixture verifies continuation and corrupt-proof blocking. It
+caught and corrected a missing explicit false scratch-retirement flag; no cleanup
+or release operation was performed. Retained byte dependency forwarding, automatic
+execution/admission scheduling, creative review and release remain separate.
+These are producer-applied checks, not independent review or human approval.
