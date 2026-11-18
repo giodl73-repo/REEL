@@ -263,6 +263,14 @@ impl Journal {
     pub fn ticket(&self) -> &Ticket {
         &self.ticket
     }
+    /// Recorded intent only; callers must still verify native retained state.
+    pub fn result(&self) -> Option<&ReturnedResult> {
+        self.result.as_ref()
+    }
+    /// Recorded immutable descriptor only; not proof of current ownership.
+    pub fn acknowledgement(&self) -> Option<&Artifact> {
+        self.acknowledgement.as_ref()
+    }
     fn apply(&mut self, event: Event) -> Result<()> {
         match (self.state, event) {
             (State::Waiting, Event::ImportPending { result }) => {

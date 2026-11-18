@@ -72,9 +72,9 @@ it creates no store or payload. It was run locally against a previously publishe
 1 MiB object, including allowance and undeclared-read refusal. This does not
 qualify a complete native comic job, external import or retained publication.
 
-Next: implement idempotent
-registration/retained-owner recovery through `handoff::Lifecycle`. Completion,
-selection and guarded scratch retirement remain separate. Project adoption
+The native `handoff::Lifecycle` implementation below now connects idempotent
+registration and retained-owner recovery to technical task completion.
+Selection and guarded scratch retirement remain separate. Project adoption
 requires those fixtures and an owned rollback.
 
 ## Explicit durable input claims
@@ -310,7 +310,80 @@ update recovery across CLI processes, preserved unrelated history, historical
 readback/ack regeneration after source advance and refusal after lost coverage.
 Its source advance and loss/restoration of coverage are explicit synthetic SDK
 test operations, not qualification of slot close or retirement. No payloads are
-deleted. Tool/comic worker receipt integration, the native `handoff::Lifecycle`
-port, task completion, expected-baseline selection, guarded actor close and scratch
-retirement remain open. Native byte/claim verification grants no creative,
+deleted. The native `handoff::Lifecycle` port and technical task completion are
+described below. Tool/comic worker receipt integration, expected-baseline selection,
+guarded actor close and scratch retirement remain open. Native byte/claim verification grants no creative,
 translation, rights, print or release approval.
+
+## Native handoff completion journal
+
+The `handoff` adapter implements the existing `reel-workflow::handoff::Lifecycle`
+port over real native response/retention work. It uses the existing append-only
+journal. `create-handoff` verifies original live input protection before writing
+`Waiting`. Import flushes `ImportPending` before ingestion. Only a verified
+retained acknowledgement and reopened exact output bytes permit the final
+`Retained` event and `task_completed:true`. This is technical task completion;
+creative approval and selection remain separate.
+
+Its private `reel.workflow-native-handoff.v1` profile contains:
+
+| Field | Meaning |
+| --- | --- |
+| `source` | Existing `NativeProfile`, exact committed input binding and pinned Git/annex tools. |
+| `admission` | Existing input-admission controller profile and trusted minima. |
+| `binding` | `reel.workflow-native-handoff-binding.v1`, original `admission` receipt and exact retained `target`. Its canonical artifact is pinned by the journal ticket. |
+| `runtime` | Exact Tool pin for the executable actually running this adapter. A different named executable cannot satisfy it. |
+| `acknowledgements` | Existing private control directory outside managed roots and the journal. Machine locator only. |
+
+```text
+reel-workflow-native create-handoff PACKET HANDOFF_PROFILE NEW_JOURNAL --apply
+reel-workflow-native import-handoff JOURNAL HANDOFF_PROFILE RESULT RETURNS --apply
+reel-workflow-native resume-handoff JOURNAL HANDOFF_PROFILE RETURNS_OR_DASH --apply
+```
+
+`RETURNS` is the explicit return-file map used by ingress. `-` supplies none: a
+still-unretained response requires those files, while an already staged retention
+operation or retained result is reconciled through original native handles.
+Completed-journal resume verifies current retained claims and native bytes; a
+saved success report or plain local `check-handoff` inspection is not proof.
+Journal/runtime/target binding changes refuse before import intent. Direct/manual
+provider results are supported; tool/comic results remain refused pending their
+worker/source adapter.
+
+Reopening is passive. During recovery, a separate original-generation fence may
+coexist with native Prepare; it grants no mutation capability. Effect entrypoints
+reacquire/recheck the original generation and reconcile exact original work.
+Durable input claims remain throughout. Native read handles hold object gates,
+so new retained admission runs after the initial byte read handles close, under
+original positive job protection and ordered source/retained fences. Lost
+original response coverage refuses before new admission, including retries of
+merely staged work. Outputs reopen after admission; that proof remains held
+through completion append.
+
+Acknowledgement controls are canonical, exclusive-create, flushed and reopened.
+An existing file must match original candidate/work/evidence/target and pass
+native verification; fresh checkpoint witnesses do not overwrite it. The journal
+pins its exact artifact. Lost completion reuses that proof without re-importing
+bytes. Partial/corrupt controls and event tails remain untouched and stop recovery.
+Initial uncertainty before a complete Waiting record or acknowledgement requires
+explicit diagnosis. Journal/acknowledgement writers use existing cooperating
+metadata fences; active namespace/file/runtime guards protect each call. Long
+waits retain native claims rather than OS handles. No deadline or cancellation
+releases claims.
+
+The acknowledgement directory is bounded to 128 ordinary files of at most 64 KiB
+each; journal limits remain 128 events/1 MiB per event. These control directories
+must stay outside native pool/index/metadata/coordination roots and not overlap
+each other. Existing actor, changed-path, byte and resource limits still apply.
+Exact frozen executables must be preserved for old tickets; runtime upgrades
+need explicit migration. No store initialization or additional cache is added.
+
+Default fixtures cover runtime/target/control binding, unavailable providers and
+preserved intent/claims. A native fixture combines actual input claims, response
+Prepare recovery, publication, NEW retained admission, byte reopening and journal
+completion across CLI processes. It also tests lost completion, resume without
+return files, a busy former source actor and corrupt-proof refusal. It exposed
+and fixed the read-gate/new-admission conflict that retained recovery alone had
+not covered. Provider execution, complete comic production, selection, guarded
+actor close and scratch/capacity retirement remain separate acceptance gates.
+No production project or public release is adopted by these fixtures.

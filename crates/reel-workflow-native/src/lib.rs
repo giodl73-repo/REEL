@@ -12,6 +12,7 @@ use std::{
 use tig_assets::resolve::AssetResolver;
 use tig_core::{LogicalPath, Object};
 pub mod admission;
+pub mod handoff;
 mod qualified;
 pub mod response;
 pub mod retention;
@@ -76,6 +77,10 @@ fn error(kind: ErrorKind, code: &str) -> Error {
         kind,
         code: code.into(),
     }
+}
+pub(crate) fn in_phase(mut error: Error, phase: &str) -> Error {
+    error.code = format!("{phase}:{}", error.code);
+    error
 }
 fn git_error(value: source::Error) -> Error {
     let kind = match value {

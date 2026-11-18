@@ -1,5 +1,6 @@
 //! Workflow-specific retained actor registration, separate from selection and
 //! scratch retirement. Serialized acknowledgements never grant a live guard.
+use crate::in_phase as phase;
 use crate::{
     NativeProfile,
     admission::{self, Prepared, Receipt},
@@ -114,10 +115,15 @@ pub fn stage(
 ) -> Result<Acknowledgement> {
     check(packet, receipt, result)?;
     let prepared = Prepared::open(packet, source, profile, &receipt.attempt_id)?;
-    if let Some(ack) = prepared.completed_retention(receipt, result, target)? {
+    if let Some(ack) = prepared
+        .completed_retention(receipt, result, target)
+        .map_err(|e| phase(e, "retention-completed-probe"))?
+    {
         return Ok(ack);
     }
-    let (guard, candidate) = prepared.retention_guard(receipt, result, target)?;
+    let (guard, candidate) = prepared
+        .retention_guard(receipt, result, target)
+        .map_err(|e| phase(e, "retention-guard"))?;
     guard.retain_response(receipt, &candidate, target, false)
 }
 
@@ -134,14 +140,25 @@ pub fn retain(
     check(packet, receipt, result)?;
     let _annex = hold_tool(&source.annex)?;
     let prepared = Prepared::open(packet, source, profile, &receipt.attempt_id)?;
-    if let Some(ack) = prepared.completed_retention(receipt, result, target)? {
+    if let Some(ack) = prepared
+        .completed_retention(receipt, result, target)
+        .map_err(|e| phase(e, "retention-completed-probe"))?
+    {
         let _verified = verify(packet, source, profile, receipt, result, &ack)?;
         return Ok(ack);
     }
-    let (guard, candidate) = prepared.retention_guard(receipt, result, target)?;
-    let _outputs = outputs(source, result)?;
-    let acknowledgement = guard.retain_response(receipt, &candidate, target, true)?;
+    let (guard, candidate) = prepared
+        .retention_guard(receipt, result, target)
+        .map_err(|e| phase(e, "retention-guard"))?;
+    // Native read guards hold object effect gates. Do not keep those gates
+    // while admitting a NEW index update. Original positive job claims and the
+    // ordered source/retained fences protect this transition instead.
+    drop(outputs(source, result)?);
+    let acknowledgement = guard
+        .retain_response(receipt, &candidate, target, true)
+        .map_err(|e| phase(e, "retention-apply"))?;
     guard.verify_retention(receipt, &acknowledgement)?;
+    let _outputs = outputs(source, result)?;
     Ok(acknowledgement)
 }
 

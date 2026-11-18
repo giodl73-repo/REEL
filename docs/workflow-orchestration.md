@@ -33,16 +33,16 @@ No API/proxy, ElevenLabs recording, image-generation, GitHub issue,
 selection application or
 scratch retirement adapter is installed. `check-result` never marks a task
 complete. Direct mode currently has a library adapter boundary and synthetic
-tests, not a live endpoint. Handoff is private packet construction/checking,
-not yet qualified resumable export/import against managed resources. An additive
-private handoff coordinator now records recovery intent through an injected
-managed-lifecycle port; the native implementation of that port remains open.
+tests, not a live endpoint. The private append-only handoff coordinator now has
+a bounded native lifecycle implementation for provider-result ingestion and
+retained verification. Windows synthetic fixtures exercise actual managed input
+claims, native publication, retained ownership and technical task completion.
 The native input bridge now supports explicit durable input-claim admission in
-an existing actor and pinned resumable input export. It does not implement the
-full result-registration/retention lifecycle port. A bounded provider-response
+an existing actor and pinned resumable input export. A bounded provider-response
 adapter now stages logical registration, admits output claims and publishes exact
 unselected bytes. Native retained actor acknowledgement/readback is now available
-for provider responses; handoff task-completion integration remains open.
+for provider responses, and the native handoff journal requires that proof before
+recording technical task completion. Production project adoption remains open.
 
 Example local contract commands (synthetic files only until W1/W2 qualify):
 
@@ -79,8 +79,8 @@ Bounds include 32 artifacts, 128 MiB total returned bytes, one 64 KiB native
 evidence node and the original native phase/resource limits. Qualification covers
 direct/manual provider returns in the explicit single-store Windows scope;
 deterministic comic/tool receipts are refused pending their native correspondence
-adapter. Retained-owner acknowledgement is now covered below; task completion,
-coordinator integration, selection and retirement remain open. See the
+adapter. Retained-owner acknowledgement and native coordinator completion are
+covered below; selection and retirement remain open. See the
 [ingress handoff](handoff/2026-11-18-workflow-response-ingress.md).
 
 ### Retained provider responses (2026-11-18)
@@ -98,9 +98,30 @@ actor advancement and use only the retained fence. They refuse missing bytes or
 lost retained coverage. They do not infer readiness from source scratch, an old
 CLI report or serialized acknowledgement. This is a bounded workflow adapter over
 SDK work, not the scene runner's producer outcome-adoption protocol. The native
-handoff coordinator port, tool/comic receipt integration, durable task completion,
-selection and retirement remain open. See the
+handoff coordinator port now connects this proof to technical task completion.
+Tool/comic receipt integration, selection and retirement remain open. See the
 [retention handoff](handoff/2026-11-18-workflow-retained-acknowledgement.md).
+
+### Native journal completion (2026-11-18)
+
+The native bridge now implements `handoff::Lifecycle` for direct/manual provider
+returns. A ticket pins original admission and retained owner plus the executable
+actually running the adapter. Import intent precedes effects; exact SDK response
+and retained work are reconciled before canonical acknowledgement controls are
+flushed, reopened, pinned and independently verified. Only then may the journal
+append `Retained` and the CLI report technical task completion. Completed resume
+rechecks actual native claims/bytes. Missing/corrupt proof cannot be replaced by
+an old success report or the local journal state.
+
+Readonly reopening grants no new mutation capability, including while a native
+Prepare is pending. Effect entrypoints reacquire original-generation fences and
+recheck actual source coverage. New retained admission releases native object
+read gates while keeping durable job protection and ordered actor fences, then
+reopens exact bytes. The integration fixture exposed this gate conflict, which
+retained-Prepare recovery alone had not exercised. Lost completion is recovered
+through original work and a pinned acknowledgement without re-importing files.
+Tool/comic worker receipts, selection, guarded actor close and scratch retirement
+remain open. See the [native completion handoff](handoff/2026-11-18-workflow-native-handoff.md).
 
 ## Ownership
 
@@ -243,10 +264,10 @@ All 247 source pins match, with source line endings preserved. This covers the
 tested source-binding/read behavior, not a full native comic workflow.
 W1 now has explicit positive input-claim admission and bounded resumable byte
 staging (below). W2 now has bounded provider-response registration and native
-ingress and retained-owner readback, with native coordinator completion still
-open. Full managed result-lifecycle
+ingress, retained-owner readback and native provider-task journal completion.
+Full producer/comic result-lifecycle
 qualification and W3-W5 remain open. See the
-[current handoff](handoff/2026-11-18-workflow-retained-acknowledgement.md).
+[current handoff](handoff/2026-11-18-workflow-native-handoff.md).
 
 ### Durable input-claim admission (2026-11-18)
 
@@ -403,8 +424,10 @@ object pins and owner acknowledgement; the coordinator never invents replacement
 
 The injected `Lifecycle::reopen` must verify that admission against the exact
 task/attempt/source closure and hold a `ProtectedJob` guard across effects and
-acknowledgement readback. Creation requires already active protection. No
-production implementation of this port is installed. The qualified CLI's
+acknowledgement readback. Creation requires already active protection. The
+bounded native provider adapter now implements this port, with original work,
+actual retained proof and output guards required before technical completion.
+Full producer/comic and production project adoption remain open. The qualified CLI's
 `prepare-protection` currently compiles its existing producer profiles and
 requires a retained native render; it is not a generic comic/manual staging
 endpoint. Wrapping it alone cannot qualify W1 for comics.
@@ -439,17 +462,18 @@ accidental changes, not an authenticated hostile journal rewrite. File contents
 are synced; power-loss durability of directory entries is not qualified. They
 do not replace native fencing, source freshness or NTFS custody qualification.
 
-Nine fault-injection tests cover process restart, publication before a lost
+Nine shared fault-injection tests cover process restart, publication before a lost
 response, owner-readback failure, stale generation, wrong attempt, stale local
 instances, preserved partial/corrupt records, cancellation and the actual
-privacy-bounded CLI. Test adapters are synthetic; no native job or cache was
-created and no project was adopted.
+privacy-bounded CLI. Those shared test adapters are synthetic. The separate
+native fixtures described above now exercise real claim/publication/retention
+and journal completion. No production project is adopted.
 
 | Package | Owner / entry | Exit evidence still required |
 | --- | --- | --- |
-| W0 task/result contracts | reel-workflow; committed REEL base and synthetic inputs | Bounded DAG/identity checks, direct fake and handoff equivalence, stale/duplicate/corrupt refusal, no-clobber CLI. This is the current slice. |
+| W0 task/result contracts | reel-workflow; committed REEL base and synthetic inputs | Bounded DAG/identity checks, direct fake and handoff equivalence, stale/duplicate/corrupt refusal, no-clobber CLI are implemented. Production adoption is separate. |
 | W1 resumable manual staging | REEL lifecycle adapter; exact qualified SDK/source profile | Actual accepted protection, exact closure/staging, interrupted export, days-long reopen/cancel and conservative slot return under synthetic fixtures. |
-| W2 idempotent external candidate registration | REEL adapter over existing Tig publisher and retained owner | Stable task/attempt/artifact identity; repeated import, failed response, publish-before-ack and recovery; no task completion before retained owner ack. |
+| W2 idempotent external candidate registration | REEL adapter over existing Tig publisher and retained owner | Bounded provider imports, retained native proof and journal completion now pass synthetic native fixtures. Tool/comic receipts and full producer integration remain required. |
 | W3 expected-baseline selection application | REEL Git adapter over Tig proposals | Expected-ref compare/apply or checked merge; new-path registration separately admitted; stale main/other writer refuses without overwriting selection. |
 | W4 structured integration errors | REEL adapters | Normalize typed SDK observations; unknown I/O/uncertain CLI failure remains NeedsRecovery or Unsupported. Never infer safe retry from exit 1. |
 | W5 providers, review and project adoption | REEL + each project | API/proxy/subprocess adapters, explicit image/speech operations, issue dedup/closure, bilingual film fix/isolation, second synthetic project and owned rollback. |

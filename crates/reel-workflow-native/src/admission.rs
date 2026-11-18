@@ -89,6 +89,12 @@ pub struct ClaimsGuard {
     _fences: Vec<reel_assets::admission::MetadataLock>,
     _prepared: Prepared,
 }
+/// Passive original-generation recovery fence. May coexist with a native
+/// Prepare; it grants no mutation capability and is not a settled ClaimsGuard.
+pub(crate) struct RecoveryGuard {
+    _fences: Vec<reel_assets::admission::MetadataLock>,
+    _prepared: Prepared,
+}
 pub(crate) fn limits() -> projection::Limits {
     projection::Limits {
         objects: 512,
@@ -491,8 +497,30 @@ impl Prepared {
     fn reopen_checked(self, receipt: &Receipt, companion: Option<&Key>) -> Result<ClaimsGuard> {
         let (mut index, mut nodes) = self.stores(Some(receipt))?;
         let fences = self.actor_fences(&index, companion)?;
+        self.verify_live(receipt, &mut index, &mut nodes)?;
+        Ok(ClaimsGuard {
+            _fences: fences,
+            _prepared: self,
+        })
+    }
+    pub(crate) fn recovery_guard(self, receipt: &Receipt) -> Result<RecoveryGuard> {
+        self.check_receipt(receipt)?;
+        let (mut index, mut nodes) = self.stores_with_pending(Some(receipt), true)?;
+        let fences = self.actor_fences(&index, None)?;
+        self.verify_live(receipt, &mut index, &mut nodes)?;
+        Ok(RecoveryGuard {
+            _fences: fences,
+            _prepared: self,
+        })
+    }
+    fn verify_live(
+        &self,
+        receipt: &Receipt,
+        index: &mut Index,
+        nodes: &mut MetadataStore,
+    ) -> Result<()> {
         let expected = slots::activation(
-            &index,
+            index,
             &self.profile.scope,
             &self.input,
             &self.source_binding,
@@ -503,12 +531,12 @@ impl Prepared {
             return Err(error(ErrorKind::Conflict, "admission-activation-candidate"));
         }
         slots::verify_activation(
-            &index,
+            index,
             &self.profile.scope,
             &self.input,
             &self.source_binding,
             &receipt.activation,
-            &nodes,
+            nodes,
         )
         .map_err(native_error)?;
         let operation = Key::parse(&format!(
@@ -521,7 +549,7 @@ impl Prepared {
             .as_str()
         ))
         .map_err(|_| error(ErrorKind::Invalid, "admission-operation-key"))?;
-        if work::lookup(&mut index, &operation)
+        if work::lookup(index, &operation)
             .map_err(|e| native_error(e.into()))?
             .as_ref()
             != Some(&receipt.work)
@@ -531,9 +559,8 @@ impl Prepared {
                 "admission-original-work-reference",
             ));
         }
-        let record =
-            work::read(&mut index, &receipt.work, &nodes).map_err(|e| native_error(e.into()))?;
-        if !work::complete(&mut index, &receipt.work).map_err(|e| native_error(e.into()))?
+        let record = work::read(index, &receipt.work, nodes).map_err(|e| native_error(e.into()))?;
+        if !work::complete(index, &receipt.work).map_err(|e| native_error(e.into()))?
             || record.evidence.as_ref() != Some(&receipt.activation)
             || record.update.actor != self.profile.scope.actor
             || record.update.owner != self.profile.scope.owner
@@ -547,12 +574,12 @@ impl Prepared {
             ));
         }
         let current = index
-            .actor(&mut nodes, &self.profile.scope.actor)
+            .actor(nodes, &self.profile.scope.actor)
             .map_err(|e| native_error(e.into()))?;
-        let binding = envelope::read_binding(&current.selection, &mut nodes, limits())
+        let binding = envelope::read_binding(&current.selection, nodes, limits())
             .map_err(|e| native_error(e.into()))?;
         let entries = Tree::from_root(current.selection.root)
-            .entries(&mut nodes, TreeLimits::default())
+            .entries(nodes, TreeLimits::default())
             .map_err(|_| error(ErrorKind::Integrity, "admission-current-tree"))?
             .0;
         let present: BTreeSet<_> = entries.into_values().collect();
@@ -565,10 +592,7 @@ impl Prepared {
         {
             return Err(error(ErrorKind::Stale, "admission-generation-or-coverage"));
         }
-        Ok(ClaimsGuard {
-            _fences: fences,
-            _prepared: self,
-        })
+        Ok(())
     }
     fn actor_fences(
         &self,

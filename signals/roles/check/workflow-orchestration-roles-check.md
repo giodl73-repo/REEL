@@ -221,3 +221,25 @@ retirement qualification. Native handoff coordinator completion, tool/comic work
 receipts, selection and retirement stay open. Technical acknowledgement grants no
 creative, translation, consent, rights, print or release approval. These remain
 producer-applied checklists, not independent review or actual human decisions.
+
+2026-11-18 native handoff follow-up, producer-applied engineering, editor,
+comics-editor and rights/provenance lenses: task completion must follow actual
+retained native proof, never a deserialized success flag. The adapter now binds
+original admission/retained target and the actual running executable, records
+intent before effects, reconciles original work and holds verified proof through
+completion append. Completed resume rechecks current retained claims and bytes;
+corrupt acknowledgements refuse while leaving history intact. Lost completion
+does not require a second publication or replacement attempt.
+
+The coupled fixture exposed native object read gates conflicting with new retained
+admission. Read handles now close for admission while positive job protection and
+ordered actor fences remain, original response coverage is checked even for
+staged retries, and output bytes reopen afterward. Passive recovery fencing is
+distinct from settled mutation permission. Private control writers/namespaces
+are bounded and cooperate through existing locks; partials are preserved.
+
+Technical `Retained` means the task's declared outputs passed byte/custody gates.
+It does not approve text, translation, images, voice/likeness, fonts, comics,
+printing or release. Tool/comic worker integration, explicit selection and
+guarded close/retirement remain open. This is producer-applied review with
+synthetic native evidence, not independent reviewers or human approval.

@@ -32,6 +32,55 @@ fn plan(
 }
 
 impl Prepared {
+    pub(crate) fn validate_retained_target(
+        &self,
+        receipt: &Receipt,
+        target: &Target,
+    ) -> Result<()> {
+        self.check_receipt(receipt)?;
+        let (index, _) = self.stores_with_pending(Some(receipt), true)?;
+        self.retained_scope(&index, target)?;
+        Ok(())
+    }
+    pub(crate) fn has_retention_work(
+        &self,
+        receipt: &Receipt,
+        result: &reel_workflow::ReturnedResult,
+        target: &Target,
+    ) -> Result<bool> {
+        self.check_receipt(receipt)?;
+        let (mut index, mut nodes) = self.stores_with_pending(Some(receipt), true)?;
+        self.retained_scope(&index, target)?;
+        let (operation, raw, outputs) = crate::response::identity(&self.profile, receipt, result)?;
+        let Some(reference) =
+            work::lookup(&mut index, &operation).map_err(|e| native_error(e.into()))?
+        else {
+            return Ok(false);
+        };
+        let record =
+            work::read(&mut index, &reference, &nodes).map_err(|e| native_error(e.into()))?;
+        self.check_response(
+            &record,
+            receipt,
+            &Object::from_bytes(&raw),
+            &outputs,
+            &mut nodes,
+        )?;
+        if !work::complete(&mut index, &reference).map_err(|e| native_error(e.into()))? {
+            return Ok(false);
+        }
+        let candidate = self.response_candidate(receipt, result, &mut index, &mut nodes)?;
+        let (operation, _) = plan(&self.profile, receipt, &candidate, target)?;
+        let Some(reference) =
+            work::lookup(&mut index, &operation).map_err(|e| native_error(e.into()))?
+        else {
+            return Ok(false);
+        };
+        self.retained_record(
+            receipt, &candidate, target, &reference, &mut nodes, &mut index,
+        )?;
+        Ok(true)
+    }
     pub(crate) fn completed_retention(
         &self,
         receipt: &Receipt,
@@ -47,6 +96,20 @@ impl Prepared {
             &target.actor,
         )
         .map_err(native_error)?;
+        let (response_operation, _, _) = crate::response::identity(&self.profile, receipt, result)?;
+        if work::lookup(&mut index, &response_operation)
+            .map_err(|e| native_error(e.into()))?
+            .is_none()
+        {
+            return Ok(None);
+        }
+        let response_reference = work::lookup(&mut index, &response_operation)
+            .map_err(|e| native_error(e.into()))?
+            .ok_or_else(|| error(ErrorKind::NeedsRecovery, "retention-response-disappeared"))?;
+        if !work::complete(&mut index, &response_reference).map_err(|e| native_error(e.into()))? {
+            // No retained acknowledgement can exist before response admission.
+            return Ok(None);
+        }
         let candidate = self.response_candidate(receipt, result, &mut index, &mut nodes)?;
         let (operation, raw) = plan(&self.profile, receipt, &candidate, target)?;
         let Some(reference) =
@@ -309,6 +372,25 @@ impl ClaimsGuard {
         p.retained_scope(&index, target)?;
         let (operation, raw) = plan(&p.profile, receipt, candidate, target)?;
         let evidence = Object::from_bytes(&raw);
+        let source = index
+            .actor(&mut nodes, &p.profile.scope.actor)
+            .map_err(|e| native_error(e.into()))?;
+        let source_objects: BTreeSet<_> = entries(&source.selection, &mut nodes)?
+            .into_values()
+            .chain([source.selection.root.clone()])
+            .collect();
+        let original_response =
+            work::read(&mut index, &candidate.work, &nodes).map_err(|e| native_error(e.into()))?;
+        let required: BTreeSet<_> = entries(&original_response.update.selection, &mut nodes)?
+            .into_values()
+            .chain([original_response.update.selection.root])
+            .collect();
+        if !source.ready || !required.is_subset(&source_objects) {
+            return Err(error(
+                ErrorKind::Stale,
+                "retention-original-response-coverage",
+            ));
+        }
         let reference = if let Some(reference) =
             work::lookup(&mut index, &operation).map_err(|e| native_error(e.into()))?
         {
@@ -323,18 +405,9 @@ impl ClaimsGuard {
             if !retained.ready {
                 return Err(error(ErrorKind::Denied, "retention-target-unready"));
             }
-            let source = index
-                .actor(&mut nodes, &p.profile.scope.actor)
-                .map_err(|e| native_error(e.into()))?;
             let mut next = entries(&retained.selection, &mut nodes)?;
-            let mut objects: BTreeSet<_> = entries(&source.selection, &mut nodes)?
-                .into_values()
-                .chain([
-                    source.selection.root,
-                    retained.selection.root.clone(),
-                    evidence.clone(),
-                ])
-                .collect();
+            let mut objects = source_objects;
+            objects.extend([retained.selection.root.clone(), evidence.clone()]);
             objects.extend(next.values().cloned());
             let total = objects.iter().try_fold(0u64, |n, o| n.checked_add(o.bytes));
             if objects.len() > 512 || total.is_none_or(|n| n > 1024 * 1024 * 1024) {

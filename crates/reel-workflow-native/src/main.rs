@@ -63,6 +63,53 @@ fn new_receipt(
 }
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
+        [command, packet, profile, journal, apply]
+            if command == "create-handoff" && apply == "--apply" =>
+        {
+            let packet = read_control(Path::new(packet))?;
+            let profile = read_control(Path::new(profile))?;
+            let state =
+                reel_workflow_native::handoff::create(Path::new(journal), &packet, &profile)?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"native-handoff","state":state,"task_completed":false,"selected":false,"input_claims_released":false}),
+            )
+        }
+        [command, journal, profile, result, returns, apply]
+            if command == "import-handoff" && apply == "--apply" =>
+        {
+            let profile = read_control(Path::new(profile))?;
+            let result = read_control(Path::new(result))?;
+            let returns = read_control(Path::new(returns))?;
+            let state = reel_workflow_native::handoff::import(
+                Path::new(journal),
+                &profile,
+                result,
+                &returns,
+            )?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"native-handoff","state":state,
+                "task_completed":state == reel_workflow::handoff::State::Retained,"selected":false,"input_claims_released":false,"scratch_retirement_authorized":false}),
+            )
+        }
+        [command, journal, profile, returns, apply]
+            if command == "resume-handoff" && apply == "--apply" =>
+        {
+            let profile = read_control(Path::new(profile))?;
+            let returns = if returns == "-" {
+                None
+            } else {
+                Some(read_control(Path::new(returns))?)
+            };
+            let state = reel_workflow_native::handoff::resume(
+                Path::new(journal),
+                &profile,
+                returns.as_ref(),
+            )?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"native-handoff","state":state,
+                "task_completed":state == reel_workflow::handoff::State::Retained,"selected":false,"input_claims_released":false,"scratch_retirement_authorized":false}),
+            )
+        }
         [
             command,
             packet,
@@ -328,9 +375,13 @@ fn main() -> ExitCode {
             "reel-workflow-native stage-retention PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT RETAINED_TARGET NEW_ACK --apply\n",
             "reel-workflow-native retain-response PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT RETAINED_TARGET NEW_ACK --apply\n",
             "reel-workflow-native verify-retained PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT ACK\n",
+            "reel-workflow-native create-handoff PACKET HANDOFF_PROFILE NEW_JOURNAL --apply\n",
+            "reel-workflow-native import-handoff JOURNAL HANDOFF_PROFILE RESULT RETURNS --apply\n",
+            "reel-workflow-native resume-handoff JOURNAL HANDOFF_PROFILE RETURNS_OR_DASH --apply\n",
             "Response staging records work; registration admits output claims; ingestion publishes native bytes.\n",
             "Retain-response acknowledges retained ownership; verify-retained checks live retained protection and bytes.\n",
-            "No provider execution, task completion, cleanup, actor close or selection."
+            "Native handoff completion requires original work, actual retained-owner proof and exact output bytes.\n",
+            "No provider execution, cleanup, actor close or selection."
         ));
         return ExitCode::SUCCESS;
     }

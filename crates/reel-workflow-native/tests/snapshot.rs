@@ -1440,6 +1440,464 @@ fn retained_native_acknowledgement_replays_and_survives_source_advance_but_not_l
     }
 }
 
+#[cfg(windows)]
+fn handoff_profile(
+    case: &AdmissionCase,
+    receipt: reel_workflow_native::admission::Receipt,
+    executable: PathBuf,
+) -> reel_workflow_native::handoff::Profile {
+    let raw = fs::read(&executable).unwrap();
+    let controls = case.temp.path().join("acknowledgements");
+    fs::create_dir(&controls).unwrap();
+    reel_workflow_native::handoff::Profile {
+        schema: "reel.workflow-native-handoff.v1".into(),
+        source: serde_json::from_slice(&serde_json::to_vec(&case.source).unwrap()).unwrap(),
+        admission: case.profile.clone(),
+        binding: reel_workflow_native::handoff::Binding {
+            schema: "reel.workflow-native-handoff-binding.v1".into(),
+            admission: receipt,
+            target: retained_target(),
+        },
+        runtime: Tool {
+            path: executable,
+            sha256: digest(&raw),
+            bytes: raw.len() as u64,
+        },
+        acknowledgements: controls,
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn native_handoff_records_intent_and_preserves_claims_when_provider_is_unavailable() {
+    use reel_workflow::handoff::{Journal, State};
+    use reel_workflow_native::{admission::Prepared, handoff};
+    let fixture = Fixture::new();
+    let case = AdmissionCase::new(&fixture);
+    let receipt = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    let profile = handoff_profile(&case, receipt, std::env::current_exe().unwrap());
+    let journal = case.temp.path().join("journal");
+    assert_eq!(
+        handoff::create(&journal, &fixture.packet, &profile).unwrap(),
+        State::Waiting
+    );
+    let (result, returns) = response_fixture(&fixture.packet, &case.temp.path().join("returns"));
+    assert!(handoff::import(&journal, &profile, result.clone(), &returns).is_err());
+    let observed = Journal::open(&journal).unwrap();
+    assert_eq!(observed.state(), State::ImportPending);
+    assert_eq!(observed.result(), Some(&result));
+    assert!(observed.acknowledgement().is_none());
+    assert!(handoff::resume(&journal, &profile, None).is_err());
+    assert_eq!(
+        Journal::open(&journal).unwrap().state(),
+        State::ImportPending
+    );
+    assert_eq!(
+        case.protected(&Object::from_bytes(b"synthetic input")),
+        vec![case.profile.scope.actor.clone()]
+    );
+    assert!(!case.source.source.pool.repository.exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn native_handoff_pins_the_actual_runtime_target_and_control_namespaces() {
+    use reel_workflow::handoff::{Journal, State};
+    use reel_workflow_native::{admission::Prepared, handoff};
+    let fixture = Fixture::new();
+    let case = AdmissionCase::new(&fixture);
+    let receipt = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    let mut profile = handoff_profile(&case, receipt, fixture.profile.git.path.clone());
+    let journal = case.temp.path().join("journal");
+    assert_eq!(
+        handoff::create(&journal, &fixture.packet, &profile)
+            .unwrap_err()
+            .kind,
+        ErrorKind::Conflict
+    );
+    assert!(!journal.exists());
+    let executable = std::env::current_exe().unwrap();
+    let raw = fs::read(&executable).unwrap();
+    profile.runtime = Tool {
+        path: executable,
+        sha256: digest(&raw),
+        bytes: raw.len() as u64,
+    };
+    assert_eq!(
+        handoff::create(&journal, &fixture.packet, &profile).unwrap(),
+        State::Waiting
+    );
+    let original = profile.binding.target.owner.clone();
+    profile.binding.target.owner = tig_store::Key::parse("different-owner").unwrap();
+    assert_eq!(
+        handoff::resume(&journal, &profile, None).unwrap_err().kind,
+        ErrorKind::Conflict
+    );
+    profile.binding.target.owner = original;
+    profile.runtime.sha256 = "0".repeat(64);
+    assert_eq!(
+        handoff::resume(&journal, &profile, None).unwrap_err().kind,
+        ErrorKind::Conflict
+    );
+    assert_eq!(Journal::open(&journal).unwrap().state(), State::Waiting);
+    let controls = profile.acknowledgements.clone();
+    profile.acknowledgements = case.profile.metadata_root.clone();
+    assert!(handoff::resume(&journal, &profile, None).is_err());
+    profile.acknowledgements = journal;
+    assert!(handoff::resume(&profile.acknowledgements, &profile, None).is_err());
+    profile.acknowledgements = controls;
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "Existing synthetic native pool only: journal/native Prepare/lost completion recovery, no project assets or cleanup"]
+fn native_handoff_completes_only_after_retained_proof_and_recovers_lost_completion() {
+    use reel_workflow::handoff::{Journal, State};
+    use reel_workflow_native::{NativeProfile, admission::Prepared, response};
+    use tig_store::{
+        metadata::MetadataStore,
+        source_claims::protection::{self, Index, work},
+    };
+    let path =
+        std::env::var_os("REEL_NATIVE_INPUT_FIXTURE").expect("Set REEL_NATIVE_INPUT_FIXTURE");
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    let object: Object = serde_json::from_value(value["object"].clone()).unwrap();
+    let native: tig_git::annex::workflow::reader::Profile =
+        serde_json::from_value(value["source"].clone()).unwrap();
+    let annex: Tool = serde_json::from_value(value["annex"].clone()).unwrap();
+    let mut fixture = Fixture::with_object(object.clone());
+    let git_raw = fs::read(&native.pool.git).unwrap();
+    fixture.profile.git = Tool {
+        path: native.pool.git.clone(),
+        sha256: digest(&git_raw),
+        bytes: git_raw.len() as u64,
+    };
+    let mut case = AdmissionCase::with_store(&fixture, native.store.clone());
+    let control = case.source.source.pool.control.clone();
+    case.source = NativeProfile {
+        snapshot: fixture.profile.clone(),
+        annex,
+        source: native,
+    };
+    case.source.source.pool.control = control;
+    let receipt = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    let executable = std::env::var_os("REEL_NATIVE_HANDOFF_TOOL")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_reel-workflow-native")));
+    let profile = handoff_profile(&case, receipt.clone(), executable.clone());
+    let (result, returns) = response_fixture(&fixture.packet, &case.temp.path().join("returns"));
+    let packet_file = case.temp.path().join("packet.json");
+    let profile_file = case.temp.path().join("handoff.json");
+    let result_file = case.temp.path().join("result.json");
+    let returns_file = case.temp.path().join("returns.json");
+    let missing_file = case.temp.path().join("missing-returns.json");
+    let mut missing = returns.clone();
+    missing.files.insert("note".into(), "missing.txt".into());
+    for (path, raw) in [
+        (&packet_file, serde_json::to_vec(&fixture.packet).unwrap()),
+        (&profile_file, serde_json::to_vec(&profile).unwrap()),
+        (&result_file, serde_json::to_vec(&result).unwrap()),
+        (&returns_file, serde_json::to_vec(&returns).unwrap()),
+        (&missing_file, serde_json::to_vec(&missing).unwrap()),
+    ] {
+        fs::write(path, raw).unwrap();
+    }
+    let journal = case.temp.path().join("journal");
+    let created = Command::new(&executable)
+        .arg("create-handoff")
+        .arg(&packet_file)
+        .arg(&profile_file)
+        .arg(&journal)
+        .arg("--apply")
+        .output()
+        .unwrap();
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stdout)
+    );
+    let failed = Command::new(&executable)
+        .arg("import-handoff")
+        .arg(&journal)
+        .arg(&profile_file)
+        .arg(&result_file)
+        .arg(&missing_file)
+        .arg("--apply")
+        .output()
+        .unwrap();
+    assert!(!failed.status.success());
+    assert_eq!(
+        Journal::open(&journal).unwrap().state(),
+        State::ImportPending
+    );
+    assert_eq!(
+        case.protected(&object),
+        vec![case.profile.scope.actor.clone()]
+    );
+    // Stage original response work, then interrupt its native Prepare. Reopening
+    // the journal must be passive; only original SDK reconciliation may finish.
+    let staged = response::stage(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &result,
+        &returns,
+    )
+    .unwrap();
+    let mut nodes =
+        MetadataStore::open(&case.profile.metadata_root, &case.profile.metadata_minimum).unwrap();
+    let mut index = Index::open(&case.profile.index_root, &case.profile.index_minimum).unwrap();
+    let record = work::read(&mut index, &staged.work, &nodes).unwrap();
+    let mut interrupted = false;
+    assert!(
+        index
+            .update_hook(&record.update, &mut nodes, |stage| {
+                if stage == protection::Stage::Prepared {
+                    interrupted = true;
+                    Err(protection::Error::Unknown)
+                } else {
+                    Ok(())
+                }
+            })
+            .is_err()
+    );
+    assert!(interrupted);
+    drop(index);
+    drop(nodes);
+    let resume = |directory: &Path, returned: &Path| {
+        Command::new(&executable)
+            .arg("resume-handoff")
+            .arg(directory)
+            .arg(&profile_file)
+            .arg(returned)
+            .arg("--apply")
+            .output()
+            .unwrap()
+    };
+    let completed = resume(&journal, &returns_file);
+    if !completed.status.success() {
+        eprintln!(
+            "Synthetic diagnostic control root: {}",
+            case.temp.path().display()
+        );
+        let _ = case.temp.keep();
+        let _ = fixture.temp.keep();
+        panic!("{}", String::from_utf8_lossy(&completed.stdout));
+    }
+    assert!(
+        completed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&completed.stdout)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&completed.stdout).unwrap();
+    assert_eq!(report["task_completed"], true);
+    assert_eq!(report["selected"], false);
+    assert_eq!(report["input_claims_released"], false);
+    assert_eq!(report["scratch_retirement_authorized"], false);
+    let complete = Journal::open(&journal).unwrap();
+    assert_eq!(complete.state(), State::Retained);
+    let proof = complete.acknowledgement().unwrap().clone();
+    assert_eq!(
+        case.protected(&object),
+        vec![
+            profile.binding.target.actor.clone(),
+            case.profile.scope.actor.clone()
+        ]
+    );
+    let original_index = Index::open(&case.profile.index_root, &case.profile.index_minimum)
+        .unwrap()
+        .checkpoint();
+    // A new private control copy of only the durable prefix models a lost final
+    // journal append. Original records and native publications remain untouched.
+    let lost_reply = case.temp.path().join("lost-reply");
+    fs::create_dir(&lost_reply).unwrap();
+    for name in ["00000.json", "00001.json"] {
+        fs::copy(journal.join(name), lost_reply.join(name)).unwrap();
+    }
+    let recovered = resume(&lost_reply, Path::new("-"));
+    assert!(
+        recovered.status.success(),
+        "{}",
+        String::from_utf8_lossy(&recovered.stdout)
+    );
+    assert_eq!(
+        Journal::open(&lost_reply).unwrap().acknowledgement(),
+        Some(&proof)
+    );
+    assert_eq!(
+        Index::open(&case.profile.index_root, &original_index)
+            .unwrap()
+            .checkpoint(),
+        original_index
+    );
+    let busy_source = reel_assets::admission::lock(
+        &case
+            .profile
+            .scope
+            .coordination_root
+            .join("tig-native-publication")
+            .join(case.profile.index_identity.as_str())
+            .join(tig_core::Digest::blob(case.profile.scope.actor.as_str().as_bytes()).as_str()),
+    )
+    .unwrap();
+    let verified = resume(&journal, Path::new("-"));
+    assert!(
+        verified.status.success(),
+        "{}",
+        String::from_utf8_lossy(&verified.stdout)
+    );
+    drop(busy_source);
+    let ack_path = profile.acknowledgements.join(format!(
+        "retained-{}-attempt-1.json",
+        fixture.packet.task_key
+    ));
+    let ack_bytes = fs::read(&ack_path).unwrap();
+    fs::write(&ack_path, b"synthetic interrupted control").unwrap();
+    assert!(!resume(&journal, Path::new("-")).status.success());
+    assert_eq!(Journal::open(&journal).unwrap().state(), State::Retained);
+    fs::write(&ack_path, &ack_bytes).unwrap();
+    if let Some(directory) = std::env::var_os("REEL_HANDOFF_EVIDENCE_DIRECTORY") {
+        use std::io::Write;
+        let directory = PathBuf::from(directory);
+        assert!(directory.is_absolute() && directory.is_dir());
+        for (name, raw) in [
+            ("packet.json", fs::read(&packet_file).unwrap()),
+            ("profile.json", fs::read(&profile_file).unwrap()),
+            ("result.json", fs::read(&result_file).unwrap()),
+            ("returns.json", fs::read(&returns_file).unwrap()),
+            ("completion-report.json", completed.stdout),
+            ("recovery-report.json", recovered.stdout),
+            ("verification-report.json", verified.stdout),
+            (
+                "locations.json",
+                serde_json::to_vec(&json!({"journal":journal,"recovered_journal":lost_reply}))
+                    .unwrap(),
+            ),
+        ] {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(directory.join(name))
+                .unwrap();
+            file.write_all(&raw).unwrap();
+            file.sync_all().unwrap();
+        }
+        let _ = case.temp.keep();
+        let _ = fixture.temp.keep();
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn staged_retention_refuses_lost_original_response_coverage_before_new_admission() {
+    use reel_workflow_native::{admission::Prepared, response, retention};
+    use tig_core::tree::{Tree, TreeLimits};
+    use tig_store::{
+        metadata::MetadataStore,
+        source_claims::protection::{self, Index, work},
+    };
+    let fixture = Fixture::new();
+    let case = AdmissionCase::new(&fixture);
+    let receipt = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    let (result, returns) = response_fixture(&fixture.packet, &case.temp.path().join("returns"));
+    response::register(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &result,
+        &returns,
+    )
+    .unwrap();
+    let staged = retention::stage(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &result,
+        &retained_target(),
+    )
+    .unwrap();
+    let mut nodes =
+        MetadataStore::open(&case.profile.metadata_root, &staged.metadata_checkpoint).unwrap();
+    let mut index = Index::open(&case.profile.index_root, &staged.index_checkpoint).unwrap();
+    let current = index.actor(&mut nodes, &case.profile.scope.actor).unwrap();
+    let old = Tree::from_root(current.selection.root)
+        .entries(&mut nodes, TreeLimits::default())
+        .unwrap()
+        .0;
+    let original_input = work::read(&mut index, &receipt.work, &nodes)
+        .unwrap()
+        .update
+        .selection;
+    let next = Tree::from_root(original_input.root.clone())
+        .entries(&mut nodes, TreeLimits::default())
+        .unwrap()
+        .0;
+    let mut changes = BTreeMap::new();
+    for (path, object) in &next {
+        if old.get(path) != Some(object) {
+            changes.insert(path.clone(), Some(object.clone()));
+        }
+    }
+    for path in old.keys() {
+        if !next.contains_key(path) {
+            changes.insert(path.clone(), None);
+        }
+    }
+    let update = protection::Update {
+        operation: tig_store::Key::parse("fixture-response-coverage-loss").unwrap(),
+        actor: case.profile.scope.actor.clone(),
+        owner: case.profile.scope.owner.clone(),
+        expected_revision: current.revision,
+        selection: original_input,
+        changes,
+        ready: true,
+    };
+    let reference = work::stage(&mut index, &update, None, &mut nodes).unwrap();
+    work::execute(&mut index, &reference, &mut nodes).unwrap();
+    drop(index);
+    drop(nodes);
+    Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .reopen(&receipt)
+        .unwrap();
+    assert_eq!(
+        retention::stage(
+            &fixture.packet,
+            &case.source,
+            &case.profile,
+            &receipt,
+            &result,
+            &retained_target()
+        )
+        .unwrap_err()
+        .kind,
+        ErrorKind::Stale
+    );
+    assert!(
+        case.protected(&Object::from_bytes(b"synthetic response"))
+            .is_empty()
+    );
+    assert_eq!(
+        case.protected(&Object::from_bytes(b"synthetic input")),
+        vec![case.profile.scope.actor.clone()]
+    );
+}
+
 struct AdmissionCase {
     temp: tempfile::TempDir,
     profile: reel_workflow_native::admission::Profile,

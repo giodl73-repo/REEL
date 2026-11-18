@@ -25,7 +25,8 @@ native reads. Explicit input admission can protect declared resources in an
 existing job actor. Pinned private tickets support resumable input staging.
 Returned provider files can be registered by task/attempt, protected and ingested
 as unselected native candidates. Retained actor registration and exact historical
-readback now have a bounded native adapter; task-completion integration remains open.
+readback now have a bounded native adapter. The native handoff journal records
+technical task completion only after actual retained proof and output reopening.
 
 [Publication contracts](docs/publication.md) add film and comic language editions,
 ordered page/panel metadata and independently tracked output sets through
