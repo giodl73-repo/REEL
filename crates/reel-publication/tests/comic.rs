@@ -188,6 +188,330 @@ fn request(
 }
 
 #[test]
+fn issue_parts_reassemble_in_order_and_restore_without_original_folders() {
+    use reel_publication::comic_issue::{Assembly, Part, Plan, assemble};
+    use reel_publication::{
+        Artifact, ComicPage, Content, Edition, OutputContract, PageKind, Publication,
+        ReadingDirection,
+    };
+    use std::collections::BTreeMap;
+    let temp = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir_in(temp.path()).unwrap();
+    let packets = tempfile::tempdir_in(temp.path()).unwrap();
+    let root = source.path();
+    let (font_bytes, license_bytes, family) = font();
+    let font = pin(root, "fonts/body.ttf", &font_bytes);
+    let license = pin(root, "fonts/license.txt", &license_bytes);
+    let (bg, person, lamp) = artwork();
+    let art = [
+        pin(root, "art/background.png", &bg),
+        pin(root, "art/person.png", &person),
+        pin(root, "art/lamp.png", &lamp),
+    ];
+    let mut pages = Vec::new();
+    let mut pins = Vec::new();
+    for id in ["page01", "page02", "page03"] {
+        let source = page(
+            id,
+            [
+                if id == "page01" {
+                    "La luz sigue."
+                } else if id == "page02" {
+                    "Seguimos."
+                } else {
+                    "Hasta mañana."
+                },
+                "Juntos.",
+            ],
+            &art,
+        );
+        let pin = json(root, &format!("pages/{id}.json"), &source);
+        pages.push(ComicPage {
+            id: id.into(),
+            kind: PageKind::Story,
+            source: Artifact {
+                logical_id: format!("sources/{id}"),
+                sha256: pin.sha256.clone(),
+                bytes: pin.bytes,
+                media_type: "application/json".into(),
+            },
+            panel_order: source.panels.iter().map(|p| p.id.clone()).collect(),
+            utterance_order: source.utterances.iter().map(|u| u.id.clone()).collect(),
+            spread_id: if id == "page01" {
+                None
+            } else {
+                Some("spread-a".into())
+            },
+        });
+        pins.push(pin);
+    }
+    let mut plan = Plan {
+        schema: "reel.comic-issue-plan.v1".into(),
+        publication: Publication {
+            schema: "reel.publication.v1".into(),
+            id: "synthetic-lamp".into(),
+            editions: vec![Edition {
+                id: "reading-es".into(),
+                language: "es".into(),
+                content: Content::Comic {
+                    reading_direction: ReadingDirection::RightToLeft,
+                    pages,
+                },
+                outputs: BTreeMap::from([
+                    (
+                        "reading.pdf".into(),
+                        OutputContract {
+                            media_type: "application/pdf".into(),
+                            max_bytes: 64 * 1024 * 1024,
+                            required: true,
+                        },
+                    ),
+                    (
+                        "transcript.json".into(),
+                        OutputContract {
+                            media_type: "application/json".into(),
+                            max_bytes: 1024 * 1024,
+                            required: true,
+                        },
+                    ),
+                ]),
+            }],
+        },
+        edition_id: "reading-es".into(),
+        parts: vec![
+            Part {
+                id: "opening".into(),
+                pages: vec!["page01".into()],
+            },
+            Part {
+                id: "spread".into(),
+                pages: vec!["page02".into(), "page03".into()],
+            },
+        ],
+    };
+    plan.check().unwrap();
+    let mut large = plan.clone();
+    let Content::Comic {
+        pages: large_pages, ..
+    } = &mut large.publication.editions[0].content
+    else {
+        unreachable!()
+    };
+    let template = large_pages[0].clone();
+    *large_pages = (0..40)
+        .map(|i| ComicPage {
+            id: format!("page{i:03}"),
+            ..template.clone()
+        })
+        .collect();
+    large.parts = vec![
+        Part {
+            id: "first".into(),
+            pages: large_pages[..32].iter().map(|p| p.id.clone()).collect(),
+        },
+        Part {
+            id: "last".into(),
+            pages: large_pages[32..].iter().map(|p| p.id.clone()).collect(),
+        },
+    ];
+    large.check().unwrap();
+    let next = large.parts[1].pages.remove(0);
+    large.parts[0].pages.push(next);
+    assert!(large.check().is_err()); // metadata supports larger issues, each worker remains bounded
+    assert_eq!(
+        plan.part_publication("spread").unwrap().editions[0].language,
+        "es"
+    );
+    let mut invalid = plan.clone();
+    invalid.parts[0].pages.push("page02".into());
+    invalid.parts[1].pages.remove(0);
+    assert!(invalid.check().is_err()); // authored spread cannot be split
+    invalid = plan.clone();
+    invalid.parts[1].pages.reverse();
+    assert!(invalid.check().is_err());
+    invalid = plan.clone();
+    invalid.parts.pop();
+    assert!(invalid.check().is_err());
+    invalid = plan.clone();
+    invalid.parts[1].id = "OPENING".into();
+    assert!(invalid.check().is_err());
+    let mut part_receipts = BTreeMap::new();
+    for (id, page_pins) in [
+        ("opening", vec![pins[0].clone()]),
+        ("spread", pins[1..].to_vec()),
+    ] {
+        // Same edition identity; requests live separately and are captured in packets.
+        let request = request(
+            root,
+            "reading-es",
+            "es",
+            &family,
+            &font,
+            &license,
+            page_pins,
+        );
+        let output = packets.path().join(id);
+        render(&request, &output).unwrap();
+        fs::remove_file(request).unwrap(); // exclusively owned fixture request, reused name
+        let receipt = object(&fs::read(output.join("receipt.json")).unwrap());
+        part_receipts.insert(
+            id.into(),
+            Pin {
+                path: format!("{id}/receipt.json"),
+                sha256: receipt.sha256,
+                bytes: receipt.bytes,
+            },
+        );
+    }
+    // Only captured sources are available to assembly; the source checkout is gone.
+    source.close().unwrap();
+    let plan_pin = json(packets.path(), "plan.json", &plan);
+    let cli = std::process::Command::new(env!("CARGO_BIN_EXE_reel-publication"))
+        .args(["comic-issue-check"])
+        .arg(packets.path().join("plan.json"))
+        .output()
+        .unwrap();
+    assert!(cli.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&cli.stdout).unwrap();
+    assert_eq!(report["outputs_written"], false);
+    assert_eq!(report["payloads_verified"], false);
+    let assembly = Assembly {
+        schema: "reel.comic-issue-assembly.v1".into(),
+        plan: plan_pin,
+        parts: part_receipts,
+        limits: Limits {
+            input_bytes: 128 * 1024 * 1024,
+            output_bytes: 128 * 1024 * 1024,
+        },
+    };
+    let request_path = packets.path().join("assembly.json");
+    fs::write(&request_path, serde_json::to_vec_pretty(&assembly).unwrap()).unwrap();
+    let output = temp.path().join("issue");
+    let receipt = assemble(&request_path, &output).unwrap();
+    assert_eq!(receipt.page_order, ["page01", "page02", "page03"]);
+    assert!(
+        !receipt.human_approval && !receipt.retained_owner_acknowledged && !receipt.print_ready
+    );
+    assert_eq!(
+        lopdf::Document::load(output.join("reading.pdf"))
+            .unwrap()
+            .get_pages()
+            .len(),
+        3
+    );
+    let pdf = lopdf::Document::load(output.join("reading.pdf")).unwrap();
+    for ((_, page_id), (part, page)) in pdf.get_pages().iter().zip([
+        ("opening", "page01"),
+        ("spread", "page02"),
+        ("spread", "page03"),
+    ]) {
+        let resources = pdf
+            .get_dictionary(*page_id)
+            .unwrap()
+            .get(b"Resources")
+            .unwrap()
+            .as_dict()
+            .unwrap();
+        let image_id = resources
+            .get(b"XObject")
+            .unwrap()
+            .as_dict()
+            .unwrap()
+            .get(b"Im0")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let rgb = pdf
+            .get_object(image_id)
+            .unwrap()
+            .as_stream()
+            .unwrap()
+            .decompressed_content()
+            .unwrap();
+        let png = Pixmap::decode_png(
+            &fs::read(output.join(format!("parts/{part}/{page}-reading.png"))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            rgb,
+            png.data()
+                .chunks_exact(4)
+                .flat_map(|p| p[..3].iter().copied())
+                .collect::<Vec<_>>()
+        );
+    }
+    let transcript: serde_json::Value =
+        serde_json::from_slice(&fs::read(output.join("transcript.json")).unwrap()).unwrap();
+    assert_eq!(transcript["pages"][1]["page_id"], "page02");
+    assert_eq!(
+        transcript["pages"][0]["utterances"][0]["lines"][0],
+        "La luz sigue."
+    );
+    assert!(assemble(&request_path, &output).is_err());
+    // Changed plan/language and changed page source pins refuse before reserving output.
+    plan.publication.editions[0].language = "en".into();
+    fs::write(
+        packets.path().join("plan.json"),
+        serde_json::to_vec_pretty(&plan).unwrap(),
+    )
+    .unwrap();
+    let mut wrong = assembly.clone();
+    let obj = object(&fs::read(packets.path().join("plan.json")).unwrap());
+    wrong.plan.sha256 = obj.sha256;
+    wrong.plan.bytes = obj.bytes;
+    let wrong_path = packets.path().join("wrong.json");
+    fs::write(&wrong_path, serde_json::to_vec_pretty(&wrong).unwrap()).unwrap();
+    let refused = temp.path().join("refused");
+    assert!(assemble(&wrong_path, &refused).is_err());
+    assert!(!refused.exists());
+    plan.publication.editions[0].language = "es".into();
+    let Content::Comic { pages, .. } = &mut plan.publication.editions[0].content else {
+        unreachable!()
+    };
+    pages[0].source.sha256 = "0".repeat(64);
+    let altered = serde_json::to_vec_pretty(&plan).unwrap();
+    let obj = object(&altered);
+    fs::write(packets.path().join("plan.json"), altered).unwrap();
+    wrong.plan.sha256 = obj.sha256;
+    wrong.plan.bytes = obj.bytes;
+    fs::write(&wrong_path, serde_json::to_vec_pretty(&wrong).unwrap()).unwrap();
+    assert!(assemble(&wrong_path, &refused).is_err());
+    assert!(!refused.exists());
+    packets.close().unwrap();
+    // Self-contained issue can be reassembled after both original locations are gone.
+    let second = temp.path().join("second");
+    let cli = std::process::Command::new(env!("CARGO_BIN_EXE_reel-publication"))
+        .arg("comic-issue-assemble")
+        .arg(output.join("assembly.json"))
+        .arg(&second)
+        .output()
+        .unwrap();
+    assert!(cli.status.success());
+    let replay: reel_publication::comic_issue::AssemblyReceipt =
+        serde_json::from_slice(&fs::read(second.join("receipt.json")).unwrap()).unwrap();
+    assert_eq!(receipt.outputs, replay.outputs);
+    let restored = temp.path().join("restored-part");
+    let part = output.join("parts/opening");
+    let receipt_pin = object(&fs::read(part.join("receipt.json")).unwrap());
+    restore_sources(&part, &restored, &receipt_pin.sha256).unwrap();
+    assert!(restored.join("pages/page01.json").is_file());
+    fs::write(part.join("page01-lettering.svg"), b"altered").unwrap();
+    assert!(assemble(&output.join("assembly.json"), &temp.path().join("tampered")).is_err());
+    assert!(!temp.path().join("tampered").exists());
+    if let Some(path) = std::env::var_os("REEL_COMIC_ISSUE_EVIDENCE_LOCATION") {
+        use std::io::Write;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .unwrap();
+        let location = temp.keep();
+        file.write_all(&serde_json::to_vec_pretty(&serde_json::json!({"root":location,"verified_issue":second,"editable_restoration":restored,"tampered_issue":output})).unwrap()).unwrap();
+        file.sync_all().unwrap();
+    }
+}
+
+#[test]
 fn bilingual_pages_fix_preserves_art_and_restores_editable_sources_without_originals() {
     let temp = tempfile::tempdir().unwrap();
     let root = std::env::var_os("REEL_COMIC_FIXTURE_ROOT")

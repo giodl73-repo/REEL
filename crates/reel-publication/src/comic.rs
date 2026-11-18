@@ -14,9 +14,9 @@ use std::{
 
 pub use crate::comic_source::*;
 
-struct Packet {
-    receipt: Receipt,
-    files: BTreeMap<String, Vec<u8>>,
+pub(crate) struct Packet {
+    pub(crate) receipt: Receipt,
+    pub(crate) files: BTreeMap<String, Vec<u8>>,
 }
 struct Inputs<'a> {
     read: &'a mut dyn FnMut(&Pin) -> Result<Vec<u8>>,
@@ -49,7 +49,7 @@ fn ordinary(path: &Path) -> Result<fs::Metadata> {
     ensure!(!link, "ordinary paths required");
     Ok(m)
 }
-fn read(path: &Path, max: u64) -> Result<Vec<u8>> {
+pub(crate) fn read(path: &Path, max: u64) -> Result<Vec<u8>> {
     for p in path.parent().context("input parent required")?.ancestors() {
         ensure!(ordinary(p)?.is_dir(), "ordinary ancestors required");
     }
@@ -60,7 +60,7 @@ fn read(path: &Path, max: u64) -> Result<Vec<u8>> {
     ensure!(raw.len() as u64 <= max, "input grew beyond bound");
     Ok(raw)
 }
-fn portable(path: &str) -> bool {
+pub(crate) fn portable(path: &str) -> bool {
     !path.is_empty()
         && path.len() <= 256
         && !path.contains('\\')
@@ -457,7 +457,7 @@ fn prepare_with(raw: &[u8], read_input: &mut dyn FnMut(&Pin) -> Result<Vec<u8>>)
     );
     Ok(Packet { receipt, files })
 }
-fn write_new(output: &Path, files: &BTreeMap<String, Vec<u8>>) -> Result<()> {
+pub(crate) fn write_new(output: &Path, files: &BTreeMap<String, Vec<u8>>) -> Result<()> {
     let parent = output.parent().context("output parent required")?;
     for ancestor in parent.ancestors() {
         ensure!(
@@ -489,6 +489,10 @@ pub fn render(request: &Path, output: &Path) -> Result<Receipt> {
 }
 pub fn check(request: &Path, output: &Path) -> Result<Receipt> {
     let packet = prepare(&std::path::absolute(request)?)?;
+    check_packet(&packet, output)?;
+    Ok(packet.receipt)
+}
+fn check_packet(packet: &Packet, output: &Path) -> Result<()> {
     let output = std::path::absolute(output)?;
     let mut actual = BTreeSet::new();
     inventory(&output, &output, 0, &mut actual)?;
@@ -502,7 +506,16 @@ pub fn check(request: &Path, output: &Path) -> Result<Receipt> {
             "comic packet differs"
         );
     }
-    Ok(packet.receipt)
+    Ok(())
+}
+/// Capture and replay a packet using only its own editable source copies.
+pub(crate) fn reopen_packet(output: &Path) -> Result<Packet> {
+    let raw = read(&output.join("sources/request.json"), 1024 * 1024)?;
+    let packet = prepare_with(&raw, &mut |pin| {
+        read(&output.join("sources").join(&pin.path), pin.bytes)
+    })?;
+    check_packet(&packet, output)?;
+    Ok(packet)
 }
 /// Deterministic replay against injected exact source/output readers. Performs
 /// no filesystem writes and does not infer worker identity, rights or custody.

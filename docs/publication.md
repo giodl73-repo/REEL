@@ -159,7 +159,64 @@ of a new shared adapter.
 The first rendering/source-restoration fixture is implemented. Stale workflow
 returns have separate contract tests. Bounded synthetic native handoff now covers
 actual protection, logical registration, deterministic replay and retained native
-outputs. Larger issue planning, expected-baseline selection and project adoption
+outputs. Native issue scheduling, expected-baseline selection and project adoption
 remain open under the upstream lifecycle. Only after
 that qualification and owned rollback should a project adopt the shared producer.
 Issue-level review/selection, printer preflight and delivery remain distinct gates.
+
+## Explicit issue parts and reading assembly
+
+The `comic` feature also provides:
+
+```text
+reel-publication comic-issue-check PLAN
+reel-publication comic-issue-assemble REQUEST NEW_DIRECTORY
+```
+
+`reel.comic-issue-plan.v1` embeds a complete `Publication`, its selected
+`edition_id`, and ordered `parts` of `{id, pages: [PAGE_ID, ...]}`. Groups must
+cover that edition exactly once in its declared order, contain 1–32 pages each,
+and preserve spreads. Part IDs must be unique even ignoring case. The existing
+512-page publication and 1 MiB control bounds apply, with at most 128 parts.
+The metadata check reads no artwork or fonts and performs no rendering.
+Rust callers can use `Plan::part_publication(id)` to derive a checked subset
+definition without changing original page, language or source identity. This is
+an unselected definition, not an admitted workflow task or a committed record.
+
+`reel.comic-issue-assembly.v1` has `plan` (a relative path/hash/length pin),
+`parts` (part ID to exact relative packet `receipt.json` pin), and `limits`
+with `input_bytes` and `output_bytes`, each at most 128 MiB. Packet locations
+are private controls. Each part must already have been produced by the matching
+comic renderer. Its publication ID, edition, language, page source hashes,
+panel/utterance order and font/license binding must match the plan and other
+parts. Every packet is deterministically replayed using its captured `sources`
+and checked for exact bytes and file inventory; mutable receipt claims alone
+cannot satisfy this operation. Final named `reading.pdf` and `transcript.json`
+outputs must satisfy the selected edition's output contracts.
+
+The assembler merges passive PDFs in declared part order without inserting a
+cover or reversing pages for right-to-left editions. The publication's page list
+already declares reading order. It combines accessible source text in that same
+order; the PDF remains lossless raster reading output, not a tagged or press PDF.
+The fresh output contains both derivatives, the issue plan, a technical receipt,
+all complete editable packets under `parts/PART_ID`, the original assembly
+request and a relocated `assembly.json`. The relocated request supports rebuilding
+the issue without either original source or worker folders. Each copied part
+still supports the externally pinned `comic-restore` operation. Inputs are never
+overwritten; output inside a source packet is refused, and partial writes remain.
+Captured sources and these receipts are private, not shareable public reports.
+
+The synthetic fixture assembles three Spanish pages in two parts, preserves a
+two-page spread and right-to-left page order, verifies every PDF page's decoded
+RGB against its selected reading PNG, removes the original source/part folders,
+reassembles through the CLI and restores editable page sources. It rejects split
+spreads, missing/reordered pages, case-colliding part IDs, mixed languages,
+changed source hashes and tampered lettering. A 40-page metadata fixture accepts
+32+8 grouping and rejects a 33-page worker group; it does not render 40 pages.
+
+This is private local reading assembly. It does not yet schedule native part jobs,
+consume upstream retained task results, export an issue from native storage,
+release an actor, alter selections or dispatch workers. A 32-page part can still
+exceed native source/close or byte limits and must refuse admission there. Full
+issue creative/translation review, surrounding-page fix review, font permissions,
+print proof and release authority remain project-owned.

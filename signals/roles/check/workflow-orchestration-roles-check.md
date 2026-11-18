@@ -262,3 +262,19 @@ extra actors or history deletion. The full scope remains in the completion ledge
 providers, review/fix integration, selection and retirement are not inferred from
 one comic fixture. These are producer-applied checks, not independent reviewers
 or creative, rights, translation, print or release approval.
+
+2026-11-18 issue assembly follow-up, producer-applied comics-editor,
+story/editing, platform/audience and rights/provenance lenses: authored groups
+must preserve complete reading order and spread boundaries. The assembler checks
+each captured part's selected source, panel and utterance identities, language,
+font/license binding and deterministic bytes before making an issue. RGB proof
+checks the ordered raster PDF; the private issue retains editable packets and
+can be rebuilt after original folders disappear. Captured text does not turn
+the raster PDF into a tagged accessibility or printer-certified deliverable.
+
+The fixture has three synthetic pages; 40-page evidence is metadata only.
+Neither establishes full issue quality, real BBJ adoption or native scheduling.
+Part metadata cannot bypass the 128-path close bound or 16-actor admission limit.
+Issue-level creative and neighboring-page fix review remain required; preserving
+source order does not assess reveals, story quality or translation authority.
+These are producer-applied checks, not independent review or human approval.

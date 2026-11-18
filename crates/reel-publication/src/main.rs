@@ -14,16 +14,33 @@ fn check(path: &str) -> Result<(), &'static str> {
     let publication: Publication = serde_json::from_slice(&bytes).map_err(|_| "manifest-json")?;
     reel_publication::check_publication(&publication).map_err(|e| e.code)
 }
+#[cfg(feature = "comic")]
+fn check_issue(path: &str) -> Result<(), &'static str> {
+    let raw = reel_publication::comic_issue::read_plan(std::path::Path::new(path))
+        .map_err(|_| "issue-plan-read")?;
+    raw.check().map_err(|_| "issue-plan-contract")
+}
 fn main() -> std::process::ExitCode {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.is_empty() || matches!(args.as_slice(),[arg] if arg == "-h" || arg == "--help") {
         println!(
-            "reel-publication check MANIFEST\nreel-publication comic-render REQUEST NEW_DIRECTORY\nreel-publication comic-check REQUEST PACKET\nreel-publication comic-restore PACKET NEW_DIRECTORY RECEIPT_SHA256\nMetadata check is read-only. Comic commands perform explicit private production/check/restore, without native retention, selection or release."
+            "reel-publication check MANIFEST\nreel-publication comic-render REQUEST NEW_DIRECTORY\nreel-publication comic-check REQUEST PACKET\nreel-publication comic-restore PACKET NEW_DIRECTORY RECEIPT_SHA256\nreel-publication comic-issue-check PLAN\nreel-publication comic-issue-assemble REQUEST NEW_DIRECTORY\nMetadata checks are read-only. Comic production/check/restore are explicit private operations, without native retention, selection or release."
         );
         return std::process::ExitCode::SUCCESS;
     }
     let result = match args.as_slice() {
         [command, path] if command == "check" => check(path),
+        #[cfg(feature = "comic")]
+        [command, path] if command == "comic-issue-check" => check_issue(path),
+        #[cfg(feature = "comic")]
+        [command, request, output] if command == "comic-issue-assemble" => {
+            reel_publication::comic_issue::assemble(
+                std::path::Path::new(request),
+                std::path::Path::new(output),
+            )
+            .map(|_| ())
+            .map_err(|_| "comic-issue-assembly-refused-preserve-partial")
+        }
         #[cfg(feature = "comic")]
         [command, request, output] if command == "comic-render" => reel_publication::comic::render(
             std::path::Path::new(request),
@@ -54,12 +71,12 @@ fn main() -> std::process::ExitCode {
     };
     match result {
         Ok(()) => {
-            let metadata = matches!(args.first(),Some(command) if command=="check");
+            let metadata = matches!(args.first(),Some(command) if command=="check" || command=="comic-issue-check");
             println!(
                 "{}",
                 serde_json::json!({"ok":true,"scope":if metadata {"publication-metadata-only"} else {"explicit-private-comic-operation"},
-                "payloads_verified":!metadata,"rendered":matches!(args.first(),Some(command) if command=="comic-render" || command=="comic-check"),
-                "outputs_written":matches!(args.first(),Some(command) if command=="comic-render" || command=="comic-restore"),
+                "payloads_verified":!metadata,"rendered":matches!(args.first(),Some(command) if command=="comic-render" || command=="comic-check" || command=="comic-issue-assemble"),
+                "outputs_written":matches!(args.first(),Some(command) if command=="comic-render" || command=="comic-restore" || command=="comic-issue-assemble"),
                 "selected":false,"print_ready":false,"retained_owner_acknowledged":false})
             );
             std::process::ExitCode::SUCCESS

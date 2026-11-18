@@ -20,8 +20,8 @@ checked again before closing the objective.
 | Review copies with stable cel IDs | Existing root review/asset authority surfaces described in the orchestration plan | Connect generated review copies and exact frame/sample locations to findings, fixes and affected consumer invalidation. |
 | Packaging, review, issue filing and fixes | Existing packaging/review checks; `ReviewFinding` task type; project/root role checklists | Machine-readable findings, issue dedup/routing and authorized issue adapter, scoped repairs, contextual review, closure evidence and dependency invalidation. |
 | HTML/CSS/SVG and browser compositions | Existing root browser/composition and vector/print surfaces | Explicit workflow contracts/producer bindings, reference closure, deterministic checks and bounded execution policy. Returned code is never an implicit shell command. |
-| Comic editions, pages, panels, editable lettering and reading order | `reel-publication`, shared print renderer, bilingual producer/restoration fixtures; bounded native receipt/replay and bare-history completion fixture | Issue-sized task partition/assembly, automated dispatch and native editable packet restoration. |
-| Larger complete comic issues | Portable metadata supports issue/page structure; producer has explicit page/byte limits | Page/part jobs and final ordered edition assembly must be planned explicitly within native actor/128-changed-path bounds. Raising an artifact-count ceiling alone is not completion. |
+| Comic editions, pages, panels, editable lettering and reading order | `reel-publication`, shared print renderer, bilingual producer/restoration fixtures; bounded native receipt/replay; explicit part plan and private issue assembler | Connect part plans/assembly to native task admission and upstream retained results, automated dispatch and native editable packet restoration. |
+| Larger complete comic issues | Explicit contiguous part metadata preserves spreads; private assembler replays captured parts, checks selected page sources/order/language and builds an ordered reading PDF/transcript with editable packets | Qualify larger actual issues and native page/part scheduling within actor/128-changed-path bounds; the three-page assembly and 40-page metadata fixtures do not establish that qualification. |
 | Multiple languages and source canon | Language-specific task/edition keys, immutable selected source descriptors | End-to-end bilingual film and comic fix tests; source wording and separate approvals remain project-owned. |
 | Multiple projects/repos | Generic logical IDs/commits; synthetic provider and comic consumers | Owned consumer profiles for relevant repos, independent historical access, project instructions/rights and rollback evidence. No modifications to active lanes or historical repositories are inferred. |
 | History and editable restoration | Native exact-commit readers, archived metadata, pinned tools, comic source capture/restore | Native packet export/restore and issue-level reconstruction without original producer folders; unavailable bytes must refuse instead of substituting latest. |
@@ -29,7 +29,8 @@ checked again before closing the objective.
 | Structured errors and retry policy | Typed workflow errors plus native phase codes; unknown native I/O remains NeedsRecovery | Normalize remaining typed SDK/provider/selection errors. No stderr parsing or blind effect retries. |
 | Review and release authority | `.roles`, `.pitfall`, private controls and separate technical flags | Continue producer-applied reviews per feature. Technical completion cannot grant creative, translation, likeness/voice, font, print or public release approval. |
 
-Current ordering: build issue-sized planning/restoration and deterministic worker
+Current ordering: connect issue-sized plans/assembly to native admission and retained
+upstream results; build native restoration and deterministic worker
 dispatch on the bounded native comic receipt/replay path; connect film,
 cue/style/language and review/fix flows; implement provider transports; finish
 explicit selection/retirement and project adoption qualification. Independent

@@ -7,6 +7,39 @@ use std::sync::Arc;
 pub struct Renderer {
     fonts: Fonts,
 }
+/// Assemble captured passive reading PDFs in supplied order, without adding pages.
+/// Callers retain responsibility for source hashes, edition identity and rights.
+pub fn merge_reading_pdfs(parts: &[&[u8]], max_pages: usize, max_bytes: u64) -> Result<Vec<u8>> {
+    ensure!(
+        (1..=128).contains(&parts.len())
+            && (1..=512).contains(&max_pages)
+            && (1..=128 * 1024 * 1024).contains(&max_bytes),
+        "reading assembly limits refused"
+    );
+    let mut used = 0u64;
+    let mut pages = 0usize;
+    let mut documents = Vec::new();
+    for raw in parts {
+        used = used
+            .checked_add(raw.len() as u64)
+            .ok_or_else(|| anyhow::anyhow!("reading input overflow"))?;
+        ensure!(used <= max_bytes, "reading input bound exceeded");
+        let sheets = pdf::retained("reading-part", raw)?;
+        ensure!(!sheets.is_empty(), "empty reading part refused");
+        pages += sheets.len();
+        ensure!(pages <= max_pages, "reading page bound exceeded");
+        let crate::pages::Content::Pdf(document) = &sheets[0].content else {
+            anyhow::bail!("reading PDF required");
+        };
+        documents.push(document.clone());
+    }
+    let output = pdf::merge(documents)?;
+    ensure!(
+        output.len() as u64 <= max_bytes,
+        "reading output bound exceeded"
+    );
+    Ok(output)
+}
 pub struct RenderedPage {
     pub png: Vec<u8>,
 }
